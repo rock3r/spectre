@@ -2,8 +2,10 @@
 .idea/
 .kotlin/
 .tmp/
+.plans/
+.worktrees/
+worktrees/
 **/build/
 **/out/
 *.iml
 .DS_Store
-

@@ -1,4 +1,5 @@
 rootProject.name = "Spectre"
+
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 pluginManagement {
@@ -28,12 +29,14 @@ dependencyResolutionManagement {
     }
 }
 
-plugins {
-    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
-}
+plugins { id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0" }
 
 include(":core")
+
 include(":server")
+
 include(":recording")
+
 include(":testing")
+
 include(":sample-desktop")

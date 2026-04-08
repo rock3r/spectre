@@ -1,14 +1,14 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
 plugins {
+    alias(libs.plugins.detekt)
+    alias(libs.plugins.ktfmt)
     alias(libs.plugins.kotlinJvm)
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
 }
 
-kotlin {
-    jvmToolchain(21)
-}
+kotlin { jvmToolchain(21) }
 
 dependencies {
     implementation(projects.core)
@@ -19,6 +19,7 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.compose.uiToolingPreview)
     implementation(libs.kotlinx.coroutines.swing)
+    detektPlugins(libs.compose.rules.detekt)
 }
 
 compose.desktop {

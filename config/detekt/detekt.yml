@@ -1,0 +1,41 @@
+#
+# Builds upon the default config from the Detekt 2.x plugin line.
+# Compose-bearing modules also load io.nlopez.compose.rules via detektPlugins.
+#
+style:
+  MaxLineLength:
+    maxLineLength: 120
+    excludeCommentStatements: true
+    excludePackageStatements: true
+    excludeImportStatements: true
+  WildcardImport:
+    active: true
+  ThrowsCount:
+    active: false
+  ReturnCount:
+    max: 8
+
+complexity:
+  LongParameterList:
+    active: false
+  ComplexCondition:
+    allowedConditions: 5
+  CyclomaticComplexMethod:
+    allowedComplexity: 15
+    ignoreAnnotated:
+      - "Composable"
+  LongMethod:
+    active: true
+    allowedLines: 100
+  TooManyFunctions:
+    allowedFunctionsPerFile: 15
+    allowedFunctionsPerClass: 15
+    allowedFunctionsPerObject: 15
+    allowedFunctionsPerInterface: 15
+  NestedBlockDepth:
+    allowedDepth: 5
+
+naming:
+  FunctionNaming:
+    ignoreAnnotated:
+      - "Composable"

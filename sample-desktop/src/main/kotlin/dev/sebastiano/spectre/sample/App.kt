@@ -13,16 +13,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 @Composable
-fun App() {
+fun App(modifier: Modifier = Modifier) {
     MaterialTheme {
         Column(
-            modifier = Modifier.fillMaxSize().padding(24.dp),
+            modifier = modifier.fillMaxSize().padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text(
-                text = "Spectre bootstrap",
-                style = MaterialTheme.typography.headlineMedium,
-            )
+            Text(text = "Spectre bootstrap", style = MaterialTheme.typography.headlineMedium)
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.padding(20.dp),
@@ -36,4 +33,3 @@ fun App() {
         }
     }
 }
-
