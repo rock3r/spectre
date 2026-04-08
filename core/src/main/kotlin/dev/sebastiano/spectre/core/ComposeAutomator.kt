@@ -69,8 +69,12 @@ private constructor(
         return waitUntil(timeout = timeout, pollInterval = pollInterval) {
             refreshWindows()
             val byTag = if (tag != null) findByTestTag(tag) else allNodes()
-            val byText = if (text != null) findByText(text) else allNodes()
-            byTag.firstOrNull { it in byText }
+            if (text == null) {
+                byTag.firstOrNull()
+            } else {
+                val textKeys = findByText(text).map { it.key }.toSet()
+                byTag.firstOrNull { it.key in textKeys }
+            }
         }
     }
 
