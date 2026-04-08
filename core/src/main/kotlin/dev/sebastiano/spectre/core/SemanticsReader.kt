@@ -21,8 +21,7 @@ class SemanticsReader {
         exact: Boolean = true,
     ): List<AutomatorNode> =
         readAllNodes(trackedWindows).filter { node ->
-            val nodeText = node.text ?: return@filter false
-            if (exact) nodeText == text else nodeText.contains(text, ignoreCase = true)
+            matchesText(node.text, text, exact) || matchesText(node.editableText, text, exact)
         }
 
     fun findByContentDescription(
@@ -69,4 +68,9 @@ class SemanticsReader {
             traverseTree(child, trackedWindow, ownerIndex, result)
         }
     }
+}
+
+private fun matchesText(nodeText: String?, query: String, exact: Boolean): Boolean {
+    if (nodeText == null) return false
+    return if (exact) nodeText == query else nodeText.contains(query, ignoreCase = true)
 }

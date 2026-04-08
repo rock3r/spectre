@@ -58,6 +58,7 @@ class WindowTracker {
         if (activePanel != null) {
             addTrackedWindow(window, activePanel, "embedded", isPopup = false)
         }
+        trackOwnedPopups(window)
     }
 
     private fun addTrackedWindow(
