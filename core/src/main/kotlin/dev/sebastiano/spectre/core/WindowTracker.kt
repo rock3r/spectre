@@ -51,6 +51,8 @@ class WindowTracker {
                 }
                 else -> trackActivePanels(owned, "popup", isPopup = true)
             }
+            // Recurse into owned windows to discover nested popups (popups of popups)
+            trackOwnedPopups(owned)
         }
     }
 
