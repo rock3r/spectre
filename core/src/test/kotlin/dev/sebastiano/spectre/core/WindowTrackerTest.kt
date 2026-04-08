@@ -1,14 +1,17 @@
 package dev.sebastiano.spectre.core
 
 import java.awt.Container
+import java.awt.GraphicsEnvironment
 import javax.swing.JFrame
 import javax.swing.JPanel
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.condition.EnabledIf
 
 class WindowTrackerTest {
 
+    @EnabledIf("isNotHeadless")
     @Test
     fun `findComposePanels returns empty for plain Swing container`() {
         val frame = JFrame()
@@ -28,7 +31,6 @@ class WindowTrackerTest {
 
     @Test
     fun `findComposePanels searches nested containers`() {
-        // Build a 3-level Swing hierarchy with no ComposePanel
         val root = JPanel()
         val child = JPanel()
         val grandchild = JPanel()
@@ -36,5 +38,10 @@ class WindowTrackerTest {
         root.add(child)
         val result = findComposePanels(root)
         assertEquals(0, result.size)
+    }
+
+    companion object {
+
+        @JvmStatic fun isNotHeadless(): Boolean = !GraphicsEnvironment.isHeadless()
     }
 }

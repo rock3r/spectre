@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.core
 
+import java.awt.GraphicsEnvironment
 import java.awt.event.KeyEvent
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -7,6 +8,7 @@ import javax.swing.SwingUtilities
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.condition.EnabledIf
 
 class RobotDriverTest {
 
@@ -29,6 +31,7 @@ class RobotDriverTest {
         assertEquals(expected, detectMacOs())
     }
 
+    @EnabledIf("isNotHeadless")
     @Test
     fun `click does not throw when called from the EDT`() {
         val driver = RobotDriver()
@@ -37,7 +40,6 @@ class RobotDriverTest {
 
         SwingUtilities.invokeLater {
             try {
-                // Click at (0,0) — we don't care where, just that it doesn't throw
                 driver.click(0, 0)
             } catch (e: Throwable) {
                 error = e
@@ -50,6 +52,7 @@ class RobotDriverTest {
         error?.let { throw AssertionError("click from EDT should not throw", it) }
     }
 
+    @EnabledIf("isNotHeadless")
     @Test
     fun `typeText does not throw when called from the EDT`() {
         val driver = RobotDriver()
@@ -68,6 +71,11 @@ class RobotDriverTest {
 
         assertTrue(latch.await(ROBOT_EDT_TEST_TIMEOUT_SECONDS, TimeUnit.SECONDS), "Timed out")
         error?.let { throw AssertionError("typeText from EDT should not throw", it) }
+    }
+
+    companion object {
+
+        @JvmStatic fun isNotHeadless(): Boolean = !GraphicsEnvironment.isHeadless()
     }
 }
 
