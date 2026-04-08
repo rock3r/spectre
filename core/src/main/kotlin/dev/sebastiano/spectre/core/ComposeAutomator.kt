@@ -68,10 +68,11 @@ private constructor(
         require(tag != null || text != null) { "Either tag or text must be specified" }
         return waitUntil(timeout = timeout, pollInterval = pollInterval) {
             refreshWindows()
-            val candidates = allNodes()
-            candidates.firstOrNull { node ->
-                (tag == null || node.testTag == tag) && (text == null || node.text == text)
-            }
+            // Use the same matching logic as findByText (all texts + editableText)
+            val byTag = if (tag != null) findByTestTag(tag) else allNodes()
+            val byText =
+                if (text != null) byTag.filter { node -> nodeMatchesText(node, text) } else byTag
+            byText.firstOrNull()
         }
     }
 
@@ -98,6 +99,9 @@ private constructor(
     }
 }
 
+private fun nodeMatchesText(node: AutomatorNode, text: String): Boolean =
+    node.texts.any { it == text } || node.editableText == text
+
 private fun StringBuilder.appendNodeTree(
     node: AutomatorNode,
     allNodes: List<AutomatorNode>,
@@ -111,8 +115,10 @@ private fun StringBuilder.appendNodeTree(
     if (node.isFocused) append(" focused")
     if (node.isDisabled) append(" disabled")
     appendLine()
+    // Match children by full NodeKey (ownerIndex + nodeId) to avoid cross-owner collisions
     for (child in node.semanticsNode.children) {
-        val childNode = allNodes.find { it.key.nodeId == child.id }
+        val childKey = NodeKey(node.key.surfaceId, node.key.ownerIndex, child.id)
+        val childNode = allNodes.find { it.key == childKey }
         if (childNode != null) {
             appendNodeTree(childNode, allNodes, depth + 1)
         }
