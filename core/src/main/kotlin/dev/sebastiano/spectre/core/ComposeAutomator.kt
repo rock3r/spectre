@@ -68,12 +68,10 @@ private constructor(
         require(tag != null || text != null) { "Either tag or text must be specified" }
         return waitUntil(timeout = timeout, pollInterval = pollInterval) {
             refreshWindows()
-            val byTag = if (tag != null) findByTestTag(tag) else allNodes()
-            if (text == null) {
-                byTag.firstOrNull()
-            } else {
-                val textKeys = findByText(text).map { it.key }.toSet()
-                byTag.firstOrNull { it.key in textKeys }
+            // Single readAllNodes snapshot, then filter locally for both criteria
+            allNodes().firstOrNull { node ->
+                (tag == null || node.testTag == tag) &&
+                    (text == null || node.texts.any { it == text } || node.editableText == text)
             }
         }
     }
