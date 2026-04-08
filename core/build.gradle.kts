@@ -11,5 +11,11 @@ dependencies {
     implementation(libs.compose.foundation)
     implementation(libs.compose.ui)
     implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.kotlinx.coroutines.swing)
     detektPlugins(libs.compose.rules.detekt)
+
+    testImplementation(libs.kotlin.testJunit5)
+    testImplementation(libs.kotlinx.coroutines.test)
 }
+
+tasks.withType<Test>().configureEach { useJUnitPlatform() }
