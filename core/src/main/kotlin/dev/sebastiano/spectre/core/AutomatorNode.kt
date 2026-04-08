@@ -64,20 +64,17 @@ class AutomatorNode(
         get() = semanticsNode.boundsInWindow
 
     val centerOnScreen: Point
-        get() {
+        get() = readOnEdt {
             val bounds = semanticsNode.boundsInWindow
-            val scale = trackedWindow.window.graphicsConfiguration.defaultTransform.scaleX.toFloat()
-            // boundsInWindow is relative to the Compose content area, which sits inside
-            // the window's content pane (below title bar and decorations).
-            // Use ComposePanel location if available, otherwise the content pane for JFrames,
-            // falling back to the window itself for undecorated windows.
+            val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
             val contentOrigin = trackedWindow.composeContentOrigin
-            return composeBoundsToAwtCenter(
+            composeBoundsToAwtCenter(
                 left = bounds.left,
                 top = bounds.top,
                 right = bounds.right,
                 bottom = bounds.bottom,
-                scale = scale,
+                scaleX = transform.scaleX.toFloat(),
+                scaleY = transform.scaleY.toFloat(),
                 panelScreenX = contentOrigin.x,
                 panelScreenY = contentOrigin.y,
             )

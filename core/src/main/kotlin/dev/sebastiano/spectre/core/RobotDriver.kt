@@ -51,12 +51,7 @@ class RobotDriver(
     }
 
     fun screenshot(region: Rectangle? = null): BufferedImage {
-        val captureRegion =
-            region
-                ?: GraphicsEnvironment.getLocalGraphicsEnvironment()
-                    .defaultScreenDevice
-                    .defaultConfiguration
-                    .bounds
+        val captureRegion = region ?: virtualDesktopBounds()
         return robot.createScreenCapture(captureRegion)
     }
 }
@@ -96,5 +91,14 @@ fun modifierMaskToKeyCodes(mask: Int): List<Int> = buildList {
 }
 
 fun detectMacOs(): Boolean = System.getProperty("os.name").lowercase().contains("mac")
+
+private fun virtualDesktopBounds(): Rectangle {
+    val ge = GraphicsEnvironment.getLocalGraphicsEnvironment()
+    var bounds = Rectangle()
+    for (device in ge.screenDevices) {
+        bounds = bounds.union(device.defaultConfiguration.bounds)
+    }
+    return bounds
+}
 
 private const val DEFAULT_AUTO_DELAY_MS = 10
