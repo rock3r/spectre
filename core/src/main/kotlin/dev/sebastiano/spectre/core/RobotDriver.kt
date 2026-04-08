@@ -94,9 +94,12 @@ fun detectMacOs(): Boolean = System.getProperty("os.name").lowercase().contains(
 
 private fun virtualDesktopBounds(): Rectangle {
     val ge = GraphicsEnvironment.getLocalGraphicsEnvironment()
-    var bounds = Rectangle()
-    for (device in ge.screenDevices) {
-        bounds = bounds.union(device.defaultConfiguration.bounds)
+    val devices = ge.screenDevices
+    // Seed with the first device's bounds to avoid Rectangle() defaulting to (0,0)
+    // which would incorrectly include the origin in multi-monitor offset setups
+    var bounds = devices.first().defaultConfiguration.bounds
+    for (i in 1 until devices.size) {
+        bounds = bounds.union(devices[i].defaultConfiguration.bounds)
     }
     return bounds
 }

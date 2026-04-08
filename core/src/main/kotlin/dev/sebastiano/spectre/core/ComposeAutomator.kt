@@ -68,11 +68,9 @@ private constructor(
         require(tag != null || text != null) { "Either tag or text must be specified" }
         return waitUntil(timeout = timeout, pollInterval = pollInterval) {
             refreshWindows()
-            // Use the same matching logic as findByText (all texts + editableText)
             val byTag = if (tag != null) findByTestTag(tag) else allNodes()
-            val byText =
-                if (text != null) byTag.filter { node -> nodeMatchesText(node, text) } else byTag
-            byText.firstOrNull()
+            val byText = if (text != null) findByText(text) else allNodes()
+            byTag.firstOrNull { it in byText }
         }
     }
 
@@ -98,9 +96,6 @@ private constructor(
         ): ComposeAutomator = ComposeAutomator(windowTracker, semanticsReader, robotDriver)
     }
 }
-
-private fun nodeMatchesText(node: AutomatorNode, text: String): Boolean =
-    node.texts.any { it == text } || node.editableText == text
 
 private fun StringBuilder.appendNodeTree(
     node: AutomatorNode,
