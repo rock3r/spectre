@@ -21,14 +21,17 @@ class SemanticsReader {
         exact: Boolean = true,
     ): List<AutomatorNode> =
         readAllNodes(trackedWindows).filter { node ->
-            matchesText(node.text, text, exact) || matchesText(node.editableText, text, exact)
+            node.texts.any { matchesText(it, text, exact) } ||
+                matchesText(node.editableText, text, exact)
         }
 
     fun findByContentDescription(
         description: String,
         trackedWindows: List<TrackedWindow>,
     ): List<AutomatorNode> =
-        readAllNodes(trackedWindows).filter { it.contentDescription == description }
+        readAllNodes(trackedWindows).filter { node ->
+            node.contentDescriptions.any { it == description }
+        }
 
     fun findByRole(role: Role, trackedWindows: List<TrackedWindow>): List<AutomatorNode> =
         readAllNodes(trackedWindows).filter { it.role == role }

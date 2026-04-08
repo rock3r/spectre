@@ -38,15 +38,20 @@ class AutomatorNode(
     val testTag: String?
         get() = semanticsNode.config.getOrNull(SemanticsProperties.TestTag)
 
+    val texts: List<String>
+        get() = semanticsNode.config.getOrNull(SemanticsProperties.Text)?.map { it.text }.orEmpty()
+
     val text: String?
-        get() = semanticsNode.config.getOrNull(SemanticsProperties.Text)?.firstOrNull()?.text
+        get() = texts.firstOrNull()
 
     val editableText: String?
         get() = semanticsNode.config.getOrNull(SemanticsProperties.EditableText)?.text
 
+    val contentDescriptions: List<String>
+        get() = semanticsNode.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty()
+
     val contentDescription: String?
-        get() =
-            semanticsNode.config.getOrNull(SemanticsProperties.ContentDescription)?.firstOrNull()
+        get() = contentDescriptions.firstOrNull()
 
     val role: Role?
         get() = semanticsNode.config.getOrNull(SemanticsProperties.Role)

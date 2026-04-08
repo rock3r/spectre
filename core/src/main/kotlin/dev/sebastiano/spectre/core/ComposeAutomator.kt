@@ -64,32 +64,26 @@ private constructor(
         text: String? = null,
         timeout: Duration = 5.seconds,
         pollInterval: Duration = 100.milliseconds,
-    ): AutomatorNode =
-        waitUntil(timeout = timeout, pollInterval = pollInterval) {
+    ): AutomatorNode {
+        require(tag != null || text != null) { "Either tag or text must be specified" }
+        return waitUntil(timeout = timeout, pollInterval = pollInterval) {
             refreshWindows()
-            when {
-                tag != null -> findOneByTestTag(tag)
-                text != null -> findOneByText(text)
-                else -> error("Either tag or text must be specified")
+            val candidates = allNodes()
+            candidates.firstOrNull { node ->
+                (tag == null || node.testTag == tag) && (text == null || node.text == text)
             }
         }
+    }
 
     fun printTree(): String = buildString {
         refreshWindows()
         for ((windowIndex, trackedWindow) in windows.withIndex()) {
             val kind = if (trackedWindow.isPopup) "popup" else "main"
             appendLine("Window $windowIndex ($kind): ${trackedWindow.surfaceId}")
-            val nodes = semanticsReader.readAllNodes(listOf(trackedWindow))
-            for (node in nodes) {
-                val indent = "  "
-                append(indent)
-                append("[${node.key.nodeId}]")
-                node.testTag?.let { append(" testTag=\"$it\"") }
-                node.text?.let { append(" text=\"$it\"") }
-                node.role?.let { append(" role=$it") }
-                if (node.isFocused) append(" focused")
-                if (node.isDisabled) append(" disabled")
-                appendLine()
+            val allNodes = semanticsReader.readAllNodes(listOf(trackedWindow))
+            val roots = allNodes.filter { it.semanticsNode.parent == null }
+            for (root in roots) {
+                appendNodeTree(root, allNodes, depth = 1)
             }
         }
     }
@@ -101,5 +95,26 @@ private constructor(
             semanticsReader: SemanticsReader = SemanticsReader(),
             robotDriver: RobotDriver = RobotDriver(),
         ): ComposeAutomator = ComposeAutomator(windowTracker, semanticsReader, robotDriver)
+    }
+}
+
+private fun StringBuilder.appendNodeTree(
+    node: AutomatorNode,
+    allNodes: List<AutomatorNode>,
+    depth: Int,
+) {
+    append("  ".repeat(depth))
+    append("[${node.key.nodeId}]")
+    node.testTag?.let { append(" testTag=\"$it\"") }
+    node.text?.let { append(" text=\"$it\"") }
+    node.role?.let { append(" role=$it") }
+    if (node.isFocused) append(" focused")
+    if (node.isDisabled) append(" disabled")
+    appendLine()
+    for (child in node.semanticsNode.children) {
+        val childNode = allNodes.find { it.key.nodeId == child.id }
+        if (childNode != null) {
+            appendNodeTree(childNode, allNodes, depth + 1)
+        }
     }
 }
