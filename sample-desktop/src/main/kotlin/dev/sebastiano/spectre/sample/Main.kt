@@ -39,8 +39,10 @@ private suspend fun runAutomatorDemo() {
 
     val button = automator.findOneByTestTag("incrementButton")
     if (button != null) {
-        button.trackedWindow.window.toFront()
-        button.trackedWindow.window.requestFocus()
+        javax.swing.SwingUtilities.invokeAndWait {
+            button.trackedWindow.window.toFront()
+            button.trackedWindow.window.requestFocus()
+        }
         delay(BETWEEN_ACTION_DELAY_MS)
 
         println("Clicking button $CLICK_REPETITIONS times...")

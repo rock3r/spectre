@@ -40,25 +40,33 @@ class WindowTracker {
 
     @OptIn(ExperimentalComposeUiApi::class)
     private fun trackOwnedPopups(owner: Window) {
-        for (owned in owner.ownedWindows) {
-            if (!owned.isShowing || owned !is Container) continue
-            val panels = findComposePanels(owned)
-            val activePanel = panels.firstOrNull { it.semanticsOwners.isNotEmpty() }
-            if (activePanel != null) {
-                addTrackedWindow(owned, activePanel, "popup", isPopup = true)
+        val visibleOwned = owner.ownedWindows.filter { it.isShowing }
+        for (owned in visibleOwned) {
+            when (owned) {
+                is ComposeWindow -> {
+                    if (owned.semanticsOwners.isNotEmpty()) {
+                        val panel = findComposePanels(owned).firstOrNull()
+                        addTrackedWindow(owned, panel, "popup", isPopup = true)
+                    }
+                }
+                else -> trackActivePanels(owned, "popup", isPopup = true)
             }
         }
     }
 
-    @OptIn(ExperimentalComposeUiApi::class)
     private fun trackEmbeddedPanels(window: Window) {
-        if (window !is Container) return
-        val panels = findComposePanels(window)
-        val activePanel = panels.firstOrNull { it.semanticsOwners.isNotEmpty() }
-        if (activePanel != null) {
-            addTrackedWindow(window, activePanel, "embedded", isPopup = false)
-        }
+        trackActivePanels(window, "embedded", isPopup = false)
         trackOwnedPopups(window)
+    }
+
+    @OptIn(ExperimentalComposeUiApi::class)
+    private fun trackActivePanels(window: Window, prefix: String, isPopup: Boolean) {
+        val panels = findComposePanels(window)
+        for (panel in panels) {
+            if (panel.semanticsOwners.isNotEmpty()) {
+                addTrackedWindow(window, panel, prefix, isPopup)
+            }
+        }
     }
 
     private fun addTrackedWindow(
