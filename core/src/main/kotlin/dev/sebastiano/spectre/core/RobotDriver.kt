@@ -73,9 +73,11 @@ private fun runOffEdt(block: () -> Unit) {
         block()
         return
     }
-    val thread = Thread(block, "spectre-robot")
+    var result: Result<Unit>? = null
+    val thread = Thread({ result = runCatching(block) }, "spectre-robot")
     thread.start()
     thread.join()
+    result!!.getOrThrow()
 }
 
 fun pasteModifierKeyCode(isMacOs: Boolean): Int =

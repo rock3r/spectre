@@ -14,7 +14,7 @@ class WindowTracker {
     val trackedWindows: List<TrackedWindow>
         get() = _trackedWindows.toList()
 
-    fun refresh() {
+    fun refresh() = readOnEdt {
         _trackedWindows.clear()
         surfaceIndex = 0
 

@@ -5,7 +5,6 @@ import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsOwner
-import javax.swing.SwingUtilities
 
 class SemanticsReader {
 
@@ -68,12 +67,4 @@ class SemanticsReader {
             traverseTree(child, trackedWindow, ownerIndex, result)
         }
     }
-}
-
-private fun <T> readOnEdt(block: () -> T): T {
-    if (SwingUtilities.isEventDispatchThread()) return block()
-
-    var result: Result<T>? = null
-    SwingUtilities.invokeAndWait { result = runCatching(block) }
-    return result!!.getOrThrow()
 }
