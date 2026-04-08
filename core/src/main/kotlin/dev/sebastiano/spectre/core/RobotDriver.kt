@@ -43,10 +43,11 @@ class RobotDriver(
     }
 
     fun pressKey(keyCode: Int, modifiers: Int = 0) = runOffEdt {
-        if (modifiers != 0) robot.keyPress(modifiers)
+        val modifierKeys = modifierMaskToKeyCodes(modifiers)
+        for (mod in modifierKeys) robot.keyPress(mod)
         robot.keyPress(keyCode)
         robot.keyRelease(keyCode)
-        if (modifiers != 0) robot.keyRelease(modifiers)
+        for (mod in modifierKeys.reversed()) robot.keyRelease(mod)
     }
 
     fun screenshot(region: Rectangle? = null): BufferedImage {
@@ -82,6 +83,17 @@ private fun runOffEdt(block: () -> Unit) {
 
 fun pasteModifierKeyCode(isMacOs: Boolean): Int =
     if (isMacOs) KeyEvent.VK_META else KeyEvent.VK_CONTROL
+
+/**
+ * Translates an AWT modifier bitmask (e.g. [InputEvent.CTRL_DOWN_MASK]) into individual key codes
+ * that Robot can press/release.
+ */
+fun modifierMaskToKeyCodes(mask: Int): List<Int> = buildList {
+    if (mask and InputEvent.CTRL_DOWN_MASK != 0) add(KeyEvent.VK_CONTROL)
+    if (mask and InputEvent.SHIFT_DOWN_MASK != 0) add(KeyEvent.VK_SHIFT)
+    if (mask and InputEvent.ALT_DOWN_MASK != 0) add(KeyEvent.VK_ALT)
+    if (mask and InputEvent.META_DOWN_MASK != 0) add(KeyEvent.VK_META)
+}
 
 fun detectMacOs(): Boolean = System.getProperty("os.name").lowercase().contains("mac")
 

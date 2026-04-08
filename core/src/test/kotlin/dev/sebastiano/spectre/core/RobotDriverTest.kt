@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.core
 
 import java.awt.GraphicsEnvironment
+import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -29,6 +30,28 @@ class RobotDriverTest {
         val osName = System.getProperty("os.name").lowercase()
         val expected = osName.contains("mac")
         assertEquals(expected, detectMacOs())
+    }
+
+    @Test
+    fun `modifierMaskToKeyCodes returns empty for zero mask`() {
+        assertEquals(emptyList(), modifierMaskToKeyCodes(0))
+    }
+
+    @Test
+    fun `modifierMaskToKeyCodes translates CTRL_DOWN_MASK to VK_CONTROL`() {
+        assertEquals(listOf(KeyEvent.VK_CONTROL), modifierMaskToKeyCodes(InputEvent.CTRL_DOWN_MASK))
+    }
+
+    @Test
+    fun `modifierMaskToKeyCodes translates combined Ctrl+Shift mask`() {
+        val mask = InputEvent.CTRL_DOWN_MASK or InputEvent.SHIFT_DOWN_MASK
+        val result = modifierMaskToKeyCodes(mask)
+        assertEquals(listOf(KeyEvent.VK_CONTROL, KeyEvent.VK_SHIFT), result)
+    }
+
+    @Test
+    fun `modifierMaskToKeyCodes translates META_DOWN_MASK to VK_META`() {
+        assertEquals(listOf(KeyEvent.VK_META), modifierMaskToKeyCodes(InputEvent.META_DOWN_MASK))
     }
 
     @EnabledIf("isNotHeadless")

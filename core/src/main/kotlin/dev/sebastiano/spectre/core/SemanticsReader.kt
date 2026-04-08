@@ -51,8 +51,10 @@ class SemanticsReader {
         val window = trackedWindow.window
         if (window is ComposeWindow) return window.semanticsOwners
 
-        // For non-ComposeWindow containers, find embedded ComposePanels
-        return findComposePanels(window).flatMap { it.semanticsOwners }
+        // Use the specific ComposePanel stored in TrackedWindow to keep
+        // owners aligned with the panel used for coordinate mapping.
+        val panel = trackedWindow.composePanel ?: return emptyList()
+        return panel.semanticsOwners
     }
 
     private fun traverseTree(

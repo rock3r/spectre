@@ -18,9 +18,10 @@ class WindowTracker {
         _trackedWindows.clear()
         surfaceIndex = 0
 
-        for (window in Window.getWindows()) {
-            if (!window.isShowing) continue
-
+        // Skip owned windows — they are discovered via trackOwnedPopups
+        // from their owner. Without this, popups appear twice.
+        val topLevelWindows = Window.getWindows().filter { it.isShowing && it.owner == null }
+        for (window in topLevelWindows) {
             when (window) {
                 is ComposeWindow -> trackComposeWindow(window)
                 else -> trackEmbeddedPanels(window)
