@@ -535,17 +535,13 @@ def is_trusted_human_review_author(item, authenticated_login):
     return association in TRUSTED_AUTHOR_ASSOCIATIONS
 
 
-def is_blocking_review_item(item, head_sha, unresolved_comment_ids=None):
+def is_blocking_review_item(item, unresolved_comment_ids=None):
     if not isinstance(item, dict):
         return False
     if str(item.get("kind") or "") != "review_comment":
         return False
-    commit_id = str(item.get("commit_id") or "")
-    if not commit_id or not head_sha or commit_id != head_sha:
-        return False
-    # Only block on comments whose review thread is still unresolved. GitHub
-    # maps commit_id to the latest SHA for unchanged lines, so without this
-    # check resolved threads would continue to appear as blocking after fixes.
+    # Block on any inline comment whose thread is unresolved, regardless of which
+    # commit it was posted on. Unresolved threads always represent pending feedback.
     if unresolved_comment_ids is not None:
         item_id = str(item.get("id") or "")
         return item_id in unresolved_comment_ids
@@ -605,7 +601,6 @@ def fetch_unresolved_comment_ids(repo, pr_number):
 def fetch_new_review_items(pr, state, authenticated_login=None):
     repo = pr["repo"]
     pr_number = pr["number"]
-    head_sha = str(pr.get("head_sha") or "")
     endpoints = comment_endpoints(repo, pr_number)
 
     issue_payload = gh_api_list_paginated(endpoints["issue_comment"], repo=repo)
@@ -669,9 +664,7 @@ def fetch_new_review_items(pr, state, authenticated_login=None):
     blocking_items = [
         item
         for item in actionable_items
-        if is_blocking_review_item(
-            item, head_sha=head_sha, unresolved_comment_ids=unresolved_comment_ids
-        )
+        if is_blocking_review_item(item, unresolved_comment_ids=unresolved_comment_ids)
     ]
     blocking_items.sort(
         key=lambda item: (
