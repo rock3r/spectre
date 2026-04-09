@@ -1,7 +1,7 @@
 package dev.sebastiano.spectre.core
 
 import java.awt.GraphicsEnvironment
-import java.awt.MouseInfo
+import java.awt.Robot
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.util.concurrent.CountDownLatch
@@ -58,15 +58,13 @@ class RobotDriverTest {
     @EnabledIf("isNotHeadless")
     @Test
     fun `click does not throw when called from the EDT`() {
-        val driver = RobotDriver()
+        val driver = RobotDriver(noOpRobot())
         val latch = CountDownLatch(1)
         var error: Throwable? = null
 
         SwingUtilities.invokeLater {
             try {
-                // Click at the current pointer position to avoid moving the mouse visibly
-                val pos = MouseInfo.getPointerInfo().location
-                driver.click(pos.x, pos.y)
+                driver.click(0, 0)
             } catch (e: Throwable) {
                 error = e
             } finally {
@@ -81,7 +79,7 @@ class RobotDriverTest {
     @EnabledIf("isNotHeadless")
     @Test
     fun `typeText does not throw when called from the EDT`() {
-        val driver = RobotDriver()
+        val driver = RobotDriver(noOpRobot())
         val latch = CountDownLatch(1)
         var error: Throwable? = null
 
@@ -104,5 +102,21 @@ class RobotDriverTest {
         @JvmStatic fun isNotHeadless(): Boolean = !GraphicsEnvironment.isHeadless()
     }
 }
+
+/**
+ * A Robot subclass that suppresses all mouse and keyboard actions, for use in EDT-dispatch tests.
+ */
+private fun noOpRobot() =
+    object : Robot() {
+        override fun mouseMove(x: Int, y: Int) = Unit
+
+        override fun mousePress(buttons: Int) = Unit
+
+        override fun mouseRelease(buttons: Int) = Unit
+
+        override fun keyPress(keycode: Int) = Unit
+
+        override fun keyRelease(keycode: Int) = Unit
+    }
 
 private const val ROBOT_EDT_TEST_TIMEOUT_SECONDS = 5L
