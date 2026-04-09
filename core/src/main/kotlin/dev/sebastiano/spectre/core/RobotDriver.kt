@@ -32,21 +32,26 @@ class RobotDriver(
         }
     }
 
-    fun typeText(text: String) = runOffEdt {
+    fun typeText(text: String) {
         val clipboard = Toolkit.getDefaultToolkit().systemClipboard
         val previousContents = runCatching { clipboard.getContents(null) }.getOrNull()
         try {
             clipboard.setContents(StringSelection(text), null)
-            val modifier = pasteModifierKeyCode(detectMacOs())
-            robot.keyPress(modifier)
-            robot.keyPress(KeyEvent.VK_V)
-            robot.keyRelease(KeyEvent.VK_V)
-            robot.keyRelease(modifier)
+            runOffEdt {
+                val modifier = pasteModifierKeyCode(detectMacOs())
+                robot.keyPress(modifier)
+                robot.keyPress(KeyEvent.VK_V)
+                robot.keyRelease(KeyEvent.VK_V)
+                robot.keyRelease(modifier)
+            }
+            // Wait for the EDT to finish processing the paste event before restoring
+            // the clipboard. waitForIdle() is safe only when NOT on the EDT; when
+            // called from the EDT, runOffEdt blocks the EDT so waitForIdle would
+            // deadlock. EDT callers are unsupported and accept the restore race.
+            if (!SwingUtilities.isEventDispatchThread()) {
+                robot.waitForIdle()
+            }
         } finally {
-            // Restore synchronously so the clipboard state is deterministic across
-            // back-to-back typeText calls. Note: this automation API is intended for
-            // use from background threads (coroutines), not from the EDT. Calling
-            // typeText from the EDT is unsupported and may race with paste processing.
             if (previousContents != null) {
                 runCatching { clipboard.setContents(previousContents, null) }
             }
