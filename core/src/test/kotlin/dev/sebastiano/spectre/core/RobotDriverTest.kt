@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.core
 
 import java.awt.GraphicsEnvironment
+import java.awt.MouseInfo
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.util.concurrent.CountDownLatch
@@ -63,7 +64,9 @@ class RobotDriverTest {
 
         SwingUtilities.invokeLater {
             try {
-                driver.click(0, 0)
+                // Click at the current pointer position to avoid moving the mouse visibly
+                val pos = MouseInfo.getPointerInfo().location
+                driver.click(pos.x, pos.y)
             } catch (e: Throwable) {
                 error = e
             } finally {
