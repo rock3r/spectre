@@ -34,12 +34,19 @@ class RobotDriver(
 
     fun typeText(text: String) = runOffEdt {
         val clipboard = Toolkit.getDefaultToolkit().systemClipboard
-        clipboard.setContents(StringSelection(text), null)
-        val modifier = pasteModifierKeyCode(detectMacOs())
-        robot.keyPress(modifier)
-        robot.keyPress(KeyEvent.VK_V)
-        robot.keyRelease(KeyEvent.VK_V)
-        robot.keyRelease(modifier)
+        val previousContents = runCatching { clipboard.getContents(null) }.getOrNull()
+        try {
+            clipboard.setContents(StringSelection(text), null)
+            val modifier = pasteModifierKeyCode(detectMacOs())
+            robot.keyPress(modifier)
+            robot.keyPress(KeyEvent.VK_V)
+            robot.keyRelease(KeyEvent.VK_V)
+            robot.keyRelease(modifier)
+        } finally {
+            if (previousContents != null) {
+                runCatching { clipboard.setContents(previousContents, null) }
+            }
+        }
     }
 
     fun pressKey(keyCode: Int, modifiers: Int = 0) = runOffEdt {

@@ -77,8 +77,8 @@ private constructor(
     }
 
     fun printTree(): String {
-        refreshWindows()
         return readOnEdt {
+            refreshWindows()
             buildString {
                 for ((windowIndex, trackedWindow) in windows.withIndex()) {
                     val kind = if (trackedWindow.isPopup) "popup" else "main"

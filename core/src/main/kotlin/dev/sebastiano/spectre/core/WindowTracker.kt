@@ -97,7 +97,8 @@ private fun findComposePanelsRecursive(container: Container, result: MutableList
     for (child in container.components) {
         if (child is ComposePanel) {
             result += child
-        } else if (child is Container) {
+        }
+        if (child is Container) {
             findComposePanelsRecursive(child, result)
         }
     }

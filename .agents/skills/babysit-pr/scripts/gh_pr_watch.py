@@ -566,7 +566,7 @@ def is_blocking_review_item(item, head_sha, now_seconds=None):
     return age_seconds <= BLOCKING_REVIEW_ITEM_FRESH_SECONDS
 
 
-def fetch_new_review_items(pr, state, fresh_state, authenticated_login=None):
+def fetch_new_review_items(pr, state, authenticated_login=None):
     repo = pr["repo"]
     pr_number = pr["number"]
     head_sha = str(pr.get("head_sha") or "")
@@ -824,7 +824,6 @@ def collect_snapshot(args):
     new_review_items, blocking_review_items = fetch_new_review_items(
         pr,
         state,
-        fresh_state=fresh_state,
         authenticated_login=authenticated_login,
     )
 
