@@ -60,13 +60,6 @@ GREEN_STATE_MAX_POLL_SECONDS = 2 * 60
 # the bot's findings are ever seen.
 CHECKS_TERMINAL_GRACE_PERIOD_SECONDS = 60
 
-# Actionable inline review comments on the current head SHA block merge
-# readiness for a bounded freshness window. This catches the race where review
-# feedback arrives shortly after checks complete, while avoiding a permanent
-# merge block for comments that were already handled/resolved without a new
-# commit.
-BLOCKING_REVIEW_ITEM_FRESH_SECONDS = 30 * 60
-
 # Per-check-name hung thresholds: if a check has been IN_PROGRESS longer than
 # this many seconds without completing, surface a diagnose_hung_check action.
 # Matched by substring of the lowercased check name; "default" is the fallback.
@@ -550,20 +543,10 @@ def is_blocking_review_item(item, head_sha, now_seconds=None):
     commit_id = str(item.get("commit_id") or "")
     if not commit_id or not head_sha or commit_id != head_sha:
         return False
-
-    created_at = str(item.get("created_at") or "")
-    if not created_at:
-        return True
-    try:
-        created_at_seconds = datetime.fromisoformat(
-            created_at.replace("Z", "+00:00")
-        ).timestamp()
-    except ValueError:
-        return True
-
-    now = float(now_seconds) if now_seconds is not None else time.time()
-    age_seconds = max(0, now - created_at_seconds)
-    return age_seconds <= BLOCKING_REVIEW_ITEM_FRESH_SECONDS
+    # Any inline bot/human comment on the current SHA blocks until explicitly
+    # resolved. Age-based expiry was removed because it allowed unresolved
+    # comments to silently fall out of the blocking list after 30 minutes.
+    return True
 
 
 def fetch_new_review_items(pr, state, authenticated_login=None):
@@ -629,11 +612,10 @@ def fetch_new_review_items(pr, state, authenticated_login=None):
             item.get("id") or "",
         )
     )
-    now_seconds = time.time()
     blocking_items = [
         item
         for item in actionable_items
-        if is_blocking_review_item(item, head_sha=head_sha, now_seconds=now_seconds)
+        if is_blocking_review_item(item, head_sha=head_sha)
     ]
     blocking_items.sort(
         key=lambda item: (

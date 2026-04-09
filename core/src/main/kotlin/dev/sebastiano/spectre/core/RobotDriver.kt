@@ -32,18 +32,23 @@ class RobotDriver(
         }
     }
 
-    fun typeText(text: String) = runOffEdt {
+    fun typeText(text: String) {
         val clipboard = Toolkit.getDefaultToolkit().systemClipboard
         val previousContents = runCatching { clipboard.getContents(null) }.getOrNull()
-        try {
-            clipboard.setContents(StringSelection(text), null)
+        clipboard.setContents(StringSelection(text), null)
+        runOffEdt {
             val modifier = pasteModifierKeyCode(detectMacOs())
             robot.keyPress(modifier)
             robot.keyPress(KeyEvent.VK_V)
             robot.keyRelease(KeyEvent.VK_V)
             robot.keyRelease(modifier)
-        } finally {
-            if (previousContents != null) {
+        }
+        // Restore via invokeLater so the EDT processes any pending Robot-generated
+        // paste events before the clipboard is replaced. This is safe whether
+        // typeText is called from the EDT (runOffEdt unblocks first, paste events
+        // are queued ahead of invokeLater) or from a background thread.
+        if (previousContents != null) {
+            SwingUtilities.invokeLater {
                 runCatching { clipboard.setContents(previousContents, null) }
             }
         }
