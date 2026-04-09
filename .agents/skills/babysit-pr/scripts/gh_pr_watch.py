@@ -553,41 +553,52 @@ def is_blocking_review_item(item, head_sha, unresolved_comment_ids=None):
 
 
 def fetch_unresolved_comment_ids(repo, pr_number):
-    """Returns a set of comment IDs (as strings) belonging to unresolved review threads."""
+    """Returns a set of comment IDs (as strings) belonging to unresolved review threads.
+
+    Paginates through all review threads and their comments to avoid missing any
+    unresolved feedback on large PRs.
+    """
     owner, name = repo.split("/", 1)
-    query = (
-        "{"
-        f'  repository(owner: "{owner}", name: "{name}") {{'
-        f"    pullRequest(number: {pr_number}) {{"
-        "      reviewThreads(first: 100) {"
-        "        nodes {"
-        "          isResolved"
-        "          comments(first: 100) {"
-        "            nodes { databaseId }"
-        "          }"
-        "        }"
-        "      }"
-        "    }"
-        "  }"
-        "}"
-    )
-    result = gh_json(["api", "graphql", "-f", f"query={query}"])
-    threads = (
-        (result or {})
-        .get("data", {})
-        .get("repository", {})
-        .get("pullRequest", {})
-        .get("reviewThreads", {})
-        .get("nodes", [])
-    )
     ids = set()
-    for thread in threads:
-        if thread.get("isResolved"):
-            continue
-        for comment in (thread.get("comments") or {}).get("nodes", []):
-            db_id = comment.get("databaseId")
-            if db_id is not None:
-                ids.add(str(db_id))
+    cursor = None
+    while True:
+        after = f', after: "{cursor}"' if cursor else ""
+        query = (
+            "{"
+            f'  repository(owner: "{owner}", name: "{name}") {{'
+            f"    pullRequest(number: {pr_number}) {{"
+            f"      reviewThreads(first: 100{after}) {{"
+            "        pageInfo { hasNextPage endCursor }"
+            "        nodes {"
+            "          isResolved"
+            "          comments(first: 100) {"
+            "            nodes { databaseId }"
+            "          }"
+            "        }"
+            "      }"
+            "    }"
+            "  }"
+            "}"
+        )
+        result = gh_json(["api", "graphql", "-f", f"query={query}"])
+        threads_data = (
+            (result or {})
+            .get("data", {})
+            .get("repository", {})
+            .get("pullRequest", {})
+            .get("reviewThreads", {})
+        )
+        for thread in (threads_data or {}).get("nodes", []):
+            if thread.get("isResolved"):
+                continue
+            for comment in (thread.get("comments") or {}).get("nodes", []):
+                db_id = comment.get("databaseId")
+                if db_id is not None:
+                    ids.add(str(db_id))
+        page_info = (threads_data or {}).get("pageInfo", {})
+        if not page_info.get("hasNextPage"):
+            break
+        cursor = page_info.get("endCursor")
     return ids
 
 
@@ -1078,7 +1089,7 @@ def run_watch(args):
             or "stop_ready_to_merge" in actions
             or "diagnose_hung_check" in actions
         ):
-            print_event("stop", {"actions": snapshot.get("actions"), "pr": snapshot.get("pr")})
+            print_event("stop", {"snapshot": snapshot, "state_file": str(state_path)})
             return 0
 
         current_change_key = snapshot_change_key(snapshot)
@@ -1107,9 +1118,10 @@ def run_watch(args):
 
 def main():
     args = parse_args()
-    # Fetch once per session; collect_snapshot accesses it via args.authenticated_login.
-    args.authenticated_login = get_authenticated_login()
     try:
+        # Fetch once per session inside the error-handling block so GhCommandError
+        # from missing/expired auth is caught and reported via the structured error path.
+        args.authenticated_login = get_authenticated_login()
         if args.retry_failed_now:
             print_json(retry_failed_now(args))
             return 0
