@@ -19,7 +19,7 @@ data class NodeKey(val surfaceId: String, val ownerIndex: Int, val nodeId: Int) 
             val lastColon = key.lastIndexOf(':')
             require(lastColon > 0) { "Invalid NodeKey: $key" }
             val beforeLast = key.lastIndexOf(':', lastColon - 1)
-            require(beforeLast > 0) { "Invalid NodeKey: $key" }
+            require(beforeLast >= 0) { "Invalid NodeKey: $key" }
 
             val surfaceId = key.substring(0, beforeLast)
             val ownerIndex = key.substring(beforeLast + 1, lastColon).toInt()

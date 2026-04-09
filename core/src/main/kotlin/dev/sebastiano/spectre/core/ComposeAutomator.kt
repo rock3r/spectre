@@ -67,11 +67,13 @@ private constructor(
     ): AutomatorNode {
         require(tag != null || text != null) { "Either tag or text must be specified" }
         return waitUntil(timeout = timeout, pollInterval = pollInterval) {
-            refreshWindows()
-            // Single readAllNodes snapshot, then filter locally for both criteria
-            allNodes().firstOrNull { node ->
-                (tag == null || node.testTag == tag) &&
-                    (text == null || node.texts.any { it == text } || node.editableText == text)
+            // Wrap snapshot + filter in readOnEdt so semantics property reads are thread-safe
+            readOnEdt {
+                refreshWindows()
+                allNodes().firstOrNull { node ->
+                    (tag == null || node.testTag == tag) &&
+                        (text == null || node.texts.any { it == text } || node.editableText == text)
+                }
             }
         }
     }

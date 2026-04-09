@@ -45,4 +45,11 @@ class NodeKeyTest {
     fun `parse throws on single colon`() {
         assertFailsWith<IllegalArgumentException> { NodeKey.parse("a:b") }
     }
+
+    @Test
+    fun `parse roundtrips with empty surfaceId`() {
+        val original = NodeKey(surfaceId = "", ownerIndex = 0, nodeId = 1)
+        val parsed = NodeKey.parse(original.toString())
+        assertEquals(original, parsed)
+    }
 }
