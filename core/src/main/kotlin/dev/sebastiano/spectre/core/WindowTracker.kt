@@ -8,18 +8,17 @@ import java.awt.Window
 
 class WindowTracker {
 
-    private val _trackedWindows = mutableListOf<TrackedWindow>()
+    @Volatile private var _trackedWindows: List<TrackedWindow> = emptyList()
+    private var pendingWindows = mutableListOf<TrackedWindow>()
     private var surfaceIndex = 0
 
     val trackedWindows: List<TrackedWindow>
-        get() = _trackedWindows.toList()
+        get() = _trackedWindows
 
     fun refresh() = readOnEdt {
-        _trackedWindows.clear()
+        pendingWindows = mutableListOf()
         surfaceIndex = 0
 
-        // Skip owned windows — they are discovered via trackOwnedPopups
-        // from their owner. Without this, popups appear twice.
         val topLevelWindows = Window.getWindows().filter { it.isShowing && it.owner == null }
         for (window in topLevelWindows) {
             when (window) {
@@ -27,6 +26,7 @@ class WindowTracker {
                 else -> trackEmbeddedPanels(window)
             }
         }
+        _trackedWindows = pendingWindows.toList()
     }
 
     @OptIn(ExperimentalComposeUiApi::class)
@@ -51,7 +51,6 @@ class WindowTracker {
                 }
                 else -> trackActivePanels(owned, "popup", isPopup = true)
             }
-            // Recurse into owned windows to discover nested popups (popups of popups)
             trackOwnedPopups(owned)
         }
     }
@@ -77,7 +76,7 @@ class WindowTracker {
         prefix: String,
         isPopup: Boolean,
     ) {
-        _trackedWindows +=
+        pendingWindows +=
             TrackedWindow(
                 surfaceId = "$prefix:$surfaceIndex",
                 window = window,

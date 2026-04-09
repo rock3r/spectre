@@ -13,28 +13,34 @@ class SemanticsReader {
     }
 
     fun findByTestTag(tag: String, trackedWindows: List<TrackedWindow>): List<AutomatorNode> =
-        readAllNodes(trackedWindows).filter { it.testTag == tag }
+        readOnEdt {
+            collectAllNodes(trackedWindows).filter { it.testTag == tag }
+        }
 
     fun findByText(
         text: String,
         trackedWindows: List<TrackedWindow>,
         exact: Boolean = true,
-    ): List<AutomatorNode> =
-        readAllNodes(trackedWindows).filter { node ->
+    ): List<AutomatorNode> = readOnEdt {
+        collectAllNodes(trackedWindows).filter { node ->
             node.texts.any { matchesText(it, text, exact) } ||
                 matchesText(node.editableText, text, exact)
         }
+    }
 
     fun findByContentDescription(
         description: String,
         trackedWindows: List<TrackedWindow>,
-    ): List<AutomatorNode> =
-        readAllNodes(trackedWindows).filter { node ->
+    ): List<AutomatorNode> = readOnEdt {
+        collectAllNodes(trackedWindows).filter { node ->
             node.contentDescriptions.any { it == description }
         }
+    }
 
     fun findByRole(role: Role, trackedWindows: List<TrackedWindow>): List<AutomatorNode> =
-        readAllNodes(trackedWindows).filter { it.role == role }
+        readOnEdt {
+            collectAllNodes(trackedWindows).filter { it.role == role }
+        }
 
     @OptIn(ExperimentalComposeUiApi::class)
     private fun collectAllNodes(trackedWindows: List<TrackedWindow>): List<AutomatorNode> {
@@ -53,8 +59,6 @@ class SemanticsReader {
         val window = trackedWindow.window
         if (window is ComposeWindow) return window.semanticsOwners
 
-        // Use the specific ComposePanel stored in TrackedWindow to keep
-        // owners aligned with the panel used for coordinate mapping.
         val panel = trackedWindow.composePanel ?: return emptyList()
         return panel.semanticsOwners
     }

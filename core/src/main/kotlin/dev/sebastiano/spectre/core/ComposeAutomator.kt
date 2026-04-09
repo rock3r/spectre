@@ -76,15 +76,19 @@ private constructor(
         }
     }
 
-    fun printTree(): String = buildString {
+    fun printTree(): String {
         refreshWindows()
-        for ((windowIndex, trackedWindow) in windows.withIndex()) {
-            val kind = if (trackedWindow.isPopup) "popup" else "main"
-            appendLine("Window $windowIndex ($kind): ${trackedWindow.surfaceId}")
-            val allNodes = semanticsReader.readAllNodes(listOf(trackedWindow))
-            val roots = allNodes.filter { it.semanticsNode.parent == null }
-            for (root in roots) {
-                appendNodeTree(root, allNodes, depth = 1)
+        return readOnEdt {
+            buildString {
+                for ((windowIndex, trackedWindow) in windows.withIndex()) {
+                    val kind = if (trackedWindow.isPopup) "popup" else "main"
+                    appendLine("Window $windowIndex ($kind): ${trackedWindow.surfaceId}")
+                    val allNodes = semanticsReader.readAllNodes(listOf(trackedWindow))
+                    val roots = allNodes.filter { it.semanticsNode.parent == null }
+                    for (root in roots) {
+                        appendNodeTree(root, allNodes, depth = 1)
+                    }
+                }
             }
         }
     }
