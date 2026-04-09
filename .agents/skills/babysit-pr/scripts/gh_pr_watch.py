@@ -535,7 +535,7 @@ def is_trusted_human_review_author(item, authenticated_login):
     return association in TRUSTED_AUTHOR_ASSOCIATIONS
 
 
-def is_blocking_review_item(item, head_sha, now_seconds=None):
+def is_blocking_review_item(item, head_sha, unresolved_comment_ids=None):
     if not isinstance(item, dict):
         return False
     if str(item.get("kind") or "") != "review_comment":
@@ -543,10 +543,52 @@ def is_blocking_review_item(item, head_sha, now_seconds=None):
     commit_id = str(item.get("commit_id") or "")
     if not commit_id or not head_sha or commit_id != head_sha:
         return False
-    # Any inline bot/human comment on the current SHA blocks until explicitly
-    # resolved. Age-based expiry was removed because it allowed unresolved
-    # comments to silently fall out of the blocking list after 30 minutes.
+    # Only block on comments whose review thread is still unresolved. GitHub
+    # maps commit_id to the latest SHA for unchanged lines, so without this
+    # check resolved threads would continue to appear as blocking after fixes.
+    if unresolved_comment_ids is not None:
+        item_id = str(item.get("id") or "")
+        return item_id in unresolved_comment_ids
     return True
+
+
+def fetch_unresolved_comment_ids(repo, pr_number):
+    """Returns a set of comment IDs (as strings) belonging to unresolved review threads."""
+    owner, name = repo.split("/", 1)
+    query = (
+        "{"
+        f'  repository(owner: "{owner}", name: "{name}") {{'
+        f"    pullRequest(number: {pr_number}) {{"
+        "      reviewThreads(first: 100) {"
+        "        nodes {"
+        "          isResolved"
+        "          comments(first: 100) {"
+        "            nodes { databaseId }"
+        "          }"
+        "        }"
+        "      }"
+        "    }"
+        "  }"
+        "}"
+    )
+    result = gh_json(["api", "graphql", "-f", f"query={query}"])
+    threads = (
+        (result or {})
+        .get("data", {})
+        .get("repository", {})
+        .get("pullRequest", {})
+        .get("reviewThreads", {})
+        .get("nodes", [])
+    )
+    ids = set()
+    for thread in threads:
+        if thread.get("isResolved"):
+            continue
+        for comment in (thread.get("comments") or {}).get("nodes", []):
+            db_id = comment.get("databaseId")
+            if db_id is not None:
+                ids.add(str(db_id))
+    return ids
 
 
 def fetch_new_review_items(pr, state, authenticated_login=None):
@@ -612,10 +654,13 @@ def fetch_new_review_items(pr, state, authenticated_login=None):
             item.get("id") or "",
         )
     )
+    unresolved_comment_ids = fetch_unresolved_comment_ids(repo, pr_number)
     blocking_items = [
         item
         for item in actionable_items
-        if is_blocking_review_item(item, head_sha=head_sha)
+        if is_blocking_review_item(
+            item, head_sha=head_sha, unresolved_comment_ids=unresolved_comment_ids
+        )
     ]
     blocking_items.sort(
         key=lambda item: (
@@ -802,11 +847,10 @@ def collect_snapshot(args):
     hung_checks = hung_checks_from_checks(checks)
     workflow_runs = get_workflow_runs_for_sha(pr["repo"], pr["head_sha"])
     failed_runs = failed_runs_from_workflow_runs(workflow_runs, pr["head_sha"])
-    authenticated_login = get_authenticated_login()
     new_review_items, blocking_review_items = fetch_new_review_items(
         pr,
         state,
-        authenticated_login=authenticated_login,
+        authenticated_login=args.authenticated_login,
     )
 
     # Track when checks first went all_terminal for the current head SHA.
@@ -1026,14 +1070,6 @@ def run_watch(args):
             )
             return 0
         snapshot, state_path = collect_snapshot(args)
-        print_event(
-            "snapshot",
-            {
-                "snapshot": snapshot,
-                "state_file": str(state_path),
-                "next_poll_seconds": poll_seconds,
-            },
-        )
         actions = set(snapshot.get("actions") or [])
         if (
             "stop_pr_closed" in actions
@@ -1057,11 +1093,22 @@ def run_watch(args):
             poll_seconds = min(poll_seconds * 2, GREEN_STATE_MAX_POLL_SECONDS)
 
         last_change_key = current_change_key
+        # Emit snapshot after computing poll_seconds so next_poll_seconds is accurate.
+        print_event(
+            "snapshot",
+            {
+                "snapshot": snapshot,
+                "state_file": str(state_path),
+                "next_poll_seconds": poll_seconds,
+            },
+        )
         time.sleep(poll_seconds)
 
 
 def main():
     args = parse_args()
+    # Fetch once per session; collect_snapshot accesses it via args.authenticated_login.
+    args.authenticated_login = get_authenticated_login()
     try:
         if args.retry_failed_now:
             print_json(retry_failed_now(args))
