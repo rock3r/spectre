@@ -1096,7 +1096,7 @@ def run_watch(args):
             return 0
         try:
             snapshot, state_path = collect_snapshot(args)
-        except (GhCommandError, RuntimeError, ValueError) as err:
+        except (GhCommandError, RuntimeError) as err:
             sys.stderr.write(f"gh_pr_watch.py poll error (retrying): {err}\n")
             time.sleep(poll_seconds)
             continue

@@ -35,38 +35,22 @@ class AutomatorNode(
     val trackedWindow: TrackedWindow,
 ) {
 
-    val testTag: String?
-        get() = semanticsNode.config.getOrNull(SemanticsProperties.TestTag)
-
-    val texts: List<String>
-        get() = semanticsNode.config.getOrNull(SemanticsProperties.Text)?.map { it.text }.orEmpty()
-
-    val text: String?
-        get() = texts.firstOrNull()
-
-    val editableText: String?
-        get() = semanticsNode.config.getOrNull(SemanticsProperties.EditableText)?.text
-
-    val contentDescriptions: List<String>
-        get() = semanticsNode.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty()
-
-    val contentDescription: String?
-        get() = contentDescriptions.firstOrNull()
-
-    val role: Role?
-        get() = semanticsNode.config.getOrNull(SemanticsProperties.Role)
-
-    val isDisabled: Boolean
-        get() = semanticsNode.config.getOrNull(SemanticsProperties.Disabled) != null
-
-    val isFocused: Boolean
-        get() = semanticsNode.config.getOrNull(SemanticsProperties.Focused) == true
-
-    val isSelected: Boolean
-        get() = semanticsNode.config.getOrNull(SemanticsProperties.Selected) == true
-
-    val boundsInWindow: Rect
-        get() = semanticsNode.boundsInWindow
+    // Eagerly snapshot all semantics properties at construction time (which runs on
+    // the EDT inside readAllNodes) so callers can safely read them from any thread.
+    val testTag: String? = semanticsNode.config.getOrNull(SemanticsProperties.TestTag)
+    val texts: List<String> =
+        semanticsNode.config.getOrNull(SemanticsProperties.Text)?.map { it.text }.orEmpty()
+    val text: String? = texts.firstOrNull()
+    val editableText: String? =
+        semanticsNode.config.getOrNull(SemanticsProperties.EditableText)?.text
+    val contentDescriptions: List<String> =
+        semanticsNode.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty()
+    val contentDescription: String? = contentDescriptions.firstOrNull()
+    val role: Role? = semanticsNode.config.getOrNull(SemanticsProperties.Role)
+    val isDisabled: Boolean = semanticsNode.config.getOrNull(SemanticsProperties.Disabled) != null
+    val isFocused: Boolean = semanticsNode.config.getOrNull(SemanticsProperties.Focused) == true
+    val isSelected: Boolean = semanticsNode.config.getOrNull(SemanticsProperties.Selected) == true
+    val boundsInWindow: Rect = semanticsNode.boundsInWindow
 
     val centerOnScreen: Point
         get() = readOnEdt {
