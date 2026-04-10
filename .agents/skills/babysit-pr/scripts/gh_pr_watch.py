@@ -335,6 +335,7 @@ def summarize_checks(checks):
     pending_count = 0
     failed_count = 0
     passed_count = 0
+    skipping_count = 0
     for check in checks:
         bucket = str(check.get("bucket") or "").lower()
         if is_pending_check(check):
@@ -343,10 +344,13 @@ def summarize_checks(checks):
             failed_count += 1
         elif bucket == "pass":
             passed_count += 1
+        elif bucket in ("neutral", "skipping"):
+            skipping_count += 1
     return {
         "pending_count": pending_count,
         "failed_count": failed_count,
         "passed_count": passed_count,
+        "skipping_count": skipping_count,
         "all_terminal": pending_count == 0,
     }
 
@@ -718,7 +722,11 @@ def is_pr_ready_to_merge(
         return False
     if not checks_summary["all_terminal"]:
         return False
-    if checks_summary["failed_count"] > 0 or checks_summary["pending_count"] > 0:
+    if (
+        checks_summary["failed_count"] > 0
+        or checks_summary["pending_count"] > 0
+        or checks_summary.get("skipping_count", 0) > 0
+    ):
         return False
     if new_review_items:
         return False
@@ -1073,7 +1081,12 @@ def run_watch(args):
                 },
             )
             return 0
-        snapshot, state_path = collect_snapshot(args)
+        try:
+            snapshot, state_path = collect_snapshot(args)
+        except (GhCommandError, RuntimeError, ValueError) as err:
+            sys.stderr.write(f"gh_pr_watch.py poll error (retrying): {err}\n")
+            time.sleep(poll_seconds)
+            continue
         actions = set(snapshot.get("actions") or [])
         if (
             "stop_pr_closed" in actions
