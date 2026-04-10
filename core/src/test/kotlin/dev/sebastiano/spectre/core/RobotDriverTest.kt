@@ -1,16 +1,16 @@
 package dev.sebastiano.spectre.core
 
-import java.awt.GraphicsEnvironment
-import java.awt.Robot
+import java.awt.Point
+import java.awt.Rectangle
+import java.awt.datatransfer.Transferable
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import javax.swing.SwingUtilities
+import java.awt.image.BufferedImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
-import org.junit.jupiter.api.condition.EnabledIf
+import kotlin.time.Duration.Companion.ZERO
 
 class RobotDriverTest {
 
@@ -24,6 +24,12 @@ class RobotDriverTest {
     fun `pasteModifierKeyCode returns VK_CONTROL on non-macOS`() {
         val result = pasteModifierKeyCode(isMacOs = false)
         assertEquals(KeyEvent.VK_CONTROL, result)
+    }
+
+    @Test
+    fun `shortcutModifierKeyCode matches platform shortcut key`() {
+        val expected = if (detectMacOs()) KeyEvent.VK_META else KeyEvent.VK_CONTROL
+        assertEquals(expected, shortcutModifierKeyCode(detectMacOs()))
     }
 
     @Test
@@ -55,68 +61,103 @@ class RobotDriverTest {
         assertEquals(listOf(KeyEvent.VK_META), modifierMaskToKeyCodes(InputEvent.META_DOWN_MASK))
     }
 
-    @EnabledIf("isNotHeadless")
     @Test
-    fun `click does not throw when called from the EDT`() {
-        val driver = RobotDriver(noOpRobot())
-        val latch = CountDownLatch(1)
-        var error: Throwable? = null
+    fun `interpolateSwipePoints includes both endpoints`() {
+        val result =
+            interpolateSwipePoints(startX = 10, startY = 20, endX = 40, endY = 50, steps = 3)
 
-        SwingUtilities.invokeLater {
-            try {
-                driver.click(0, 0)
-            } catch (e: Throwable) {
-                error = e
-            } finally {
-                latch.countDown()
-            }
-        }
-
-        assertTrue(latch.await(ROBOT_EDT_TEST_TIMEOUT_SECONDS, TimeUnit.SECONDS), "Timed out")
-        error?.let { throw AssertionError("click from EDT should not throw", it) }
+        assertEquals(listOf(Point(10, 20), Point(20, 30), Point(30, 40), Point(40, 50)), result)
     }
 
-    @EnabledIf("isNotHeadless")
     @Test
-    fun `typeText does not throw when called from the EDT`() {
-        val driver = RobotDriver(noOpRobot())
-        val latch = CountDownLatch(1)
-        var error: Throwable? = null
-
-        SwingUtilities.invokeLater {
-            try {
-                driver.typeText("test")
-            } catch (e: Throwable) {
-                error = e
-            } finally {
-                latch.countDown()
+    fun `interpolateSwipePoints rejects non-positive steps`() {
+        val error =
+            assertFailsWith<IllegalArgumentException> {
+                interpolateSwipePoints(startX = 0, startY = 0, endX = 10, endY = 10, steps = 0)
             }
-        }
 
-        assertTrue(latch.await(ROBOT_EDT_TEST_TIMEOUT_SECONDS, TimeUnit.SECONDS), "Timed out")
-        error?.let { throw AssertionError("typeText from EDT should not throw", it) }
+        assertTrue(error.message?.contains("steps") == true)
     }
 
-    companion object {
+    @Test
+    fun `click moves and presses left button`() {
+        val robot = RecordingRobotAdapter()
+        val driver = RobotDriver(robot, RecordingClipboardAdapter())
 
-        @JvmStatic fun isNotHeadless(): Boolean = !GraphicsEnvironment.isHeadless()
+        driver.click(10, 20)
+
+        assertEquals(
+            listOf(
+                "move(10,20)",
+                "press(${InputEvent.BUTTON1_DOWN_MASK})",
+                "release(${InputEvent.BUTTON1_DOWN_MASK})",
+            ),
+            robot.events,
+        )
+    }
+
+    @Test
+    fun `swipe presses drags and releases in order`() {
+        val robot = RecordingRobotAdapter()
+        val driver = RobotDriver(robot, RecordingClipboardAdapter())
+
+        driver.swipe(startX = 10, startY = 20, endX = 40, endY = 50, steps = 3, duration = ZERO)
+
+        assertEquals(
+            listOf(
+                "move(10,20)",
+                "press(${InputEvent.BUTTON1_DOWN_MASK})",
+                "move(20,30)",
+                "move(30,40)",
+                "move(40,50)",
+                "release(${InputEvent.BUTTON1_DOWN_MASK})",
+            ),
+            robot.events,
+        )
     }
 }
 
-/**
- * A Robot subclass that suppresses all mouse and keyboard actions, for use in EDT-dispatch tests.
- */
-private fun noOpRobot() =
-    object : Robot() {
-        override fun mouseMove(x: Int, y: Int) = Unit
+private class RecordingRobotAdapter : RobotAdapter {
+    val events = mutableListOf<String>()
 
-        override fun mousePress(buttons: Int) = Unit
-
-        override fun mouseRelease(buttons: Int) = Unit
-
-        override fun keyPress(keycode: Int) = Unit
-
-        override fun keyRelease(keycode: Int) = Unit
+    override fun mouseMove(x: Int, y: Int) {
+        events += "move($x,$y)"
     }
 
-private const val ROBOT_EDT_TEST_TIMEOUT_SECONDS = 5L
+    override fun mousePress(buttons: Int) {
+        events += "press($buttons)"
+    }
+
+    override fun mouseRelease(buttons: Int) {
+        events += "release($buttons)"
+    }
+
+    override fun keyPress(keyCode: Int) {
+        events += "keyPress($keyCode)"
+    }
+
+    override fun keyRelease(keyCode: Int) {
+        events += "keyRelease($keyCode)"
+    }
+
+    override fun createScreenCapture(region: Rectangle): BufferedImage =
+        BufferedImage(
+            region.width.coerceAtLeast(1),
+            region.height.coerceAtLeast(1),
+            BufferedImage.TYPE_INT_ARGB,
+        )
+
+    override fun waitForIdle() {
+        events += "waitForIdle()"
+    }
+}
+
+private class RecordingClipboardAdapter : ClipboardAdapter {
+    private var current: Transferable? = null
+
+    override fun getContents(): Transferable? = current
+
+    override fun setContents(contents: Transferable) {
+        current = contents
+    }
+}

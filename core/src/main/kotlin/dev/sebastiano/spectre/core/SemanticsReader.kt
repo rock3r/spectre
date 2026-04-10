@@ -69,13 +69,14 @@ class SemanticsReader {
             }
         }
 
+        val parentKeyByNodeKey = entries.associate { it.key to it.parentKey }
         val nodeKeysByParentKey =
             entries.groupBy(keySelector = NodeEntry::parentKey, valueTransform = NodeEntry::key)
         val nodesByKey = mutableMapOf<NodeKey, AutomatorNode>()
         val relations =
             object : NodeRelations {
                 override fun parentOf(key: NodeKey): AutomatorNode? =
-                    entries.firstOrNull { it.key == key }?.parentKey?.let(nodesByKey::get)
+                    parentKeyByNodeKey[key]?.let(nodesByKey::get)
 
                 override fun childrenOf(key: NodeKey): List<AutomatorNode> =
                     nodeKeysByParentKey[key].orEmpty().mapNotNull(nodesByKey::get)

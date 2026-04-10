@@ -53,7 +53,7 @@ internal constructor(
         duration: Duration = DEFAULT_SWIPE_DURATION,
     ) = runOffEdt {
         val points = interpolateSwipePoints(startX, startY, endX, endY, steps)
-        val pausePerStepMs = (duration.inWholeMilliseconds / points.size).coerceAtLeast(0)
+        val pausePerStepMs = swipePauseMillis(duration, steps)
         val firstPoint = points.first()
         robot.mouseMove(firstPoint.x, firstPoint.y)
         robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
@@ -195,6 +195,11 @@ fun modifierMaskToKeyCodes(mask: Int): List<Int> = buildList {
     if (mask and InputEvent.SHIFT_DOWN_MASK != 0) add(KeyEvent.VK_SHIFT)
     if (mask and InputEvent.ALT_DOWN_MASK != 0) add(KeyEvent.VK_ALT)
     if (mask and InputEvent.META_DOWN_MASK != 0) add(KeyEvent.VK_META)
+}
+
+internal fun swipePauseMillis(duration: Duration, steps: Int): Long {
+    require(steps > 0) { "steps must be positive" }
+    return (duration.inWholeMilliseconds / steps).coerceAtLeast(0)
 }
 
 fun interpolateSwipePoints(
