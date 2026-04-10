@@ -397,16 +397,25 @@ def is_retry_eligible_failed_run(run):
 
 
 def failed_runs_from_workflow_runs(runs, head_sha):
-    failed_runs = []
+    # Keep only the latest run per workflow (highest run_id) to ignore
+    # superseded reruns that are no longer the active failure.
+    latest_by_workflow = {}
     for run in runs:
         if not isinstance(run, dict):
             continue
         if str(run.get("head_sha") or "") != head_sha:
             continue
+        workflow_name = run.get("name") or run.get("display_title") or ""
+        run_id = run.get("id") or 0
+        prev = latest_by_workflow.get(workflow_name)
+        if prev is None or run_id > (prev.get("id") or 0):
+            latest_by_workflow[workflow_name] = run
+
+    failed_runs = []
+    for workflow_name, run in latest_by_workflow.items():
         conclusion = str(run.get("conclusion") or "")
         if conclusion not in FAILED_RUN_CONCLUSIONS:
             continue
-        workflow_name = run.get("name") or run.get("display_title") or ""
         failed_runs.append(
             {
                 "run_id": run.get("id"),
@@ -835,6 +844,9 @@ def recommend_actions(
 
     if hung_checks:
         actions.append("diagnose_hung_check")
+
+    if checks_summary.get("skipping_count", 0) > 0 and checks_summary["all_terminal"]:
+        actions.append("diagnose_skipping_checks")
 
     has_failed_pr_checks = checks_summary["failed_count"] > 0
     if has_failed_pr_checks:
