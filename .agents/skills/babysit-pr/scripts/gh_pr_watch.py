@@ -405,14 +405,14 @@ def failed_runs_from_workflow_runs(runs, head_sha):
             continue
         if str(run.get("head_sha") or "") != head_sha:
             continue
-        workflow_name = run.get("name") or run.get("display_title") or ""
+        workflow_id = run.get("workflow_id") or run.get("name") or run.get("display_title") or ""
         run_id = run.get("id") or 0
-        prev = latest_by_workflow.get(workflow_name)
+        prev = latest_by_workflow.get(workflow_id)
         if prev is None or run_id > (prev.get("id") or 0):
-            latest_by_workflow[workflow_name] = run
+            latest_by_workflow[workflow_id] = run
 
     failed_runs = []
-    for workflow_name, run in latest_by_workflow.items():
+    for _workflow_id, run in latest_by_workflow.items():
         conclusion = str(run.get("conclusion") or "")
         if conclusion not in FAILED_RUN_CONCLUSIONS:
             continue
@@ -1119,6 +1119,7 @@ def run_watch(args):
             or "stop_non_retryable_failure" in actions
             or "stop_ready_to_merge" in actions
             or "diagnose_hung_check" in actions
+            or "diagnose_skipping_checks" in actions
         ):
             print_event("stop", {"snapshot": snapshot, "state_file": str(state_path)})
             return 0
