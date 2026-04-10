@@ -357,16 +357,29 @@ def summarize_checks(checks):
 
 def get_workflow_runs_for_sha(repo, head_sha):
     endpoint = f"repos/{repo}/actions/runs"
-    data = gh_json(
-        ["api", endpoint, "-X", "GET", "-f", f"head_sha={head_sha}", "-f", "per_page=100"],
-        repo=repo,
-    )
-    if not isinstance(data, dict):
-        raise GhCommandError("Unexpected payload from actions runs API")
-    runs = data.get("workflow_runs") or []
-    if not isinstance(runs, list):
-        raise GhCommandError("Expected `workflow_runs` to be a list")
-    return runs
+    page = 1
+    all_runs = []
+    while True:
+        data = gh_json(
+            [
+                "api", endpoint, "-X", "GET",
+                "-f", f"head_sha={head_sha}",
+                "-f", f"per_page=100",
+                "-f", f"page={page}",
+                "-f", "event=pull_request",
+            ],
+            repo=repo,
+        )
+        if not isinstance(data, dict):
+            raise GhCommandError("Unexpected payload from actions runs API")
+        runs = data.get("workflow_runs") or []
+        if not isinstance(runs, list):
+            raise GhCommandError("Expected `workflow_runs` to be a list")
+        all_runs.extend(runs)
+        if len(runs) < 100:
+            break
+        page += 1
+    return all_runs
 
 
 def is_retry_eligible_workflow_name(workflow_name):
