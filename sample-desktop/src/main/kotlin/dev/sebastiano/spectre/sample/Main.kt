@@ -17,9 +17,11 @@ private const val CLICK_REPETITIONS = 3
 fun main() = application {
     Window(onCloseRequest = ::exitApplication, title = "Spectre") { App() }
 
-    GlobalScope.launch(Dispatchers.Default) {
-        delay(INITIAL_SETTLE_DELAY_MS)
-        runAutomatorDemo()
+    if (System.getProperty("spectre.demo") == "true") {
+        GlobalScope.launch(Dispatchers.Default) {
+            delay(INITIAL_SETTLE_DELAY_MS)
+            runAutomatorDemo()
+        }
     }
 }
 
