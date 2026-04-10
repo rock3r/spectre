@@ -416,14 +416,15 @@ def failed_runs_from_workflow_runs(runs, head_sha):
         conclusion = str(run.get("conclusion") or "")
         if conclusion not in FAILED_RUN_CONCLUSIONS:
             continue
+        wf_name = run.get("name") or run.get("display_title") or ""
         failed_runs.append(
             {
                 "run_id": run.get("id"),
-                "workflow_name": workflow_name,
+                "workflow_name": wf_name,
                 "status": str(run.get("status") or ""),
                 "conclusion": conclusion,
                 "html_url": str(run.get("html_url") or ""),
-                "retry_eligible": is_retry_eligible_workflow_name(workflow_name),
+                "retry_eligible": is_retry_eligible_workflow_name(wf_name),
             }
         )
     failed_runs.sort(
