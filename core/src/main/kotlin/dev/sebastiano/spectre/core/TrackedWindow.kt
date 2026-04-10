@@ -28,8 +28,9 @@ data class TrackedWindow(
                 ?: window.locationOnScreen
 
     val composeSurfaceBoundsOnScreen: Rectangle
-        get() =
+        get() = readOnEdt {
             composePanel?.let { Rectangle(it.locationOnScreen, it.size) }
                 ?: (window as? JFrame)?.contentPane?.let { Rectangle(it.locationOnScreen, it.size) }
                 ?: Rectangle(window.locationOnScreen, window.size)
+        }
 }
