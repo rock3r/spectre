@@ -1,22 +1,26 @@
 package dev.sebastiano.spectre.core
 
 import java.awt.GraphicsEnvironment
+import java.awt.Point
 import java.awt.Rectangle
 import java.awt.Robot
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
+import java.awt.datatransfer.Transferable
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.awt.image.BufferedImage
 import javax.swing.SwingUtilities
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 
-class RobotDriver(
-    private val robot: Robot =
-        Robot().apply {
-            autoDelay = DEFAULT_AUTO_DELAY_MS
-            isAutoWaitForIdle = false
-        }
+class RobotDriver
+internal constructor(
+    private val robot: RobotAdapter = AwtRobotAdapter(),
+    private val clipboard: ClipboardAdapter = SystemClipboardAdapter(),
 ) {
+
+    constructor(robot: Robot) : this(AwtRobotAdapter(robot))
 
     fun click(screenX: Int, screenY: Int) = runOffEdt {
         robot.mouseMove(screenX, screenY)
@@ -26,17 +30,46 @@ class RobotDriver(
 
     fun doubleClick(screenX: Int, screenY: Int) = runOffEdt {
         robot.mouseMove(screenX, screenY)
-        repeat(2) {
+        repeat(DOUBLE_CLICK_COUNT) {
             robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
             robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
         }
     }
 
+    fun longClick(screenX: Int, screenY: Int, holdFor: Duration = DEFAULT_LONG_CLICK_DURATION) =
+        runOffEdt {
+            robot.mouseMove(screenX, screenY)
+            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
+            Thread.sleep(holdFor.inWholeMilliseconds)
+            robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
+        }
+
+    fun swipe(
+        startX: Int,
+        startY: Int,
+        endX: Int,
+        endY: Int,
+        steps: Int = DEFAULT_SWIPE_STEPS,
+        duration: Duration = DEFAULT_SWIPE_DURATION,
+    ) = runOffEdt {
+        val points = interpolateSwipePoints(startX, startY, endX, endY, steps)
+        val pausePerStepMs = (duration.inWholeMilliseconds / points.size).coerceAtLeast(0)
+        val firstPoint = points.first()
+        robot.mouseMove(firstPoint.x, firstPoint.y)
+        robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
+        for (point in points.drop(1)) {
+            robot.mouseMove(point.x, point.y)
+            if (pausePerStepMs > 0) {
+                Thread.sleep(pausePerStepMs)
+            }
+        }
+        robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
+    }
+
     fun typeText(text: String) {
-        val clipboard = Toolkit.getDefaultToolkit().systemClipboard
-        val previousContents = runCatching { clipboard.getContents(null) }.getOrNull()
+        val previousContents = runCatching { clipboard.getContents() }.getOrNull()
         try {
-            clipboard.setContents(StringSelection(text), null)
+            clipboard.setContents(StringSelection(text))
             runOffEdt {
                 val modifier = pasteModifierKeyCode(detectMacOs())
                 robot.keyPress(modifier)
@@ -44,18 +77,27 @@ class RobotDriver(
                 robot.keyRelease(KeyEvent.VK_V)
                 robot.keyRelease(modifier)
             }
-            // Wait for the EDT to finish processing the paste event before restoring
-            // the clipboard. waitForIdle() is safe only when NOT on the EDT; when
-            // called from the EDT, runOffEdt blocks the EDT so waitForIdle would
-            // deadlock. EDT callers are unsupported and accept the restore race.
             if (!SwingUtilities.isEventDispatchThread()) {
                 robot.waitForIdle()
             }
         } finally {
             if (previousContents != null) {
-                runCatching { clipboard.setContents(previousContents, null) }
+                runCatching { clipboard.setContents(previousContents) }
             }
         }
+    }
+
+    fun clearAndTypeText(text: String) {
+        val selectAllModifier = shortcutModifierKeyCode(detectMacOs())
+        runOffEdt {
+            robot.keyPress(selectAllModifier)
+            robot.keyPress(KeyEvent.VK_A)
+            robot.keyRelease(KeyEvent.VK_A)
+            robot.keyRelease(selectAllModifier)
+            robot.keyPress(KeyEvent.VK_BACK_SPACE)
+            robot.keyRelease(KeyEvent.VK_BACK_SPACE)
+        }
+        typeText(text)
     }
 
     fun pressKey(keyCode: Int, modifiers: Int = 0) = runOffEdt {
@@ -72,14 +114,64 @@ class RobotDriver(
     }
 }
 
-/**
- * Robot actions must not run on the EDT because Robot.waitForIdle() would deadlock. When called
- * from the EDT, this dispatches the block to a temporary thread and waits for it to complete.
- *
- * Note: isAutoWaitForIdle is disabled to avoid the Robot internally calling waitForIdle() (which
- * would still deadlock if the spawned thread tried it). The autoDelay provides a small pause
- * between events instead.
- */
+internal interface RobotAdapter {
+
+    fun mouseMove(x: Int, y: Int)
+
+    fun mousePress(buttons: Int)
+
+    fun mouseRelease(buttons: Int)
+
+    fun keyPress(keyCode: Int)
+
+    fun keyRelease(keyCode: Int)
+
+    fun createScreenCapture(region: Rectangle): BufferedImage
+
+    fun waitForIdle()
+}
+
+internal interface ClipboardAdapter {
+
+    fun getContents(): Transferable?
+
+    fun setContents(contents: Transferable)
+}
+
+private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) : RobotAdapter {
+
+    override fun mouseMove(x: Int, y: Int) = robot.mouseMove(x, y)
+
+    override fun mousePress(buttons: Int) = robot.mousePress(buttons)
+
+    override fun mouseRelease(buttons: Int) = robot.mouseRelease(buttons)
+
+    override fun keyPress(keyCode: Int) = robot.keyPress(keyCode)
+
+    override fun keyRelease(keyCode: Int) = robot.keyRelease(keyCode)
+
+    override fun createScreenCapture(region: Rectangle): BufferedImage =
+        robot.createScreenCapture(region)
+
+    override fun waitForIdle() = robot.waitForIdle()
+}
+
+private class SystemClipboardAdapter : ClipboardAdapter {
+    private val clipboard = Toolkit.getDefaultToolkit().systemClipboard
+
+    override fun getContents(): Transferable? = clipboard.getContents(null)
+
+    override fun setContents(contents: Transferable) {
+        clipboard.setContents(contents, null)
+    }
+}
+
+private fun createAwtRobot(): Robot =
+    Robot().apply {
+        autoDelay = DEFAULT_AUTO_DELAY_MS
+        isAutoWaitForIdle = false
+    }
+
 private fun runOffEdt(block: () -> Unit) {
     if (!SwingUtilities.isEventDispatchThread()) {
         block()
@@ -95,10 +187,9 @@ private fun runOffEdt(block: () -> Unit) {
 fun pasteModifierKeyCode(isMacOs: Boolean): Int =
     if (isMacOs) KeyEvent.VK_META else KeyEvent.VK_CONTROL
 
-/**
- * Translates an AWT modifier bitmask (e.g. [InputEvent.CTRL_DOWN_MASK]) into individual key codes
- * that Robot can press/release.
- */
+fun shortcutModifierKeyCode(isMacOs: Boolean): Int =
+    if (isMacOs) KeyEvent.VK_META else KeyEvent.VK_CONTROL
+
 fun modifierMaskToKeyCodes(mask: Int): List<Int> = buildList {
     if (mask and InputEvent.CTRL_DOWN_MASK != 0) add(KeyEvent.VK_CONTROL)
     if (mask and InputEvent.SHIFT_DOWN_MASK != 0) add(KeyEvent.VK_SHIFT)
@@ -106,13 +197,27 @@ fun modifierMaskToKeyCodes(mask: Int): List<Int> = buildList {
     if (mask and InputEvent.META_DOWN_MASK != 0) add(KeyEvent.VK_META)
 }
 
+fun interpolateSwipePoints(
+    startX: Int,
+    startY: Int,
+    endX: Int,
+    endY: Int,
+    steps: Int,
+): List<Point> {
+    require(steps > 0) { "steps must be positive" }
+    return buildList {
+        for (step in 0..steps) {
+            val progress = step.toFloat() / steps
+            add(Point(lerp(startX, endX, progress), lerp(startY, endY, progress)))
+        }
+    }
+}
+
 fun detectMacOs(): Boolean = System.getProperty("os.name").lowercase().contains("mac")
 
 private fun virtualDesktopBounds(): Rectangle {
     val ge = GraphicsEnvironment.getLocalGraphicsEnvironment()
     val devices = ge.screenDevices
-    // Seed with the first device's bounds to avoid Rectangle() defaulting to (0,0)
-    // which would incorrectly include the origin in multi-monitor offset setups
     var bounds = devices.first().defaultConfiguration.bounds
     for (i in 1 until devices.size) {
         bounds = bounds.union(devices[i].defaultConfiguration.bounds)
@@ -120,4 +225,11 @@ private fun virtualDesktopBounds(): Rectangle {
     return bounds
 }
 
+private fun lerp(start: Int, end: Int, progress: Float): Int =
+    (start + ((end - start) * progress)).toInt()
+
 private const val DEFAULT_AUTO_DELAY_MS = 10
+private const val DOUBLE_CLICK_COUNT = 2
+private const val DEFAULT_SWIPE_STEPS = 12
+private val DEFAULT_SWIPE_DURATION: Duration = 200.milliseconds
+private val DEFAULT_LONG_CLICK_DURATION: Duration = 500.milliseconds

@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.core
 
 import androidx.compose.ui.awt.ComposePanel
 import java.awt.Point
+import java.awt.Rectangle
 import java.awt.Window
 import javax.swing.JFrame
 
@@ -25,4 +26,10 @@ data class TrackedWindow(
             composePanel?.locationOnScreen
                 ?: (window as? JFrame)?.contentPane?.locationOnScreen
                 ?: window.locationOnScreen
+
+    val composeSurfaceBoundsOnScreen: Rectangle
+        get() =
+            composePanel?.let { Rectangle(it.locationOnScreen, it.size) }
+                ?: (window as? JFrame)?.contentPane?.let { Rectangle(it.locationOnScreen, it.size) }
+                ?: Rectangle(window.locationOnScreen, window.size)
 }

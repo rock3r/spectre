@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.core
 
 import java.awt.Point
+import java.awt.Rectangle
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -91,5 +92,56 @@ class HiDpiMapperTest {
         // AWT X: left=60, right=160 → center=110
         // AWT Y: top=110, bottom=210 → center=160
         assertEquals(Point(110, 160), result)
+    }
+
+    @Test
+    fun `computes capture rectangle in AWT screen coordinates`() {
+        val result =
+            composeBoundsToAwtRectangle(
+                left = 100f,
+                top = 200f,
+                right = 300f,
+                bottom = 500f,
+                scaleX = 2f,
+                scaleY = 2f,
+                panelScreenX = 10,
+                panelScreenY = 20,
+            )
+
+        assertEquals(Rectangle(60, 120, 100, 150), result)
+    }
+
+    @Test
+    fun `capture rectangle is at least one pixel in each dimension`() {
+        val result =
+            composeBoundsToAwtRectangle(
+                left = 10f,
+                top = 20f,
+                right = 10.4f,
+                bottom = 20.4f,
+                scaleX = 1f,
+                scaleY = 1f,
+                panelScreenX = 0,
+                panelScreenY = 0,
+            )
+
+        assertEquals(Rectangle(10, 20, 1, 1), result)
+    }
+
+    @Test
+    fun `capture rectangle rounds outward to preserve trailing edge pixels`() {
+        val result =
+            composeBoundsToAwtRectangle(
+                left = 10.2f,
+                top = 5.1f,
+                right = 20.8f,
+                bottom = 9.9f,
+                scaleX = 1f,
+                scaleY = 1f,
+                panelScreenX = 0,
+                panelScreenY = 0,
+            )
+
+        assertEquals(Rectangle(10, 5, 11, 5), result)
     }
 }

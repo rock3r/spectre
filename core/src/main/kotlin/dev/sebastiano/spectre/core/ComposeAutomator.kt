@@ -2,17 +2,16 @@ package dev.sebastiano.spectre.core
 
 import androidx.compose.ui.semantics.Role
 import java.awt.Rectangle
+import java.awt.event.KeyEvent
 import java.awt.image.BufferedImage
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
-class ComposeAutomator
-private constructor(
-    private val windowTracker: WindowTracker,
-    private val semanticsReader: SemanticsReader,
-    private val robotDriver: RobotDriver,
-) {
+sealed class ComposeAutomatorQueries {
+
+    protected abstract val windowTracker: WindowTracker
+    protected abstract val semanticsReader: SemanticsReader
 
     val windows: List<TrackedWindow>
         get() = windowTracker.trackedWindows
@@ -21,6 +20,20 @@ private constructor(
         windowTracker.refresh()
     }
 
+    fun tree(): AutomatorTree {
+        refreshWindows()
+        val windowScopes = windows.mapIndexed { index, trackedWindow ->
+            AutomatorWindow(
+                windowIndex = index,
+                trackedWindow = trackedWindow,
+                nodes = semanticsReader.readAllNodes(listOf(trackedWindow)),
+            )
+        }
+        return AutomatorTree(windowScopes)
+    }
+
+    fun tree(windowIndex: Int): AutomatorWindow = tree().window(windowIndex)
+
     fun allNodes(): List<AutomatorNode> = semanticsReader.readAllNodes(windows)
 
     fun findByTestTag(tag: String): List<AutomatorNode> =
@@ -28,8 +41,13 @@ private constructor(
 
     fun findOneByTestTag(tag: String): AutomatorNode? = findByTestTag(tag).firstOrNull()
 
+    fun findByText(query: TextQuery): List<AutomatorNode> =
+        semanticsReader.findByText(query, windows)
+
     fun findByText(text: String, exact: Boolean = true): List<AutomatorNode> =
         semanticsReader.findByText(text, windows, exact)
+
+    fun findOneByText(query: TextQuery): AutomatorNode? = findByText(query).firstOrNull()
 
     fun findOneByText(text: String, exact: Boolean = true): AutomatorNode? =
         findByText(text, exact).firstOrNull()
@@ -38,6 +56,11 @@ private constructor(
         semanticsReader.findByContentDescription(description, windows)
 
     fun findByRole(role: Role): List<AutomatorNode> = semanticsReader.findByRole(role, windows)
+}
+
+sealed class ComposeAutomatorInteractions : ComposeAutomatorQueries() {
+
+    protected abstract val robotDriver: RobotDriver
 
     fun click(node: AutomatorNode) {
         val center = node.centerOnScreen
@@ -49,15 +72,64 @@ private constructor(
         robotDriver.doubleClick(center.x, center.y)
     }
 
+    fun longClick(node: AutomatorNode, holdFor: Duration = 500.milliseconds) {
+        val center = node.centerOnScreen
+        robotDriver.longClick(center.x, center.y, holdFor)
+    }
+
+    fun swipe(
+        startX: Int,
+        startY: Int,
+        endX: Int,
+        endY: Int,
+        steps: Int = 12,
+        duration: Duration = 200.milliseconds,
+    ) {
+        robotDriver.swipe(startX, startY, endX, endY, steps, duration)
+    }
+
+    fun swipe(
+        from: AutomatorNode,
+        to: AutomatorNode,
+        steps: Int = 12,
+        duration: Duration = 200.milliseconds,
+    ) {
+        val fromCenter = from.centerOnScreen
+        val toCenter = to.centerOnScreen
+        swipe(fromCenter.x, fromCenter.y, toCenter.x, toCenter.y, steps, duration)
+    }
+
     fun typeText(text: String) {
         robotDriver.typeText(text)
+    }
+
+    fun clearAndTypeText(node: AutomatorNode, text: String) {
+        click(node)
+        robotDriver.clearAndTypeText(text)
     }
 
     fun pressKey(keyCode: Int, modifiers: Int = 0) {
         robotDriver.pressKey(keyCode, modifiers)
     }
 
+    fun pressEnter() {
+        robotDriver.pressKey(KeyEvent.VK_ENTER)
+    }
+
     fun screenshot(region: Rectangle? = null): BufferedImage = robotDriver.screenshot(region)
+
+    fun screenshot(node: AutomatorNode): BufferedImage = robotDriver.screenshot(node.boundsOnScreen)
+
+    fun screenshot(windowIndex: Int): BufferedImage =
+        robotDriver.screenshot(tree(windowIndex).trackedWindow.composeSurfaceBoundsOnScreen)
+}
+
+class ComposeAutomator
+private constructor(
+    override val windowTracker: WindowTracker,
+    override val semanticsReader: SemanticsReader,
+    override val robotDriver: RobotDriver,
+) : ComposeAutomatorInteractions() {
 
     suspend fun waitForNode(
         tag: String? = null,
@@ -67,7 +139,6 @@ private constructor(
     ): AutomatorNode {
         require(tag != null || text != null) { "Either tag or text must be specified" }
         return waitUntil(timeout = timeout, pollInterval = pollInterval) {
-            // Wrap snapshot + filter in readOnEdt so semantics property reads are thread-safe
             readOnEdt {
                 refreshWindows()
                 allNodes().firstOrNull { node ->
@@ -82,13 +153,11 @@ private constructor(
         return readOnEdt {
             refreshWindows()
             buildString {
-                for ((windowIndex, trackedWindow) in windows.withIndex()) {
-                    val kind = if (trackedWindow.isPopup) "popup" else "main"
-                    appendLine("Window $windowIndex ($kind): ${trackedWindow.surfaceId}")
-                    val allNodes = semanticsReader.readAllNodes(listOf(trackedWindow))
-                    val roots = allNodes.filter { it.semanticsNode.parent == null }
-                    for (root in roots) {
-                        appendNodeTree(root, allNodes, depth = 1)
+                for (window in tree().windows()) {
+                    val kind = if (window.isPopup) "popup" else "main"
+                    appendLine("Window ${window.windowIndex} ($kind): ${window.surfaceId}")
+                    for (root in window.roots()) {
+                        appendNodeTree(root, depth = 1)
                     }
                 }
             }
@@ -102,14 +171,16 @@ private constructor(
             semanticsReader: SemanticsReader = SemanticsReader(),
             robotDriver: RobotDriver = RobotDriver(),
         ): ComposeAutomator = ComposeAutomator(windowTracker, semanticsReader, robotDriver)
+
+        fun inProcess(
+            windowTracker: WindowTracker = WindowTracker(),
+            semanticsReader: SemanticsReader = SemanticsReader(),
+            robotDriver: RobotDriver = RobotDriver(),
+        ): ComposeAutomator = create(windowTracker, semanticsReader, robotDriver)
     }
 }
 
-private fun StringBuilder.appendNodeTree(
-    node: AutomatorNode,
-    allNodes: List<AutomatorNode>,
-    depth: Int,
-) {
+private fun StringBuilder.appendNodeTree(node: AutomatorNode, depth: Int) {
     append("  ".repeat(depth))
     append("[${node.key.nodeId}]")
     node.testTag?.let { append(" testTag=\"$it\"") }
@@ -118,12 +189,7 @@ private fun StringBuilder.appendNodeTree(
     if (node.isFocused) append(" focused")
     if (node.isDisabled) append(" disabled")
     appendLine()
-    // Match children by full NodeKey (ownerIndex + nodeId) to avoid cross-owner collisions
-    for (child in node.semanticsNode.children) {
-        val childKey = NodeKey(node.key.surfaceId, node.key.ownerIndex, child.id)
-        val childNode = allNodes.find { it.key == childKey }
-        if (childNode != null) {
-            appendNodeTree(childNode, allNodes, depth + 1)
-        }
+    for (child in node.children) {
+        appendNodeTree(child, depth + 1)
     }
 }
