@@ -87,10 +87,14 @@ object MacOsRecordingPermissions {
         }
 
     @Suppress("TooGenericExceptionCaught")
-    private fun runOsascript(script: String): OsascriptResult? =
-        try {
-            val process =
+    private fun runOsascript(script: String): OsascriptResult? {
+        val process =
+            try {
                 ProcessBuilder("osascript", "-e", script).redirectErrorStream(true).start()
+            } catch (_: Throwable) {
+                return null
+            }
+        return try {
             if (!process.waitFor(OSASCRIPT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 process.destroyForcibly()
                 null
@@ -100,9 +104,17 @@ object MacOsRecordingPermissions {
                     exitCode = process.exitValue(),
                 )
             }
+        } catch (_: InterruptedException) {
+            // Cancellation is meaningful upstream — surface the interrupt so callers'
+            // timeout/cancellation logic can react instead of silently swallowing it.
+            process.destroyForcibly()
+            Thread.currentThread().interrupt()
+            null
         } catch (_: Throwable) {
+            process.destroyForcibly()
             null
         }
+    }
 
     private data class OsascriptResult(val output: String, val exitCode: Int)
 

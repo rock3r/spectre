@@ -24,6 +24,15 @@ internal object FfmpegCli {
         require(region.width > 0 && region.height > 0) {
             "region must have positive dimensions, was ${region.width}x${region.height}"
         }
+        // ffmpeg's `crop` filter silently clamps negative offsets to zero, which would record
+        // the wrong region without any error signal. Reject negative coordinates outright so
+        // misalignment surfaces here. Multi-monitor setups can produce negative AWT screen
+        // coordinates for a secondary display; callers in that situation should translate
+        // into the primary screen's coordinate space (or use ScreenCaptureKit window capture
+        // when that lands in v2).
+        require(region.x >= 0 && region.y >= 0) {
+            "region origin must be non-negative for ffmpeg crop, was (${region.x}, ${region.y})"
+        }
         return buildList {
             add(ffmpegPath.toString())
             // Quiet ffmpeg's stderr noise to warnings+errors so callers' logs stay readable.

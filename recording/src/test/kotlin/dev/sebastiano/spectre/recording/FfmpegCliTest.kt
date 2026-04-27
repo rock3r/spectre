@@ -68,6 +68,27 @@ class FfmpegCliTest {
     }
 
     @Test
+    fun `negative region origin is rejected`() {
+        // ffmpeg's crop filter would silently clamp these — surface the alignment problem here.
+        assertFailsWith<IllegalArgumentException> {
+            FfmpegCli.avfoundationRegionCapture(
+                ffmpeg,
+                Rectangle(-1, 0, 100, 100),
+                output,
+                RecordingOptions(),
+            )
+        }
+        assertFailsWith<IllegalArgumentException> {
+            FfmpegCli.avfoundationRegionCapture(
+                ffmpeg,
+                Rectangle(0, -10, 100, 100),
+                output,
+                RecordingOptions(),
+            )
+        }
+    }
+
+    @Test
     fun `non-positive region dimensions are rejected`() {
         assertFailsWith<IllegalArgumentException> {
             FfmpegCli.avfoundationRegionCapture(
