@@ -8,6 +8,7 @@ import java.nio.file.Paths
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Default [Recorder] backed by a system `ffmpeg` binary.
@@ -144,17 +145,20 @@ class FfmpegRecorder(
 private class FfmpegRecordingHandle(private val process: Process, override val output: Path) :
     RecordingHandle {
 
-    // Two-state lifecycle so concurrent observers see an accurate `isStopped`:
+    // Three-state lifecycle so concurrent observers see an accurate `isStopped`:
     //   - stopInitiated: CAS guard so the cleanup runs exactly once.
-    //   - finished: CountDownLatch that flips only after the cleanup completes (or throws).
-    // A concurrent stop() finds stopInitiated already true, then blocks on `finished` so it
-    // returns at the same time as the original stop() — and isStopped reflects "process has
-    // actually exited" rather than "stop has been entered".
+    //   - finished:      CountDownLatch that releases waiters once the first cleanup attempt
+    //                    completes (success or failure).
+    //   - result:        Result<Unit> set by the first cleanup. isStopped reflects this — it
+    //                    is true only on success. Concurrent callers replay the same failure
+    //                    so a leaked-orphan situation is observable to every caller, not just
+    //                    the first.
     private val stopInitiated = AtomicBoolean(false)
     private val finished = CountDownLatch(1)
+    private val result = AtomicReference<Result<Unit>?>()
 
     override val isStopped: Boolean
-        get() = finished.count == 0L
+        get() = result.get()?.isSuccess == true
 
     // Tracks whether stop() *itself* sent SIGTERM/SIGKILL to ffmpeg. Used to decide whether a
     // signal-shaped exit code (255 / 137 / 143) is "ours" (expected, not a crash) or external
@@ -163,13 +167,21 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
 
     override fun stop() {
         if (!stopInitiated.compareAndSet(false, true)) {
-            // Another thread is already running the cleanup. Block until it finishes so
-            // both callers observe a consistent post-stop world (file flushed, process gone).
+            // Another thread is already running the cleanup. Block until it finishes, then
+            // replay the same outcome — including any exception — so concurrent callers do
+            // not silently observe a "stopped" state that the first call actually failed to
+            // achieve.
             finished.await()
+            result.get()?.getOrThrow()
             return
         }
+        @Suppress("TooGenericExceptionCaught")
         try {
             stopInternal()
+            result.set(Result.success(Unit))
+        } catch (t: Throwable) {
+            result.set(Result.failure(t))
+            throw t
         } finally {
             finished.countDown()
         }
