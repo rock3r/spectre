@@ -52,21 +52,31 @@ fun ComposeAutomator.waitUntilGone(tag: String, timeout: Duration = 5.seconds) {
 
 /**
  * Click the picker entry for a scenario by its `scenario.<name>` testTag, then wait until the
- * right-pane `scenario.title` node reflects that scenario's title. Comparing against the picker
- * entry's text (with the selected-state "▸ " prefix stripped) means we wait for the actual
- * recomposition rather than just the title node's existence — `scenario.title` is always present,
- * so checking only for non-null text would let follow-up assertions race the previous scenario's
- * UI.
+ * right-pane `scenario.title` node either gains a value (first navigation) or its text changes
+ * (subsequent navigations). The title node is always present in the picker layout, so the prior
+ * "wait for non-null title" check would return immediately and let follow-up assertions race the
+ * previous scenario's UI.
+ *
+ * If the navigation happens to land on the same scenario already selected (so the title text
+ * doesn't change), the click is still observable through the picker entry's selected-state "▸ "
+ * prefix — so we accept either a title-change OR a picker entry that's now marked selected.
  */
 fun ComposeAutomator.navigateToScenario(scenarioTag: String) {
-    val pickerEntry = waitForTestTag(scenarioTag)
-    val expectedTitle = pickerEntry.text?.removePrefix("▸ ")?.trim()
-    click(pickerEntry)
+    val pickerEntryBefore = waitForTestTag(scenarioTag)
+    val previousTitle = findOneByTestTag("scenario.title")?.text
+    val pickerWasSelected = pickerEntryBefore.text?.startsWith("▸") == true
+    click(pickerEntryBefore)
     eventually(description = "scenario '$scenarioTag' to become selected") {
         val titleNode = findOneByTestTag("scenario.title") ?: return@eventually null
+        val pickerNow = findOneByTestTag(scenarioTag) ?: return@eventually null
+        val titleChanged = titleNode.text != null && titleNode.text != previousTitle
+        val pickerNowSelected = pickerNow.text?.startsWith("▸") == true
         when {
-            expectedTitle == null -> titleNode.takeIf { it.text != null }
-            titleNode.text == expectedTitle -> titleNode
+            previousTitle == null && titleNode.text != null -> titleNode
+            titleChanged -> titleNode
+            // Re-selecting the current scenario: the picker entry was already marked, so the
+            // click is a no-op as far as state is concerned. Accept this as settled.
+            pickerWasSelected && pickerNowSelected -> titleNode
             else -> null
         }
     }

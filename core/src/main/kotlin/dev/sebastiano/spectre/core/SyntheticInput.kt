@@ -241,6 +241,11 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
                 System.currentTimeMillis(),
                 heldKeyModifiers,
                 keyCode,
+                // Real OS-injected KEY_PRESSED/KEY_RELEASED events for printable keys carry
+                // the produced char too (per JavaDoc the value is "not guaranteed to be
+                // meaningful" but it is set, and Compose Desktop's paste path reads it). The
+                // explicit override branch is for the synthetic KEY_TYPED dispatch in
+                // `keyPress`, which passes a Shift-aware character.
                 keyCharOverride
                     ?: if (keyCode in PRINTABLE_KEY_CODES)
                         keyCharFor(
@@ -262,8 +267,14 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
                 runCatching {
                         val origin = window.locationOnScreen
                         val size = window.size
-                        screenX in origin.x..(origin.x + size.width) &&
-                            screenY in origin.y..(origin.y + size.height)
+                        // Half-open range matches AWT's `Rectangle.contains` semantics so a
+                        // point at `origin + size` falls outside, not inside — touching/adjacent
+                        // popups and secondary windows that share an edge get routed to the
+                        // right target.
+                        screenX >= origin.x &&
+                            screenX < origin.x + size.width &&
+                            screenY >= origin.y &&
+                            screenY < origin.y + size.height
                     }
                     .getOrDefault(false)
         }

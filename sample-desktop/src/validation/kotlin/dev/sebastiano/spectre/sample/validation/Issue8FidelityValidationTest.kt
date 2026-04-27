@@ -6,6 +6,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assumptions.assumeFalse
@@ -132,12 +133,18 @@ class Issue8FidelityValidationTest {
             // attempt didn't land — the synthetic Cmd+V occasionally misses on a cold AWT EDT).
             typeText("spectre")
             val typed =
-                eventually(description = "third field reflects typed text", timeout = 8.seconds) {
+                eventually(
+                    description = "third field reflects typed text",
+                    timeout = 15.seconds,
+                    pollInterval = 250.milliseconds,
+                ) {
                     val node = findOneByTestTag("focus.field.third")
                     if (node?.editableText?.contains("spectre") == true) node
                     else {
-                        // Re-issue the type — synthetic paste sometimes drops the very first
-                        // dispatch on a cold JVM. The field is still focused, so a retry is safe.
+                        // Re-issue the type — the synthetic Cmd+V occasionally drops on a cold
+                        // AWT EDT (clipboard write races the paste handler). The field is still
+                        // focused, so a retry is safe; the longer poll interval keeps the
+                        // clipboard from thrashing while we wait for the paste to settle.
                         if (node?.isFocused == true) typeText("spectre")
                         null
                     }
