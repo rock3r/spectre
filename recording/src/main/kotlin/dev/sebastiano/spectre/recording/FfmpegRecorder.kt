@@ -5,6 +5,7 @@ import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -65,13 +66,20 @@ class FfmpegRecorder(
                 // during this wait means the JVM is being torn down anyway, and the daemon
                 // semantics of subprocesses will let it die with the JVM.
                 @Suppress("TooGenericExceptionCaught", "SwallowedException")
-                try {
-                    process.waitFor(FORCE_KILL_DURING_START_SECONDS, TimeUnit.SECONDS)
-                } catch (_: Throwable) {
-                    // Best effort — the interrupt below carries the cancellation signal
-                    // upstream regardless.
-                }
+                val terminated =
+                    try {
+                        process.waitFor(FORCE_KILL_DURING_START_SECONDS, TimeUnit.SECONDS)
+                    } catch (_: Throwable) {
+                        false
+                    }
                 Thread.currentThread().interrupt()
+                if (!terminated) {
+                    throw IllegalStateException(
+                        "ffmpeg refused to die after destroyForcibly() during start() interrupt — " +
+                            "leaking an orphan recorder is not safe; output at $output is in an " +
+                            "undefined state."
+                    )
+                }
                 throw e
             }
         if (exitedDuringProbe) {
@@ -136,10 +144,17 @@ class FfmpegRecorder(
 private class FfmpegRecordingHandle(private val process: Process, override val output: Path) :
     RecordingHandle {
 
-    private val stopped = AtomicBoolean(false)
+    // Two-state lifecycle so concurrent observers see an accurate `isStopped`:
+    //   - stopInitiated: CAS guard so the cleanup runs exactly once.
+    //   - finished: CountDownLatch that flips only after the cleanup completes (or throws).
+    // A concurrent stop() finds stopInitiated already true, then blocks on `finished` so it
+    // returns at the same time as the original stop() — and isStopped reflects "process has
+    // actually exited" rather than "stop has been entered".
+    private val stopInitiated = AtomicBoolean(false)
+    private val finished = CountDownLatch(1)
 
     override val isStopped: Boolean
-        get() = stopped.get()
+        get() = finished.count == 0L
 
     // Tracks whether stop() *itself* sent SIGTERM/SIGKILL to ffmpeg. Used to decide whether a
     // signal-shaped exit code (255 / 137 / 143) is "ours" (expected, not a crash) or external
@@ -147,7 +162,20 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
     private var sentSignalOurselves: Boolean = false
 
     override fun stop() {
-        if (!stopped.compareAndSet(false, true)) return
+        if (!stopInitiated.compareAndSet(false, true)) {
+            // Another thread is already running the cleanup. Block until it finishes so
+            // both callers observe a consistent post-stop world (file flushed, process gone).
+            finished.await()
+            return
+        }
+        try {
+            stopInternal()
+        } finally {
+            finished.countDown()
+        }
+    }
+
+    private fun stopInternal() {
         if (!process.isAlive) {
             // ffmpeg already exited — could be a clean prior stop, or a mid-recording crash
             // (disk full, encoder error, device failure). The handle is the only error
