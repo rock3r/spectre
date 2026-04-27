@@ -138,7 +138,7 @@ class RobotDriverTest {
     }
 }
 
-private class RecordingRobotAdapter : RobotAdapter {
+private class RecordingRobotAdapter(override val autoDelayMs: Int = 0) : RobotAdapter {
     val events = mutableListOf<String>()
 
     override fun mouseMove(x: Int, y: Int) {

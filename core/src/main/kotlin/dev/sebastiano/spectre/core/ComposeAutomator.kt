@@ -120,8 +120,13 @@ sealed class ComposeAutomatorInteractions : ComposeAutomatorQueries() {
 
     fun screenshot(node: AutomatorNode): BufferedImage = robotDriver.screenshot(node.boundsOnScreen)
 
-    fun screenshot(windowIndex: Int): BufferedImage =
-        robotDriver.screenshot(tree(windowIndex).trackedWindow.composeSurfaceBoundsOnScreen)
+    fun screenshot(windowIndex: Int): BufferedImage {
+        refreshWindows()
+        val trackedWindow =
+            windows.getOrNull(windowIndex)
+                ?: error("No tracked window at index $windowIndex (have ${windows.size})")
+        return robotDriver.screenshot(trackedWindow.composeSurfaceBoundsOnScreen)
+    }
 }
 
 class ComposeAutomator

@@ -53,7 +53,7 @@ internal constructor(
         duration: Duration = DEFAULT_SWIPE_DURATION,
     ) = runOffEdt {
         val points = interpolateSwipePoints(startX, startY, endX, endY, steps)
-        val pausePerStepMs = swipePauseMillis(duration, steps, autoDelayMs = DEFAULT_AUTO_DELAY_MS)
+        val pausePerStepMs = swipePauseMillis(duration, steps, autoDelayMs = robot.autoDelayMs)
         val firstPoint = points.first()
         robot.mouseMove(firstPoint.x, firstPoint.y)
         robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
@@ -116,6 +116,8 @@ internal constructor(
 
 internal interface RobotAdapter {
 
+    val autoDelayMs: Int
+
     fun mouseMove(x: Int, y: Int)
 
     fun mousePress(buttons: Int)
@@ -139,6 +141,9 @@ internal interface ClipboardAdapter {
 }
 
 private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) : RobotAdapter {
+
+    override val autoDelayMs: Int
+        get() = robot.autoDelay
 
     override fun mouseMove(x: Int, y: Int) = robot.mouseMove(x, y)
 
