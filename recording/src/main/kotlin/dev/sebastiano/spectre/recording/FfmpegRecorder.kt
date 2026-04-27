@@ -129,6 +129,11 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
     override val isStopped: Boolean
         get() = stopped.get()
 
+    // Tracks whether stop() *itself* sent SIGTERM/SIGKILL to ffmpeg. Used to decide whether a
+    // signal-shaped exit code (255 / 137 / 143) is "ours" (expected, not a crash) or external
+    // (CI/test harness/OS killed ffmpeg, which IS an error from the caller's perspective).
+    private var sentSignalOurselves: Boolean = false
+
     override fun stop() {
         if (!stopped.compareAndSet(false, true)) return
         if (!process.isAlive) {
@@ -163,6 +168,7 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
                 false
             }
         if (!gracefulExit) {
+            sentSignalOurselves = true
             process.destroy()
             val terminatedAfterDestroy =
                 try {
@@ -184,6 +190,15 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
             }
         }
         if (interrupted) Thread.currentThread().interrupt()
+        if (process.isAlive) {
+            // Even after destroyForcibly(), ffmpeg refused to die within the wait window.
+            // Surface this as a hard failure rather than letting the caller observe
+            // isStopped=true while the process is still mutating the output file.
+            throw IllegalStateException(
+                "ffmpeg did not exit after destroyForcibly() within ${FORCE_KILL_SECONDS}s — " +
+                    "output at $output is in an undefined state."
+            )
+        }
         failIfFfmpegCrashed()
     }
 
@@ -197,15 +212,23 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
             } catch (_: Throwable) {
                 return
             }
-        // ffmpeg returns 255 on SIGTERM (destroy()) and 137 on SIGKILL (destroyForcibly() —
-        // the standard 128+9 Unix convention). Both are signals stop() may have sent itself
-        // along the SIGTERM/SIGKILL fallback path, so neither is a crash from the caller's
-        // perspective.
-        if (exit != 0 && exit != FFMPEG_SIGTERM_EXIT && exit != FFMPEG_SIGKILL_EXIT) {
+        if (exit == 0) return
+        // 255 (ffmpeg-on-SIGTERM), 143 (POSIX 128+15 SIGTERM if ffmpeg's signal handler
+        // didn't run), and 137 (POSIX 128+9 SIGKILL) are *only* exempted when stop() sent
+        // the signal itself — see sentSignalOurselves. Otherwise they signify external
+        // termination (CI / test harness / OS killing ffmpeg) which IS a crash from the
+        // caller's perspective: the recording was interrupted and the output is likely
+        // truncated.
+        val isExpectedSelfSignal =
+            sentSignalOurselves &&
+                (exit == FFMPEG_SIGTERM_EXIT ||
+                    exit == POSIX_SIGTERM_EXIT ||
+                    exit == FFMPEG_SIGKILL_EXIT)
+        if (!isExpectedSelfSignal) {
             throw IllegalStateException(
                 "ffmpeg exited with code $exit during recording — output at $output may be " +
                     "truncated or missing. Common causes: disk full, encoder error, device " +
-                    "failure during capture."
+                    "failure during capture, or external termination."
             )
         }
     }
@@ -214,7 +237,8 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
         const val SHUTDOWN_GRACE_SECONDS: Long = 5
         const val FORCE_KILL_SECONDS: Long = 2
         const val FFMPEG_SIGTERM_EXIT: Int = 255
-        const val FFMPEG_SIGKILL_EXIT: Int = 137 // 128 + 9 (SIGKILL) per POSIX convention
+        const val POSIX_SIGTERM_EXIT: Int = 143 // 128 + 15 (SIGTERM)
+        const val FFMPEG_SIGKILL_EXIT: Int = 137 // 128 + 9 (SIGKILL)
     }
 }
 
