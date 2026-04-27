@@ -211,6 +211,19 @@ private constructor(
                     }
                     if (node.isFocused) append(":F")
                     if (node.isDisabled) append(":D")
+                    if (node.isSelected) append(":S")
+                    if (node.texts.isNotEmpty()) {
+                        append(":T")
+                        append(node.texts.joinToString(separator = "").hashCode())
+                    }
+                    if (node.contentDescriptions.isNotEmpty()) {
+                        append(":C")
+                        append(node.contentDescriptions.joinToString(separator = "").hashCode())
+                    }
+                    node.editableText?.let {
+                        append(":E")
+                        append(it.hashCode())
+                    }
                     append(';')
                 }
                 append("||")
@@ -219,7 +232,13 @@ private constructor(
     }
 
     private fun computeFrameHash(): Int {
-        val image = robotDriver.screenshot()
+        // Hash only the tracked Compose surfaces, not the full virtual desktop. Sampling the
+        // whole desktop lets unrelated pixel churn (notifications, other windows, the cursor
+        // outside the app) continuously break the stable-frame streak and time out
+        // waitForVisualIdle even when the app under test is fully idle.
+        refreshWindows()
+        val region = composeSurfaceUnionBounds() ?: return EMPTY_FRAME_HASH
+        val image = robotDriver.screenshot(region)
         val raster = image.raster
         val buffer = raster.dataBuffer
         return if (buffer is DataBufferInt) {
@@ -230,6 +249,19 @@ private constructor(
             val height = image.height
             val pixels = image.getRGB(0, 0, width, height, null, 0, width)
             pixels.contentHashCode()
+        }
+    }
+
+    private fun composeSurfaceUnionBounds(): Rectangle? = readOnEdt {
+        val rects = windows.mapNotNull { window ->
+            runCatching { window.composeSurfaceBoundsOnScreen }.getOrNull()?.takeIf { !it.isEmpty }
+        }
+        if (rects.isEmpty()) {
+            null
+        } else {
+            var union = Rectangle(rects.first())
+            for (i in 1 until rects.size) union = union.union(rects[i])
+            union
         }
     }
 
@@ -280,6 +312,7 @@ private val DEFAULT_WAIT_TIMEOUT: Duration = 5.seconds
 private val DEFAULT_QUIET_PERIOD: Duration = 64.milliseconds
 private val DEFAULT_POLL_INTERVAL: Duration = 16.milliseconds
 private const val DEFAULT_STABLE_FRAMES: Int = 3
+private const val EMPTY_FRAME_HASH: Int = 0
 
 private fun StringBuilder.appendNodeTree(node: AutomatorNode, depth: Int) {
     append("  ".repeat(depth))
