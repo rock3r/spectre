@@ -232,12 +232,30 @@ private constructor(
     }
 
     private fun computeFrameHash(): Int {
-        // Hash only the tracked Compose surfaces, not the full virtual desktop. Sampling the
-        // whole desktop lets unrelated pixel churn (notifications, other windows, the cursor
-        // outside the app) continuously break the stable-frame streak and time out
-        // waitForVisualIdle even when the app under test is fully idle.
+        // Hash each tracked Compose surface independently, then combine the per-surface hashes.
+        // - Sampling the full virtual desktop would let unrelated pixel churn (notifications,
+        //   other apps, the cursor outside the app) break the stable-frame streak.
+        // - A single union rectangle would include the gap between disjoint surfaces (main
+        //   window + a popup floating elsewhere), and gap-pixel churn would still break the
+        //   streak. Per-surface hashes ignore the gap entirely.
+        // - When no surfaces are tracked we deliberately return a value that differs every
+        //   call, so the streak never completes — waitForVisualIdle keeps waiting (or times
+        //   out) rather than declaring success against an empty UI.
         refreshWindows()
-        val region = composeSurfaceUnionBounds() ?: return EMPTY_FRAME_HASH
+        val rects = composeSurfaceRects()
+        if (rects.isEmpty()) return System.nanoTime().toInt()
+        val hashes = IntArray(rects.size)
+        for (i in rects.indices) hashes[i] = hashScreenRegion(rects[i])
+        return hashes.contentHashCode()
+    }
+
+    private fun composeSurfaceRects(): List<Rectangle> = readOnEdt {
+        windows.mapNotNull { window ->
+            runCatching { window.composeSurfaceBoundsOnScreen }.getOrNull()?.takeIf { !it.isEmpty }
+        }
+    }
+
+    private fun hashScreenRegion(region: Rectangle): Int {
         val image = robotDriver.screenshot(region)
         val raster = image.raster
         val buffer = raster.dataBuffer
@@ -249,19 +267,6 @@ private constructor(
             val height = image.height
             val pixels = image.getRGB(0, 0, width, height, null, 0, width)
             pixels.contentHashCode()
-        }
-    }
-
-    private fun composeSurfaceUnionBounds(): Rectangle? = readOnEdt {
-        val rects = windows.mapNotNull { window ->
-            runCatching { window.composeSurfaceBoundsOnScreen }.getOrNull()?.takeIf { !it.isEmpty }
-        }
-        if (rects.isEmpty()) {
-            null
-        } else {
-            var union = Rectangle(rects.first())
-            for (i in 1 until rects.size) union = union.union(rects[i])
-            union
         }
     }
 
@@ -312,7 +317,6 @@ private val DEFAULT_WAIT_TIMEOUT: Duration = 5.seconds
 private val DEFAULT_QUIET_PERIOD: Duration = 64.milliseconds
 private val DEFAULT_POLL_INTERVAL: Duration = 16.milliseconds
 private const val DEFAULT_STABLE_FRAMES: Int = 3
-private const val EMPTY_FRAME_HASH: Int = 0
 
 private fun StringBuilder.appendNodeTree(node: AutomatorNode, depth: Int) {
     append("  ".repeat(depth))
