@@ -153,6 +153,17 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
         val modifierBit = modifierMaskFor(keyCode)
         if (modifierBit != 0) heldKeyModifiers = heldKeyModifiers or modifierBit
         dispatchKey(type = KeyEvent.KEY_PRESSED, keyCode = keyCode)
+        // Real AWT emits KEY_TYPED after KEY_PRESSED for printable keys (with keyCode=UNDEFINED
+        // and keyChar set to the produced character). Listeners that consume typed events
+        // (search-as-you-type filters, character-counting validators) would miss input through
+        // the synthetic driver without this — the real Robot path gets it for free via the OS.
+        if (keyCode in PRINTABLE_KEY_CODES && (heldKeyModifiers and SHORTCUT_MODIFIER_MASK) == 0) {
+            dispatchKey(
+                type = KeyEvent.KEY_TYPED,
+                keyCode = KeyEvent.VK_UNDEFINED,
+                keyCharOverride = keyCharFor(keyCode),
+            )
+        }
     }
 
     override fun keyRelease(keyCode: Int) {
@@ -217,7 +228,7 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
         runOnEdt { targetComponent.dispatchEvent(event) }
     }
 
-    private fun dispatchKey(type: Int, keyCode: Int) {
+    private fun dispatchKey(type: Int, keyCode: Int, keyCharOverride: Char? = null) {
         // Key events go to the focus owner of whichever window owns the keyboard. Fall back to
         // the root window if no focus owner is present (no field focused yet).
         val focusOwner =
@@ -229,7 +240,9 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
                 System.currentTimeMillis(),
                 heldKeyModifiers,
                 keyCode,
-                if (keyCode in PRINTABLE_KEY_CODES) keyCode.toChar() else KeyEvent.CHAR_UNDEFINED,
+                keyCharOverride
+                    ?: if (keyCode in PRINTABLE_KEY_CODES) keyCharFor(keyCode)
+                    else KeyEvent.CHAR_UNDEFINED,
             )
         runOnEdt { focusOwner.dispatchEvent(event) }
     }
@@ -309,6 +322,23 @@ private const val NO_BUTTON: Int = MouseEvent.NOBUTTON
 // at the same coordinates within this window count as a double-click, so doubleClick() emits
 // MOUSE_CLICKED with clickCount=2 on the second pair instead of two clickCount=1 events.
 private const val DOUBLE_CLICK_INTERVAL_MS: Long = 500L
+
+// Modifiers that mean "this isn't a typing keystroke" — Cmd/Ctrl/Alt mask off KEY_TYPED so that
+// shortcut combos like Cmd+V don't accidentally inject a 'v' character into the focused field.
+// Shift is intentionally NOT here: Shift+A is a real typed 'A'.
+private val SHORTCUT_MODIFIER_MASK: Int =
+    java.awt.event.InputEvent.META_DOWN_MASK or
+        java.awt.event.InputEvent.CTRL_DOWN_MASK or
+        java.awt.event.InputEvent.ALT_DOWN_MASK
+
+private fun keyCharFor(keyCode: Int): Char =
+    when (keyCode) {
+        KeyEvent.VK_ENTER -> '\n'
+        KeyEvent.VK_SPACE -> ' '
+        in KeyEvent.VK_A..KeyEvent.VK_Z -> ('a' + (keyCode - KeyEvent.VK_A))
+        in KeyEvent.VK_0..KeyEvent.VK_9 -> ('0' + (keyCode - KeyEvent.VK_0))
+        else -> KeyEvent.CHAR_UNDEFINED
+    }
 
 // Conservative subset of printable VK_ codes for KeyEvent's keyChar; matches what RobotDriver
 // typically dispatches via direct keyPress.
