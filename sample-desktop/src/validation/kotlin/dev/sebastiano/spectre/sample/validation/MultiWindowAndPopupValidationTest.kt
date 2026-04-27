@@ -71,9 +71,12 @@ class MultiWindowAndPopupValidationTest {
     fun `secondary Window appears in tracked windows when opened`() {
         with(fixture.automator) {
             navigateToScenario("scenario.multiwindow")
+            // Capture the main window's surfaceIds BEFORE opening the secondary — the order
+            // returned by `windows` (built from `Window.getWindows()`) is not contractually
+            // guaranteed, so taking `windows.first()` after the open could pick the secondary.
+            val mainSurfaceIds = windows.map { it.surfaceId }.toSet()
             val initialCount = windows.size
             click(waitForTestTag("multiwindow.toggleButton"))
-            // The secondary window has its own surfaceId distinct from the main window.
             eventually(description = "windows.size > $initialCount") {
                 if (windows.size > initialCount) Unit else null
             }
@@ -81,8 +84,8 @@ class MultiWindowAndPopupValidationTest {
             val secondaryText = waitForTestTag("multiwindow.secondary.text")
             assertNotNull(secondaryText)
             assertTrue(
-                secondaryText.trackedWindow.surfaceId != windows.first().surfaceId,
-                "Secondary window's surfaceId should differ from the main window's",
+                secondaryText.trackedWindow.surfaceId !in mainSurfaceIds,
+                "Secondary window's surfaceId should be new, was ${secondaryText.trackedWindow.surfaceId} (mains: $mainSurfaceIds)",
             )
             // Tear down: dismiss the secondary window and wait for the count to drop.
             click(waitForTestTag("multiwindow.secondary.dismissButton"))
