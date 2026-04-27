@@ -13,11 +13,13 @@ internal fun TrackedWindow.toDto(index: Int): WindowSummaryDto =
     )
 
 internal fun AutomatorNode.toDto(): NodeSnapshotDto {
-    // Snapshot live bounds once. AutomatorNode.boundsInWindow is a getter that bounces to the
-    // EDT each call, so reading .left, .top, .right, .bottom separately would issue six
-    // independent reads — layout could shift between them and produce an internally
-    // inconsistent rectangle (e.g. negative width).
-    val rect = boundsInWindow
+    // bothBounds() reads in-window and on-screen bounds in a single EDT round-trip so the two
+    // rectangles in the DTO are guaranteed to come from the same underlying layout state.
+    // Calling the individual `boundsInWindow` / `boundsOnScreen` getters separately would
+    // issue independent EDT bounces and could produce a spatially inconsistent snapshot if
+    // layout shifted between the two reads.
+    val bounds = bothBounds()
+    val inWindow = bounds.inWindow
     return NodeSnapshotDto(
         key = key.toString(),
         testTag = testTag,
@@ -30,12 +32,12 @@ internal fun AutomatorNode.toDto(): NodeSnapshotDto {
         isSelected = isSelected,
         boundsInWindow =
             RectangleDto(
-                x = rect.left.toDouble(),
-                y = rect.top.toDouble(),
-                width = (rect.right - rect.left).toDouble(),
-                height = (rect.bottom - rect.top).toDouble(),
+                x = inWindow.left.toDouble(),
+                y = inWindow.top.toDouble(),
+                width = (inWindow.right - inWindow.left).toDouble(),
+                height = (inWindow.bottom - inWindow.top).toDouble(),
             ),
-        boundsOnScreen = boundsOnScreen.toDto(),
+        boundsOnScreen = bounds.onScreen.toDto(),
     )
 }
 

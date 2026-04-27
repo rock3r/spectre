@@ -94,7 +94,16 @@ class HttpComposeAutomator internal constructor(private val baseUrl: String) : A
         const val DEFAULT_PORT: Int = 9274
 
         internal fun create(host: String, port: Int, basePath: String): HttpComposeAutomator =
-            HttpComposeAutomator(baseUrl = "http://$host:$port$basePath")
+            HttpComposeAutomator(baseUrl = normaliseBaseUrl(host, port, basePath))
+
+        // Normalise basePath so callers can pass any of `""`, `"/spectre"`, `"spectre"`,
+        // `"/spectre/"`, `"api/v1/spectre"`, etc. without producing a malformed URL like
+        // `http://localhost:9274api/v1/spectre/...`. The result always has exactly one leading
+        // slash (or is empty) and never has a trailing slash.
+        internal fun normaliseBaseUrl(host: String, port: Int, basePath: String): String {
+            val normalisedPath = basePath.trim('/').let { if (it.isEmpty()) "" else "/$it" }
+            return "http://$host:$port$normalisedPath"
+        }
     }
 }
 
