@@ -52,6 +52,18 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
     // Compose's KeyEvent handler like a plain 'v' keystroke and paste never fires.
     @Volatile private var heldKeyModifiers: Int = 0
 
+    // Press position + release history for click-vs-drag detection and click-count tracking.
+    // Real AWT only fires MOUSE_CLICKED when press and release happen at the same location, and
+    // increments clickCount on consecutive press/release pairs at the same spot within the
+    // double-click interval. Without these, `swipe` would fire a spurious click at the swipe end
+    // and `doubleClick` would emit two clickCount=1 events instead of clickCount=1 then 2.
+    @Volatile private var pressX: Int = 0
+    @Volatile private var pressY: Int = 0
+    @Volatile private var lastClickX: Int = Int.MIN_VALUE
+    @Volatile private var lastClickY: Int = Int.MIN_VALUE
+    @Volatile private var lastClickTimeMs: Long = 0
+    @Volatile private var lastClickCount: Int = 0
+
     override fun mouseMove(x: Int, y: Int) {
         lastX = x
         lastY = y
@@ -59,15 +71,17 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
         // We send DRAGGED instead of MOVED if any button is currently pressed, matching the
         // AWT contract for in-progress drags.
         val type = if (pressedButtons != 0) MouseEvent.MOUSE_DRAGGED else MouseEvent.MOUSE_MOVED
-        dispatchMouse(type = type, button = NO_BUTTON, modifiers = pressedButtons)
+        dispatchMouse(type = type, button = NO_BUTTON, modifiers = mouseModifiers())
     }
 
     override fun mousePress(buttons: Int) {
         pressedButtons = pressedButtons or buttons
+        pressX = lastX
+        pressY = lastY
         dispatchMouse(
             type = MouseEvent.MOUSE_PRESSED,
             button = buttonNumber(buttons),
-            modifiers = pressedButtons,
+            modifiers = mouseModifiers(),
         )
     }
 
@@ -79,14 +93,36 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
         dispatchMouse(
             type = MouseEvent.MOUSE_RELEASED,
             button = buttonNumber(released),
-            modifiers = pressedButtons,
+            modifiers = mouseModifiers(),
         )
-        dispatchMouse(
-            type = MouseEvent.MOUSE_CLICKED,
-            button = buttonNumber(released),
-            modifiers = pressedButtons,
-        )
+        // MOUSE_CLICKED only fires when the pointer didn't move between press and release —
+        // otherwise this is a drag and AWT suppresses the click. Skipping the synthetic click
+        // here is what stops `RobotDriver.swipe(...)` from triggering a spurious click at its
+        // end target.
+        if (lastX == pressX && lastY == pressY) {
+            val now = System.currentTimeMillis()
+            lastClickCount =
+                if (
+                    lastX == lastClickX &&
+                        lastY == lastClickY &&
+                        (now - lastClickTimeMs) < DOUBLE_CLICK_INTERVAL_MS
+                ) {
+                    lastClickCount + 1
+                } else {
+                    1
+                }
+            lastClickX = lastX
+            lastClickY = lastY
+            lastClickTimeMs = now
+            dispatchMouse(
+                type = MouseEvent.MOUSE_CLICKED,
+                button = buttonNumber(released),
+                modifiers = mouseModifiers(),
+            )
+        }
     }
+
+    private fun mouseModifiers(): Int = pressedButtons or heldKeyModifiers
 
     override fun mouseWheel(wheelClicks: Int) {
         val window = findWindowAt(lastX, lastY) ?: return
@@ -101,7 +137,7 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
                 target,
                 MouseEvent.MOUSE_WHEEL,
                 System.currentTimeMillis(),
-                pressedButtons,
+                mouseModifiers(),
                 lastX - origin.x,
                 lastY - origin.y,
                 0, // clickCount
@@ -174,7 +210,7 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
                 modifiers,
                 localX,
                 localY,
-                if (type == MouseEvent.MOUSE_CLICKED) 1 else 0,
+                if (type == MouseEvent.MOUSE_CLICKED) lastClickCount else 0,
                 false, // popupTrigger
                 button,
             )
@@ -268,6 +304,11 @@ private fun buttonNumber(buttonMask: Int): Int =
     }
 
 private const val NO_BUTTON: Int = MouseEvent.NOBUTTON
+
+// Conservative double-click window — matches the typical OS default. Two press/release pairs
+// at the same coordinates within this window count as a double-click, so doubleClick() emits
+// MOUSE_CLICKED with clickCount=2 on the second pair instead of two clickCount=1 events.
+private const val DOUBLE_CLICK_INTERVAL_MS: Long = 500L
 
 // Conservative subset of printable VK_ codes for KeyEvent's keyChar; matches what RobotDriver
 // typically dispatches via direct keyPress.
