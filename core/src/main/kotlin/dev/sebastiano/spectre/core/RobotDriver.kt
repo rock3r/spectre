@@ -65,13 +65,16 @@ internal constructor(
         val firstPoint = points.first()
         robot.mouseMove(firstPoint.x, firstPoint.y)
         robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
-        for (point in points.drop(1)) {
-            robot.mouseMove(point.x, point.y)
-            if (pausePerStepMs > 0) {
-                Thread.sleep(pausePerStepMs)
+        try {
+            for (point in points.drop(1)) {
+                robot.mouseMove(point.x, point.y)
+                if (pausePerStepMs > 0) {
+                    Thread.sleep(pausePerStepMs)
+                }
             }
+        } finally {
+            robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
         }
-        robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
     }
 
     fun typeText(text: String) {
