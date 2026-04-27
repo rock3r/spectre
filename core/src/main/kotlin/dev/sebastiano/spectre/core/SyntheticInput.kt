@@ -78,6 +78,24 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
         pressedButtons = pressedButtons or buttons
         pressX = lastX
         pressY = lastY
+        // Compute the click sequence count at press time so MOUSE_PRESSED, MOUSE_RELEASED, and
+        // (if no drag) MOUSE_CLICKED all carry the same count. Real AWT fires the second press
+        // of a double-click with `clickCount = 2`, so listeners that detect double-clicks from
+        // press/release events (rather than CLICKED) need this too.
+        val now = System.currentTimeMillis()
+        lastClickCount =
+            if (
+                lastX == lastClickX &&
+                    lastY == lastClickY &&
+                    (now - lastClickTimeMs) < DOUBLE_CLICK_INTERVAL_MS
+            ) {
+                lastClickCount + 1
+            } else {
+                1
+            }
+        lastClickX = lastX
+        lastClickY = lastY
+        lastClickTimeMs = now
         dispatchMouse(
             type = MouseEvent.MOUSE_PRESSED,
             button = buttonNumber(buttons),
@@ -100,20 +118,6 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
         // here is what stops `RobotDriver.swipe(...)` from triggering a spurious click at its
         // end target.
         if (lastX == pressX && lastY == pressY) {
-            val now = System.currentTimeMillis()
-            lastClickCount =
-                if (
-                    lastX == lastClickX &&
-                        lastY == lastClickY &&
-                        (now - lastClickTimeMs) < DOUBLE_CLICK_INTERVAL_MS
-                ) {
-                    lastClickCount + 1
-                } else {
-                    1
-                }
-            lastClickX = lastX
-            lastClickY = lastY
-            lastClickTimeMs = now
             dispatchMouse(
                 type = MouseEvent.MOUSE_CLICKED,
                 button = buttonNumber(released),
@@ -123,6 +127,14 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
     }
 
     private fun mouseModifiers(): Int = pressedButtons or heldKeyModifiers
+
+    private fun clickCountFor(eventType: Int): Int =
+        when (eventType) {
+            MouseEvent.MOUSE_PRESSED,
+            MouseEvent.MOUSE_RELEASED,
+            MouseEvent.MOUSE_CLICKED -> lastClickCount
+            else -> 0
+        }
 
     override fun mouseWheel(wheelClicks: Int) {
         val window = findWindowAt(lastX, lastY) ?: return
@@ -222,7 +234,7 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
                 modifiers,
                 localX,
                 localY,
-                if (type == MouseEvent.MOUSE_CLICKED) lastClickCount else 0,
+                clickCountFor(type),
                 false, // popupTrigger
                 button,
             )

@@ -77,12 +77,18 @@ class SampleAppFixture(
         }
         // The Window enters the AWT hierarchy a few frames after application{} starts. Poll a
         // bootstrap WindowTracker until it surfaces our window so we can construct the
-        // automator with a synthetic driver bound to it.
+        // automator with a synthetic driver bound to it. Match by title — `Window.getWindows()`
+        // can return multiple top-level windows in unspecified order (other JVM windows, the
+        // sample app's previous instance, etc.), so taking `.first()` would risk attaching the
+        // synthetic driver to an unrelated surface.
         val bootstrapTracker = WindowTracker()
         val deadline = System.nanoTime() + startupTimeout.inWholeNanoseconds
         while (System.nanoTime() < deadline) {
             bootstrapTracker.refresh()
-            val tracked = bootstrapTracker.trackedWindows.firstOrNull()
+            val tracked =
+                bootstrapTracker.trackedWindows.firstOrNull {
+                    runCatching { (it.window as? java.awt.Frame)?.title }.getOrNull() == title
+                }
             if (tracked != null) {
                 _automator =
                     ComposeAutomator.inProcess(
@@ -95,7 +101,7 @@ class SampleAppFixture(
             }
             Thread.sleep(WINDOW_POLL.inWholeMilliseconds)
         }
-        error("Main window did not appear within $startupTimeout")
+        error("Main window with title '$title' did not appear within $startupTimeout")
     }
 
     fun stop() {
