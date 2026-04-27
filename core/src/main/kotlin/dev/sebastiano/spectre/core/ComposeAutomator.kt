@@ -5,6 +5,7 @@ import java.awt.Rectangle
 import java.awt.event.KeyEvent
 import java.awt.image.BufferedImage
 import java.awt.image.DataBufferInt
+import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -154,6 +155,24 @@ private constructor(
     fun unregisterIdlingResource(resource: AutomatorIdlingResource) {
         idlingResources.remove(resource)
     }
+
+    /**
+     * Bracket [block] with a profiling/tracing recording, writing the captured trace to [output].
+     *
+     * The default [tracer] is [PerfettoTracer], which uses `androidx.tracing-wire-desktop` to write
+     * standard Perfetto trace files into [output] (which is treated as a directory). Open the
+     * resulting files at [ui.perfetto.dev](https://ui.perfetto.dev). Pass a custom [Tracer] (e.g. a
+     * JFR adapter, in-memory event collector, etc.) to integrate with a different recorder.
+     *
+     * The block's return value is propagated to the caller. If the block throws, [Tracer.stop]
+     * still runs so the partial trace is flushed to disk; any exception thrown by `stop` is
+     * attached as a suppressed exception so the original failure stays visible.
+     */
+    suspend fun <T> withTracing(
+        output: Path,
+        tracer: Tracer = PerfettoTracer(),
+        block: suspend () -> T,
+    ): T = withTracingInternal(output, tracer, block)
 
     suspend fun waitForIdle(
         timeout: Duration = DEFAULT_WAIT_TIMEOUT,

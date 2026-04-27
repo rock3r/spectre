@@ -12,6 +12,7 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.swing)
+    implementation(libs.androidx.tracing.wire)
     detektPlugins(libs.compose.rules.detekt)
 
     testImplementation(libs.kotlin.testJunit5)
