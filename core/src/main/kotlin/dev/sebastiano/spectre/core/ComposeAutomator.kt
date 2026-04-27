@@ -5,6 +5,7 @@ import java.awt.Rectangle
 import java.awt.event.KeyEvent
 import java.awt.image.BufferedImage
 import java.awt.image.DataBufferInt
+import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -153,6 +154,49 @@ private constructor(
 
     fun unregisterIdlingResource(resource: AutomatorIdlingResource) {
         idlingResources.remove(resource)
+    }
+
+    /**
+     * Bracket [block] with a profiling/tracing recording, writing the captured trace to [output].
+     *
+     * The default [tracer] is [JfrTracer], which records a Java Flight Recorder `.jfr` file using
+     * the JDK's built-in default profile. JFR is supported on every modern JDK and Perfetto can
+     * ingest the resulting file directly. Pass a custom [Tracer] (e.g. an `androidx.tracing` /
+     * Perfetto SDK binding) to integrate with a different recorder.
+     *
+     * The block's return value is propagated to the caller. If the block throws, [Tracer.stop]
+     * still runs so the partial trace is flushed to disk; any exception thrown by `stop` is
+     * attached as a suppressed exception so the original failure stays visible.
+     */
+    suspend fun <T> withTracing(
+        output: Path,
+        tracer: Tracer = JfrTracer(),
+        block: suspend () -> T,
+    ): T {
+        tracer.start()
+        var blockError: Throwable? = null
+        var result: T? = null
+        // The block runs untrusted scenario code; we want every failure mode propagated to the
+        // caller after the trace has been flushed, hence the broad catch.
+        @Suppress("TooGenericExceptionCaught")
+        try {
+            result = block()
+        } catch (t: Throwable) {
+            blockError = t
+        }
+        @Suppress("TooGenericExceptionCaught")
+        try {
+            tracer.stop(output)
+        } catch (stopError: Throwable) {
+            if (blockError != null) {
+                blockError.addSuppressed(stopError)
+            } else {
+                throw stopError
+            }
+        }
+        if (blockError != null) throw blockError
+        @Suppress("UNCHECKED_CAST")
+        return result as T
     }
 
     suspend fun waitForIdle(
