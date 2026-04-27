@@ -119,6 +119,25 @@ class WaitForIdleTest {
     }
 
     @Test
+    fun `waitForIdle throws if quiet period only completes after the deadline`() = runTest {
+        // 50ms timeout with 30ms pollInterval and 40ms quietPeriod: the third sample at t=60
+        // satisfies the quiet period, but t=60 is already past the 50ms deadline.
+        val clock = FakeClock()
+        assertFailsWith<IdleTimeoutException> {
+            waitForIdleInternal(
+                timeout = 50.milliseconds,
+                quietPeriod = 40.milliseconds,
+                pollInterval = 30.milliseconds,
+                idlingResources = { emptyList() },
+                drainEdt = {},
+                fingerprint = { "stable" },
+                clock = clock,
+                sleep = clock::advance,
+            )
+        }
+    }
+
+    @Test
     fun `waitForIdle throws when fingerprint never settles`() = runTest {
         val clock = FakeClock()
         var counter = 0

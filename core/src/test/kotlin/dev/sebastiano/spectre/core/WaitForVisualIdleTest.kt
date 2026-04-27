@@ -78,6 +78,26 @@ class WaitForVisualIdleTest {
     }
 
     @Test
+    fun `waitForVisualIdle throws if the streak only completes after the deadline`() = runTest {
+        // 50ms timeout, 30ms pollInterval, stableFrames=2: streak completes at the second
+        // identical sample (t=30) which is fine; but if the deadline already passed by the
+        // time we accept the streak, we must throw rather than return success.
+        val clock = FakeClock()
+        // Using stableFrames=3 with timeout 50ms / pollInterval 30ms: third matching sample
+        // lands at t=60, after the 50ms deadline.
+        assertFailsWith<IdleTimeoutException> {
+            waitForVisualIdleInternal(
+                timeout = 50.milliseconds,
+                stableFrames = 3,
+                pollInterval = 30.milliseconds,
+                frameHash = { 7 },
+                clock = clock,
+                sleep = clock::advance,
+            )
+        }
+    }
+
+    @Test
     fun `waitForVisualIdle requires positive stableFrames`() = runTest {
         val clock = FakeClock()
         assertFailsWith<IllegalArgumentException> {

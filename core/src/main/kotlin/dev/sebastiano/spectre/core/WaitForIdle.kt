@@ -49,6 +49,7 @@ internal suspend fun waitForIdleInternal(
         drainEdt()
         val resources = idlingResources()
         val busy = resources.firstOrNull { !it.isIdleNow }
+        var idleReached = false
 
         if (busy != null) {
             stableSince = null
@@ -58,14 +59,16 @@ internal suspend fun waitForIdleInternal(
             val now = clock.now()
             if (fp == lastFingerprint) {
                 val sinceMs = stableSince ?: now.also { stableSince = it }
-                if (now - sinceMs >= quietPeriod.inWholeMilliseconds) return
+                if (now - sinceMs >= quietPeriod.inWholeMilliseconds) idleReached = true
             } else {
                 lastFingerprint = fp
                 stableSince = now
             }
         }
 
-        if (clock.now() >= deadline) {
+        val nowAfterSample = clock.now()
+        if (idleReached && nowAfterSample <= deadline) return
+        if (nowAfterSample >= deadline) {
             val diagnostic =
                 resources
                     .filter { !it.isIdleNow }
@@ -106,9 +109,11 @@ internal suspend fun waitForVisualIdleInternal(
         }
         window.addLast(hash)
         if (window.size > stableFrames) window.removeFirst()
-        if (window.size == stableFrames && window.all { it == window.first() }) return
+        val streakComplete = window.size == stableFrames && window.all { it == window.first() }
 
-        if (clock.now() >= deadline) {
+        val nowAfterSample = clock.now()
+        if (streakComplete && nowAfterSample <= deadline) return
+        if (nowAfterSample >= deadline) {
             throw IdleTimeoutException(
                 "waitForVisualIdle timed out after ${timeout.inWholeMilliseconds}ms: " +
                     "frames did not stabilise across $stableFrames samples"
