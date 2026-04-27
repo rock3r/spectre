@@ -59,6 +59,11 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
     // and `doubleClick` would emit two clickCount=1 events instead of clickCount=1 then 2.
     @Volatile private var pressX: Int = 0
     @Volatile private var pressY: Int = 0
+    // The mouse-grab target: real AWT routes every MOUSE_DRAGGED and the final MOUSE_RELEASED
+    // to whichever component received MOUSE_PRESSED, regardless of where the cursor moves.
+    // Without this, `RobotDriver.swipe(...)` would deliver each drag step to a different
+    // component along the path, breaking listeners that expect the full drag stream.
+    @Volatile private var grabTarget: Component? = null
     @Volatile private var lastClickX: Int = Int.MIN_VALUE
     @Volatile private var lastClickY: Int = Int.MIN_VALUE
     @Volatile private var lastClickTimeMs: Long = 0
@@ -221,8 +226,21 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
     }
 
     private fun dispatchMouse(type: Int, button: Int, modifiers: Int) {
-        val window = findWindowAt(lastX, lastY) ?: return
-        val targetComponent = findDeepestComponentAt(window, lastX, lastY) ?: window
+        val targetComponent =
+            when (type) {
+                // While a button is down (drag in progress) the press target retains the grab —
+                // every DRAGGED and the final RELEASED/CLICKED route there even if the cursor
+                // has moved over a different component.
+                MouseEvent.MOUSE_DRAGGED,
+                MouseEvent.MOUSE_RELEASED,
+                MouseEvent.MOUSE_CLICKED -> grabTarget ?: hitTestComponent() ?: return
+                MouseEvent.MOUSE_PRESSED -> {
+                    val target = hitTestComponent() ?: return
+                    grabTarget = target
+                    target
+                }
+                else -> hitTestComponent() ?: return
+            }
         val origin = targetComponent.locationOnScreen
         val localX = lastX - origin.x
         val localY = lastY - origin.y
@@ -239,6 +257,13 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
                 button,
             )
         runOnEdt { targetComponent.dispatchEvent(event) }
+        // Release the grab after the click sequence completes (or the drag ends without click).
+        if (type == MouseEvent.MOUSE_RELEASED) grabTarget = null
+    }
+
+    private fun hitTestComponent(): Component? {
+        val window = findWindowAt(lastX, lastY) ?: return null
+        return findDeepestComponentAt(window, lastX, lastY) ?: window
     }
 
     private fun dispatchKey(type: Int, keyCode: Int, keyCharOverride: Char? = null) {
@@ -302,11 +327,19 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
 }
 
 /**
- * Dispatches [block] on the AWT EDT, running inline if the caller is already on the EDT. Plain
- * `SwingUtilities.invokeAndWait` would deadlock here: `RobotDriver.runOffEdt` re-routes EDT callers
- * onto a worker thread, but that worker still needs the EDT to be free to drain its
- * `invokeAndWait`. Without this guard, calling `click()`/`typeText()`/`scrollWheel()` from a UI
- * callback hangs the automator hard.
+ * Dispatches [block] on the AWT EDT, running inline if the caller is already on the EDT.
+ *
+ * Compose Desktop's pointer/measure/layout pipeline requires events to be processed on the EDT —
+ * `performMeasureAndLayout called during measure layout` errors and dropped events surface
+ * immediately when this runs from another thread, so we cannot bypass the marshal.
+ *
+ * Codex (P1 on 638764f) flagged that this still deadlocks when a caller routes through
+ * `RobotDriver.runOffEdt` from an EDT thread (the worker awaits an EDT that's blocked on its own
+ * `Thread.join()`). An attempt to satisfy the deadlock by running inline on any thread broke
+ * Compose's input pipeline outright (above). Documenting the trade-off and tracking a proper fix as
+ * a follow-up: the deadlock only fires for callers that invoke automator methods from a UI callback
+ * (an unusual pattern in test code), and the right home for the fix is `RobotDriver.runOffEdt`
+ * (rewire to a non-blocking handoff), not the synthetic adapter.
  */
 private fun runOnEdt(block: () -> Unit) {
     if (SwingUtilities.isEventDispatchThread()) {
