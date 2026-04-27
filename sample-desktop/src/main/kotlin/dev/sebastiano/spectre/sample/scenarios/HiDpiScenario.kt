@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -44,7 +45,10 @@ private fun HiDpiContent() {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Two known-position targets. Use these to validate Retina coordinate maths.")
-            Box(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            // Explicit height so the parent Box covers both targets — Modifier.offset shifts
+            // placement without expanding the parent's measured size, so without a fixed
+            // height the second target at y = 80.dp would render outside the Card and clip.
+            Box(modifier = Modifier.fillMaxWidth().height(160.dp).padding(16.dp)) {
                 HiDpiTarget(offsetXDp = 40, offsetYDp = 0)
                 HiDpiTarget(offsetXDp = 200, offsetYDp = 80)
             }

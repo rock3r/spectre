@@ -3,8 +3,10 @@ package dev.sebastiano.spectre.sample
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -45,7 +47,7 @@ fun App(modifier: Modifier = Modifier) {
                     style = MaterialTheme.typography.headlineMedium,
                     modifier = Modifier.testTag("header"),
                 )
-                Spacer4()
+                Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier.fillMaxSize(),
                     horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -101,9 +103,4 @@ private fun ScenarioPicker(
             }
         }
     }
-}
-
-@Composable
-private fun Spacer4() {
-    androidx.compose.foundation.layout.Spacer(modifier = Modifier.padding(4.dp))
 }
