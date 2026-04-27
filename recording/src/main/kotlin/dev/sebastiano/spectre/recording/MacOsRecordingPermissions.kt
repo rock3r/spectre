@@ -43,27 +43,36 @@ object MacOsRecordingPermissions {
         )
     }
 
-    private fun probeScreenRecordingPermission(): PermissionStatus =
-        runOsascript(
-                // CGPreflightScreenCaptureAccess via the AppleScript bridge isn't directly
-                // available — the cheap proxy is to ask whether the JVM process has been granted
-                // the right via `do shell script` on `tccutil reset` (which prompts on missing
-                // permission). We use a read-only path: System Events' "tell" returns success
-                // when accessibility is allowed; for screen recording there's no AppleScript
-                // proxy, so we fall back to PermissionStatus.Unknown.
-                // This keeps v1 honest: we return Unknown rather than pretending we know.
-                "return \"unknown\""
-            )
-            .let { PermissionStatus.Unknown }
+    private fun probeScreenRecordingPermission(): PermissionStatus {
+        // CGPreflightScreenCaptureAccess lives in CoreGraphics and isn't reachable from pure
+        // JVM. There's no AppleScript proxy for the Screen Recording TCC entry either, so for
+        // v1 we honestly report Unknown rather than pretending we know — full native detection
+        // is deferred to v2 alongside the ScreenCaptureKit JNI/Panama work.
+        return PermissionStatus.Unknown
+    }
 
     private fun probeAccessibilityPermission(): PermissionStatus {
-        val output =
+        // Run the script and ask runOsascript to surface the exit status separately. Common
+        // Automation-permission failures on macOS Ventura+ produce non-blank output (e.g.
+        // "execution error: Not authorized to send Apple events to System Events. (-1743)")
+        // with a non-zero exit code, so a successful-looking output without the matching exit
+        // code must be reported as Unknown rather than Granted.
+        val result =
             runOsascript("tell application \"System Events\" to return name of first process")
         return when {
-            output == null -> PermissionStatus.Unknown
-            output.contains("not allowed assistive access", ignoreCase = true) ->
-                PermissionStatus.Denied
-            output.isNotBlank() -> PermissionStatus.Granted
+            result == null -> PermissionStatus.Unknown
+            result.exitCode != 0 -> {
+                if (
+                    result.output.contains("not allowed assistive access", ignoreCase = true) ||
+                        result.output.contains("Not authorized", ignoreCase = true) ||
+                        result.output.contains("-1743") // Apple Events authorization
+                ) {
+                    PermissionStatus.Denied
+                } else {
+                    PermissionStatus.Unknown
+                }
+            }
+            result.output.isNotBlank() -> PermissionStatus.Granted
             else -> PermissionStatus.Unknown
         }
     }
@@ -78,7 +87,7 @@ object MacOsRecordingPermissions {
         }
 
     @Suppress("TooGenericExceptionCaught")
-    private fun runOsascript(script: String): String? =
+    private fun runOsascript(script: String): OsascriptResult? =
         try {
             val process =
                 ProcessBuilder("osascript", "-e", script).redirectErrorStream(true).start()
@@ -86,11 +95,16 @@ object MacOsRecordingPermissions {
                 process.destroyForcibly()
                 null
             } else {
-                process.inputStream.bufferedReader().use { it.readText() }.trim()
+                OsascriptResult(
+                    output = process.inputStream.bufferedReader().use { it.readText() }.trim(),
+                    exitCode = process.exitValue(),
+                )
             }
         } catch (_: Throwable) {
             null
         }
+
+    private data class OsascriptResult(val output: String, val exitCode: Int)
 
     private fun isMacOs(): Boolean = System.getProperty("os.name").lowercase().contains("mac")
 

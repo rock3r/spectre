@@ -59,7 +59,12 @@ class FfmpegRecorder(
     private object SystemProcessFactory : ProcessFactory {
         override fun start(argv: List<String>): Process =
             ProcessBuilder(argv)
-                .redirectErrorStream(true)
+                // Discard ffmpeg's stdout and stderr. We never consume them, and leaving them
+                // on the default pipe means a noisy ffmpeg run can fill the pipe buffer and
+                // deadlock the encoder. DISCARD routes the streams to /dev/null at the OS
+                // level so ffmpeg can write freely without backpressure.
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
                 // ffmpeg listens for `q` on stdin to flush + exit cleanly. We need PIPE so we
                 // can send it from RecordingHandle.stop().
                 .redirectInput(ProcessBuilder.Redirect.PIPE)
@@ -107,8 +112,8 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
         if (!stopped.compareAndSet(false, true)) return
         if (!process.isAlive) return
         // Send 'q' on stdin: ffmpeg's documented clean-shutdown signal. The subprocess flushes
-        // its mux buffer, finalises the output file, and exits. SIGTERM as a fallback for
-        // stalled processes.
+        // its mux buffer, finalises the output file, and exits. SIGTERM / SIGKILL as fallback
+        // for stalled processes.
         @Suppress("TooGenericExceptionCaught")
         try {
             process.outputStream?.use { it.write('q'.code) }
@@ -118,12 +123,31 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
             // Any failure here still goes to the SIGTERM fallback.
             if (t is InterruptedException) Thread.currentThread().interrupt()
         }
-        if (!process.waitFor(SHUTDOWN_GRACE_SECONDS, TimeUnit.SECONDS)) {
+        // Catch InterruptedException around every waitFor so cancellation never short-circuits
+        // the SIGTERM/SIGKILL fallback path. We still call destroyForcibly() in that case so
+        // ffmpeg can't outlive us, then re-set the interrupt flag for the caller to observe.
+        var interrupted = false
+        val gracefulExit =
+            try {
+                process.waitFor(SHUTDOWN_GRACE_SECONDS, TimeUnit.SECONDS)
+            } catch (_: InterruptedException) {
+                interrupted = true
+                false
+            }
+        if (!gracefulExit) {
             process.destroy()
-            if (!process.waitFor(FORCE_KILL_SECONDS, TimeUnit.SECONDS)) {
+            val terminatedAfterDestroy =
+                try {
+                    process.waitFor(FORCE_KILL_SECONDS, TimeUnit.SECONDS)
+                } catch (_: InterruptedException) {
+                    interrupted = true
+                    false
+                }
+            if (!terminatedAfterDestroy) {
                 process.destroyForcibly()
             }
         }
+        if (interrupted) Thread.currentThread().interrupt()
     }
 
     private companion object {

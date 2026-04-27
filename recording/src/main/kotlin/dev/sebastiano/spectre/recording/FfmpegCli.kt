@@ -33,7 +33,10 @@ internal object FfmpegCli {
             // to be replaced if it already exists.
             add("-y")
             // avfoundation source: input frame rate, optional cursor capture, then the device
-            // selector (display index 1 = main display per the FFmpeg avfoundation docs).
+            // selector. We use the device *name* `Capture screen 0` rather than a numeric
+            // index — index 1 is wrong on Macs without a built-in camera (Mac Mini, Mac Pro,
+            // external-display setups) where the screen sits at index 0. The name form is
+            // stable across hardware and is the form FFmpeg's avfoundation docs recommend.
             add("-f")
             add("avfoundation")
             add("-framerate")
@@ -41,7 +44,7 @@ internal object FfmpegCli {
             add("-capture_cursor")
             add(if (options.captureCursor) "1" else "0")
             add("-i")
-            add("1")
+            add("Capture screen 0")
             // Crop filter to the requested region.
             add("-vf")
             add("crop=${region.width}:${region.height}:${region.x}:${region.y}")

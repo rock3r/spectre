@@ -32,7 +32,8 @@ class FfmpegCliTest {
         assertContainsSequence(argv, listOf("-f", "avfoundation"))
         assertContainsSequence(argv, listOf("-framerate", "60"))
         assertContainsSequence(argv, listOf("-capture_cursor", "0"))
-        assertContainsSequence(argv, listOf("-i", "1"))
+        // Device name (not numeric index) — stable across hardware with/without built-in cameras.
+        assertContainsSequence(argv, listOf("-i", "Capture screen 0"))
     }
 
     @Test
