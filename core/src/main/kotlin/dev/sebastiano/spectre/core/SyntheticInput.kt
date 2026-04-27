@@ -242,10 +242,13 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
                 heldKeyModifiers,
                 keyCode,
                 // Real OS-injected KEY_PRESSED/KEY_RELEASED events for printable keys carry
-                // the produced char too (per JavaDoc the value is "not guaranteed to be
-                // meaningful" but it is set, and Compose Desktop's paste path reads it). The
-                // explicit override branch is for the synthetic KEY_TYPED dispatch in
-                // `keyPress`, which passes a Shift-aware character.
+                // the produced char too. JavaDoc says the value is "not guaranteed to be
+                // meaningful" outside of KEY_TYPED, but in practice it IS set, and Compose
+                // Desktop's paste path on this version reads `keyChar` on KEY_PRESSED to
+                // resolve Cmd/Ctrl+V — setting CHAR_UNDEFINED here makes synthetic paste flake.
+                // Codex flagged this as a P2 fidelity issue but the empirical trade-off favours
+                // the current behaviour. The override branch carries the Shift-aware char from
+                // `keyPress`'s KEY_TYPED dispatch.
                 keyCharOverride
                     ?: if (keyCode in PRINTABLE_KEY_CODES)
                         keyCharFor(
