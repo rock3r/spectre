@@ -19,9 +19,12 @@ import org.junit.rules.ExternalResource
  * The [factory] defaults to `ComposeAutomator.inProcess()`. Tests that need a stub for headless CI
  * or focused unit testing can supply their own factory.
  */
-class ComposeAutomatorRule(
-    private val factory: AutomatorFactory = { ComposeAutomator.inProcess() }
-) : ExternalResource() {
+class ComposeAutomatorRule(private val factory: AutomatorFactory) : ExternalResource() {
+
+    // Explicit no-arg secondary constructor so JUnit 4 callers can write
+    // `@get:Rule val r = ComposeAutomatorRule()` without relying on Kotlin's
+    // default-parameter constructor synthesis (consistent with ComposeAutomatorExtension).
+    constructor() : this({ ComposeAutomator.inProcess() })
 
     private var instance: ComposeAutomator? = null
 

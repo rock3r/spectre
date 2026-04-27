@@ -33,9 +33,13 @@ import org.junit.jupiter.api.extension.ParameterResolver
  * The [factory] defaults to `ComposeAutomator.inProcess()`. Tests that need a stub for headless CI
  * or focused unit testing can supply their own factory.
  */
-class ComposeAutomatorExtension(
-    private val factory: AutomatorFactory = { ComposeAutomator.inProcess() }
-) : BeforeEachCallback, AfterEachCallback, ParameterResolver {
+class ComposeAutomatorExtension(private val factory: AutomatorFactory) :
+    BeforeEachCallback, AfterEachCallback, ParameterResolver {
+
+    // Explicit no-arg secondary constructor so JUnit 5's @ExtendWith — which reflectively
+    // calls the no-arg constructor — can instantiate the extension. Kotlin's default-parameter
+    // primary constructor does not emit a true JVM no-arg overload without @JvmOverloads.
+    constructor() : this({ ComposeAutomator.inProcess() })
 
     private var instance: ComposeAutomator? = null
 
@@ -60,10 +64,12 @@ class ComposeAutomatorExtension(
         extensionContext: ExtensionContext,
     ): Boolean =
         parameterContext.parameter.type == ComposeAutomator::class.java &&
-            // Constructor injection happens before beforeEach, so the per-test instance does not
-            // exist yet. Restrict resolution to method/lifecycle parameters where the instance
-            // is guaranteed to be available.
-            parameterContext.declaringExecutable is Method
+            parameterContext.declaringExecutable is Method &&
+            // Restrict resolution to per-test method invocations. Constructor parameters and
+            // @BeforeAll / @AfterAll lifecycle hooks run outside the per-test window, when
+            // `instance` is null; rejecting them lets other resolvers handle those slots and
+            // avoids surfacing IllegalStateException to the runner.
+            extensionContext.testMethod.isPresent
 
     override fun resolveParameter(
         parameterContext: ParameterContext,
