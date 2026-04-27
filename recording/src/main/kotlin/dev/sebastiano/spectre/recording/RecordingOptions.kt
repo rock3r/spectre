@@ -14,16 +14,28 @@ data class RecordingOptions(
      * encoders work too if the platform supports them.
      */
     val codec: String = DEFAULT_CODEC,
+    /**
+     * Index of the macOS display to capture from, used to build ffmpeg's avfoundation device name
+     * `Capture screen $screenIndex`. Defaults to `0` — the primary display. Multi-monitor users
+     * whose target region lives on a secondary display must set this to the matching index
+     * (typically the AWT `GraphicsDevice` index of the screen, but verify by running `ffmpeg -f
+     * avfoundation -list_devices true -i ""` once and matching the "Capture screen N" entries
+     * against your physical display arrangement). The crop coordinates in the region are
+     * interpreted relative to the chosen screen's top-left.
+     */
+    val screenIndex: Int = DEFAULT_SCREEN_INDEX,
 ) {
 
     init {
         require(frameRate > 0) { "frameRate must be positive, was $frameRate" }
         require(codec.isNotBlank()) { "codec must not be blank" }
+        require(screenIndex >= 0) { "screenIndex must be non-negative, was $screenIndex" }
     }
 
     companion object {
 
         const val DEFAULT_FRAME_RATE: Int = 30
         const val DEFAULT_CODEC: String = "libx264"
+        const val DEFAULT_SCREEN_INDEX: Int = 0
     }
 }

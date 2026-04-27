@@ -43,6 +43,19 @@ class FfmpegCliTest {
     }
 
     @Test
+    fun `argv selects the requested screen index`() {
+        val argv =
+            FfmpegCli.avfoundationRegionCapture(
+                ffmpeg,
+                region,
+                output,
+                RecordingOptions(screenIndex = 2),
+            )
+        // Multi-monitor: the device name carries the requested screen index.
+        assertContainsSequence(argv, listOf("-i", "Capture screen 2"))
+    }
+
+    @Test
     fun `argv applies the configured codec and output path`() {
         val argv =
             FfmpegCli.avfoundationRegionCapture(

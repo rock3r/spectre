@@ -16,4 +16,9 @@ class RecordingOptionsTest {
         assertFailsWith<IllegalArgumentException> { RecordingOptions(codec = "") }
         assertFailsWith<IllegalArgumentException> { RecordingOptions(codec = "   ") }
     }
+
+    @Test
+    fun `negative screenIndex is rejected`() {
+        assertFailsWith<IllegalArgumentException> { RecordingOptions(screenIndex = -1) }
+    }
 }
