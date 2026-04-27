@@ -59,6 +59,18 @@ class FfmpegRecorder(
                 process.waitFor(STARTUP_PROBE_MILLIS, TimeUnit.MILLISECONDS)
             } catch (e: InterruptedException) {
                 process.destroyForcibly()
+                // destroyForcibly() is asynchronous — wait once more so the orphan ffmpeg
+                // really has gone before we propagate the interrupt to the caller. We
+                // explicitly do NOT catch InterruptedException here: another interrupt
+                // during this wait means the JVM is being torn down anyway, and the daemon
+                // semantics of subprocesses will let it die with the JVM.
+                @Suppress("TooGenericExceptionCaught", "SwallowedException")
+                try {
+                    process.waitFor(FORCE_KILL_DURING_START_SECONDS, TimeUnit.SECONDS)
+                } catch (_: Throwable) {
+                    // Best effort — the interrupt below carries the cancellation signal
+                    // upstream regardless.
+                }
                 Thread.currentThread().interrupt()
                 throw e
             }
@@ -243,3 +255,4 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
 }
 
 private const val STARTUP_PROBE_MILLIS: Long = 200
+private const val FORCE_KILL_DURING_START_SECONDS: Long = 2
