@@ -20,8 +20,8 @@ class WaitForIdleTest {
             quietPeriod = 64.milliseconds,
             pollInterval = 16.milliseconds,
             idlingResources = { emptyList() },
-            drainEdt = { drained++ },
-            fingerprint = { "stable" },
+            drainEdt = { _ -> drained++ },
+            fingerprint = { _ -> "stable" },
             clock = clock,
             sleep = clock::advance,
         )
@@ -41,7 +41,7 @@ class WaitForIdleTest {
             pollInterval = 16.milliseconds,
             idlingResources = { emptyList() },
             drainEdt = {},
-            fingerprint = {
+            fingerprint = { _ ->
                 val next = sequence.removeFirst()
                 readings += next
                 next
@@ -79,8 +79,8 @@ class WaitForIdleTest {
             quietPeriod = 16.milliseconds,
             pollInterval = 16.milliseconds,
             idlingResources = { listOf(resource) },
-            drainEdt = {},
-            fingerprint = { "stable" },
+            drainEdt = { _ -> },
+            fingerprint = { _ -> "stable" },
             clock = clock,
             sleep = clock::advance,
         )
@@ -129,7 +129,7 @@ class WaitForIdleTest {
             pollInterval = 16.milliseconds,
             idlingResources = { emptyList() },
             drainEdt = {},
-            fingerprint = {
+            fingerprint = { _ ->
                 samples++
                 "stable"
             },
@@ -205,7 +205,7 @@ class WaitForIdleTest {
                 pollInterval = 16.milliseconds,
                 idlingResources = { emptyList() },
                 drainEdt = {},
-                fingerprint = { (counter++).toString() },
+                fingerprint = { _ -> (counter++).toString() },
                 clock = clock,
                 sleep = clock::advance,
             )

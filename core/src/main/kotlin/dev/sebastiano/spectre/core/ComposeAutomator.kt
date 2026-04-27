@@ -183,20 +183,23 @@ private constructor(
         )
     }
 
-    private fun drainEdt() {
+    private fun drainEdt(remainingMs: Long) {
         if (SwingUtilities.isEventDispatchThread()) return
         // Bounded drain: invokeAndWait can hang indefinitely if the EDT is deadlocked, which
         // would let waitForIdle silently overrun its timeout. We dispatch via invokeLater and
-        // wait on a latch capped at EDT_DRAIN_BUDGET_MS so a stalled EDT can never out-block
-        // the surrounding wait loop's timeout enforcement.
+        // wait on a latch capped at min(remainingMs, EDT_DRAIN_BUDGET_MS) so neither the
+        // safety budget nor the caller's overall timeout can be overrun.
         val latch = CountDownLatch(1)
         SwingUtilities.invokeLater { latch.countDown() }
-        latch.await(EDT_DRAIN_BUDGET_MS, TimeUnit.MILLISECONDS)
+        val budget = remainingMs.coerceAtMost(EDT_DRAIN_BUDGET_MS).coerceAtLeast(0)
+        latch.await(budget, TimeUnit.MILLISECONDS)
     }
 
-    private fun computeUiFingerprint(): String =
-        runBoundedOnWorker(FINGERPRINT_BUDGET_MS) { computeUiFingerprintUnbounded() }
+    private fun computeUiFingerprint(remainingMs: Long): String {
+        val budget = remainingMs.coerceAtMost(FINGERPRINT_BUDGET_MS).coerceAtLeast(0)
+        return runBoundedOnWorker(budget) { computeUiFingerprintUnbounded() }
             ?: "${EMPTY_FINGERPRINT_PREFIX}${System.nanoTime()}"
+    }
 
     private fun computeUiFingerprintUnbounded(): String = readOnEdt {
         refreshWindows()
@@ -244,7 +247,7 @@ private constructor(
         }
     }
 
-    private fun computeFrameHash(): Int {
+    private fun computeFrameHash(remainingMs: Long): Int {
         // Hash each tracked Compose surface independently, then combine the per-surface hashes.
         // - Sampling the full virtual desktop would let unrelated pixel churn (notifications,
         //   other apps, the cursor outside the app) break the stable-frame streak.
@@ -258,7 +261,8 @@ private constructor(
         // The sampling itself runs on a worker thread bounded by FRAME_HASH_BUDGET_MS so a
         // hung EDT or stuck Robot.createScreenCapture cannot out-block the wait loop's
         // overall timeout enforcement.
-        return runBoundedOnWorker(FRAME_HASH_BUDGET_MS) {
+        val budget = remainingMs.coerceAtMost(FRAME_HASH_BUDGET_MS).coerceAtLeast(0)
+        return runBoundedOnWorker(budget) {
             refreshWindows()
             val rects = composeSurfaceRects()
             if (rects.isEmpty()) {
@@ -312,6 +316,11 @@ private constructor(
             resultRef.get()!!.getOrThrow()
         } else {
             thread.interrupt()
+            // Give the worker a brief grace period to honour the interrupt before we abandon
+            // it. Cooperative blocking calls (invokeAndWait) clean up immediately; this stops
+            // them from being reported as leaked. Native non-interruptible calls still leak,
+            // but the daemon flag keeps a stuck thread from holding the JVM open.
+            latch.await(WORKER_INTERRUPT_GRACE_MS, TimeUnit.MILLISECONDS)
             null
         }
     }
@@ -387,6 +396,7 @@ private const val DEFAULT_STABLE_FRAMES: Int = 3
 private const val EDT_DRAIN_BUDGET_MS: Long = 250
 private const val FRAME_HASH_BUDGET_MS: Long = 500
 private const val FINGERPRINT_BUDGET_MS: Long = 500
+private const val WORKER_INTERRUPT_GRACE_MS: Long = 50
 private const val EMPTY_FINGERPRINT_PREFIX: String = "spectre-fingerprint-budget-elapsed:"
 
 private fun StringBuilder.appendNodeTree(node: AutomatorNode, depth: Int) {

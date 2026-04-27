@@ -36,8 +36,8 @@ internal suspend fun waitForIdleInternal(
     quietPeriod: Duration,
     pollInterval: Duration,
     idlingResources: () -> Collection<AutomatorIdlingResource>,
-    drainEdt: () -> Unit,
-    fingerprint: () -> String,
+    drainEdt: (remainingMs: Long) -> Unit,
+    fingerprint: (remainingMs: Long) -> String,
     clock: MonotonicClock = SystemClock(),
     sleep: suspend (Duration) -> Unit = { delay(it) },
 ) {
@@ -46,7 +46,7 @@ internal suspend fun waitForIdleInternal(
     var lastFingerprint: String? = null
 
     while (true) {
-        drainEdt()
+        drainEdt((deadline - clock.now()).coerceAtLeast(0))
         val resources = idlingResources()
         val busy = resources.firstOrNull { !it.isIdleNow }
         var idleReached = false
@@ -55,7 +55,7 @@ internal suspend fun waitForIdleInternal(
             stableSince = null
             lastFingerprint = null
         } else {
-            val fp = fingerprint()
+            val fp = fingerprint((deadline - clock.now()).coerceAtLeast(0))
             val now = clock.now()
             if (fp != lastFingerprint) {
                 lastFingerprint = fp
@@ -104,7 +104,7 @@ internal suspend fun waitForVisualIdleInternal(
     timeout: Duration,
     stableFrames: Int,
     pollInterval: Duration,
-    frameHash: () -> Int,
+    frameHash: (remainingMs: Long) -> Int,
     clock: MonotonicClock = SystemClock(),
     sleep: suspend (Duration) -> Unit = { delay(it) },
 ) {
@@ -113,7 +113,7 @@ internal suspend fun waitForVisualIdleInternal(
     val window = ArrayDeque<Int>(stableFrames)
 
     while (true) {
-        val hash = frameHash()
+        val hash = frameHash((deadline - clock.now()).coerceAtLeast(0))
         if (window.isNotEmpty() && window.last() != hash) {
             window.clear()
         }

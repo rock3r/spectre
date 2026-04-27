@@ -20,7 +20,7 @@ class WaitForVisualIdleTest {
             timeout = 1.seconds,
             stableFrames = 3,
             pollInterval = 16.milliseconds,
-            frameHash = {
+            frameHash = { _ ->
                 val next = frames.removeFirst()
                 sampled += next
                 next
@@ -42,7 +42,7 @@ class WaitForVisualIdleTest {
             timeout = 1.seconds,
             stableFrames = 3,
             pollInterval = 16.milliseconds,
-            frameHash = {
+            frameHash = { _ ->
                 val next = frames.removeFirst()
                 sampled += next
                 next
@@ -65,7 +65,7 @@ class WaitForVisualIdleTest {
                     timeout = 80.milliseconds,
                     stableFrames = 3,
                     pollInterval = 16.milliseconds,
-                    frameHash = { counter++ },
+                    frameHash = { _ -> counter++ },
                     clock = clock,
                     sleep = clock::advance,
                 )
@@ -90,11 +90,38 @@ class WaitForVisualIdleTest {
                 timeout = 50.milliseconds,
                 stableFrames = 3,
                 pollInterval = 30.milliseconds,
-                frameHash = { 7 },
+                frameHash = { _ -> 7 },
                 clock = clock,
                 sleep = clock::advance,
             )
         }
+    }
+
+    @Test
+    fun `waitForVisualIdle passes the remaining timeout to the frame hash callback`() = runTest {
+        val clock = FakeClock()
+        val budgets = mutableListOf<Long>()
+
+        assertFailsWith<IdleTimeoutException> {
+            waitForVisualIdleInternal(
+                timeout = 100.milliseconds,
+                stableFrames = 5,
+                pollInterval = 30.milliseconds,
+                frameHash = { remainingMs ->
+                    budgets += remainingMs
+                    // Always changing → never streaks → loop runs until deadline.
+                    budgets.size
+                },
+                clock = clock,
+                sleep = clock::advance,
+            )
+        }
+
+        assertTrue(budgets.first() == 100L, "First budget should equal full timeout: $budgets")
+        assertTrue(
+            budgets.zipWithNext().all { (prev, next) -> next <= prev },
+            "Budget should monotonically decrease across polls: $budgets",
+        )
     }
 
     @Test
@@ -105,7 +132,7 @@ class WaitForVisualIdleTest {
                 timeout = 1.seconds,
                 stableFrames = 0,
                 pollInterval = 16.milliseconds,
-                frameHash = { 0 },
+                frameHash = { _ -> 0 },
                 clock = clock,
                 sleep = clock::advance,
             )
