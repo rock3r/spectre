@@ -73,7 +73,15 @@ private fun Route.spectreRoutes(automator: ComposeAutomator) {
     post("/click") {
         automator.refreshWindows()
         val request = call.receive<ClickRequest>()
-        val key = NodeKey.parse(request.nodeKey)
+        // NodeKey.parse throws on malformed input — surface that as a client error (400)
+        // rather than letting it bubble up as a generic 500.
+        val key =
+            try {
+                NodeKey.parse(request.nodeKey)
+            } catch (e: IllegalArgumentException) {
+                call.respond(HttpStatusCode.BadRequest, "Malformed node key: ${e.message}")
+                return@post
+            }
         val node = automator.allNodes().firstOrNull { it.key == key }
         if (node == null) {
             call.respond(HttpStatusCode.NotFound, "No node with key ${request.nodeKey}")

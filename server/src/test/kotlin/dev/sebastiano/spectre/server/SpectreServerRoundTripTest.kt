@@ -89,6 +89,21 @@ class SpectreServerRoundTripTest {
     }
 
     @Test
+    fun `click against a malformed node key returns 400`() = testApplication {
+        application { installSpectreRoutes(headlessAutomator()) }
+        val client = createClient { install(ContentNegotiation) { json() } }
+
+        val response =
+            client.post("/spectre/click") {
+                contentType(ContentType.Application.Json)
+                setBody(ClickRequest(nodeKey = "not-a-valid-key"))
+            }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(response.bodyAsText().contains("Malformed node key"))
+    }
+
+    @Test
     fun `typeText returns 204 No Content`() = testApplication {
         application { installSpectreRoutes(headlessAutomator()) }
         val client = createClient { install(ContentNegotiation) { json() } }
