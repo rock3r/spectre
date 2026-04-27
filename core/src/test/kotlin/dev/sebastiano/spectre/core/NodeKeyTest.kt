@@ -52,4 +52,12 @@ class NodeKeyTest {
         val parsed = NodeKey.parse(original.toString())
         assertEquals(original, parsed)
     }
+
+    @Test
+    fun `owner index participates in node identity`() {
+        val ownerZero = NodeKey(surfaceId = "window:0", ownerIndex = 0, nodeId = 42)
+        val ownerOne = NodeKey(surfaceId = "window:0", ownerIndex = 1, nodeId = 42)
+
+        kotlin.test.assertNotEquals(ownerZero, ownerOne)
+    }
 }

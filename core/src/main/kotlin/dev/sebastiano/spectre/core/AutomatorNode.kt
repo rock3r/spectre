@@ -6,6 +6,7 @@ import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import java.awt.Point
+import java.awt.Rectangle
 
 data class NodeKey(val surfaceId: String, val ownerIndex: Int, val nodeId: Int) {
 
@@ -29,10 +30,12 @@ data class NodeKey(val surfaceId: String, val ownerIndex: Int, val nodeId: Int) 
     }
 }
 
-class AutomatorNode(
+class AutomatorNode
+internal constructor(
     val key: NodeKey,
     val semanticsNode: SemanticsNode,
     val trackedWindow: TrackedWindow,
+    private val relations: NodeRelations = EmptyNodeRelations,
 ) {
 
     // Eagerly snapshot all semantics properties at construction time (which runs on
@@ -50,7 +53,12 @@ class AutomatorNode(
     val isDisabled: Boolean = semanticsNode.config.getOrNull(SemanticsProperties.Disabled) != null
     val isFocused: Boolean = semanticsNode.config.getOrNull(SemanticsProperties.Focused) == true
     val isSelected: Boolean = semanticsNode.config.getOrNull(SemanticsProperties.Selected) == true
-    val boundsInWindow: Rect = semanticsNode.boundsInWindow
+
+    // Geometry is always read live: layout can change between node lookup and action,
+    // so a snapshot would let click/screenshot drift to stale coordinates after scrolling
+    // or recomposition-driven repositioning.
+    val boundsInWindow: Rect
+        get() = readOnEdt { semanticsNode.boundsInWindow }
 
     val centerOnScreen: Point
         get() = readOnEdt {
@@ -69,6 +77,29 @@ class AutomatorNode(
             )
         }
 
+    val boundsOnScreen: Rectangle
+        get() = readOnEdt {
+            val bounds = semanticsNode.boundsInWindow
+            val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
+            val contentOrigin = trackedWindow.composeContentOrigin
+            composeBoundsToAwtRectangle(
+                left = bounds.left,
+                top = bounds.top,
+                right = bounds.right,
+                bottom = bounds.bottom,
+                scaleX = transform.scaleX.toFloat(),
+                scaleY = transform.scaleY.toFloat(),
+                panelScreenX = contentOrigin.x,
+                panelScreenY = contentOrigin.y,
+            )
+        }
+
+    val parent: AutomatorNode?
+        get() = relations.parentOf(key)
+
+    val children: List<AutomatorNode>
+        get() = relations.childrenOf(key)
+
     override fun toString(): String = buildString {
         append("AutomatorNode(key=$key")
         testTag?.let { append(", tag=$it") }
@@ -76,4 +107,18 @@ class AutomatorNode(
         role?.let { append(", role=$it") }
         append(")")
     }
+}
+
+internal interface NodeRelations {
+
+    fun parentOf(key: NodeKey): AutomatorNode?
+
+    fun childrenOf(key: NodeKey): List<AutomatorNode>
+}
+
+private object EmptyNodeRelations : NodeRelations {
+
+    override fun parentOf(key: NodeKey): AutomatorNode? = null
+
+    override fun childrenOf(key: NodeKey): List<AutomatorNode> = emptyList()
 }

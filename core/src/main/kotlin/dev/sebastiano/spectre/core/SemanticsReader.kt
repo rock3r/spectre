@@ -17,16 +17,27 @@ class SemanticsReader {
             collectAllNodes(trackedWindows).filter { it.testTag == tag }
         }
 
+    fun findByText(query: TextQuery, trackedWindows: List<TrackedWindow>): List<AutomatorNode> =
+        readOnEdt {
+            collectAllNodes(trackedWindows).filter { node ->
+                node.texts.any(query::matches) || query.matches(node.editableText)
+            }
+        }
+
     fun findByText(
         text: String,
         trackedWindows: List<TrackedWindow>,
         exact: Boolean = true,
-    ): List<AutomatorNode> = readOnEdt {
-        collectAllNodes(trackedWindows).filter { node ->
-            node.texts.any { matchesText(it, text, exact) } ||
-                matchesText(node.editableText, text, exact)
-        }
-    }
+    ): List<AutomatorNode> =
+        findByText(
+            query =
+                if (exact) {
+                    TextQuery.exact(text)
+                } else {
+                    TextQuery.substring(text, ignoreCase = true)
+                },
+            trackedWindows = trackedWindows,
+        )
 
     fun findByContentDescription(
         description: String,
@@ -44,14 +55,44 @@ class SemanticsReader {
 
     @OptIn(ExperimentalComposeUiApi::class)
     private fun collectAllNodes(trackedWindows: List<TrackedWindow>): List<AutomatorNode> {
-        val nodes = mutableListOf<AutomatorNode>()
+        val entries = mutableListOf<NodeEntry>()
         for (trackedWindow in trackedWindows) {
             val owners = getOwnersForWindow(trackedWindow)
             for ((ownerIndex, owner) in owners.withIndex()) {
-                traverseTree(owner.rootSemanticsNode, trackedWindow, ownerIndex, nodes)
+                traverseTree(
+                    owner.rootSemanticsNode,
+                    trackedWindow,
+                    ownerIndex,
+                    parentKey = null,
+                    entries,
+                )
             }
         }
-        return nodes
+
+        val parentKeyByNodeKey = entries.associate { it.key to it.parentKey }
+        val nodeKeysByParentKey =
+            entries.groupBy(keySelector = NodeEntry::parentKey, valueTransform = NodeEntry::key)
+        val nodesByKey = mutableMapOf<NodeKey, AutomatorNode>()
+        val relations =
+            object : NodeRelations {
+                override fun parentOf(key: NodeKey): AutomatorNode? =
+                    parentKeyByNodeKey[key]?.let(nodesByKey::get)
+
+                override fun childrenOf(key: NodeKey): List<AutomatorNode> =
+                    nodeKeysByParentKey[key].orEmpty().mapNotNull(nodesByKey::get)
+            }
+
+        for (entry in entries) {
+            nodesByKey[entry.key] =
+                AutomatorNode(
+                    key = entry.key,
+                    semanticsNode = entry.node,
+                    trackedWindow = entry.trackedWindow,
+                    relations = relations,
+                )
+        }
+
+        return entries.mapNotNull { entry -> nodesByKey[entry.key] }
     }
 
     @OptIn(ExperimentalComposeUiApi::class)
@@ -67,17 +108,21 @@ class SemanticsReader {
         node: SemanticsNode,
         trackedWindow: TrackedWindow,
         ownerIndex: Int,
-        result: MutableList<AutomatorNode>,
+        parentKey: NodeKey?,
+        result: MutableList<NodeEntry>,
     ) {
         val key = NodeKey(trackedWindow.surfaceId, ownerIndex, node.id)
-        result += AutomatorNode(key = key, semanticsNode = node, trackedWindow = trackedWindow)
+        result +=
+            NodeEntry(key = key, node = node, trackedWindow = trackedWindow, parentKey = parentKey)
         for (child in node.children) {
-            traverseTree(child, trackedWindow, ownerIndex, result)
+            traverseTree(child, trackedWindow, ownerIndex, parentKey = key, result)
         }
     }
 }
 
-private fun matchesText(nodeText: String?, query: String, exact: Boolean): Boolean {
-    if (nodeText == null) return false
-    return if (exact) nodeText == query else nodeText.contains(query, ignoreCase = true)
-}
+private data class NodeEntry(
+    val key: NodeKey,
+    val node: SemanticsNode,
+    val trackedWindow: TrackedWindow,
+    val parentKey: NodeKey?,
+)

@@ -27,7 +27,7 @@ fun main() = application {
 
 @Suppress("LongMethod")
 private suspend fun runAutomatorDemo() {
-    val automator = ComposeAutomator.create()
+    val automator = ComposeAutomator.inProcess()
     automator.refreshWindows()
 
     println("=== Spectre Automator Demo ===")
