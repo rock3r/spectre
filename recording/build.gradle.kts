@@ -6,4 +6,13 @@ plugins {
 
 kotlin { jvmToolchain(21) }
 
-dependencies { implementation(libs.kotlinx.coroutines.core) }
+dependencies {
+    api(projects.core)
+    implementation(libs.kotlinx.coroutines.core)
+    detektPlugins(libs.compose.rules.detekt)
+
+    testImplementation(libs.kotlin.testJunit5)
+    testImplementation(libs.kotlinx.coroutines.test)
+}
+
+tasks.withType<Test>().configureEach { useJUnitPlatform() }
