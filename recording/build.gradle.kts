@@ -7,7 +7,8 @@ plugins {
 kotlin { jvmToolchain(21) }
 
 dependencies {
-    api(projects.core)
+    // recording is intentionally isolated per docs/ARCHITECTURE.md — it has its own native /
+    // ffmpeg boundary and shares no types with core. No projects.core dependency here.
     implementation(libs.kotlinx.coroutines.core)
     detektPlugins(libs.compose.rules.detekt)
 

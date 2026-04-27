@@ -7,7 +7,7 @@ import java.util.concurrent.TimeUnit
  *
  * The Spectre automator interacts with the OS in two ways that gated by macOS TCC permissions:
  * - **Screen Recording** — required for [FfmpegRecorder]'s avfoundation device and for AWT
- *   `Robot.createScreenCapture` (so [dev.sebastiano.spectre.core.RobotDriver]'s screenshot path on
+ *   `Robot.createScreenCapture` (which is what the core RobotDriver's screenshot path uses on
  *   macOS).
  * - **Accessibility (input control)** — required for AWT `Robot` to actually move the mouse and
  *   synthesize key events. Without it, mouse/key calls silently no-op.

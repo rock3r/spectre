@@ -189,8 +189,11 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
             } catch (_: Throwable) {
                 return
             }
-        // ffmpeg returns 255 on SIGTERM (our own destroy()), so don't treat that as a crash.
-        if (exit != 0 && exit != FFMPEG_SIGTERM_EXIT) {
+        // ffmpeg returns 255 on SIGTERM (destroy()) and 137 on SIGKILL (destroyForcibly() —
+        // the standard 128+9 Unix convention). Both are signals stop() may have sent itself
+        // along the SIGTERM/SIGKILL fallback path, so neither is a crash from the caller's
+        // perspective.
+        if (exit != 0 && exit != FFMPEG_SIGTERM_EXIT && exit != FFMPEG_SIGKILL_EXIT) {
             throw IllegalStateException(
                 "ffmpeg exited with code $exit during recording — output at $output may be " +
                     "truncated or missing. Common causes: disk full, encoder error, device " +
@@ -203,6 +206,7 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
         const val SHUTDOWN_GRACE_SECONDS: Long = 5
         const val FORCE_KILL_SECONDS: Long = 2
         const val FFMPEG_SIGTERM_EXIT: Int = 255
+        const val FFMPEG_SIGKILL_EXIT: Int = 137 // 128 + 9 (SIGKILL) per POSIX convention
     }
 }
 
