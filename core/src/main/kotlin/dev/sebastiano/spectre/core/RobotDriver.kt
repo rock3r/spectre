@@ -200,12 +200,12 @@ private object NoopRobotAdapter : RobotAdapter {
 
     override fun keyRelease(keyCode: Int) = Unit
 
-    // Always return a 1×1 sentinel image regardless of region size. RobotDriver.headless() is
-    // explicitly documented as no-OS-contact, so we should not allocate a full virtual-desktop
-    // BufferedImage on headful machines that happen to use the headless factory.
-    private val sentinelImage = BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB)
-
-    override fun createScreenCapture(region: Rectangle): BufferedImage = sentinelImage
+    // Always return a fresh 1×1 image regardless of region size. RobotDriver.headless() is
+    // documented as no-OS-contact (so we don't probe screen devices) and screenshot returns
+    // are conceptually owned by the caller (BufferedImage is mutable; setRGB/createGraphics
+    // are normal post-screenshot operations), so a per-call instance is required for safety.
+    override fun createScreenCapture(region: Rectangle): BufferedImage =
+        BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB)
 
     override fun waitForIdle() = Unit
 }
