@@ -19,6 +19,8 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.server.application.install as serverInstall
+import io.ktor.server.plugins.contentnegotiation.ContentNegotiation as ServerContentNegotiation
 import io.ktor.server.testing.testApplication
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -120,4 +122,20 @@ class SpectreServerRoundTripTest {
         val response = client.get("/api/v1/spectre/windows").body<WindowsResponse>()
         assertEquals(emptyList(), response.windows)
     }
+
+    @Test
+    fun `installSpectreRoutes is safe when ContentNegotiation is already installed`() =
+        testApplication {
+            application {
+                // Host configures ContentNegotiation for its own routes. The route installer
+                // must reuse it rather than calling install() again, which would throw a
+                // duplicate-plugin exception at startup.
+                serverInstall(ServerContentNegotiation) { json() }
+                installSpectreRoutes(headlessAutomator())
+            }
+            val client = createClient { install(ContentNegotiation) { json() } }
+
+            val response = client.get("/spectre/windows").body<WindowsResponse>()
+            assertEquals(emptyList(), response.windows)
+        }
 }

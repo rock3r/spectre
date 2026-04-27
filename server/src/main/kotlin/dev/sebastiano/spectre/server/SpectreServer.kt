@@ -12,6 +12,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
+import io.ktor.server.application.pluginOrNull
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
@@ -36,7 +37,12 @@ import javax.imageio.ImageIO
  * scope for the v1 transport.
  */
 fun Application.installSpectreRoutes(automator: ComposeAutomator, basePath: String = "/spectre") {
-    install(ContentNegotiation) { json() }
+    // Hosts may already have ContentNegotiation installed for their own routes; Ktor throws a
+    // duplicate-plugin exception on a second install. Only install when absent so the route
+    // mount is safe to call from any application configuration.
+    if (pluginOrNull(ContentNegotiation) == null) {
+        install(ContentNegotiation) { json() }
+    }
     routing { route(basePath) { spectreRoutes(automator) } }
 }
 
@@ -51,6 +57,9 @@ private fun Route.spectreRoutes(automator: ComposeAutomator) {
     }
 
     get("/nodes") {
+        // Query handlers always refresh first: in-process callers control when to refresh, but
+        // remote callers expect a request to reflect current state without an explicit prelude.
+        automator.refreshWindows()
         val testTag = call.request.queryParameters["testTag"]
         val nodes =
             if (testTag != null) {
@@ -62,6 +71,7 @@ private fun Route.spectreRoutes(automator: ComposeAutomator) {
     }
 
     post("/click") {
+        automator.refreshWindows()
         val request = call.receive<ClickRequest>()
         val key = NodeKey.parse(request.nodeKey)
         val node = automator.allNodes().firstOrNull { it.key == key }
