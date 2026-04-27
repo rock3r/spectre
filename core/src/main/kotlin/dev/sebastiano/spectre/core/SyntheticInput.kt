@@ -158,10 +158,11 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
         // (search-as-you-type filters, character-counting validators) would miss input through
         // the synthetic driver without this — the real Robot path gets it for free via the OS.
         if (keyCode in PRINTABLE_KEY_CODES && (heldKeyModifiers and SHORTCUT_MODIFIER_MASK) == 0) {
+            val shiftHeld = (heldKeyModifiers and InputEvent.SHIFT_DOWN_MASK) != 0
             dispatchKey(
                 type = KeyEvent.KEY_TYPED,
                 keyCode = KeyEvent.VK_UNDEFINED,
-                keyCharOverride = keyCharFor(keyCode),
+                keyCharOverride = keyCharFor(keyCode, shift = shiftHeld),
             )
         }
     }
@@ -241,7 +242,11 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
                 heldKeyModifiers,
                 keyCode,
                 keyCharOverride
-                    ?: if (keyCode in PRINTABLE_KEY_CODES) keyCharFor(keyCode)
+                    ?: if (keyCode in PRINTABLE_KEY_CODES)
+                        keyCharFor(
+                            keyCode,
+                            shift = (heldKeyModifiers and InputEvent.SHIFT_DOWN_MASK) != 0,
+                        )
                     else KeyEvent.CHAR_UNDEFINED,
             )
         runOnEdt { focusOwner.dispatchEvent(event) }
@@ -331,14 +336,24 @@ private val SHORTCUT_MODIFIER_MASK: Int =
         java.awt.event.InputEvent.CTRL_DOWN_MASK or
         java.awt.event.InputEvent.ALT_DOWN_MASK
 
-private fun keyCharFor(keyCode: Int): Char =
+private fun keyCharFor(keyCode: Int, shift: Boolean = false): Char =
     when (keyCode) {
         KeyEvent.VK_ENTER -> '\n'
         KeyEvent.VK_SPACE -> ' '
-        in KeyEvent.VK_A..KeyEvent.VK_Z -> ('a' + (keyCode - KeyEvent.VK_A))
-        in KeyEvent.VK_0..KeyEvent.VK_9 -> ('0' + (keyCode - KeyEvent.VK_0))
+        in KeyEvent.VK_A..KeyEvent.VK_Z ->
+            // Shift produces uppercase letters — matches what the OS HID layer would inject
+            // when KEY_TYPED reaches a focused text field.
+            if (shift) ('A' + (keyCode - KeyEvent.VK_A)) else ('a' + (keyCode - KeyEvent.VK_A))
+        in KeyEvent.VK_0..KeyEvent.VK_9 ->
+            // US-layout shifted digit symbols. Tests can rely on '!' for Shift+1, etc., so
+            // listeners that consume KEY_TYPED character validators see the right input.
+            if (shift) SHIFTED_DIGIT_CHARS[keyCode - KeyEvent.VK_0]
+            else ('0' + (keyCode - KeyEvent.VK_0))
         else -> KeyEvent.CHAR_UNDEFINED
     }
+
+private val SHIFTED_DIGIT_CHARS: CharArray =
+    charArrayOf(')', '!', '@', '#', '$', '%', '^', '&', '*', '(')
 
 // Conservative subset of printable VK_ codes for KeyEvent's keyChar; matches what RobotDriver
 // typically dispatches via direct keyPress.

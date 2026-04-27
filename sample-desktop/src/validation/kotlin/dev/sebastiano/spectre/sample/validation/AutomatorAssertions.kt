@@ -51,13 +51,23 @@ fun ComposeAutomator.waitUntilGone(tag: String, timeout: Duration = 5.seconds) {
 }
 
 /**
- * Click the picker entry for a scenario by its `scenario.<name>` testTag, then wait for the
- * scenario's title node to appear in the right pane so the navigation has actually settled.
+ * Click the picker entry for a scenario by its `scenario.<name>` testTag, then wait until the
+ * right-pane `scenario.title` node reflects that scenario's title. Comparing against the picker
+ * entry's text (with the selected-state "▸ " prefix stripped) means we wait for the actual
+ * recomposition rather than just the title node's existence — `scenario.title` is always present,
+ * so checking only for non-null text would let follow-up assertions race the previous scenario's
+ * UI.
  */
 fun ComposeAutomator.navigateToScenario(scenarioTag: String) {
     val pickerEntry = waitForTestTag(scenarioTag)
+    val expectedTitle = pickerEntry.text?.removePrefix("▸ ")?.trim()
     click(pickerEntry)
-    eventually(description = "scenario '$scenarioTag' to be selected") {
-        findOneByTestTag("scenario.title")?.takeIf { it.text != null }
+    eventually(description = "scenario '$scenarioTag' to become selected") {
+        val titleNode = findOneByTestTag("scenario.title") ?: return@eventually null
+        when {
+            expectedTitle == null -> titleNode.takeIf { it.text != null }
+            titleNode.text == expectedTitle -> titleNode
+            else -> null
+        }
     }
 }
