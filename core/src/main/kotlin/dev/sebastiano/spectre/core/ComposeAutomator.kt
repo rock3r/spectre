@@ -272,6 +272,11 @@ private constructor(
     }
 
     private fun <T> runBoundedOnWorker(budgetMs: Long, block: () -> T): T? {
+        // EDT fast path: if the caller is already on the EDT, spawning a worker that calls
+        // readOnEdt would deadlock — the worker would block on invokeAndWait while we sit on
+        // latch.await holding the EDT. Run inline; readOnEdt's own fast path takes over.
+        if (SwingUtilities.isEventDispatchThread()) return block()
+
         // We deliberately use a dedicated daemon Thread (not CompletableFuture.supplyAsync,
         // which runs on ForkJoinPool.commonPool) for two reasons:
         // 1. CompletableFuture.cancel ignores mayInterruptIfRunning and never interrupts the
