@@ -173,6 +173,14 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
                 }
             if (!terminatedAfterDestroy) {
                 process.destroyForcibly()
+                // destroyForcibly() is asynchronous on the JVM. Wait once more so the post-
+                // stop world really has the process gone (otherwise isStopped=true could be
+                // observable while ffmpeg is still finalising the output file).
+                try {
+                    process.waitFor(FORCE_KILL_SECONDS, TimeUnit.SECONDS)
+                } catch (_: InterruptedException) {
+                    interrupted = true
+                }
             }
         }
         if (interrupted) Thread.currentThread().interrupt()
