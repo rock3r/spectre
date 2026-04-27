@@ -92,6 +92,10 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
         val window = findWindowAt(lastX, lastY) ?: return
         val target = findDeepestComponentAt(window, lastX, lastY) ?: window
         val origin = target.locationOnScreen
+        // AWT's getUnitsToScroll() returns scrollAmount * wheelRotation. To keep that product
+        // equal to the signed `wheelClicks` contract (and avoid the wheelClicks² blow-up that
+        // both Codex and Bugbot flagged on the cb5d560 review), keep scrollAmount fixed at 1
+        // unit per click and put the signed click count in wheelRotation.
         val event =
             MouseWheelEvent(
                 target,
@@ -103,8 +107,8 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
                 0, // clickCount
                 false, // popupTrigger
                 MouseWheelEvent.WHEEL_UNIT_SCROLL,
-                wheelClicks, // scrollAmount in units
-                wheelClicks, // wheelRotation
+                1, // scrollAmount: one unit per click (matches OS wheel behaviour)
+                wheelClicks, // wheelRotation: signed, positive away from the user
             )
         SwingUtilities.invokeAndWait { target.dispatchEvent(event) }
     }
@@ -194,7 +198,11 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
     }
 
     private fun findWindowAt(screenX: Int, screenY: Int): Window? =
-        allWindows().firstOrNull { window ->
+        // Iterate in reverse so popups and secondary windows (added after the root by the
+        // pre-order walk in `collectWindowTree`) win the hit test against an overlapping parent.
+        // Without this, a popup that sits on top of its owner would route synthetic input to the
+        // owner — exactly the regression Codex flagged on the cb5d560 review.
+        allWindows().asReversed().firstOrNull { window ->
             window.isVisible &&
                 runCatching {
                         val origin = window.locationOnScreen
