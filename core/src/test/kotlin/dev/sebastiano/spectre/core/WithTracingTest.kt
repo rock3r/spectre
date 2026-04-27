@@ -13,11 +13,10 @@ class WithTracingTest {
     @Test
     fun `withTracing brackets the block with start and stop`() = runTest {
         val tracer = RecordingTracer()
-        val automator = ComposeAutomator.inProcess()
         val output = Path.of("test-output.jfr")
 
         val result =
-            automator.withTracing(output = output, tracer = tracer) {
+            withTracingInternal(output = output, tracer = tracer) {
                 tracer.recordEvent("inside-block")
                 42
             }
@@ -29,12 +28,11 @@ class WithTracingTest {
     @Test
     fun `withTracing stops the tracer even when the block throws`() = runTest {
         val tracer = RecordingTracer()
-        val automator = ComposeAutomator.inProcess()
         val output = Path.of("crash.jfr")
 
         val raised =
             assertFailsWith<RuntimeException> {
-                automator.withTracing(output = output, tracer = tracer) {
+                withTracingInternal(output = output, tracer = tracer) {
                     tracer.recordEvent("about-to-throw")
                     error("boom")
                 }
@@ -46,11 +44,10 @@ class WithTracingTest {
 
     @Test
     fun `withTracing returns the block result`() = runTest {
-        val automator = ComposeAutomator.inProcess()
         val sentinel = Any()
 
         val result =
-            automator.withTracing(output = Path.of("x.jfr"), tracer = NoOpTracer()) { sentinel }
+            withTracingInternal(output = Path.of("x.jfr"), tracer = NoOpTracer()) { sentinel }
 
         assertSame(sentinel, result)
     }
@@ -69,10 +66,9 @@ class WithTracingTest {
                     error("stop failed")
                 }
             }
-        val automator = ComposeAutomator.inProcess()
         val raised =
             assertFailsWith<IllegalStateException> {
-                automator.withTracing(output = Path.of("x.jfr"), tracer = tracer) {
+                withTracingInternal(output = Path.of("x.jfr"), tracer = tracer) {
                     error("block failed")
                 }
             }

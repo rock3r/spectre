@@ -172,32 +172,7 @@ private constructor(
         output: Path,
         tracer: Tracer = JfrTracer(),
         block: suspend () -> T,
-    ): T {
-        tracer.start()
-        var blockError: Throwable? = null
-        var result: T? = null
-        // The block runs untrusted scenario code; we want every failure mode propagated to the
-        // caller after the trace has been flushed, hence the broad catch.
-        @Suppress("TooGenericExceptionCaught")
-        try {
-            result = block()
-        } catch (t: Throwable) {
-            blockError = t
-        }
-        @Suppress("TooGenericExceptionCaught")
-        try {
-            tracer.stop(output)
-        } catch (stopError: Throwable) {
-            if (blockError != null) {
-                blockError.addSuppressed(stopError)
-            } else {
-                throw stopError
-            }
-        }
-        if (blockError != null) throw blockError
-        @Suppress("UNCHECKED_CAST")
-        return result as T
-    }
+    ): T = withTracingInternal(output, tracer, block)
 
     suspend fun waitForIdle(
         timeout: Duration = DEFAULT_WAIT_TIMEOUT,

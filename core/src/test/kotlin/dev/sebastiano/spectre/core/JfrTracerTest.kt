@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.core
 
 import java.nio.file.Files
+import java.nio.file.Path
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.fileSize
 import kotlin.test.Test
@@ -35,6 +36,29 @@ class JfrTracerTest {
         val output = Files.createTempFile("spectre-tracer-test-", ".jfr")
         try {
             assertFailsWith<IllegalStateException> { tracer.stop(output) }
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `stop with an unwritable output still resets the tracer state`() {
+        val tracer = JfrTracer()
+        // A path under a non-existent parent we cannot create — Files.createDirectories
+        // throws and stop() must still close the recording.
+        val unwritable = Path.of("/proc/spectre-cannot-write-here.jfr")
+
+        tracer.start()
+        runCatching { tracer.stop(unwritable) }
+            .also { assertTrue(it.isFailure, "stop should propagate the IO failure") }
+
+        // The tracer must be in a clean state — start() should succeed without throwing
+        // "already recording", and a follow-up stop() must succeed too.
+        val output = Files.createTempFile("spectre-tracer-test-", ".jfr")
+        try {
+            tracer.start()
+            tracer.stop(output)
+            assertTrue(output.fileSize() > 0, "Recovery recording should produce a file")
         } finally {
             output.deleteIfExists()
         }

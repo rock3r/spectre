@@ -26,3 +26,48 @@ interface Tracer {
      */
     fun stop(output: Path)
 }
+
+/**
+ * Bracket [block] with a [Tracer] recording. Public callers go through
+ * [ComposeAutomator.withTracing]; this top-level helper exists so the bracket contract can be
+ * exercised in unit tests without instantiating an automator (and therefore without requiring an
+ * AWT-capable test environment).
+ *
+ * Guarantees:
+ * - [Tracer.start] is invoked before [block] runs.
+ * - [Tracer.stop] is invoked after [block] completes — including when [block] throws, so the
+ *   captured trace is always flushed.
+ * - The block's return value is propagated.
+ * - If both [block] and [Tracer.stop] throw, the block's exception is the one rethrown and the stop
+ *   failure is attached as a suppressed exception so neither failure is silently lost.
+ */
+internal suspend fun <T> withTracingInternal(
+    output: Path,
+    tracer: Tracer,
+    block: suspend () -> T,
+): T {
+    tracer.start()
+    var blockError: Throwable? = null
+    var result: T? = null
+    // The block runs untrusted scenario code; we want every failure mode propagated to the
+    // caller after the trace has been flushed, hence the broad catch.
+    @Suppress("TooGenericExceptionCaught")
+    try {
+        result = block()
+    } catch (t: Throwable) {
+        blockError = t
+    }
+    @Suppress("TooGenericExceptionCaught")
+    try {
+        tracer.stop(output)
+    } catch (stopError: Throwable) {
+        if (blockError != null) {
+            blockError.addSuppressed(stopError)
+        } else {
+            throw stopError
+        }
+    }
+    if (blockError != null) throw blockError
+    @Suppress("UNCHECKED_CAST")
+    return result as T
+}

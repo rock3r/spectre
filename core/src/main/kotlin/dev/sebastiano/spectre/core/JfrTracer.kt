@@ -28,11 +28,17 @@ class JfrTracer(private val configurationName: String = DEFAULT_CONFIGURATION) :
 
     override fun stop(output: Path) {
         val active = checkNotNull(recording) { "JfrTracer.stop called before start" }
-        Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
-        active.stop()
-        active.dump(output)
-        active.close()
-        recording = null
+        // Use try/finally so a failing dump (disk full, permissions, etc.) does not leak the
+        // native JFR Recording handle and does not leave the tracer in a half-stopped state
+        // where a subsequent start() would throw "already recording".
+        try {
+            Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
+            active.stop()
+            active.dump(output)
+        } finally {
+            active.close()
+            recording = null
+        }
     }
 
     companion object {
