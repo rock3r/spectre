@@ -57,13 +57,14 @@ internal suspend fun waitForIdleInternal(
         } else {
             val fp = fingerprint()
             val now = clock.now()
-            if (fp == lastFingerprint) {
-                val sinceMs = stableSince ?: now.also { stableSince = it }
-                if (now - sinceMs >= quietPeriod.inWholeMilliseconds) idleReached = true
-            } else {
+            if (fp != lastFingerprint) {
                 lastFingerprint = fp
                 stableSince = now
             }
+            // The elapsed check runs even on the first matching sample, so quietPeriod = 0
+            // resolves to "first idle sample wins".
+            val sinceMs = stableSince ?: now
+            if (now - sinceMs >= quietPeriod.inWholeMilliseconds) idleReached = true
         }
 
         val nowAfterSample = clock.now()

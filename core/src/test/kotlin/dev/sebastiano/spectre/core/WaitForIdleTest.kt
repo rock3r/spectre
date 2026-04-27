@@ -119,6 +119,28 @@ class WaitForIdleTest {
     }
 
     @Test
+    fun `waitForIdle accepts the first sample when quietPeriod is zero`() = runTest {
+        val clock = FakeClock()
+        var samples = 0
+
+        waitForIdleInternal(
+            timeout = 1.milliseconds,
+            quietPeriod = 0.milliseconds,
+            pollInterval = 16.milliseconds,
+            idlingResources = { emptyList() },
+            drainEdt = {},
+            fingerprint = {
+                samples++
+                "stable"
+            },
+            clock = clock,
+            sleep = clock::advance,
+        )
+
+        assertEquals(1, samples, "Should return on the first sample with quietPeriod=0")
+    }
+
+    @Test
     fun `waitForIdle throws if quiet period only completes after the deadline`() = runTest {
         // 50ms timeout with 30ms pollInterval and 40ms quietPeriod: the third sample at t=60
         // satisfies the quiet period, but t=60 is already past the 50ms deadline.
