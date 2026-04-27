@@ -11,14 +11,16 @@ dependencies {
     api(projects.core)
     api(libs.kotlinx.serialization.json)
 
-    // Server runtime is `implementation` so consumers hosting the automator inherit it via
-    // `api(projects.core)` + `implementation(projects.server)` only when they actually want the
-    // server side. The `installSpectreRoutes` extension and `HttpComposeAutomator` client are
-    // both reachable transitively from the public API.
-    implementation(libs.ktor.server.core)
-    implementation(libs.ktor.server.cio)
+    // ktor-server-core is `api` because installSpectreRoutes uses
+    // io.ktor.server.application.Application
+    // in its public signature — consumers calling the extension must see that type on their
+    // compile classpath. The remaining server-side bits (content-negotiation plugin, JSON
+    // serializer) are wiring details and stay `implementation`.
+    api(libs.ktor.server.core)
     implementation(libs.ktor.server.contentNegotiation)
     implementation(libs.ktor.serialization.json)
+    // Client side uses CIO as the engine factory. ktor-server-cio is intentionally not pulled
+    // in: installSpectreRoutes is engine-agnostic, so consumers bring their own server engine.
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.cio)
     implementation(libs.ktor.client.contentNegotiation)

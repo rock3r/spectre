@@ -35,11 +35,21 @@ import javax.imageio.ImageIO
  * (idling resources, withTracing, waitForVisualIdle) are in-process only because they either
  * require live JVM objects (Tracer, IdlingResource) or stateful long-poll semantics that are out of
  * scope for the v1 transport.
+ *
+ * ## ContentNegotiation contract
+ *
+ * The Spectre routes exchange JSON DTOs, so a JSON-capable [ContentNegotiation] plugin must be
+ * present on the application by the time the routes serve traffic.
+ *
+ * - If [ContentNegotiation] is **not** installed, this function installs it with the kotlinx JSON
+ *   converter automatically.
+ * - If [ContentNegotiation] **is** already installed (because the host application configured it
+ *   for its own routes), this function leaves it alone. The host is responsible for ensuring the
+ *   existing configuration includes a JSON converter — Ktor's plugin model does not let us merge
+ *   converters into an already-installed plugin, and re-installing would throw a duplicate-plugin
+ *   exception. Without JSON support the routes will fail at request time with a 415/500.
  */
 fun Application.installSpectreRoutes(automator: ComposeAutomator, basePath: String = "/spectre") {
-    // Hosts may already have ContentNegotiation installed for their own routes; Ktor throws a
-    // duplicate-plugin exception on a second install. Only install when absent so the route
-    // mount is safe to call from any application configuration.
     if (pluginOrNull(ContentNegotiation) == null) {
         install(ContentNegotiation) { json() }
     }
