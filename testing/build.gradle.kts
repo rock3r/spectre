@@ -7,8 +7,19 @@ plugins {
 kotlin { jvmToolchain(21) }
 
 dependencies {
-    implementation(projects.core)
+    api(projects.core)
+    // JUnit 4 and JUnit Jupiter are compileOnly so consumers pick whichever they're already
+    // using; the testing module itself only references their public APIs.
+    compileOnly(libs.junit4)
+    compileOnly(libs.junit5.api)
+    detektPlugins(libs.compose.rules.detekt)
+
     testImplementation(libs.kotlin.testJunit5)
+    testImplementation(libs.junit4)
+    testImplementation(libs.junit5.api)
+    testRuntimeOnly(libs.junit5.engine)
+    // Lets us run the JUnit 4 rule via the JUnit Platform launcher in our own tests.
+    testRuntimeOnly(libs.junit5.vintageEngine)
 }
 
 tasks.withType<Test>().configureEach { useJUnitPlatform() }

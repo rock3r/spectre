@@ -123,6 +123,20 @@ internal constructor(
         val captureRegion = region ?: virtualDesktopBounds()
         return robot.createScreenCapture(captureRegion)
     }
+
+    companion object {
+
+        /**
+         * Returns a [RobotDriver] that performs no real OS input or capture.
+         *
+         * Intended for tests and headless CI environments where constructing a real
+         * `java.awt.Robot` (or touching the system clipboard / screen) is unavailable. Mouse and
+         * key calls are silently dropped, screenshots return a 1×1 empty image, and clipboard
+         * access is a no-op. Combine with the testing module's `ComposeAutomatorRule` /
+         * `ComposeAutomatorExtension` to exercise the rule/extension lifecycle without an EDT.
+         */
+        fun headless(): RobotDriver = RobotDriver(NoopRobotAdapter, NoopClipboardAdapter)
+    }
 }
 
 internal interface RobotAdapter {
@@ -170,6 +184,37 @@ private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) : Rob
         robot.createScreenCapture(region)
 
     override fun waitForIdle() = robot.waitForIdle()
+}
+
+private object NoopRobotAdapter : RobotAdapter {
+
+    override val autoDelayMs: Int = 0
+
+    override fun mouseMove(x: Int, y: Int) = Unit
+
+    override fun mousePress(buttons: Int) = Unit
+
+    override fun mouseRelease(buttons: Int) = Unit
+
+    override fun keyPress(keyCode: Int) = Unit
+
+    override fun keyRelease(keyCode: Int) = Unit
+
+    override fun createScreenCapture(region: Rectangle): BufferedImage =
+        BufferedImage(
+            region.width.coerceAtLeast(1),
+            region.height.coerceAtLeast(1),
+            BufferedImage.TYPE_INT_ARGB,
+        )
+
+    override fun waitForIdle() = Unit
+}
+
+private object NoopClipboardAdapter : ClipboardAdapter {
+
+    override fun getContents(): Transferable? = null
+
+    override fun setContents(contents: Transferable) = Unit
 }
 
 private class SystemClipboardAdapter : ClipboardAdapter {
