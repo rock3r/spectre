@@ -110,7 +110,7 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
                 1, // scrollAmount: one unit per click (matches OS wheel behaviour)
                 wheelClicks, // wheelRotation: signed, positive away from the user
             )
-        SwingUtilities.invokeAndWait { target.dispatchEvent(event) }
+        runOnEdt { target.dispatchEvent(event) }
     }
 
     override fun keyPress(keyCode: Int) {
@@ -138,7 +138,7 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
                 BufferedImage.TYPE_INT_ARGB,
             )
         val target = findWindowAt(region.x, region.y) ?: rootWindow
-        SwingUtilities.invokeAndWait {
+        runOnEdt {
             val g = image.createGraphics()
             try {
                 val origin = target.locationOnScreen
@@ -153,7 +153,8 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
 
     override fun waitForIdle() {
         // SwingUtilities.invokeAndWait flushes the EDT — equivalent to Robot.waitForIdle for
-        // the synthetic event queue. We post a no-op event and wait for it to drain.
+        // the synthetic event queue. We post a no-op event and wait for it to drain. If the
+        // caller is already the EDT, the queue is being drained synchronously by definition.
         if (!SwingUtilities.isEventDispatchThread()) {
             SwingUtilities.invokeAndWait {}
         }
@@ -177,7 +178,7 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
                 false, // popupTrigger
                 button,
             )
-        SwingUtilities.invokeAndWait { targetComponent.dispatchEvent(event) }
+        runOnEdt { targetComponent.dispatchEvent(event) }
     }
 
     private fun dispatchKey(type: Int, keyCode: Int) {
@@ -194,7 +195,7 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
                 keyCode,
                 if (keyCode in PRINTABLE_KEY_CODES) keyCode.toChar() else KeyEvent.CHAR_UNDEFINED,
             )
-        SwingUtilities.invokeAndWait { focusOwner.dispatchEvent(event) }
+        runOnEdt { focusOwner.dispatchEvent(event) }
     }
 
     private fun findWindowAt(screenX: Int, screenY: Int): Window? =
@@ -217,6 +218,21 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
         val collected = mutableListOf<Window>()
         collectWindowTree(rootWindow, collected)
         return collected
+    }
+}
+
+/**
+ * Dispatches [block] on the AWT EDT, running inline if the caller is already on the EDT. Plain
+ * `SwingUtilities.invokeAndWait` would deadlock here: `RobotDriver.runOffEdt` re-routes EDT callers
+ * onto a worker thread, but that worker still needs the EDT to be free to drain its
+ * `invokeAndWait`. Without this guard, calling `click()`/`typeText()`/`scrollWheel()` from a UI
+ * callback hangs the automator hard.
+ */
+private fun runOnEdt(block: () -> Unit) {
+    if (SwingUtilities.isEventDispatchThread()) {
+        block()
+    } else {
+        SwingUtilities.invokeAndWait(block)
     }
 }
 
