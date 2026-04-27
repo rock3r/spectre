@@ -11,7 +11,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 FAILED_RUN_CONCLUSIONS = {
     "failure",
@@ -35,6 +35,13 @@ REVIEW_BOT_LOGIN_KEYWORDS = {
     "cursor",
     "codex",
 }
+# Workflow name keyword fragments used to identify Cursor Bugbot CI runs.
+# The merge gate is hard-blocked unless the latest Bugbot run for the current
+# head SHA is `completed` with conclusion `success`.
+BUGBOT_WORKFLOW_KEYWORDS = {
+    "cursor",
+    "bugbot",
+}
 TRUSTED_AUTHOR_ASSOCIATIONS = {
     "OWNER",
     "MEMBER",
@@ -50,7 +57,12 @@ MERGE_CONFLICT_OR_BLOCKING_STATES = {
     "DRAFT",
     "UNKNOWN",
 }
-GREEN_STATE_MAX_POLL_SECONDS = 2 * 60
+# Merge state values that indicate a real content conflict which will not
+# self-resolve by waiting and should be surfaced immediately.
+MERGE_CONFLICT_STATES = {
+    "DIRTY",
+}
+GREEN_STATE_MAX_POLL_SECONDS = 60
 
 # Minimum seconds to wait after all checks go terminal before declaring the PR
 # ready to merge.  Review bots (e.g. Cursor Bugbot) complete their CI check run
@@ -60,11 +72,19 @@ GREEN_STATE_MAX_POLL_SECONDS = 2 * 60
 # the bot's findings are ever seen.
 CHECKS_TERMINAL_GRACE_PERIOD_SECONDS = 60
 
+# Actionable inline review comments on the current head SHA block merge
+# readiness for a bounded freshness window. This catches the race where review
+# feedback arrives shortly after checks complete, while avoiding a permanent
+# merge block for comments that were already handled/resolved without a new
+# commit.
+BLOCKING_REVIEW_ITEM_FRESH_SECONDS = 30 * 60
+
 # Per-check-name hung thresholds: if a check has been IN_PROGRESS longer than
 # this many seconds without completing, surface a diagnose_hung_check action.
 # Matched by substring of the lowercased check name; "default" is the fallback.
 HUNG_CHECK_THRESHOLDS_SECONDS = {
     "cursor": 20 * 60,   # Cursor Bugbot: avg ~8 min, max observed ~12 min
+    "bugbot": 20 * 60,   # Alternate naming for bugbot checks
     "default": 30 * 60,  # CI / E2E: normal 5-6 min, slow-but-legit up to ~20 min
 }
 
@@ -75,8 +95,18 @@ HUNG_CHECK_THRESHOLDS_SECONDS = {
 RETRY_ELIGIBLE_WORKFLOW_KEYWORDS = {
     "e2e",
 }
+# Login keyword fragments for Codex bot, used for emoji reaction gate detection.
+# Codex signals it is reviewing a PR by adding a 👀 reaction; it either posts a
+# review with comments (issues found) or removes the reaction silently (clean).
+CODEX_BOT_LOGIN_KEYWORDS = {
+    "codex",
+    "chatgpt-codex",
+}
 
 MAX_SESSION_MINUTES_DEFAULT = 90
+STATE_STALENESS_RESET_SECONDS = 2 * 60 * 60
+
+_AUTHENTICATED_LOGIN_CACHE = None
 
 
 class GhCommandError(RuntimeError):
@@ -100,7 +130,16 @@ def parse_args():
         help="Max rerun cycles per head SHA before stop recommendation",
     )
     parser.add_argument("--state-file", help="Path to state JSON file")
-    parser.add_argument("--once", action="store_true", help="Emit one snapshot and exit")
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Poll until something needs agent attention, then emit one snapshot and exit",
+    )
+    parser.add_argument(
+        "--snapshot",
+        action="store_true",
+        help="Emit one instant snapshot of current state and exit (no waiting)",
+    )
     parser.add_argument("--watch", action="store_true", help="Continuously emit JSONL snapshots")
     parser.add_argument(
         "--retry-failed-now",
@@ -127,9 +166,14 @@ def parse_args():
         parser.error("--poll-seconds must be > 0")
     if args.max_flaky_retries < 0:
         parser.error("--max-flaky-retries must be >= 0")
+    if args.max_session_minutes <= 0:
+        parser.error("--max-session-minutes must be > 0")
     if args.watch and args.retry_failed_now:
         parser.error("--watch cannot be combined with --retry-failed-now")
-    if not args.once and not args.watch and not args.retry_failed_now:
+    mode_count = sum([args.once, args.snapshot, args.watch, args.retry_failed_now])
+    if mode_count > 1:
+        parser.error("only one of --once, --snapshot, --watch, --retry-failed-now can be used")
+    if mode_count == 0:
         args.once = True
     return args
 
@@ -261,6 +305,29 @@ def extract_repo_from_pr_url(pr_url):
     return None
 
 
+def reset_seen_tracking_state(state):
+    state["seen_issue_comment_ids"] = []
+    state["seen_review_comment_ids"] = []
+    state["seen_review_ids"] = []
+    state["seen_issue_comment_updated_at"] = {}
+    state["seen_review_comment_updated_at"] = {}
+    state["seen_review_updated_at"] = {}
+    state["last_review_poll_at"] = None
+    state["pending_checks_first_seen_at"] = {}
+    state["checks_went_terminal_at"] = None
+    state["checks_terminal_sha"] = None
+
+
+def is_state_stale(state, now_seconds=None):
+    now = float(now_seconds) if now_seconds is not None else time.time()
+    last_snapshot_at = state.get("last_snapshot_at")
+    try:
+        last_snapshot = float(last_snapshot_at)
+    except (TypeError, ValueError):
+        return True
+    return now - last_snapshot > STATE_STALENESS_RESET_SECONDS
+
+
 def load_state(path):
     if path.exists():
         try:
@@ -269,6 +336,9 @@ def load_state(path):
             raise RuntimeError(f"State file is not valid JSON: {path}") from err
         if not isinstance(data, dict):
             raise RuntimeError(f"State file must contain an object: {path}")
+        if is_state_stale(data):
+            reset_seen_tracking_state(data)
+            return data, True
         return data, False
     return {
         "pr": {},
@@ -278,6 +348,9 @@ def load_state(path):
         "seen_issue_comment_ids": [],
         "seen_review_comment_ids": [],
         "seen_review_ids": [],
+        "seen_issue_comment_updated_at": {},
+        "seen_review_comment_updated_at": {},
+        "seen_review_updated_at": {},
         "last_snapshot_at": None,
         # Timestamp (unix seconds) when checks first went all_terminal for the
         # current head SHA.  Used to enforce a grace period before emitting
@@ -286,6 +359,12 @@ def load_state(path):
         "checks_went_terminal_at": None,
         # The head SHA for which checks_went_terminal_at was recorded.
         "checks_terminal_sha": None,
+        # ISO timestamp for the last successful review/comment poll cycle.
+        "last_review_poll_at": None,
+        # First-seen unix seconds for pending checks keyed by a stable check
+        # identity. This allows hung detection even when `startedAt` is not
+        # provided by GitHub for queued/blocked checks.
+        "pending_checks_first_seen_at": {},
     }, True
 
 
@@ -364,7 +443,7 @@ def get_workflow_runs_for_sha(repo, head_sha):
             [
                 "api", endpoint, "-X", "GET",
                 "-f", f"head_sha={head_sha}",
-                "-f", f"per_page=100",
+                "-f", "per_page=100",
                 "-f", f"page={page}",
                 "-f", "event=pull_request",
             ],
@@ -416,15 +495,15 @@ def failed_runs_from_workflow_runs(runs, head_sha):
         conclusion = str(run.get("conclusion") or "")
         if conclusion not in FAILED_RUN_CONCLUSIONS:
             continue
-        wf_name = run.get("name") or run.get("display_title") or ""
+        workflow_name = run.get("name") or run.get("display_title") or ""
         failed_runs.append(
             {
                 "run_id": run.get("id"),
-                "workflow_name": wf_name,
+                "workflow_name": workflow_name,
                 "status": str(run.get("status") or ""),
                 "conclusion": conclusion,
                 "html_url": str(run.get("html_url") or ""),
-                "retry_eligible": is_retry_eligible_workflow_name(wf_name),
+                "retry_eligible": is_retry_eligible_workflow_name(workflow_name),
             }
         )
     failed_runs.sort(
@@ -433,11 +512,197 @@ def failed_runs_from_workflow_runs(runs, head_sha):
     return failed_runs
 
 
+def is_bugbot_name(name):
+    lower = str(name or "").lower()
+    return any(keyword in lower for keyword in BUGBOT_WORKFLOW_KEYWORDS)
+
+
+def bugbot_check_activity_sort_key(check):
+    started = str(check.get("startedAt") or "")
+    completed = str(check.get("completedAt") or "")
+    activity = max(started, completed)
+    return (
+        activity,
+        started,
+        completed,
+        str(check.get("name") or ""),
+    )
+
+
+def summarize_bugbot_gate_from_checks(checks):
+    bugbot_checks = []
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        check_name = str(check.get("name") or "")
+        workflow_name = str(check.get("workflow") or "")
+        if not is_bugbot_name(check_name) and not is_bugbot_name(workflow_name):
+            continue
+        bugbot_checks.append(check)
+
+    if not bugbot_checks:
+        return {
+            "required": True,
+            "present": False,
+            "status": "missing",
+            "conclusion": "",
+            "is_success": False,
+            "run_id": None,
+            "workflow_name": "",
+            "html_url": "",
+            "source": "checks",
+        }
+
+    pending_bugbot_checks = [check for check in bugbot_checks if is_pending_check(check)]
+    if pending_bugbot_checks:
+        pending_bugbot_checks.sort(key=bugbot_check_activity_sort_key)
+        latest = pending_bugbot_checks[-1]
+    else:
+        bugbot_checks.sort(key=bugbot_check_activity_sort_key)
+        latest = bugbot_checks[-1]
+    state = str(latest.get("state") or "").upper()
+    bucket = str(latest.get("bucket") or "").lower()
+
+    if is_pending_check(latest):
+        status = "in_progress"
+        conclusion = ""
+    elif bucket == "pass" or state == "SUCCESS":
+        status = "completed"
+        conclusion = "success"
+    elif bucket == "skipping" or state == "SKIPPING":
+        status = "completed"
+        conclusion = "skipped"
+    elif state == "NEUTRAL":
+        status = "completed"
+        conclusion = "neutral"
+    elif bucket == "fail":
+        status = "completed"
+        conclusion = "failure"
+    elif state:
+        status = "completed"
+        conclusion = state.lower()
+    else:
+        status = "in_progress"
+        conclusion = ""
+
+    is_success = status == "completed" and conclusion == "success"
+    return {
+        "required": True,
+        "present": True,
+        "status": status,
+        "conclusion": conclusion,
+        "is_success": is_success,
+        "run_id": None,
+        "workflow_name": str(latest.get("name") or ""),
+        "html_url": str(latest.get("link") or ""),
+        "source": "checks",
+    }
+
+
+def summarize_bugbot_gate_from_runs(runs, head_sha):
+    bugbot_runs = []
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        if str(run.get("head_sha") or "") != head_sha:
+            continue
+        workflow_name = run.get("name") or run.get("display_title") or ""
+        if not is_bugbot_name(workflow_name):
+            continue
+        bugbot_runs.append(run)
+
+    if not bugbot_runs:
+        return {
+            "required": True,
+            "present": False,
+            "status": "missing",
+            "conclusion": "",
+            "is_success": False,
+            "run_id": None,
+            "workflow_name": "",
+            "html_url": "",
+            "source": "actions_runs",
+        }
+
+    bugbot_runs.sort(
+        key=lambda item: (
+            str(item.get("created_at") or ""),
+            str(item.get("updated_at") or ""),
+            int(item.get("id") or 0),
+        )
+    )
+    latest = bugbot_runs[-1]
+    status = str(latest.get("status") or "")
+    conclusion = str(latest.get("conclusion") or "")
+    is_success = status == "completed" and conclusion == "success"
+    return {
+        "required": True,
+        "present": True,
+        "status": status,
+        "conclusion": conclusion,
+        "is_success": is_success,
+        "run_id": latest.get("id"),
+        "workflow_name": latest.get("name") or latest.get("display_title") or "",
+        "html_url": str(latest.get("html_url") or ""),
+        "source": "actions_runs",
+    }
+
+
+def summarize_bugbot_gate(checks, runs, head_sha):
+    from_checks = summarize_bugbot_gate_from_checks(checks)
+    if from_checks.get("present"):
+        return from_checks
+    return summarize_bugbot_gate_from_runs(runs, head_sha)
+
+
+def is_codex_bot_login(login):
+    lower = str(login or "").lower()
+    return any(keyword in lower for keyword in CODEX_BOT_LOGIN_KEYWORDS)
+
+
+def summarize_codex_gate(repo, pr_number):
+    """Detect Codex review status via PR emoji reactions.
+
+    Codex signals it is reviewing a PR by adding a 👀 (eyes) reaction.
+    It either posts a review with comments (issues found) or removes the
+    reaction silently (clean).  A present 👀 reaction from a Codex bot
+    account means review is still in progress.
+    """
+    try:
+        reactions = gh_json(
+            ["api", f"repos/{repo}/issues/{pr_number}/reactions"],
+            repo=repo,
+        )
+    except GhCommandError:
+        return {"reviewing": False, "status": "unknown"}
+
+    if not isinstance(reactions, list):
+        return {"reviewing": False, "status": "unknown"}
+
+    for reaction in reactions:
+        if not isinstance(reaction, dict):
+            continue
+        if str(reaction.get("content") or "") != "eyes":
+            continue
+        user = reaction.get("user") or {}
+        login = str(user.get("login") or "")
+        if is_codex_bot_login(login):
+            return {"reviewing": True, "status": "in_progress"}
+
+    return {"reviewing": False, "status": "idle"}
+
+
 def get_authenticated_login():
+    global _AUTHENTICATED_LOGIN_CACHE
+    if _AUTHENTICATED_LOGIN_CACHE:
+        return _AUTHENTICATED_LOGIN_CACHE
+
     data = gh_json(["api", "user"])
     if not isinstance(data, dict) or not data.get("login"):
         raise GhCommandError("Unable to determine authenticated GitHub login from `gh api user`")
-    return str(data["login"])
+
+    _AUTHENTICATED_LOGIN_CACHE = str(data["login"])
+    return _AUTHENTICATED_LOGIN_CACHE
 
 
 def comment_endpoints(repo, pr_number):
@@ -448,12 +713,103 @@ def comment_endpoints(repo, pr_number):
     }
 
 
-def gh_api_list_paginated(endpoint, repo=None, per_page=100):
+def get_unresolved_review_comment_ids(repo, pr_number):
+    owner, name = repo.split("/", 1)
+    query = (
+        "query($owner:String!, $name:String!, $number:Int!, $cursor:String) {"
+        " repository(owner:$owner, name:$name) {"
+        "   pullRequest(number:$number) {"
+        "     reviewThreads(first:100, after:$cursor) {"
+        "       pageInfo { hasNextPage endCursor }"
+        "       nodes {"
+        "         isResolved"
+        "         comments(first:100) { totalCount nodes { databaseId } }"
+        "       }"
+        "     }"
+        "   }"
+        " }"
+        "}"
+    )
+
+    unresolved_ids = set()
+    truncated_unresolved_threads = False
+    cursor = None
+    while True:
+        args = [
+            "api",
+            "graphql",
+            "-f",
+            f"query={query}",
+            "-F",
+            f"owner={owner}",
+            "-F",
+            f"name={name}",
+            "-F",
+            f"number={pr_number}",
+        ]
+        if cursor is not None:
+            args.extend(["-F", f"cursor={cursor}"])
+
+        payload = gh_json(args)
+        if not isinstance(payload, dict):
+            raise GhCommandError("Unexpected GraphQL payload for review threads")
+
+        data = payload.get("data") or {}
+        repository = data.get("repository") or {}
+        pull_request = repository.get("pullRequest") or {}
+        review_threads = pull_request.get("reviewThreads") or {}
+        nodes = review_threads.get("nodes") or []
+
+        if not isinstance(nodes, list):
+            raise GhCommandError("Unexpected reviewThreads.nodes payload")
+
+        for thread in nodes:
+            if not isinstance(thread, dict):
+                continue
+            if bool(thread.get("isResolved")):
+                continue
+            comments_payload = thread.get("comments") or {}
+            comments = comments_payload.get("nodes") or []
+            total_count = comments_payload.get("totalCount")
+            try:
+                total_count_int = int(total_count)
+            except (TypeError, ValueError):
+                total_count_int = len(comments)
+            if total_count_int > len(comments):
+                truncated_unresolved_threads = True
+
+            for comment in comments:
+                if not isinstance(comment, dict):
+                    continue
+                database_id = comment.get("databaseId")
+                if database_id is None:
+                    continue
+                unresolved_ids.add(str(database_id))
+
+        page_info = review_threads.get("pageInfo") or {}
+        has_next = bool(page_info.get("hasNextPage"))
+        if not has_next:
+            break
+        cursor = page_info.get("endCursor")
+        if not cursor:
+            break
+
+    return {
+        "ids": unresolved_ids,
+        "truncated": truncated_unresolved_threads,
+    }
+
+
+def gh_api_list_paginated(endpoint, repo=None, per_page=100, query_params=None):
     items = []
     page = 1
+    base_params = dict(query_params or {})
     while True:
         sep = "&" if "?" in endpoint else "?"
-        page_endpoint = f"{endpoint}{sep}per_page={per_page}&page={page}"
+        params = dict(base_params)
+        params["per_page"] = per_page
+        params["page"] = page
+        page_endpoint = f"{endpoint}{sep}{urlencode(params)}"
         payload = gh_json(["api", page_endpoint], repo=repo)
         if payload is None:
             break
@@ -478,6 +834,7 @@ def normalize_issue_comments(items):
                 "author": extract_login(item.get("user")),
                 "author_association": str(item.get("author_association") or ""),
                 "created_at": str(item.get("created_at") or ""),
+                "updated_at": str(item.get("updated_at") or item.get("created_at") or ""),
                 "body": str(item.get("body") or ""),
                 "path": None,
                 "line": None,
@@ -503,6 +860,7 @@ def normalize_review_comments(items):
                 "author": extract_login(item.get("user")),
                 "author_association": str(item.get("author_association") or ""),
                 "created_at": str(item.get("created_at") or ""),
+                "updated_at": str(item.get("updated_at") or item.get("created_at") or ""),
                 "body": str(item.get("body") or ""),
                 "path": item.get("path"),
                 "line": line,
@@ -525,7 +883,14 @@ def normalize_reviews(items):
                 "author": extract_login(item.get("user")),
                 "author_association": str(item.get("author_association") or ""),
                 "created_at": str(item.get("submitted_at") or item.get("created_at") or ""),
+                "updated_at": str(
+                    item.get("updated_at")
+                    or item.get("submitted_at")
+                    or item.get("created_at")
+                    or ""
+                ),
                 "body": str(item.get("body") or ""),
+                "review_state": str(item.get("state") or "").upper(),
                 "path": None,
                 "line": None,
                 "commit_id": None,
@@ -553,85 +918,65 @@ def is_actionable_review_bot_login(login):
 
 
 def is_trusted_human_review_author(item, authenticated_login):
+    _ = authenticated_login
     author = str(item.get("author") or "")
     if not author:
         return False
-    if authenticated_login and author == authenticated_login:
-        return True
     association = str(item.get("author_association") or "").upper()
     return association in TRUSTED_AUTHOR_ASSOCIATIONS
 
 
-def is_blocking_review_item(item, unresolved_comment_ids=None):
+def item_age_seconds(item, now_seconds=None, timestamp_field="created_at"):
+    timestamp_value = str(item.get(timestamp_field) or item.get("created_at") or "")
+    if not timestamp_value:
+        return None
+    try:
+        timestamp_seconds = datetime.fromisoformat(
+            timestamp_value.replace("Z", "+00:00")
+        ).timestamp()
+    except ValueError:
+        return None
+
+    now = float(now_seconds) if now_seconds is not None else time.time()
+    return max(0, now - timestamp_seconds)
+
+
+def is_blocking_review_item(item, head_sha, now_seconds=None):
     if not isinstance(item, dict):
         return False
     if str(item.get("kind") or "") != "review_comment":
         return False
-    # Block on any inline comment whose thread is unresolved, regardless of which
-    # commit it was posted on. Unresolved threads always represent pending feedback.
-    if unresolved_comment_ids is not None:
-        item_id = str(item.get("id") or "")
-        return item_id in unresolved_comment_ids
-    return True
+    commit_id = str(item.get("commit_id") or "")
+    if not commit_id or not head_sha or commit_id != head_sha:
+        return False
+
+    age_seconds = item_age_seconds(item, now_seconds=now_seconds)
+    if age_seconds is None:
+        return True
+    return age_seconds <= BLOCKING_REVIEW_ITEM_FRESH_SECONDS
 
 
-def fetch_unresolved_comment_ids(repo, pr_number):
-    """Returns a set of comment IDs (as strings) belonging to unresolved review threads.
-
-    Paginates through all review threads and their comments to avoid missing any
-    unresolved feedback on large PRs.
-    """
-    owner, name = repo.split("/", 1)
-    ids = set()
-    cursor = None
-    while True:
-        after = f', after: "{cursor}"' if cursor else ""
-        query = (
-            "{"
-            f'  repository(owner: "{owner}", name: "{name}") {{'
-            f"    pullRequest(number: {pr_number}) {{"
-            f"      reviewThreads(first: 100{after}) {{"
-            "        pageInfo { hasNextPage endCursor }"
-            "        nodes {"
-            "          isResolved"
-            "          comments(first: 100) {"
-            "            nodes { databaseId }"
-            "          }"
-            "        }"
-            "      }"
-            "    }"
-            "  }"
-            "}"
-        )
-        result = gh_json(["api", "graphql", "-f", f"query={query}"])
-        threads_data = (
-            (result or {})
-            .get("data", {})
-            .get("repository", {})
-            .get("pullRequest", {})
-            .get("reviewThreads", {})
-        )
-        for thread in (threads_data or {}).get("nodes", []):
-            if thread.get("isResolved"):
-                continue
-            for comment in (thread.get("comments") or {}).get("nodes", []):
-                db_id = comment.get("databaseId")
-                if db_id is not None:
-                    ids.add(str(db_id))
-        page_info = (threads_data or {}).get("pageInfo", {})
-        if not page_info.get("hasNextPage"):
-            break
-        cursor = page_info.get("endCursor")
-    return ids
-
-
-def fetch_new_review_items(pr, state, authenticated_login=None):
+def fetch_new_review_items(pr, state, fresh_state, authenticated_login=None):
     repo = pr["repo"]
     pr_number = pr["number"]
+    head_sha = str(pr.get("head_sha") or "")
     endpoints = comment_endpoints(repo, pr_number)
 
-    issue_payload = gh_api_list_paginated(endpoints["issue_comment"], repo=repo)
-    review_comment_payload = gh_api_list_paginated(endpoints["review_comment"], repo=repo)
+    if fresh_state:
+        # Force a full review scan on fresh state files and clear any stale
+        # review cursor inherited from prior sessions.
+        state["last_review_poll_at"] = None
+
+    now_utc = datetime.now(timezone.utc)
+
+    issue_payload = gh_api_list_paginated(
+        endpoints["issue_comment"],
+        repo=repo,
+    )
+    review_comment_payload = gh_api_list_paginated(
+        endpoints["review_comment"],
+        repo=repo,
+    )
     review_payload = gh_api_list_paginated(endpoints["review"], repo=repo)
 
     issue_items = normalize_issue_comments(issue_payload)
@@ -639,16 +984,45 @@ def fetch_new_review_items(pr, state, authenticated_login=None):
     review_items = normalize_reviews(review_payload)
     all_items = issue_items + review_comment_items + review_items
 
+    # Look up unresolved review threads via GraphQL when there are any review
+    # comments at all.  Unresolved threads block merge regardless of which
+    # commit they were posted on.
+    unresolved_review_comment_ids = None
+    unresolved_lookup_truncated = False
+    if review_comment_items:
+        try:
+            unresolved_result = get_unresolved_review_comment_ids(repo, pr_number)
+            if isinstance(unresolved_result, dict):
+                unresolved_review_comment_ids = set(unresolved_result.get("ids") or [])
+                unresolved_lookup_truncated = bool(unresolved_result.get("truncated"))
+            else:
+                unresolved_review_comment_ids = set()
+        except GhCommandError:
+            unresolved_review_comment_ids = None
+
     seen_issue = {str(x) for x in state.get("seen_issue_comment_ids") or []}
     seen_review_comment = {str(x) for x in state.get("seen_review_comment_ids") or []}
     seen_review = {str(x) for x in state.get("seen_review_ids") or []}
+    seen_issue_updated_at = {
+        str(key): str(value)
+        for key, value in (state.get("seen_issue_comment_updated_at") or {}).items()
+    }
+    seen_review_comment_updated_at = {
+        str(key): str(value)
+        for key, value in (state.get("seen_review_comment_updated_at") or {}).items()
+    }
+    seen_review_updated_at = {
+        str(key): str(value)
+        for key, value in (state.get("seen_review_updated_at") or {}).items()
+    }
 
     # On a brand-new state file, surface existing review activity instead of
     # silently treating it as seen. This avoids missing already-pending review
     # feedback when monitoring starts after comments were posted.
 
-    actionable_items = []
     new_items = []
+    blocking_items = []
+    now_seconds = time.time()
     for item in all_items:
         item_id = item.get("id")
         if not item_id:
@@ -656,29 +1030,58 @@ def fetch_new_review_items(pr, state, authenticated_login=None):
         author = item.get("author") or ""
         if not author:
             continue
+        if authenticated_login and author == authenticated_login:
+            continue
         if is_bot_login(author):
             if not is_actionable_review_bot_login(author):
                 continue
         elif not is_trusted_human_review_author(item, authenticated_login):
             continue
 
-        actionable_items.append(item)
+        is_blocking = False
+        is_review_comment = str(item.get("kind") or "") == "review_comment"
+        if unresolved_review_comment_ids is not None:
+            # Block on any inline comment whose thread is unresolved, regardless
+            # of which commit it was posted on.
+            is_blocking = (
+                is_review_comment
+                and (item_id in unresolved_review_comment_ids or unresolved_lookup_truncated)
+            )
+        else:
+            # Fallback heuristic when unresolved-thread lookup is unavailable.
+            is_blocking = is_blocking_review_item(item, head_sha=head_sha, now_seconds=now_seconds)
+
+        if is_blocking:
+            blocking_items.append(item)
 
         kind = item["kind"]
-        if kind == "issue_comment" and item_id in seen_issue:
+        item_updated_at = str(item.get("updated_at") or item.get("created_at") or "")
+
+        if kind == "review" and str(item.get("review_state") or "") == "APPROVED":
+            seen_review.add(item_id)
+            seen_review_updated_at[item_id] = item_updated_at
             continue
-        if kind == "review_comment" and item_id in seen_review_comment:
+        if kind == "issue_comment" and item_id in seen_issue and seen_issue_updated_at.get(item_id) == item_updated_at:
             continue
-        if kind == "review" and item_id in seen_review:
+        if (
+            kind == "review_comment"
+            and item_id in seen_review_comment
+            and seen_review_comment_updated_at.get(item_id) == item_updated_at
+        ):
+            continue
+        if kind == "review" and item_id in seen_review and seen_review_updated_at.get(item_id) == item_updated_at:
             continue
 
         new_items.append(item)
         if kind == "issue_comment":
             seen_issue.add(item_id)
+            seen_issue_updated_at[item_id] = item_updated_at
         elif kind == "review_comment":
             seen_review_comment.add(item_id)
+            seen_review_comment_updated_at[item_id] = item_updated_at
         elif kind == "review":
             seen_review.add(item_id)
+            seen_review_updated_at[item_id] = item_updated_at
 
     new_items.sort(
         key=lambda item: (
@@ -687,12 +1090,6 @@ def fetch_new_review_items(pr, state, authenticated_login=None):
             item.get("id") or "",
         )
     )
-    unresolved_comment_ids = fetch_unresolved_comment_ids(repo, pr_number)
-    blocking_items = [
-        item
-        for item in actionable_items
-        if is_blocking_review_item(item, unresolved_comment_ids=unresolved_comment_ids)
-    ]
     blocking_items.sort(
         key=lambda item: (
             item.get("created_at") or "",
@@ -704,6 +1101,10 @@ def fetch_new_review_items(pr, state, authenticated_login=None):
     state["seen_issue_comment_ids"] = sorted(seen_issue)
     state["seen_review_comment_ids"] = sorted(seen_review_comment)
     state["seen_review_ids"] = sorted(seen_review)
+    state["seen_issue_comment_updated_at"] = seen_issue_updated_at
+    state["seen_review_comment_updated_at"] = seen_review_comment_updated_at
+    state["seen_review_updated_at"] = seen_review_updated_at
+    state["last_review_poll_at"] = now_utc.isoformat().replace("+00:00", "Z")
     return new_items, blocking_items
 
 
@@ -740,6 +1141,8 @@ def is_pr_ready_to_merge(
     new_review_items,
     checks_terminal_elapsed=None,
     blocking_review_items=None,
+    bugbot_gate=None,
+    codex_gate=None,
 ):
     if pr["closed"] or pr["merged"]:
         return False
@@ -761,6 +1164,10 @@ def is_pr_ready_to_merge(
         return False
     if str(pr.get("review_decision") or "") in MERGE_BLOCKING_REVIEW_DECISIONS:
         return False
+    if bugbot_gate and bool(bugbot_gate.get("required")) and not bool(bugbot_gate.get("is_success")):
+        return False
+    if codex_gate and bool(codex_gate.get("reviewing")):
+        return False
     # Enforce a grace period after checks go terminal.  Review bots complete
     # their CI check run first and post inline PR review comments a few seconds
     # later via a separate API call.  Declaring the PR ready before the grace
@@ -768,6 +1175,53 @@ def is_pr_ready_to_merge(
     if checks_terminal_elapsed is not None and checks_terminal_elapsed < CHECKS_TERMINAL_GRACE_PERIOD_SECONDS:
         return False
     return True
+
+
+def is_merge_conflicted(pr):
+    mergeable = str(pr.get("mergeable") or "")
+    merge_state_status = str(pr.get("merge_state_status") or "")
+    if mergeable == "CONFLICTING":
+        return True
+    return merge_state_status in MERGE_CONFLICT_STATES
+
+
+def pending_check_key(check):
+    """Return a stable identity key for a pending check across snapshots."""
+    name = str(check.get("name") or "")
+    workflow = str(check.get("workflow") or "")
+    link = str(check.get("link") or "")
+    return f"{name.lower()}|{workflow}|{link}"
+
+
+def reset_state_for_new_head_sha(state, head_sha):
+    """Clear SHA-scoped tracking when the PR head SHA changes."""
+    previous_sha = str(state.get("last_seen_head_sha") or "")
+    current_sha = str(head_sha or "")
+    if previous_sha and current_sha and previous_sha != current_sha:
+        state["pending_checks_first_seen_at"] = {}
+
+
+def update_pending_checks_first_seen(state, checks, now_seconds):
+    existing = state.get("pending_checks_first_seen_at")
+    if not isinstance(existing, dict):
+        existing = {}
+
+    current_pending_keys = set()
+    now_int = int(now_seconds)
+    for check in checks:
+        if not is_pending_check(check):
+            continue
+        key = pending_check_key(check)
+        current_pending_keys.add(key)
+        if key not in existing:
+            existing[key] = now_int
+
+    for key in list(existing.keys()):
+        if key not in current_pending_keys:
+            existing.pop(key, None)
+
+    state["pending_checks_first_seen_at"] = existing
+    return existing
 
 
 def hung_threshold_for_check(check_name):
@@ -781,22 +1235,32 @@ def hung_threshold_for_check(check_name):
     return HUNG_CHECK_THRESHOLDS_SECONDS["default"]
 
 
-def hung_checks_from_checks(checks):
+def hung_checks_from_checks(checks, pending_checks_first_seen_at):
     """Return checks that have been pending longer than their hung threshold."""
     hung = []
     now = time.time()
     for check in checks:
         if not is_pending_check(check):
             continue
+
+        started_at = None
         started_at_str = check.get("startedAt") or ""
-        if not started_at_str:
-            continue
-        try:
-            started_at = datetime.fromisoformat(
-                started_at_str.replace("Z", "+00:00")
-            ).timestamp()
-        except ValueError:
-            continue
+        if started_at_str:
+            try:
+                started_at = datetime.fromisoformat(
+                    started_at_str.replace("Z", "+00:00")
+                ).timestamp()
+            except ValueError:
+                started_at = None
+
+        if started_at is None:
+            key = pending_check_key(check)
+            first_seen = pending_checks_first_seen_at.get(key)
+            try:
+                started_at = float(first_seen)
+            except (TypeError, ValueError):
+                continue
+
         elapsed = now - started_at
         threshold = hung_threshold_for_check(check.get("name") or "")
         if elapsed > threshold:
@@ -820,6 +1284,8 @@ def recommend_actions(
     max_retries,
     checks_terminal_elapsed=None,
     blocking_review_items=None,
+    bugbot_gate=None,
+    codex_gate=None,
 ):
     actions = []
     if pr["closed"] or pr["merged"]:
@@ -828,12 +1294,17 @@ def recommend_actions(
         actions.append("stop_pr_closed")
         return unique_actions(actions)
 
+    if is_merge_conflicted(pr):
+        actions.append("diagnose_merge_conflict")
+
     if is_pr_ready_to_merge(
         pr,
         checks_summary,
         new_review_items,
         checks_terminal_elapsed=checks_terminal_elapsed,
         blocking_review_items=blocking_review_items,
+        bugbot_gate=bugbot_gate,
+        codex_gate=codex_gate,
     ):
         actions.append("stop_ready_to_merge")
         return unique_actions(actions)
@@ -842,6 +1313,28 @@ def recommend_actions(
         actions.append("process_review_comment")
     elif blocking_review_items:
         actions.append("process_review_comment")
+
+    if codex_gate and bool(codex_gate.get("reviewing")):
+        actions.append("wait_codex")
+
+    if bugbot_gate and bool(bugbot_gate.get("required")) and not bool(bugbot_gate.get("is_success")):
+        bugbot_status = str(bugbot_gate.get("status") or "")
+        grace_active = (
+            checks_terminal_elapsed is not None
+            and checks_terminal_elapsed < CHECKS_TERMINAL_GRACE_PERIOD_SECONDS
+        )
+        if bugbot_status == "completed":
+            if grace_active:
+                actions.append("wait_bugbot")
+            else:
+                actions.append("stop_bugbot_not_green")
+        elif bugbot_status == "missing":
+            if checks_summary["all_terminal"] and not grace_active:
+                actions.append("stop_bugbot_not_green")
+            else:
+                actions.append("wait_bugbot")
+        else:
+            actions.append("wait_bugbot")
 
     if hung_checks:
         actions.append("diagnose_hung_check")
@@ -878,24 +1371,44 @@ def collect_snapshot(args):
     if not state.get("started_at"):
         state["started_at"] = int(time.time())
 
+    now = int(time.time())
+    reset_state_for_new_head_sha(state, pr["head_sha"])
+
     # `gh pr checks -R <repo>` requires an explicit PR/branch/url argument.
     # After resolving `--pr auto`, reuse the concrete PR number.
     checks = get_pr_checks(str(pr["number"]), repo=pr["repo"])
     checks_summary = summarize_checks(checks)
-    hung_checks = hung_checks_from_checks(checks)
-    workflow_runs = get_workflow_runs_for_sha(pr["repo"], pr["head_sha"])
-    failed_runs = failed_runs_from_workflow_runs(workflow_runs, pr["head_sha"])
+    pending_checks_first_seen_at = update_pending_checks_first_seen(state, checks, now)
+    hung_checks = hung_checks_from_checks(checks, pending_checks_first_seen_at)
+
+    bugbot_gate = summarize_bugbot_gate_from_checks(checks)
+
+    workflow_runs = []
+    failed_runs = []
+    needs_failed_run_lookup = checks_summary["failed_count"] > 0
+    needs_bugbot_run_lookup = not bool(bugbot_gate.get("present"))
+    if needs_failed_run_lookup or needs_bugbot_run_lookup:
+        workflow_runs = get_workflow_runs_for_sha(pr["repo"], pr["head_sha"])
+        if needs_failed_run_lookup:
+            failed_runs = failed_runs_from_workflow_runs(workflow_runs, pr["head_sha"])
+        if needs_bugbot_run_lookup:
+            bugbot_gate = summarize_bugbot_gate(checks, workflow_runs, pr["head_sha"])
+
+    try:
+        authenticated_login = get_authenticated_login()
+    except GhCommandError:
+        authenticated_login = None
     new_review_items, blocking_review_items = fetch_new_review_items(
         pr,
         state,
-        authenticated_login=args.authenticated_login,
+        fresh_state=fresh_state,
+        authenticated_login=authenticated_login,
     )
 
     # Track when checks first went all_terminal for the current head SHA.
     # This timestamp is used to enforce a grace period before emitting
     # stop_ready_to_merge, preventing a race where the script declares the PR
     # ready before review bots have finished posting their inline comments.
-    now = int(time.time())
     head_sha = pr["head_sha"]
     if checks_summary["all_terminal"]:
         if state.get("checks_terminal_sha") != head_sha:
@@ -917,6 +1430,8 @@ def collect_snapshot(args):
         state["checks_went_terminal_at"] = None
         checks_terminal_elapsed = None
 
+    codex_gate = summarize_codex_gate(pr["repo"], pr["number"])
+
     retries_used = current_retry_count(state, pr["head_sha"])
     actions = recommend_actions(
         pr,
@@ -928,6 +1443,8 @@ def collect_snapshot(args):
         args.max_flaky_retries,
         checks_terminal_elapsed=checks_terminal_elapsed,
         blocking_review_items=blocking_review_items,
+        bugbot_gate=bugbot_gate,
+        codex_gate=codex_gate,
     )
 
     state["pr"] = {"repo": pr["repo"], "number": pr["number"]}
@@ -939,6 +1456,8 @@ def collect_snapshot(args):
         "pr": pr,
         "checks": checks_summary,
         "failed_runs": failed_runs,
+        "bugbot_gate": bugbot_gate,
+        "codex_gate": codex_gate,
         "hung_checks": hung_checks,
         "new_review_items": new_review_items,
         "blocking_review_items": blocking_review_items,
@@ -1041,12 +1560,21 @@ def is_ci_green(snapshot):
         return False
     checks = snapshot.get("checks") or {}
     pr = snapshot.get("pr") or {}
+    bugbot_gate = snapshot.get("bugbot_gate") or {}
+    blocking_review_items = snapshot.get("blocking_review_items") or []
     review_decision = str(pr.get("review_decision") or "")
+    bugbot_required = bool(bugbot_gate.get("required")) if bugbot_gate else False
+    bugbot_green = (not bugbot_required) or bool(bugbot_gate.get("is_success"))
+    codex_gate = snapshot.get("codex_gate") or {}
+    codex_reviewing = bool(codex_gate.get("reviewing"))
     return (
         bool(checks.get("all_terminal"))
         and int(checks.get("failed_count") or 0) == 0
         and int(checks.get("pending_count") or 0) == 0
+        and not blocking_review_items
         and review_decision not in MERGE_BLOCKING_REVIEW_DECISIONS
+        and bugbot_green
+        and not codex_reviewing
     )
 
 
@@ -1055,6 +1583,8 @@ def snapshot_change_key(snapshot):
     checks = snapshot.get("checks") or {}
     review_items = snapshot.get("new_review_items") or []
     blocking_review_items = snapshot.get("blocking_review_items") or []
+    bugbot_gate = snapshot.get("bugbot_gate") or {}
+    codex_gate = snapshot.get("codex_gate") or {}
     return (
         str(pr.get("head_sha") or ""),
         str(pr.get("state") or ""),
@@ -1075,6 +1605,10 @@ def snapshot_change_key(snapshot):
             if isinstance(item, dict)
         ),
         tuple(snapshot.get("actions") or []),
+        str(bugbot_gate.get("status") or ""),
+        str(bugbot_gate.get("conclusion") or ""),
+        bool(bugbot_gate.get("is_success")),
+        bool(codex_gate.get("reviewing")),
         # Include whether the checks-terminal grace period is still active.
         # This flips exactly once (True → False) when the grace period expires,
         # ensuring the change-key transitions at that moment and preventing the
@@ -1088,6 +1622,49 @@ def _grace_period_active(snapshot):
     if elapsed is None:
         return False
     return elapsed < CHECKS_TERMINAL_GRACE_PERIOD_SECONDS
+
+
+# Actions that mean "nothing for the agent to do yet, keep waiting internally".
+# Everything else requires agent attention and should cause --once to return.
+PASSIVE_WAIT_ACTIONS = {
+    "idle",
+    "wait_bugbot",
+    "wait_codex",
+}
+
+
+def needs_agent_attention(actions):
+    """Return True when the actions list contains something the agent should act on.
+
+    Used by --once to decide when to stop polling and return to the caller.
+    Returns True for any action that is not a passive wait (idle, wait_bugbot,
+    wait_codex).  An empty actions list also returns True as a safety measure.
+    """
+    action_set = set(actions or [])
+    if not action_set:
+        return True
+    return not action_set.issubset(PASSIVE_WAIT_ACTIONS)
+
+
+def should_stop_watching(actions):
+    action_set = set(actions or [])
+    if "stop_pr_closed" in action_set:
+        return True
+    if "stop_exhausted_retries" in action_set:
+        return True
+    if "stop_non_retryable_failure" in action_set:
+        return True
+    if "stop_ready_to_merge" in action_set:
+        return True
+    if "stop_bugbot_not_green" in action_set:
+        return True
+    if "diagnose_hung_check" in action_set:
+        return True
+    if "diagnose_skipping_checks" in action_set:
+        return True
+    if "diagnose_merge_conflict" in action_set and "wait_bugbot" not in action_set:
+        return True
+    return False
 
 
 def run_watch(args):
@@ -1113,55 +1690,99 @@ def run_watch(args):
             sys.stderr.write(f"gh_pr_watch.py poll error (retrying): {err}\n")
             time.sleep(poll_seconds)
             continue
-        actions = set(snapshot.get("actions") or [])
-        if (
-            "stop_pr_closed" in actions
-            or "stop_exhausted_retries" in actions
-            or "stop_non_retryable_failure" in actions
-            or "stop_ready_to_merge" in actions
-            or "diagnose_hung_check" in actions
-            or "diagnose_skipping_checks" in actions
-        ):
-            print_event("stop", {"snapshot": snapshot, "state_file": str(state_path)})
+        actions = snapshot.get("actions") or []
+        if should_stop_watching(actions):
+            print_event(
+                "snapshot",
+                {
+                    "snapshot": snapshot,
+                    "state_file": str(state_path),
+                    "next_poll_seconds": poll_seconds,
+                },
+            )
+            print_event("stop", {"actions": snapshot.get("actions"), "pr": snapshot.get("pr")})
             return 0
 
         current_change_key = snapshot_change_key(snapshot)
         changed = current_change_key != last_change_key
         green = is_ci_green(snapshot)
 
-        if not green:
-            poll_seconds = args.poll_seconds
-        elif changed or last_change_key is None:
-            poll_seconds = args.poll_seconds
+        if not green or changed or last_change_key is None:
+            next_poll_seconds = args.poll_seconds
         else:
-            poll_seconds = min(poll_seconds * 2, GREEN_STATE_MAX_POLL_SECONDS)
+            next_poll_seconds = min(poll_seconds * 2, GREEN_STATE_MAX_POLL_SECONDS)
 
-        last_change_key = current_change_key
-        # Emit snapshot after computing poll_seconds so next_poll_seconds is accurate.
         print_event(
             "snapshot",
             {
                 "snapshot": snapshot,
                 "state_file": str(state_path),
-                "next_poll_seconds": poll_seconds,
+                "next_poll_seconds": next_poll_seconds,
             },
         )
+
+        last_change_key = current_change_key
+        poll_seconds = next_poll_seconds
+        time.sleep(poll_seconds)
+
+
+def run_once(args):
+    """Poll internally until something needs agent attention, then return one snapshot.
+
+    Unlike an instant snapshot, this blocks until checks go terminal, a review
+    comment arrives, a stop condition fires, or the session timeout elapses.
+    The caller (the agent) only gets called back when there is something to do,
+    eliminating blind sleep loops.
+    """
+    poll_seconds = args.poll_seconds
+    started_at = time.time()
+    max_session_seconds = args.max_session_minutes * 60
+    while True:
+        elapsed = time.time() - started_at
+        if elapsed > max_session_seconds:
+            # Return a timeout snapshot so the agent knows what happened.
+            try:
+                snapshot, state_path = collect_snapshot(args)
+            except (GhCommandError, RuntimeError):
+                snapshot = {"actions": ["stop_session_timeout"]}
+                state_path = None
+            snapshot["actions"] = ["stop_session_timeout"]
+            snapshot["state_file"] = str(state_path) if state_path else None
+            return snapshot
+
+        try:
+            snapshot, state_path = collect_snapshot(args)
+        except (GhCommandError, RuntimeError) as err:
+            sys.stderr.write(f"gh_pr_watch.py poll error (retrying): {err}\n")
+            time.sleep(poll_seconds)
+            continue
+
+        actions = snapshot.get("actions") or []
+        snapshot["state_file"] = str(state_path)
+
+        if needs_agent_attention(actions):
+            return snapshot
+
+        # Nothing actionable yet — keep polling.
         time.sleep(poll_seconds)
 
 
 def main():
     args = parse_args()
     try:
-        # Fetch once per session inside the error-handling block so GhCommandError
-        # from missing/expired auth is caught and reported via the structured error path.
-        args.authenticated_login = get_authenticated_login()
         if args.retry_failed_now:
             print_json(retry_failed_now(args))
             return 0
         if args.watch:
             return run_watch(args)
-        snapshot, state_path = collect_snapshot(args)
-        snapshot["state_file"] = str(state_path)
+        if args.snapshot:
+            # Instant snapshot — no waiting.
+            snapshot, state_path = collect_snapshot(args)
+            snapshot["state_file"] = str(state_path)
+            print_json(snapshot)
+            return 0
+        # --once (default): poll internally until something needs agent attention.
+        snapshot = run_once(args)
         print_json(snapshot)
         return 0
     except (GhCommandError, RuntimeError, ValueError) as err:

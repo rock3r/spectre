@@ -1,0 +1,4 @@
+interface:
+  display_name: "PR Babysitter"
+  short_description: "Monitor a PR: watch CI, process review comments, fix failures, retry flakes"
+  default_prompt: "Use $babysit-pr to watch the current PR until it is ready to merge."
