@@ -123,6 +123,33 @@ class FfmpegRecorderTest {
     }
 
     @Test
+    fun `stop throws if ffmpeg crashed mid-recording`() {
+        // Simulate a crash during capture: process started OK, then ffmpeg dies non-cleanly
+        // (e.g. disk full) before stop() is called. The handle is the only error boundary
+        // exposed to callers, so stop() must surface the non-zero exit instead of silently
+        // succeeding and leaving the caller to trust a truncated output file.
+        val process = CrashedAfterStartFakeProcess()
+        val recorder =
+            FfmpegRecorder(
+                ffmpegPath = FfmpegRecorder.PROBE_PATH,
+                processFactory = ProcessFactoryReturning(process),
+            )
+        val output = Files.createTempFile("spectre-recording-test-", ".mp4")
+        try {
+            val handle = recorder.start(Rectangle(0, 0, 50, 50), output, RecordingOptions())
+            // Drive the crash *after* start succeeded — start's own probe reports the process
+            // alive (waitFor returns false), then we flip alive to false to mimic a runtime
+            // crash with non-zero exit code.
+            process.crash(exitCode = 1)
+            kotlin.test
+                .assertFailsWith<IllegalStateException> { handle.stop() }
+                .also { assertTrue(it.message?.contains("exited with code 1") == true) }
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
     fun `start throws when the spawned ffmpeg exits immediately`() {
         // Simulates the common "ffmpeg dies right after spawn" failure modes — missing Screen
         // Recording permission, invalid codec, unavailable device. Recorder.start must surface
@@ -214,6 +241,47 @@ private class FakeProcess : Process() {
     }
 
     override fun exitValue(): Int = 0
+
+    override fun destroy() {
+        alive = false
+    }
+
+    override fun isAlive(): Boolean = alive
+
+    override fun pid(): Long = 0
+
+    override fun toHandle(): ProcessHandle = ProcessHandle.current()
+
+    override fun onExit(): CompletableFuture<Process> = CompletableFuture.completedFuture(this)
+}
+
+/**
+ * A FakeProcess that starts alive (so start()'s startup probe sees it as healthy) and can be
+ * flipped to exited via [crash]. Used to drive the "ffmpeg crashed mid-recording" branch of
+ * FfmpegRecordingHandle.stop.
+ */
+private class CrashedAfterStartFakeProcess : Process() {
+
+    private var alive: Boolean = true
+    private var exit: Int = 0
+
+    fun crash(exitCode: Int) {
+        alive = false
+        exit = exitCode
+    }
+
+    override fun getOutputStream(): OutputStream = ByteArrayOutputStream()
+
+    override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun waitFor(): Int = exit
+
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean = !alive
+
+    override fun exitValue(): Int =
+        if (alive) throw IllegalThreadStateException("still running") else exit
 
     override fun destroy() {
         alive = false

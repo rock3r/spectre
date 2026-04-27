@@ -131,7 +131,14 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
 
     override fun stop() {
         if (!stopped.compareAndSet(false, true)) return
-        if (!process.isAlive) return
+        if (!process.isAlive) {
+            // ffmpeg already exited — could be a clean prior stop, or a mid-recording crash
+            // (disk full, encoder error, device failure). The handle is the only error
+            // boundary callers see, so a non-zero exit must surface as an error rather than
+            // letting the caller trust a truncated or missing output file.
+            failIfFfmpegCrashed()
+            return
+        }
         // Send 'q' on stdin: ffmpeg's documented clean-shutdown signal. The subprocess flushes
         // its mux buffer, finalises the output file, and exits. SIGTERM / SIGKILL as fallback
         // for stalled processes.
@@ -169,11 +176,33 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
             }
         }
         if (interrupted) Thread.currentThread().interrupt()
+        failIfFfmpegCrashed()
+    }
+
+    private fun failIfFfmpegCrashed() {
+        // exitValue throws IllegalThreadStateException if the process is still alive; we only
+        // call this from paths that have already established the process exited.
+        val exit =
+            @Suppress("TooGenericExceptionCaught")
+            try {
+                process.exitValue()
+            } catch (_: Throwable) {
+                return
+            }
+        // ffmpeg returns 255 on SIGTERM (our own destroy()), so don't treat that as a crash.
+        if (exit != 0 && exit != FFMPEG_SIGTERM_EXIT) {
+            throw IllegalStateException(
+                "ffmpeg exited with code $exit during recording — output at $output may be " +
+                    "truncated or missing. Common causes: disk full, encoder error, device " +
+                    "failure during capture."
+            )
+        }
     }
 
     private companion object {
         const val SHUTDOWN_GRACE_SECONDS: Long = 5
         const val FORCE_KILL_SECONDS: Long = 2
+        const val FFMPEG_SIGTERM_EXIT: Int = 255
     }
 }
 
