@@ -123,6 +123,20 @@ internal constructor(
         val captureRegion = region ?: virtualDesktopBounds()
         return robot.createScreenCapture(captureRegion)
     }
+
+    companion object {
+
+        /**
+         * Returns a [RobotDriver] that performs no real OS input or capture.
+         *
+         * Intended for tests and headless CI environments where constructing a real
+         * `java.awt.Robot` (or touching the system clipboard / screen) is unavailable. Mouse and
+         * key calls are silently dropped, screenshots return a 1×1 empty image, and clipboard
+         * access is a no-op. Combine with the testing module's `ComposeAutomatorRule` /
+         * `ComposeAutomatorExtension` to exercise the rule/extension lifecycle without an EDT.
+         */
+        fun headless(): RobotDriver = RobotDriver(NoopRobotAdapter, NoopClipboardAdapter)
+    }
 }
 
 internal interface RobotAdapter {
@@ -170,6 +184,37 @@ private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) : Rob
         robot.createScreenCapture(region)
 
     override fun waitForIdle() = robot.waitForIdle()
+}
+
+private object NoopRobotAdapter : RobotAdapter {
+
+    override val autoDelayMs: Int = 0
+
+    override fun mouseMove(x: Int, y: Int) = Unit
+
+    override fun mousePress(buttons: Int) = Unit
+
+    override fun mouseRelease(buttons: Int) = Unit
+
+    override fun keyPress(keyCode: Int) = Unit
+
+    override fun keyRelease(keyCode: Int) = Unit
+
+    // Always return a fresh 1×1 image regardless of region size. RobotDriver.headless() is
+    // documented as no-OS-contact (so we don't probe screen devices) and screenshot returns
+    // are conceptually owned by the caller (BufferedImage is mutable; setRGB/createGraphics
+    // are normal post-screenshot operations), so a per-call instance is required for safety.
+    override fun createScreenCapture(region: Rectangle): BufferedImage =
+        BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB)
+
+    override fun waitForIdle() = Unit
+}
+
+private object NoopClipboardAdapter : ClipboardAdapter {
+
+    override fun getContents(): Transferable? = null
+
+    override fun setContents(contents: Transferable) = Unit
 }
 
 private class SystemClipboardAdapter : ClipboardAdapter {
@@ -238,6 +283,13 @@ fun interpolateSwipePoints(
 fun detectMacOs(): Boolean = System.getProperty("os.name").lowercase().contains("mac")
 
 private fun virtualDesktopBounds(): Rectangle {
+    // GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices throws HeadlessException
+    // when the JVM is running with -Djava.awt.headless=true (e.g. CI). RobotDriver.headless()
+    // is documented as safe in that environment, so fall back to a 1×1 rectangle here so the
+    // headless path never reaches a real device probe. The NoopRobotAdapter will still produce
+    // an empty BufferedImage of that size.
+    if (GraphicsEnvironment.isHeadless()) return Rectangle(0, 0, 1, 1)
+
     val ge = GraphicsEnvironment.getLocalGraphicsEnvironment()
     val devices = ge.screenDevices
     var bounds = devices.first().defaultConfiguration.bounds
