@@ -94,6 +94,32 @@ internal constructor(
             )
         }
 
+    /**
+     * Atomic snapshot of both [boundsInWindow] and [boundsOnScreen] taken in a single EDT read.
+     * Useful when callers need both forms — e.g. wire serialisation — and want them to reflect the
+     * same underlying layout state. Reading the two getters separately would issue two independent
+     * EDT bounces, between which layout could shift.
+     */
+    fun bothBounds(): BothBounds = readOnEdt {
+        val bounds = semanticsNode.boundsInWindow
+        val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
+        val contentOrigin = trackedWindow.composeContentOrigin
+        BothBounds(
+            inWindow = bounds,
+            onScreen =
+                composeBoundsToAwtRectangle(
+                    left = bounds.left,
+                    top = bounds.top,
+                    right = bounds.right,
+                    bottom = bounds.bottom,
+                    scaleX = transform.scaleX.toFloat(),
+                    scaleY = transform.scaleY.toFloat(),
+                    panelScreenX = contentOrigin.x,
+                    panelScreenY = contentOrigin.y,
+                ),
+        )
+    }
+
     val parent: AutomatorNode?
         get() = relations.parentOf(key)
 
@@ -108,6 +134,9 @@ internal constructor(
         append(")")
     }
 }
+
+/** Atomic snapshot of [AutomatorNode.boundsInWindow] and [AutomatorNode.boundsOnScreen]. */
+data class BothBounds(val inWindow: Rect, val onScreen: Rectangle)
 
 internal interface NodeRelations {
 
