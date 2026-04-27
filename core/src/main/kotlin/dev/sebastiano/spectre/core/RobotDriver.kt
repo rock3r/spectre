@@ -20,6 +20,11 @@ internal constructor(
     private val clipboard: ClipboardAdapter = SystemClipboardAdapter(),
 ) {
 
+    // Public surface: callers may instantiate without arguments (defaults to a fresh
+    // AWT Robot + system clipboard) or hand in an existing Robot. The internal
+    // adapter-injecting constructor is reserved for tests within this module.
+    constructor() : this(AwtRobotAdapter(), SystemClipboardAdapter())
+
     constructor(robot: Robot) : this(AwtRobotAdapter(robot))
 
     fun click(screenX: Int, screenY: Int) = runOffEdt {

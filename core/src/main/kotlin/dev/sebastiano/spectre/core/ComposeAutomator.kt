@@ -156,8 +156,8 @@ private constructor(
 
     fun printTree(): String {
         return readOnEdt {
-            refreshWindows()
             buildString {
+                // tree() already refreshes windows before reading semantics nodes.
                 for (window in tree().windows()) {
                     val kind = if (window.isPopup) "popup" else "main"
                     appendLine("Window ${window.windowIndex} ($kind): ${window.surfaceId}")
