@@ -1,0 +1,123 @@
+package dev.sebastiano.spectre.server
+
+import dev.sebastiano.spectre.core.ComposeAutomator
+import dev.sebastiano.spectre.core.RobotDriver
+import dev.sebastiano.spectre.core.SemanticsReader
+import dev.sebastiano.spectre.core.WindowTracker
+import dev.sebastiano.spectre.server.dto.ClickRequest
+import dev.sebastiano.spectre.server.dto.NodesResponse
+import dev.sebastiano.spectre.server.dto.ScreenshotResponse
+import dev.sebastiano.spectre.server.dto.TypeTextRequest
+import dev.sebastiano.spectre.server.dto.WindowsResponse
+import io.ktor.client.call.body
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.get
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
+import io.ktor.serialization.kotlinx.json.json
+import io.ktor.server.testing.testApplication
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+/**
+ * End-to-end test for the HTTP transport.
+ *
+ * Drives the real route handlers through Ktor's `testApplication` (no real network sockets) with a
+ * real headless `ComposeAutomator` backing them. The automator has no Compose surfaces in this
+ * environment, so the assertions are about the request/response *envelope* contract — list shapes,
+ * status codes, body decoding — not about live UI behaviour.
+ */
+class SpectreServerRoundTripTest {
+
+    private fun headlessAutomator(): ComposeAutomator =
+        ComposeAutomator.inProcess(
+            windowTracker = WindowTracker(),
+            semanticsReader = SemanticsReader(),
+            robotDriver = RobotDriver.headless(),
+        )
+
+    @Test
+    fun `windows endpoint returns an empty list for an empty automator`() = testApplication {
+        application { installSpectreRoutes(headlessAutomator()) }
+        val client = createClient { install(ContentNegotiation) { json() } }
+
+        val response = client.get("/spectre/windows").body<WindowsResponse>()
+
+        assertEquals(emptyList(), response.windows)
+    }
+
+    @Test
+    fun `nodes endpoint returns an empty list when no windows are tracked`() = testApplication {
+        application { installSpectreRoutes(headlessAutomator()) }
+        val client = createClient { install(ContentNegotiation) { json() } }
+
+        val response = client.get("/spectre/nodes").body<NodesResponse>()
+
+        assertEquals(emptyList(), response.nodes)
+    }
+
+    @Test
+    fun `nodes endpoint accepts a testTag query parameter`() = testApplication {
+        application { installSpectreRoutes(headlessAutomator()) }
+        val client = createClient { install(ContentNegotiation) { json() } }
+
+        val response = client.get("/spectre/nodes?testTag=Send").body<NodesResponse>()
+
+        assertEquals(emptyList(), response.nodes)
+    }
+
+    @Test
+    fun `click against an unknown node key returns 404`() = testApplication {
+        application { installSpectreRoutes(headlessAutomator()) }
+        val client = createClient { install(ContentNegotiation) { json() } }
+
+        val response =
+            client.post("/spectre/click") {
+                contentType(ContentType.Application.Json)
+                setBody(ClickRequest(nodeKey = "nonexistent:0:1"))
+            }
+
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertTrue(response.bodyAsText().contains("nonexistent:0:1"))
+    }
+
+    @Test
+    fun `typeText returns 204 No Content`() = testApplication {
+        application { installSpectreRoutes(headlessAutomator()) }
+        val client = createClient { install(ContentNegotiation) { json() } }
+
+        val response =
+            client.post("/spectre/typeText") {
+                contentType(ContentType.Application.Json)
+                setBody(TypeTextRequest(text = "hello"))
+            }
+
+        assertEquals(HttpStatusCode.NoContent, response.status)
+    }
+
+    @Test
+    fun `screenshot returns a base64-encoded PNG envelope`() = testApplication {
+        application { installSpectreRoutes(headlessAutomator()) }
+        val client = createClient { install(ContentNegotiation) { json() } }
+
+        val response = client.get("/spectre/screenshot").body<ScreenshotResponse>()
+
+        assertTrue(response.pngBase64.isNotEmpty(), "PNG payload should be present")
+        assertTrue(response.width > 0, "Width should be positive")
+        assertTrue(response.height > 0, "Height should be positive")
+    }
+
+    @Test
+    fun `routes can be mounted at a custom base path`() = testApplication {
+        application { installSpectreRoutes(headlessAutomator(), basePath = "/api/v1/spectre") }
+        val client = createClient { install(ContentNegotiation) { json() } }
+
+        val response = client.get("/api/v1/spectre/windows").body<WindowsResponse>()
+        assertEquals(emptyList(), response.windows)
+    }
+}
