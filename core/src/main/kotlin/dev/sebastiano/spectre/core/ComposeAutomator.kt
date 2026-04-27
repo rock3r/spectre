@@ -159,10 +159,10 @@ private constructor(
     /**
      * Bracket [block] with a profiling/tracing recording, writing the captured trace to [output].
      *
-     * The default [tracer] is [JfrTracer], which records a Java Flight Recorder `.jfr` file using
-     * the JDK's built-in default profile. JFR is supported on every modern JDK and Perfetto can
-     * ingest the resulting file directly. Pass a custom [Tracer] (e.g. an `androidx.tracing` /
-     * Perfetto SDK binding) to integrate with a different recorder.
+     * The default [tracer] is [PerfettoTracer], which uses `androidx.tracing-wire-desktop` to write
+     * standard Perfetto trace files into [output] (which is treated as a directory). Open the
+     * resulting files at [ui.perfetto.dev](https://ui.perfetto.dev). Pass a custom [Tracer] (e.g. a
+     * JFR adapter, in-memory event collector, etc.) to integrate with a different recorder.
      *
      * The block's return value is propagated to the caller. If the block throws, [Tracer.stop]
      * still runs so the partial trace is flushed to disk; any exception thrown by `stop` is
@@ -170,7 +170,7 @@ private constructor(
      */
     suspend fun <T> withTracing(
         output: Path,
-        tracer: Tracer = JfrTracer(),
+        tracer: Tracer = PerfettoTracer(),
         block: suspend () -> T,
     ): T = withTracingInternal(output, tracer, block)
 

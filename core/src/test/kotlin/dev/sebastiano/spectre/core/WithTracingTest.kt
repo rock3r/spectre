@@ -13,7 +13,7 @@ class WithTracingTest {
     @Test
     fun `withTracing brackets the block with start and stop`() = runTest {
         val tracer = RecordingTracer()
-        val output = Path.of("test-output.jfr")
+        val output = Path.of("test-output")
 
         val result =
             withTracingInternal(output = output, tracer = tracer) {
@@ -22,13 +22,13 @@ class WithTracingTest {
             }
 
         assertEquals(42, result)
-        assertEquals(listOf("start", "inside-block", "stop:test-output.jfr"), tracer.events)
+        assertEquals(listOf("start:test-output", "inside-block", "stop"), tracer.events)
     }
 
     @Test
     fun `withTracing stops the tracer even when the block throws`() = runTest {
         val tracer = RecordingTracer()
-        val output = Path.of("crash.jfr")
+        val output = Path.of("crash")
 
         val raised =
             assertFailsWith<RuntimeException> {
@@ -39,15 +39,14 @@ class WithTracingTest {
             }
 
         assertEquals("boom", raised.message)
-        assertEquals(listOf("start", "about-to-throw", "stop:crash.jfr"), tracer.events)
+        assertEquals(listOf("start:crash", "about-to-throw", "stop"), tracer.events)
     }
 
     @Test
     fun `withTracing returns the block result`() = runTest {
         val sentinel = Any()
 
-        val result =
-            withTracingInternal(output = Path.of("x.jfr"), tracer = NoOpTracer()) { sentinel }
+        val result = withTracingInternal(output = Path.of("x"), tracer = NoOpTracer()) { sentinel }
 
         assertSame(sentinel, result)
     }
@@ -58,17 +57,17 @@ class WithTracingTest {
             object : Tracer {
                 var started = false
 
-                override fun start() {
+                override fun start(output: Path) {
                     started = true
                 }
 
-                override fun stop(output: Path) {
+                override fun stop() {
                     error("stop failed")
                 }
             }
         val raised =
             assertFailsWith<IllegalStateException> {
-                withTracingInternal(output = Path.of("x.jfr"), tracer = tracer) {
+                withTracingInternal(output = Path.of("x"), tracer = tracer) {
                     error("block failed")
                 }
             }
@@ -88,17 +87,17 @@ private class RecordingTracer : Tracer {
         events += name
     }
 
-    override fun start() {
-        events += "start"
+    override fun start(output: Path) {
+        events += "start:${output.fileName}"
     }
 
-    override fun stop(output: Path) {
-        events += "stop:${output.fileName}"
+    override fun stop() {
+        events += "stop"
     }
 }
 
 private class NoOpTracer : Tracer {
-    override fun start() = Unit
+    override fun start(output: Path) = Unit
 
-    override fun stop(output: Path) = Unit
+    override fun stop() = Unit
 }

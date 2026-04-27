@@ -10,21 +10,23 @@ import java.nio.file.Path
  * phases). The automator's job is to bracket the scenario: start a recording, drive the UI, stop
  * the recording, and flush it to disk so the developer can open it in Perfetto.
  *
- * `JfrTracer` is the v1 default — it uses Java Flight Recorder, which is built into every modern
- * JDK and produces `.jfr` files that Perfetto can ingest natively. Callers that want a different
- * recorder (a Perfetto SDK binding, an Android-style atrace shim, an in-memory event collector for
- * tests) can plug their own `Tracer` into [ComposeAutomator.withTracing].
+ * `PerfettoTracer` is the v1 default — it uses `androidx.tracing-wire-desktop` to produce standard
+ * Perfetto trace files (open them at [ui.perfetto.dev](https://ui.perfetto.dev)). Callers that want
+ * a different recorder (an in-memory event collector for tests, a JFR adapter, etc.) can plug their
+ * own `Tracer` into [ComposeAutomator.withTracing].
  */
 interface Tracer {
 
-    /** Begin a recording. Implementations may throw if a recording is already in progress. */
-    fun start()
-
     /**
-     * Stop the recording and write the captured trace to [output]. The file extension callers use
-     * should match the format the implementation produces (`.jfr` for [JfrTracer]).
+     * Begin a recording, writing captured trace data into [output]. Implementations may interpret
+     * [output] as either a single file (e.g. JFR `.jfr`) or a directory (the Perfetto / wire tracer
+     * writes one file per sequence). Implementations may throw if a recording is already in
+     * progress.
      */
-    fun stop(output: Path)
+    fun start(output: Path)
+
+    /** Stop the recording and flush any buffered events to disk. */
+    fun stop()
 }
 
 /**
@@ -46,7 +48,7 @@ internal suspend fun <T> withTracingInternal(
     tracer: Tracer,
     block: suspend () -> T,
 ): T {
-    tracer.start()
+    tracer.start(output)
     var blockError: Throwable? = null
     var result: T? = null
     // The block runs untrusted scenario code; we want every failure mode propagated to the
@@ -59,7 +61,7 @@ internal suspend fun <T> withTracingInternal(
     }
     @Suppress("TooGenericExceptionCaught")
     try {
-        tracer.stop(output)
+        tracer.stop()
     } catch (stopError: Throwable) {
         if (blockError != null) {
             blockError.addSuppressed(stopError)
