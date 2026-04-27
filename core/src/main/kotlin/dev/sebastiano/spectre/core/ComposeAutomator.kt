@@ -5,7 +5,11 @@ import java.awt.Rectangle
 import java.awt.event.KeyEvent
 import java.awt.image.BufferedImage
 import java.awt.image.DataBufferInt
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import javax.swing.SwingUtilities
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -182,7 +186,13 @@ private constructor(
 
     private fun drainEdt() {
         if (SwingUtilities.isEventDispatchThread()) return
-        SwingUtilities.invokeAndWait {}
+        // Bounded drain: invokeAndWait can hang indefinitely if the EDT is deadlocked, which
+        // would let waitForIdle silently overrun its timeout. We dispatch via invokeLater and
+        // wait on a latch capped at EDT_DRAIN_BUDGET_MS so a stalled EDT can never out-block
+        // the surrounding wait loop's timeout enforcement.
+        val latch = CountDownLatch(1)
+        SwingUtilities.invokeLater { latch.countDown() }
+        latch.await(EDT_DRAIN_BUDGET_MS, TimeUnit.MILLISECONDS)
     }
 
     private fun computeUiFingerprint(): String = readOnEdt {
@@ -238,15 +248,34 @@ private constructor(
         // - A single union rectangle would include the gap between disjoint surfaces (main
         //   window + a popup floating elsewhere), and gap-pixel churn would still break the
         //   streak. Per-surface hashes ignore the gap entirely.
-        // - When no surfaces are tracked we deliberately return a value that differs every
-        //   call, so the streak never completes — waitForVisualIdle keeps waiting (or times
-        //   out) rather than declaring success against an empty UI.
-        refreshWindows()
-        val rects = composeSurfaceRects()
-        if (rects.isEmpty()) return System.nanoTime().toInt()
-        val hashes = IntArray(rects.size)
-        for (i in rects.indices) hashes[i] = hashScreenRegion(rects[i])
-        return hashes.contentHashCode()
+        // - When no surfaces are tracked, or the bounded sampling budget elapses, we
+        //   deliberately return a value that differs every call so the streak never completes
+        //   — waitForVisualIdle keeps waiting (or times out) rather than declaring success
+        //   against an unsampleable UI.
+        // The sampling itself runs on a worker thread bounded by FRAME_HASH_BUDGET_MS so a
+        // hung EDT or stuck Robot.createScreenCapture cannot out-block the wait loop's
+        // overall timeout enforcement.
+        return runBoundedOnWorker(FRAME_HASH_BUDGET_MS) {
+            refreshWindows()
+            val rects = composeSurfaceRects()
+            if (rects.isEmpty()) {
+                System.nanoTime().toInt()
+            } else {
+                val hashes = IntArray(rects.size)
+                for (i in rects.indices) hashes[i] = hashScreenRegion(rects[i])
+                hashes.contentHashCode()
+            }
+        } ?: System.nanoTime().toInt()
+    }
+
+    private fun <T> runBoundedOnWorker(budgetMs: Long, block: () -> T): T? {
+        val future = CompletableFuture.supplyAsync(block)
+        return try {
+            future.get(budgetMs, TimeUnit.MILLISECONDS)
+        } catch (_: TimeoutException) {
+            future.cancel(true)
+            null
+        }
     }
 
     private fun composeSurfaceRects(): List<Rectangle> = readOnEdt {
@@ -317,6 +346,8 @@ private val DEFAULT_WAIT_TIMEOUT: Duration = 5.seconds
 private val DEFAULT_QUIET_PERIOD: Duration = 64.milliseconds
 private val DEFAULT_POLL_INTERVAL: Duration = 16.milliseconds
 private const val DEFAULT_STABLE_FRAMES: Int = 3
+private const val EDT_DRAIN_BUDGET_MS: Long = 250
+private const val FRAME_HASH_BUDGET_MS: Long = 500
 
 private fun StringBuilder.appendNodeTree(node: AutomatorNode, depth: Int) {
     append("  ".repeat(depth))
