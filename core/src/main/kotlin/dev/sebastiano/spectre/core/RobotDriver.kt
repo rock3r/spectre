@@ -135,6 +135,8 @@ internal constructor(
         return robot.createScreenCapture(captureRegion)
     }
 
+    private fun runOffEdt(block: () -> Unit) = runOffEdt(robot, block)
+
     companion object {
 
         /**
@@ -153,6 +155,18 @@ internal constructor(
 internal interface RobotAdapter {
 
     val autoDelayMs: Int
+
+    /**
+     * `true` when the adapter's input methods must run off the AWT EDT — the real
+     * `java.awt.Robot.mouseMove`/`keyPress` block when called from the EDT, so [RobotDriver]
+     * marshals them onto a worker thread.
+     *
+     * `false` when the adapter dispatches to its own thread internally (synthetic, headless), in
+     * which case [RobotDriver] runs the call inline. The worker-thread path used to deadlock
+     * synthetic callers invoked from the EDT: the EDT-blocking `Thread.join()` waited for a worker
+     * that was itself stuck in `SwingUtilities.invokeAndWait` waiting for the EDT.
+     */
+    val requiresOffEdt: Boolean
 
     fun mouseMove(x: Int, y: Int)
 
@@ -183,6 +197,10 @@ private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) : Rob
     override val autoDelayMs: Int
         get() = robot.autoDelay
 
+    // Real `java.awt.Robot` calls block when invoked on the EDT, so RobotDriver must marshal
+    // them onto a worker thread.
+    override val requiresOffEdt: Boolean = true
+
     override fun mouseMove(x: Int, y: Int) = robot.mouseMove(x, y)
 
     override fun mousePress(buttons: Int) = robot.mousePress(buttons)
@@ -204,6 +222,9 @@ private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) : Rob
 private object NoopRobotAdapter : RobotAdapter {
 
     override val autoDelayMs: Int = 0
+
+    // No-op input never blocks the EDT, so the worker-thread hop is unnecessary.
+    override val requiresOffEdt: Boolean = false
 
     override fun mouseMove(x: Int, y: Int) = Unit
 
@@ -253,8 +274,11 @@ private fun createAwtRobot(): Robot =
         isAutoWaitForIdle = false
     }
 
-private fun runOffEdt(block: () -> Unit) {
-    if (!SwingUtilities.isEventDispatchThread()) {
+private fun runOffEdt(robot: RobotAdapter, block: () -> Unit) {
+    // Adapters that don't need the off-EDT marshal (synthetic, no-op) can run inline even
+    // on the EDT — spawning a worker would deadlock the synthetic adapter, whose internal
+    // `SwingUtilities.invokeAndWait` would wait forever for an EDT blocked on `Thread.join()`.
+    if (!robot.requiresOffEdt || !SwingUtilities.isEventDispatchThread()) {
         block()
         return
     }

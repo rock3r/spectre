@@ -139,6 +139,7 @@ class RobotDriverTest {
 }
 
 private class RecordingRobotAdapter(override val autoDelayMs: Int = 0) : RobotAdapter {
+    override val requiresOffEdt: Boolean = false
     val events = mutableListOf<String>()
 
     override fun mouseMove(x: Int, y: Int) {
