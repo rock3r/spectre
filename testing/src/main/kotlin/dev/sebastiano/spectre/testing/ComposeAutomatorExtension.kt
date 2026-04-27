@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.testing
 
 import dev.sebastiano.spectre.core.ComposeAutomator
+import java.lang.reflect.Method
 import org.junit.jupiter.api.extension.AfterEachCallback
 import org.junit.jupiter.api.extension.BeforeEachCallback
 import org.junit.jupiter.api.extension.ExtensionContext
@@ -57,7 +58,12 @@ class ComposeAutomatorExtension(
     override fun supportsParameter(
         parameterContext: ParameterContext,
         extensionContext: ExtensionContext,
-    ): Boolean = parameterContext.parameter.type == ComposeAutomator::class.java
+    ): Boolean =
+        parameterContext.parameter.type == ComposeAutomator::class.java &&
+            // Constructor injection happens before beforeEach, so the per-test instance does not
+            // exist yet. Restrict resolution to method/lifecycle parameters where the instance
+            // is guaranteed to be available.
+            parameterContext.declaringExecutable is Method
 
     override fun resolveParameter(
         parameterContext: ParameterContext,

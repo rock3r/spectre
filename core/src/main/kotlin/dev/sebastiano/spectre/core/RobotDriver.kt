@@ -283,6 +283,13 @@ fun interpolateSwipePoints(
 fun detectMacOs(): Boolean = System.getProperty("os.name").lowercase().contains("mac")
 
 private fun virtualDesktopBounds(): Rectangle {
+    // GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices throws HeadlessException
+    // when the JVM is running with -Djava.awt.headless=true (e.g. CI). RobotDriver.headless()
+    // is documented as safe in that environment, so fall back to a 1×1 rectangle here so the
+    // headless path never reaches a real device probe. The NoopRobotAdapter will still produce
+    // an empty BufferedImage of that size.
+    if (GraphicsEnvironment.isHeadless()) return Rectangle(0, 0, 1, 1)
+
     val ge = GraphicsEnvironment.getLocalGraphicsEnvironment()
     val devices = ge.screenDevices
     var bounds = devices.first().defaultConfiguration.bounds
