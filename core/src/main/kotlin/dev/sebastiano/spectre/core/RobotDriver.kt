@@ -45,8 +45,11 @@ internal constructor(
         runOffEdt {
             robot.mouseMove(screenX, screenY)
             robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
-            Thread.sleep(holdFor.inWholeMilliseconds)
-            robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
+            try {
+                Thread.sleep(holdFor.inWholeMilliseconds)
+            } finally {
+                robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
+            }
         }
 
     fun swipe(
