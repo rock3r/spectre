@@ -52,8 +52,17 @@ class FfmpegRecorder(
         // Screen Recording permission, invalid codec, unavailable avfoundation device). The
         // Recorder.start contract promises frames are landing by return, so a process that
         // has already exited must surface as an error rather than a "success" handle that
-        // later produces nothing.
-        if (process.waitFor(STARTUP_PROBE_MILLIS, TimeUnit.MILLISECONDS)) {
+        // later produces nothing. Interruption during the probe must also clean up the
+        // spawned ffmpeg before propagating, otherwise we leak an orphan subprocess.
+        val exitedDuringProbe =
+            try {
+                process.waitFor(STARTUP_PROBE_MILLIS, TimeUnit.MILLISECONDS)
+            } catch (e: InterruptedException) {
+                process.destroyForcibly()
+                Thread.currentThread().interrupt()
+                throw e
+            }
+        if (exitedDuringProbe) {
             throw IllegalStateException(
                 "ffmpeg exited immediately (code ${process.exitValue()}) — recording did not start. " +
                     "Common causes: missing Screen Recording permission, invalid codec, or " +
