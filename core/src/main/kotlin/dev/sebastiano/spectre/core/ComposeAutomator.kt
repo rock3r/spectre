@@ -333,11 +333,15 @@ private constructor(
             resultRef.get()!!.getOrThrow()
         } else {
             thread.interrupt()
-            // Give the worker a brief grace period to honour the interrupt before we abandon
-            // it. Cooperative blocking calls (invokeAndWait) clean up immediately; this stops
-            // them from being reported as leaked. Native non-interruptible calls still leak,
-            // but the daemon flag keeps a stuck thread from holding the JVM open.
-            latch.await(WORKER_INTERRUPT_GRACE_MS, TimeUnit.MILLISECONDS)
+            // Brief grace window to let cooperative blockers (invokeAndWait) honour the
+            // interrupt and exit cleanly before we abandon the thread. Skipped when the
+            // caller's remaining budget was already exhausted (budgetMs == 0): in that case
+            // even a 50ms grace would push the public wait API past the caller's timeout.
+            // Native non-interruptible calls still leak, but the daemon flag keeps a stuck
+            // thread from holding the JVM open.
+            if (budgetMs > 0) {
+                latch.await(WORKER_INTERRUPT_GRACE_MS, TimeUnit.MILLISECONDS)
+            }
             null
         }
     }
