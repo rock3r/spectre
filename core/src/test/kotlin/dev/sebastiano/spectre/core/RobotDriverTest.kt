@@ -11,18 +11,19 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.ZERO
+import kotlin.time.Duration.Companion.milliseconds
 
 class RobotDriverTest {
 
     @Test
-    fun `pasteModifierKeyCode returns VK_META on macOS`() {
-        val result = pasteModifierKeyCode(isMacOs = true)
+    fun `shortcutModifierKeyCode returns VK_META on macOS`() {
+        val result = shortcutModifierKeyCode(isMacOs = true)
         assertEquals(KeyEvent.VK_META, result)
     }
 
     @Test
-    fun `pasteModifierKeyCode returns VK_CONTROL on non-macOS`() {
-        val result = pasteModifierKeyCode(isMacOs = false)
+    fun `shortcutModifierKeyCode returns VK_CONTROL on non-macOS`() {
+        val result = shortcutModifierKeyCode(isMacOs = false)
         assertEquals(KeyEvent.VK_CONTROL, result)
     }
 
@@ -30,6 +31,26 @@ class RobotDriverTest {
     fun `shortcutModifierKeyCode matches platform shortcut key`() {
         val expected = if (detectMacOs()) KeyEvent.VK_META else KeyEvent.VK_CONTROL
         assertEquals(expected, shortcutModifierKeyCode(detectMacOs()))
+    }
+
+    @Test
+    fun `swipePauseMillis subtracts autoDelay from per-step pause`() {
+        // 200ms over 10 steps = 20ms/step, minus 10ms Robot autoDelay per move = 10ms.
+        val pause = swipePauseMillis(duration = 200.milliseconds, steps = 10, autoDelayMs = 10)
+        assertEquals(10L, pause)
+    }
+
+    @Test
+    fun `swipePauseMillis clamps to zero when autoDelay exceeds the per-step budget`() {
+        // 50ms over 10 steps = 5ms/step, minus 10ms autoDelay would be negative.
+        val pause = swipePauseMillis(duration = 50.milliseconds, steps = 10, autoDelayMs = 10)
+        assertEquals(0L, pause)
+    }
+
+    @Test
+    fun `swipePauseMillis returns zero for zero duration`() {
+        val pause = swipePauseMillis(duration = ZERO, steps = 5, autoDelayMs = 10)
+        assertEquals(0L, pause)
     }
 
     @Test

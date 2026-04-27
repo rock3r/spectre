@@ -53,17 +53,23 @@ internal constructor(
     val isDisabled: Boolean = semanticsNode.config.getOrNull(SemanticsProperties.Disabled) != null
     val isFocused: Boolean = semanticsNode.config.getOrNull(SemanticsProperties.Focused) == true
     val isSelected: Boolean = semanticsNode.config.getOrNull(SemanticsProperties.Selected) == true
-    val boundsInWindow: Rect = semanticsNode.boundsInWindow
+
+    // Geometry is always read live: layout can change between node lookup and action,
+    // so a snapshot would let click/screenshot drift to stale coordinates after scrolling
+    // or recomposition-driven repositioning.
+    val boundsInWindow: Rect
+        get() = readOnEdt { semanticsNode.boundsInWindow }
 
     val centerOnScreen: Point
         get() = readOnEdt {
+            val bounds = semanticsNode.boundsInWindow
             val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
             val contentOrigin = trackedWindow.composeContentOrigin
             composeBoundsToAwtCenter(
-                left = boundsInWindow.left,
-                top = boundsInWindow.top,
-                right = boundsInWindow.right,
-                bottom = boundsInWindow.bottom,
+                left = bounds.left,
+                top = bounds.top,
+                right = bounds.right,
+                bottom = bounds.bottom,
                 scaleX = transform.scaleX.toFloat(),
                 scaleY = transform.scaleY.toFloat(),
                 panelScreenX = contentOrigin.x,
@@ -73,13 +79,14 @@ internal constructor(
 
     val boundsOnScreen: Rectangle
         get() = readOnEdt {
+            val bounds = semanticsNode.boundsInWindow
             val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
             val contentOrigin = trackedWindow.composeContentOrigin
             composeBoundsToAwtRectangle(
-                left = boundsInWindow.left,
-                top = boundsInWindow.top,
-                right = boundsInWindow.right,
-                bottom = boundsInWindow.bottom,
+                left = bounds.left,
+                top = bounds.top,
+                right = bounds.right,
+                bottom = bounds.bottom,
                 scaleX = transform.scaleX.toFloat(),
                 scaleY = transform.scaleY.toFloat(),
                 panelScreenX = contentOrigin.x,

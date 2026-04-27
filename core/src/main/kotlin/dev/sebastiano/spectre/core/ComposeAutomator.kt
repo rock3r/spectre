@@ -166,17 +166,11 @@ private constructor(
 
     companion object {
 
-        fun create(
-            windowTracker: WindowTracker = WindowTracker(),
-            semanticsReader: SemanticsReader = SemanticsReader(),
-            robotDriver: RobotDriver = RobotDriver(),
-        ): ComposeAutomator = ComposeAutomator(windowTracker, semanticsReader, robotDriver)
-
         fun inProcess(
             windowTracker: WindowTracker = WindowTracker(),
             semanticsReader: SemanticsReader = SemanticsReader(),
             robotDriver: RobotDriver = RobotDriver(),
-        ): ComposeAutomator = create(windowTracker, semanticsReader, robotDriver)
+        ): ComposeAutomator = ComposeAutomator(windowTracker, semanticsReader, robotDriver)
     }
 }
 

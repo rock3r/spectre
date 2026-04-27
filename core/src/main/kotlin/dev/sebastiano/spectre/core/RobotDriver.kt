@@ -53,7 +53,7 @@ internal constructor(
         duration: Duration = DEFAULT_SWIPE_DURATION,
     ) = runOffEdt {
         val points = interpolateSwipePoints(startX, startY, endX, endY, steps)
-        val pausePerStepMs = swipePauseMillis(duration, steps)
+        val pausePerStepMs = swipePauseMillis(duration, steps, autoDelayMs = DEFAULT_AUTO_DELAY_MS)
         val firstPoint = points.first()
         robot.mouseMove(firstPoint.x, firstPoint.y)
         robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
@@ -71,7 +71,7 @@ internal constructor(
         try {
             clipboard.setContents(StringSelection(text))
             runOffEdt {
-                val modifier = pasteModifierKeyCode(detectMacOs())
+                val modifier = shortcutModifierKeyCode(detectMacOs())
                 robot.keyPress(modifier)
                 robot.keyPress(KeyEvent.VK_V)
                 robot.keyRelease(KeyEvent.VK_V)
@@ -157,7 +157,10 @@ private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) : Rob
 }
 
 private class SystemClipboardAdapter : ClipboardAdapter {
-    private val clipboard = Toolkit.getDefaultToolkit().systemClipboard
+    // Lazy: looking up the system clipboard at construction time would couple every
+    // RobotDriver instantiation to clipboard availability, breaking mouse/screenshot-only
+    // automation runs in restricted environments.
+    private val clipboard by lazy { Toolkit.getDefaultToolkit().systemClipboard }
 
     override fun getContents(): Transferable? = clipboard.getContents(null)
 
@@ -184,9 +187,6 @@ private fun runOffEdt(block: () -> Unit) {
     result!!.getOrThrow()
 }
 
-fun pasteModifierKeyCode(isMacOs: Boolean): Int =
-    if (isMacOs) KeyEvent.VK_META else KeyEvent.VK_CONTROL
-
 fun shortcutModifierKeyCode(isMacOs: Boolean): Int =
     if (isMacOs) KeyEvent.VK_META else KeyEvent.VK_CONTROL
 
@@ -197,9 +197,10 @@ fun modifierMaskToKeyCodes(mask: Int): List<Int> = buildList {
     if (mask and InputEvent.META_DOWN_MASK != 0) add(KeyEvent.VK_META)
 }
 
-internal fun swipePauseMillis(duration: Duration, steps: Int): Long {
+internal fun swipePauseMillis(duration: Duration, steps: Int, autoDelayMs: Int): Long {
     require(steps > 0) { "steps must be positive" }
-    return (duration.inWholeMilliseconds / steps).coerceAtLeast(0)
+    val perStepBudgetMs = duration.inWholeMilliseconds / steps
+    return (perStepBudgetMs - autoDelayMs).coerceAtLeast(0)
 }
 
 fun interpolateSwipePoints(
