@@ -160,6 +160,7 @@ private constructor(
         quietPeriod: Duration = DEFAULT_QUIET_PERIOD,
         pollInterval: Duration = DEFAULT_POLL_INTERVAL,
     ) {
+        rejectEdtCaller("waitForIdle")
         waitForIdleInternal(
             timeout = timeout,
             quietPeriod = quietPeriod,
@@ -175,12 +176,26 @@ private constructor(
         stableFrames: Int = DEFAULT_STABLE_FRAMES,
         pollInterval: Duration = DEFAULT_POLL_INTERVAL,
     ) {
+        rejectEdtCaller("waitForVisualIdle")
         waitForVisualIdleInternal(
             timeout = timeout,
             stableFrames = stableFrames,
             pollInterval = pollInterval,
             frameHash = ::computeFrameHash,
         )
+    }
+
+    private fun rejectEdtCaller(name: String) {
+        // The wait loops drain the EDT, snapshot semantics via invokeAndWait, and capture
+        // screenshots on a bounded worker. Calling them from the EDT would either deadlock
+        // (worker waiting on the EDT we hold) or skip the bounded worker entirely and lose
+        // timeout enforcement. Force callers off the EDT — typically they should be running
+        // on Dispatchers.Default or Dispatchers.IO with an explicit dispatcher hop into the
+        // wait helper.
+        check(!SwingUtilities.isEventDispatchThread()) {
+            "$name must not be called from the AWT event dispatch thread; " +
+                "wrap the call with withContext(Dispatchers.Default) or similar."
+        }
     }
 
     private fun drainEdt(remainingMs: Long) {
@@ -276,10 +291,12 @@ private constructor(
     }
 
     private fun <T> runBoundedOnWorker(budgetMs: Long, block: () -> T): T? {
-        // EDT fast path: if the caller is already on the EDT, spawning a worker that calls
-        // readOnEdt would deadlock — the worker would block on invokeAndWait while we sit on
-        // latch.await holding the EDT. Run inline; readOnEdt's own fast path takes over.
-        if (SwingUtilities.isEventDispatchThread()) return block()
+        // The wait helpers reject EDT callers, so we never enter here on the EDT — meaning
+        // the worker can safely invokeAndWait without deadlocking against us, and we can
+        // genuinely enforce budgetMs on the sample.
+        check(!SwingUtilities.isEventDispatchThread()) {
+            "runBoundedOnWorker is not safe on the EDT; wait callers should have been rejected"
+        }
 
         // We deliberately use a dedicated daemon Thread (not CompletableFuture.supplyAsync,
         // which runs on ForkJoinPool.commonPool) for two reasons:
