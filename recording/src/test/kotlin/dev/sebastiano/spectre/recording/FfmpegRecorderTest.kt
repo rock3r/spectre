@@ -123,6 +123,28 @@ class FfmpegRecorderTest {
     }
 
     @Test
+    fun `start throws when the spawned ffmpeg exits immediately`() {
+        // Simulates the common "ffmpeg dies right after spawn" failure modes — missing Screen
+        // Recording permission, invalid codec, unavailable device. Recorder.start must surface
+        // these as errors rather than returning a handle that produces an empty file.
+        val recorder =
+            FfmpegRecorder(
+                ffmpegPath = FfmpegRecorder.PROBE_PATH,
+                processFactory = ProcessFactoryReturning(InstantlyExitingFakeProcess()),
+            )
+        val output = Files.createTempFile("spectre-recording-test-", ".mp4")
+        try {
+            kotlin.test
+                .assertFailsWith<IllegalStateException> {
+                    recorder.start(Rectangle(0, 0, 100, 100), output, RecordingOptions())
+                }
+                .also { assertTrue(it.message?.contains("exited immediately") == true) }
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
     fun `constructor with non-executable explicit path throws`() {
         val nonexistent = Path.of("/this/path/does/not/exist/ffmpeg")
         kotlin.test.assertFailsWith<IllegalArgumentException> {
@@ -182,10 +204,13 @@ private class FakeProcess : Process() {
         return 0
     }
 
+    // Honest "did the process exit within the timeout?" — alive => no (false), dead => yes
+    // (true). The startup probe in FfmpegRecorder.start() needs the false signal to allow the
+    // recording handle through; stop() needs the true signal once 'q' on stdin has flipped
+    // alive=false via the OutputStream.close() callback.
     override fun waitFor(timeout: Long, unit: TimeUnit): Boolean {
         waitForCalled = true
-        alive = false
-        return true
+        return !alive
     }
 
     override fun exitValue(): Int = 0
@@ -201,4 +226,37 @@ private class FakeProcess : Process() {
     override fun toHandle(): ProcessHandle = ProcessHandle.current()
 
     override fun onExit(): CompletableFuture<Process> = CompletableFuture.completedFuture(this)
+}
+
+/**
+ * A FakeProcess that reports as already-exited from the moment it is created. Used to drive the
+ * "ffmpeg died right after spawn" branch of FfmpegRecorder.start.
+ */
+private class InstantlyExitingFakeProcess : Process() {
+
+    override fun getOutputStream(): OutputStream = ByteArrayOutputStream()
+
+    override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun waitFor(): Int = EXIT_CODE
+
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean = true
+
+    override fun exitValue(): Int = EXIT_CODE
+
+    override fun destroy() = Unit
+
+    override fun isAlive(): Boolean = false
+
+    override fun pid(): Long = 0
+
+    override fun toHandle(): ProcessHandle = ProcessHandle.current()
+
+    override fun onExit(): CompletableFuture<Process> = CompletableFuture.completedFuture(this)
+
+    private companion object {
+        const val EXIT_CODE: Int = 1
+    }
 }

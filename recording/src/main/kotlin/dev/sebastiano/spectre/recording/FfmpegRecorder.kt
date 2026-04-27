@@ -48,6 +48,18 @@ class FfmpegRecorder(
         val argv = FfmpegCli.avfoundationRegionCapture(ffmpegPath, region, output, options)
         Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
         val process = processFactory.start(argv)
+        // Fail fast: ffmpeg dies almost instantly on common configuration errors (missing
+        // Screen Recording permission, invalid codec, unavailable avfoundation device). The
+        // Recorder.start contract promises frames are landing by return, so a process that
+        // has already exited must surface as an error rather than a "success" handle that
+        // later produces nothing.
+        if (process.waitFor(STARTUP_PROBE_MILLIS, TimeUnit.MILLISECONDS)) {
+            throw IllegalStateException(
+                "ffmpeg exited immediately (code ${process.exitValue()}) — recording did not start. " +
+                    "Common causes: missing Screen Recording permission, invalid codec, or " +
+                    "unavailable avfoundation device. Argv: $argv"
+            )
+        }
         return FfmpegRecordingHandle(process, output)
     }
 
@@ -155,3 +167,5 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
         const val FORCE_KILL_SECONDS: Long = 2
     }
 }
+
+private const val STARTUP_PROBE_MILLIS: Long = 200

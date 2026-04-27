@@ -52,21 +52,19 @@ object MacOsRecordingPermissions {
     }
 
     private fun probeAccessibilityPermission(): PermissionStatus {
-        // Run the script and ask runOsascript to surface the exit status separately. Common
-        // Automation-permission failures on macOS Ventura+ produce non-blank output (e.g.
-        // "execution error: Not authorized to send Apple events to System Events. (-1743)")
-        // with a non-zero exit code, so a successful-looking output without the matching exit
-        // code must be reported as Unknown rather than Granted.
+        // The probe asks System Events for a process name. Three outcomes:
+        //   - exit 0 with non-blank output: Accessibility is granted.
+        //   - exit non-zero with the explicit Accessibility denial string: Denied.
+        //   - exit non-zero with anything else (including the AppleEvents/Automation
+        //     authorisation error -1743 / "Not authorized to send Apple events to System
+        //     Events"): Unknown — Automation and Accessibility are separate macOS TCC
+        //     entries, so an Automation refusal does NOT prove Accessibility is denied.
         val result =
             runOsascript("tell application \"System Events\" to return name of first process")
         return when {
             result == null -> PermissionStatus.Unknown
             result.exitCode != 0 -> {
-                if (
-                    result.output.contains("not allowed assistive access", ignoreCase = true) ||
-                        result.output.contains("Not authorized", ignoreCase = true) ||
-                        result.output.contains("-1743") // Apple Events authorization
-                ) {
+                if (result.output.contains("not allowed assistive access", ignoreCase = true)) {
                     PermissionStatus.Denied
                 } else {
                     PermissionStatus.Unknown
