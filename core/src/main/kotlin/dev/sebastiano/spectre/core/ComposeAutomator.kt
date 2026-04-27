@@ -5,11 +5,10 @@ import java.awt.Rectangle
 import java.awt.event.KeyEvent
 import java.awt.image.BufferedImage
 import java.awt.image.DataBufferInt
-import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicReference
 import javax.swing.SwingUtilities
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -195,7 +194,11 @@ private constructor(
         latch.await(EDT_DRAIN_BUDGET_MS, TimeUnit.MILLISECONDS)
     }
 
-    private fun computeUiFingerprint(): String = readOnEdt {
+    private fun computeUiFingerprint(): String =
+        runBoundedOnWorker(FINGERPRINT_BUDGET_MS) { computeUiFingerprintUnbounded() }
+            ?: "${EMPTY_FINGERPRINT_PREFIX}${System.nanoTime()}"
+
+    private fun computeUiFingerprintUnbounded(): String = readOnEdt {
         refreshWindows()
         buildString {
             for (window in windows) {
@@ -269,11 +272,41 @@ private constructor(
     }
 
     private fun <T> runBoundedOnWorker(budgetMs: Long, block: () -> T): T? {
-        val future = CompletableFuture.supplyAsync(block)
-        return try {
-            future.get(budgetMs, TimeUnit.MILLISECONDS)
-        } catch (_: TimeoutException) {
-            future.cancel(true)
+        // We deliberately use a dedicated daemon Thread (not CompletableFuture.supplyAsync,
+        // which runs on ForkJoinPool.commonPool) for two reasons:
+        // 1. CompletableFuture.cancel ignores mayInterruptIfRunning and never interrupts the
+        //    underlying worker, so timed-out tasks would leak threads onto the common pool.
+        // 2. A daemon Thread can be Thread.interrupt()-ed, which lets blocking calls that do
+        //    honour interrupts (notably SwingUtilities.invokeAndWait used by readOnEdt) bail
+        //    out and free the thread up. Native calls like Robot.createScreenCapture do not
+        //    honour interrupts, so a stuck Robot can still leak a single daemon thread, but
+        //    daemon status keeps it from holding the JVM open.
+        val resultRef = AtomicReference<Result<T>?>(null)
+        val latch = CountDownLatch(1)
+        val thread =
+            Thread(
+                    {
+                        // The wrapped block runs untrusted user/Compose code (semantics
+                        // reads, AWT calls, screenshot capture). We genuinely want every
+                        // failure mode propagated back to the caller via the Result so the
+                        // wait loop can decide what to do, hence the broad catch.
+                        @Suppress("TooGenericExceptionCaught")
+                        try {
+                            resultRef.set(Result.success(block()))
+                        } catch (t: Throwable) {
+                            resultRef.set(Result.failure(t))
+                        } finally {
+                            latch.countDown()
+                        }
+                    },
+                    "spectre-bounded-worker",
+                )
+                .apply { isDaemon = true }
+        thread.start()
+        return if (latch.await(budgetMs, TimeUnit.MILLISECONDS)) {
+            resultRef.get()!!.getOrThrow()
+        } else {
+            thread.interrupt()
             null
         }
     }
@@ -348,6 +381,8 @@ private val DEFAULT_POLL_INTERVAL: Duration = 16.milliseconds
 private const val DEFAULT_STABLE_FRAMES: Int = 3
 private const val EDT_DRAIN_BUDGET_MS: Long = 250
 private const val FRAME_HASH_BUDGET_MS: Long = 500
+private const val FINGERPRINT_BUDGET_MS: Long = 500
+private const val EMPTY_FINGERPRINT_PREFIX: String = "spectre-fingerprint-budget-elapsed:"
 
 private fun StringBuilder.appendNodeTree(node: AutomatorNode, depth: Int) {
     append("  ".repeat(depth))

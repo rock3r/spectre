@@ -70,12 +70,21 @@ internal suspend fun waitForIdleInternal(
         val nowAfterSample = clock.now()
         if (idleReached && nowAfterSample <= deadline) return
         if (nowAfterSample >= deadline) {
+            val busyResources = resources.filter { !it.isIdleNow }
             val diagnostic =
-                resources
-                    .filter { !it.isIdleNow }
-                    .mapNotNull { it.diagnosticMessage() }
-                    .joinToString(separator = "; ")
-                    .ifEmpty { "UI fingerprint did not stabilise" }
+                if (busyResources.isNotEmpty()) {
+                    val messages = busyResources.mapNotNull { it.diagnosticMessage() }
+                    if (messages.isNotEmpty()) {
+                        messages.joinToString(separator = "; ")
+                    } else {
+                        // None of the busy resources implement diagnosticMessage(), but they
+                        // are still the actual cause — say so instead of misattributing the
+                        // timeout to the fingerprint.
+                        "${busyResources.size} idling resource(s) reported busy"
+                    }
+                } else {
+                    "UI fingerprint did not stabilise"
+                }
             throw IdleTimeoutException(
                 "waitForIdle timed out after ${timeout.inWholeMilliseconds}ms: $diagnostic"
             )

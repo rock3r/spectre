@@ -160,6 +160,40 @@ class WaitForIdleTest {
     }
 
     @Test
+    fun `waitForIdle reports busy resources even when none provide a diagnostic message`() =
+        runTest {
+            val clock = FakeClock()
+            val busyResource =
+                object : AutomatorIdlingResource {
+                    override val isIdleNow: Boolean = false
+                    // Intentionally use the default null diagnosticMessage().
+                }
+
+            val error =
+                assertFailsWith<IdleTimeoutException> {
+                    waitForIdleInternal(
+                        timeout = 32.milliseconds,
+                        quietPeriod = 16.milliseconds,
+                        pollInterval = 16.milliseconds,
+                        idlingResources = { listOf(busyResource) },
+                        drainEdt = {},
+                        fingerprint = { "stable" },
+                        clock = clock,
+                        sleep = clock::advance,
+                    )
+                }
+
+            assertTrue(
+                error.message?.contains("idling resource") == true,
+                "Diagnostic should attribute the timeout to busy resources: ${error.message}",
+            )
+            assertTrue(
+                error.message?.contains("UI fingerprint") != true,
+                "Diagnostic must not misattribute to the fingerprint: ${error.message}",
+            )
+        }
+
+    @Test
     fun `waitForIdle throws when fingerprint never settles`() = runTest {
         val clock = FakeClock()
         var counter = 0
