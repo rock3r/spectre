@@ -111,6 +111,17 @@ internal constructor(
         typeText(text)
     }
 
+    /**
+     * Dispatches a vertical mouse-wheel scroll at the given screen coordinates. Positive
+     * [wheelClicks] scrolls down (away from the user, like physical wheel rotation toward the
+     * desk); negative scrolls up. Drives Compose's `Modifier.scrollable` and lazy-list scroll on
+     * desktop, which respond to wheel events rather than touch-style drag gestures.
+     */
+    fun scrollWheel(screenX: Int, screenY: Int, wheelClicks: Int) = runOffEdt {
+        robot.mouseMove(screenX, screenY)
+        robot.mouseWheel(wheelClicks)
+    }
+
     fun pressKey(keyCode: Int, modifiers: Int = 0) = runOffEdt {
         val modifierKeys = modifierMaskToKeyCodes(modifiers)
         for (mod in modifierKeys) robot.keyPress(mod)
@@ -153,6 +164,8 @@ internal interface RobotAdapter {
 
     fun keyRelease(keyCode: Int)
 
+    fun mouseWheel(wheelClicks: Int)
+
     fun createScreenCapture(region: Rectangle): BufferedImage
 
     fun waitForIdle()
@@ -180,6 +193,8 @@ private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) : Rob
 
     override fun keyRelease(keyCode: Int) = robot.keyRelease(keyCode)
 
+    override fun mouseWheel(wheelClicks: Int) = robot.mouseWheel(wheelClicks)
+
     override fun createScreenCapture(region: Rectangle): BufferedImage =
         robot.createScreenCapture(region)
 
@@ -200,6 +215,8 @@ private object NoopRobotAdapter : RobotAdapter {
 
     override fun keyRelease(keyCode: Int) = Unit
 
+    override fun mouseWheel(wheelClicks: Int) = Unit
+
     // Always return a fresh 1×1 image regardless of region size. RobotDriver.headless() is
     // documented as no-OS-contact (so we don't probe screen devices) and screenshot returns
     // are conceptually owned by the caller (BufferedImage is mutable; setRGB/createGraphics
@@ -217,7 +234,7 @@ private object NoopClipboardAdapter : ClipboardAdapter {
     override fun setContents(contents: Transferable) = Unit
 }
 
-private class SystemClipboardAdapter : ClipboardAdapter {
+internal class SystemClipboardAdapter : ClipboardAdapter {
     // Lazy: looking up the system clipboard at construction time would couple every
     // RobotDriver instantiation to clipboard availability, breaking mouse/screenshot-only
     // automation runs in restricted environments.

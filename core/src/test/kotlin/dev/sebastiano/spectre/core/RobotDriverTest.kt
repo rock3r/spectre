@@ -161,6 +161,10 @@ private class RecordingRobotAdapter(override val autoDelayMs: Int = 0) : RobotAd
         events += "keyRelease($keyCode)"
     }
 
+    override fun mouseWheel(wheelClicks: Int) {
+        events += "mouseWheel($wheelClicks)"
+    }
+
     override fun createScreenCapture(region: Rectangle): BufferedImage =
         BufferedImage(
             region.width.coerceAtLeast(1),

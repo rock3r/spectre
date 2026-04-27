@@ -106,6 +106,16 @@ sealed class ComposeAutomatorInteractions : ComposeAutomatorQueries() {
         swipe(fromCenter.x, fromCenter.y, toCenter.x, toCenter.y, steps, duration)
     }
 
+    /**
+     * Scrolls vertically at [node]'s centre. Positive [wheelClicks] scrolls down (revealing items
+     * lower in the list); negative scrolls up. Drives Compose's `Modifier.scrollable` /
+     * `LazyColumn` on desktop, which respond to wheel events rather than touch-style drags.
+     */
+    fun scrollWheel(node: AutomatorNode, wheelClicks: Int) {
+        val center = node.centerOnScreen
+        robotDriver.scrollWheel(center.x, center.y, wheelClicks)
+    }
+
     fun typeText(text: String) {
         robotDriver.typeText(text)
     }
