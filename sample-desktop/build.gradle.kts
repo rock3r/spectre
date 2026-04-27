@@ -20,7 +20,11 @@ dependencies {
     implementation(libs.compose.uiToolingPreview)
     implementation(libs.kotlinx.coroutines.swing)
     detektPlugins(libs.compose.rules.detekt)
+
+    testImplementation(libs.kotlin.testJunit5)
 }
+
+tasks.withType<Test>().configureEach { useJUnitPlatform() }
 
 compose.desktop {
     application {
