@@ -38,7 +38,7 @@ internal class HelperBinaryExtractor(
         }
         val source =
             resourceLocator()
-                ?: throw IllegalStateException(
+                ?: throw HelperNotBundledException(
                     "Bundled helper binary not found at classpath resource '$RESOURCE_PATH'. " +
                         "The recording module's macOS build stages 'spectre-screencapture' there " +
                         "via the assembleScreenCaptureKitHelper task — verify the module was " +
