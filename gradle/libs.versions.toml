@@ -5,7 +5,6 @@ composeMultiplatform = "1.10.3"
 composeRules = "0.5.6"
 detekt = "2.0.0-alpha.2"
 intellijIdea = "2024.3.5"
-intellijPlatform = "2.10.1"
 jewel = "0.28.0-243.27100"
 ktfmt = "0.26.0"
 kotlin = "2.3.20"
@@ -53,7 +52,10 @@ jewel-ui = { module = "org.jetbrains.jewel:jewel-ui", version.ref = "jewel" }
 composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "composeMultiplatform" }
 composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 detekt = { id = "dev.detekt", version.ref = "detekt" }
-intellijPlatform = { id = "org.jetbrains.intellij.platform", version.ref = "intellijPlatform" }
+# IntelliJ Platform plugin: pinned in `settings.gradle.kts` because Gradle's settings
+# `plugins { }` block doesn't accept catalog references for `version`. The project-level
+# plugin in `sample-intellij-plugin/build.gradle.kts` is applied without a version (inheriting
+# from the settings classpath), so a catalog alias here would be unused.
 ktfmt = { id = "com.ncorti.ktfmt.gradle", version.ref = "ktfmt" }
 kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
