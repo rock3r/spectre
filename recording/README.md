@@ -15,10 +15,20 @@ capture (ScreenCaptureKit) live side by side — pick by what you need.
 - `screencapturekit.ScreenCaptureKitRecorder` — forks a bundled Swift helper that drives
   `SCStream` + `AVAssetWriter` against a single window identified by `(pid, title-substring)`.
   Captures only that window's pixels even when partially occluded, and survives the host
-  window moving across the screen. macOS only.
+  window moving across the screen. macOS only. Implements `WindowRecorder`.
+- `screencapturekit.WindowRecorder` — interface for window-targeted backends. SCK is the only
+  implementation today; future Windows / Linux backends would slot in here.
 
   Decision rationale + alternatives considered are written up in the bridge strategy doc kept
   in `.plans/`.
+
+### Auto-routing (v2)
+- `AutoRecorder` — high-level wrapper that takes both a `WindowRecorder` and a `Recorder`
+  plus a `(window?, region, output, options)` per-call signature. Picks SCK when a window
+  is supplied on macOS, falls back to ffmpeg region capture otherwise. If the SCK helper
+  isn't bundled in the jar (e.g. built on Linux running on macOS) it degrades to ffmpeg
+  with a stderr warning. Operational SCK failures (TCC denied, window not found) propagate
+  unmodified — only `HelperNotBundledException` triggers the fallback.
 
 ### Shared
 - `RecordingHandle` — `AutoCloseable`. Stop sends `q` on stdin (the documented clean-shutdown

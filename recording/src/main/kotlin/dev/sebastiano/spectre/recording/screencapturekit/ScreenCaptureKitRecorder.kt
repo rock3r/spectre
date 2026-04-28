@@ -3,7 +3,6 @@ package dev.sebastiano.spectre.recording.screencapturekit
 import dev.sebastiano.spectre.recording.RecordingHandle
 import dev.sebastiano.spectre.recording.RecordingOptions
 import java.io.IOException
-import java.lang.ProcessHandle
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
@@ -27,10 +26,10 @@ import java.util.concurrent.atomic.AtomicReference
  *    `FfmpegRecorder`'s shutdown contract). Title restoration happens unconditionally during stop,
  *    including the crashed-mid-recording branch.
  *
- * Why not implement [dev.sebastiano.spectre.recording.Recorder]: that interface is region-based
- * (`Rectangle`), and ScreenCaptureKit is window-targeted. A higher-level router can pick between
- * `ScreenCaptureKitRecorder` (when a `windowHandle != 0L` is available) and `FfmpegRecorder`
- * (region fallback for embedded `ComposePanel`s) — that lives outside this class.
+ * Implements [WindowRecorder] (window-targeted) rather than the region-based
+ * [dev.sebastiano.spectre.recording.Recorder] — ScreenCaptureKit is fundamentally window-attached
+ * and coordinates aren't necessary. The high-level [dev.sebastiano.spectre.recording.AutoRecorder]
+ * takes both backends and picks per call: SCK when there's a window on macOS, ffmpeg otherwise.
  *
  * macOS-only. On non-macOS hosts the helper isn't bundled; [start] fails early with a clear "helper
  * not found" error from [HelperBinaryExtractor].
@@ -39,15 +38,15 @@ class ScreenCaptureKitRecorder
 internal constructor(
     private val helperExtractor: HelperBinaryExtractor,
     private val processFactory: ProcessFactory,
-) {
+) : WindowRecorder {
 
     constructor() : this(HelperBinaryExtractor(), SystemProcessFactory)
 
-    fun start(
+    override fun start(
         window: TitledWindow,
-        windowOwnerPid: Long = ProcessHandle.current().pid(),
+        windowOwnerPid: Long,
         output: Path,
-        options: RecordingOptions = RecordingOptions(),
+        options: RecordingOptions,
     ): RecordingHandle {
         // Resolve everything that can fail without touching window state first. Anything we do
         // before `discriminator.apply()` doesn't need a restore path; anything after must
