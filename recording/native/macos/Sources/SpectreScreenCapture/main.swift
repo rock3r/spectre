@@ -156,6 +156,12 @@ final class Recorder {
     private var framesDropped: Int = 0
     private var streamDelegate: StreamLogger?
     private var frameOutput: FrameOutput?
+    // Retained for the lifetime of `run()` so the SIGTERM dispatch source isn't deallocated
+    // when `waitForStop`'s continuation-setup closure returns. Without this, the source goes
+    // away — and `signal(SIGTERM, SIG_IGN)` is still in effect, which means SIGTERM gets
+    // silently swallowed and the JVM-side `process.destroy()` fallback does nothing useful.
+    // (Same FrameOutput-style retain bug pattern, second instance.)
+    private var sigtermSource: DispatchSourceSignal?
 
     init(arguments: Arguments) {
         self.args = arguments
@@ -419,13 +425,16 @@ final class Recorder {
             // signal(SIGTERM, SIG_IGN) prevents the default action from firing; the
             // DispatchSource picks up the signal instead. Must call signal() BEFORE the
             // dispatch source resumes, otherwise there's a brief window where SIGTERM still
-            // kills the process.
+            // kills the process. We assign the source to a recorder-scoped property so it
+            // outlives this closure — local-only retain would let it deallocate with the
+            // source still installed, and SIGTERM would then be silently swallowed.
             signal(SIGTERM, SIG_IGN)
-            let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
-            sigtermSource.setEventHandler {
+            let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
+            source.setEventHandler {
                 if resumed.set() { continuation.resume() }
             }
-            sigtermSource.resume()
+            source.resume()
+            self.sigtermSource = source
         }
     }
 
