@@ -201,23 +201,33 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `typeText with no-op clipboard adapter does not spin the settle timeout`() {
+    fun `typeText with no-op clipboard adapter does not spin or settle for the headless path`() {
         // RobotDriver.headless() pairs the noop robot with the noop clipboard. The clipboard
-        // never reads back what was written, so the post-fix awaitClipboardContents loop would
-        // burn its full timeout (1 second) on every typeText call. The supportsRead opt-out
-        // skips the poll for adapters that explicitly can't satisfy it; this test pins that
-        // contract so a future change can't accidentally regress headless typeText latency.
+        // never reads back what was written and the noop robot has no real paste pipeline to
+        // drain, so neither the awaitClipboardContents poll nor the post-paste settle delay
+        // should run. This test pins headless typeText latency at well under a single
+        // POST_PASTE_SETTLE_MS so a future change can't accidentally re-introduce either delay.
+        // We invoke typeText several times because per-call settle accumulates: a 50ms sleep
+        // per call would push 5 calls to 250ms+, which is what Codex P2 on PR #37 flagged.
         val driver = RobotDriver.headless()
-        val elapsedMs = kotlin.system.measureTimeMillis { driver.typeText("hello") }
+        val elapsedMs =
+            kotlin.system.measureTimeMillis {
+                repeat(HEADLESS_TYPE_TEXT_INVOCATIONS) { driver.typeText("hello") }
+            }
         assertTrue(
             elapsedMs < HEADLESS_TYPE_TEXT_BUDGET_MS,
-            "headless typeText should return immediately (no clipboard wait), " +
-                "took ${elapsedMs}ms (budget ${HEADLESS_TYPE_TEXT_BUDGET_MS}ms)",
+            "headless typeText × $HEADLESS_TYPE_TEXT_INVOCATIONS should return immediately " +
+                "(no clipboard wait, no post-paste settle), took ${elapsedMs}ms " +
+                "(budget ${HEADLESS_TYPE_TEXT_BUDGET_MS}ms)",
         )
     }
 
     private companion object {
-        const val HEADLESS_TYPE_TEXT_BUDGET_MS: Long = 250L
+        const val HEADLESS_TYPE_TEXT_INVOCATIONS: Int = 5
+        // Tight budget — comfortably under POST_PASTE_SETTLE_MS (50ms) × invocation count so
+        // the test fails if either the clipboard poll or the post-paste sleep ever fires for
+        // a no-op adapter.
+        const val HEADLESS_TYPE_TEXT_BUDGET_MS: Long = 30L
     }
 }
 
