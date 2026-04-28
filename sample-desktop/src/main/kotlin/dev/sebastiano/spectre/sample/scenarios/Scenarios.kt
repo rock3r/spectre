@@ -14,4 +14,8 @@ val ALL_SCENARIOS: List<Scenario> =
         FocusScenario,
         ScrollScenario,
         HiDpiScenario,
+        DualPanelScenario,
+        JDialogScenario,
+        RecompositionStressScenario,
+        AnimationScenario,
     )

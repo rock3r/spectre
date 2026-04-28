@@ -327,9 +327,20 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
         }
 
     private fun allWindows(): List<Window> {
-        val collected = mutableListOf<Window>()
+        val collected = LinkedHashSet<Window>()
         collectWindowTree(rootWindow, collected)
-        return collected
+        // Walk every other top-level window (and its owned tree). The visibility check is
+        // applied per-window inside `collectWindowTree` rather than at the top level: Swing's
+        // `SharedOwnerFrame` (parent of `JDialog(null, …)`) is itself a top-level window that
+        // is NOT showing, but its owned dialogs may be — so filtering hidden top-levels out
+        // here would drop those dialogs and synthetic input would silently miss them, even
+        // though `WindowTracker` correctly surfaces them.
+        for (other in Window.getWindows()) {
+            if (other.owner == null && other !== rootWindow) {
+                collectWindowTree(other, collected)
+            }
+        }
+        return collected.toList()
     }
 }
 
@@ -363,7 +374,7 @@ private fun modifierMaskFor(keyCode: Int): Int =
         else -> 0
     }
 
-private fun collectWindowTree(window: Window, into: MutableList<Window>) {
+private fun collectWindowTree(window: Window, into: MutableCollection<Window>) {
     into += window
     for (child in window.ownedWindows) {
         collectWindowTree(child, into)
