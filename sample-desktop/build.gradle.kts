@@ -65,6 +65,43 @@ val validationTest by
         // loop. The 10-second startupTimeout is enough headroom for cold JVM warmup on CI hardware.
     }
 
+// Compose Desktop reads `compose.layers.type` once at composition init, so popup-layer-variant
+// coverage needs a separate JVM per layer mode. Each task below filters to
+// `PopupLayerVariantsValidationTest` and sets the layer-type system property for the worker.
+// `validationTest` (above) covers the default `OnSameCanvas` path, so we only register the
+// non-default variants here — and aggregate them under `validationTestPopupLayers`.
+val popupLayerVariantTaskName =
+    "dev.sebastiano.spectre.sample.validation.PopupLayerVariantsValidationTest"
+
+fun popupLayerTask(suffix: String, layerType: String) =
+    tasks.register("validationTestLayer$suffix", Test::class) {
+        description = "Runs PopupLayerVariantsValidationTest with -Dcompose.layers.type=$layerType."
+        group = "verification"
+        testClassesDirs = sourceSets["validation"].output.classesDirs
+        classpath = sourceSets["validation"].runtimeClasspath
+        useJUnitPlatform { includeTags() } // accept all
+        forkEvery = 1
+        filter { includeTestsMatching("$popupLayerVariantTaskName") }
+        systemProperty("compose.layers.type", layerType)
+    }
+
+val validationTestLayerComponent = popupLayerTask("Component", "COMPONENT")
+
+// `OnWindow` (Compose Desktop's `compose.layers.type=WINDOW`) is intentionally NOT registered
+// here yet. Compose builds OnWindow popups inside an internal `JLayeredPaneWithTransparencyHack`
+// rather than a `ComposePanel`, so neither `WindowTracker` nor `SemanticsReader` can surface
+// the popup's semantics owner without a deeper rework. Tracked separately as a follow-up — see
+// https://github.com/rock3r/spectre/issues/7 for the deferred checklist item.
+
+@Suppress("UNUSED_VARIABLE")
+val validationTestPopupLayers by tasks.registering {
+    description =
+        "Runs PopupLayerVariantsValidationTest under each Compose layer type Spectre " +
+            "currently supports (OnSameCanvas via :validationTest, OnComponent via this task)."
+    group = "verification"
+    dependsOn(validationTestLayerComponent)
+}
+
 compose.desktop {
     application {
         mainClass = "dev.sebastiano.spectre.sample.MainKt"

@@ -327,9 +327,18 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
         }
 
     private fun allWindows(): List<Window> {
-        val collected = mutableListOf<Window>()
+        val collected = LinkedHashSet<Window>()
         collectWindowTree(rootWindow, collected)
-        return collected
+        // Also include every other visible top-level Window (and its owned tree). Popups in
+        // Compose Desktop's `OnWindow` layer mode and any Swing JDialog with a default
+        // (`SharedOwnerFrame`) parent become top-level windows that are NOT in the spawned
+        // root's `ownedWindows` chain — without this, synthetic input can't reach them.
+        for (other in Window.getWindows()) {
+            if (other.isShowing && other.owner == null && other !== rootWindow) {
+                collectWindowTree(other, collected)
+            }
+        }
+        return collected.toList()
     }
 }
 
@@ -363,7 +372,7 @@ private fun modifierMaskFor(keyCode: Int): Int =
         else -> 0
     }
 
-private fun collectWindowTree(window: Window, into: MutableList<Window>) {
+private fun collectWindowTree(window: Window, into: MutableCollection<Window>) {
     into += window
     for (child in window.ownedWindows) {
         collectWindowTree(child, into)

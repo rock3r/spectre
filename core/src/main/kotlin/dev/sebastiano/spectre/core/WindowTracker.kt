@@ -15,11 +15,19 @@ class WindowTracker {
 
     fun refresh() = readOnEdt {
         val pending = mutableListOf<TrackedWindow>()
-        val topLevelWindows = Window.getWindows().filter { it.isShowing && it.owner == null }
+        // Iterate every top-level window (`owner == null`) regardless of visibility — Swing's
+        // `SharedOwnerFrame` is a hidden parent for `JDialog(null as Frame?, ...)`, so filtering
+        // by `isShowing` here would drop the dialog along with it. Visibility is enforced per
+        // candidate further down (a hidden parent only contributes through its visible
+        // descendants).
+        val topLevelWindows = Window.getWindows().filter { it.owner == null }
         for (window in topLevelWindows) {
-            when (window) {
-                is ComposeWindow -> trackComposeWindow(pending, window)
-                else -> trackEmbeddedPanels(pending, window)
+            when {
+                window is ComposeWindow && window.isShowing -> trackComposeWindow(pending, window)
+                window.isShowing -> trackEmbeddedPanels(pending, window)
+                // Hidden parent (e.g. SharedOwnerFrame) — skip its own panels but still walk its
+                // owned dialogs in case any of them are showing.
+                else -> trackOwnedPopups(pending, window)
             }
         }
         _trackedWindows = pending.toList()
