@@ -124,12 +124,18 @@ internal constructor(
                     // `waitFor()` can pin the calling thread indefinitely if the kernel
                     // hasn't reaped the helper yet. If the helper still hasn't died after
                     // the timeout, fall back to a sentinel exit code so we don't propagate a
-                    // hang into the caller.
-                    if (process.waitFor(FORCE_KILL_DURING_START_SECONDS, TimeUnit.SECONDS)) {
-                        process.exitValue()
-                    } else {
-                        EXIT_HELPER_NOT_REAPED
-                    }
+                    // hang into the caller. InterruptedException during this cleanup wait
+                    // must still trip discriminator.restore() before propagating; otherwise
+                    // a caller interrupt during start() leaves the window's title dirty.
+                    val terminated =
+                        try {
+                            process.waitFor(FORCE_KILL_DURING_START_SECONDS, TimeUnit.SECONDS)
+                        } catch (e: InterruptedException) {
+                            discriminator.restore()
+                            Thread.currentThread().interrupt()
+                            throw e
+                        }
+                    if (terminated) process.exitValue() else EXIT_HELPER_NOT_REAPED
                 } else {
                     process.exitValue()
                 }
