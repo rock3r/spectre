@@ -58,12 +58,12 @@ internal constructor(
 
         val discriminator = TitleDiscriminator(window)
         discriminator.apply()
-
-        // HelperArguments.init validates pid/title/fps/timeout — IllegalArgumentException is
-        // the only failure mode here. Anything else escaping from the constructor would be a
-        // coding bug we want surfaced loudly, not swallowed-and-restored.
-        val argv =
-            try {
+        // Single restore-on-failure point — flipped to true on the success path so the handle
+        // takes ownership of the discriminator. Avoids per-throw-site restore() calls and the
+        // associated "did we cover every exception type from ProcessBuilder.start" gotcha.
+        var success = false
+        try {
+            val argv =
                 HelperArguments(
                         pid = windowOwnerPid,
                         titleContains = discriminator.value,
@@ -73,81 +73,72 @@ internal constructor(
                         discoveryTimeoutMs = DEFAULT_DISCOVERY_TIMEOUT_MS,
                     )
                     .toArgv(helperPath)
-            } catch (e: IllegalArgumentException) {
-                discriminator.restore()
-                throw e
-            }
 
-        // ProcessBuilder.start throws IOException for every failure mode (missing binary,
-        // permission denied on exec, fork failure). Catch that specifically so a non-IO bug in
-        // a test ProcessFactory propagates loudly instead of triggering a silent restore path.
-        val process =
-            try {
-                processFactory.start(argv)
-            } catch (e: IOException) {
-                discriminator.restore()
-                throw e
-            }
+            val process = processFactory.start(argv)
 
-        // Wait for the helper to either:
-        //   - emit the READY marker on stdout (window discovered, SCK is streaming frames), or
-        //   - exit with one of the documented fast-fail codes (2/3/4/5).
-        // A plain `process.waitFor(STARTUP_PROBE_MILLIS)`-style probe was racy: when the
-        // helper's window discovery took longer than the probe, start() reported success
-        // before the helper had actually started capturing. Reading stdout removes the race.
-        val ready =
-            try {
-                awaitHelperReady(process, READY_WAIT_MILLIS)
-            } catch (e: InterruptedException) {
-                // destroyForcibly() is asynchronous on the JVM. Without a bounded wait here we
-                // can return from start() while the helper is still alive + writing the
-                // output file — leaks a subprocess and leaves the .mov mutating after the
-                // caller thinks startup aborted. Mirror the non-ready path's bounded wait so
-                // the helper is genuinely gone by the time we propagate the interrupt.
-                process.destroyForcibly()
-                @Suppress("SwallowedException")
+            // Wait for the helper to either:
+            //   - emit the READY marker on stdout (window discovered, SCK is streaming
+            //     frames), or
+            //   - exit with one of the documented fast-fail codes (2/3/4/5).
+            // A plain `process.waitFor(STARTUP_PROBE_MILLIS)`-style probe was racy: when the
+            // helper's window discovery took longer than the probe, start() reported success
+            // before the helper had actually started capturing. Reading stdout removes the
+            // race.
+            val ready =
                 try {
-                    process.waitFor(FORCE_KILL_DURING_START_SECONDS, TimeUnit.SECONDS)
-                } catch (_: InterruptedException) {
-                    // A second interrupt during cleanup means the JVM is being torn down
-                    // anyway — daemon-process semantics will let the helper die with us.
-                }
-                discriminator.restore()
-                Thread.currentThread().interrupt()
-                throw e
-            }
-        if (!ready) {
-            val exit =
-                if (process.isAlive) {
+                    awaitHelperReady(process, READY_WAIT_MILLIS)
+                } catch (e: InterruptedException) {
+                    // destroyForcibly() is asynchronous on the JVM. Without a bounded wait
+                    // here we can return from start() while the helper is still alive +
+                    // writing the output file — leaks a subprocess and leaves the .mov
+                    // mutating after the caller thinks startup aborted. Mirror the non-ready
+                    // path's bounded wait so the helper is genuinely gone by the time we
+                    // propagate the interrupt.
                     process.destroyForcibly()
-                    // Bounded wait — destroyForcibly() is asynchronous and an unbounded
-                    // `waitFor()` can pin the calling thread indefinitely if the kernel
-                    // hasn't reaped the helper yet. If the helper still hasn't died after
-                    // the timeout, fall back to a sentinel exit code so we don't propagate a
-                    // hang into the caller. InterruptedException during this cleanup wait
-                    // must still trip discriminator.restore() before propagating; otherwise
-                    // a caller interrupt during start() leaves the window's title dirty.
-                    val terminated =
-                        try {
-                            process.waitFor(FORCE_KILL_DURING_START_SECONDS, TimeUnit.SECONDS)
-                        } catch (e: InterruptedException) {
-                            discriminator.restore()
-                            Thread.currentThread().interrupt()
-                            throw e
-                        }
-                    if (terminated) process.exitValue() else EXIT_HELPER_NOT_REAPED
-                } else {
-                    process.exitValue()
+                    @Suppress("SwallowedException")
+                    try {
+                        process.waitFor(FORCE_KILL_DURING_START_SECONDS, TimeUnit.SECONDS)
+                    } catch (_: InterruptedException) {
+                        // A second interrupt during cleanup means the JVM is being torn down
+                        // anyway — daemon-process semantics will let the helper die with us.
+                    }
+                    Thread.currentThread().interrupt()
+                    throw e
                 }
-            discriminator.restore()
-            throw IllegalStateException(messageForHelperExit(exit, output, argv))
-        }
+            if (!ready) {
+                val exit =
+                    if (process.isAlive) {
+                        process.destroyForcibly()
+                        // Bounded wait — destroyForcibly() is asynchronous and an unbounded
+                        // `waitFor()` can pin the calling thread indefinitely if the kernel
+                        // hasn't reaped the helper yet. If the helper still hasn't died after
+                        // the timeout, fall back to a sentinel exit code so we don't propagate
+                        // a hang into the caller.
+                        val terminated =
+                            try {
+                                process.waitFor(FORCE_KILL_DURING_START_SECONDS, TimeUnit.SECONDS)
+                            } catch (e: InterruptedException) {
+                                Thread.currentThread().interrupt()
+                                throw e
+                            }
+                        if (terminated) process.exitValue() else EXIT_HELPER_NOT_REAPED
+                    } else {
+                        process.exitValue()
+                    }
+                throw IllegalStateException(messageForHelperExit(exit, output, argv))
+            }
 
-        return ScreenCaptureKitRecordingHandle(
-            process = process,
-            output = output,
-            discriminator = discriminator,
-        )
+            val handle =
+                ScreenCaptureKitRecordingHandle(
+                    process = process,
+                    output = output,
+                    discriminator = discriminator,
+                )
+            success = true
+            return handle
+        } finally {
+            if (!success) discriminator.restore()
+        }
     }
 
     /**
