@@ -1,0 +1,27 @@
+<!--
+  Sample IntelliJ plugin used to validate that Spectre's in-process automator can drive a
+  Jewel-hosted Compose tool window. Not published anywhere; only consumed via `runIde`.
+-->
+<idea-plugin>
+    <id>dev.sebastiano.spectre.sample</id>
+    <name>Spectre IDE Sample</name>
+    <vendor>Spectre</vendor>
+
+    <!-- Jewel's IDE LaF bridge requires the platform module; nothing else is needed. -->
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Spectre Sample"
+                    anchor="right"
+                    factoryClass="dev.sebastiano.spectre.intellij.SpectreSampleToolWindowFactory"/>
+    </extensions>
+
+    <actions>
+        <action id="dev.sebastiano.spectre.sample.RunSpectre"
+                class="dev.sebastiano.spectre.intellij.RunSpectreAction"
+                text="Run Spectre Against the Sample Tool Window"
+                description="Drives the in-process Spectre automator against the Spectre Sample tool window and dumps the discovered semantics tree to the IDE log.">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>

@@ -3,6 +3,9 @@
 build/
 out/
 
+# IntelliJ Platform Gradle plugin scratch dir (downloaded IDE artifacts, sandbox state, etc.)
+.intellijPlatform/
+
 # Kotlin
 .kotlin/
 

@@ -4,21 +4,23 @@
 
 ```text
 spectre
-├── core/            — shared automation model and desktop automation primitives
-├── server/          — optional transport layer for cross-JVM access
-├── recording/       — screenshot / recording integrations and native capture boundaries
-├── testing/         — test fixtures and JUnit-facing helpers built on top of public APIs
-└── sample-desktop/  — small manual-test harness app for spike validation
+├── core/                    — shared automation model and desktop automation primitives
+├── server/                  — optional transport layer for cross-JVM access
+├── recording/               — screenshot / recording integrations and native capture boundaries
+├── testing/                 — test fixtures and JUnit-facing helpers built on top of public APIs
+├── sample-desktop/          — small manual-test harness app for spike validation
+└── sample-intellij-plugin/  — sample IntelliJ plugin embedding Spectre in a Jewel tool window
 ```
 
 ## Dependency Direction
 
 ```text
-sample-desktop ─┐
-server         ├──> core
-testing        ┘
+sample-desktop          ─┐
+sample-intellij-plugin   ├──> core
+server                   │
+testing                 ─┘
 
-recording      (isolated desktop/native integration module)
+recording                (isolated desktop/native integration module)
 ```
 
 Guidelines:
@@ -97,6 +99,18 @@ Expected long-term responsibilities:
 - reproducible surfaces for popup, focus, scrolling, and coordinate tests
 
 Do not let the sample app become a dumping ground for production logic.
+
+### `sample-intellij-plugin`
+
+A minimal IntelliJ plugin used to validate that Spectre's in-process automator works against
+IDE-hosted Compose surfaces (Jewel-on-IntelliJ tool windows). The plugin is **never published**
+— it exists only for `runIde` validation against #13's checklist (popup discovery and
+`ComposePanel` semantics in the IDE-hosted case). Same constraint as `sample-desktop`: do not
+move production logic here.
+
+Run via `./gradlew :sample-intellij-plugin:runIde`, then `Tools → Run Spectre Against the
+Sample Tool Window`. The action drives the in-process `ComposeAutomator` against the Jewel
+tool window and dumps the discovered semantics tree to `idea.log`.
 
 ## Architectural Invariants
 
