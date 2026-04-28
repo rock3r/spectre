@@ -118,6 +118,15 @@ class Issue8FidelityValidationTest {
     @Test
     @Order(3)
     fun `typeText writes characters into the focused text field`() {
+        // The default validation Gradle tasks boot the worker JVM as a macOS UI element so the
+        // spawned window doesn't pop to the front while tests run, but UI-element processes get
+        // restricted NSPasteboard access — Cmd+V never sees the value `typeText` writes. Skip
+        // here when that's the active mode; run with `-Dspectre.sample.fixture.uiElement=false`
+        // (and accept one focus-grab) to exercise the paste path locally.
+        assumeFalse(
+            sampleFixtureRunsAsUiElement,
+            "Skipped under apple.awt.UIElement=true (NSPasteboard restricted)",
+        )
         with(fixture.automator) {
             navigateToScenario("scenario.focus")
             val target = waitForTestTag("focus.field.third")

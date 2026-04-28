@@ -39,12 +39,27 @@ class WindowTracker {
             val panel = findComposePanels(window).firstOrNull()
             addTrackedWindow(pending, window, panel, "window", isPopup = false)
         }
-        trackOwnedPopups(pending, window)
+        // Compose Desktop's `OnWindow` popup layer hosts the popup inside an internal
+        // `WindowComposeSceneLayer` whose `JDialog` won't be discovered as a `ComposePanel` host
+        // (its content sits in a private `JLayeredPaneWithTransparencyHack`, not a ComposePanel).
+        // Surface those layers through the reflective `OverlayLayerInspector` so each one becomes
+        // its own tracked window with a semantics accessor that points at the layer's mediator.
+        val overlayLayers = OverlayLayerInspector.findOverlayLayerWindows(window)
+        for (layer in overlayLayers) {
+            if (layer.semanticsOwnersAccessor().isNotEmpty()) {
+                addOverlayTrackedWindow(pending, layer)
+            }
+        }
+        trackOwnedPopups(pending, window, skip = overlayLayers.mapTo(HashSet()) { it.window })
     }
 
     @OptIn(ExperimentalComposeUiApi::class)
-    private fun trackOwnedPopups(pending: MutableList<TrackedWindow>, owner: Window) {
-        val visibleOwned = owner.ownedWindows.filter { it.isShowing }
+    private fun trackOwnedPopups(
+        pending: MutableList<TrackedWindow>,
+        owner: Window,
+        skip: Set<Window> = emptySet(),
+    ) {
+        val visibleOwned = owner.ownedWindows.filter { it.isShowing && it !in skip }
         for (owned in visibleOwned) {
             when (owned) {
                 is ComposeWindow -> {
@@ -55,7 +70,7 @@ class WindowTracker {
                 }
                 else -> trackActivePanels(pending, owned, "popup", isPopup = true)
             }
-            trackOwnedPopups(pending, owned)
+            trackOwnedPopups(pending, owned, skip)
         }
     }
 
@@ -92,6 +107,21 @@ class WindowTracker {
                 window = window,
                 composePanel = panel,
                 isPopup = isPopup,
+            )
+    }
+
+    @OptIn(ExperimentalComposeUiApi::class)
+    private fun addOverlayTrackedWindow(
+        pending: MutableList<TrackedWindow>,
+        layer: OverlayLayerEntry,
+    ) {
+        pending +=
+            TrackedWindow(
+                surfaceId = "overlay:${pending.size}",
+                window = layer.window,
+                composePanel = null,
+                isPopup = true,
+                overlaySemanticsOwners = layer.semanticsOwnersAccessor,
             )
     }
 }

@@ -97,6 +97,12 @@ class SemanticsReader {
 
     @OptIn(ExperimentalComposeUiApi::class)
     private fun getOwnersForWindow(trackedWindow: TrackedWindow): Collection<SemanticsOwner> {
+        // Reflective overlay-layer accessor wins when present — those tracked windows are the
+        // OnWindow popup case (`compose.layers.type=WINDOW`) where neither the host JDialog is a
+        // ComposeWindow nor its content tree contains a ComposePanel.
+        trackedWindow.overlaySemanticsOwners?.let {
+            return it()
+        }
         val window = trackedWindow.window
         if (window is ComposeWindow) return window.semanticsOwners
 

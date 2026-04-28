@@ -48,6 +48,33 @@ dependencies {
 
 tasks.withType<Test>().configureEach { useJUnitPlatform() }
 
+// Mark every validation-driven worker JVM as a macOS UI element. AppKit treats UI-element
+// processes as background-only — no Dock icon, no menu bar, and (the part the user cares about)
+// no focus-grab when a window is shown. The synthetic input driver dispatches AWT events
+// directly so it doesn't need the window in the foreground.
+//
+// Trade-off: macOS restricts NSPasteboard access for UI-element processes, so the
+// clipboard-driven `typeText` validation can't run under this flag. That single test is gated
+// on `spectre.sample.fixture.uiElement` (which mirrors `apple.awt.UIElement` so JVM-level
+// invocations not going through this build script — IDE / CI — still gate correctly) and skips
+// itself when the flag is on; everything else runs as normal.
+//
+// Both flags collapse to a single override: if the user passes EITHER
+// `-Dapple.awt.UIElement=...` or `-Dspectre.sample.fixture.uiElement=...` to Gradle, that value
+// drives BOTH worker-JVM properties. That way
+// `./gradlew :sample-desktop:validationTest -Dspectre.sample.fixture.uiElement=false`
+// actually exercises the typeText path (the worker JVM gets `apple.awt.UIElement=false` too,
+// which restores NSPasteboard access). Defaults to "true" when neither is set.
+val uiElementMode: Provider<String> =
+    providers
+        .systemProperty("spectre.sample.fixture.uiElement")
+        .orElse(providers.systemProperty("apple.awt.UIElement"))
+        .orElse("true")
+val applyValidationJvmArgs: Test.() -> Unit = {
+    systemProperty("apple.awt.UIElement", uiElementMode.get())
+    systemProperty("spectre.sample.fixture.uiElement", uiElementMode.get())
+}
+
 val validationTest by
     tasks.registering(Test::class) {
         description =
@@ -63,6 +90,7 @@ val validationTest by
         forkEvery = 1
         // Re-render the picker / spawn the window inside each test method via the fixture's poll
         // loop. The 10-second startupTimeout is enough headroom for cold JVM warmup on CI hardware.
+        applyValidationJvmArgs()
     }
 
 // Compose Desktop reads `compose.layers.type` once at composition init, so popup-layer-variant
@@ -83,21 +111,15 @@ fun popupLayerTask(suffix: String, layerType: String) =
         forkEvery = 1
         filter { includeTestsMatching("$popupLayerVariantTaskName") }
         systemProperty("compose.layers.type", layerType)
+        applyValidationJvmArgs()
     }
 
 val validationTestLayerComponent = popupLayerTask("Component", "COMPONENT")
-
-// `OnWindow` (Compose Desktop's `compose.layers.type=WINDOW`) is intentionally NOT registered
-// here yet. Compose builds OnWindow popups inside an internal `JLayeredPaneWithTransparencyHack`
-// rather than a `ComposePanel`, so neither `WindowTracker` nor `SemanticsReader` can surface
-// the popup's semantics owner without a deeper rework. Tracked separately as a follow-up — see
-// https://github.com/rock3r/spectre/issues/7 for the deferred checklist item.
+val validationTestLayerWindow = popupLayerTask("Window", "WINDOW")
 
 // Default layer (`OnSameCanvas`) gets its own task so the aggregate `validationTestPopupLayers`
 // below can guarantee SAME_CANVAS coverage on its own — running just the aggregate must NOT
-// silently skip the default mode (Codex P2 on PR #40 flagged that running the aggregate alone
-// would miss SAME_CANVAS regressions because the default is otherwise only exercised by the
-// broader `:validationTest` task).
+// silently skip the default mode.
 val validationTestLayerSameCanvas =
     tasks.register("validationTestLayerSameCanvas", Test::class) {
         description =
@@ -108,15 +130,20 @@ val validationTestLayerSameCanvas =
         useJUnitPlatform()
         forkEvery = 1
         filter { includeTestsMatching(popupLayerVariantTaskName) }
+        applyValidationJvmArgs()
     }
 
 @Suppress("UNUSED_VARIABLE")
 val validationTestPopupLayers by tasks.registering {
     description =
-        "Runs PopupLayerVariantsValidationTest under every Compose layer type Spectre " +
-            "currently supports (OnSameCanvas + OnComponent). OnWindow is deferred — see #39."
+        "Runs PopupLayerVariantsValidationTest under all three Compose layer types " +
+            "(OnSameCanvas, OnComponent, OnWindow)."
     group = "verification"
-    dependsOn(validationTestLayerSameCanvas, validationTestLayerComponent)
+    dependsOn(
+        validationTestLayerSameCanvas,
+        validationTestLayerComponent,
+        validationTestLayerWindow,
+    )
 }
 
 compose.desktop {
