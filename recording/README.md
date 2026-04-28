@@ -47,8 +47,14 @@ capture (ScreenCaptureKit) live side by side — pick by what you need.
 `recording/native/macos/` is a SwiftPM project that produces the `spectre-screencapture`
 helper binary. The `assembleScreenCaptureKitHelper` Gradle task runs `swift build -c release`
 and stages the binary into `src/main/resources/native/macos/`, so the JAR carries it
-transparently. Both the build and the resource hookup are gated on macOS — non-macOS builds
-skip the Swift step entirely.
+transparently. The Swift `swift build` step only runs on macOS hosts — non-macOS hosts
+produce a structurally-correct jar that just doesn't contain the helper file (consumers see
+`HelperBinaryExtractor`'s "binary not found" message at runtime if they try to use SCK).
+
+**Distribution must be built on macOS.** A jar published from a Linux CI runner won't carry
+the helper, so any macOS consumer of that jar would fail with "helper binary not found" the
+first time `ScreenCaptureKitRecorder.start()` runs. A future macOS CI workflow will guard
+against this — see the v2 follow-ups doc.
 
 For local dev the helper is built single-arch (host arch only — universal builds need full
 Xcode for `xcbuild`, which CLT alone doesn't ship). A separate release task that produces the

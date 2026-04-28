@@ -71,8 +71,20 @@ val assembleScreenCaptureKitHelper by
         into(helperResourceDest.get().asFile.parentFile)
     }
 
+// The generated helper directory is wired into resources unconditionally — even on non-macOS
+// hosts. If we gated the srcDir registration on macOS too, a Linux CI build would produce a jar
+// with no `native/macos/` entries at all, so a downstream macOS consumer would later hit
+// `HelperBinaryExtractor`'s "binary not found" error. Wiring the srcDir always means the jar
+// structure is host-agnostic — the helper file just isn't there if the host can't build it.
+//
+// The actual `assembleScreenCaptureKitHelper` task only runs on macOS (its `onlyIf`), so it's
+// only attached to `processResources` when we're on a host that can produce the binary.
+//
+// For shipping a distribution jar, build on macOS — the README documents this. A future macOS
+// CI workflow (#18 follow-up) will guard against accidentally publishing a Linux-built jar.
+sourceSets["main"].resources.srcDir(layout.buildDirectory.dir("generated/screenCaptureHelper"))
+
 if (OperatingSystem.current().isMacOsX) {
-    sourceSets["main"].resources.srcDir(layout.buildDirectory.dir("generated/screenCaptureHelper"))
     tasks.named("processResources") { dependsOn(assembleScreenCaptureKitHelper) }
 }
 
