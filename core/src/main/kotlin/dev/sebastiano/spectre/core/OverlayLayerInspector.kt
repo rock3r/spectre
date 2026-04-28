@@ -63,8 +63,7 @@ internal object OverlayLayerInspector {
         // semanticsOwnerManager::semanticsOwners` — so it has no JVM backing field and reading via
         // `getDeclaredField` returns null. The getter method exists under the conventional name
         // (`getSemanticsOwners`) and works regardless of how the property is implemented.
-        val owners =
-            invokeGetter(mediator, "getSemanticsOwners") as? Collection<SemanticsOwner>
+        val owners = invokeGetter(mediator, "getSemanticsOwners") as? Collection<SemanticsOwner>
         return owners ?: emptyList()
     }
 

@@ -56,12 +56,19 @@ tasks.withType<Test>().configureEach { useJUnitPlatform() }
 // Trade-off: macOS restricts NSPasteboard access for UI-element processes, so the
 // clipboard-driven `typeText` validation can't run under this flag. That single test is gated
 // on `spectre.sample.fixture.uiElement` and skips itself when the flag is on; everything else
-// runs as normal. To exercise the typeText path locally, run
-// `:sample-desktop:validationTest --tests '*typeText*' -Dspectre.sample.fixture.uiElement=false`
-// (or just drop the `applyValidationJvmArgs` from the task).
+// runs as normal.
+//
+// Both flags fall through to the Gradle JVM's own system properties when set explicitly, so
+// `./gradlew :sample-desktop:validationTest -Dapple.awt.UIElement=false
+// -Dspectre.sample.fixture.uiElement=false` actually disables UI-element mode for one run and
+// lets the typeText assertion execute. Without the override we default to "true" and stay quiet.
+val uiElementOverride: Provider<String> =
+    providers.systemProperty("apple.awt.UIElement").orElse("true")
+val spectreUiElementFlagOverride: Provider<String> =
+    providers.systemProperty("spectre.sample.fixture.uiElement").orElse(uiElementOverride)
 val applyValidationJvmArgs: Test.() -> Unit = {
-    systemProperty("apple.awt.UIElement", "true")
-    systemProperty("spectre.sample.fixture.uiElement", "true")
+    systemProperty("apple.awt.UIElement", uiElementOverride.get())
+    systemProperty("spectre.sample.fixture.uiElement", spectreUiElementFlagOverride.get())
 }
 
 val validationTest by

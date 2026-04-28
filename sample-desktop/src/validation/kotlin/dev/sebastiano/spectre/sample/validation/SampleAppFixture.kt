@@ -116,11 +116,18 @@ class SampleAppFixture(
 }
 
 /**
- * `true` when the validation Gradle task booted this JVM as a macOS UI element
- * (`apple.awt.UIElement=true`), in which case AppKit suppresses the spawned window's focus-grab /
- * Dock icon but also restricts NSPasteboard access. Tests that rely on the clipboard (currently
- * only `Issue8FidelityValidationTest.typeText`) gate themselves on this so the focus-quiet workflow
- * stays the default while the paste fidelity test still runs when the property is explicitly off.
+ * `true` when this JVM was booted as a macOS UI element (`apple.awt.UIElement=true`), in which case
+ * AppKit suppresses the spawned window's focus-grab / Dock icon but also restricts NSPasteboard
+ * access. Tests that rely on the clipboard (currently only `Issue8FidelityValidationTest.typeText`)
+ * gate themselves on this so the focus-quiet workflow stays the default while the paste fidelity
+ * test still runs when the property is explicitly off.
+ *
+ * We check `apple.awt.UIElement` directly (the actual AWT switch) in addition to the
+ * `spectre.sample.fixture.uiElement` mirror flag the validation Gradle tasks set. Either being
+ * truthy is enough to skip — that way running validation from an IDE / CI with just the AWT
+ * property still skips the test instead of attempting a paste that AppKit will silently drop.
  */
 val sampleFixtureRunsAsUiElement: Boolean
-    get() = System.getProperty("spectre.sample.fixture.uiElement", "false").toBoolean()
+    get() =
+        System.getProperty("apple.awt.UIElement", "false").toBoolean() ||
+            System.getProperty("spectre.sample.fixture.uiElement", "false").toBoolean()
