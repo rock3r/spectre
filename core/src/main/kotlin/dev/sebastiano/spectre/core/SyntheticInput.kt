@@ -43,6 +43,13 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
     // The wait loop in ComposeAutomator handles synchronisation via waitForIdle / fingerprints.
     override val autoDelayMs: Int = 0
 
+    // The synthetic adapter's `dispatchMouse` / `dispatchKey` / `createScreenCapture` already
+    // marshal to the EDT via `runOnEdt` when needed. RobotDriver's worker-thread hop is therefore
+    // both unnecessary and harmful here: an EDT caller would block on `Thread.join()` while the
+    // worker thread blocked on `SwingUtilities.invokeAndWait`, deadlocking the whole pipeline
+    // (Codex P1 on PR #35).
+    override val requiresOffEdt: Boolean = false
+
     @Volatile private var lastX: Int = 0
     @Volatile private var lastY: Int = 0
     @Volatile private var pressedButtons: Int = 0
@@ -333,13 +340,11 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
  * `performMeasureAndLayout called during measure layout` errors and dropped events surface
  * immediately when this runs from another thread, so we cannot bypass the marshal.
  *
- * Codex (P1 on 638764f) flagged that this still deadlocks when a caller routes through
- * `RobotDriver.runOffEdt` from an EDT thread (the worker awaits an EDT that's blocked on its own
- * `Thread.join()`). An attempt to satisfy the deadlock by running inline on any thread broke
- * Compose's input pipeline outright (above). Documenting the trade-off and tracking a proper fix as
- * a follow-up: the deadlock only fires for callers that invoke automator methods from a UI callback
- * (an unusual pattern in test code), and the right home for the fix is `RobotDriver.runOffEdt`
- * (rewire to a non-blocking handoff), not the synthetic adapter.
+ * The earlier deadlock (Codex P1 on PR #35) — where a caller routed through `RobotDriver.runOffEdt`
+ * from an EDT thread had its worker block on `invokeAndWait` while the EDT itself was blocked on
+ * `Thread.join()` — is fixed at the `RobotDriver` layer: [SyntheticRobotAdapter.requiresOffEdt] is
+ * `false`, so the worker hop is skipped and `runOnEdt` runs the block directly when the caller is
+ * already the EDT.
  */
 private fun runOnEdt(block: () -> Unit) {
     if (SwingUtilities.isEventDispatchThread()) {
