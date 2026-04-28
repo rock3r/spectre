@@ -304,25 +304,34 @@ private class ScreenCaptureKitRecordingHandle(
             result.get()?.getOrThrow()
             return
         }
+        // Run both `stopInternal()` and `discriminator.restore()` even if the first one
+        // throws — restoring the window title is part of the cleanup contract even on the
+        // crash branch, otherwise the user's window stays dirtied with the Spectre/<id>
+        // suffix forever after a failed recording.
+        //
+        // Both outcomes are folded into a single `Result` published BEFORE `countDown` so
+        // every concurrent caller (the one that won the CAS race AND the ones blocked on
+        // `finished.await()`) observes the same outcome — including any restore failure.
+        // Earlier shape stored success before restore, so a later restore failure was visible
+        // to the first caller but invisible to subsequent ones; that inconsistency is gone.
+        var primary: Throwable? = null
         @Suppress("TooGenericExceptionCaught")
         try {
             stopInternal()
-            result.set(Result.success(Unit))
         } catch (t: Throwable) {
-            result.set(Result.failure(t))
-            throw t
-        } finally {
-            // Restore the title even when the helper crash branch threw — leaving a Spectre/
-            // suffix on the user's window after a recording attempt would be a bad UX. Wrap
-            // restore() in its own try/finally so a misbehaving custom TitledWindow can't
-            // skip countDown — concurrent threads that lost the stopInitiated CAS race are
-            // blocked on `finished.await()` and would deadlock otherwise.
-            try {
-                discriminator.restore()
-            } finally {
-                finished.countDown()
-            }
+            primary = t
         }
+        @Suppress("TooGenericExceptionCaught")
+        try {
+            discriminator.restore()
+        } catch (t: Throwable) {
+            if (primary == null) primary = t else primary.addSuppressed(t)
+        }
+        val outcome: Result<Unit> =
+            if (primary == null) Result.success(Unit) else Result.failure(primary)
+        result.set(outcome)
+        finished.countDown()
+        primary?.let { throw it }
     }
 
     private fun stopInternal() {
