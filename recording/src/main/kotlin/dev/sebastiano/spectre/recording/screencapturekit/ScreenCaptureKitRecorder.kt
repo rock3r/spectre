@@ -99,7 +99,19 @@ internal constructor(
             try {
                 awaitHelperReady(process, READY_WAIT_MILLIS)
             } catch (e: InterruptedException) {
+                // destroyForcibly() is asynchronous on the JVM. Without a bounded wait here we
+                // can return from start() while the helper is still alive + writing the
+                // output file — leaks a subprocess and leaves the .mov mutating after the
+                // caller thinks startup aborted. Mirror the non-ready path's bounded wait so
+                // the helper is genuinely gone by the time we propagate the interrupt.
                 process.destroyForcibly()
+                @Suppress("SwallowedException")
+                try {
+                    process.waitFor(FORCE_KILL_DURING_START_SECONDS, TimeUnit.SECONDS)
+                } catch (_: InterruptedException) {
+                    // A second interrupt during cleanup means the JVM is being torn down
+                    // anyway — daemon-process semantics will let the helper die with us.
+                }
                 discriminator.restore()
                 Thread.currentThread().interrupt()
                 throw e
