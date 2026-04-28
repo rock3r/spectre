@@ -57,8 +57,11 @@ dependencies {
         // `intellijIdeaCommunity` resolves to `com.jetbrains.intellij.idea:ideaIC:<version>`,
         // which is what's published on the JetBrains IntelliJ Repository releases. The bare
         // `intellijIdea(...)` overload tries to resolve `idea:idea`, which doesn't exist there.
-        // Literal version string keeps the plugin's coordinate-translation path happy.
-        intellijIdeaCommunity("2024.3.5")
+        // The plugin's coordinate-translation path needs a literal `String`, not a `Provider`,
+        // so we resolve the catalog version eagerly here rather than passing the Provider — that
+        // keeps the version centralised in `libs.versions.toml` while still picking the right
+        // overload.
+        intellijIdeaCommunity(libs.versions.intellijIdea.get())
         testFramework(TestFrameworkType.Platform)
     }
 
