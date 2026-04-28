@@ -108,7 +108,16 @@ internal constructor(
             val exit =
                 if (process.isAlive) {
                     process.destroyForcibly()
-                    process.waitFor()
+                    // Bounded wait — destroyForcibly() is asynchronous and an unbounded
+                    // `waitFor()` can pin the calling thread indefinitely if the kernel
+                    // hasn't reaped the helper yet. If the helper still hasn't died after
+                    // the timeout, fall back to a sentinel exit code so we don't propagate a
+                    // hang into the caller.
+                    if (process.waitFor(FORCE_KILL_DURING_START_SECONDS, TimeUnit.SECONDS)) {
+                        process.exitValue()
+                    } else {
+                        EXIT_HELPER_NOT_REAPED
+                    }
                 } else {
                     process.exitValue()
                 }
@@ -211,6 +220,15 @@ internal constructor(
         // enough to surface failures quickly, large enough that we don't burn CPU spinning.
         const val POLL_INTERVAL_MILLIS: Long = 50
 
+        // Bounded wait after `destroyForcibly()` in the start-failure path. Unbounded
+        // `waitFor()` would pin the calling thread if the kernel hasn't reaped the helper
+        // yet; a small budget bounds the worst case.
+        const val FORCE_KILL_DURING_START_SECONDS: Long = 2
+
+        // Sentinel exit code surfaced when the helper is still alive after destroyForcibly()
+        // + the bounded wait. Distinct from any real helper exit code (1..5).
+        const val EXIT_HELPER_NOT_REAPED: Int = -1
+
         fun messageForHelperExit(exit: Int, output: Path, argv: List<String>): String =
             when (exit) {
                 HELPER_EXIT_BAD_ARGS ->
@@ -226,6 +244,10 @@ internal constructor(
                 HELPER_EXIT_PIPELINE ->
                     "spectre-screencapture's capture pipeline failed during start (exit 5) — " +
                         "output at $output is in an undefined state. Argv: $argv"
+                EXIT_HELPER_NOT_REAPED ->
+                    "spectre-screencapture did not exit after destroyForcibly() within " +
+                        "${FORCE_KILL_DURING_START_SECONDS}s during start failure recovery — " +
+                        "process may be leaked. Argv: $argv"
                 else ->
                     "spectre-screencapture exited with code $exit during startup — recording did " +
                         "not start. Argv: $argv"
@@ -242,7 +264,6 @@ private class ScreenCaptureKitRecordingHandle(
     private val stopInitiated = AtomicBoolean(false)
     private val finished = CountDownLatch(1)
     private val result = AtomicReference<Result<Unit>?>()
-    private var sentSignalOurselves: Boolean = false
 
     override val isStopped: Boolean
         get() = result.get()?.isSuccess == true
@@ -262,9 +283,15 @@ private class ScreenCaptureKitRecordingHandle(
             throw t
         } finally {
             // Restore the title even when the helper crash branch threw — leaving a Spectre/
-            // suffix on the user's window after a recording attempt would be a bad UX.
-            discriminator.restore()
-            finished.countDown()
+            // suffix on the user's window after a recording attempt would be a bad UX. Wrap
+            // restore() in its own try/finally so a misbehaving custom TitledWindow can't
+            // skip countDown — concurrent threads that lost the stopInitiated CAS race are
+            // blocked on `finished.await()` and would deadlock otherwise.
+            try {
+                discriminator.restore()
+            } finally {
+                finished.countDown()
+            }
         }
     }
 
@@ -290,7 +317,6 @@ private class ScreenCaptureKitRecordingHandle(
                 false
             }
         if (!gracefulExit) {
-            sentSignalOurselves = true
             process.destroy()
             val terminatedAfterDestroy =
                 try {
@@ -327,20 +353,21 @@ private class ScreenCaptureKitRecordingHandle(
                 return
             }
         if (exit == 0) return
-        val isExpectedSelfSignal =
-            sentSignalOurselves && (exit == POSIX_SIGTERM_EXIT || exit == POSIX_SIGKILL_EXIT)
-        if (!isExpectedSelfSignal) {
-            throw IllegalStateException(
-                "spectre-screencapture exited with code $exit during recording — output at $output " +
-                    "may be truncated or missing."
-            )
-        }
+        // Any non-zero exit (including SIGTERM 143 / SIGKILL 137) means the helper did not
+        // run the AVAssetWriter finalize path — the .mov is truncated or missing entirely.
+        // The helper installs a SIGTERM handler that converts SIGTERM into a graceful
+        // finalize + exit(0), so seeing 143 here means the handler didn't get to run (e.g.
+        // the signal arrived before setup completed). 137 (SIGKILL) is unconditionally a
+        // forced termination — there's no handler we could install for it. Either way the
+        // file is unsafe to use; surface that to the caller rather than silently swallowing.
+        throw IllegalStateException(
+            "spectre-screencapture exited with code $exit during recording — output at $output " +
+                "may be truncated or missing."
+        )
     }
 
     private companion object {
         const val SHUTDOWN_GRACE_SECONDS: Long = 5
         const val FORCE_KILL_SECONDS: Long = 2
-        const val POSIX_SIGTERM_EXIT: Int = 143 // 128 + 15 (SIGTERM)
-        const val POSIX_SIGKILL_EXIT: Int = 137 // 128 + 9 (SIGKILL)
     }
 }

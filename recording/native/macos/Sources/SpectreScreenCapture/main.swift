@@ -179,6 +179,17 @@ final class Recorder {
         }
     }
 
+    /// Pick the backing-scale factor of the NSScreen whose frame intersects the target window's
+    /// frame the most. Falls back to NSScreen.main (which on most systems is the laptop display)
+    /// and finally to a 2.0 default for environments where AppKit isn't initialised yet.
+    private func backingScaleFactor(for windowFrame: CGRect) -> CGFloat {
+        let screens = NSScreen.screens
+        let intersecting = screens.first { screen in
+            NSIntersectsRect(screen.frame, windowFrame)
+        }
+        return intersecting?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
+    }
+
     private func discoverTargetWindow() async throws -> SCWindow {
         let deadline = Date().addingTimeInterval(Double(args.discoveryTimeoutMs) / 1000.0)
         repeat {
@@ -210,7 +221,12 @@ final class Recorder {
     }
 
     private func startCapture(targetWindow: SCWindow) async throws {
-        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+        // Use the backing-scale of the screen the target window actually lives on, not
+        // `NSScreen.main`'s. Mixed-DPI setups (Retina laptop + non-Retina external) would
+        // otherwise pick the wrong scale and produce stretched / cropped output for windows
+        // off the main screen. Falls back to NSScreen.main and finally a hardcoded 2.0 if
+        // neither lookup succeeds — neither degrades worse than the previous behaviour.
+        let scale = backingScaleFactor(for: targetWindow.frame)
         let width = max(2, Int((targetWindow.frame.width * scale).rounded()))
         let height = max(2, Int((targetWindow.frame.height * scale).rounded()))
 
@@ -375,6 +391,9 @@ final class Recorder {
     private func waitForStop() async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let resumed = AtomicFlag()
+
+            // Stdin reader — primary clean shutdown path. JVM-side `RecordingHandle.stop()`
+            // writes `q` to stdin (mirrors `FfmpegRecorder`).
             DispatchQueue.global(qos: .utility).async {
                 let handle = FileHandle.standardInput
                 while true {
@@ -389,6 +408,24 @@ final class Recorder {
                     }
                 }
             }
+
+            // SIGTERM handler — secondary graceful shutdown path. The JVM-side recorder
+            // falls back to `process.destroy()` (which sends SIGTERM) when stdin shutdown
+            // doesn't complete in time. Without this handler the default action is "die
+            // immediately", and `finalize()` never runs — the .mov is left truncated. By
+            // resuming the same continuation, SIGTERM goes through the same finalize path
+            // as a `q` on stdin and the file ends up valid + playable.
+            //
+            // signal(SIGTERM, SIG_IGN) prevents the default action from firing; the
+            // DispatchSource picks up the signal instead. Must call signal() BEFORE the
+            // dispatch source resumes, otherwise there's a brief window where SIGTERM still
+            // kills the process.
+            signal(SIGTERM, SIG_IGN)
+            let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
+            sigtermSource.setEventHandler {
+                if resumed.set() { continuation.resume() }
+            }
+            sigtermSource.resume()
         }
     }
 
