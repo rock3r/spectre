@@ -298,8 +298,13 @@ final class Recorder {
         config.queueDepth = 8
         config.pixelFormat = kCVPixelFormatType_32BGRA
 
-        // Output path was already validated up-front in `run()`; here we only need to
-        // remove a stale file (if any) before AVAssetWriter opens it.
+        // Re-validate the output path immediately before removing whatever's there. The
+        // up-front `validateOutputPath` call in `run()` happens before window discovery, so
+        // a directory could theoretically appear at the path during the discovery window.
+        // Without this re-check, the unconditional `removeItem` would silently `rm -rf`
+        // that directory tree — the destructive failure mode the guard is supposed to
+        // prevent. Cheap stat call; runs once per recording start.
+        try validateOutputPath(args.output)
         try? FileManager.default.removeItem(at: args.output)
 
         let writer = try AVAssetWriter(outputURL: args.output, fileType: .mov)
