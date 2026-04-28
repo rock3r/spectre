@@ -55,20 +55,24 @@ tasks.withType<Test>().configureEach { useJUnitPlatform() }
 //
 // Trade-off: macOS restricts NSPasteboard access for UI-element processes, so the
 // clipboard-driven `typeText` validation can't run under this flag. That single test is gated
-// on `spectre.sample.fixture.uiElement` and skips itself when the flag is on; everything else
-// runs as normal.
+// on `spectre.sample.fixture.uiElement` (which mirrors `apple.awt.UIElement` so JVM-level
+// invocations not going through this build script — IDE / CI — still gate correctly) and skips
+// itself when the flag is on; everything else runs as normal.
 //
-// Both flags fall through to the Gradle JVM's own system properties when set explicitly, so
-// `./gradlew :sample-desktop:validationTest -Dapple.awt.UIElement=false
-// -Dspectre.sample.fixture.uiElement=false` actually disables UI-element mode for one run and
-// lets the typeText assertion execute. Without the override we default to "true" and stay quiet.
-val uiElementOverride: Provider<String> =
-    providers.systemProperty("apple.awt.UIElement").orElse("true")
-val spectreUiElementFlagOverride: Provider<String> =
-    providers.systemProperty("spectre.sample.fixture.uiElement").orElse(uiElementOverride)
+// Both flags collapse to a single override: if the user passes EITHER
+// `-Dapple.awt.UIElement=...` or `-Dspectre.sample.fixture.uiElement=...` to Gradle, that value
+// drives BOTH worker-JVM properties. That way
+// `./gradlew :sample-desktop:validationTest -Dspectre.sample.fixture.uiElement=false`
+// actually exercises the typeText path (the worker JVM gets `apple.awt.UIElement=false` too,
+// which restores NSPasteboard access). Defaults to "true" when neither is set.
+val uiElementMode: Provider<String> =
+    providers
+        .systemProperty("spectre.sample.fixture.uiElement")
+        .orElse(providers.systemProperty("apple.awt.UIElement"))
+        .orElse("true")
 val applyValidationJvmArgs: Test.() -> Unit = {
-    systemProperty("apple.awt.UIElement", uiElementOverride.get())
-    systemProperty("spectre.sample.fixture.uiElement", spectreUiElementFlagOverride.get())
+    systemProperty("apple.awt.UIElement", uiElementMode.get())
+    systemProperty("spectre.sample.fixture.uiElement", uiElementMode.get())
 }
 
 val validationTest by
