@@ -321,11 +321,22 @@ private class ScreenCaptureKitRecordingHandle(
         } catch (t: Throwable) {
             primary = t
         }
+        // `stopInternal` re-sets the thread's interrupt flag if any of its `waitFor` calls saw
+        // an interrupt — that's correct behaviour for propagating cancellation to the caller.
+        // But `discriminator.restore()` in the production AWT adapter goes through
+        // `EventQueue.invokeAndWait`, whose internal `Object.wait` throws InterruptedException
+        // immediately when the interrupt flag is set. That would skip title restoration on
+        // every interrupted stop and leave the window dirty with a `Spectre/<id>` suffix
+        // forever. Clear the flag around restore, then re-set it so the caller still observes
+        // cancellation. (Unit tests miss this because FakeTitledWindow bypasses the EDT.)
+        val wasInterrupted = Thread.interrupted()
         @Suppress("TooGenericExceptionCaught")
         try {
             discriminator.restore()
         } catch (t: Throwable) {
             if (primary == null) primary = t else primary.addSuppressed(t)
+        } finally {
+            if (wasInterrupted) Thread.currentThread().interrupt()
         }
         val outcome: Result<Unit> =
             if (primary == null) Result.success(Unit) else Result.failure(primary)
