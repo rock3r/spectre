@@ -8,9 +8,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Card
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.SwingPanel
 import androidx.compose.ui.platform.testTag
@@ -40,7 +37,6 @@ val DualPanelScenario: Scenario =
 
 @Composable
 private fun DualPanelContent() {
-    val counter by remember { mutableIntStateOf(0) }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -54,10 +50,7 @@ private fun DualPanelContent() {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Text(
-                    text = "Left pane (Compose) — counter $counter",
-                    modifier = Modifier.testTag("dual.left.text"),
-                )
+                Text(text = "Left pane (Compose)", modifier = Modifier.testTag("dual.left.text"))
                 SwingPanel(
                     modifier = Modifier.fillMaxWidth().testTag("dual.right.swingHost"),
                     factory = {

@@ -93,13 +93,30 @@ val validationTestLayerComponent = popupLayerTask("Component", "COMPONENT")
 // the popup's semantics owner without a deeper rework. Tracked separately as a follow-up — see
 // https://github.com/rock3r/spectre/issues/7 for the deferred checklist item.
 
+// Default layer (`OnSameCanvas`) gets its own task so the aggregate `validationTestPopupLayers`
+// below can guarantee SAME_CANVAS coverage on its own — running just the aggregate must NOT
+// silently skip the default mode (Codex P2 on PR #40 flagged that running the aggregate alone
+// would miss SAME_CANVAS regressions because the default is otherwise only exercised by the
+// broader `:validationTest` task).
+val validationTestLayerSameCanvas =
+    tasks.register("validationTestLayerSameCanvas", Test::class) {
+        description =
+            "Runs PopupLayerVariantsValidationTest with the default OnSameCanvas layer mode."
+        group = "verification"
+        testClassesDirs = sourceSets["validation"].output.classesDirs
+        classpath = sourceSets["validation"].runtimeClasspath
+        useJUnitPlatform()
+        forkEvery = 1
+        filter { includeTestsMatching(popupLayerVariantTaskName) }
+    }
+
 @Suppress("UNUSED_VARIABLE")
 val validationTestPopupLayers by tasks.registering {
     description =
-        "Runs PopupLayerVariantsValidationTest under each Compose layer type Spectre " +
-            "currently supports (OnSameCanvas via :validationTest, OnComponent via this task)."
+        "Runs PopupLayerVariantsValidationTest under every Compose layer type Spectre " +
+            "currently supports (OnSameCanvas + OnComponent). OnWindow is deferred — see #39."
     group = "verification"
-    dependsOn(validationTestLayerComponent)
+    dependsOn(validationTestLayerSameCanvas, validationTestLayerComponent)
 }
 
 compose.desktop {

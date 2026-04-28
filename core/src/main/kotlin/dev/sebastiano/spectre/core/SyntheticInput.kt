@@ -329,12 +329,14 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
     private fun allWindows(): List<Window> {
         val collected = LinkedHashSet<Window>()
         collectWindowTree(rootWindow, collected)
-        // Also include every other visible top-level Window (and its owned tree). Popups in
-        // Compose Desktop's `OnWindow` layer mode and any Swing JDialog with a default
-        // (`SharedOwnerFrame`) parent become top-level windows that are NOT in the spawned
-        // root's `ownedWindows` chain — without this, synthetic input can't reach them.
+        // Walk every other top-level window (and its owned tree). The visibility check is
+        // applied per-window inside `collectWindowTree` rather than at the top level: Swing's
+        // `SharedOwnerFrame` (parent of `JDialog(null, …)`) is itself a top-level window that
+        // is NOT showing, but its owned dialogs may be — so filtering hidden top-levels out
+        // here would drop those dialogs and synthetic input would silently miss them, even
+        // though `WindowTracker` correctly surfaces them.
         for (other in Window.getWindows()) {
-            if (other.isShowing && other.owner == null && other !== rootWindow) {
+            if (other.owner == null && other !== rootWindow) {
                 collectWindowTree(other, collected)
             }
         }
