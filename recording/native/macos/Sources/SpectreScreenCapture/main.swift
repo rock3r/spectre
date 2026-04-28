@@ -330,6 +330,7 @@ final class Recorder {
         self.pixelBufferAdaptor = adaptor
 
         let delegate = StreamLogger()
+        delegate.recorder = self
         let stream = SCStream(filter: filter, configuration: config, delegate: delegate)
         // Keep the delegate alive for the stream's lifetime — SCStream stores it weakly.
         self.streamDelegate = delegate
@@ -413,6 +414,19 @@ final class Recorder {
             framesDropped += 1
             if pipelineError == nil { pipelineError = writer.error }
         }
+    }
+
+    /// Called by [StreamLogger.stream(_:didStopWithError:)] when SCStream stops unexpectedly
+    /// (target window closed, display reconfigured, source invalidated, etc.). Stashes the
+    /// error so [finalize] surfaces it as exit 5 AND signals [stopRequested] so the helper
+    /// exits promptly rather than waiting for the JVM-side stop. Without the stop signal a
+    /// dead-stream helper would hang on stdin until the JVM-side `RecordingHandle.stop()` was
+    /// called (which might be much later, or never, depending on caller behaviour).
+    func recordPipelineError(_ error: Error) {
+        lock.lock()
+        if pipelineError == nil { pipelineError = error }
+        lock.unlock()
+        stopRequested.signal()
     }
 
     /// Installs a SIGTERM handler that wakes [waitForStop] via [stopRequested]. Called from
@@ -512,12 +526,22 @@ private final class FrameOutput: NSObject, SCStreamOutput {
     }
 }
 
-// Logs SCStream-level errors to stderr. SCStream.delegate is a weak reference, so the recorder
-// retains an instance for the stream's lifetime via `streamDelegate`.
+// Bridges SCStream-level events back to the recorder. SCStream.delegate is a weak reference,
+// so the recorder retains an instance for the stream's lifetime via `streamDelegate`.
+//
+// `didStopWithError` fires when ScreenCaptureKit stops unexpectedly — e.g. the target window
+// closes, display configuration changes, source becomes invalid. Without propagating this back
+// to the recorder, `run()` would complete with exit code 0 after the SIGTERM/stdin shutdown
+// path, and the JVM side would treat a mid-recording failure as a successful capture. We
+// stash the error on the recorder (so `finalize()` surfaces exit 5) AND trigger graceful
+// shutdown so the helper exits promptly rather than waiting for the JVM-side stop.
 final class StreamLogger: NSObject, SCStreamDelegate {
+    weak var recorder: Recorder?
+
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         FileHandle.standardError.write(
             Data("spectre-screencapture: SCStream stopped with error: \(error)\n".utf8))
+        recorder?.recordPipelineError(error)
     }
 
     @available(macOS 14.0, *)
