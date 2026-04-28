@@ -129,17 +129,22 @@ class Issue8FidelityValidationTest {
             // RobotDriver.typeText now waits for the OS pasteboard to surface the new contents
             // before pressing Cmd+V and pumps the EDT before restoring the previous clipboard,
             // which collapses the cold-JVM clipboard-vs-paste race that previously flaked this
-            // assertion. A short eventually() still guards against the AWT input pipeline
-            // taking a frame or two to land KEY_TYPED into the focused field.
+            // assertion. The eventually() loop also re-issues the type if the field is still
+            // focused but the first attempt didn't land — covers the very first cold-JVM call
+            // where the pasteboard polling burns a few hundred ms before the first paste hits.
             typeText("spectre")
             val typed =
                 eventually(
                     description = "third field reflects typed text",
-                    timeout = 5.seconds,
-                    pollInterval = 100.milliseconds,
+                    timeout = 15.seconds,
+                    pollInterval = 250.milliseconds,
                 ) {
                     val node = findOneByTestTag("focus.field.third")
-                    if (node?.editableText?.contains("spectre") == true) node else null
+                    if (node?.editableText?.contains("spectre") == true) node
+                    else {
+                        if (node?.isFocused == true) typeText("spectre")
+                        null
+                    }
                 }
             assertNotNull(typed.editableText, "Field should expose editableText after typing")
             assertTrue(

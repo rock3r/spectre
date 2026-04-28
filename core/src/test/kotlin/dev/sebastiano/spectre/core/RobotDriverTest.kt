@@ -199,6 +199,26 @@ class RobotDriverTest {
             robot.events,
         )
     }
+
+    @Test
+    fun `typeText with no-op clipboard adapter does not spin the settle timeout`() {
+        // RobotDriver.headless() pairs the noop robot with the noop clipboard. The clipboard
+        // never reads back what was written, so the post-fix awaitClipboardContents loop would
+        // burn its full timeout (1 second) on every typeText call. The supportsRead opt-out
+        // skips the poll for adapters that explicitly can't satisfy it; this test pins that
+        // contract so a future change can't accidentally regress headless typeText latency.
+        val driver = RobotDriver.headless()
+        val elapsedMs = kotlin.system.measureTimeMillis { driver.typeText("hello") }
+        assertTrue(
+            elapsedMs < HEADLESS_TYPE_TEXT_BUDGET_MS,
+            "headless typeText should return immediately (no clipboard wait), " +
+                "took ${elapsedMs}ms (budget ${HEADLESS_TYPE_TEXT_BUDGET_MS}ms)",
+        )
+    }
+
+    private companion object {
+        const val HEADLESS_TYPE_TEXT_BUDGET_MS: Long = 250L
+    }
 }
 
 private class RecordingRobotAdapter(
