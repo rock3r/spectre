@@ -81,6 +81,12 @@ Expected long-term responsibilities:
 
 Keep native capture boundaries narrow and test the pure pieces separately from OS integration.
 
+Current backends:
+- `FfmpegRecorder` — region capture via `ffmpeg` + `avfoundation` (v1).
+- `screencapturekit.ScreenCaptureKitRecorder` — window-targeted capture on macOS via a bundled
+  Swift helper (`recording/native/macos/`, v2 / #18). The helper is built by Gradle on macOS and
+  staged into the module's `src/main/resources/native/macos/` so the JAR carries it.
+
 ### `testing`
 
 Expected long-term responsibilities:
