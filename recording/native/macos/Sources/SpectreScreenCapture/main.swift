@@ -162,12 +162,26 @@ final class Recorder {
     // silently swallowed and the JVM-side `process.destroy()` fallback does nothing useful.
     // (Same FrameOutput-style retain bug pattern, second instance.)
     private var sigtermSource: DispatchSourceSignal?
+    // Signalled by either the stdin reader (q on stdin / EOF) or the SIGTERM dispatch source.
+    // `waitForStop` blocks on this; whichever signal arrives first wakes the recorder up so
+    // `finalize()` can run. Created up front so the SIGTERM handler installed in `run()`
+    // before READY is emitted has a valid target — otherwise there'd be a race between READY
+    // and the handler being wired up.
+    private let stopRequested = DispatchSemaphore(value: 0)
 
     init(arguments: Arguments) {
         self.args = arguments
     }
 
     func run() async throws {
+        // Install the SIGTERM handler BEFORE startCapture writes the READY marker. The
+        // JVM-side recorder treats READY as "you may now call stop() / process.destroy()", so
+        // by the time the JVM is allowed to send SIGTERM the dispatch source is guaranteed
+        // to be in place. Without this ordering, there'd be a brief window where SIGTERM
+        // could arrive after `signal(SIGTERM, SIG_IGN)` was set but before the dispatch
+        // source resumed — silently dropping the signal.
+        installSigtermHandler()
+
         let target = try await discoverTargetWindow()
         try await startCapture(targetWindow: target)
         await waitForStop()
@@ -185,15 +199,22 @@ final class Recorder {
         }
     }
 
-    /// Pick the backing-scale factor of the NSScreen whose frame intersects the target window's
-    /// frame the most. Falls back to NSScreen.main (which on most systems is the laptop display)
-    /// and finally to a 2.0 default for environments where AppKit isn't initialised yet.
+    /// Pick the backing-scale factor of the NSScreen with the largest overlap area with the
+    /// target window. For windows that straddle displays in a mixed-DPI setup (Retina laptop +
+    /// non-Retina external), `NSScreen.screens` ordering would otherwise let us pick the wrong
+    /// scale and produce stretched / cropped output. Falls back to NSScreen.main, then to a
+    /// 2.0 default for environments where AppKit isn't initialised yet.
     private func backingScaleFactor(for windowFrame: CGRect) -> CGFloat {
-        let screens = NSScreen.screens
-        let intersecting = screens.first { screen in
-            NSIntersectsRect(screen.frame, windowFrame)
-        }
-        return intersecting?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
+        let dominant = NSScreen.screens
+            .map { screen -> (NSScreen, CGFloat) in
+                let overlap = windowFrame.intersection(screen.frame)
+                let area = overlap.isNull ? 0 : overlap.width * overlap.height
+                return (screen, area)
+            }
+            .filter { $0.1 > 0 }
+            .max(by: { $0.1 < $1.1 })?
+            .0
+        return dominant?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
     }
 
     private func discoverTargetWindow() async throws -> SCWindow {
@@ -394,6 +415,24 @@ final class Recorder {
         }
     }
 
+    /// Installs a SIGTERM handler that wakes [waitForStop] via [stopRequested]. Called from
+    /// [run] before [startCapture] writes the READY marker, so by the time the JVM is allowed
+    /// to send SIGTERM the dispatch source is guaranteed to be in place.
+    ///
+    /// `signal(SIGTERM, SIG_IGN)` prevents the default action from firing; the dispatch source
+    /// then picks up the signal instead. The source is retained on the recorder so the
+    /// closure-scope lifetime issue that bit the FrameOutput / earlier sigtermSource retain
+    /// bugs doesn't repeat — see `frameOutput` / earlier `sigtermSource` doc above.
+    private func installSigtermHandler() {
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
+        source.setEventHandler { [weak self] in
+            self?.stopRequested.signal()
+        }
+        source.resume()
+        self.sigtermSource = source
+    }
+
     private func waitForStop() async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let resumed = AtomicFlag()
@@ -415,26 +454,14 @@ final class Recorder {
                 }
             }
 
-            // SIGTERM handler — secondary graceful shutdown path. The JVM-side recorder
-            // falls back to `process.destroy()` (which sends SIGTERM) when stdin shutdown
-            // doesn't complete in time. Without this handler the default action is "die
-            // immediately", and `finalize()` never runs — the .mov is left truncated. By
-            // resuming the same continuation, SIGTERM goes through the same finalize path
-            // as a `q` on stdin and the file ends up valid + playable.
-            //
-            // signal(SIGTERM, SIG_IGN) prevents the default action from firing; the
-            // DispatchSource picks up the signal instead. Must call signal() BEFORE the
-            // dispatch source resumes, otherwise there's a brief window where SIGTERM still
-            // kills the process. We assign the source to a recorder-scoped property so it
-            // outlives this closure — local-only retain would let it deallocate with the
-            // source still installed, and SIGTERM would then be silently swallowed.
-            signal(SIGTERM, SIG_IGN)
-            let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
-            source.setEventHandler {
+            // SIGTERM listener — wakes when the dispatch source installed in
+            // `installSigtermHandler()` (called before READY) signals the semaphore. By
+            // putting the wait on its own dispatch queue we don't block the continuation
+            // setup closure.
+            DispatchQueue.global(qos: .utility).async { [stopRequested = self.stopRequested] in
+                stopRequested.wait()
                 if resumed.set() { continuation.resume() }
             }
-            source.resume()
-            self.sigtermSource = source
         }
     }
 
