@@ -89,20 +89,29 @@ internal constructor(
                 throw e
             }
 
-        // Startup probe — mirrors FfmpegRecorder. The helper exits within milliseconds for the
-        // documented fast-fail codes, so we wait briefly to map them into typed JVM errors
-        // rather than handing back a "successful" handle that immediately produces nothing.
-        val exitedDuringProbe =
+        // Wait for the helper to either:
+        //   - emit the READY marker on stdout (window discovered, SCK is streaming frames), or
+        //   - exit with one of the documented fast-fail codes (2/3/4/5).
+        // A plain `process.waitFor(STARTUP_PROBE_MILLIS)`-style probe was racy: when the
+        // helper's window discovery took longer than the probe, start() reported success
+        // before the helper had actually started capturing. Reading stdout removes the race.
+        val ready =
             try {
-                process.waitFor(STARTUP_PROBE_MILLIS, TimeUnit.MILLISECONDS)
+                awaitHelperReady(process, READY_WAIT_MILLIS)
             } catch (e: InterruptedException) {
                 process.destroyForcibly()
                 discriminator.restore()
                 Thread.currentThread().interrupt()
                 throw e
             }
-        if (exitedDuringProbe) {
-            val exit = process.exitValue()
+        if (!ready) {
+            val exit =
+                if (process.isAlive) {
+                    process.destroyForcibly()
+                    process.waitFor()
+                } else {
+                    process.exitValue()
+                }
             discriminator.restore()
             throw IllegalStateException(messageForHelperExit(exit, output, argv))
         }
@@ -114,6 +123,44 @@ internal constructor(
         )
     }
 
+    /**
+     * Reads the helper's stdout line by line until we see [READY_MARKER] (success) or stdin closes
+     * (the helper has exited and we'll surface its exit code at the call site).
+     *
+     * Returns `true` if the marker was seen within [budgetMs]; `false` if either the helper exited
+     * or the budget elapsed without a marker. The reading is deliberately blocking on a new
+     * platform thread so we don't have to touch `process.inputStream` from this thread directly —
+     * the JDK's process input stream's `readLine` blocks indefinitely without a timeout primitive
+     * of its own.
+     */
+    private fun awaitHelperReady(process: Process, budgetMs: Long): Boolean {
+        val ready = AtomicBoolean(false)
+        val readerStarted = CountDownLatch(1)
+        val reader =
+            Thread.ofPlatform().name("spectre-sck-helper-ready-reader").daemon(true).start {
+                readerStarted.countDown()
+                process.inputStream.bufferedReader().use { reader ->
+                    while (true) {
+                        val line = reader.readLine() ?: return@start
+                        if (line.trim() == READY_MARKER) {
+                            ready.set(true)
+                            return@start
+                        }
+                    }
+                }
+            }
+        readerStarted.await()
+        val deadline = System.currentTimeMillis() + budgetMs
+        while (System.currentTimeMillis() < deadline) {
+            if (ready.get()) return true
+            if (!process.isAlive) return false
+            Thread.sleep(POLL_INTERVAL_MILLIS)
+        }
+        // Timeout — best-effort to interrupt the reader so it doesn't outlive the recorder.
+        reader.interrupt()
+        return ready.get()
+    }
+
     /** Indirection over `ProcessBuilder.start()` so tests can drive the subprocess lifecycle. */
     interface ProcessFactory {
         fun start(argv: List<String>): Process
@@ -122,7 +169,9 @@ internal constructor(
     internal object SystemProcessFactory : ProcessFactory {
         override fun start(argv: List<String>): Process =
             ProcessBuilder(argv)
-                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                // Pipe stdout so the JVM can read the helper's READY marker; the helper
+                // writes nothing else to stdout so the pipe buffer stays small.
+                .redirectOutput(ProcessBuilder.Redirect.PIPE)
                 // Inherit stderr so the helper's diagnostic counters and any error messages
                 // surface in the host JVM's stderr without us needing a reader thread to drain
                 // the pipe. The helper writes only short single-line messages here, so there
@@ -139,10 +188,28 @@ internal constructor(
         const val HELPER_EXIT_TCC_DENIED: Int = 4
         const val HELPER_EXIT_PIPELINE: Int = 5
 
-        // Wide enough that the helper can complete window discovery + SCK init for typical
-        // workloads, narrow enough that a fast-fail surfaces synchronously from start().
-        const val STARTUP_PROBE_MILLIS: Long = 750
+        // Discovery timeout that the helper uses internally when scanning for the target
+        // window before timing out with exit code 3. Callers can override via the recorder's
+        // own configuration in the future; the default here balances giving the window time
+        // to actually appear on screen against surfacing genuine "wrong title" mistakes
+        // quickly.
         const val DEFAULT_DISCOVERY_TIMEOUT_MS: Int = 2000
+
+        // Upper bound on how long start() will wait for the helper to either signal READY on
+        // stdout or exit with one of the documented fast-fail codes. Must be greater than the
+        // helper's own [DEFAULT_DISCOVERY_TIMEOUT_MS] plus a margin for SCK init, otherwise
+        // start() can return before the helper has finished window discovery and the user
+        // would only learn of a window-not-found failure when stop() throws.
+        const val READY_WAIT_MILLIS: Long = (DEFAULT_DISCOVERY_TIMEOUT_MS + 1500).toLong()
+
+        // Single-line marker the helper writes to stdout once SCK + AVAssetWriter are
+        // running. start() blocks until either this line appears (success) or the helper
+        // exits (failure surfaced via the helper's exit code).
+        const val READY_MARKER: String = "READY"
+
+        // How often the ready-wait loop polls the atomic flag + process aliveness. Small
+        // enough to surface failures quickly, large enough that we don't burn CPU spinning.
+        const val POLL_INTERVAL_MILLIS: Long = 50
 
         fun messageForHelperExit(exit: Int, output: Path, argv: List<String>): String =
             when (exit) {

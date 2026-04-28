@@ -257,7 +257,10 @@ private open class FakeHelperProcess : Process() {
             }
         }
 
-    override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+    // Emit the READY marker the recorder waits for so start() proceeds without timing out.
+    // Real helper writes this once SCK + AVAssetWriter are running; tests don't need anything
+    // after the marker.
+    override fun getInputStream(): InputStream = ByteArrayInputStream("READY\n".toByteArray())
 
     override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
 

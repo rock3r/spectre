@@ -233,7 +233,21 @@ final class Recorder {
         config.queueDepth = 8
         config.pixelFormat = kCVPixelFormatType_32BGRA
 
-        try? FileManager.default.removeItem(at: args.output)
+        // Refuse to delete a directory the caller mistakenly handed us as `--output`. AVAssetWriter
+        // would also fail in that case, but blowing away an entire directory tree first because of
+        // a typo is a much worse failure mode. Only remove a regular file (or a symlink, which is
+        // probably fine).
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: args.output.path, isDirectory: &isDir) {
+            if isDir.boolValue {
+                throw CLIError(
+                    code: 2,
+                    message:
+                        "--output points at an existing directory (\(args.output.path)); refusing to overwrite. Pass a file path."
+                )
+            }
+            try? FileManager.default.removeItem(at: args.output)
+        }
 
         let writer = try AVAssetWriter(outputURL: args.output, fileType: .mov)
         let videoSettings: [String: Any] = [
@@ -290,6 +304,13 @@ final class Recorder {
 
         try await stream.startCapture()
         self.stream = stream
+
+        // Signal the JVM-side recorder that capture is fully running. The JVM blocks on
+        // reading this line from stdout in `start()` so it can return a recording handle
+        // synchronously rather than racing against the helper's window-discovery + SCK init.
+        // Keep this line single-token + newline-terminated; the JVM matches via `trim() ==
+        // "READY"`.
+        FileHandle.standardOutput.write(Data("READY\n".utf8))
     }
 
     // Called on the SCStream's frame queue. Holds a lock for the whole pixel append so writer
