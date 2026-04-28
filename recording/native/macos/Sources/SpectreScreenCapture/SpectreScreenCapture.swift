@@ -182,6 +182,12 @@ final class Recorder {
         // source resumed — silently dropping the signal.
         installSigtermHandler()
 
+        // Validate output path before doing any expensive setup. Catches the common
+        // typo case (caller passed a directory path) without first paying the SCK init
+        // + window discovery cost. Pure precondition check, doesn't depend on a window
+        // existing.
+        try validateOutputPath(args.output)
+
         let target = try await discoverTargetWindow()
         try await startCapture(targetWindow: target)
         await waitForStop()
@@ -215,6 +221,22 @@ final class Recorder {
             .max(by: { $0.1 < $1.1 })?
             .0
         return dominant?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
+    }
+
+    /// Refuse to overwrite a directory if the caller mistakenly passed one as `--output`.
+    /// AVAssetWriter would later fail on this anyway, but `try? FileManager.removeItem` would
+    /// silently `rm -rf` the directory first — much worse failure mode for a typo. Run this
+    /// up-front in `run()` so we fail fast on a precondition error before paying for SCK init
+    /// and window discovery.
+    private func validateOutputPath(_ url: URL) throws {
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+            throw CLIError(
+                code: 2,
+                message:
+                    "--output points at an existing directory (\(url.path)); refusing to overwrite. Pass a file path."
+            )
+        }
     }
 
     private func discoverTargetWindow() async throws -> SCWindow {
@@ -276,21 +298,9 @@ final class Recorder {
         config.queueDepth = 8
         config.pixelFormat = kCVPixelFormatType_32BGRA
 
-        // Refuse to delete a directory the caller mistakenly handed us as `--output`. AVAssetWriter
-        // would also fail in that case, but blowing away an entire directory tree first because of
-        // a typo is a much worse failure mode. Only remove a regular file (or a symlink, which is
-        // probably fine).
-        var isDir: ObjCBool = false
-        if FileManager.default.fileExists(atPath: args.output.path, isDirectory: &isDir) {
-            if isDir.boolValue {
-                throw CLIError(
-                    code: 2,
-                    message:
-                        "--output points at an existing directory (\(args.output.path)); refusing to overwrite. Pass a file path."
-                )
-            }
-            try? FileManager.default.removeItem(at: args.output)
-        }
+        // Output path was already validated up-front in `run()`; here we only need to
+        // remove a stale file (if any) before AVAssetWriter opens it.
+        try? FileManager.default.removeItem(at: args.output)
 
         let writer = try AVAssetWriter(outputURL: args.output, fileType: .mov)
         let videoSettings: [String: Any] = [
