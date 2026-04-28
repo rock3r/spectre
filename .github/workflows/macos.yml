@@ -1,0 +1,62 @@
+name: macOS
+
+# Builds the ScreenCaptureKit Swift helper and runs the recording module's tests on a real
+# macOS host. The Linux `ci.yml` workflow runs everything else, but it never exercises the
+# Swift toolchain — without this job a broken `recording/native/macos/Sources/...` change
+# would compile fine on Linux (the Gradle Swift task is gated `onlyIf macOS`) and then break
+# silently for everyone using the recording module on macOS.
+#
+# Notes:
+#   - SCK end-to-end recording isn't exercised here (CI runners don't have Screen Recording
+#     TCC). The `ScreenCaptureKitHelperContractTest` exec'es the bundled binary against
+#     intentionally-bad argv to validate the JVM↔Swift CLI contract without needing TCC.
+#   - Job is gated on changes to recording/** + this workflow file so unrelated PRs don't
+#     pay the macos-runner cost (macos-* runners are slower and more expensive than ubuntu).
+
+on:
+  pull_request:
+    paths:
+      - "recording/**"
+      - ".github/workflows/macos.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "recording/**"
+      - ".github/workflows/macos.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  recording-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Verify Swift toolchain
+        run: swift --version
+
+      - name: Build ScreenCaptureKit helper
+        # Forces `swift build -c release` so a broken Swift change fails here rather than
+        # being skipped silently by the Linux runner. The downstream `:recording:check` would
+        # cover this too, but separating the steps gives clearer CI output when the helper
+        # is the thing that broke.
+        run: ./gradlew :recording:assembleScreenCaptureKitHelper
+
+      - name: Run recording checks
+        # Includes the JVM-side unit tests (33 tests) AND the helper contract tests
+        # (10 tests, exec the real binary). End-to-end SCK recording is NOT exercised
+        # because CI lacks Screen Recording TCC; that's expected and documented.
+        run: ./gradlew :recording:check
