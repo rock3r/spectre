@@ -174,7 +174,14 @@ internal constructor(
         val deadline = System.currentTimeMillis() + budgetMs
         while (System.currentTimeMillis() < deadline) {
             if (ready.get()) return true
-            if (!process.isAlive) return false
+            if (!process.isAlive) {
+                // Process has exited — give the reader thread a brief window to drain any
+                // bytes already in the inputStream pipe buffer before deciding ready vs.
+                // failure. Without this join, the reader can be mid-read of "READY\n" when
+                // we observe the dead process and (incorrectly) report a failure.
+                reader.join(READER_DRAIN_MILLIS)
+                return ready.get()
+            }
             Thread.sleep(POLL_INTERVAL_MILLIS)
         }
         // Timeout — best-effort to interrupt the reader so it doesn't outlive the recorder.
@@ -231,6 +238,11 @@ internal constructor(
         // How often the ready-wait loop polls the atomic flag + process aliveness. Small
         // enough to surface failures quickly, large enough that we don't burn CPU spinning.
         const val POLL_INTERVAL_MILLIS: Long = 50
+
+        // Brief join budget for the reader thread when the helper process has exited but the
+        // reader may still be mid-read of buffered bytes. Without this, a helper that writes
+        // READY immediately followed by a clean exit can be misreported as a startup failure.
+        const val READER_DRAIN_MILLIS: Long = 100
 
         // Bounded wait after `destroyForcibly()` in the start-failure path. Unbounded
         // `waitFor()` would pin the calling thread if the kernel hasn't reaped the helper
