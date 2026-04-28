@@ -1,9 +1,16 @@
-# Recording limitations (v1)
+# Recording limitations
 
-Spectre's v1 recording (`recording` module) shells out to a system `ffmpeg` binary using
-`avfoundation` on macOS. This is deliberately the simplest possible capture path so v1 can ship
-quickly; the trade-offs below are the known consequences. Most of them go away under the
-window-targeted ScreenCaptureKit backend tracked in v2 (#18).
+The `recording` module currently ships two backends:
+- `FfmpegRecorder` (v1) — region capture via `ffmpeg` + `avfoundation`. Trade-offs below.
+- `ScreenCaptureKitRecorder` (v2, #18 — landed) — window-targeted capture via a bundled Swift
+  helper. Removes the "anything overlapping the region appears in the recording" class of
+  problems for top-level windows. Falls outside the scope of the v1 limitations document; see
+  the recording module README for usage.
+
+The rest of this document describes the v1 region-capture path. Use ScreenCaptureKit when you
+have a top-level `ComposeWindow` you want to record cleanly; use the v1 region capture for
+embedded `ComposePanel` surfaces (where there's no host window to target) or when you need to
+record an arbitrary screen rectangle independent of any specific window.
 
 ## Platform
 
@@ -64,10 +71,12 @@ window-targeted ScreenCaptureKit backend tracked in v2 (#18).
   post-processing.
 - Audio capture is intentionally absent — v1 records video only. Adding audio is a follow-up.
 
-## Pointers for v2
+## What v2 changed
 
-- Window-targeted capture via ScreenCaptureKit (#18) removes the "anything overlapping the region
-  appears in the video" class of problems for top-level windows.
-- A separate path for embedded panels would need to render the panel into a frame buffer and feed
-  that to `ffmpeg` on stdin (the synthetic-screenshot path in `SyntheticRobotAdapter` is the
-  blueprint). Tracked outside v1.
+- Window-targeted capture via `ScreenCaptureKitRecorder` (#18) is now the recommended path for
+  top-level `ComposeWindow` surfaces. It removes the "anything overlapping the region appears
+  in the video" class of problems and follows the window across the screen.
+- The embedded-panel path is still region capture only — there's no host window for SCK to
+  target. A future "render the panel into a frame buffer and feed `ffmpeg` on stdin" backend
+  (the synthetic-screenshot path in `SyntheticRobotAdapter` is the blueprint) would close that
+  gap; not currently scoped.
