@@ -114,3 +114,13 @@ class SampleAppFixture(
         val SHUTDOWN_TIMEOUT: Duration = 5.seconds
     }
 }
+
+/**
+ * `true` when the validation Gradle task booted this JVM as a macOS UI element
+ * (`apple.awt.UIElement=true`), in which case AppKit suppresses the spawned window's focus-grab /
+ * Dock icon but also restricts NSPasteboard access. Tests that rely on the clipboard (currently
+ * only `Issue8FidelityValidationTest.typeText`) gate themselves on this so the focus-quiet workflow
+ * stays the default while the paste fidelity test still runs when the property is explicitly off.
+ */
+val sampleFixtureRunsAsUiElement: Boolean
+    get() = System.getProperty("spectre.sample.fixture.uiElement", "false").toBoolean()
