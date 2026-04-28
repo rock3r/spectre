@@ -5,8 +5,10 @@ import java.awt.Point
 import java.awt.Rectangle
 import java.awt.Robot
 import java.awt.Toolkit
+import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.StringSelection
 import java.awt.datatransfer.Transferable
+import java.awt.datatransfer.UnsupportedFlavorException
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.awt.image.BufferedImage
@@ -81,6 +83,17 @@ internal constructor(
         val previousContents = runCatching { clipboard.getContents() }.getOrNull()
         try {
             clipboard.setContents(StringSelection(text))
+            // OS pasteboard writes (notably macOS NSPasteboard) are asynchronous: setContents
+            // returns immediately, but readers can observe the previous value for a short
+            // window. If we dispatch Cmd+V before the pasteboard surfaces our text, the focused
+            // field's paste handler reads stale (often empty) contents and the typed characters
+            // never land. Poll the clipboard until it reports our string, with a bounded budget
+            // so a misbehaving clipboard adapter cannot wedge the call indefinitely. Skip the
+            // poll for adapters that don't support read-back (the headless no-op clipboard) so
+            // that path doesn't burn the full settle timeout for nothing.
+            if (clipboard.supportsRead) {
+                awaitClipboardContents(text, CLIPBOARD_SETTLE_TIMEOUT_MS, CLIPBOARD_SETTLE_POLL_MS)
+            }
             runOffEdt {
                 val modifier = shortcutModifierKeyCode(detectMacOs())
                 robot.keyPress(modifier)
@@ -89,11 +102,47 @@ internal constructor(
                 robot.keyRelease(modifier)
             }
             if (!SwingUtilities.isEventDispatchThread()) {
-                robot.waitForIdle()
+                // Drain queued AWT events (KEY_PRESSED/RELEASED + Compose's input pipeline) so
+                // the paste handler has a chance to read the clipboard before we restore it.
+                // Without this, the finally block can clobber the clipboard mid-paste and the
+                // field receives empty text — the exact symptom that flaked the live validation.
+                // One waitForIdle pump is not enough: Compose's paste action runs on its own
+                // coroutine dispatcher which posts back to the EDT, so we pump a few times and
+                // also wait a short interval to let the OS-side paste read complete before we
+                // clobber the clipboard contents.
+                repeat(POST_PASTE_EDT_PUMPS) { robot.waitForIdle() }
+                try {
+                    Thread.sleep(POST_PASTE_SETTLE_MS)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
+                repeat(POST_PASTE_EDT_PUMPS) { robot.waitForIdle() }
             }
         } finally {
             if (previousContents != null) {
                 runCatching { clipboard.setContents(previousContents) }
+            }
+        }
+    }
+
+    private fun awaitClipboardContents(expected: String, timeoutMs: Long, pollMs: Long) {
+        val deadline = System.nanoTime() + timeoutMs * NANOS_PER_MILLI
+        while (true) {
+            val current =
+                runCatching { clipboard.getContents()?.getTransferData(DataFlavor.stringFlavor) }
+                    .recover { error ->
+                        // UnsupportedFlavorException means another writer just clobbered the
+                        // clipboard with non-string data — treat as "not yet" and keep polling.
+                        if (error is UnsupportedFlavorException) null else throw error
+                    }
+                    .getOrNull() as? String
+            if (current == expected) return
+            if (System.nanoTime() >= deadline) return
+            try {
+                Thread.sleep(pollMs)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return
             }
         }
     }
@@ -187,6 +236,14 @@ internal interface RobotAdapter {
 
 internal interface ClipboardAdapter {
 
+    /**
+     * `true` when [getContents] reads back values written by [setContents]. The headless / no-op
+     * adapter returns `false` so callers can skip clipboard-settle polling that would otherwise
+     * spin its full timeout against a permanently-null reader.
+     */
+    val supportsRead: Boolean
+        get() = true
+
     fun getContents(): Transferable?
 
     fun setContents(contents: Transferable)
@@ -249,6 +306,8 @@ private object NoopRobotAdapter : RobotAdapter {
 }
 
 private object NoopClipboardAdapter : ClipboardAdapter {
+
+    override val supportsRead: Boolean = false
 
     override fun getContents(): Transferable? = null
 
@@ -348,3 +407,17 @@ private const val DOUBLE_CLICK_COUNT = 2
 private const val DEFAULT_SWIPE_STEPS = 12
 private val DEFAULT_SWIPE_DURATION: Duration = 200.milliseconds
 private val DEFAULT_LONG_CLICK_DURATION: Duration = 500.milliseconds
+
+// Bounded budget for the OS pasteboard write to surface — generous enough to absorb cold-JVM
+// macOS NSPasteboard latency (typically <50ms but can spike on a freshly woken machine), short
+// enough that a wedged clipboard adapter cannot delay the call indefinitely.
+private const val CLIPBOARD_SETTLE_TIMEOUT_MS: Long = 1_000L
+private const val CLIPBOARD_SETTLE_POLL_MS: Long = 5L
+private const val NANOS_PER_MILLI: Long = 1_000_000L
+
+// After dispatching Cmd+V we drain the EDT a few times to let Compose's paste-action coroutine
+// post back, then sleep briefly so the OS clipboard read completes, then drain again. The total
+// cost (a few ms) is dwarfed by the cold-JVM AWT/Compose startup latency that already dominates
+// any test using typeText.
+private const val POST_PASTE_EDT_PUMPS: Int = 3
+private const val POST_PASTE_SETTLE_MS: Long = 50L

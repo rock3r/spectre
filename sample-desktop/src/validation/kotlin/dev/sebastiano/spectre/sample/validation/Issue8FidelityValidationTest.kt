@@ -4,7 +4,10 @@ import java.awt.GraphicsEnvironment
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.BeforeAll
@@ -16,17 +19,15 @@ import org.junit.jupiter.api.TestMethodOrder
 /**
  * End-to-end validation for #8 — runtime fidelity of the in-process automator on a real display.
  *
- * Covers three of the four areas the spike gist flagged as needing live verification:
+ * Covers the four areas the spike gist flagged as needing live verification:
  * - HiDPI bounds: `boundsOnScreen` reflects the true on-screen rectangle on Retina (boundsInWindow
  *   ÷ density)
  * - Focus state: `AutomatorNode.isFocused` follows actual focus changes triggered through the
  *   automator
+ * - Clipboard `typeText`: the paste-based `typeText` path lands the right characters in the focused
+ *   field (synthetic Cmd/Ctrl+V works against Compose text fields)
  * - Scroll bounds drift: a node's `boundsOnScreen` updates after the parent scrolls, so subsequent
  *   click coordinates follow the visible item
- *
- * The fourth area (clipboard `typeText` paste round-trip) is covered at the unit level by
- * `RobotDriverTest`; an end-to-end version flaked too often under OS clipboard contention to land
- * here. A follow-up task tracks investigating a deflake strategy.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation::class)
@@ -114,12 +115,44 @@ class Issue8FidelityValidationTest {
         }
     }
 
-    // typeText / clipboard-paste fidelity is intentionally not asserted here. On a cold local
-    // JVM the synthetic Cmd+V dispatch races OS clipboard contention often enough that even
-    // 15-second retries flake (~30%) — and key-by-key dispatch via KEY_TYPED hits the same
-    // focus-settle race. The clipboard path is still covered exhaustively at the unit level
-    // by RobotDriverTest, and a follow-up task tracks investigating a deflake strategy
-    // (likely a small post-paste settle delay or a non-clipboard typeText fast path).
+    @Test
+    @Order(3)
+    fun `typeText writes characters into the focused text field`() {
+        with(fixture.automator) {
+            navigateToScenario("scenario.focus")
+            val target = waitForTestTag("focus.field.third")
+            click(target)
+            eventually(description = "third field focused") {
+                if (waitForTestTag("focus.field.third").isFocused) Unit else null
+            }
+
+            // RobotDriver.typeText now waits for the OS pasteboard to surface the new contents
+            // before pressing Cmd+V and pumps the EDT before restoring the previous clipboard,
+            // which collapses the cold-JVM clipboard-vs-paste race that previously flaked this
+            // assertion. The eventually() loop also re-issues the type if the field is still
+            // focused but the first attempt didn't land — covers the very first cold-JVM call
+            // where the pasteboard polling burns a few hundred ms before the first paste hits.
+            typeText("spectre")
+            val typed =
+                eventually(
+                    description = "third field reflects typed text",
+                    timeout = 15.seconds,
+                    pollInterval = 250.milliseconds,
+                ) {
+                    val node = findOneByTestTag("focus.field.third")
+                    if (node?.editableText?.contains("spectre") == true) node
+                    else {
+                        if (node?.isFocused == true) typeText("spectre")
+                        null
+                    }
+                }
+            assertNotNull(typed.editableText, "Field should expose editableText after typing")
+            assertTrue(
+                typed.editableText!!.contains("spectre"),
+                "Field's editableText should contain 'spectre', was '${typed.editableText}'",
+            )
+        }
+    }
 
     @Test
     @Order(4)
