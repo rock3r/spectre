@@ -394,11 +394,20 @@ private class ScreenCaptureKitRecordingHandle(
         if (exit == 0) return
         // Any non-zero exit (including SIGTERM 143 / SIGKILL 137) means the helper did not
         // run the AVAssetWriter finalize path — the .mov is truncated or missing entirely.
-        // The helper installs a SIGTERM handler that converts SIGTERM into a graceful
-        // finalize + exit(0), so seeing 143 here means the handler didn't get to run (e.g.
-        // the signal arrived before setup completed). 137 (SIGKILL) is unconditionally a
-        // forced termination — there's no handler we could install for it. Either way the
-        // file is unsafe to use; surface that to the caller rather than silently swallowing.
+        // The helper installs a SIGTERM handler BEFORE writing READY to stdout, and start()
+        // only returns once READY is received, so by the time the JVM-side stop() can call
+        // process.destroy() the SIGTERM handler is guaranteed to be in place — SIGTERM goes
+        // through the same finalize path as `q` on stdin and the helper exits 0. If we DO
+        // see exit 143 here, the handler didn't run (signal arrived before installation, or
+        // the dispatch source was somehow torn down) and the file IS truncated. 137
+        // (SIGKILL) is unconditionally forced termination — there's no handler we could
+        // install for it.
+        //
+        // We deliberately do NOT exempt 137/143 as "expected because we sent the signal
+        // ourselves". Doing so would silently swallow real truncation events; surfacing the
+        // exit lets callers see that the recording's output is unsafe to use. (FfmpegRecorder
+        // has a sentSignalOurselves exemption because ffmpeg has no graceful SIGTERM handler;
+        // SCK does, so the exemption isn't appropriate here.)
         throw IllegalStateException(
             "spectre-screencapture exited with code $exit during recording — output at $output " +
                 "may be truncated or missing."
