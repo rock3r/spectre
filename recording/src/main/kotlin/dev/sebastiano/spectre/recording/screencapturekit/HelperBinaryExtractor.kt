@@ -4,7 +4,6 @@ import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
-import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.attribute.PosixFilePermissions
 
 /**
@@ -69,14 +68,6 @@ internal class HelperBinaryExtractor(
             "Failed to mark helper at $path as executable — recording will fail to spawn"
         }
     }
-
-    @Suppress("unused")
-    private val executableBitSentinel: Set<PosixFilePermission> =
-        setOf(
-            PosixFilePermission.OWNER_EXECUTE,
-            PosixFilePermission.GROUP_EXECUTE,
-            PosixFilePermission.OTHERS_EXECUTE,
-        )
 
     private companion object {
         const val BINARY_NAME: String = "spectre-screencapture"

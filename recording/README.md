@@ -59,14 +59,22 @@ After granting the host JVM Screen Recording permission, point a `ScreenCaptureK
 at any titled window owned by the same JVM:
 
 ```kotlin
+import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitRecorder
+import dev.sebastiano.spectre.recording.screencapturekit.asTitledWindow
+
 val recorder = ScreenCaptureKitRecorder()
 val handle = recorder.start(
-    window = composeWindow.asTitledWindow(), // adapter against ComposeWindow / Frame
+    window = composeWindow.asTitledWindow(), // public adapter for any java.awt.Frame
     output = Paths.get("/tmp/spectre-sck.mov"),
 )
 // drive the UI...
 handle.stop() // restores the original title, finalises the .mov
 ```
+
+`asTitledWindow()` is a `Frame.() -> TitledWindow` extension that works against
+`ComposeWindow`, `JFrame`, `JDialog.parent`, or any other `java.awt.Frame`. If you have a
+non-Frame window-like object, implement `TitledWindow` directly — it's a single mutable
+`title: String?` property.
 
 The bundled `:recording:runScreenCaptureKitSmoke` Gradle task does this against a tiny Swing
 JFrame and dumps a Robot screenshot alongside for cross-checking.

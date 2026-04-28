@@ -7,8 +7,6 @@ import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Dimension
 import java.awt.Font
-import java.awt.Frame
-import java.awt.Rectangle
 import java.awt.Robot
 import java.io.File
 import java.nio.file.Files
@@ -139,18 +137,6 @@ private fun openSmokeWindow(): Pair<JFrame, JLabel> {
     }
     return frameRef!! to labelRef!!
 }
-
-/** Adapt a [java.awt.Frame] to the [TitledWindow] surface the recorder expects. */
-private fun Frame.asTitledWindow(): TitledWindow =
-    object : TitledWindow {
-        override var title: String?
-            get() = this@asTitledWindow.title
-            set(value) {
-                this@asTitledWindow.title = value ?: ""
-            }
-    }
-
-@Suppress("unused") private fun Rectangle.toString(): String = "Rectangle($x,$y ${width}x$height)"
 
 private const val WINDOW_WIDTH = 480
 private const val WINDOW_HEIGHT = 240

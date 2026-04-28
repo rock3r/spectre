@@ -43,19 +43,25 @@ internal constructor(
 
     constructor() : this(HelperBinaryExtractor(), SystemProcessFactory)
 
-    internal fun start(
+    fun start(
         window: TitledWindow,
         windowOwnerPid: Long = ProcessHandle.current().pid(),
         output: Path,
         options: RecordingOptions = RecordingOptions(),
     ): RecordingHandle {
+        // Resolve everything that can fail without touching window state first. Anything we do
+        // before `discriminator.apply()` doesn't need a restore path; anything after must
+        // restore on every error branch (the original window title is held by the
+        // discriminator and would otherwise stay dirty across a failed start).
         val helperPath = helperExtractor.extract()
+        Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
+
         val discriminator = TitleDiscriminator(window)
         discriminator.apply()
 
-        // HelperArguments.init validates pid/title/fps/timeout — IllegalArgumentException is the
-        // only failure mode here. Anything else escaping from the constructor would be a coding
-        // bug we want surfaced loudly, not swallowed-and-restored.
+        // HelperArguments.init validates pid/title/fps/timeout — IllegalArgumentException is
+        // the only failure mode here. Anything else escaping from the constructor would be a
+        // coding bug we want surfaced loudly, not swallowed-and-restored.
         val argv =
             try {
                 HelperArguments(
@@ -71,8 +77,6 @@ internal constructor(
                 discriminator.restore()
                 throw e
             }
-
-        Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
 
         // ProcessBuilder.start throws IOException for every failure mode (missing binary,
         // permission denied on exec, fork failure). Catch that specifically so a non-IO bug in
