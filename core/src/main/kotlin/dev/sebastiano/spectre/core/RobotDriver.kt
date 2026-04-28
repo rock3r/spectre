@@ -101,7 +101,7 @@ internal constructor(
                 robot.keyRelease(KeyEvent.VK_V)
                 robot.keyRelease(modifier)
             }
-            if (!SwingUtilities.isEventDispatchThread()) {
+            if (!SwingUtilities.isEventDispatchThread() && clipboard.supportsRead) {
                 // Drain queued AWT events (KEY_PRESSED/RELEASED + Compose's input pipeline) so
                 // the paste handler has a chance to read the clipboard before we restore it.
                 // Without this, the finally block can clobber the clipboard mid-paste and the
@@ -109,7 +109,9 @@ internal constructor(
                 // One waitForIdle pump is not enough: Compose's paste action runs on its own
                 // coroutine dispatcher which posts back to the EDT, so we pump a few times and
                 // also wait a short interval to let the OS-side paste read complete before we
-                // clobber the clipboard contents.
+                // clobber the clipboard contents. Skip the whole block for adapters that don't
+                // support clipboard read-back — there's no real paste handler to drain, so the
+                // sleep would just add fixed latency to every headless typeText call.
                 repeat(POST_PASTE_EDT_PUMPS) { robot.waitForIdle() }
                 try {
                     Thread.sleep(POST_PASTE_SETTLE_MS)
