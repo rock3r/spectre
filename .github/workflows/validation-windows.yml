@@ -33,7 +33,11 @@ on:
       - "recording/**"
       - "sample-desktop/**"
       - "testing/**"
-      - "gradle/libs.versions.toml"
+      # Broad gradle/** rather than just libs.versions.toml so wrapper bumps and any other
+      # ./gradle/-resident config changes still trigger this validation job. Mirrors the
+      # filter shape of windows.yml + macos-check.yml so configuration drift surfaces here
+      # too.
+      - "gradle/**"
       - "settings.gradle.kts"
       - "build.gradle.kts"
       - ".github/workflows/validation-windows.yml"
@@ -45,7 +49,7 @@ on:
       - "recording/**"
       - "sample-desktop/**"
       - "testing/**"
-      - "gradle/libs.versions.toml"
+      - "gradle/**"
       - "settings.gradle.kts"
       - "build.gradle.kts"
       - ".github/workflows/validation-windows.yml"
@@ -74,12 +78,20 @@ jobs:
         # `continue-on-error: true` so the Gradle test-executor protocol flake (see workflow
         # header) doesn't fail the job. Real test outcomes are verified against the JUnit XML
         # reports in the next step.
+        #
+        # `--continue` is essential here: without it Gradle aborts after the first task to
+        # exit non-zero, and the protocol-flake "failure" reliably trips on the first task.
+        # That means downstream tasks would never run, the verification step would see their
+        # XMLs missing, and the job would fail for a reason unrelated to the actual tests.
+        # `--continue` makes Gradle run every requested task regardless of earlier failures,
+        # so each task gets a fair chance to produce its XML.
         continue-on-error: true
         id: gradle
         run: |
           ./gradlew \
             :sample-desktop:validationTest \
-            :sample-desktop:validationTestPopupLayers
+            :sample-desktop:validationTestPopupLayers \
+            --continue
         shell: bash
 
       - name: Verify validation tests passed via JUnit XML
@@ -131,10 +143,14 @@ jobs:
           fail_total=0
           err_total=0
           for f in "${all_xml[@]}"; do
-            failures=$(grep -oE 'failures="[0-9]+"' "$f" | head -n1 | grep -oE '[0-9]+')
-            errors=$(grep -oE 'errors="[0-9]+"' "$f" | head -n1 | grep -oE '[0-9]+')
-            failures=${failures:-0}
-            errors=${errors:-0}
+            # `set -euo pipefail` aborts the script if any pipeline component returns
+            # non-zero. The `grep -oE` calls return non-zero when no match is found, which
+            # would happen on a malformed XML (or simply one missing the attribute). Wrap
+            # each pipeline in `|| echo 0` so a missing attribute is reported as 0 rather
+            # than aborting the verification — a bare `:-0` default would never fire because
+            # `set -e` exits before the parameter expansion runs.
+            failures=$(grep -oE 'failures="[0-9]+"' "$f" | head -n1 | grep -oE '[0-9]+' || echo 0)
+            errors=$(grep -oE 'errors="[0-9]+"' "$f" | head -n1 | grep -oE '[0-9]+' || echo 0)
             if [ "$failures" -gt 0 ] || [ "$errors" -gt 0 ]; then
               echo "::error file=$f::Test class reported failures=$failures errors=$errors"
               fail_total=$((fail_total + failures))
