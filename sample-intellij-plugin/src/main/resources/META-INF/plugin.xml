@@ -7,8 +7,15 @@
     <name>Spectre IDE Sample</name>
     <vendor>Spectre</vendor>
 
-    <!-- Jewel's IDE LaF bridge requires the platform module; nothing else is needed. -->
+    <!--
+      `com.intellij.modules.compose` is the umbrella platform module that exposes the IDE's
+      bundled Jewel + Compose + skiko classes to this plugin's classloader at runtime. It is
+      paired with `composeUI()` in build.gradle.kts (which puts the matching jars on the
+      compile/runtime classpath). Per-jar `<depends>intellij.libraries.skiko</depends>` etc. are
+      not plugin IDs — the plugin loader rejects them with "requires plugin '...' to be installed".
+    -->
     <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.compose</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="Spectre Sample"
