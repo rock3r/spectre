@@ -4,14 +4,17 @@ import java.awt.Rectangle
 import java.nio.file.Path
 
 /**
- * Builds the `ffmpeg` argv for a region capture against the avfoundation device on macOS.
+ * Builds `ffmpeg` argv lists for the recording backends Spectre supports.
  *
- * Pure function — no I/O, no process spawn — so the argv is unit-testable in isolation. The actual
+ * Pure functions — no I/O, no process spawn — so the argv is unit-testable in isolation. The actual
  * subprocess lifecycle lives in [FfmpegRecorder].
  *
- * The resulting command captures the macOS main display (`-i 1` selects the screen capture device
- * per the spike plan), crops it to [region] via the `crop` video filter, and pipes the result
- * through the chosen codec into [output].
+ * Backends:
+ * - [avfoundationRegionCapture] — macOS region capture via the avfoundation device, with cropping
+ *   applied as a video filter.
+ * - [gdigrabRegionCapture] — Windows region capture via the gdigrab device, with the region
+ *   selected on the input side via offsets and `-video_size` (no crop filter).
+ * - [gdigrabWindowCapture] — Windows title-based window capture via the gdigrab device.
  */
 internal object FfmpegCli {
 
@@ -60,6 +63,96 @@ internal object FfmpegCli {
             // Crop filter to the requested region.
             add("-vf")
             add("crop=${region.width}:${region.height}:${region.x}:${region.y}")
+            add("-c:v")
+            add(options.codec)
+            add(output.toString())
+        }
+    }
+
+    /**
+     * Builds the argv for a Windows region capture via the gdigrab device.
+     *
+     * gdigrab carves the region on the *input* side via `-offset_x`, `-offset_y`, and
+     * `-video_size`, so no `crop` filter is needed. Negative offsets are accepted: Windows'
+     * virtual-desktop coordinate space puts non-primary monitors at negative coordinates if they're
+     * positioned to the left of (or above) the primary display, and gdigrab's docs explicitly
+     * support that case.
+     *
+     * [RecordingOptions.screenIndex] is intentionally unused here — gdigrab targets the entire
+     * virtual desktop with `-i desktop`, and callers select a specific monitor by translating its
+     * bounds into the region origin.
+     */
+    fun gdigrabRegionCapture(
+        ffmpegPath: Path,
+        region: Rectangle,
+        output: Path,
+        options: RecordingOptions,
+    ): List<String> {
+        require(region.width > 0 && region.height > 0) {
+            "region must have positive dimensions, was ${region.width}x${region.height}"
+        }
+        return buildList {
+            add(ffmpegPath.toString())
+            add("-loglevel")
+            add("warning")
+            add("-y")
+            // gdigrab input options must precede `-i`. -framerate is the capture rate;
+            // -draw_mouse toggles cursor compositing on the captured frames; -offset_x /
+            // -offset_y / -video_size select the region on the input side, so we don't need
+            // a crop filter and can't fall into avfoundation's silent-clamp pitfall.
+            add("-f")
+            add("gdigrab")
+            add("-framerate")
+            add(options.frameRate.toString())
+            add("-draw_mouse")
+            add(if (options.captureCursor) "1" else "0")
+            add("-offset_x")
+            add(region.x.toString())
+            add("-offset_y")
+            add(region.y.toString())
+            add("-video_size")
+            add("${region.width}x${region.height}")
+            add("-i")
+            add("desktop")
+            add("-c:v")
+            add(options.codec)
+            add(output.toString())
+        }
+    }
+
+    /**
+     * Builds the argv for a Windows title-based window capture via the gdigrab device.
+     *
+     * Title matching is exact and case-sensitive, and the window must be visible (not minimised).
+     * For Compose Desktop top-level windows this works. Jewel-in-IDE tool windows have no top-level
+     * title to match against — callers in that scenario must fall back to [gdigrabRegionCapture]
+     * using the panel's screen bounds.
+     */
+    fun gdigrabWindowCapture(
+        ffmpegPath: Path,
+        windowTitle: String,
+        output: Path,
+        options: RecordingOptions,
+    ): List<String> {
+        require(windowTitle.isNotBlank()) {
+            "windowTitle must not be blank — gdigrab's `title=` form treats an empty title as " +
+                "the desktop and would record the wrong surface"
+        }
+        return buildList {
+            add(ffmpegPath.toString())
+            add("-loglevel")
+            add("warning")
+            add("-y")
+            add("-f")
+            add("gdigrab")
+            add("-framerate")
+            add(options.frameRate.toString())
+            add("-draw_mouse")
+            add(if (options.captureCursor) "1" else "0")
+            add("-i")
+            // The full string after `title=` is the match key, including any spaces. Each argv
+            // element is a separate token, so we don't need (and must not add) shell quoting.
+            add("title=$windowTitle")
             add("-c:v")
             add(options.codec)
             add(output.toString())

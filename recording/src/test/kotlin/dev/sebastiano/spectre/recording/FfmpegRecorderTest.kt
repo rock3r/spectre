@@ -19,10 +19,9 @@ import kotlin.test.assertTrue
 class FfmpegRecorderTest {
 
     @Test
-    fun `start spawns the subprocess with the avfoundation argv`() {
+    fun `start with the macOS backend spawns the subprocess with avfoundation argv`() {
         val factory = RecordingProcessFactory()
-        val recorder =
-            FfmpegRecorder(ffmpegPath = FfmpegRecorder.PROBE_PATH, processFactory = factory)
+        val recorder = ffmpegRecorderForBackend(FfmpegBackend.MacOsAvfoundation, factory)
         val output = Files.createTempFile("spectre-recording-test-", ".mp4")
         try {
             recorder.start(Rectangle(0, 0, 100, 100), output, RecordingOptions())
@@ -37,10 +36,36 @@ class FfmpegRecorderTest {
     }
 
     @Test
+    fun `start with the Windows backend spawns the subprocess with gdigrab argv`() {
+        // Issue #22: the recorder must build a Windows-flavoured argv when constructed against
+        // the WindowsGdigrab backend. This test pins the dispatch end-to-end so the existing
+        // lifecycle plumbing (process factory, startup probe, handle) doesn't accidentally
+        // regress to the avfoundation path on Windows hosts.
+        val factory = RecordingProcessFactory()
+        val recorder = ffmpegRecorderForBackend(FfmpegBackend.WindowsGdigrab, factory)
+        val output = Files.createTempFile("spectre-recording-test-", ".mp4")
+        try {
+            recorder.start(Rectangle(0, 0, 100, 100), output, RecordingOptions())
+
+            val argv = factory.lastArgv
+            assertTrue(argv.isNotEmpty(), "Process factory should have been invoked")
+            assertTrue("gdigrab" in argv, "Argv should select gdigrab: $argv")
+            assertTrue(
+                "avfoundation" !in argv,
+                "Windows backend must not emit avfoundation argv: $argv",
+            )
+            assertEquals(output.toString(), argv.last(), "Argv should end with the output path")
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
     fun `start creates the output parent directory`() {
         val factory = RecordingProcessFactory()
-        val recorder =
-            FfmpegRecorder(ffmpegPath = FfmpegRecorder.PROBE_PATH, processFactory = factory)
+        // Inject MacOsAvfoundation so this lifecycle test is deterministic on Linux/Windows CI
+        // runners — the public ctor's lazy detect() would throw on Linux when start() runs.
+        val recorder = ffmpegRecorderForBackend(FfmpegBackend.MacOsAvfoundation, factory)
         val baseDir = Files.createTempDirectory("spectre-recording-test-")
         val nested = baseDir.resolve("nested/subdir/output.mp4")
         try {
@@ -55,8 +80,7 @@ class FfmpegRecorderTest {
     fun `stop sends q on stdin and waits for the process`() {
         val process = FakeProcess()
         val factory = ProcessFactoryReturning(process)
-        val recorder =
-            FfmpegRecorder(ffmpegPath = FfmpegRecorder.PROBE_PATH, processFactory = factory)
+        val recorder = ffmpegRecorderForBackend(FfmpegBackend.MacOsAvfoundation, factory)
         val output = Files.createTempFile("spectre-recording-test-", ".mp4")
         try {
             val handle = recorder.start(Rectangle(0, 0, 50, 50), output, RecordingOptions())
@@ -76,9 +100,9 @@ class FfmpegRecorderTest {
     fun `stop is idempotent`() {
         val process = FakeProcess()
         val recorder =
-            FfmpegRecorder(
-                ffmpegPath = FfmpegRecorder.PROBE_PATH,
-                processFactory = ProcessFactoryReturning(process),
+            ffmpegRecorderForBackend(
+                FfmpegBackend.MacOsAvfoundation,
+                ProcessFactoryReturning(process),
             )
         val output = Files.createTempFile("spectre-recording-test-", ".mp4")
         try {
@@ -95,9 +119,9 @@ class FfmpegRecorderTest {
     fun `close delegates to stop`() {
         val process = FakeProcess()
         val recorder =
-            FfmpegRecorder(
-                ffmpegPath = FfmpegRecorder.PROBE_PATH,
-                processFactory = ProcessFactoryReturning(process),
+            ffmpegRecorderForBackend(
+                FfmpegBackend.MacOsAvfoundation,
+                ProcessFactoryReturning(process),
             )
         val output = Files.createTempFile("spectre-recording-test-", ".mp4")
         try {
@@ -130,9 +154,9 @@ class FfmpegRecorderTest {
         // succeeding and leaving the caller to trust a truncated output file.
         val process = CrashedAfterStartFakeProcess()
         val recorder =
-            FfmpegRecorder(
-                ffmpegPath = FfmpegRecorder.PROBE_PATH,
-                processFactory = ProcessFactoryReturning(process),
+            ffmpegRecorderForBackend(
+                FfmpegBackend.MacOsAvfoundation,
+                ProcessFactoryReturning(process),
             )
         val output = Files.createTempFile("spectre-recording-test-", ".mp4")
         try {
@@ -155,9 +179,9 @@ class FfmpegRecorderTest {
         // Recording permission, invalid codec, unavailable device. Recorder.start must surface
         // these as errors rather than returning a handle that produces an empty file.
         val recorder =
-            FfmpegRecorder(
-                ffmpegPath = FfmpegRecorder.PROBE_PATH,
-                processFactory = ProcessFactoryReturning(InstantlyExitingFakeProcess()),
+            ffmpegRecorderForBackend(
+                FfmpegBackend.MacOsAvfoundation,
+                ProcessFactoryReturning(InstantlyExitingFakeProcess()),
             )
         val output = Files.createTempFile("spectre-recording-test-", ".mp4")
         try {
@@ -172,6 +196,32 @@ class FfmpegRecorderTest {
     }
 
     @Test
+    fun `construction does not resolve the backend so unsupported hosts can build a recorder`() {
+        // Codex regression report on PR #51: prior to deferred resolution, an Ubuntu CI runner
+        // (or a Linux/BSD developer box) would see `FfmpegRecorder()` throw at construction
+        // because `FfmpegBackend.detect()` rejects non-mac/non-Windows hosts. AutoRecorder's
+        // default ffmpegRecorder argument would crash app startup even when recording was never
+        // attempted. Pin: the backend lambda must NOT be invoked during construction.
+        var resolveCount = 0
+        val recorder =
+            FfmpegRecorder(FfmpegRecorder.PROBE_PATH, RecordingProcessFactory()) {
+                resolveCount += 1
+                throw UnsupportedOperationException("backend not resolvable for this host")
+            }
+        assertEquals(0, resolveCount, "Backend must be resolved lazily, not at construction time")
+        // Sanity: the resolver does fire on first start(), preserving the failure surface.
+        val output = Files.createTempFile("spectre-recording-test-", ".mp4")
+        try {
+            kotlin.test.assertFailsWith<UnsupportedOperationException> {
+                recorder.start(Rectangle(0, 0, 10, 10), output, RecordingOptions())
+            }
+            assertEquals(1, resolveCount, "Backend must resolve exactly once on first start()")
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
     fun `constructor with non-executable explicit path throws`() {
         val nonexistent = Path.of("/this/path/does/not/exist/ffmpeg")
         kotlin.test.assertFailsWith<IllegalArgumentException> {
@@ -179,6 +229,14 @@ class FfmpegRecorderTest {
         }
     }
 }
+
+// Constructs an FfmpegRecorder bound to a specific backend, regardless of the host OS. Tests
+// rely on the internal three-arg constructor so produced argv stays deterministic across
+// macOS / Windows / CI runners.
+private fun ffmpegRecorderForBackend(
+    backend: FfmpegBackend,
+    factory: FfmpegRecorder.ProcessFactory,
+): FfmpegRecorder = FfmpegRecorder(FfmpegRecorder.PROBE_PATH, factory, { backend })
 
 private class RecordingProcessFactory : FfmpegRecorder.ProcessFactory {
     var lastArgv: List<String> = emptyList()

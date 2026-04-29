@@ -18,23 +18,43 @@ import java.util.concurrent.atomic.AtomicReference
  * the binary is resolved via [resolveFfmpegPath]; callers can override the lookup by passing an
  * explicit [ffmpegPath] (useful in tests and for non-PATH installs).
  *
- * Platform support (v1, per the spike plan):
- * - macOS: avfoundation device with region cropping. `RecordingOptions.captureCursor` controls
- *   whether the cursor is baked into frames. **Requires macOS Screen Recording permission for the
- *   JVM process** (see [MacOsRecordingPermissions]).
- * - Windows / Linux: explicitly out of scope for v1; deferred to v3 / v4.
+ * Platform support:
+ * - macOS: avfoundation device with crop-filter region selection. `RecordingOptions.captureCursor`
+ *   controls whether the cursor is baked into frames. **Requires macOS Screen Recording permission
+ *   for the JVM process** (see [MacOsRecordingPermissions]).
+ * - Windows: gdigrab device with input-side region selection (`-offset_x`/`-offset_y`/
+ *   `-video_size`). No equivalent TCC permission gate, but gdigrab can't capture minimised windows.
+ * - Linux / BSD: not yet implemented — [FfmpegBackend.detect] throws on those hosts. Tracked under
+ *   v4.
  *
- * Window-targeted capture (`windowHandle != 0`) — i.e. ScreenCaptureKit on macOS — is deferred to
- * v2 (#18). Embedded ComposePanel surfaces with `windowHandle == 0L` always fall through to region
- * capture, which is what this recorder does.
+ * The platform backend is picked at construction time via [FfmpegBackend.detect] and can be
+ * overridden via the internal constructor for tests (so the produced argv is deterministic
+ * regardless of the host OS).
+ *
+ * Window-targeted capture (`windowHandle != 0`) — i.e. ScreenCaptureKit on macOS — is handled by a
+ * separate `WindowRecorder` and routed by [AutoRecorder]. Embedded ComposePanel surfaces with
+ * `windowHandle == 0L` always fall through to region capture, which is what this recorder does.
  *
  * The [processFactory] seam exists so the lifecycle can be unit-tested without spawning a real
  * `ffmpeg` (a fake factory can return a `Process`-like stand-in driven by an in-memory pipe).
  */
-class FfmpegRecorder(
-    private val ffmpegPath: Path = resolveFfmpegPath(),
-    private val processFactory: ProcessFactory = SystemProcessFactory,
+class FfmpegRecorder
+internal constructor(
+    private val ffmpegPath: Path,
+    private val processFactory: ProcessFactory,
+    // Provider — resolved on first [start] call rather than at construction time. Eagerly
+    // calling `FfmpegBackend.detect()` from the public constructor would make `FfmpegRecorder()`
+    // (and `AutoRecorder()`'s default ffmpegRecorder) throw immediately on Linux/BSD even when
+    // recording is never attempted, breaking call sites that instantiate recorders during app
+    // startup. Deferring keeps construction OS-agnostic and surfaces the unsupported-host error
+    // only at the point of use.
+    private val backendProvider: () -> FfmpegBackend,
 ) : Recorder {
+
+    constructor(
+        ffmpegPath: Path = resolveFfmpegPath(),
+        processFactory: ProcessFactory = SystemProcessFactory,
+    ) : this(ffmpegPath, processFactory, FfmpegBackend::detect)
 
     init {
         require(Files.isExecutable(ffmpegPath) || ffmpegPath == PROBE_PATH) {
@@ -47,15 +67,16 @@ class FfmpegRecorder(
         output: Path,
         options: RecordingOptions,
     ): RecordingHandle {
-        val argv = FfmpegCli.avfoundationRegionCapture(ffmpegPath, region, output, options)
+        val argv = backendProvider().buildRegionArgv(ffmpegPath, region, output, options)
         Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
         val process = processFactory.start(argv)
         // Fail fast: ffmpeg dies almost instantly on common configuration errors (missing
-        // Screen Recording permission, invalid codec, unavailable avfoundation device). The
-        // Recorder.start contract promises frames are landing by return, so a process that
-        // has already exited must surface as an error rather than a "success" handle that
-        // later produces nothing. Interruption during the probe must also clean up the
-        // spawned ffmpeg before propagating, otherwise we leak an orphan subprocess.
+        // macOS Screen Recording permission, invalid codec, unavailable avfoundation/gdigrab
+        // device, gdigrab title= miss). The Recorder.start contract promises frames are
+        // landing by return, so a process that has already exited must surface as an error
+        // rather than a "success" handle that later produces nothing. Interruption during
+        // the probe must also clean up the spawned ffmpeg before propagating, otherwise we
+        // leak an orphan subprocess.
         val exitedDuringProbe =
             try {
                 process.waitFor(STARTUP_PROBE_MILLIS, TimeUnit.MILLISECONDS)
@@ -86,8 +107,9 @@ class FfmpegRecorder(
         if (exitedDuringProbe) {
             throw IllegalStateException(
                 "ffmpeg exited immediately (code ${process.exitValue()}) — recording did not start. " +
-                    "Common causes: missing Screen Recording permission, invalid codec, or " +
-                    "unavailable avfoundation device. Argv: $argv"
+                    "Common causes: missing macOS Screen Recording permission, invalid codec, " +
+                    "unavailable avfoundation/gdigrab device, or a Windows gdigrab `title=` that " +
+                    "matches no visible window. Argv: $argv"
             )
         }
         return FfmpegRecordingHandle(process, output)
@@ -120,6 +142,17 @@ class FfmpegRecorder(
         // immediately rather than at start() time, but prevents the strict isExecutable check
         // from blocking the no-binary path used in tests / probing.
         internal val PROBE_PATH: Path = Paths.get("ffmpeg")
+
+        /**
+         * Builds an [FfmpegRecorder] bound to a specific [backend], using the system process
+         * factory and an auto-resolved ffmpeg path. Internal so tests / smokes can pin the backend
+         * without depending on the host OS — callers outside the module use the public constructor
+         * whose backend is detected automatically.
+         */
+        internal fun withBackend(
+            backend: FfmpegBackend,
+            ffmpegPath: Path = resolveFfmpegPath(),
+        ): FfmpegRecorder = FfmpegRecorder(ffmpegPath, SystemProcessFactory, { backend })
 
         /**
          * Best-effort lookup for a `ffmpeg` binary on PATH. Returns the resolved absolute path if
