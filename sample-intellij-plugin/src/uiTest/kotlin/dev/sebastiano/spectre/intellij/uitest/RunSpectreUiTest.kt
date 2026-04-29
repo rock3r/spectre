@@ -25,12 +25,12 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 
 /**
- * IDE-hosted validation for #42: boots a real IntelliJ Ultimate IDE via `intellij-ide-starter`,
- * installs the locally-built `:sample-intellij-plugin` zip, invokes `RunSpectreAction`, and asserts
- * the action's `[Spectre]` log lines mention every tagged node from
- * `SpectreSampleToolWindowContent`. (We'd prefer Community for parity with downstream OSS users,
- * but JetBrains hasn't released IC 2026.1.x yet — see the inline note on `IdeProductProvider.IU`
- * below.)
+ * IDE-hosted validation for #42: boots a real IntelliJ IDEA via `intellij-ide-starter`, installs
+ * the locally-built `:sample-intellij-plugin` zip, invokes `RunSpectreAction`, and asserts the
+ * action's `[Spectre]` log lines mention every tagged node from `SpectreSampleToolWindowContent`.
+ * As of the 253.x (2026.1.x) line, JetBrains stopped shipping a distinct IntelliJ Community Edition
+ * — IDEA Ultimate is now the unified product under a freemium licence, so this test naturally
+ * targets IU.
  *
  * Counterpart to the manual `./gradlew :sample-intellij-plugin:runIde` smoke that landed with #43 —
  * same assertions, no human in the loop. CI runs this only when the plugin or recording sources
@@ -58,22 +58,15 @@ class RunSpectreUiTest {
             Starter.newContext(
                     CurrentTestMethod.hyphenateWithClass(),
                     // The plugin compiles against IntelliJ IDEA 2026.1.1 (build
-                    // 261.23567.138 = IU). Ideally we'd test against IC for parity with
-                    // OSS distribution, but JetBrains hasn't released IC 2026.1.x to the
-                    // public download feed yet — latest published IC release is 2025.2.6.1
-                    // (build 252.28539.33), which doesn't match our plugin's compile
-                    // target. Using IU here means the IDE matches what `runIde` boots; the
-                    // plugin's classloader sees the SAME bundled Compose / Jewel / skiko
-                    // jars locally and in this test, so a plugin-load regression that only
-                    // surfaces against 2026.1's bundled modules is caught here.
+                    // 261.23567.138 = IU). As of the 253.x line JetBrains stopped shipping a
+                    // distinct Community Edition — IU is the unified IDEA product under a
+                    // freemium licence — so `IdeProductProvider.IU` is the only thing
+                    // ide-starter has for 2026.1.x and this test targets it directly.
                     //
                     // We do NOT call `setLicense(...)` — invokeAction-only flows against
-                    // an empty project don't need an Ultimate license. If the IDE later
-                    // refuses to start because of license validation, that's the signal
-                    // to wire `LICENSE_KEY` from a CI secret.
-                    //
-                    // Switch to `IdeProductProvider.IC` once IC 2026.1.x ships on the
-                    // public release feed.
+                    // an empty project don't need a paid licence. If the IDE later refuses
+                    // to start because of licence validation, that's the signal to wire
+                    // `LICENSE_KEY` from a CI secret.
                     TestCase(
                         IdeProductProvider.IU.copy(
                             buildType = "release",
