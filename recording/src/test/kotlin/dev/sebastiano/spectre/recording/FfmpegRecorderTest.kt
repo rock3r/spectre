@@ -19,10 +19,9 @@ import kotlin.test.assertTrue
 class FfmpegRecorderTest {
 
     @Test
-    fun `start spawns the subprocess with the avfoundation argv`() {
+    fun `start with the macOS backend spawns the subprocess with avfoundation argv`() {
         val factory = RecordingProcessFactory()
-        val recorder =
-            FfmpegRecorder(ffmpegPath = FfmpegRecorder.PROBE_PATH, processFactory = factory)
+        val recorder = ffmpegRecorderForBackend(FfmpegBackend.MacOsAvfoundation, factory)
         val output = Files.createTempFile("spectre-recording-test-", ".mp4")
         try {
             recorder.start(Rectangle(0, 0, 100, 100), output, RecordingOptions())
@@ -30,6 +29,31 @@ class FfmpegRecorderTest {
             val argv = factory.lastArgv
             assertTrue(argv.isNotEmpty(), "Process factory should have been invoked")
             assertTrue("avfoundation" in argv, "Argv should select avfoundation: $argv")
+            assertEquals(output.toString(), argv.last(), "Argv should end with the output path")
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `start with the Windows backend spawns the subprocess with gdigrab argv`() {
+        // Issue #22: the recorder must build a Windows-flavoured argv when constructed against
+        // the WindowsGdigrab backend. This test pins the dispatch end-to-end so the existing
+        // lifecycle plumbing (process factory, startup probe, handle) doesn't accidentally
+        // regress to the avfoundation path on Windows hosts.
+        val factory = RecordingProcessFactory()
+        val recorder = ffmpegRecorderForBackend(FfmpegBackend.WindowsGdigrab, factory)
+        val output = Files.createTempFile("spectre-recording-test-", ".mp4")
+        try {
+            recorder.start(Rectangle(0, 0, 100, 100), output, RecordingOptions())
+
+            val argv = factory.lastArgv
+            assertTrue(argv.isNotEmpty(), "Process factory should have been invoked")
+            assertTrue("gdigrab" in argv, "Argv should select gdigrab: $argv")
+            assertTrue(
+                "avfoundation" !in argv,
+                "Windows backend must not emit avfoundation argv: $argv",
+            )
             assertEquals(output.toString(), argv.last(), "Argv should end with the output path")
         } finally {
             output.deleteIfExists()
@@ -179,6 +203,14 @@ class FfmpegRecorderTest {
         }
     }
 }
+
+// Constructs an FfmpegRecorder bound to a specific backend, regardless of the host OS. Tests
+// rely on the internal three-arg constructor so produced argv stays deterministic across
+// macOS / Windows / CI runners.
+private fun ffmpegRecorderForBackend(
+    backend: FfmpegBackend,
+    factory: FfmpegRecorder.ProcessFactory,
+): FfmpegRecorder = FfmpegRecorder(FfmpegRecorder.PROBE_PATH, factory, backend)
 
 private class RecordingProcessFactory : FfmpegRecorder.ProcessFactory {
     var lastArgv: List<String> = emptyList()

@@ -235,3 +235,15 @@ tasks.register<JavaExec>("runScreenCaptureKitSmoke") {
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitRecorderSmoke")
 }
+
+// Manual smoke entry point — opens a JFrame, records it for ~3s via FfmpegRecorder bound to
+// the Windows gdigrab backend, prints the resulting file path + size. Mirrors the SCK smoke
+// for the Windows recording path (#22). Lives in the test source set so it can use the
+// internal FfmpegBackend / FfmpegRecorder.withBackend hooks.
+tasks.register<JavaExec>("runFfmpegGdigrabSmoke") {
+    group = "verification"
+    description = "Boots a JFrame, records it for ~3s via gdigrab, prints output stats."
+    onlyIf { OperatingSystem.current().isWindows }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.FfmpegGdigrabSmoke")
+}

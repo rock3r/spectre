@@ -15,7 +15,13 @@ import java.nio.file.Path
  * Routing logic (in order):
  * 1. `window == null` → ffmpeg region capture. Caller doesn't have a window in mind, or is
  *    capturing an embedded `ComposePanel` where there's no top-level window to target.
- * 2. Non-macOS host → ffmpeg. SCK is macOS-only.
+ * 2. Non-macOS host → ffmpeg region capture. SCK is macOS-only. On Windows the underlying
+ *    [FfmpegRecorder] uses the gdigrab device (selected by [FfmpegBackend.detect]) — it captures
+ *    the requested region by virtual-desktop offset rather than by window handle. Title-based
+ *    gdigrab capture exists as a building block in `FfmpegCli.gdigrabWindowCapture` but is not yet
+ *    wired through this router; callers wanting it must spawn ffmpeg directly. The region path is
+ *    the documented fallback when the target window title is missing, ambiguous, or points at a
+ *    Jewel-in-IDE tool window with no top-level title.
  * 3. macOS host with a window → SCK. If SCK fails because the helper isn't bundled (e.g. a jar
  *    built on Linux running on macOS), falls back to ffmpeg with a stderr warning so the
  *    degradation is visible. **Only** [HelperNotBundledException] triggers fallback — operational
