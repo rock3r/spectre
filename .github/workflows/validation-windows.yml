@@ -1,0 +1,132 @@
+name: Validation tests (Windows)
+
+# Runs the opt-in :sample-desktop validationTest* tasks on a real Windows host so the
+# multi-window / popup / fidelity flows we built up under #7, #8, #14, and #23 actually get
+# exercised under Windows JBR. The base `windows.yml` job only runs `:check`; these validation
+# tasks aren't in `:check`'s default scope, so without this workflow a Windows-side regression
+# in popup discovery or HiDPI mapping would only surface in manual testing.
+#
+# ## The "Could not write 127.0.0.1:NNNN" workaround
+#
+# Compose Desktop's `application{}` shutdown via `exitApplication()` races Gradle's test-
+# executor protocol on Windows. The test JVM exits cleanly *after* writing its JUnit XML
+# results, but Gradle's daemon-side reader sometimes loses the TCP socket carrying those
+# results back, and reports a "Could not write '/127.0.0.1:NNNN'" error followed by
+# `BUILD FAILED` — even though the test class itself passed and its `<testsuite ...
+# failures="0" errors="0">` XML is on disk.
+#
+# Until the Gradle / Compose Multiplatform interaction is fixed (or `forkEvery=1` is replaced
+# with a different isolation strategy), this workflow uses the JUnit XMLs as the source of
+# truth: `continue-on-error: true` on the Gradle step keeps the overall job alive past the
+# protocol flake, and a follow-up step parses the XMLs to determine real test outcomes.
+# Compile / dependency-resolution failures still trip the verification step (no XMLs written →
+# exit 1), so we don't lose the signal that genuinely matters.
+#
+# Local invocation:
+#   ./gradlew :sample-desktop:validationTest :sample-desktop:validationTestPopupLayers
+# (Same caveat applies — Gradle may exit non-zero with the protocol noise even when tests pass.)
+
+on:
+  pull_request:
+    paths:
+      - "core/**"
+      - "recording/**"
+      - "sample-desktop/**"
+      - "testing/**"
+      - "gradle/libs.versions.toml"
+      - "settings.gradle.kts"
+      - "build.gradle.kts"
+      - ".github/workflows/validation-windows.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "core/**"
+      - "recording/**"
+      - "sample-desktop/**"
+      - "testing/**"
+      - "gradle/libs.versions.toml"
+      - "settings.gradle.kts"
+      - "build.gradle.kts"
+      - ".github/workflows/validation-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validation-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Run validation tests
+        # `continue-on-error: true` so the Gradle test-executor protocol flake (see workflow
+        # header) doesn't fail the job. Real test outcomes are verified against the JUnit XML
+        # reports in the next step.
+        continue-on-error: true
+        id: gradle
+        run: |
+          ./gradlew \
+            :sample-desktop:validationTest \
+            :sample-desktop:validationTestPopupLayers
+        shell: bash
+
+      - name: Verify validation tests passed via JUnit XML
+        # Source-of-truth check that ignores Gradle's exit code but does NOT rubber-stamp every
+        # failure: we require at least one XML to exist (so a Gradle compile/dependency-resolution
+        # failure that produced no test results doesn't silently pass), and we fail if any XML
+        # reports `failures` or `errors` greater than zero.
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          xml_files=(sample-desktop/build/test-results/**/TEST-*.xml)
+          if [ "${#xml_files[@]}" -eq 0 ]; then
+            echo "::error::No JUnit XML reports found — Gradle likely failed before test execution."
+            echo "Gradle step outcome: ${{ steps.gradle.outcome }}"
+            exit 1
+          fi
+          fail_total=0
+          err_total=0
+          for f in "${xml_files[@]}"; do
+            failures=$(grep -oE 'failures="[0-9]+"' "$f" | head -n1 | grep -oE '[0-9]+')
+            errors=$(grep -oE 'errors="[0-9]+"' "$f" | head -n1 | grep -oE '[0-9]+')
+            failures=${failures:-0}
+            errors=${errors:-0}
+            if [ "$failures" -gt 0 ] || [ "$errors" -gt 0 ]; then
+              echo "::error file=$f::Test class reported failures=$failures errors=$errors"
+              fail_total=$((fail_total + failures))
+              err_total=$((err_total + errors))
+            fi
+          done
+          if [ "$fail_total" -gt 0 ] || [ "$err_total" -gt 0 ]; then
+            echo "::error::Validation tests reported $fail_total failure(s) and $err_total error(s) across ${#xml_files[@]} XML report(s)."
+            exit 1
+          fi
+          echo "All validation tests passed (${#xml_files[@]} XML report(s) checked, Gradle exit ignored due to known executor-protocol flake)."
+        shell: bash
+
+      - name: Upload validation artefacts
+        # Always upload — useful both for diagnosing flakes and for confirming what ran on
+        # green builds. The fail-tolerant Gradle step + XML-based verification means an absent
+        # upload would otherwise be confusing post-mortem.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-windows-artifacts
+          path: |
+            sample-desktop/build/reports/tests/
+            sample-desktop/build/test-results/
+            sample-desktop/hs_err_*.log
+          if-no-files-found: ignore
+          retention-days: 14
