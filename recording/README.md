@@ -66,9 +66,26 @@ the helper, so any macOS consumer of that jar would fail with "helper binary not
 first time `ScreenCaptureKitRecorder.start()` runs. A future macOS CI workflow will guard
 against this — see the v2 follow-ups doc.
 
-For local dev the helper is built single-arch (host arch only — universal builds need full
-Xcode for `xcbuild`, which CLT alone doesn't ship). A separate release task that produces the
-universal `arm64+x86_64` binary will land alongside notarization.
+For local dev the default `:recording:assembleScreenCaptureKitHelper` builds host-arch only
+— faster iteration. To produce the universal `arm64+x86_64` binary used for distribution
+jars, run `:recording:assembleScreenCaptureKitHelperUniversal` instead. That task:
+
+1. Builds the helper twice via `swift build --triple <arch>-apple-macosx13.0` (once per
+   arch).
+2. `lipo -create`s them into a fat binary at
+   `recording/build/generated/screenCaptureHelperUniversal/SpectreScreenCapture`.
+3. Verifies the result via `lipo -info` — non-fat output fails the build.
+4. Stages the universal binary into `src/main/resources/native/macos/spectre-screencapture`,
+   overwriting whatever the host-arch task placed there.
+
+**Both paths only need the macOS Command Line Tools.** The `--triple` + `lipo` recipe
+deliberately avoids `swift build --arch arm64 --arch x86_64` (which delegates to `xcbuild`
+and requires a full Xcode install). `lipo` ships with CLT.
+
+Universal builds roughly double the helper build time (two `swift build` invocations + the
+`lipo` step), which is why the default stays single-arch. Distribution jobs (when we add
+notarization + a publish workflow) wire `assembleScreenCaptureKitHelperUniversal` in front
+of `processResources` so the published jar always contains the fat binary.
 
 ### Manual end-to-end smoke
 After granting the host JVM Screen Recording permission, point a `ScreenCaptureKitRecorder`
