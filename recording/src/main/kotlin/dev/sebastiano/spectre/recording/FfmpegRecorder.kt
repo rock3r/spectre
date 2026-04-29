@@ -42,13 +42,19 @@ class FfmpegRecorder
 internal constructor(
     private val ffmpegPath: Path,
     private val processFactory: ProcessFactory,
-    private val backend: FfmpegBackend,
+    // Provider — resolved on first [start] call rather than at construction time. Eagerly
+    // calling `FfmpegBackend.detect()` from the public constructor would make `FfmpegRecorder()`
+    // (and `AutoRecorder()`'s default ffmpegRecorder) throw immediately on Linux/BSD even when
+    // recording is never attempted, breaking call sites that instantiate recorders during app
+    // startup. Deferring keeps construction OS-agnostic and surfaces the unsupported-host error
+    // only at the point of use.
+    private val backendProvider: () -> FfmpegBackend,
 ) : Recorder {
 
     constructor(
         ffmpegPath: Path = resolveFfmpegPath(),
         processFactory: ProcessFactory = SystemProcessFactory,
-    ) : this(ffmpegPath, processFactory, FfmpegBackend.detect())
+    ) : this(ffmpegPath, processFactory, FfmpegBackend::detect)
 
     init {
         require(Files.isExecutable(ffmpegPath) || ffmpegPath == PROBE_PATH) {
@@ -61,7 +67,7 @@ internal constructor(
         output: Path,
         options: RecordingOptions,
     ): RecordingHandle {
-        val argv = backend.buildRegionArgv(ffmpegPath, region, output, options)
+        val argv = backendProvider().buildRegionArgv(ffmpegPath, region, output, options)
         Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
         val process = processFactory.start(argv)
         // Fail fast: ffmpeg dies almost instantly on common configuration errors (missing
@@ -146,7 +152,7 @@ internal constructor(
         internal fun withBackend(
             backend: FfmpegBackend,
             ffmpegPath: Path = resolveFfmpegPath(),
-        ): FfmpegRecorder = FfmpegRecorder(ffmpegPath, SystemProcessFactory, backend)
+        ): FfmpegRecorder = FfmpegRecorder(ffmpegPath, SystemProcessFactory, { backend })
 
         /**
          * Best-effort lookup for a `ffmpeg` binary on PATH. Returns the resolved absolute path if
