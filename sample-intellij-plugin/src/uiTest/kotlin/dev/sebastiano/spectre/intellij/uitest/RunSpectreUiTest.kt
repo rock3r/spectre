@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.readText
-import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Duration.Companion.minutes
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -229,9 +229,12 @@ class RunSpectreUiTest {
         const val LOG_POLL_DEADLINE_MS: Long = 30_000
         const val POLL_INTERVAL_MS: Long = 250
 
-        // First-open of an empty project on a cold ide-starter cache hits indexing for ~10–20s
-        // (sass.scss / WorkspaceFileIndex iterators). 60s gives generous headroom while still
-        // bounding the wait so a stuck indexer doesn't hang CI.
-        val INDICATOR_QUIESCENCE_TIMEOUT = 60.seconds
+        // First-open of an empty project triggers an indexing burst (sass.scss /
+        // WorkspaceFileIndex iterators / JDK cataloging). On a local cached run this takes
+        // 10–20s; on the GH macOS runner with a fresh ide-starter cache it has come in over
+        // 90s (the whole `:uiTest` job clocks ~8 min cold), so 60s was below the runner's
+        // p99 and timed out in CI even though it was fine locally. 3 min gives CI enough
+        // headroom while still bounding the wait so a stuck indexer doesn't hang the job.
+        val INDICATOR_QUIESCENCE_TIMEOUT = 3.minutes
     }
 }
