@@ -66,9 +66,37 @@ the helper, so any macOS consumer of that jar would fail with "helper binary not
 first time `ScreenCaptureKitRecorder.start()` runs. A future macOS CI workflow will guard
 against this — see the v2 follow-ups doc.
 
-For local dev the helper is built single-arch (host arch only — universal builds need full
-Xcode for `xcbuild`, which CLT alone doesn't ship). A separate release task that produces the
-universal `arm64+x86_64` binary will land alongside notarization.
+For local dev the default `:recording:assembleScreenCaptureKitHelper` builds host-arch only
+— faster iteration. The universal `arm64+x86_64` binary is opt-in via a project property:
+
+```bash
+# Default: host-arch helper, fast.
+./gradlew :recording:jar
+
+# Distribution: universal helper bundled in the jar instead.
+./gradlew :recording:jar -PuniversalHelper
+```
+
+The `-PuniversalHelper` flag swaps `processResources`'s dependency from
+`assembleScreenCaptureKitHelper` to `assembleScreenCaptureKitHelperUniversal` at
+configuration time. Only ever one staging task is in the graph, so there's no race over
+which binary ends up bundled. The universal task pipeline:
+
+1. Builds the helper twice via `swift build --triple <arch>-apple-macosx13.0` (once per
+   arch).
+2. `lipo -create`s them into a fat binary at
+   `recording/build/generated/screenCaptureHelperUniversal/SpectreScreenCapture`.
+3. Verifies the result via `lipo -verify_arch arm64 x86_64` — exits non-zero (fails the
+   build) if any expected arch isn't present, so a thin binary can never sneak through.
+4. Stages the universal binary into `src/main/resources/native/macos/spectre-screencapture`.
+
+**Both paths only need the macOS Command Line Tools.** The `--triple` + `lipo` recipe
+deliberately avoids `swift build --arch arm64 --arch x86_64` (which delegates to `xcbuild`
+and requires a full Xcode install). `lipo` ships with CLT.
+
+Universal builds roughly double the helper build time (two `swift build` invocations + the
+`lipo` step), which is why the default stays single-arch. The publish workflow (when we add
+one) sets `-PuniversalHelper` so distribution jars always contain the fat binary.
 
 ### Manual end-to-end smoke
 After granting the host JVM Screen Recording permission, point a `ScreenCaptureKitRecorder`

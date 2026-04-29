@@ -26,8 +26,8 @@ tasks.withType<Test>().configureEach { useJUnitPlatform() }
 // that owns the actual `SCStream` + `AVAssetWriter` lifecycle. Reasons for the out-of-process
 // shape are written up in `.plans/v2-screencapturekit-bridge.md`. Build pipeline:
 //
-//   1. `swift build -c release --arch arm64 --arch x86_64` produces a universal binary
-//      under `recording/native/macos/.build/apple/Products/Release/SpectreScreenCapture`.
+//   1. `swift build -c release` produces a host-arch binary at
+//      `recording/native/macos/.build/release/SpectreScreenCapture`.
 //   2. `assembleScreenCaptureKitHelper` copies it into
 //      `src/main/resources/native/macos/spectre-screencapture` so the resource path is stable
 //      regardless of where SwiftPM lays out its output across versions.
@@ -38,16 +38,17 @@ tasks.withType<Test>().configureEach { useJUnitPlatform() }
 // Non-macOS hosts skip the build entirely — the helper is only meaningful on macOS, and the
 // JVM-side recorder gates on `os.name` before attempting extraction.
 val swiftHelperSource = layout.projectDirectory.dir("native/macos")
-// SwiftPM lays its native-arch single-config build at `.build/release/<target>` and the
-// xcbuild-driven universal builds at `.build/apple/Products/Release/<target>`. We default to
-// the native-arch path because universal builds require full Xcode (the xcbuild framework
-// isn't present with Command Line Tools alone). A release task that produces the universal
-// binary lands separately when we wire notarization.
 val swiftHelperBuildDir = swiftHelperSource.dir(".build/release")
 val swiftHelperBinary = swiftHelperBuildDir.file("SpectreScreenCapture")
 val helperResourcePath = "native/macos/spectre-screencapture"
 val helperResourceDest =
     layout.buildDirectory.file("generated/screenCaptureHelper/$helperResourcePath")
+
+// macOS deployment target for the helper. Lines up with `Package.swift`'s
+// `platforms: [.macOS(.v13)]`. The triple form (with explicit version) is required by
+// `swift build --triple` — bare `arm64-apple-macosx` defaults to the SDK's current macOS,
+// which would silently raise the floor on every Xcode update.
+val swiftMacosDeploymentTarget = "13.0"
 
 val buildScreenCaptureKitHelper by
     tasks.registering(Exec::class) {
@@ -61,6 +62,106 @@ val buildScreenCaptureKitHelper by
         outputs.file(swiftHelperBinary)
     }
 
+// --- Universal binary (release distribution) ------------------------------------------------
+//
+// Opt-in path that produces an arm64+x86_64 universal binary. Default
+// `assembleScreenCaptureKitHelper` stays host-arch so local iteration stays fast — the
+// universal build adds two SwiftPM invocations (one per arch) plus a `lipo` step, which
+// roughly doubles helper build time.
+//
+// Approach: per-arch `swift build --triple <arch>-apple-macosx<version>` followed by
+// `lipo -create`. This deliberately avoids `swift build --arch arm64 --arch x86_64`, which
+// delegates to `xcbuild` and requires a full Xcode install (the framework isn't shipped
+// with the Command Line Tools). The per-triple + lipo recipe runs against plain SwiftPM +
+// the standard `lipo` tool — both available with Command Line Tools alone.
+//
+// Use `:recording:assembleScreenCaptureKitHelperUniversal` to invoke explicitly. CI release
+// jobs (when we add them) wire this in as a dependency of `processResources` to bundle the
+// universal helper instead of the host-arch one.
+val universalArchitectures = listOf("arm64", "x86_64")
+
+val perArchSwiftBuildTasks = universalArchitectures.map { arch ->
+    val taskName = "buildScreenCaptureKitHelper${arch.replaceFirstChar { it.uppercase() }}"
+    val triple = "$arch-apple-macosx$swiftMacosDeploymentTarget"
+    // SwiftPM strips the `.0` (and any deployment-target version) from the triple when
+    // it builds the output directory name — `arm64-apple-macosx13.0` becomes
+    // `arm64-apple-macosx`. The flag still needs the version (otherwise SwiftPM picks
+    // up the SDK's current macOS as the floor); the path layout doesn't.
+    val outputDirTriple = "$arch-apple-macosx"
+    val perArchOutput =
+        swiftHelperSource.dir(".build/$outputDirTriple/release").file("SpectreScreenCapture")
+    tasks.register<Exec>(taskName) {
+        description = "Builds the macOS ScreenCaptureKit helper for $arch."
+        group = "build"
+        onlyIf { OperatingSystem.current().isMacOsX }
+        workingDir = swiftHelperSource.asFile
+        commandLine("swift", "build", "-c", "release", "--triple", triple)
+        inputs.dir(swiftHelperSource.dir("Sources"))
+        inputs.file(swiftHelperSource.file("Package.swift"))
+        outputs.file(perArchOutput)
+    }
+}
+
+// Stage the universal helper under `build/` rather than alongside the per-arch builds in
+// `.build/`. Gradle auto-creates output directories when registered via `outputs.file(...)`,
+// which lets us avoid a `doFirst { mkdirs() }` — and the closure capture of script-level
+// vals that goes with it (Gradle's configuration cache refuses to serialise that).
+val universalHelperBinary =
+    layout.buildDirectory.file("generated/screenCaptureHelperUniversal/SpectreScreenCapture")
+
+// Precompute everything as plain String/File outside the task action bodies. Capturing
+// `swiftHelperSource` / `universalHelperBinary` (which are Gradle Layout types) inside an
+// Exec task's `commandLine(...)` trips Gradle's configuration-cache rule against
+// serialising script object references.
+val perArchOutputFiles = universalArchitectures.map { arch ->
+    // Output dir uses the version-stripped triple — see note in the per-arch task block
+    // above.
+    swiftHelperSource.dir(".build/$arch-apple-macosx/release").file("SpectreScreenCapture")
+}
+val perArchOutputAbsolutePaths = perArchOutputFiles.map { it.asFile.absolutePath }
+val universalHelperAbsolutePath = universalHelperBinary.get().asFile.absolutePath
+
+val lipoScreenCaptureKitHelper by
+    tasks.registering(Exec::class) {
+        description = "Combines the per-arch helper builds into a universal arm64+x86_64 binary."
+        group = "build"
+        onlyIf { OperatingSystem.current().isMacOsX }
+        dependsOn(perArchSwiftBuildTasks)
+        commandLine(
+            buildList {
+                add("lipo")
+                add("-create")
+                add("-output")
+                add(universalHelperAbsolutePath)
+                addAll(perArchOutputAbsolutePaths)
+            }
+        )
+        inputs.files(perArchOutputFiles)
+        outputs.file(universalHelperBinary)
+    }
+
+val verifyUniversalScreenCaptureKitHelper by
+    tasks.registering(Exec::class) {
+        description = "Sanity-checks that the lipo'd helper is actually fat (arm64 + x86_64)."
+        group = "verification"
+        onlyIf { OperatingSystem.current().isMacOsX }
+        dependsOn(lipoScreenCaptureKitHelper)
+        // `lipo -verify_arch <arch>...` exits 0 only if EVERY listed architecture is present
+        // in the binary, exit 1 otherwise. We deliberately use this instead of `lipo -info`
+        // — the latter exits 0 even for thin (non-fat) binaries, just printing "Non-fat
+        // file: ... is architecture: ...", so it would silently let a single-arch helper
+        // through to a distribution build.
+        commandLine(
+            buildList {
+                add("lipo")
+                add(universalHelperAbsolutePath)
+                add("-verify_arch")
+                addAll(universalArchitectures)
+            }
+        )
+        inputs.file(universalHelperBinary)
+    }
+
 val assembleScreenCaptureKitHelper by
     tasks.registering(Copy::class) {
         description = "Stages the ScreenCaptureKit helper binary into the resources tree."
@@ -68,6 +169,19 @@ val assembleScreenCaptureKitHelper by
         onlyIf { OperatingSystem.current().isMacOsX }
         dependsOn(buildScreenCaptureKitHelper)
         from(swiftHelperBinary) { rename { "spectre-screencapture" } }
+        into(helperResourceDest.get().asFile.parentFile)
+    }
+
+val assembleScreenCaptureKitHelperUniversal by
+    tasks.registering(Copy::class) {
+        description =
+            "Stages the universal arm64+x86_64 ScreenCaptureKit helper into resources " +
+                "(opt-in for distribution builds; slower than the host-arch task). Wire into " +
+                "processResources by passing -PuniversalHelper at invocation time."
+        group = "build"
+        onlyIf { OperatingSystem.current().isMacOsX }
+        dependsOn(verifyUniversalScreenCaptureKitHelper)
+        from(universalHelperBinary) { rename { "spectre-screencapture" } }
         into(helperResourceDest.get().asFile.parentFile)
     }
 
@@ -84,8 +198,30 @@ val assembleScreenCaptureKitHelper by
 // CI workflow (#18 follow-up) will guard against accidentally publishing a Linux-built jar.
 sourceSets["main"].resources.srcDir(layout.buildDirectory.dir("generated/screenCaptureHelper"))
 
+// Whether `processResources` (and therefore `jar` / distribution) bundles the host-arch helper
+// or the universal one is controlled by a project property. Two reasons for this design over
+// `mustRunAfter`-based ordering:
+//   1. `mustRunAfter` only orders tasks that are BOTH in the requested graph; it doesn't pull
+//      a task into the graph. So a flow like
+//      `:recording:assembleScreenCaptureKitHelperUniversal :recording:jar` would still let
+//      `processResources` run after the host-arch staging (because that's its declared
+//      dependency) and finalise the jar before universal landed — published jars would
+//      ship a thin binary even though universal had been requested.
+//   2. Having only ONE staging task in `processResources`'s graph at any time eliminates the
+//      "both wrote to the same destination, hope ordering held" race entirely. Either
+//      universal or host-arch is the wired-in dependency, never both.
+//
+// Default invocation: `./gradlew :recording:jar` → host-arch (fast iteration).
+// Distribution invocation: `./gradlew :recording:jar -PuniversalHelper` → universal binary.
+val useUniversalHelper = providers.gradleProperty("universalHelper").isPresent
+
 if (OperatingSystem.current().isMacOsX) {
-    tasks.named("processResources") { dependsOn(assembleScreenCaptureKitHelper) }
+    tasks.named("processResources") {
+        dependsOn(
+            if (useUniversalHelper) assembleScreenCaptureKitHelperUniversal
+            else assembleScreenCaptureKitHelper
+        )
+    }
 }
 
 // Manual smoke entry point — opens a JFrame, records it for ~3s via ScreenCaptureKitRecorder,
