@@ -1,3 +1,4 @@
+import org.gradle.internal.os.OperatingSystem
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
 plugins {
@@ -156,4 +157,17 @@ compose.desktop {
             packageVersion = "1.0.0"
         }
     }
+}
+
+// Manual diagnostic — opens a JFrame containing a ComposePanel, prints per-monitor scale +
+// LocalDensity + boundsInWindow chain on each Reprint click. Used to gather Windows DPI
+// scaling data for issue #21 (validate HiDpiMapper across 100/125/150/200% per-monitor DPI).
+// Lives in the test source set so it can pull in test infra freely without affecting the
+// production application bundle.
+tasks.register<JavaExec>("runWindowsHiDpiDiagnostic") {
+    group = "verification"
+    description = "Boots a Compose JFrame and prints DPI scale + density on each Reprint click."
+    onlyIf { OperatingSystem.current().isWindows }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.sample.WindowsHiDpiDiagnostic")
 }
