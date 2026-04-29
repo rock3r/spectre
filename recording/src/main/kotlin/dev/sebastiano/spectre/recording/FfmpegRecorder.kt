@@ -68,51 +68,7 @@ internal constructor(
         options: RecordingOptions,
     ): RecordingHandle {
         val argv = backendProvider().buildRegionArgv(ffmpegPath, region, output, options)
-        Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
-        val process = processFactory.start(argv)
-        // Fail fast: ffmpeg dies almost instantly on common configuration errors (missing
-        // macOS Screen Recording permission, invalid codec, unavailable avfoundation/gdigrab
-        // device, gdigrab title= miss). The Recorder.start contract promises frames are
-        // landing by return, so a process that has already exited must surface as an error
-        // rather than a "success" handle that later produces nothing. Interruption during
-        // the probe must also clean up the spawned ffmpeg before propagating, otherwise we
-        // leak an orphan subprocess.
-        val exitedDuringProbe =
-            try {
-                process.waitFor(STARTUP_PROBE_MILLIS, TimeUnit.MILLISECONDS)
-            } catch (e: InterruptedException) {
-                process.destroyForcibly()
-                // destroyForcibly() is asynchronous — wait once more so the orphan ffmpeg
-                // really has gone before we propagate the interrupt to the caller. We
-                // explicitly do NOT catch InterruptedException here: another interrupt
-                // during this wait means the JVM is being torn down anyway, and the daemon
-                // semantics of subprocesses will let it die with the JVM.
-                @Suppress("TooGenericExceptionCaught", "SwallowedException")
-                val terminated =
-                    try {
-                        process.waitFor(FORCE_KILL_DURING_START_SECONDS, TimeUnit.SECONDS)
-                    } catch (_: Throwable) {
-                        false
-                    }
-                Thread.currentThread().interrupt()
-                if (!terminated) {
-                    throw IllegalStateException(
-                        "ffmpeg refused to die after destroyForcibly() during start() interrupt — " +
-                            "leaking an orphan recorder is not safe; output at $output is in an " +
-                            "undefined state."
-                    )
-                }
-                throw e
-            }
-        if (exitedDuringProbe) {
-            throw IllegalStateException(
-                "ffmpeg exited immediately (code ${process.exitValue()}) — recording did not start. " +
-                    "Common causes: missing macOS Screen Recording permission, invalid codec, " +
-                    "unavailable avfoundation/gdigrab device, or a Windows gdigrab `title=` that " +
-                    "matches no visible window. Argv: $argv"
-            )
-        }
-        return FfmpegRecordingHandle(process, output)
+        return spawnFfmpegRecording(processFactory, argv, output)
     }
 
     /** Indirection over `ProcessBuilder.start()` so tests can drive the subprocess lifecycle. */
@@ -120,7 +76,7 @@ internal constructor(
         fun start(argv: List<String>): Process
     }
 
-    private object SystemProcessFactory : ProcessFactory {
+    internal object SystemProcessFactory : ProcessFactory {
         override fun start(argv: List<String>): Process =
             ProcessBuilder(argv)
                 // Discard ffmpeg's stdout and stderr. We never consume them, and leaving them
@@ -325,6 +281,64 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
         const val POSIX_SIGTERM_EXIT: Int = 143 // 128 + 15 (SIGTERM)
         const val FFMPEG_SIGKILL_EXIT: Int = 137 // 128 + 9 (SIGKILL)
     }
+}
+
+/**
+ * Spawn an `ffmpeg` subprocess against [argv], block briefly to detect immediate exits, and wrap
+ * the live process in a [RecordingHandle]. Shared by [FfmpegRecorder] (region capture) and
+ * [FfmpegWindowRecorder] (Windows title-targeted capture) so the startup probe + signal-handling
+ * + crash-detection lifecycle stays in one place.
+ *
+ * The startup probe is failure-mode-agnostic: it just observes that the spawned process is still
+ * alive after a short window. Common immediate-exit triggers across the two recorder shapes:
+ * - missing macOS Screen Recording permission (avfoundation device fails to open),
+ * - invalid codec / unavailable device,
+ * - gdigrab `title=` that matches no visible window,
+ * - output path on a read-only filesystem.
+ */
+internal fun spawnFfmpegRecording(
+    processFactory: FfmpegRecorder.ProcessFactory,
+    argv: List<String>,
+    output: Path,
+): RecordingHandle {
+    Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
+    val process = processFactory.start(argv)
+    val exitedDuringProbe =
+        try {
+            process.waitFor(STARTUP_PROBE_MILLIS, TimeUnit.MILLISECONDS)
+        } catch (e: InterruptedException) {
+            process.destroyForcibly()
+            // destroyForcibly() is asynchronous — wait once more so the orphan ffmpeg really
+            // has gone before we propagate the interrupt to the caller. We explicitly do NOT
+            // catch InterruptedException here: another interrupt during this wait means the JVM
+            // is being torn down anyway, and the daemon semantics of subprocesses will let it
+            // die with the JVM.
+            @Suppress("TooGenericExceptionCaught", "SwallowedException")
+            val terminated =
+                try {
+                    process.waitFor(FORCE_KILL_DURING_START_SECONDS, TimeUnit.SECONDS)
+                } catch (_: Throwable) {
+                    false
+                }
+            Thread.currentThread().interrupt()
+            if (!terminated) {
+                throw IllegalStateException(
+                    "ffmpeg refused to die after destroyForcibly() during start() interrupt — " +
+                        "leaking an orphan recorder is not safe; output at $output is in an " +
+                        "undefined state."
+                )
+            }
+            throw e
+        }
+    if (exitedDuringProbe) {
+        throw IllegalStateException(
+            "ffmpeg exited immediately (code ${process.exitValue()}) — recording did not start. " +
+                "Common causes: missing macOS Screen Recording permission, invalid codec, " +
+                "unavailable avfoundation/gdigrab device, or a Windows gdigrab `title=` that " +
+                "matches no visible window. Argv: $argv"
+        )
+    }
+    return FfmpegRecordingHandle(process, output)
 }
 
 private const val STARTUP_PROBE_MILLIS: Long = 200
