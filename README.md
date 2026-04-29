@@ -60,6 +60,20 @@ For a non-interactive smoke that auto-fires the action on project open:
 - **`:recording:check`** on macOS — exercises the Swift ScreenCaptureKit helper. Runs in CI via
   [`.github/workflows/macos.yml`](.github/workflows/macos.yml) when recording sources change.
 
+## Supported JVMs
+
+Spectre is validated on:
+
+- **JBR 21** — JetBrains Runtime 21 (the dev-loop default; the project's Gradle toolchain pins
+  JDK 21 and bytecode targets 21).
+- **JBR 25** — exercised via the IDE-hosted UI test, which boots IntelliJ Ultimate 2026.1.1
+  with its bundled JBR 25.0.2 and runs `core` + plugin code paths inside that runtime.
+
+Other JDKs / vendors at language level 21+ should work — Spectre uses no JBR-only APIs in the
+non-IDE modules — but they're not validated and **YMMV**. CI itself runs on Temurin 21
+(see [`ci.yml`](.github/workflows/ci.yml)) because the GitHub `setup-java` action's JBR index
+is currently missing JBR 21; bytecode equivalence makes that an acceptable proxy.
+
 ## CI
 
 - [`ci.yml`](.github/workflows/ci.yml) — `./gradlew check` on every PR (Linux).
