@@ -84,35 +84,45 @@ jobs:
 
       - name: Verify validation tests passed via JUnit XML
         # Source-of-truth check that ignores Gradle's exit code but does NOT rubber-stamp every
-        # failure. Two layers of safety so a crashed worker JVM in *one* task doesn't get masked
-        # by another task's clean XML:
+        # failure. Three layers of safety so a crashed worker JVM in *one* class doesn't get
+        # masked by another's clean XML:
         #
-        # 1. We require XML reports from each *expected* validationTest* task directory. If
-        #    any of those directories are missing (e.g. the worker JVM crashed before writing
-        #    anything, or Gradle skipped the task outright), this step fails.
-        # 2. For every XML found we still parse `failures="N"` / `errors="N"` and fail if any
-        #    are non-zero.
+        # 1. We require an XML report for every *expected test class* (not just every expected
+        #    task directory). validationTest runs multiple ValidationTest classes; a mid-class
+        #    JVM crash would skip writing that class's XML while siblings still wrote theirs.
+        #    If we only required "at least one XML per task" we'd silently green-light that.
+        # 2. For every XML found we parse `failures="N"` / `errors="N"` and fail if any are
+        #    non-zero.
+        # 3. Compile / dependency-resolution failures that produced no XMLs at all still trip
+        #    the per-class existence check.
         #
-        # The expected-task list mirrors what the Gradle step above invokes. Keep them in sync
-        # if this workflow's task graph changes.
+        # The expected-class lists mirror what the Gradle step above invokes (the validation
+        # source set's *.kt files). Keep them in sync when adding or removing test classes —
+        # this is the one place adding a ValidationTest class requires a CI-side touch, and
+        # that's deliberately the design (drift here would be a silent CI hole otherwise).
         run: |
           set -euo pipefail
           shopt -s globstar nullglob
-          expected_task_dirs=(
-            "validationTest"
-            "validationTestLayerComponent"
-            "validationTestLayerSameCanvas"
-            "validationTestLayerWindow"
+          # validationTest runs every class that isn't gated to a layer-mode task. Layer
+          # tasks filter to PopupLayerVariantsValidationTest only (see the build.gradle.kts
+          # `popupLayerTask` helper).
+          declare -A expected_classes_by_task=(
+            ["validationTest"]="Issue7CompletionValidationTest Issue8CompletionValidationTest Issue8FidelityValidationTest Issue14PerfValidationTest MultiWindowAndPopupValidationTest PopupLayerVariantsValidationTest"
+            ["validationTestLayerComponent"]="PopupLayerVariantsValidationTest"
+            ["validationTestLayerSameCanvas"]="PopupLayerVariantsValidationTest"
+            ["validationTestLayerWindow"]="PopupLayerVariantsValidationTest"
           )
           missing=()
           all_xml=()
-          for task_dir in "${expected_task_dirs[@]}"; do
-            xmls=(sample-desktop/build/test-results/$task_dir/TEST-*.xml)
-            if [ "${#xmls[@]}" -eq 0 ]; then
-              missing+=("$task_dir")
-            else
-              all_xml+=("${xmls[@]}")
-            fi
+          for task_dir in "${!expected_classes_by_task[@]}"; do
+            for class_name in ${expected_classes_by_task[$task_dir]}; do
+              xml="sample-desktop/build/test-results/$task_dir/TEST-dev.sebastiano.spectre.sample.validation.${class_name}.xml"
+              if [ ! -f "$xml" ]; then
+                missing+=("$task_dir/${class_name}")
+              else
+                all_xml+=("$xml")
+              fi
+            done
           done
           if [ "${#missing[@]}" -gt 0 ]; then
             echo "::error::Missing JUnit XML reports for: ${missing[*]}. Gradle step outcome: ${{ steps.gradle.outcome }}"
@@ -135,7 +145,7 @@ jobs:
             echo "::error::Validation tests reported $fail_total failure(s) and $err_total error(s) across ${#all_xml[@]} XML report(s)."
             exit 1
           fi
-          echo "All ${#expected_task_dirs[@]} expected validation tasks reported XMLs, all ${#all_xml[@]} XML report(s) clean (Gradle exit ignored due to known executor-protocol flake)."
+          echo "All ${#all_xml[@]} expected per-class XML report(s) present and clean (Gradle exit ignored due to known executor-protocol flake)."
         shell: bash
 
       - name: Upload validation artefacts
