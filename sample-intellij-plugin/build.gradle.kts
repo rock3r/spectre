@@ -1,5 +1,3 @@
-import org.jetbrains.intellij.platform.gradle.TestFrameworkType
-
 plugins {
     alias(libs.plugins.detekt)
     alias(libs.plugins.ktfmt)
@@ -85,11 +83,7 @@ dependencies {
         // NOT plugin IDs and cannot be referenced from `<depends>` — that route fails the IDE's
         // plugin loader with "requires plugin 'intellij.libraries.skiko' to be installed".
         @Suppress("UnstableApiUsage") composeUI()
-
-        testFramework(TestFrameworkType.Platform)
     }
-
-    testImplementation(libs.junit4)
 }
 
 // Belt-and-braces: ensure neither Compose Multiplatform nor skiko ever lands in the plugin's

@@ -26,6 +26,17 @@ import dev.sebastiano.spectre.core.WindowTracker
  * from `SpectreSampleToolWindowContent` should appear in `idea.log`. This proves Spectre's
  * `WindowTracker` reaches the Jewel-hosted `ComposePanel` inside the IDE process and that
  * `SemanticsReader` reads its semantics owners — both checklist items on #13.
+ *
+ * Threading model:
+ * - Polling and `Thread.sleep` happen on a pooled background thread, NEVER the EDT. Sleeping on the
+ *   EDT would block AWT's event queue for the full poll budget and prevent Compose recomposition,
+ *   so the panel-attach / popup-appear events we're polling for could never fire — the polls would
+ *   always time out even though the tool window is healthy. (Caught by both Codex and Bugbot review
+ *   on #43; the older single-`invokeLater` shape suffered from this race.)
+ * - Compose-tree access (`refreshWindows()`, `findOneByTestTag`, semantics-tree reads) is
+ *   marshalled back to the EDT inside the poll iteration via `invokeAndWait`. The ComposePanel's
+ *   semantics owners must be read from the EDT — they're not thread-safe.
+ * - `triggerOnClick` runs the semantics OnClick action on the EDT (same reason).
  */
 class RunSpectreAction : AnAction() {
 
@@ -43,10 +54,13 @@ class RunSpectreAction : AnAction() {
             thisLogger().warn("Spectre Sample tool window not registered")
             return
         }
+        // Activation must run on EDT (ToolWindow API contract). The activation callback fires
+        // on EDT too — we immediately bounce off to a pooled thread so the polling loop
+        // doesn't block AWT's event queue.
         toolWindow.activate(
-            { ApplicationManager.getApplication().invokeLater { driveAutomator() } },
-            true,
-            true,
+            { ApplicationManager.getApplication().executeOnPooledThread { driveAutomator() } },
+            /* autoFocusContents = */ true,
+            /* forced = */ true,
         )
     }
 
@@ -59,12 +73,12 @@ class RunSpectreAction : AnAction() {
             )
         val log = thisLogger()
 
-        // 1. Wait for the Jewel `ComposePanel` to attach its semantics owner. The activation
-        //    callback runs as soon as the tool window has been shown but Compose composition is
-        //    asynchronous — on a cold IDE warmup the first `refreshWindows()` can land before
-        //    the panel registers any owners. Poll for a bounded budget instead of failing on
-        //    the very first tick.
-        val panelReady = poll {
+        // 1. Wait for the Jewel `ComposePanel` to attach its semantics owner. Compose
+        //    composition is asynchronous; the panel's first owners can land several frames
+        //    after activation. Polling here happens on the pooled background thread (the
+        //    `Thread.sleep` between ticks does NOT block EDT) and the per-tick Compose
+        //    access is marshalled back to EDT.
+        val panelReady = pollOnEdt {
             automator.refreshWindows()
             automator.windows.isNotEmpty() && automator.findOneByTestTag("ide.counter.text") != null
         }
@@ -79,22 +93,21 @@ class RunSpectreAction : AnAction() {
 
         // 2. Dump the initial tree (popup closed).
         log.info("[Spectre] tracked windows (initial): ${automator.windows.map { it.surfaceId }}")
-        dumpTaggedNodes(automator, "[Spectre] (initial)")
+        runOnEdt { dumpTaggedNodes(automator, "[Spectre] (initial)") }
 
         // 3. Open the popup so the Jewel-hosted popup discovery path actually runs. Without
         //    this the action would only ever observe the initial counter scenario nodes — the
         //    popup `body`/`text`/`dismissButton` nodes don't exist until after a click. We
-        //    drive the click through the in-process automator's `RobotDriver.headless()`
-        //    (which can't reach the OS) so we fire the toggle by activating its semantics
-        //    on-click action directly.
-        val toggle = automator.findOneByTestTag("ide.popup.toggleButton")
+        //    drive the click through Compose's `OnClick` semantics action (the headless
+        //    `RobotDriver` can't reach the OS).
+        val toggle = runOnEdt { automator.findOneByTestTag("ide.popup.toggleButton") }
         if (toggle == null) {
             log.warn("[Spectre] popup toggle node not discoverable — popup discovery skipped")
             return
         }
-        triggerOnClick(toggle)
+        runOnEdt { triggerOnClick(toggle) }
 
-        val popupReady = poll {
+        val popupReady = pollOnEdt {
             automator.refreshWindows()
             automator.findOneByTestTag("ide.popup.body") != null
         }
@@ -109,7 +122,7 @@ class RunSpectreAction : AnAction() {
         log.info(
             "[Spectre] tracked windows (with popup): ${automator.windows.map { it.surfaceId }}"
         )
-        dumpTaggedNodes(automator, "[Spectre] (with popup)")
+        runOnEdt { dumpTaggedNodes(automator, "[Spectre] (with popup)") }
     }
 
     private fun dumpTaggedNodes(automator: ComposeAutomator, prefix: String) {
@@ -125,19 +138,28 @@ class RunSpectreAction : AnAction() {
      * synthetic click for the purpose of toggling state, without going through the OS input stack.
      * The `RobotDriver.headless()` we use here can't deliver real input, so we drive the semantics
      * tree directly. This is the same pattern Compose's own `composeTestRule.onNode` uses
-     * internally.
+     * internally. Caller is responsible for ensuring this runs on the EDT.
      */
     private fun triggerOnClick(node: AutomatorNode) {
-        ApplicationManager.getApplication().invokeAndWait {
-            val onClick = node.semanticsNode.config.getOrNull(SemanticsActions.OnClick)
-            onClick?.action?.invoke()
-        }
+        val onClick = node.semanticsNode.config.getOrNull(SemanticsActions.OnClick)
+        onClick?.action?.invoke()
     }
 
-    private inline fun poll(predicate: () -> Boolean): Boolean {
+    /**
+     * Polls [predicate] until it returns true or [POLL_BUDGET_MS] elapses. Each tick runs
+     * [predicate] on the EDT (so it can touch Compose semantics safely); the inter-tick sleep runs
+     * on the calling thread (must NOT be the EDT — sleeping there freezes AWT event dispatching and
+     * prevents Compose from recomposing the very state we're polling for).
+     */
+    private inline fun pollOnEdt(crossinline predicate: () -> Boolean): Boolean {
+        check(!ApplicationManager.getApplication().isDispatchThread) {
+            "pollOnEdt must NOT be called from the EDT — it would block recomposition. " +
+                "Call from a pooled background thread (executeOnPooledThread)."
+        }
         val deadline = System.nanoTime() + POLL_BUDGET_MS * NANOS_PER_MILLI
         while (System.nanoTime() < deadline) {
-            if (runCatching(predicate).getOrDefault(false)) return true
+            val matched = runOnEdt { runCatching { predicate() }.getOrDefault(false) }
+            if (matched) return true
             try {
                 Thread.sleep(POLL_INTERVAL_MS)
             } catch (_: InterruptedException) {
@@ -146,6 +168,19 @@ class RunSpectreAction : AnAction() {
             }
         }
         return false
+    }
+
+    /**
+     * Runs [block] on the EDT and returns its result. Wrapper around `invokeAndWait` so the polling
+     * loop can synchronously fold each Compose-touching tick back into its decision.
+     */
+    private inline fun <T> runOnEdt(crossinline block: () -> T): T {
+        if (ApplicationManager.getApplication().isDispatchThread) return block()
+        var result: T? = null
+        @Suppress("UNCHECKED_CAST")
+        ApplicationManager.getApplication().invokeAndWait { result = block() }
+        @Suppress("UNCHECKED_CAST")
+        return result as T
     }
 
     private fun formatNode(node: AutomatorNode): String = buildString {
