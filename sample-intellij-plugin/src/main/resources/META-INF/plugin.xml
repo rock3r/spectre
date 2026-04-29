@@ -1,0 +1,41 @@
+<!--
+  Sample IntelliJ plugin used to validate that Spectre's in-process automator can drive a
+  Jewel-hosted Compose tool window. Not published anywhere; only consumed via `runIde`.
+-->
+<idea-plugin>
+    <id>dev.sebastiano.spectre.sample</id>
+    <name>Spectre IDE Sample</name>
+    <vendor>Spectre</vendor>
+
+    <!--
+      `com.intellij.modules.compose` is the umbrella platform module that exposes the IDE's
+      bundled Jewel + Compose + skiko classes to this plugin's classloader at runtime. It is
+      paired with `composeUI()` in build.gradle.kts (which puts the matching jars on the
+      compile/runtime classpath). Per-jar `<depends>intellij.libraries.skiko</depends>` etc. are
+      not plugin IDs — the plugin loader rejects them with "requires plugin '...' to be installed".
+    -->
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.compose</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Spectre Sample"
+                    anchor="right"
+                    factoryClass="dev.sebastiano.spectre.intellij.SpectreSampleToolWindowFactory"/>
+
+        <!--
+          Diagnostic auto-run: fires `RunSpectreAction` on project open when
+          `-Dspectre.autorun=true` is set. Off by default — interactive `Tools → Run Spectre`
+          is the normal path. Used for non-interactive validation of the action.
+        -->
+        <postStartupActivity implementation="dev.sebastiano.spectre.intellij.SpectreAutoRunStartupActivity"/>
+    </extensions>
+
+    <actions>
+        <action id="dev.sebastiano.spectre.sample.RunSpectre"
+                class="dev.sebastiano.spectre.intellij.RunSpectreAction"
+                text="Run Spectre Against the Sample Tool Window"
+                description="Drives the in-process Spectre automator against the Spectre Sample tool window and dumps the discovered semantics tree to the IDE log.">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>

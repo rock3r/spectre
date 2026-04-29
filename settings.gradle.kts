@@ -1,3 +1,5 @@
+import org.jetbrains.intellij.platform.gradle.extensions.intellijPlatform
+
 rootProject.name = "Spectre"
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
@@ -26,10 +28,33 @@ dependencyResolutionManagement {
             }
         }
         mavenCentral()
+
+        // The IntelliJ Platform Gradle plugin (settings variant, applied below) registers an
+        // ivy-style index for IDE distribution artifacts here. Settings-level avoids forcing
+        // each module to declare it. Other modules ignore the IntelliJ index because their
+        // dependencies don't match the index's group, so this is harmless for them.
+        intellijPlatform { defaultRepositories() }
+
+        // Jewel pulls `org.jetbrains.skiko:skiko-awt-runtime-all`, which lives only on
+        // JetBrains' Compose dev space (not Maven Central). `includeGroup` keeps the lookup
+        // scoped to skiko so Maven Central remains the source of truth for everything else.
+        maven("https://maven.pkg.jetbrains.space/public/p/compose/dev") {
+            mavenContent { includeGroup("org.jetbrains.skiko") }
+        }
     }
 }
 
-plugins { id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0" }
+plugins {
+    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
+    // Settings-level companion to the project-level `org.jetbrains.intellij.platform` plugin —
+    // makes the `intellijPlatform { defaultRepositories() }` block above resolvable.
+    //
+    // Version pinned here as a literal because Gradle's settings `plugins { }` block doesn't
+    // accept script-scope expressions for `version`. Keep the project-level plugin in
+    // `sample-intellij-plugin/build.gradle.kts` applied without a version (`id(...)` only) so
+    // it inherits this version through the settings classpath — single source of truth.
+    id("org.jetbrains.intellij.platform.settings") version "2.10.1"
+}
 
 include(":core")
 
@@ -40,3 +65,5 @@ include(":recording")
 include(":testing")
 
 include(":sample-desktop")
+
+include(":sample-intellij-plugin")
