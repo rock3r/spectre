@@ -176,19 +176,11 @@ val assembleScreenCaptureKitHelperUniversal by
     tasks.registering(Copy::class) {
         description =
             "Stages the universal arm64+x86_64 ScreenCaptureKit helper into resources " +
-                "(opt-in for distribution builds; slower than the host-arch task)."
+                "(opt-in for distribution builds; slower than the host-arch task). Wire into " +
+                "processResources by passing -PuniversalHelper at invocation time."
         group = "build"
         onlyIf { OperatingSystem.current().isMacOsX }
         dependsOn(verifyUniversalScreenCaptureKitHelper)
-        // Both staging tasks write to the same destination
-        // (`build/generated/screenCaptureHelper/native/macos/spectre-screencapture`). Without
-        // an explicit ordering, a distribution flow that invokes
-        // `:recording:assembleScreenCaptureKitHelperUniversal :recording:jar` could run the
-        // host-arch task AFTER the universal one — silently replacing the fat binary with a
-        // thin one in the published jar. `mustRunAfter` forces universal to land last when
-        // both are in the requested task graph; the host-arch step's earlier work is just
-        // overwritten, which is wasted I/O but self-correcting and produces the right output.
-        mustRunAfter(assembleScreenCaptureKitHelper)
         from(universalHelperBinary) { rename { "spectre-screencapture" } }
         into(helperResourceDest.get().asFile.parentFile)
     }
@@ -206,8 +198,30 @@ val assembleScreenCaptureKitHelperUniversal by
 // CI workflow (#18 follow-up) will guard against accidentally publishing a Linux-built jar.
 sourceSets["main"].resources.srcDir(layout.buildDirectory.dir("generated/screenCaptureHelper"))
 
+// Whether `processResources` (and therefore `jar` / distribution) bundles the host-arch helper
+// or the universal one is controlled by a project property. Two reasons for this design over
+// `mustRunAfter`-based ordering:
+//   1. `mustRunAfter` only orders tasks that are BOTH in the requested graph; it doesn't pull
+//      a task into the graph. So a flow like
+//      `:recording:assembleScreenCaptureKitHelperUniversal :recording:jar` would still let
+//      `processResources` run after the host-arch staging (because that's its declared
+//      dependency) and finalise the jar before universal landed — published jars would
+//      ship a thin binary even though universal had been requested.
+//   2. Having only ONE staging task in `processResources`'s graph at any time eliminates the
+//      "both wrote to the same destination, hope ordering held" race entirely. Either
+//      universal or host-arch is the wired-in dependency, never both.
+//
+// Default invocation: `./gradlew :recording:jar` → host-arch (fast iteration).
+// Distribution invocation: `./gradlew :recording:jar -PuniversalHelper` → universal binary.
+val useUniversalHelper = providers.gradleProperty("universalHelper").isPresent
+
 if (OperatingSystem.current().isMacOsX) {
-    tasks.named("processResources") { dependsOn(assembleScreenCaptureKitHelper) }
+    tasks.named("processResources") {
+        dependsOn(
+            if (useUniversalHelper) assembleScreenCaptureKitHelperUniversal
+            else assembleScreenCaptureKitHelper
+        )
+    }
 }
 
 // Manual smoke entry point — opens a JFrame, records it for ~3s via ScreenCaptureKitRecorder,
