@@ -105,8 +105,15 @@ class SampleAppFixture(
     }
 
     fun stop() {
+        // Robust against `start()` never having been called: a JUnit `assumeFalse` in @BeforeAll
+        // skips the suite but @AfterAll still runs, so this method may be invoked even though
+        // `thread` was never initialized. Without the guard, that lifecycle path tripped on the
+        // `lateinit` access and surfaced as a confusing `initializationError` instead of the
+        // intended skip outcome.
         exitFn?.invoke()
-        thread.join(SHUTDOWN_TIMEOUT.inWholeMilliseconds)
+        if (::thread.isInitialized) {
+            thread.join(SHUTDOWN_TIMEOUT.inWholeMilliseconds)
+        }
     }
 
     private companion object {

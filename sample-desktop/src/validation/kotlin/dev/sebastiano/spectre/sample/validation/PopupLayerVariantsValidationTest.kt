@@ -30,6 +30,23 @@ class PopupLayerVariantsValidationTest {
     @BeforeAll
     fun start() {
         assumeFalse(GraphicsEnvironment.isHeadless(), "Needs a real AWT display")
+        // Issue #23 finding: on Windows + JBR 21.0.9, `compose.layers.type=WINDOW` triggers a
+        // fatal native crash in skiko-windows-x64.dll during the first `SkiaLayer.update`
+        // (PictureRecorder.finishRecordingAsPicture). The crash kills the worker JVM before
+        // the test can run, so Gradle reports the suite as a non-informative `<skipped/>`
+        // with the test executor's "Could not write 127.0.0.1:NNNN" error. Until JBR / skiko
+        // ships a fix, gate the Window-mode variant out of the Windows runner cleanly so the
+        // suite reports the actual reason and the rest of the test class still validates the
+        // SameCanvas + Component layer modes Windows users can actually use today.
+        val isOnWindowLayer = layerType.equals("WINDOW", ignoreCase = true)
+        val isWindowsHost =
+            System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
+        assumeFalse(
+            isOnWindowLayer && isWindowsHost,
+            "compose.layers.type=WINDOW currently crashes JBR's skiko-windows-x64.dll on " +
+                "Windows; SameCanvas + Component modes work and cover the same WindowTracker " +
+                "discovery paths.",
+        )
         fixture.start()
     }
 
