@@ -21,6 +21,13 @@
         <toolWindow id="Spectre Sample"
                     anchor="right"
                     factoryClass="dev.sebastiano.spectre.intellij.SpectreSampleToolWindowFactory"/>
+
+        <!--
+          Diagnostic auto-run: fires `RunSpectreAction` on project open when
+          `-Dspectre.autorun=true` is set. Off by default — interactive `Tools → Run Spectre`
+          is the normal path. Used for non-interactive validation of the action.
+        -->
+        <postStartupActivity implementation="dev.sebastiano.spectre.intellij.SpectreAutoRunStartupActivity"/>
     </extensions>
 
     <actions>

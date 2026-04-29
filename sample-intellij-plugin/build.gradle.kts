@@ -123,7 +123,17 @@ intellijPlatform {
 
 // Gradle's idea plugin emits the synthetic `:idea` task alongside `runIde` — we want the
 // developer entry point to be discoverable.
-tasks.named("runIde") { group = "verification" }
+//
+// `-PspectreAutorun=true` flips on the `spectre.autorun` system property the
+// `SpectreAutoRunStartupActivity` listens for, causing `RunSpectreAction` to fire
+// automatically once the project is open. Off by default; interactive `Tools → Run Spectre`
+// is the normal manual path.
+tasks.named<JavaExec>("runIde") {
+    group = "verification"
+    if (providers.gradleProperty("spectreAutorun").isPresent) {
+        systemProperty("spectre.autorun", "true")
+    }
+}
 
 // `buildPlugin` (and its dependencies) generate the plugin distribution zip. Strip from `check`
 // so the regular CI loop stays fast — a contributor opting into the plugin runs `runIde`
