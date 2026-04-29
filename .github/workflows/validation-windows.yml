@@ -84,21 +84,43 @@ jobs:
 
       - name: Verify validation tests passed via JUnit XML
         # Source-of-truth check that ignores Gradle's exit code but does NOT rubber-stamp every
-        # failure: we require at least one XML to exist (so a Gradle compile/dependency-resolution
-        # failure that produced no test results doesn't silently pass), and we fail if any XML
-        # reports `failures` or `errors` greater than zero.
+        # failure. Two layers of safety so a crashed worker JVM in *one* task doesn't get masked
+        # by another task's clean XML:
+        #
+        # 1. We require XML reports from each *expected* validationTest* task directory. If
+        #    any of those directories are missing (e.g. the worker JVM crashed before writing
+        #    anything, or Gradle skipped the task outright), this step fails.
+        # 2. For every XML found we still parse `failures="N"` / `errors="N"` and fail if any
+        #    are non-zero.
+        #
+        # The expected-task list mirrors what the Gradle step above invokes. Keep them in sync
+        # if this workflow's task graph changes.
         run: |
           set -euo pipefail
           shopt -s globstar nullglob
-          xml_files=(sample-desktop/build/test-results/**/TEST-*.xml)
-          if [ "${#xml_files[@]}" -eq 0 ]; then
-            echo "::error::No JUnit XML reports found — Gradle likely failed before test execution."
-            echo "Gradle step outcome: ${{ steps.gradle.outcome }}"
+          expected_task_dirs=(
+            "validationTest"
+            "validationTestLayerComponent"
+            "validationTestLayerSameCanvas"
+            "validationTestLayerWindow"
+          )
+          missing=()
+          all_xml=()
+          for task_dir in "${expected_task_dirs[@]}"; do
+            xmls=(sample-desktop/build/test-results/$task_dir/TEST-*.xml)
+            if [ "${#xmls[@]}" -eq 0 ]; then
+              missing+=("$task_dir")
+            else
+              all_xml+=("${xmls[@]}")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing JUnit XML reports for: ${missing[*]}. Gradle step outcome: ${{ steps.gradle.outcome }}"
             exit 1
           fi
           fail_total=0
           err_total=0
-          for f in "${xml_files[@]}"; do
+          for f in "${all_xml[@]}"; do
             failures=$(grep -oE 'failures="[0-9]+"' "$f" | head -n1 | grep -oE '[0-9]+')
             errors=$(grep -oE 'errors="[0-9]+"' "$f" | head -n1 | grep -oE '[0-9]+')
             failures=${failures:-0}
@@ -110,10 +132,10 @@ jobs:
             fi
           done
           if [ "$fail_total" -gt 0 ] || [ "$err_total" -gt 0 ]; then
-            echo "::error::Validation tests reported $fail_total failure(s) and $err_total error(s) across ${#xml_files[@]} XML report(s)."
+            echo "::error::Validation tests reported $fail_total failure(s) and $err_total error(s) across ${#all_xml[@]} XML report(s)."
             exit 1
           fi
-          echo "All validation tests passed (${#xml_files[@]} XML report(s) checked, Gradle exit ignored due to known executor-protocol flake)."
+          echo "All ${#expected_task_dirs[@]} expected validation tasks reported XMLs, all ${#all_xml[@]} XML report(s) clean (Gradle exit ignored due to known executor-protocol flake)."
         shell: bash
 
       - name: Upload validation artefacts
