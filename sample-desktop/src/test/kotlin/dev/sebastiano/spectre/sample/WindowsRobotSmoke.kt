@@ -72,6 +72,12 @@ import kotlin.system.exitProcess
  *    does not focus the field, leaving subsequent typeText with nothing to type into. This is a
  *    generic Compose layout fact rather than a Windows quirk, but the failure mode looks identical
  *    to a focus bug, so it's worth banking explicitly.
+ * 3. **Cold-JVM warmup click.** The very first Robot mouse event after a freshly-shown alwaysOnTop
+ *    JFrame is empirically dropped on Windows ~half the time — observed flake where scenario 1's
+ *    click registers as 0 → 0 but scenario 2's double-click registers as 0 → 2 on the same button.
+ *    The smoke fires one sacrificial warmup click before scenarios run; the production
+ *    `ComposeAutomator` API doesn't see this because validation tests use synthetic input. Real-
+ *    Robot Windows fixtures should mirror the warmup pattern.
  *
  * What this *doesn't* exercise:
  * - Cross-monitor `mouseMove` to a different DPI scale — covered by `WindowsHiDpiScenariosTest`.
@@ -126,22 +132,39 @@ private fun runSmoke(): Int {
         frameRef.set(frame)
     }
 
-    // Block until the window is up and the first composition has settled. Compose Desktop's
-    // first render takes ~200ms cold, plus AWT shows the window asynchronously, so a fixed
-    // settle window is the minimum viable wait — any shorter and `boundsInWindow` returns
-    // Rect.Zero before the user-visible content is laid out.
+    // Block until the window is up AND the first composition has produced non-zero
+    // boundsInWindow for the targets we'll click. A fixed sleep is unreliable on cold JVMs:
+    // Compose Desktop's first render can take >200ms, AWT shows the window asynchronously,
+    // and `Rect.Zero` bounds would silently route Robot clicks at (0,0) — out of the panel.
+    // Poll until both target rects are laid out, with a bounded timeout so a wedged composition
+    // surfaces a clear error rather than hanging forever.
     waitForFrame(frameRef)
-    Thread.sleep(WINDOW_SETTLE_MS)
+    waitForLayout(state)
+    // Layout being non-zero means Compose has done its first measure/layout pass, but the AWT
+    // mouse-input handlers attach a few frames later — empirically the first Robot click can
+    // arrive before they're wired and gets dropped. A short warmup after layout closes that
+    // race without wasting time on cold-JVM boots that took longer to lay out anyway.
+    Thread.sleep(POST_LAYOUT_WARMUP_MS)
 
     printEnvironment(state)
 
     val driver = RobotDriver()
+    // Cold-JVM warmup: the very first Robot mouse event after a freshly-shown alwaysOnTop
+    // JFrame is empirically dropped on Windows ~half the time — observed flake where
+    // scenario 1's click registers as 0 → 0 but scenario 2's double-click registers as
+    // 0 → 2 on the same button. Fire one sacrificial click outside the assertion-bearing
+    // scenarios so the production scenarios run on a warm input pipeline.
+    warmupRobot(driver, state)
     val results = mutableListOf<ScenarioResult>()
 
+    // Order matters: typeText asserts exact equality on a freshly-empty field, so it has to
+    // run before any keystroke that would have left state in the BasicTextField. After that,
+    // pressKey appends one character (verifying focus + raw keystrokes), and clearAndTypeText
+    // wipes and re-types (verifying the Ctrl+A + Backspace path).
     results += scenarioCounterClick(driver, state)
     results += scenarioCounterDoubleClick(driver, state)
-    results += scenarioPressKeySingleChar(driver, state)
     results += scenarioTypeText(driver, state)
+    results += scenarioPressKeySingleChar(driver, state)
     results += scenarioClearAndTypeText(driver, state)
     results += scenarioCtrlSShortcut(driver, state)
 
@@ -204,6 +227,34 @@ private fun waitForFrame(ref: AtomicReference<JFrame>) {
         Thread.sleep(50)
     }
     error("frame never showed within ${WINDOW_OPEN_TIMEOUT_MS}ms")
+}
+
+private fun warmupRobot(driver: RobotDriver, state: SmokeState) {
+    // Click on the counter button, fire-and-forget. counterBounds is non-zero by here
+    // (waitForLayout already proved it). Each scenario captures its own `before` snapshot,
+    // so we don't need to reset state — the warmup click just primes the input pipeline.
+    val target = awtCenter(state, state.counterBounds) ?: return
+    driver.click(target.x, target.y)
+    Thread.sleep(POST_CLICK_SETTLE_MS)
+}
+
+private fun waitForLayout(state: SmokeState) {
+    val deadline = System.nanoTime() + LAYOUT_TIMEOUT_MS * 1_000_000L
+    while (System.nanoTime() < deadline) {
+        val counter = state.counterBounds
+        val textField = state.textFieldBounds
+        val ready =
+            counter.width > 0f &&
+                counter.height > 0f &&
+                textField.width > 0f &&
+                textField.height > 0f
+        if (ready) return
+        Thread.sleep(50)
+    }
+    error(
+        "Compose targets never laid out within ${LAYOUT_TIMEOUT_MS}ms; " +
+            "counterBounds=${state.counterBounds} textFieldBounds=${state.textFieldBounds}"
+    )
 }
 
 private data class ScenarioResult(val label: String, val passed: Boolean, val detail: String)
@@ -270,16 +321,14 @@ private fun scenarioTypeText(driver: RobotDriver, state: SmokeState): ScenarioRe
     driver.click(target.x, target.y)
     Thread.sleep(POST_CLICK_SETTLE_MS)
     val focusOwnerBefore = focusOwnerSummary(state)
-    val clipboardBefore = readClipboardOrNull()
     driver.typeText(expected)
     Thread.sleep(POST_TYPE_SETTLE_MS)
     val actual = state.textValue.text
-    val passed = actual.contains(expected)
-    val detail = buildString {
-        append("text=\"$actual\" expected=\"$expected\" focusOwner=$focusOwnerBefore ")
-        append("clipboardBefore=${clipboardBefore?.let { "\"$it\"" }} ")
-        append("clipboardAfter=${readClipboardOrNull()?.let { "\"$it\"" }}")
-    }
+    // Exact equality: the field starts empty (typeText runs first in the scenario order
+    // before any keystroke leaves state behind), so the only correct outcome is the typed
+    // string — substring match would mask paste-doubling or stray-keypress bugs.
+    val passed = actual == expected
+    val detail = "text=\"$actual\" expected=\"$expected\" focusOwner=$focusOwnerBefore"
     return ScenarioResult("typeText into BasicTextField", passed = passed, detail = detail)
 }
 
@@ -288,18 +337,6 @@ private fun focusOwnerSummary(state: SmokeState): String {
     return focused?.let { "${it.javaClass.simpleName}@${System.identityHashCode(it)}" }
         ?: "null (frame.isFocused=${state.frame?.isFocused})"
 }
-
-private fun readClipboardOrNull(): String? =
-    try {
-        val data =
-            java.awt.Toolkit.getDefaultToolkit()
-                .systemClipboard
-                .getContents(null)
-                ?.getTransferData(java.awt.datatransfer.DataFlavor.stringFlavor)
-        data as? String
-    } catch (_: Throwable) {
-        null
-    }
 
 private fun scenarioClearAndTypeText(driver: RobotDriver, state: SmokeState): ScenarioResult {
     val expected = "replaced"
@@ -436,7 +473,8 @@ private fun SmokeContent(state: SmokeState) {
 
 private const val PANEL_WIDTH = 540
 private const val PANEL_HEIGHT = 320
-private const val WINDOW_SETTLE_MS = 800L
 private const val WINDOW_OPEN_TIMEOUT_MS = 5_000L
+private const val LAYOUT_TIMEOUT_MS = 5_000L
+private const val POST_LAYOUT_WARMUP_MS = 500L
 private const val POST_CLICK_SETTLE_MS = 250L
 private const val POST_TYPE_SETTLE_MS = 800L
