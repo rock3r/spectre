@@ -171,3 +171,15 @@ tasks.register<JavaExec>("runWindowsHiDpiDiagnostic") {
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("dev.sebastiano.spectre.sample.WindowsHiDpiDiagnostic")
 }
+
+// Manual smoke for `RobotDriver` on Windows (#20). Drives a Compose window through real
+// java.awt.Robot input — counter clicks, clipboard typeText, clearAndTypeText, Ctrl+S
+// shortcut — and reports PASS/FAIL per scenario. Mirrors the diagnostic shape so future
+// platform smokes can land alongside.
+tasks.register<JavaExec>("runWindowsRobotSmoke") {
+    group = "verification"
+    description = "Drives a Compose window via real RobotDriver on Windows; PASS/FAIL per scenario."
+    onlyIf { OperatingSystem.current().isWindows }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.sample.WindowsRobotSmoke")
+}
