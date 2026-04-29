@@ -142,21 +142,32 @@ jobs:
           fi
           fail_total=0
           err_total=0
+          malformed_total=0
           for f in "${all_xml[@]}"; do
             # `set -euo pipefail` aborts the script if any pipeline component returns
-            # non-zero. The `grep -oE` calls return non-zero when no match is found, which
-            # would happen on a malformed XML (or simply one missing the attribute). Wrap
-            # each pipeline in `|| echo 0` so a missing attribute is reported as 0 rather
-            # than aborting the verification — a bare `:-0` default would never fire because
-            # `set -e` exits before the parameter expansion runs.
-            failures=$(grep -oE 'failures="[0-9]+"' "$f" | head -n1 | grep -oE '[0-9]+' || echo 0)
-            errors=$(grep -oE 'errors="[0-9]+"' "$f" | head -n1 | grep -oE '[0-9]+' || echo 0)
-            if [ "$failures" -gt 0 ] || [ "$errors" -gt 0 ]; then
-              echo "::error file=$f::Test class reported failures=$failures errors=$errors"
-              fail_total=$((fail_total + failures))
-              err_total=$((err_total + errors))
+            # non-zero. `grep -oE` returns non-zero when no match is found, so wrap each
+            # pipeline in `|| true` to capture missing-attribute cases without exiting.
+            # A missing attribute is treated as MALFORMED (truncated XML, wrong schema,
+            # etc.) — NOT silently coerced to 0 — so a corrupted report can't quietly pass
+            # by reporting "no failures" simply because the failures="N" attribute didn't
+            # parse.
+            failures_raw=$(grep -oE 'failures="[0-9]+"' "$f" | head -n1 | grep -oE '[0-9]+' || true)
+            errors_raw=$(grep -oE 'errors="[0-9]+"' "$f" | head -n1 | grep -oE '[0-9]+' || true)
+            if [ -z "$failures_raw" ] || [ -z "$errors_raw" ]; then
+              echo "::error file=$f::Malformed JUnit XML — missing/unparsable failures or errors attribute"
+              malformed_total=$((malformed_total + 1))
+              continue
+            fi
+            if [ "$failures_raw" -gt 0 ] || [ "$errors_raw" -gt 0 ]; then
+              echo "::error file=$f::Test class reported failures=$failures_raw errors=$errors_raw"
+              fail_total=$((fail_total + failures_raw))
+              err_total=$((err_total + errors_raw))
             fi
           done
+          if [ "$malformed_total" -gt 0 ]; then
+            echo "::error::$malformed_total XML report(s) were malformed (missing failures/errors attribute)."
+            exit 1
+          fi
           if [ "$fail_total" -gt 0 ] || [ "$err_total" -gt 0 ]; then
             echo "::error::Validation tests reported $fail_total failure(s) and $err_total error(s) across ${#all_xml[@]} XML report(s)."
             exit 1
