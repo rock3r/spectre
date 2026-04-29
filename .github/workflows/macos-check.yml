@@ -1,0 +1,70 @@
+name: macOS check
+
+# Runs the JVM checks on a real macOS host for full-OS-matrix parity with `ci.yml` (ubuntu)
+# and `windows.yml` (Windows). The existing `macos.yml` is *focused* — it builds the SCK Swift
+# helper and runs `:recording:check` only, gated on `recording/**`. That doesn't catch macOS-
+# specific regressions in `core/`, `server/`, `sample-desktop/`, or `testing/`.
+#
+# The split into two macOS workflows is intentional: `macos.yml` stays small + fast and only
+# fires when the recording surface changes, while this `macos-check` job mirrors the broader
+# path filter from `windows.yml` so any PR likely to affect cross-OS behaviour gets exercised
+# on a real mac runner. macOS-* runners are slower and more expensive than ubuntu, so the path
+# filter keeps unrelated PRs (docs, plugin-only, etc.) out of this job.
+#
+# Notes:
+#   - `:recording:check` runs here too as a side effect of `:check`, so this overlaps with
+#     `macos.yml`'s focused job. That's OK — the focused job is faster + has its own Swift
+#     helper-build step, so it stays the primary signal for recording-only changes.
+#   - End-to-end SCK recording isn't exercised here either (CI runners don't have Screen
+#     Recording TCC); the helper contract test stays unchanged.
+
+on:
+  pull_request:
+    paths:
+      - "core/**"
+      - "recording/**"
+      - "sample-desktop/**"
+      - "server/**"
+      - "testing/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle/**"
+      - ".github/workflows/macos-check.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "core/**"
+      - "recording/**"
+      - "sample-desktop/**"
+      - "server/**"
+      - "testing/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle/**"
+      - ".github/workflows/macos-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        # Same Temurin choice as ci.yml + windows.yml — JBR 21 isn't currently in setup-java's
+        # index. Revert to `jetbrains` here too once setup-java's JBR 21 entry returns.
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Run checks
+        run: ./gradlew check
