@@ -138,4 +138,82 @@ tasks.named<JavaExec>("runIde") {
 // `buildPlugin` (and its dependencies) generate the plugin distribution zip. Strip from `check`
 // so the regular CI loop stays fast — a contributor opting into the plugin runs `runIde`
 // explicitly. Verification of the plugin descriptor still happens via `verifyPluginStructure`.
-tasks.named("check") { dependsOn("verifyPluginStructure") }
+//
+// `detektUiTest` is hooked into `:check` so the uiTest source set is statically validated on every
+// PR even though `:uiTest` itself (which boots a real IDE) is opt-in — keeps the linter from going
+// stale on a source set that only runs in the dedicated `ide-uitest.yml` CI job.
+tasks.named("check") { dependsOn("verifyPluginStructure", "detektUiTest") }
+
+// --- intellij-ide-starter UI test (issue #42) ----------------------------------------------
+//
+// The default `:check` is fast and runs on every PR. The IDE-hosted UI test is opt-in via a
+// dedicated `uiTest` task because:
+//   - First run downloads ~1 GB IDE Community installer (cached afterwards).
+//   - Even cached, the test boots a real IDE process per scenario; multi-second startup.
+//   - Failures here are environmental (display, sandbox cleanup, ide-starter cache state)
+//     more often than logic, so blocking PRs on them is the wrong default.
+//
+// CI runs this only when `recording/**`, `sample-intellij-plugin/**`, or this build file
+// changes (gated in `.github/workflows/ide-uitest.yml`). Local invocation:
+//   ./gradlew :sample-intellij-plugin:uiTest
+//
+// The test JVM needs the built plugin zip path and the IDE log directory base path. Both
+// are wired here as system properties so the test code stays declarative.
+val uiTestSourceSet =
+    sourceSets.create("uiTest") {
+        java.srcDir("src/uiTest/kotlin")
+        resources.srcDir("src/uiTest/resources")
+        compileClasspath += sourceSets["main"].output
+        runtimeClasspath += sourceSets["main"].output
+    }
+
+val uiTestImplementation by configurations.getting { extendsFrom(configurations["implementation"]) }
+
+val uiTestRuntimeOnly by configurations.getting { extendsFrom(configurations["runtimeOnly"]) }
+
+dependencies {
+    "uiTestImplementation"(libs.junit5.api)
+    "uiTestImplementation"(libs.ideStarter.squashed)
+    "uiTestImplementation"(libs.ideStarter.junit5)
+    "uiTestImplementation"(libs.ideStarter.driver)
+    "uiTestImplementation"(libs.ideStarter.driverClient)
+    "uiTestImplementation"(libs.ideStarter.driverSdk)
+    "uiTestImplementation"(libs.ideStarter.driverModel)
+    "uiTestImplementation"(libs.kotlinx.coroutines.core)
+    "uiTestRuntimeOnly"(libs.junit5.engine)
+    // Gradle 8+ test execution needs junit-platform-launcher on the test runtime classpath
+    // OR `useJUnitPlatform()` on a task that pulls it via convention. The Test task we
+    // configure below does call `useJUnitPlatform()`, but JUnit's own launcher isn't pulled
+    // in transitively from `junit-jupiter-engine` — wire it explicitly so the executor can
+    // boot.
+    "uiTestRuntimeOnly"("org.junit.platform:junit-platform-launcher")
+}
+
+val buildPluginTask = tasks.named<Zip>("buildPlugin")
+val pluginZipProvider = buildPluginTask.flatMap { it.archiveFile }
+
+val uiTest by
+    tasks.registering(Test::class) {
+        group = "verification"
+        description =
+            "IDE-hosted UI test for the Spectre sample plugin (intellij-ide-starter, #42). " +
+                "Boots an IntelliJ Ultimate IDE (2026.1.1) in a child process, installs the " +
+                "plugin from the local buildPlugin output, invokes `RunSpectreAction`, and " +
+                "asserts the expected semantics tags appear in idea.log. NOT wired into " +
+                ":check — opt-in. (IU rather than IC because IC 2026.1.x isn't on the public " +
+                "release feed yet.)"
+        useJUnitPlatform()
+        testClassesDirs = uiTestSourceSet.output.classesDirs
+        classpath = uiTestSourceSet.runtimeClasspath
+        // Plugin zip needs to exist before the test fires. `buildPlugin` is the canonical
+        // upstream task; depending on `prepareSandbox` instead would skip the
+        // pluginConfiguration validation that surfaces e.g. malformed plugin.xml early.
+        dependsOn(buildPluginTask)
+        // `path.to.build.plugin` is the system property the ide-starter sample tests use to
+        // point at a locally-built plugin zip — we follow the same convention so the test
+        // code reads naturally for anyone familiar with the JetBrains examples.
+        // Resolved from buildPlugin's actual archive output rather than hardcoding the
+        // filename, which depends on Gradle archive-naming conventions
+        // (`<project>-<version>.zip`, not the plugin's display name).
+        systemProperty("path.to.build.plugin", pluginZipProvider.get().asFile.absolutePath)
+    }

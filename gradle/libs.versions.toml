@@ -5,6 +5,11 @@ composeMultiplatform = "1.10.3"
 composeRules = "0.5.6"
 detekt = "2.0.0-alpha.2"
 intellijIdea = "2026.1.1"
+# JetBrains' intellij-ide-starter for the #42 IDE-hosted UI test. Pinned to the same build
+# our IDE itself runs (2026.1.1 == 261.23567.138) so the framework matches the IDE's
+# internal API surface. Deliberately NOT `LATEST-EAP-SNAPSHOT` — JetBrains' own examples use
+# that for their nightly cycle but we need reproducibility against beta+ build stability.
+ideStarter = "261.23567.138"
 jewel = "0.35.0-261.23567.138"
 jewelBridge = "261.23567.138"
 ktfmt = "0.26.0"
@@ -48,6 +53,16 @@ ktor-server-testHost = { module = "io.ktor:ktor-server-test-host", version.ref =
 
 jewel-ideLafBridge = { module = "com.jetbrains.intellij.platform:jewel-ide-laf-bridge", version.ref = "jewelBridge" }
 jewel-ui = { module = "org.jetbrains.jewel:jewel-ui", version.ref = "jewel" }
+
+# intellij-ide-starter (#42). Coords sourced from
+# https://www.jetbrains.com/intellij-repository/releases/com/jetbrains/intellij/tools/ —
+# require the JetBrains releases repo declared in settings.gradle.kts.
+ideStarter-squashed = { module = "com.jetbrains.intellij.tools:ide-starter-squashed", version.ref = "ideStarter" }
+ideStarter-junit5 = { module = "com.jetbrains.intellij.tools:ide-starter-junit5", version.ref = "ideStarter" }
+ideStarter-driver = { module = "com.jetbrains.intellij.tools:ide-starter-driver", version.ref = "ideStarter" }
+ideStarter-driverClient = { module = "com.jetbrains.intellij.driver:driver-client", version.ref = "ideStarter" }
+ideStarter-driverSdk = { module = "com.jetbrains.intellij.driver:driver-sdk", version.ref = "ideStarter" }
+ideStarter-driverModel = { module = "com.jetbrains.intellij.driver:driver-model", version.ref = "ideStarter" }
 
 [plugins]
 composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "composeMultiplatform" }

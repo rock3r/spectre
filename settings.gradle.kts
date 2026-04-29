@@ -41,6 +41,28 @@ dependencyResolutionManagement {
         maven("https://maven.pkg.jetbrains.space/public/p/compose/dev") {
             mavenContent { includeGroup("org.jetbrains.skiko") }
         }
+
+        // intellij-ide-starter and the Driver API are only published to JetBrains' own
+        // releases mirror — the IDE-build-numbered versions we pin (e.g. `261.23567.138`)
+        // never make it to Maven Central. Scope the lookup to the two relevant groups so
+        // every other module's resolution still goes through Maven Central first. Used by
+        // the `:sample-intellij-plugin` UI test only.
+        maven("https://www.jetbrains.com/intellij-repository/releases") {
+            mavenContent {
+                includeGroup("com.jetbrains.intellij.tools")
+                includeGroup("com.jetbrains.intellij.driver")
+            }
+        }
+
+        // Transitive dependency mirror used by intellij-ide-starter (its kodein-di / fus /
+        // teamcity-rest deps live here, not Maven Central). Scoped via `includeGroupByRegex`
+        // to avoid bleeding into other modules' resolution.
+        maven("https://cache-redirector.jetbrains.com/intellij-dependencies") {
+            mavenContent {
+                includeGroupByRegex("com\\.jetbrains\\..*")
+                includeGroupByRegex("org\\.jetbrains\\.intellij\\..*")
+            }
+        }
     }
 }
 
