@@ -1,4 +1,8 @@
-# Spectre
+<h1 align="center">
+  <img src="docs/assets/spectre-logo.png" alt="Spectre" width="200" />
+  <br />
+  Spectre
+</h1>
 
 JVM-first Kotlin library for automating live Compose Desktop UIs — semantics-tree inspection,
 Robot-backed real-OS input, screen recording, and IDE-hosted Jewel surfaces. v1 (cross-platform
