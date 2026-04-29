@@ -160,15 +160,17 @@ private fun DiagnosticContent(state: DiagnosticState) {
         BasicText("clicks = $clickCount")
         // Clickable Box stands in for a Material button — :sample-desktop has Material3, but
         // the diagnostic stays foundation-only so it's portable to any module that pulls in
-        // compose-foundation.
+        // compose-foundation. `clickable` is applied *before* `padding` so the entire blue
+        // background is the hit target — otherwise edge clicks land in the padding inset and
+        // silently fail.
         Box(
             modifier =
-                Modifier.background(Color(red = 0x33, green = 0x66, blue = 0xCC))
-                    .padding(12.dp)
-                    .clickable {
+                Modifier.clickable {
                         clickCount += 1
                         printSnapshot(state, density.density, density.fontScale, trackedBounds)
                     }
+                    .background(Color(red = 0x33, green = 0x66, blue = 0xCC))
+                    .padding(12.dp)
         ) {
             BasicText("Reprint")
         }
