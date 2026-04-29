@@ -271,7 +271,7 @@ private fun scenarioCounterClick(driver: RobotDriver, state: SmokeState): Scenar
     return ScenarioResult(
         "mouseMove + click on counter",
         passed = after == before + 1,
-        detail = "clickCount $before → $after at ($${target.x},${target.y})",
+        detail = "clickCount $before → $after at (${target.x},${target.y})",
     )
 }
 
