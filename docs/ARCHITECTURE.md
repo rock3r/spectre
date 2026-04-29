@@ -118,6 +118,14 @@ Run via `./gradlew :sample-intellij-plugin:runIde`, then `Tools → Run Spectre 
 Sample Tool Window`. The action drives the in-process `ComposeAutomator` against the Jewel
 tool window and dumps the discovered semantics tree to `idea.log`.
 
+The non-interactive counterpart is `./gradlew :sample-intellij-plugin:uiTest`
+(intellij-ide-starter, `#42`). It boots a real IntelliJ Ultimate IDE in a child process,
+installs the locally-built plugin zip, fires `RunSpectreAction` through the Driver API, and
+asserts every tagged Compose node from `SpectreSampleToolWindowContent` appears in
+`idea.log`. Same assertions as the manual smoke, no human in the loop. Opt-in (not wired into
+`:check`); CI runs it in `.github/workflows/ide-uitest.yml` when plugin / core / recording
+sources change.
+
 ## Architectural Invariants
 
 These should remain true as the codebase grows:
