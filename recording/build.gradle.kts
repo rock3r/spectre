@@ -180,6 +180,15 @@ val assembleScreenCaptureKitHelperUniversal by
         group = "build"
         onlyIf { OperatingSystem.current().isMacOsX }
         dependsOn(verifyUniversalScreenCaptureKitHelper)
+        // Both staging tasks write to the same destination
+        // (`build/generated/screenCaptureHelper/native/macos/spectre-screencapture`). Without
+        // an explicit ordering, a distribution flow that invokes
+        // `:recording:assembleScreenCaptureKitHelperUniversal :recording:jar` could run the
+        // host-arch task AFTER the universal one — silently replacing the fat binary with a
+        // thin one in the published jar. `mustRunAfter` forces universal to land last when
+        // both are in the requested task graph; the host-arch step's earlier work is just
+        // overwritten, which is wasted I/O but self-correcting and produces the right output.
+        mustRunAfter(assembleScreenCaptureKitHelper)
         from(universalHelperBinary) { rename { "spectre-screencapture" } }
         into(helperResourceDest.get().asFile.parentFile)
     }
