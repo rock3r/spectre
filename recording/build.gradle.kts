@@ -146,10 +146,19 @@ val verifyUniversalScreenCaptureKitHelper by
         group = "verification"
         onlyIf { OperatingSystem.current().isMacOsX }
         dependsOn(lipoScreenCaptureKitHelper)
-        // `lipo -info` prints e.g. "Architectures in the fat file ... are: x86_64 arm64" and
-        // exits zero. A malformed binary or a non-fat file would exit non-zero, breaking the
-        // build before we publish a helper that doesn't actually contain both arches.
-        commandLine("lipo", "-info", universalHelperAbsolutePath)
+        // `lipo -verify_arch <arch>...` exits 0 only if EVERY listed architecture is present
+        // in the binary, exit 1 otherwise. We deliberately use this instead of `lipo -info`
+        // — the latter exits 0 even for thin (non-fat) binaries, just printing "Non-fat
+        // file: ... is architecture: ...", so it would silently let a single-arch helper
+        // through to a distribution build.
+        commandLine(
+            buildList {
+                add("lipo")
+                add(universalHelperAbsolutePath)
+                add("-verify_arch")
+                addAll(universalArchitectures)
+            }
+        )
         inputs.file(universalHelperBinary)
     }
 
