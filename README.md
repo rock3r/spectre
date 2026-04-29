@@ -4,98 +4,78 @@
   Spectre
 </h1>
 
-JVM-first Kotlin library for automating live Compose Desktop UIs — semantics-tree inspection,
-Robot-backed real-OS input, screen recording, and IDE-hosted Jewel surfaces. v1 (cross-platform
-core, in-process automator, Robot input, ffmpeg region recording, IntelliJ/Jewel sample plugin)
-and v2 (macOS ScreenCaptureKit window-targeted recording via a bundled Swift helper) have shipped.
-v3 (Windows) and v4 (Linux) are tracked as platform-specific issues.
+A Kotlin library for driving Compose Desktop UIs from automated tests. Reads the semantics
+tree, sends real OS-level mouse and keyboard input via `java.awt.Robot`, records the screen,
+and works against IDE-hosted Compose surfaces (IntelliJ, Jewel) the same way as standalone
+desktop apps.
+
+Supports macOS and Windows. Linux is on the roadmap.
 
 ## Modules
 
-- `core` — semantics tree reading, owner/root-aware node identity, selectors, coordinate mapping,
-  Robot-backed input primitives.
-- `server` — opt-in transport layer (planned; scaffolded only).
-- `recording` — region capture via `ffmpeg`+`avfoundation` (`FfmpegRecorder`, v1) and
-  window-targeted capture on macOS via a bundled Swift ScreenCaptureKit helper
-  (`screencapturekit.ScreenCaptureKitRecorder`, v2). `AutoRecorder` picks the right backend
-  per call. See [`docs/RECORDING-LIMITATIONS.md`](docs/RECORDING-LIMITATIONS.md) for the
-  matrix of when each backend applies.
-- `testing` — JUnit 5 extension and JUnit 4 rule (`ComposeAutomatorExtension` /
-  `ComposeAutomatorRule`) for tests that drive a real `ComposeAutomator`.
-- `sample-desktop` — small Compose Desktop app used as a manual smoke surface for the automator
-  primitives.
-- `sample-intellij-plugin` — IntelliJ plugin that hosts a Jewel tool window and proves Spectre
-  works against IDE-hosted Compose surfaces. Never published — exists as a validation surface.
+- `core` — semantics tree, selectors, coordinate mapping, Robot-backed input.
+- `server` — embedded HTTP transport (Ktor) for cross-JVM access.
+- `recording` — region capture via `ffmpeg`, plus window-targeted capture (ScreenCaptureKit on
+  macOS, `gdigrab` on Windows). `AutoRecorder` picks per call. See
+  [`docs/RECORDING-LIMITATIONS.md`](docs/RECORDING-LIMITATIONS.md).
+- `testing` — JUnit 5 extension and JUnit 4 rule.
+- `sample-desktop` — Compose Desktop app for manual smokes.
+- `sample-intellij-plugin` — IntelliJ plugin hosting a Jewel tool window. Not published; lives
+  in-tree as the IDE-hosted test bed.
 
-## Run the desktop sample
+## Run the samples
+
+Standalone Compose Desktop app:
 
 ```shell
 ./gradlew :sample-desktop:run
 ```
 
-## Run the IntelliJ sample
+IntelliJ plugin (then `Tools → Run Spectre Against the Sample Tool Window`):
 
 ```shell
 ./gradlew :sample-intellij-plugin:runIde
-# Then: Tools → Run Spectre Against the Sample Tool Window
-# Discovered semantics tree dumps to idea.log.
 ```
 
-For a non-interactive smoke that auto-fires the action on project open:
-
-```shell
-./gradlew :sample-intellij-plugin:runIde -PspectreAutorun=true
-```
+Add `-PspectreAutorun=true` to fire the action automatically on project open.
 
 ## Quality checks
 
 ```shell
-./gradlew check        # tests + Detekt 2.x + Compose Rules + ktfmt verification
-./gradlew ktfmtFormat  # rewrite Kotlin / Gradle Kotlin DSL files in place
+./gradlew check        # tests + Detekt + Compose Rules + ktfmt
+./gradlew ktfmtFormat  # rewrite Kotlin / .gradle.kts in place
 ```
 
-`:check` is intentionally fast and runs on every PR. Two pieces are opt-in / gated separately:
+Two heavier checks are opt-in:
 
-- **`:sample-intellij-plugin:uiTest`** — IDE-hosted UI test (issue #42, intellij-ide-starter).
-  Boots a real IntelliJ Ultimate IDE, installs the locally-built plugin, fires `RunSpectreAction`,
-  and asserts every tagged Compose node lands in `idea.log`. Runs in CI via
-  [`.github/workflows/ide-uitest.yml`](.github/workflows/ide-uitest.yml) when plugin / core /
-  recording sources change.
-- **`:recording:check`** on macOS — exercises the Swift ScreenCaptureKit helper. Runs in CI via
-  [`.github/workflows/macos.yml`](.github/workflows/macos.yml) when recording sources change.
+- `:sample-intellij-plugin:uiTest` — boots IntelliJ via `intellij-ide-starter`, installs the
+  plugin, fires `RunSpectreAction`, and looks for every tagged Compose node in `idea.log`.
+- `:recording:check` on macOS — covers the Swift ScreenCaptureKit helper.
 
 ## Supported JVMs
 
-Spectre is validated on:
-
-- **JBR 21** — JetBrains Runtime 21 (the dev-loop default; the project's Gradle toolchain pins
-  JDK 21 and bytecode targets 21).
-- **JBR 25** — exercised via the IDE-hosted UI test, which boots IntelliJ Ultimate 2026.1.1
-  with its bundled JBR 25.0.2 and runs `core` + plugin code paths inside that runtime.
-
-Other JDKs / vendors at language level 21+ should work — Spectre uses no JBR-only APIs in the
-non-IDE modules — but they're not validated and **YMMV**. CI itself runs on Temurin 21
-(see [`ci.yml`](.github/workflows/ci.yml)) because the GitHub `setup-java` action's JBR index
-is currently missing JBR 21; bytecode equivalence makes that an acceptable proxy.
+JBR 21 is the dev-loop default. JBR 25 also gets exercised via the IDE-hosted test (it ships
+bundled with IntelliJ 2026.1). Any JDK 21+ should work for the non-IDE modules; CI itself
+runs on Temurin 21 because `setup-java`'s JBR 21 entry is currently missing.
 
 ## CI
 
-- [`ci.yml`](.github/workflows/ci.yml) — `./gradlew check` on every PR (Linux).
-- [`macos.yml`](.github/workflows/macos.yml) — Swift helper build + `:recording:check` on macOS,
-  gated on `recording/**` changes.
+- [`ci.yml`](.github/workflows/ci.yml) — `:check` on Linux, every PR.
+- [`macos-check.yml`](.github/workflows/macos-check.yml) — `:check` on macOS, broad path filter.
+- [`windows.yml`](.github/workflows/windows.yml) — `:check` on Windows, broad path filter.
+- [`macos.yml`](.github/workflows/macos.yml) — Swift helper build + `:recording:check`, gated
+  on `recording/**`.
 - [`ide-uitest.yml`](.github/workflows/ide-uitest.yml) — IDE-hosted UI test on macOS, gated on
-  plugin/core/recording/build changes, with `out/ide-tests/{installers,cache}` cached so warm
-  runs are ~30s instead of ~10min.
+  plugin / core / recording changes. `out/ide-tests/{installers,cache}` is cached so warm
+  runs are ~30s.
 
 ## Reference docs
 
-- [Architecture](docs/ARCHITECTURE.md) — module map, dependency direction, invariants.
-- [Testing](docs/TESTING.md) — TDD flow, contract tests, validation expectations.
-- [Conventions](docs/CONVENTIONS.md) — file placement, coding style, git/build workflow.
-- [Static analysis](docs/STATIC-ANALYSIS.md) — Detekt, ktfmt, CI quality expectations.
-- [Recording limitations](docs/RECORDING-LIMITATIONS.md) — v1 region-capture trade-offs and the
-  v2 window-targeted backend's scope.
-- [Bootstrap plan](docs/bootstrap-plan.md) — historical context for what shipped in v1+v2 and
-  pointers into the v3/v4 tracking issues.
+- [Architecture](docs/ARCHITECTURE.md)
+- [Testing](docs/TESTING.md)
+- [Conventions](docs/CONVENTIONS.md)
+- [Static analysis](docs/STATIC-ANALYSIS.md)
+- [Recording limitations](docs/RECORDING-LIMITATIONS.md)
+- [Bootstrap plan](docs/bootstrap-plan.md)
 - [Spike gist](https://gist.github.com/rock3r/8e520bb3fe8fe5886367d5e22cefbab8) — original
-  external design notes.
+  design notes.
