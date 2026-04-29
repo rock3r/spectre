@@ -129,7 +129,12 @@ jobs:
             ["validationTestLayerSameCanvas"]="PopupLayerVariantsValidationTest"
             ["validationTestLayerWindow"]="PopupLayerVariantsValidationTest"
           )
-          task_dirs=("validationTest" "validationTestLayerComponent" "validationTestLayerSameCanvas" "validationTestLayerWindow")
+          # Derive task_dirs from the associative array's keys rather than maintaining a
+          # parallel list. A future edit that adds a key to required_classes_by_task without
+          # updating a separate task_dirs list would have left Pass 2's discovered-set scan
+          # silently skipping the new directory, masking failing classes not in the required
+          # list.
+          task_dirs=("${!required_classes_by_task[@]}")
 
           # Pass 1: required-set existence.
           missing=()
