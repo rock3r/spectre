@@ -35,3 +35,8 @@ out/
 
 # Temp
 .tmp/
+
+# SwiftPM (recording/native/macos)
+recording/native/macos/.build/
+recording/native/macos/.swiftpm/
+recording/native/macos/Package.resolved
