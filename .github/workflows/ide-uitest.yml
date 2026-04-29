@@ -56,6 +56,13 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    # Windows is **informational** for now: the GitHub-hosted Windows runner runs as
+    # `runneradmin` (elevated), the JetBrains Daemon's de-elevation step fails repeatedly,
+    # and project open hangs silently for 2-3+ minutes — bumping `waitForProjectOpen`'s
+    # timeout to 3 minutes was insufficient. macOS gates the merge; Windows surfaces issues
+    # without blocking until the underlying environment fight is resolved. Tracked as
+    # https://github.com/rock3r/spectre/issues/71.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
 
     steps:
       - name: Check out repository
