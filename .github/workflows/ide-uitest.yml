@@ -1,0 +1,106 @@
+name: IDE UI test
+
+# Runs the intellij-ide-starter UI test (#42) — boots a real IntelliJ Ultimate 2026.1.1 IDE in
+# a child process (IC 2026.1.x isn't published to the release feed yet), installs the
+# freshly-built `:sample-intellij-plugin` zip, invokes `RunSpectreAction`
+# via the Driver, and asserts every tagged Compose node from `SpectreSampleToolWindowContent`
+# appears in `idea.log`.
+#
+# Why this is its own workflow (not part of `ci.yml`):
+#   - First run downloads ~1 GB IDE installer (cached afterwards via the `ide-starter-cache`
+#     step below).
+#   - Even cached, each scenario boots a real IDE — multi-second startup cost per test.
+#   - macOS runner: the test invokes the IDE's bundled skiko + Jewel + Compose modules. Linux
+#     runners would need `xvfb-run` plus a software-GL stack, and any rendering quirk in that
+#     stack would shift the failure mode away from "regression in our plugin code". macOS
+#     gives us the same Compose runtime everyone develops against and matches the manual
+#     `runIde` smoke that landed with PR #43.
+#   - Path filter keeps unrelated PRs from paying the macOS-runner cost.
+#
+# Local invocation: `./gradlew :sample-intellij-plugin:uiTest`.
+
+on:
+  pull_request:
+    paths:
+      # Plugin sources whose breakage would surface here.
+      - "sample-intellij-plugin/**"
+      # `:core` / `:recording` provide the in-process Spectre automator the action drives;
+      # changes there can regress what the IDE-hosted run discovers.
+      - "core/**"
+      - "recording/**"
+      # Catalog/build glue that affects ide-starter dependency resolution or plugin packaging.
+      - "gradle/libs.versions.toml"
+      - "settings.gradle.kts"
+      - "build.gradle.kts"
+      - ".github/workflows/ide-uitest.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "sample-intellij-plugin/**"
+      - "core/**"
+      - "recording/**"
+      - "gradle/libs.versions.toml"
+      - "settings.gradle.kts"
+      - "build.gradle.kts"
+      - ".github/workflows/ide-uitest.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  uitest:
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        # Same toolchain as the rest of the project (see ci.yml for the temurin-vs-jbr note —
+        # JBR 21 is currently missing from setup-java's index, so temurin is the working choice).
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      # ide-starter writes IDE installers and extracted builds under `out/ide-tests/{installers,cache}`
+      # — re-using these between runs cuts the cold-start cost from ~10 minutes (DMG download +
+      # mount + copy) to ~30 seconds (existence check). The per-run sandbox lives under
+      # `out/ide-tests/tests/...` and is intentionally NOT cached: it's per-test-method scratch space
+      # that includes the IDE config, indexes, and idea.log, all of which must be fresh each run.
+      #
+      # Cache key includes the IDE build number so a version bump in `libs.versions.toml`
+      # (`ideStarter` / `intellijIdea`) busts the cache rather than silently re-using stale bits.
+      - name: Restore ide-starter cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            out/ide-tests/installers
+            out/ide-tests/cache
+          key: ide-starter-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          restore-keys: |
+            ide-starter-${{ runner.os }}-
+
+      - name: Run IDE UI test
+        run: ./gradlew :sample-intellij-plugin:uiTest
+
+      # Capture artefacts on failure so post-mortem doesn't require re-running the test.
+      # `idea.log`, screenshots, and the test reports cover the three angles a regression here
+      # typically has: IDE-side activity, what the IDE looked like at failure time, and which
+      # JUnit assertion tripped.
+      - name: Upload failure artefacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ide-uitest-artifacts
+          path: |
+            sample-intellij-plugin/build/reports/tests/uiTest/
+            sample-intellij-plugin/build/test-results/uiTest/
+            out/ide-tests/tests/**/log/idea.log
+            out/ide-tests/tests/**/log/screenshots/
+          if-no-files-found: ignore
+          retention-days: 14
