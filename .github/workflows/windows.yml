@@ -1,0 +1,77 @@
+name: Windows
+
+# Runs the JVM checks on a real Windows host so Spectre's v3 Windows code paths
+# (recording/FfmpegBackend gdigrab argv, core/HiDpiMapper validation tests, sample-desktop
+# Robot+popup smokes) get exercised end-to-end. The Linux `ci.yml` workflow already runs the
+# same `:check` task, but it can't catch:
+#   - argv-builder behaviour that diverges between gdigrab (Windows) and avfoundation (macOS)
+#     when the host OS picks a different FfmpegBackend by default.
+#   - Compose Desktop renderer regressions that only surface under skiko-windows-x64.dll.
+#   - Any future Windows-conditional test that an `os.name` check would skip on Linux.
+# Without this job, those regressions reach an end user before they reach CI.
+#
+# Notes:
+#   - The Windows-gated manual smokes (`:sample-desktop:runWindowsHiDpiDiagnostic`,
+#     `:sample-desktop:runWindowsRobotSmoke`, `:recording:runFfmpegGdigrabSmoke`) are *not*
+#     wired into `:check` and therefore not executed here — they require an interactive
+#     display + alwaysOnTop window manipulation that GitHub-hosted Windows runners don't
+#     reliably provide. They stay manual.
+#   - The validation `validationTestPopupLayers` task is also opt-in and not part of `:check`.
+#     The OnWindow popup variant currently crashes JBR's skiko on Windows (see #23); the test
+#     class `Assumptions.assumeFalse`-skips that variant on Windows hosts.
+#   - Job is gated on changes likely to affect Windows behaviour so unrelated PRs don't pay
+#     the windows-runner cost. Mirrors the path-filter pattern from `macos.yml`.
+
+on:
+  pull_request:
+    paths:
+      - "core/**"
+      - "recording/**"
+      - "sample-desktop/**"
+      - "server/**"
+      - "testing/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle/**"
+      - ".github/workflows/windows.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "core/**"
+      - "recording/**"
+      - "sample-desktop/**"
+      - "server/**"
+      - "testing/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle/**"
+      - ".github/workflows/windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        # Same Temurin choice as `ci.yml` — JBR 21 isn't currently in setup-java's index, and
+        # the toolchain version is what matters here (production code targets 21). Local dev
+        # keeps using JBR 21 via `JAVA_HOME`; revert to `jetbrains` here too once setup-java's
+        # JBR 21 entry returns.
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Run checks
+        run: ./gradlew check
+        shell: bash
