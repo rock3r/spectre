@@ -183,3 +183,18 @@ tasks.register<JavaExec>("runWindowsRobotSmoke") {
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("dev.sebastiano.spectre.sample.WindowsRobotSmoke")
 }
+
+// Companion to runWindowsRobotSmoke for issue #59: drives Robot at a Compose window that's
+// deliberately *not* the focused/foreground window. Spawns a sibling distractor JFrame that
+// holds focus, then asserts what happens when Robot fires at the unfocused SUT — does
+// click-to-focus deliver the click, do keystrokes drop, does typeText still work after a
+// focus-handoff click. Findings get banked into the smoke's KDoc once observed empirically.
+tasks.register<JavaExec>("runWindowsRobotUnfocusedSmoke") {
+    group = "verification"
+    description =
+        "Drives Robot at an unfocused Compose window on Windows; pins click-to-focus + " +
+            "keystroke semantics."
+    onlyIf { OperatingSystem.current().isWindows }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.sample.WindowsRobotUnfocusedSmoke")
+}
