@@ -76,6 +76,46 @@ class RunSpectreUiTest {
                     ),
                 )
                 .apply { PluginConfigurator(this).installPluginFromPath(pluginPath) }
+                .applyVMOptionsPatch {
+                    // Disable the JetBrains Daemon (`jetbrainsd.exe`) discovery + URI
+                    // handling on IDE startup. The daemon is a host-side helper for Toolbox
+                    // sync / AI Assistant integration / `jetbrains://` URI handlers — none
+                    // of which our automation test needs. On the GitHub-hosted Windows
+                    // runner the daemon's de-elevation step also fails repeatedly because
+                    // `runneradmin` is elevated, which used to add ~50s of retry noise to
+                    // project open. Both keys are documented registry keys in the bundled
+                    // `JetBrains OS Integration` plugin (`com.intellij.platform.daemon`).
+                    addSystemProperty("jetbrainsd.discovery.enabled", false)
+                    addSystemProperty("jetbrainsd.uri.handling.enabled", false)
+
+                    // Belt-and-braces: trust every project unconditionally. ide-starter's
+                    // `Starter.newContext` already calls `addProjectToTrustedLocations()`
+                    // for `LocalProjectInfo` projects, but on Windows the path it writes
+                    // into `trusted-paths.xml` is the 8.3 short form (because
+                    // `java.io.tmpdir` resolves to `C:\Users\RUNNER~1\...` on the GHA
+                    // runner) whereas the IDE compares against the resolved long form
+                    // (`C:\Users\runneradmin\...`). Result: the "Trust and Open Project?"
+                    // modal pops up and silently blocks project open until the test
+                    // deadline — which the captured artefact screenshot confirmed.
+                    // We also resolve the path to its real form below; this property is
+                    // here so the test never depends on that resolution succeeding.
+                    addSystemProperty("idea.trust.all.projects", true)
+
+                    // Disable the new-user startup wizard (theme / keymap / plugin
+                    // selection). Logs from the failing run showed `IdeStartupWizard - IDE
+                    // startup isEnabled = true, IDEStartupKind = ExperimentalWizard`. On
+                    // CI's fresh config dir this can briefly steal focus and adds
+                    // unnecessary cost; we don't need it.
+                    setIdeStartupDialogEnabled(false)
+                    setNeverShowInitConfigModal()
+                }
+                // Skip stub-index initialization on project open. With the daemon disabled
+                // the dominant remaining cost on a cold Windows runner is ~3 min of stub /
+                // file index initialization. Our action reads the running Compose tool
+                // window's semantics tree via Spectre's in-process automator and dumps tags
+                // to `idea.log` — it doesn't touch the indices, so skipping them shaves
+                // most of the project-open time without affecting the assertions.
+                .skipIndicesInitialization()
 
         // ide-starter writes the IDE's `idea.log` to `IDERunContext.logsDir`, which is
         // `<testHome>/<launchName>/log` — a SIBLING of `<testHome>/system`, not a child of it.
@@ -178,7 +218,12 @@ class RunSpectreUiTest {
     private fun createEmptyProject(): Path {
         val base = Path.of(System.getProperty("java.io.tmpdir"), "spectre-uitest-project")
         base.createDirectories()
-        return Files.createTempDirectory(base, "project-").also { dir ->
+        // `toRealPath()` resolves Windows 8.3 short names (`RUNNER~1`) to their long form
+        // (`runneradmin`). ide-starter writes the project path into `trusted-paths.xml` for
+        // its automatic trust setup; if that path is in short form but the IDE resolves to
+        // the long form when opening, the trust check fails and the IDE pops a modal that
+        // blocks project open. Returning the resolved path avoids the mismatch.
+        return Files.createTempDirectory(base, "project-").toRealPath().also { dir ->
             dir.toFile().deleteOnExit()
         }
     }
@@ -238,11 +283,11 @@ class RunSpectreUiTest {
         val INDICATOR_QUIESCENCE_TIMEOUT = 3.minutes
 
         // ide-starter's `waitForProjectOpen` defaults to ~60s. That's plenty on macOS but
-        // tight on the GitHub-hosted Windows runner: `runneradmin` is elevated, the IDE
-        // tries (and fails) to spawn a de-elevated daemon a few times during open, and
-        // logs go silent for 50+ seconds while indexing proceeds. Bumping to 3 minutes
-        // keeps the same headroom shape as `INDICATOR_QUIESCENCE_TIMEOUT` and applies
-        // uniformly so behaviour stays identical across the matrix.
-        val PROJECT_OPEN_TIMEOUT = 3.minutes
+        // not enough on the GitHub-hosted Windows runner. The original 3-minute bump
+        // wasn't enough either — index initialization alone took just over 3 min on a cold
+        // cache. Combined with the daemon-disable + skipIndicesInitialization() above,
+        // 5 min is comfortably above the observed worst-case open time without bounding
+        // a hung indexer too loosely.
+        val PROJECT_OPEN_TIMEOUT = 5.minutes
     }
 }
