@@ -76,6 +76,20 @@ class RunSpectreUiTest {
                     ),
                 )
                 .apply { PluginConfigurator(this).installPluginFromPath(pluginPath) }
+                .applyVMOptionsPatch {
+                    // Disable the JetBrains Daemon (`jetbrainsd.exe`) discovery + URI
+                    // handling on IDE startup. The daemon is a host-side helper for Toolbox
+                    // sync / AI Assistant integration / `jetbrains://` URI handlers — none
+                    // of which our automation test needs. Crucially, on the GitHub-hosted
+                    // Windows runner the daemon's de-elevation step fails repeatedly because
+                    // `runneradmin` is elevated, blocking project open for 2-3+ minutes
+                    // before the test eventually times out (#71). Both keys are documented
+                    // registry keys in the bundled `JetBrains OS Integration` plugin
+                    // (`com.intellij.platform.daemon`); flipping them off avoids the
+                    // de-elevation attempt entirely.
+                    addSystemProperty("jetbrainsd.discovery.enabled", false)
+                    addSystemProperty("jetbrainsd.uri.handling.enabled", false)
+                }
 
         // ide-starter writes the IDE's `idea.log` to `IDERunContext.logsDir`, which is
         // `<testHome>/<launchName>/log` — a SIBLING of `<testHome>/system`, not a child of it.
