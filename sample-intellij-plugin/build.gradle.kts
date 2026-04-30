@@ -144,6 +144,20 @@ tasks.named<JavaExec>("runIde") {
 // stale on a source set that only runs in the dedicated `ide-uitest.yml` CI job.
 tasks.named("check") { dependsOn("verifyPluginStructure", "detektUiTest") }
 
+// Disable the IntelliJ Platform Gradle plugin's `buildSearchableOptions` task. That task boots a
+// headless IDE process to index the plugin's Settings pages for search; we don't ship a Settings
+// page (`:sample-intellij-plugin` is a validation surface for #13, not a marketplace plugin) so
+// the index is always empty. Beyond saving time, disabling it sidesteps a Windows-specific
+// failure on intellij-ide-starter / windows-latest where the IDE's headless launcher tries to
+// load the kotlinx-coroutines-debug `AgentPremain` java-agent class from a transitive that
+// isn't on the searchable-options runtime classpath:
+//
+//     java.lang.ClassNotFoundException: kotlinx.coroutines.debug.internal.AgentPremain
+//     FATAL ERROR in native method: processing of -javaagent failed
+//
+// Re-enable if and when we add real Settings UI to the plugin.
+tasks.named("buildSearchableOptions") { enabled = false }
+
 // --- intellij-ide-starter UI test (issue #42) ----------------------------------------------
 //
 // The default `:check` is fast and runs on every PR. The IDE-hosted UI test is opt-in via a

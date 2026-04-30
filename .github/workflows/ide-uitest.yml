@@ -1,8 +1,7 @@
 name: IDE UI test
 
-# Runs the intellij-ide-starter UI test (#42) — boots a real IntelliJ Ultimate 2026.1.1 IDE in
-# a child process (IC 2026.1.x isn't published to the release feed yet), installs the
-# freshly-built `:sample-intellij-plugin` zip, invokes `RunSpectreAction`
+# Runs the intellij-ide-starter UI test (#42) — boots a real IntelliJ IDEA 2026.1.1 in a child
+# process, installs the freshly-built `:sample-intellij-plugin` zip, invokes `RunSpectreAction`
 # via the Driver, and asserts every tagged Compose node from `SpectreSampleToolWindowContent`
 # appears in `idea.log`.
 #
@@ -10,12 +9,12 @@ name: IDE UI test
 #   - First run downloads ~1 GB IDE installer (cached afterwards via the `ide-starter-cache`
 #     step below).
 #   - Even cached, each scenario boots a real IDE — multi-second startup cost per test.
-#   - macOS runner: the test invokes the IDE's bundled skiko + Jewel + Compose modules. Linux
-#     runners would need `xvfb-run` plus a software-GL stack, and any rendering quirk in that
-#     stack would shift the failure mode away from "regression in our plugin code". macOS
-#     gives us the same Compose runtime everyone develops against and matches the manual
-#     `runIde` smoke that landed with PR #43.
-#   - Path filter keeps unrelated PRs from paying the macOS-runner cost.
+#   - The OS matrix (macos-latest + windows-latest) covers both supported Spectre platforms.
+#     Linux is intentionally excluded — it would need `xvfb-run` plus a software-GL stack, and
+#     any rendering quirk in that stack would shift the failure mode away from "regression in
+#     our plugin code". macOS + Windows give us the same Compose runtime everyone develops
+#     against and match the manual `runIde` smokes.
+#   - Path filter keeps unrelated PRs from paying the IDE-runner cost.
 #
 # Local invocation: `./gradlew :sample-intellij-plugin:uiTest`.
 
@@ -50,7 +49,20 @@ permissions:
 
 jobs:
   uitest:
-    runs-on: macos-latest
+    strategy:
+      # `fail-fast: false` so a Windows-side regression doesn't cancel the macOS run mid-flight
+      # (or vice versa). Each platform's failure deserves its own diagnostic / artefact dump.
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    # Windows is **informational** for now: the GitHub-hosted Windows runner runs as
+    # `runneradmin` (elevated), the JetBrains Daemon's de-elevation step fails repeatedly,
+    # and project open hangs silently for 2-3+ minutes — bumping `waitForProjectOpen`'s
+    # timeout to 3 minutes was insufficient. macOS gates the merge; Windows surfaces issues
+    # without blocking until the underlying environment fight is resolved. Tracked as
+    # https://github.com/rock3r/spectre/issues/71.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
 
     steps:
       - name: Check out repository
@@ -67,14 +79,17 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
 
-      # ide-starter writes IDE installers and extracted builds under `out/ide-tests/{installers,cache}`
-      # — re-using these between runs cuts the cold-start cost from ~10 minutes (DMG download +
-      # mount + copy) to ~30 seconds (existence check). The per-run sandbox lives under
-      # `out/ide-tests/tests/...` and is intentionally NOT cached: it's per-test-method scratch space
-      # that includes the IDE config, indexes, and idea.log, all of which must be fresh each run.
+      # ide-starter writes IDE installers and extracted builds under
+      # `out/ide-tests/{installers,cache}` — re-using these between runs cuts the cold-start
+      # cost from ~10 minutes (DMG/EXE download + extract) to ~30 seconds (existence check).
+      # The per-run sandbox lives under `out/ide-tests/tests/...` and is intentionally NOT
+      # cached: it's per-test-method scratch space that includes the IDE config, indexes, and
+      # idea.log, all of which must be fresh each run.
       #
-      # Cache key includes the IDE build number so a version bump in `libs.versions.toml`
-      # (`ideStarter` / `intellijIdea`) busts the cache rather than silently re-using stale bits.
+      # Cache key includes the runner OS so Windows and macOS get separate caches (different
+      # installer formats, different extracted layouts), and the IDE build number from
+      # libs.versions.toml so a version bump busts the cache rather than silently re-using
+      # stale bits.
       - name: Restore ide-starter cache
         uses: actions/cache@v4
         with:
@@ -87,16 +102,21 @@ jobs:
 
       - name: Run IDE UI test
         run: ./gradlew :sample-intellij-plugin:uiTest
+        # Use bash explicitly on Windows so the `./gradlew` invocation is identical across the
+        # matrix. Default Windows shell is pwsh which has different path-resolution semantics
+        # for `./` prefixes; bash keeps the script identical to ci.yml + windows.yml.
+        shell: bash
 
       # Capture artefacts on failure so post-mortem doesn't require re-running the test.
       # `idea.log`, screenshots, and the test reports cover the three angles a regression here
       # typically has: IDE-side activity, what the IDE looked like at failure time, and which
-      # JUnit assertion tripped.
+      # JUnit assertion tripped. Per-OS artefact name so both legs of the matrix can upload
+      # without colliding.
       - name: Upload failure artefacts
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: ide-uitest-artifacts
+          name: ide-uitest-artifacts-${{ runner.os }}
           path: |
             sample-intellij-plugin/build/reports/tests/uiTest/
             sample-intellij-plugin/build/test-results/uiTest/

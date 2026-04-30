@@ -103,7 +103,14 @@ class RunSpectreUiTest {
                 // Wait for the empty project we passed via `LocalProjectInfo` to finish
                 // opening before firing the action. Without this the action races
                 // `ProjectActivity` execution and `e.project` is unreliable.
-                waitForProjectOpen()
+                //
+                // The default `waitForProjectOpen()` timeout (~60s) is enough on macOS but
+                // not always on the GitHub-hosted Windows runner: `runneradmin` is elevated
+                // there, which causes the IDE to repeatedly try (and fail) to spawn a
+                // de-elevated daemon — the IDE log shows ~50s of mostly-silent retries
+                // before the project finishes opening. Use a Windows-tolerant value across
+                // all hosts (no harm on macOS, where it'll resolve in seconds anyway).
+                waitForProjectOpen(timeout = PROJECT_OPEN_TIMEOUT)
 
                 // Wait for indexing / Resolving / Analyzing-project indicators to settle.
                 // First-open of an empty project still triggers a brief indexing burst that
@@ -229,5 +236,13 @@ class RunSpectreUiTest {
         // p99 and timed out in CI even though it was fine locally. 3 min gives CI enough
         // headroom while still bounding the wait so a stuck indexer doesn't hang the job.
         val INDICATOR_QUIESCENCE_TIMEOUT = 3.minutes
+
+        // ide-starter's `waitForProjectOpen` defaults to ~60s. That's plenty on macOS but
+        // tight on the GitHub-hosted Windows runner: `runneradmin` is elevated, the IDE
+        // tries (and fails) to spawn a de-elevated daemon a few times during open, and
+        // logs go silent for 50+ seconds while indexing proceeds. Bumping to 3 minutes
+        // keeps the same headroom shape as `INDICATOR_QUIESCENCE_TIMEOUT` and applies
+        // uniformly so behaviour stays identical across the matrix.
+        val PROJECT_OPEN_TIMEOUT = 3.minutes
     }
 }
