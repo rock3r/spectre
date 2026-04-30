@@ -60,14 +60,6 @@ permissions:
 jobs:
   validation-windows:
     runs-on: windows-latest
-    # Currently informational — the Gradle test-executor protocol flake described in the
-    # workflow header is unreliable enough on Windows that the verifier (correctly) flags
-    # missing per-class XMLs whenever a worker JVM gets caught by it. Random tests are
-    # affected per run. Job-level `continue-on-error: true` keeps the workflow reporting
-    # green so it doesn't block PRs while the fix is investigated; the artefact upload step
-    # still captures everything for post-mortem of any genuine regression. Drop this once
-    # the flake is resolved — tracked at https://github.com/rock3r/spectre/issues/72.
-    continue-on-error: true
 
     steps:
       - name: Check out repository
@@ -144,19 +136,41 @@ jobs:
           # list.
           task_dirs=("${!required_classes_by_task[@]}")
 
-          # Pass 1: required-set existence.
+          # Pass 1: required-set existence + protocol-flake distinction.
+          #
+          # When the Gradle test-executor protocol race fires (see workflow header), the
+          # affected worker JVM finishes the test cleanly but its per-class XML never lands
+          # on disk; instead Gradle writes a synthetic envelope at
+          # `TEST-Gradle-Test-Run--sample-desktop-<task>.xml` with `<testcase name="<class>"
+          # ...><skipped/></testcase>`. Use that envelope to tell apart:
+          #   - a genuinely-missing class (test never ran, no envelope mention) → hard fail
+          #   - a class chewed by the flake (envelope mentions it) → warning, not fatal
+          #
+          # The warning still surfaces in the GitHub Actions UI and the artefact upload
+          # captures everything for post-mortem; we just don't block the workflow on the
+          # documented Windows-specific race tracked at #72.
           missing=()
+          flaked=()
           for task_dir in "${!required_classes_by_task[@]}"; do
+            envelope="sample-desktop/build/test-results/$task_dir/TEST-Gradle-Test-Run--sample-desktop-${task_dir}.xml"
             for class_name in ${required_classes_by_task[$task_dir]}; do
               xml="sample-desktop/build/test-results/$task_dir/TEST-dev.sebastiano.spectre.sample.validation.${class_name}.xml"
-              if [ ! -f "$xml" ]; then
+              if [ -f "$xml" ]; then
+                continue
+              fi
+              if [ -f "$envelope" ] && grep -qE "<testcase name=\"${class_name}\"" "$envelope"; then
+                flaked+=("$task_dir/${class_name}")
+              else
                 missing+=("$task_dir/${class_name}")
               fi
             done
           done
           if [ "${#missing[@]}" -gt 0 ]; then
-            echo "::error::Missing JUnit XML reports for: ${missing[*]}. Gradle step outcome: ${{ steps.gradle.outcome }}"
+            echo "::error::Missing JUnit XML reports (no Gradle envelope mention either) for: ${missing[*]}. Gradle step outcome: ${{ steps.gradle.outcome }}"
             exit 1
+          fi
+          if [ "${#flaked[@]}" -gt 0 ]; then
+            echo "::warning::Protocol-flake skipped per-class XMLs (Gradle envelope confirms the class was enrolled): ${flaked[*]}. Tracked at https://github.com/rock3r/spectre/issues/72."
           fi
 
           # Pass 2: discovered-set inspection.
