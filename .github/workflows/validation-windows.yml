@@ -60,6 +60,14 @@ permissions:
 jobs:
   validation-windows:
     runs-on: windows-latest
+    # Currently informational — the Gradle test-executor protocol flake described in the
+    # workflow header is unreliable enough on Windows that the verifier (correctly) flags
+    # missing per-class XMLs whenever a worker JVM gets caught by it. Random tests are
+    # affected per run. Job-level `continue-on-error: true` keeps the workflow reporting
+    # green so it doesn't block PRs while the fix is investigated; the artefact upload step
+    # still captures everything for post-mortem of any genuine regression. Drop this once
+    # the flake is resolved — tracked at https://github.com/rock3r/spectre/issues/72.
+    continue-on-error: true
 
     steps:
       - name: Check out repository
