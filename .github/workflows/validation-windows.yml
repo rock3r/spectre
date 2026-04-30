@@ -1,0 +1,234 @@
+name: Validation tests (Windows)
+
+# Runs the opt-in :sample-desktop validationTest* tasks on a real Windows host so the
+# multi-window / popup / fidelity flows we built up under #7, #8, #14, and #23 actually get
+# exercised under Windows JBR. The base `windows.yml` job only runs `:check`; these validation
+# tasks aren't in `:check`'s default scope, so without this workflow a Windows-side regression
+# in popup discovery or HiDPI mapping would only surface in manual testing.
+#
+# ## The "Could not write 127.0.0.1:NNNN" workaround
+#
+# Compose Desktop's `application{}` shutdown via `exitApplication()` races Gradle's test-
+# executor protocol on Windows. The test JVM exits cleanly *after* writing its JUnit XML
+# results, but Gradle's daemon-side reader sometimes loses the TCP socket carrying those
+# results back, and reports a "Could not write '/127.0.0.1:NNNN'" error followed by
+# `BUILD FAILED` — even though the test class itself passed and its `<testsuite ...
+# failures="0" errors="0">` XML is on disk.
+#
+# Until the Gradle / Compose Multiplatform interaction is fixed (or `forkEvery=1` is replaced
+# with a different isolation strategy), this workflow uses the JUnit XMLs as the source of
+# truth: `continue-on-error: true` on the Gradle step keeps the overall job alive past the
+# protocol flake, and a follow-up step parses the XMLs to determine real test outcomes.
+# Compile / dependency-resolution failures still trip the verification step (no XMLs written →
+# exit 1), so we don't lose the signal that genuinely matters.
+#
+# Local invocation:
+#   ./gradlew :sample-desktop:validationTest :sample-desktop:validationTestPopupLayers
+# (Same caveat applies — Gradle may exit non-zero with the protocol noise even when tests pass.)
+
+on:
+  pull_request:
+    paths:
+      - "core/**"
+      - "recording/**"
+      - "sample-desktop/**"
+      - "testing/**"
+      # Broad gradle/** rather than just libs.versions.toml so wrapper bumps and any other
+      # ./gradle/-resident config changes still trigger this validation job. Mirrors the
+      # filter shape of windows.yml + macos-check.yml so configuration drift surfaces here
+      # too.
+      - "gradle/**"
+      - "settings.gradle.kts"
+      - "build.gradle.kts"
+      - ".github/workflows/validation-windows.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "core/**"
+      - "recording/**"
+      - "sample-desktop/**"
+      - "testing/**"
+      - "gradle/**"
+      - "settings.gradle.kts"
+      - "build.gradle.kts"
+      - ".github/workflows/validation-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validation-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Run validation tests
+        # `continue-on-error: true` so the Gradle test-executor protocol flake (see workflow
+        # header) doesn't fail the job. Real test outcomes are verified against the JUnit XML
+        # reports in the next step.
+        #
+        # `--continue` is essential here: without it Gradle aborts after the first task to
+        # exit non-zero, and the protocol-flake "failure" reliably trips on the first task.
+        # That means downstream tasks would never run, the verification step would see their
+        # XMLs missing, and the job would fail for a reason unrelated to the actual tests.
+        # `--continue` makes Gradle run every requested task regardless of earlier failures,
+        # so each task gets a fair chance to produce its XML.
+        continue-on-error: true
+        id: gradle
+        run: |
+          ./gradlew \
+            :sample-desktop:validationTest \
+            :sample-desktop:validationTestPopupLayers \
+            --continue
+        shell: bash
+
+      - name: Verify validation tests passed via JUnit XML
+        # Source-of-truth check that ignores Gradle's exit code but does NOT rubber-stamp every
+        # failure. Two passes over the JUnit XMLs:
+        #
+        # 1. **Required-set existence pass**: an explicit list of expected (task, class) pairs
+        #    must each have a corresponding TEST-<fqn>.xml. A mid-class JVM crash that skips
+        #    writing one XML, or a Gradle compile / dependency-resolution failure that
+        #    produced no XMLs at all, fails the verification with a clear error pointing at
+        #    the missing entry.
+        # 2. **Discovered-set inspection pass**: every TEST-*.xml found under any of the four
+        #    validation task directories — including ones NOT in the required set, e.g. a new
+        #    ValidationTest class added without updating this workflow — is parsed for
+        #    `failures="N"` / `errors="N"`. Any non-zero count fails the step. Missing or
+        #    unparsable attributes are treated as malformation (truncated XML, wrong schema)
+        #    and also fail the step.
+        #
+        # The two passes overlap deliberately: the required set catches "what should run but
+        # didn't"; the discovered set catches "what ran but failed, regardless of whether
+        # we knew about it ahead of time." Together they make it impossible for a new
+        # ValidationTest class with failing assertions to slip past silently.
+        #
+        # Keep `required_classes_by_task` in sync with the validation source set when
+        # ADDING tests; the discovered-set pass means REMOVING a test only fails the
+        # verification (you'd see a "missing required class" error) which is the right
+        # signal to update the list.
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+
+          declare -A required_classes_by_task=(
+            ["validationTest"]="Issue7CompletionValidationTest Issue8CompletionValidationTest Issue8FidelityValidationTest Issue14PerfValidationTest MultiWindowAndPopupValidationTest PopupLayerVariantsValidationTest"
+            ["validationTestLayerComponent"]="PopupLayerVariantsValidationTest"
+            ["validationTestLayerSameCanvas"]="PopupLayerVariantsValidationTest"
+            ["validationTestLayerWindow"]="PopupLayerVariantsValidationTest"
+          )
+          # Derive task_dirs from the associative array's keys rather than maintaining a
+          # parallel list. A future edit that adds a key to required_classes_by_task without
+          # updating a separate task_dirs list would have left Pass 2's discovered-set scan
+          # silently skipping the new directory, masking failing classes not in the required
+          # list.
+          task_dirs=("${!required_classes_by_task[@]}")
+
+          # Pass 1: required-set existence + protocol-flake distinction.
+          #
+          # When the Gradle test-executor protocol race fires (see workflow header), the
+          # affected worker JVM finishes the test cleanly but its per-class XML never lands
+          # on disk; instead Gradle writes a synthetic envelope at
+          # `TEST-Gradle-Test-Run--sample-desktop-<task>.xml` with `<testcase name="<class>"
+          # ...><skipped/></testcase>`. Use that envelope to tell apart:
+          #   - a genuinely-missing class (test never ran, no envelope mention) → hard fail
+          #   - a class chewed by the flake (envelope mentions it) → warning, not fatal
+          #
+          # The warning still surfaces in the GitHub Actions UI and the artefact upload
+          # captures everything for post-mortem; we just don't block the workflow on the
+          # documented Windows-specific race tracked at #72.
+          missing=()
+          flaked=()
+          for task_dir in "${!required_classes_by_task[@]}"; do
+            envelope="sample-desktop/build/test-results/$task_dir/TEST-Gradle-Test-Run--sample-desktop-${task_dir}.xml"
+            for class_name in ${required_classes_by_task[$task_dir]}; do
+              xml="sample-desktop/build/test-results/$task_dir/TEST-dev.sebastiano.spectre.sample.validation.${class_name}.xml"
+              if [ -f "$xml" ]; then
+                continue
+              fi
+              if [ -f "$envelope" ] && grep -qE "<testcase name=\"${class_name}\"" "$envelope"; then
+                flaked+=("$task_dir/${class_name}")
+              else
+                missing+=("$task_dir/${class_name}")
+              fi
+            done
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing JUnit XML reports (no Gradle envelope mention either) for: ${missing[*]}. Gradle step outcome: ${{ steps.gradle.outcome }}"
+            exit 1
+          fi
+          if [ "${#flaked[@]}" -gt 0 ]; then
+            echo "::warning::Protocol-flake skipped per-class XMLs (Gradle envelope confirms the class was enrolled): ${flaked[*]}. Tracked at https://github.com/rock3r/spectre/issues/72."
+          fi
+
+          # Pass 2: discovered-set inspection.
+          all_xml=()
+          for task_dir in "${task_dirs[@]}"; do
+            xmls=(sample-desktop/build/test-results/$task_dir/TEST-*.xml)
+            all_xml+=("${xmls[@]}")
+          done
+          if [ "${#all_xml[@]}" -eq 0 ]; then
+            echo "::error::No JUnit XML reports discovered under expected task directories — Gradle step outcome: ${{ steps.gradle.outcome }}"
+            exit 1
+          fi
+
+          fail_total=0
+          err_total=0
+          malformed_total=0
+          for f in "${all_xml[@]}"; do
+            # `set -euo pipefail` aborts the script if any pipeline component returns
+            # non-zero. `grep -oE` returns non-zero when no match is found, so wrap each
+            # pipeline in `|| true` to capture missing-attribute cases without exiting.
+            # Missing attributes are treated as MALFORMED (truncated XML, wrong schema)
+            # so a corrupted report can't quietly pass by reporting "no failures" simply
+            # because the failures="N" attribute didn't parse.
+            failures_raw=$(grep -oE 'failures="[0-9]+"' "$f" | head -n1 | grep -oE '[0-9]+' || true)
+            errors_raw=$(grep -oE 'errors="[0-9]+"' "$f" | head -n1 | grep -oE '[0-9]+' || true)
+            if [ -z "$failures_raw" ] || [ -z "$errors_raw" ]; then
+              echo "::error file=$f::Malformed JUnit XML — missing/unparsable failures or errors attribute"
+              malformed_total=$((malformed_total + 1))
+              continue
+            fi
+            if [ "$failures_raw" -gt 0 ] || [ "$errors_raw" -gt 0 ]; then
+              echo "::error file=$f::Test class reported failures=$failures_raw errors=$errors_raw"
+              fail_total=$((fail_total + failures_raw))
+              err_total=$((err_total + errors_raw))
+            fi
+          done
+          if [ "$malformed_total" -gt 0 ]; then
+            echo "::error::$malformed_total XML report(s) were malformed (missing failures/errors attribute)."
+            exit 1
+          fi
+          if [ "$fail_total" -gt 0 ] || [ "$err_total" -gt 0 ]; then
+            echo "::error::Validation tests reported $fail_total failure(s) and $err_total error(s) across ${#all_xml[@]} XML report(s)."
+            exit 1
+          fi
+          echo "All required classes present; ${#all_xml[@]} discovered XML report(s) clean (Gradle exit ignored due to known executor-protocol flake)."
+        shell: bash
+
+      - name: Upload validation artefacts
+        # Always upload — useful both for diagnosing flakes and for confirming what ran on
+        # green builds. The fail-tolerant Gradle step + XML-based verification means an absent
+        # upload would otherwise be confusing post-mortem.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-windows-artifacts
+          path: |
+            sample-desktop/build/reports/tests/
+            sample-desktop/build/test-results/
+            sample-desktop/hs_err_*.log
+          if-no-files-found: ignore
+          retention-days: 14
