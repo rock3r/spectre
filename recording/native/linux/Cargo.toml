@@ -12,9 +12,11 @@ path = "src/main.rs"
 
 [dependencies]
 # zbus — D-Bus client. Async-by-default (tokio integration), idiomatic Rust API for the
-# portal's three-call request/response pattern. The 4.x line requires Rust 1.75+, which
-# matches what Ubuntu 22.04 jammy-backports ships and what we install in CI.
-zbus = { version = "4", default-features = false, features = ["tokio"] }
+# portal's three-call request/response pattern. Pinned to 3.x rather than 4.x because some
+# transitive deps in the 4.x tree (toml_datetime 1.x) bumped to edition2024, which
+# requires Rust 1.85+. Our toolchain floor is 1.75 (Ubuntu 22.04 jammy-backports). 3.15
+# is the last 3.x release and works on stable Rust 1.65+.
+zbus = { version = "3.15", default-features = false, features = ["tokio"] }
 
 # tokio — async runtime for zbus. Single-threaded current_thread flavour because the helper
 # is I/O-bound and short-lived: one D-Bus connection, one PipeWire FD, one gst-launch
@@ -37,11 +39,6 @@ nix = { version = "0.29", default-features = false, features = ["fs", "signal", 
 # `?` propagation. anyhow gets us that without a custom error enum per module.
 anyhow = "1"
 
-# Transitive-dep ceiling: toml_datetime 1.x bumped to edition2024 (Rust 1.85+). Our toolchain
-# floor is 1.75 (what Ubuntu 22.04 jammy-backports ships). Pin to the 0.6 line which
-# stays edition2021-compatible. Same constraint applies to a couple of other crates that
-# the zbus tree pulls; if cargo's resolver complains, add similar pins.
-toml_datetime = "=0.6.5"
 
 [profile.release]
 # Strip symbols + LTO for distribution: cuts the binary from ~12 MB to ~3 MB. Helper is
