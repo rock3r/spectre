@@ -16,11 +16,15 @@ dependencies {
     // dbus-java for the Wayland xdg-desktop-portal ScreenCast flow (#77 stage 2). Pulled in
     // unconditionally rather than gated on `OperatingSystem.current().isLinux` because (a)
     // build configuration is OS-agnostic to keep cross-host CI deterministic, (b) the library
-    // is small (~600KB jar) and (c) every reference is internal to the
+    // is small relative to other module deps and (c) every reference is internal to the
     // `recording.portal` package — cross-platform distribution jars carry the bytes without
     // touching them on macOS/Windows.
+    //
+    // We use the JNR transport (not native) because the session bus's EXTERNAL auth requires
+    // reading SCM_CREDENTIALS over the Unix socket, which JDK 21's `UnixDomainSocketChannel`
+    // doesn't expose but JNR's `unixsocket` library does — see the catalog comment.
     implementation(libs.dbusJava.core)
-    runtimeOnly(libs.dbusJava.transport.nativeUnixSocket)
+    runtimeOnly(libs.dbusJava.transport.jnrUnixSocket)
 
     detektPlugins(libs.compose.rules.detekt)
 

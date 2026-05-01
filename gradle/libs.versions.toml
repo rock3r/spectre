@@ -41,10 +41,14 @@ compose-components-resources = { module = "org.jetbrains.compose.components:comp
 compose-uiToolingPreview = { module = "org.jetbrains.compose.ui:ui-tooling-preview", version.ref = "composeMultiplatform" }
 # dbus-java — used only in `:recording` for the Wayland xdg-desktop-portal ScreenCast flow.
 # Two coordinates because dbus-java separates core (interface model + signal dispatch) from
-# transports (the Unix-socket / TCP plumbing). The native-unixsocket transport works on JDK
-# 16+ and is automatically picked up by dbus-java when on the classpath.
+# transports (the Unix-socket / TCP plumbing). We pick the JNR-based unix-socket transport
+# rather than the JDK-native one because the session bus's EXTERNAL auth requires reading
+# SCM_CREDENTIALS over the socket — which JDK 21's `UnixDomainSocketChannel` doesn't expose,
+# but JNR's `unixsocket` library does. The native-unixsocket transport silently fails auth
+# with "Underlying transport returned -1" against the GNOME session bus on Ubuntu 22.04;
+# the JNR transport works there. JNR adds ~1.5 MB of JNI deps but is well-maintained.
 dbusJava-core = { module = "com.github.hypfvieh:dbus-java-core", version.ref = "dbusJava" }
-dbusJava-transport-nativeUnixSocket = { module = "com.github.hypfvieh:dbus-java-transport-native-unixsocket", version.ref = "dbusJava" }
+dbusJava-transport-jnrUnixSocket = { module = "com.github.hypfvieh:dbus-java-transport-jnr-unixsocket", version.ref = "dbusJava" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
