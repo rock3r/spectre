@@ -30,6 +30,13 @@ dependencies {
 
     testImplementation(libs.kotlin.testJunit5)
     testImplementation(libs.kotlinx.coroutines.test)
+
+    // slf4j-simple on the test runtime classpath only. dbus-java is a noop without an SLF4J
+    // implementation present, which is what we want for production code (the recording-module
+    // jar shouldn't bind logging implementations on consumers' behalf). For the manual portal
+    // smoke we DO want the transport-layer chatter, so it's bound here and configured to
+    // DEBUG via the JavaExec task.
+    testRuntimeOnly(libs.slf4j.simple)
 }
 
 tasks.withType<Test>().configureEach { useJUnitPlatform() }
@@ -286,4 +293,17 @@ tasks.register<JavaExec>("runWaylandPortalSmoke") {
     onlyIf { OperatingSystem.current().isLinux }
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("dev.sebastiano.spectre.recording.portal.WaylandPortalSmoke")
+    // slf4j-simple is on the test runtime classpath; route dbus-java's transport / connection
+    // logs to stderr at DEBUG so the smoke output captures the full handshake trail. Without
+    // this, dbus-java still works but a transport-level failure surfaces only as the wrapped
+    // DBusExecutionException at the call site, which doesn't say WHICH bytes the bus rejected.
+    // Override at invocation time with `-Dorg.slf4j.simpleLogger.defaultLogLevel=info` if the
+    // chatter gets too loud.
+    systemProperty("org.slf4j.simpleLogger.defaultLogLevel", "debug")
+    systemProperty("org.slf4j.simpleLogger.showDateTime", "true")
+    systemProperty("org.slf4j.simpleLogger.dateTimeFormat", "HH:mm:ss.SSS")
+    // Forward gst-launch / dbus-java output so the user sees what's happening live rather
+    // than waiting for the JavaExec task to terminate.
+    standardOutput = System.out
+    errorOutput = System.err
 }

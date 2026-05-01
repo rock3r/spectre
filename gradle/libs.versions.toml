@@ -49,6 +49,11 @@ compose-uiToolingPreview = { module = "org.jetbrains.compose.ui:ui-tooling-previ
 # the JNR transport works there. JNR adds ~1.5 MB of JNI deps but is well-maintained.
 dbusJava-core = { module = "com.github.hypfvieh:dbus-java-core", version.ref = "dbusJava" }
 dbusJava-transport-jnrUnixSocket = { module = "com.github.hypfvieh:dbus-java-transport-jnr-unixsocket", version.ref = "dbusJava" }
+# Test-only — when present on the test runtime classpath, dbus-java's SLF4J calls land on the
+# console at the level set via -Dorg.slf4j.simpleLogger.defaultLogLevel. Used by the
+# `runWaylandPortalSmoke` task to surface the transport-layer trail when debugging the portal
+# handshake.
+slf4j-simple = { module = "org.slf4j:slf4j-simple", version = "2.0.16" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
