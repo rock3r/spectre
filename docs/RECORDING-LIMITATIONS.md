@@ -22,23 +22,18 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
 - **Windows** — `gdigrab` region capture (#22). Plus title-based window capture via
   `FfmpegWindowRecorder` (#55).
 - **Linux Xorg sessions** — `x11grab` region capture (#75 / #76). Reads `DISPLAY`.
-- **Linux Wayland sessions** — **partial: handshake works, encoder spawn doesn't yet.** `LinuxX11Grab`
-  detects Wayland (via `XDG_SESSION_TYPE`, `WAYLAND_DISPLAY`, or a `wayland-*` socket in
-  `XDG_RUNTIME_DIR`) and routes through `WaylandPortalRecorder` instead of producing the
-  uniform-black frames `x11grab`-through-XWayland would. The xdg-desktop-portal handshake
-  (`CreateSession` → `SelectSources` → `Start`) completes cleanly via dbus-java; the recorder
-  extracts a PipeWire stream node id from the response. **What it doesn't do** — yet — is spawn
-  the gst-launch encoder against that node. The portal's permission model is FD-scoped:
-  pipewiresrc reads the granted node only when given the file descriptor returned by
-  `OpenPipeWireRemote`, and the JDK's `ProcessBuilder` doesn't inherit arbitrary FDs across
-  exec. Without the FD, gst-launch reaches PLAYING but receives zero frames and the output
-  mp4 is 0 bytes. To avoid the silent-corruption antipattern, `WaylandPortalRecorder.start`
-  throws an `UnsupportedOperationException` after the handshake completes with an actionable
-  message naming the granted node + size. Workarounds in the meantime: switch the session to
-  Xorg (`WaylandEnable=false` in `/etc/gdm3/custom.conf` + `systemctl restart gdm`, or pick
-  "Ubuntu on Xorg" at GDM), or run under Xvfb. Stage 3 (the JNR-POSIX-based FD inheritance
-  plumbing that closes the loop) is tracked under
-  [#80](https://github.com/rock3r/spectre/issues/80).
+- **Linux Wayland sessions** — `gst-launch-1.0` driven through the
+  `xdg-desktop-portal` ScreenCast interface, with the PipeWire FD passed to the encoder by a
+  small Rust helper binary (`spectre-wayland-helper`, sources at
+  `recording/native/linux/`). The JVM-side `WaylandPortalRecorder` spawns the helper and
+  talks to it over stdin/stdout via newline-delimited JSON. **First call within a session
+  pops the compositor's "share your screen" dialog**; subsequent calls reuse the grant via
+  the portal's `restore_token`. Why the helper: the JVM-only attempt (#77 stage 2) hit a
+  dbus-java UnixFD-unmarshalling bug that wasn't fixable trivially, and Rust's `std::process`
+  makes FD inheritance into `gst-launch` a one-liner where the JVM's `ProcessBuilder`
+  doesn't expose the necessary `fcntl(F_SETFD, ...)` knob. The helper-as-subprocess shape
+  also matches the macOS SCK helper (`recording/native/macos/`) — same pattern, same
+  bundling, same recorder-skeleton on the JVM side.
 
 ## Capture mode
 
