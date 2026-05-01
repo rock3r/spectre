@@ -92,10 +92,20 @@ internal class ScreenCastPortal(
                         )
                     )
                 }
+            // Validate response code BEFORE digging for session_handle. Without this we'd
+            // surface a portal rejection (e.g. PipeWire daemon down → response code 2) as a
+            // confusing PortalProtocolException about a missing session_handle field, instead
+            // of "CreateSession rejected." Mirrors the SelectSources / Start checks below.
+            require(createResponse.code == 0) {
+                "CreateSession rejected (response code ${createResponse.code}). The compositor " +
+                    "or portal service refused to open a screen-cast session — common causes: " +
+                    "PipeWire daemon not reachable, xdg-desktop-portal-gnome service crashed, " +
+                    "user disabled screen-cast permission globally."
+            }
             val sessionHandle =
                 (createResponse.results["session_handle"]?.value as? String)?.let { DBusPath(it) }
                     ?: throw PortalProtocolException(
-                        "CreateSession Response did not include session_handle: " +
+                        "CreateSession Response code was 0 but did not include session_handle: " +
                             "${createResponse.results}"
                     )
 
