@@ -21,65 +21,68 @@ mod recorder;
 
 use anyhow::Result;
 use protocol::{Command, Event};
-use std::io::{BufRead, Write};
-use tokio::sync::mpsc;
+use std::io::BufRead;
+use std::sync::mpsc;
+use std::thread;
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     // Read the start command from stdin first. The JVM writes one Start command, then waits
     // for "started" or "error" before driving any further. After the recording is in flight
     // it can write a Stop command, which we read on a separate thread (stdin can be busy).
     let start = read_start_command()?;
 
-    // Channel for outbound events (helper → JVM). All writes go through one task to
-    // serialise stdout access without juggling locks. Bounded so a runaway frame_progress
-    // event source can't OOM the helper.
-    let (event_tx, mut event_rx) = mpsc::channel::<Event>(32);
-    let writer_task = tokio::spawn(async move {
-        let stdout = tokio::io::stdout();
-        let mut stdout = tokio::io::BufWriter::new(stdout);
-        while let Some(event) = event_rx.recv().await {
-            let line = match serde_json::to_string(&event) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("[helper] failed to serialise event {event:?}: {e}");
-                    continue;
-                }
-            };
-            // Errors writing to stdout typically mean the JVM hung up — log and break;
-            // the recorder will see EOF on its read side and abort the session.
-            use tokio::io::AsyncWriteExt;
-            if let Err(e) = stdout.write_all(line.as_bytes()).await {
-                eprintln!("[helper] stdout write_all failed: {e}");
-                break;
-            }
-            if let Err(e) = stdout.write_all(b"\n").await {
-                eprintln!("[helper] stdout newline write failed: {e}");
-                break;
-            }
-            if let Err(e) = stdout.flush().await {
-                eprintln!("[helper] stdout flush failed: {e}");
-                break;
-            }
-        }
-    });
+    // Channel for outbound events (helper → JVM). All writes go through one thread to
+    // serialise stdout access without juggling locks. Bounded depth via the receiver-side
+    // logic; producers don't queue more than one event before flushing.
+    let (event_tx, event_rx) = mpsc::channel::<Event>();
+    let writer_handle = thread::Builder::new()
+        .name("event-writer".into())
+        .spawn(move || writer_loop(event_rx))?;
 
     // Drive the actual recording session. recorder::run owns the portal session, the
     // gst-launch subprocess, and the lifecycle; it watches stdin in parallel for the Stop
     // command and emits events through `event_tx`.
-    if let Err(e) = recorder::run(start, event_tx.clone()).await {
+    if let Err(e) = recorder::run(start, event_tx.clone()) {
         // recorder::run failed before it could emit its own error event — emit one here so
         // the JVM doesn't see EOF and have to guess the failure mode.
-        let _ = event_tx
-            .send(Event::Error {
-                kind: "Helper".into(),
-                message: format!("{e:#}"),
-            })
-            .await;
+        let _ = event_tx.send(Event::Error {
+            kind: "Helper".into(),
+            message: format!("{e:#}"),
+        });
     }
-    drop(event_tx); // close the channel so the writer task exits
-    let _ = writer_task.await;
+    drop(event_tx); // close the channel so the writer thread exits
+    let _ = writer_handle.join();
     Ok(())
+}
+
+/// Drain [`Event`]s from `rx` and write each as one newline-terminated JSON line to stdout.
+/// Stops on channel close (all senders dropped) or on the first stdout write error — typically
+/// the JVM hanging up.
+fn writer_loop(rx: mpsc::Receiver<Event>) {
+    use std::io::Write;
+    let stdout = std::io::stdout();
+    let mut stdout = stdout.lock();
+    while let Ok(event) = rx.recv() {
+        let line = match serde_json::to_string(&event) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[helper] failed to serialise event {event:?}: {e}");
+                continue;
+            }
+        };
+        if let Err(e) = stdout.write_all(line.as_bytes()) {
+            eprintln!("[helper] stdout write failed: {e}");
+            break;
+        }
+        if let Err(e) = stdout.write_all(b"\n") {
+            eprintln!("[helper] stdout newline write failed: {e}");
+            break;
+        }
+        if let Err(e) = stdout.flush() {
+            eprintln!("[helper] stdout flush failed: {e}");
+            break;
+        }
+    }
 }
 
 /// Block on stdin until we receive the first JSON line; parse it as a [`Command::Start`].

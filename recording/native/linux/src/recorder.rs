@@ -5,9 +5,9 @@
 
 use crate::protocol::{Event, StartCommand};
 use anyhow::Result;
-use tokio::sync::mpsc;
+use std::sync::mpsc;
 
-pub async fn run(_start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
+pub fn run(_start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
     // Placeholder so cargo check / cargo build pass while we wire up the real implementation.
     // Emit a deterministic Error event so a JVM-side smoke against this skeleton sees the
     // not-yet-implemented state explicitly rather than EOF.
@@ -17,7 +17,6 @@ pub async fn run(_start: StartCommand, events: mpsc::Sender<Event>) -> Result<()
             message: "recorder::run is a skeleton; portal + gst-launch wiring lands next."
                 .into(),
         })
-        .await
         .ok();
     Ok(())
 }

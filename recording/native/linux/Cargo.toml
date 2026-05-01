@@ -11,37 +11,34 @@ name = "spectre-wayland-helper"
 path = "src/main.rs"
 
 [dependencies]
-# zbus — D-Bus client. Async-by-default (tokio integration), idiomatic Rust API for the
-# portal's three-call request/response pattern. Pinned to 3.x rather than 4.x because some
-# transitive deps in the 4.x tree (toml_datetime 1.x) bumped to edition2024, which
-# requires Rust 1.85+. Our toolchain floor is 1.75 (Ubuntu 22.04 jammy-backports). 3.15
-# is the last 3.x release and works on stable Rust 1.65+.
-zbus = { version = "3.15", default-features = false, features = ["tokio"] }
-
-# tokio — async runtime for zbus. Single-threaded current_thread flavour because the helper
-# is I/O-bound and short-lived: one D-Bus connection, one PipeWire FD, one gst-launch
-# subprocess. Spinning up a multi-threaded runtime is overkill.
-tokio = { version = "1", features = ["rt", "macros", "io-util", "io-std", "process", "signal", "sync", "fs"] }
+# dbus-rs — thin wrapper over libdbus (C library). Picked over zbus because the zbus 4.x and
+# 3.x trees both pull transitive deps (toml_datetime, indexmap) that have bumped to
+# edition2024 and require Rust 1.85+. Our toolchain floor is 1.75 (Ubuntu 22.04 jammy-
+# backports). dbus-rs has been stable since 2018, has a much smaller dep graph, and uses
+# the system libdbus which is available on every modern Linux distro. Trade-off: links a
+# C library at runtime (libdbus-1.so.3, ubiquitous on Linux desktops; also a zbus runtime
+# requirement transitively, just less obvious). We use the sync API — the portal flow is
+# request/response + signal-wait, all straightforward sync code.
+dbus = "0.9"
 
 # serde — JSON DTOs for the JVM↔helper protocol. Newline-delimited JSON over stdin/stdout
-# keeps the wire format simple and the JVM-side parsing trivial (java.util.Scanner +
-# kotlinx.serialization.json).
+# keeps the wire format simple and the JVM-side parsing trivial (kotlinx.serialization).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# nix — POSIX-y syscalls. Used for `fcntl(F_SETFD, FD_CLOEXEC)` clearing on the portal-granted
-# PipeWire FD before spawning gst-launch (so the FD survives exec(2)). Rust std doesn't expose
-# fcntl on stable channel, and going through libc directly means manual sigil handling.
-nix = { version = "0.29", default-features = false, features = ["fs", "signal", "process"] }
+# nix — POSIX-y syscalls. Used for `fcntl(F_SETFD, ...)` clearing on the portal-granted
+# PipeWire FD before spawning gst-launch (so the FD survives exec(2)). Pinned to 0.27 (the
+# last 0.x line that doesn't pull edition2024 transitives on this Rust version). Default-
+# features off to keep the binary lean — we only use the fcntl + signal subsets.
+nix = { version = "=0.27.1", default-features = false, features = ["fs", "process", "signal"] }
 
 # anyhow — for error propagation up to the protocol-error event. The helper is a thin
 # orchestrator; we don't need fine-grained error types, but we do want context-preserving
 # `?` propagation. anyhow gets us that without a custom error enum per module.
 anyhow = "1"
 
-
 [profile.release]
-# Strip symbols + LTO for distribution: cuts the binary from ~12 MB to ~3 MB. Helper is
+# Strip symbols + LTO for distribution: cuts the binary from ~6 MB to ~1.5 MB. Helper is
 # tiny enough that LTO compile time isn't a concern.
 strip = "symbols"
 lto = "thin"
