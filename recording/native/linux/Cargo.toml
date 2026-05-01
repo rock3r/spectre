@@ -1,0 +1,45 @@
+[package]
+name = "spectre-wayland-helper"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+publish = false
+description = "Native helper for Spectre's Linux Wayland recording path. Runs the xdg-desktop-portal screen-cast handshake, extracts the PipeWire FD, and spawns gst-launch-1.0 with the FD inherited so pipewiresrc can read the granted stream. Communicates with the JVM-side recorder over stdin/stdout via newline-delimited JSON."
+
+[[bin]]
+name = "spectre-wayland-helper"
+path = "src/main.rs"
+
+[dependencies]
+# zbus — D-Bus client. Async-by-default (tokio integration), idiomatic Rust API for the
+# portal's three-call request/response pattern. The 4.x line requires Rust 1.75+, which
+# matches what Ubuntu 22.04 jammy-backports ships and what we install in CI.
+zbus = { version = "4", default-features = false, features = ["tokio"] }
+
+# tokio — async runtime for zbus. Single-threaded current_thread flavour because the helper
+# is I/O-bound and short-lived: one D-Bus connection, one PipeWire FD, one gst-launch
+# subprocess. Spinning up a multi-threaded runtime is overkill.
+tokio = { version = "1", features = ["rt", "macros", "io-util", "io-std", "process", "signal", "sync", "fs"] }
+
+# serde — JSON DTOs for the JVM↔helper protocol. Newline-delimited JSON over stdin/stdout
+# keeps the wire format simple and the JVM-side parsing trivial (java.util.Scanner +
+# kotlinx.serialization.json).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# nix — POSIX-y syscalls. Used for `fcntl(F_SETFD, FD_CLOEXEC)` clearing on the portal-granted
+# PipeWire FD before spawning gst-launch (so the FD survives exec(2)). Rust std doesn't expose
+# fcntl on stable channel, and going through libc directly means manual sigil handling.
+nix = { version = "0.29", default-features = false, features = ["fs", "signal", "process"] }
+
+# anyhow — for error propagation up to the protocol-error event. The helper is a thin
+# orchestrator; we don't need fine-grained error types, but we do want context-preserving
+# `?` propagation. anyhow gets us that without a custom error enum per module.
+anyhow = "1"
+
+[profile.release]
+# Strip symbols + LTO for distribution: cuts the binary from ~12 MB to ~3 MB. Helper is
+# tiny enough that LTO compile time isn't a concern.
+strip = "symbols"
+lto = "thin"
+codegen-units = 1
