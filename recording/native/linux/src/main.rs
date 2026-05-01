@@ -27,25 +27,31 @@ use std::sync::mpsc;
 use std::thread;
 
 fn main() -> Result<()> {
-    // Read the start command from stdin first. The JVM writes one Start command, then waits
-    // for "started" or "error" before driving any further. After the recording is in flight
-    // it can write a Stop command, which we read on a separate thread (stdin can be busy).
-    let start = read_start_command()?;
-
-    // Channel for outbound events (helper → JVM). All writes go through one thread to
-    // serialise stdout access without juggling locks. Bounded depth via the receiver-side
-    // logic; producers don't queue more than one event before flushing.
+    // Set up the writer thread FIRST so any error — including a malformed Start command on
+    // stdin — surfaces as an Event::Error to the JVM instead of an unceremonious exit code
+    // the JVM has to guess at. The protocol's contract is "events over stdout, terminal
+    // event signals end-of-recording"; we honour it even for early-protocol errors.
     let (event_tx, event_rx) = mpsc::channel::<Event>();
     let writer_handle = thread::Builder::new()
         .name("event-writer".into())
         .spawn(move || writer_loop(event_rx))?;
 
-    // Drive the actual recording session. recorder::run owns the portal session, the
-    // gst-launch subprocess, and the lifecycle; it watches stdin in parallel for the Stop
-    // command and emits events through `event_tx`.
-    if let Err(e) = recorder::run(start, event_tx.clone()) {
-        // recorder::run failed before it could emit its own error event — emit one here so
-        // the JVM doesn't see EOF and have to guess the failure mode.
+    // Read the Start command. If parsing fails (EOF, malformed JSON, Stop-without-Start),
+    // emit a Protocol error event and exit cleanly via the writer thread.
+    let outcome: Result<()> = match read_start_command() {
+        Ok(start) => recorder::run(start, event_tx.clone()),
+        Err(e) => {
+            let _ = event_tx.send(Event::Error {
+                kind: "Protocol".into(),
+                message: format!("{e:#}"),
+            });
+            Ok(()) // Error already reported via the event channel — don't double-report.
+        }
+    };
+
+    // recorder::run can fail without having reported the error itself (e.g. portal
+    // handshake exception bubbles up). Cover that case too.
+    if let Err(e) = outcome {
         let _ = event_tx.send(Event::Error {
             kind: "Helper".into(),
             message: format!("{e:#}"),
