@@ -75,21 +75,41 @@ what's done and what's planned. The original spike notes still live at
   with the Windows job. The pre-existing `macos.yml` stays focused on
   `:recording:check` + the Swift helper build.
 
+### v4 — Linux Xorg support
+
+Validated on a Hyper-V Ubuntu 22.04 dev VM (2026-05-01). Most of v4's "Linux" surface area
+turned out to already work without changes; the only piece that needed real implementation
+work was the recording backend.
+
+- **`recording.FfmpegBackend.LinuxX11Grab` + `x11grabRegionCapture` argv builder** — Xorg
+  region capture via `ffmpeg -f x11grab`. Mirrors the gdigrab pattern: input-side region
+  selection (offset baked into the input URL as `<display>+x,y`, dimensions via
+  `-video_size`), no crop filter, no silent-clamp pitfall. (`#75`.)
+- **Wayland session detection** — `LinuxX11Grab.checkNotWayland` throws explicitly on
+  Wayland sessions (env signals: `XDG_SESSION_TYPE=wayland`, non-blank `WAYLAND_DISPLAY`,
+  or a `wayland-*` socket in `XDG_RUNTIME_DIR`). Without this guard, x11grab through
+  XWayland succeeds without erroring but produces uniform-black frames — Wayland's
+  security model blocks framebuffer reads by clients other than the compositor. (`#77`
+  stage 1.)
+- **Robot input + popup discovery + HiDPI + multi-window** — already worked on Linux
+  Xorg out of the box. `:sample-desktop:validationTest*` was 15/15 + 3/3 popup-layer
+  variants on the dev VM with no source changes.
+
 ## What's planned
 
 The open work is platform-specific and tracked as labelled GitHub issues. Pick them up on a
 machine with the relevant runtime — the issues reference what blocks them.
 
-- **v4 (Linux)** — `#28` tracks the phase. Sub-issues cover Robot input + focus on X11/Wayland
-  (`#25`), HiDPI coordinate mapping (`#26`), and ffmpeg X11/Wayland recording (`#27`).
+- **Linux Wayland** — `#77` tracks both stage 1 (runtime detection — landed) and stage 2
+  (PipeWire + xdg-desktop-portal native capture, plus a `WaylandRobot` shim for
+  framebuffer reads). Stage 2 needs ffmpeg ≥ 6.1 (`pipewiregrab` device); Ubuntu 22.04
+  ships 4.4 so Wayland support implies bumping the supported floor.
 - **Notarization** — `#49` covers signing + notarising the SCK helper for distribution. v2
   intentionally landed unsigned (the helper runs from inside the JVM's process, so end users
   never see a Gatekeeper prompt for it directly), but distribution scenarios may want it.
-- **v3 follow-ups** — `#55` (wire title-based gdigrab through `AutoRecorder`), `#56`
-  (JBR/skiko OnWindow popup crash tracking), `#57` (widen `:sample-intellij-plugin:uiTest`
-  to Windows), `#58` (run `:sample-desktop` validation tests on Windows CI). The
-  backlog-only `#61` (audio capture) sits in the same problem space but with no scheduled
-  work.
+- **v3 follow-ups** — `#56` (JBR/skiko OnWindow popup crash tracking). `#55` / `#57` /
+  `#58` shipped during the v3 cleanup pass. The backlog-only `#61` (audio capture) sits
+  in the same problem space but with no scheduled work.
 
 ## Module map
 

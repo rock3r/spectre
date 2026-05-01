@@ -9,7 +9,9 @@ tree, sends real OS-level mouse and keyboard input via `java.awt.Robot`, and rec
 screen — against IDE-hosted Compose surfaces (IntelliJ, Jewel) and standalone desktop apps
 alike.
 
-macOS and Windows. Linux works for everything except recording — see [#75](https://github.com/rock3r/spectre/issues/75).
+macOS, Windows, and Linux Xorg. Wayland sessions are detected and rejected with an
+actionable error — native Wayland capture (PipeWire + xdg-desktop-portal) is tracked under
+[#77](https://github.com/rock3r/spectre/issues/77).
 
 ## Modules
 
