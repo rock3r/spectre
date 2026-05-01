@@ -259,27 +259,49 @@ internal class ScreenCastPortal(
         @Suppress("UNCHECKED_CAST")
         fun parseStreams(results: Map<String, Variant<*>>): List<PortalStream> {
             // The "streams" key is `a(ua{sv})` — array of (uint32 node_id, vardict properties).
-            // dbus-java surfaces this as List<List<Any>> where each inner list is [UInt32,
-            // Map<String, Variant<*>>]. We pull node_id, position, and size out of each.
-            val raw = results["streams"]?.value as? List<*> ?: return emptyList()
+            // dbus-java unmarshals D-Bus arrays as Java `Object[]` (NOT `List<?>`), and D-Bus
+            // structs as Object[] with one element per struct field. So the runtime shape is:
+            //   Object[]  // the D-Bus array
+            //     ↳ Object[]  // each stream — the D-Bus struct
+            //         ↳ UInt32  // index 0: node_id
+            //         ↳ Map<String, Variant<*>>  // index 1: properties (size, position, etc.)
+            // Earlier I tried `as? List<*>` and got `null` every time — because Object[] isn't
+            // a List in Java. Coerce both shapes (defensive: future dbus-java versions may
+            // change unmarshalling) and pull node_id / position / size out.
+            val raw = toListOrNull(results["streams"]?.value) ?: return emptyList()
             return raw.mapNotNull { entry ->
-                val list = entry as? List<*> ?: return@mapNotNull null
-                if (list.size < 2) return@mapNotNull null
-                val nodeId = (list[0] as? UInt32)?.toInt() ?: return@mapNotNull null
-                val props = list[1] as? Map<String, Variant<*>> ?: emptyMap()
-                val pos = (props["position"]?.value as? List<*>)?.let { Pair(it) }
-                val size = (props["size"]?.value as? List<*>)?.let { Pair(it) }
+                val structFields = toListOrNull(entry) ?: return@mapNotNull null
+                if (structFields.size < 2) return@mapNotNull null
+                val nodeId = (structFields[0] as? UInt32)?.toInt() ?: return@mapNotNull null
+                val props = structFields[1] as? Map<String, Variant<*>> ?: emptyMap()
+                val pos = toListOrNull(props["position"]?.value)?.let { intPairOrZero(it) }
+                val size = toListOrNull(props["size"]?.value)?.let { intPairOrZero(it) }
                 PortalStream(nodeId = nodeId, position = pos ?: (0 to 0), size = size ?: (0 to 0))
             }
         }
 
-        @Suppress("FunctionName", "UNUSED_PARAMETER")
-        fun Pair(list: List<*>): Pair<Int, Int> {
-            // Position / size come back as `(ii)` D-Bus structs of two int32s.
+        /** Coerce a D-Bus container surfaced by dbus-java to a `List<*>`, regardless of whether
+         * it landed as a Java `Object[]` (the actual unmarshalling shape) or a `List<?>` (defensive
+         * for future dbus-java versions). Returns null if the value is neither shape — including
+         * when the value is missing entirely (the caller pipes a nullable in via `?.value`). */
+        private fun toListOrNull(value: Any?): List<Any?>? =
+            when (value) {
+                null -> null
+                is Array<*> -> value.toList()
+                is List<*> -> value
+                else -> null
+            }
+
+        /** Position / size come back as `(ii)` D-Bus structs of two int32s — see [parseStreams]
+         * for why they arrive as a generic list. Defensive about element types because dbus-java
+         * has been observed to surface int32 fields as either `Integer` or boxed `int` depending
+         * on the marshaller path. */
+        private fun intPairOrZero(list: List<Any?>): Pair<Int, Int> {
             val first = (list.getOrNull(0) as? Number)?.toInt() ?: 0
             val second = (list.getOrNull(1) as? Number)?.toInt() ?: 0
             return first to second
         }
+
     }
 
     /**
