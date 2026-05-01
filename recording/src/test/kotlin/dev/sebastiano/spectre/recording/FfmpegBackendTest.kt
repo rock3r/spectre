@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.recording
 
+import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -61,7 +62,60 @@ class FfmpegBackendTest {
         // No DISPLAY, no WAYLAND_DISPLAY, no XDG_SESSION_TYPE — typical for a barebones
         // SSH session or a CI job without a display server. We don't claim "Wayland" in this
         // case; the actual ffmpeg-side error will surface separately.
-        assertFalse(FfmpegBackend.detectWaylandSession(fakeEnv()))
+        assertFalse(FfmpegBackend.detectWaylandSession(fakeEnv()) { _ -> false })
+    }
+
+    // -----------------------------------------------------------------------
+    // detectWaylandSession tier 3: filesystem probe of XDG_RUNTIME_DIR.
+    // Catches the SSH-into-Wayland-host case — XDG_SESSION_TYPE and
+    // WAYLAND_DISPLAY are missing in SSH-spawned processes, but
+    // XDG_RUNTIME_DIR IS exported and the user's Wayland compositor leaves
+    // a `wayland-0` socket inside it. Without this tier, recording over SSH
+    // on a Wayland workstation silently produces a black mp4.
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `detectWaylandSession returns true when XDG_RUNTIME_DIR has a wayland socket`() {
+        // Simulates SSH-into-Wayland-host: env signals tier 1 + 2 are absent (XDG_SESSION_TYPE
+        // would be "tty" for SSH, WAYLAND_DISPLAY unset), but the runtime dir contains the
+        // compositor's socket.
+        val sshEnv = fakeEnv("XDG_SESSION_TYPE" to "tty", "XDG_RUNTIME_DIR" to "/run/user/1000")
+        val socketPresent: (Path) -> Boolean = { _ -> true }
+        assertTrue(FfmpegBackend.detectWaylandSession(sshEnv, socketPresent))
+    }
+
+    @Test
+    fun `detectWaylandSession returns false when runtime dir exists but no wayland socket`() {
+        // Pure Xorg host: runtime dir is set, but no `wayland-*` socket inside.
+        val xorgEnv = fakeEnv("XDG_SESSION_TYPE" to "tty", "XDG_RUNTIME_DIR" to "/run/user/1000")
+        val noSocket: (Path) -> Boolean = { _ -> false }
+        assertFalse(FfmpegBackend.detectWaylandSession(xorgEnv, noSocket))
+    }
+
+    @Test
+    fun `detectWaylandSession skips runtime dir probe when XDG_RUNTIME_DIR is unset`() {
+        // No env signals AND no runtime dir to probe → false. The lambda must NOT be called
+        // (we'd give it a junk path), so the test enforces that with a throwing fake.
+        val noRuntime = fakeEnv()
+        val unreachable: (Path) -> Boolean = { _ -> error("must not probe filesystem") }
+        assertFalse(FfmpegBackend.detectWaylandSession(noRuntime, unreachable))
+    }
+
+    @Test
+    fun `detectWaylandSession ignores blank XDG_RUNTIME_DIR`() {
+        val blankRuntime = fakeEnv("XDG_RUNTIME_DIR" to "")
+        val unreachable: (Path) -> Boolean = { _ -> error("must not probe filesystem") }
+        assertFalse(FfmpegBackend.detectWaylandSession(blankRuntime, unreachable))
+    }
+
+    @Test
+    fun `detectWaylandSession short-circuits on tier 1 without invoking the filesystem probe`() {
+        // If XDG_SESSION_TYPE=wayland is decisive, we should never reach the runtime-dir tier.
+        // Avoids pointless filesystem I/O on systems where the env vars are clear.
+        val explicitWayland =
+            fakeEnv("XDG_SESSION_TYPE" to "wayland", "XDG_RUNTIME_DIR" to "/run/user/1000")
+        val unreachable: (Path) -> Boolean = { _ -> error("must not probe filesystem") }
+        assertTrue(FfmpegBackend.detectWaylandSession(explicitWayland, unreachable))
     }
 
     // -----------------------------------------------------------------------

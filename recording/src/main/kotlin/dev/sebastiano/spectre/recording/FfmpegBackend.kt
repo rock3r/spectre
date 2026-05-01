@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.recording
 
 import java.awt.Rectangle
+import java.nio.file.Files
 import java.nio.file.Path
 
 /**
@@ -103,24 +104,55 @@ internal sealed interface FfmpegBackend {
         /**
          * Returns true when the host is running a Wayland session, false otherwise.
          *
-         * Two signals, either of which is sufficient:
-         * - `XDG_SESSION_TYPE=wayland` — set by systemd-logind / GDM for Wayland sessions.
-         * - `WAYLAND_DISPLAY` — set to a non-blank value (typically `wayland-0`) when a Wayland
-         *   compositor is reachable. This catches the edge case where `XDG_SESSION_TYPE` is unset
-         *   but a Wayland compositor is running anyway (manually-started compositors,
-         *   user-namespace setups).
+         * Three signals checked in order; any one positive returns true:
+         * 1. `XDG_SESSION_TYPE=wayland` — set by systemd-logind / GDM for graphical sessions that
+         *    started under Wayland.
+         * 2. `WAYLAND_DISPLAY` non-blank (typically `wayland-0`) — set when a Wayland compositor
+         *    socket is reachable. Catches manually-started compositors and user-namespace setups
+         *    where `XDG_SESSION_TYPE` may be missing.
+         * 3. A `wayland-*` socket file under `XDG_RUNTIME_DIR` — catches the SSH-into-Wayland-host
+         *    case that #1 and #2 miss. SSH's `XDG_SESSION_TYPE` reports `tty` (not `wayland`) and
+         *    `WAYLAND_DISPLAY` is unset, but the user's Wayland compositor is still running and
+         *    leaves a socket at `/run/user/<uid>/wayland-0`. Without this tier, recording a Wayland
+         *    host over SSH would silently produce a black mp4 even though we have ample signal that
+         *    Wayland is in play.
          *
-         * The pure form (taking `getenv` as a parameter rather than reading [System.getenv]
-         * directly) lets unit tests cover the signal matrix deterministically without mucking with
-         * process-level env vars (which the JVM doesn't even support modifying at runtime).
+         * The pure form (taking `getenv` and a filesystem-probe lambda as parameters rather than
+         * reading [System.getenv] / [Files] directly) lets unit tests cover the signal matrix
+         * deterministically without mucking with process-level env vars (which the JVM can't modify
+         * at runtime anyway) or per-test temp directories.
          */
         @Suppress("ReturnCount")
-        internal fun detectWaylandSession(getenv: (String) -> String?): Boolean {
+        internal fun detectWaylandSession(
+            getenv: (String) -> String?,
+            runtimeDirHasWaylandSocket: (Path) -> Boolean = ::defaultRuntimeDirHasWaylandSocket,
+        ): Boolean {
             val sessionType = getenv("XDG_SESSION_TYPE")?.lowercase()
             if (sessionType == "wayland") return true
             val waylandDisplay = getenv("WAYLAND_DISPLAY")
             if (!waylandDisplay.isNullOrBlank()) return true
-            return false
+            val runtimeDir = getenv("XDG_RUNTIME_DIR")?.takeIf { it.isNotBlank() } ?: return false
+            return runtimeDirHasWaylandSocket(Path.of(runtimeDir))
+        }
+
+        /**
+         * Default filesystem probe for tier 3 of [detectWaylandSession]. Returns true if
+         * [runtimeDir] is a readable directory and contains any entry whose name starts with
+         * `wayland-` (matching the compositor's socket file convention).
+         *
+         * Wrapped in [runCatching] because the directory may exist but be unreadable due to a mount
+         * race or permission glitch — in that case we'd rather treat the host as non-Wayland (and
+         * let the smoke surface the real failure mode) than throw out of detection entirely.
+         */
+        @Suppress("TooGenericExceptionCaught")
+        private fun defaultRuntimeDirHasWaylandSocket(runtimeDir: Path): Boolean {
+            if (!Files.isDirectory(runtimeDir)) return false
+            return runCatching {
+                    Files.list(runtimeDir).use { stream ->
+                        stream.anyMatch { it.fileName.toString().startsWith("wayland-") }
+                    }
+                }
+                .getOrDefault(false)
         }
 
         /**
@@ -135,7 +167,7 @@ internal sealed interface FfmpegBackend {
                 "ffmpeg's x11grab silently captures black frames on Wayland sessions even with " +
                     "XWayland in the loop — Wayland's security model blocks framebuffer reads " +
                     "by clients other than the compositor. Detected via XDG_SESSION_TYPE / " +
-                    "WAYLAND_DISPLAY. " +
+                    "WAYLAND_DISPLAY / XDG_RUNTIME_DIR/wayland-* socket. " +
                     "Workarounds: switch to an Xorg session (set `WaylandEnable=false` in " +
                     "/etc/gdm3/custom.conf and restart gdm, or pick \"Ubuntu on Xorg\" at the " +
                     "GDM login screen), or run under Xvfb. " +
