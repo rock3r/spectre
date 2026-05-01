@@ -15,6 +15,7 @@
 //! `Command::pre_exec` + `nix::fcntl`. Both pain points the JVM side had simply don't exist
 //! in this language environment.
 
+mod gst;
 mod portal;
 mod protocol;
 mod recorder;
