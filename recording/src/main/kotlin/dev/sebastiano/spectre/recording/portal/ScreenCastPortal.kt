@@ -241,8 +241,20 @@ internal class ScreenCastPortal(
         const val PORTAL_REQUEST_PATH_BASE = "/org/freedesktop/portal/desktop/request"
         const val DEFAULT_RESPONSE_TIMEOUT_MS: Long = 60_000
 
-        fun defaultSessionConnection(): DBusConnection =
-            DBusConnectionBuilder.forSessionBus().build()
+        fun defaultSessionConnection(): DBusConnection {
+            // Two-step discovery: prefer DBUS_SESSION_BUS_ADDRESS if set (matches what the
+            // session shell / systemd-logind exports), otherwise fall back to dbus-java's
+            // built-in `forSessionBus()` which queries `/org/freedesktop/DBus` and the
+            // standard discovery paths. Spelling this out fixes a footgun where SSH-spawned
+            // processes inherit DBUS_SESSION_BUS_ADDRESS but dbus-java's automatic discovery
+            // can blow past it and hit the transport-error path.
+            val address = System.getenv("DBUS_SESSION_BUS_ADDRESS")?.takeIf { it.isNotBlank() }
+            return if (address != null) {
+                DBusConnectionBuilder.forAddress(address).build()
+            } else {
+                DBusConnectionBuilder.forSessionBus().build()
+            }
+        }
 
         @Suppress("UNCHECKED_CAST")
         fun parseStreams(results: Map<String, Variant<*>>): List<PortalStream> {
