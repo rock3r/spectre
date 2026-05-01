@@ -124,7 +124,7 @@ pub fn open_screen_cast_session(
     // 2. SelectSources
     let select_token = next_token("select");
     let select_options = make_options([
-        ("handle_token", variant(select_token.as_str())),
+        ("handle_token", variant(select_token.clone())),
         ("types", variant(source_types_to_bitmask(source_types))),
         ("multiple", variant(false)),
         ("cursor_mode", variant(cursor_mode_flag(cursor_mode))),
@@ -150,7 +150,7 @@ pub fn open_screen_cast_session(
 
     // 3. Start
     let start_token = next_token("start");
-    let start_options = make_options([("handle_token", variant(start_token.as_str()))]);
+    let start_options = make_options([("handle_token", variant(start_token.clone()))]);
     let start_response = call_with_response(
         &conn,
         &sender,
