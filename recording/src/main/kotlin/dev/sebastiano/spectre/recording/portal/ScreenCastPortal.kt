@@ -289,8 +289,16 @@ internal class ScreenCastPortal(
     // dbus-java introspects method names case-sensitively against the D-Bus member names,
     // so these MUST be PascalCase even though Kotlin's convention says camelCase. Suppressing
     // FunctionNaming on the interface block as a whole.
+    //
+    // `@JvmSuppressWildcards` is critical: without it, Kotlin compiles `Map<String, Variant<*>>`
+    // to Java as `Map<String, ? extends Variant<?>>`, and dbus-java's reflective signature
+    // derivation chokes on the wildcard and emits the body signature as `a{s}` instead of
+    // `a{sv}`. The session bus then rejects the malformed message and slams the connection
+    // ("Underlying transport returned -1" with a hard EOF). With the annotation, Kotlin emits
+    // `Map<String, Variant<?>>` as the Java type, which dbus-java introspects correctly.
     @DBusInterfaceName("org.freedesktop.portal.ScreenCast")
     @Suppress("FunctionNaming")
+    @JvmSuppressWildcards
     internal interface ScreenCast : DBusInterface {
 
         fun CreateSession(options: Map<String, Variant<*>>): DBusPath
