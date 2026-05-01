@@ -17,6 +17,13 @@ import java.nio.file.Path
  * - [gdigrabWindowCapture] — Windows title-based window capture via the gdigrab device.
  * - [x11grabRegionCapture] — Linux X11 region capture via the x11grab device, with the region
  *   selected on the input side via the `<display>+x,y` URL form and `-video_size`.
+ *
+ * Wayland capture is **not** here — it goes through GStreamer + xdg-desktop-portal in
+ * `dev.sebastiano.spectre.recording.portal.WaylandPortalRecorder`, separately from this ffmpeg argv
+ * layer. ffmpeg ≥ 6.1 has a `pipewiregrab` indev that would slot in here, but the Spectre supported
+ * floor stays on stock Ubuntu 22.04 (ffmpeg 4.4 + GStreamer 1.20), and the Wayland portal lifecycle
+ * (D-Bus session held open across the recording) is sufficiently different from the stateless
+ * ffmpeg argv shape that a separate recorder reads cleaner.
  */
 internal object FfmpegCli {
 

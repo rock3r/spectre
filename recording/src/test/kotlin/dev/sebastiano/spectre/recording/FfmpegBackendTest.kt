@@ -137,11 +137,15 @@ class FfmpegBackendTest {
                 FfmpegBackend.checkNotWayland(fakeEnv("XDG_SESSION_TYPE" to "wayland"))
             }
         // The error has to point users somewhere — at minimum: name what we detected, the
-        // Xorg-switch workaround, and the Wayland tracking issue.
+        // primary recommendation (use the new portal-based recorder, post-#77 stage 2), and
+        // the Xorg-switch fallback for setups where the portal isn't available.
         val msg = ex.message.orEmpty()
         assertTrue("Wayland" in msg, "Should name Wayland: $msg")
-        assertTrue("Xorg" in msg, "Should suggest Xorg switch: $msg")
-        assertTrue("issues/77" in msg, "Should link to the tracking issue: $msg")
+        assertTrue("Xorg" in msg, "Should mention Xorg fallback: $msg")
+        assertTrue(
+            "AutoRecorder" in msg || "WaylandPortalRecorder" in msg,
+            "Should point users at the portal-based recorder: $msg",
+        )
     }
 
     // -----------------------------------------------------------------------

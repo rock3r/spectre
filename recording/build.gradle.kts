@@ -12,6 +12,16 @@ dependencies {
     // recording is intentionally isolated per docs/ARCHITECTURE.md — it has its own native /
     // ffmpeg boundary and shares no types with core. No projects.core dependency here.
     implementation(libs.kotlinx.coroutines.core)
+
+    // dbus-java for the Wayland xdg-desktop-portal ScreenCast flow (#77 stage 2). Pulled in
+    // unconditionally rather than gated on `OperatingSystem.current().isLinux` because (a)
+    // build configuration is OS-agnostic to keep cross-host CI deterministic, (b) the library
+    // is small (~600KB jar) and (c) every reference is internal to the
+    // `recording.portal` package — cross-platform distribution jars carry the bytes without
+    // touching them on macOS/Windows.
+    implementation(libs.dbusJava.core)
+    runtimeOnly(libs.dbusJava.transport.nativeUnixSocket)
+
     detektPlugins(libs.compose.rules.detekt)
 
     testImplementation(libs.kotlin.testJunit5)
@@ -257,4 +267,19 @@ tasks.register<JavaExec>("runFfmpegX11GrabSmoke") {
     onlyIf { OperatingSystem.current().isLinux }
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("dev.sebastiano.spectre.recording.FfmpegX11GrabSmoke")
+}
+
+// Manual smoke for the Wayland portal + PipeWire path (#77 stage 2). Pops the compositor's
+// screen-cast permission dialog on first run; subsequent runs in the same login session reuse
+// the grant. Requires a Wayland session (the recorder's portal flow returns no node id on
+// Xorg). Linux-only; no-op on macOS/Windows where the gst-launch + xdg-desktop-portal stack
+// doesn't exist.
+tasks.register<JavaExec>("runWaylandPortalSmoke") {
+    group = "verification"
+    description =
+        "Boots a JFrame, records it for ~3s via xdg-desktop-portal + gst-launch (PipeWire), " +
+            "prints output stats."
+    onlyIf { OperatingSystem.current().isLinux }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.portal.WaylandPortalSmoke")
 }

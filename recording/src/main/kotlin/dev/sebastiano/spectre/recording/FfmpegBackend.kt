@@ -168,11 +168,13 @@ internal sealed interface FfmpegBackend {
                     "XWayland in the loop — Wayland's security model blocks framebuffer reads " +
                     "by clients other than the compositor. Detected via XDG_SESSION_TYPE / " +
                     "WAYLAND_DISPLAY / XDG_RUNTIME_DIR/wayland-* socket. " +
-                    "Workarounds: switch to an Xorg session (set `WaylandEnable=false` in " +
-                    "/etc/gdm3/custom.conf and restart gdm, or pick \"Ubuntu on Xorg\" at the " +
-                    "GDM login screen), or run under Xvfb. " +
-                    "Wayland-native capture (PipeWire + xdg-desktop-portal) is tracked under " +
-                    "https://github.com/rock3r/spectre/issues/77."
+                    "Use Wayland-native capture instead: construct " +
+                    "`dev.sebastiano.spectre.recording.AutoRecorder` (which routes Wayland " +
+                    "sessions through xdg-desktop-portal + PipeWire automatically), or " +
+                    "instantiate `WaylandPortalRecorder` directly. Alternatively, switch to an " +
+                    "Xorg session (set `WaylandEnable=false` in /etc/gdm3/custom.conf and " +
+                    "restart gdm, or pick \"Ubuntu on Xorg\" at the GDM login screen), or run " +
+                    "under Xvfb."
             )
         }
     }
