@@ -1,22 +1,36 @@
 # Recording limitations
 
-The `recording` module currently ships two backends:
-- `FfmpegRecorder` (v1) — region capture via `ffmpeg` + `avfoundation`. Trade-offs below.
-- `ScreenCaptureKitRecorder` (v2, #18 — landed) — window-targeted capture via a bundled Swift
-  helper. Removes the "anything overlapping the region appears in the recording" class of
-  problems for top-level windows. Falls outside the scope of the v1 limitations document; see
+The `recording` module ships:
+- `FfmpegRecorder` — region capture via `ffmpeg` against the platform's native capture device.
+  Three backends auto-selected from `os.name`: `avfoundation` (macOS), `gdigrab` (Windows),
+  `x11grab` (Linux Xorg). Trade-offs below.
+- `ScreenCaptureKitRecorder` (#18 — landed) — macOS-only window-targeted capture via a bundled
+  Swift helper. Removes the "anything overlapping the region appears in the recording" class
+  of problems for top-level windows. Falls outside the region-capture trade-off list below; see
   the recording module README for usage.
+- `FfmpegWindowRecorder` (#22 / #55 — landed) — Windows-only title-based window capture via
+  `gdigrab title=`. Mirrors the SCK ergonomics for Windows top-level Compose windows.
 
-The rest of this document describes the v1 region-capture path. Use ScreenCaptureKit when you
-have a top-level `ComposeWindow` you want to record cleanly; use the v1 region capture for
-embedded `ComposePanel` surfaces (where there's no host window to target) or when you need to
-record an arbitrary screen rectangle independent of any specific window.
+The rest of this document describes the region-capture path (relevant on every platform when
+there's no host window to target). Use ScreenCaptureKit / FfmpegWindowRecorder when you have a
+top-level `ComposeWindow` you want to record cleanly; use region capture for embedded
+`ComposePanel` surfaces or arbitrary screen rectangles.
 
 ## Platform
 
-- **macOS only**. v1 implements `avfoundation` region capture and nothing else.
-- **Windows** (`gdigrab`) is deferred to v3.
-- **Linux** (`x11grab` / Wayland) is deferred to v4.
+- **macOS** — `avfoundation` region capture. Requires the Screen Recording permission.
+- **Windows** — `gdigrab` region capture (#22). Plus title-based window capture via
+  `FfmpegWindowRecorder` (#55).
+- **Linux Xorg sessions** — `x11grab` region capture (#75 / #76). Reads `DISPLAY`.
+- **Linux Wayland sessions** — **not supported**. `LinuxX11Grab` detects Wayland (via
+  `XDG_SESSION_TYPE`, `WAYLAND_DISPLAY`, or a `wayland-*` socket in `XDG_RUNTIME_DIR`) and
+  throws an explicit error rather than silently produce uniform-black frames. Wayland's
+  security model blocks framebuffer reads by clients other than the compositor, so x11grab
+  through XWayland succeeds without erroring but captures nothing useful. Workarounds: switch
+  the session to Xorg (`WaylandEnable=false` in `/etc/gdm3/custom.conf` + `systemctl restart
+  gdm`, or pick "Ubuntu on Xorg" at GDM), or run under Xvfb. Native Wayland capture (PipeWire
+  + xdg-desktop-portal) is tracked under
+  [#77](https://github.com/rock3r/spectre/issues/77).
 
 ## Capture mode
 
