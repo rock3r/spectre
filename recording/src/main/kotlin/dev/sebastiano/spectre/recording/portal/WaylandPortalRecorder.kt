@@ -131,25 +131,33 @@ internal class WaylandPortalRecorder(
     }
 
     internal object SystemProcessFactory : ProcessFactory {
-        override fun start(argv: List<String>): Process =
-            ProcessBuilder(argv)
-                // stdout: discard. With the `-q` flag we pass in the argv, gst-launch is silent
-                // on stdout during normal operation. Discarding avoids pipe-fill-and-stall.
-                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                // stderr: INHERIT so warnings + real errors land on the JVM's stderr where
-                // callers can see them. gst-launch's `-q` already suppresses the version
-                // banner, so the chatter level on a healthy run is near-zero. On failures
-                // (missing plugin, PipeWire daemon refusing the node, encoder OOM, etc.)
-                // gst-launch writes a useful one-liner to stderr — without forwarding it,
-                // the recorder would silently produce a 0-byte file the way #77's first
-                // validation pass did. The trade-off vs DISCARD is that consumers who want
-                // a quiet recorder need to redirect stderr themselves.
-                .redirectError(ProcessBuilder.Redirect.INHERIT)
+        override fun start(argv: List<String>): Process {
+            // gst-launch can produce a wall of diagnostic output when verbose. We need the
+            // diagnostic on failures (otherwise a 0-byte recording is silent corruption) but
+            // don't want it noising up healthy runs. Compromise: route both stdout and stderr
+            // to a per-PID log file under the JVM's tmpdir. Smoke / debug callers can `cat`
+            // the file; production callers can read it on failure or ignore it on success.
+            // Compared to a PIPE-with-reader-thread design, this trades "lose chatter past
+            // the pipe buffer" for "pay the IO cost of a tmpfile" — and tmpfs makes the IO
+            // free on Linux runners.
+            val logDir = Path.of(System.getProperty("java.io.tmpdir"), "spectre-gst-launch-logs")
+            Files.createDirectories(logDir)
+            val logFile = logDir.resolve("gst-launch-${System.currentTimeMillis()}.log").toFile()
+            return ProcessBuilder(argv)
+                .redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
+                .redirectError(ProcessBuilder.Redirect.appendTo(logFile))
                 // gst-launch uses SIGTERM (with `-e` set) to mean "send EOS through the
                 // pipeline and finalise." No stdin protocol; we don't need a pipe here, but
                 // keeping it as PIPE matches FfmpegRecorder.SystemProcessFactory's shape.
                 .redirectInput(ProcessBuilder.Redirect.PIPE)
                 .start()
+                .also {
+                    // Print the log path so callers (especially the smoke) know where to look
+                    // when debugging a 0-byte recording. The recorder's wider lifecycle is
+                    // silent on stderr; this one line is intentional.
+                    System.err.println("[WaylandPortalRecorder] gst-launch log: $logFile")
+                }
+        }
     }
 
     companion object {

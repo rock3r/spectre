@@ -54,6 +54,25 @@ class GstCliTest {
     }
 
     @Test
+    fun `argv does NOT pass -q so gst-launch can surface plugin and stream errors`() {
+        // gst-launch's `-q` suppresses progress AND filters out diagnostic warnings; we'd
+        // rather see them — they're the breadcrumb trail when pipewiresrc can't connect to
+        // the portal-granted node, when an encoder plugin is missing, etc. The captured
+        // stderr is what the recorder uses to surface "0-byte recording" failures into a
+        // useful error message.
+        val argv =
+            GstCli.pipewireRegionCapture(
+                gstLaunch,
+                pipewireNodeId,
+                region,
+                streamSize,
+                output,
+                RecordingOptions(),
+            )
+        assertTrue("-q" !in argv, "Should NOT pass -q so gst-launch is diagnostic: $argv")
+    }
+
+    @Test
     fun `argv omits -e when eosOnExit is false`() {
         val argv =
             GstCli.pipewireRegionCapture(

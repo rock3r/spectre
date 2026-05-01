@@ -89,9 +89,6 @@ internal object GstCli {
         val bottom = streamHeight - (region.y + region.height)
         return buildList {
             add(gstLaunchPath.toString())
-            // Quiet gst-launch's startup banner so callers' logs aren't drowned in plugin
-            // version listings. Real failures still surface on stderr at level >= warning.
-            add("-q")
             // EOS-on-exit: SIGTERM → End-Of-Stream → mux finalises → file plays back. Without
             // this, the mux MOOV atom never lands and the file is half-written.
             if (eosOnExit) add("-e")
