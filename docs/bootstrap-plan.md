@@ -75,11 +75,11 @@ what's done and what's planned. The original spike notes still live at
   with the Windows job. The pre-existing `macos.yml` stays focused on
   `:recording:check` + the Swift helper build.
 
-### v4 — Linux Xorg support
+### v4 — Linux Xorg support + Wayland portal handshake
 
 Validated on a Hyper-V Ubuntu 22.04 dev VM (2026-05-01). Most of v4's "Linux" surface area
-turned out to already work without changes; the only piece that needed real implementation
-work was the recording backend.
+turned out to already work without changes; the recording backend needed real implementation
+work, and the Wayland recording path turned out to be a two-stage problem.
 
 - **`recording.FfmpegBackend.LinuxX11Grab` + `x11grabRegionCapture` argv builder** — Xorg
   region capture via `ffmpeg -f x11grab`. Mirrors the gdigrab pattern: input-side region
@@ -91,6 +91,10 @@ work was the recording backend.
   XWayland succeeds without erroring but produces uniform-black frames — Wayland's
   security model blocks framebuffer reads by clients other than the compositor. (`#77`
   stage 1.)
+- **Wayland portal handshake** — `dev.sebastiano.spectre.recording.portal.ScreenCastPortal`
+  is a dbus-java client for `org.freedesktop.portal.ScreenCast`. The three-call flow
+  (`CreateSession` → `SelectSources` → `Start`) round-trips cleanly on GNOME mutter and the
+  recorder extracts a PipeWire stream node id from the `Start.Response`. (`#77` stage 2.)
 - **Robot input + popup discovery + HiDPI + multi-window** — already worked on Linux
   Xorg out of the box. `:sample-desktop:validationTest*` was 15/15 + 3/3 popup-layer
   variants on the dev VM with no source changes.
@@ -100,10 +104,16 @@ work was the recording backend.
 The open work is platform-specific and tracked as labelled GitHub issues. Pick them up on a
 machine with the relevant runtime — the issues reference what blocks them.
 
-- **Linux Wayland** — `#77` tracks both stage 1 (runtime detection — landed) and stage 2
-  (PipeWire + xdg-desktop-portal native capture, plus a `WaylandRobot` shim for
-  framebuffer reads). Stage 2 needs ffmpeg ≥ 6.1 (`pipewiregrab` device); Ubuntu 22.04
-  ships 4.4 so Wayland support implies bumping the supported floor.
+- **Linux Wayland — stage 3: encoder spawn with FD inheritance** ([`#80`](https://github.com/rock3r/spectre/issues/80)).
+  The portal grant is FD-scoped: pipewiresrc only reads the granted node when given the file
+  descriptor returned by `OpenPipeWireRemote`. JDK 21's `ProcessBuilder` doesn't inherit
+  arbitrary FDs across exec — only stdin/stdout/stderr — so we need to clear `O_CLOEXEC` on
+  the FD via JNR-POSIX, then spawn `gst-launch-1.0 ... pipewiresrc fd=$N path=$nodeId ...`
+  with the FD inherited. The architecture (`WaylandPortalRecorder`, `GstCli`, `AutoRecorder`
+  routing) is already in place from stage 2; stage 3 is the FD-passing plumbing plus the
+  encoder lifecycle. Stage 2's `WaylandPortalRecorder.start` throws an explicit
+  `UnsupportedOperationException` rather than producing a 0-byte mp4 — so users on Wayland
+  see a useful error, not silent corruption.
 - **Notarization** — `#49` covers signing + notarising the SCK helper for distribution. v2
   intentionally landed unsigned (the helper runs from inside the JVM's process, so end users
   never see a Gatekeeper prompt for it directly), but distribution scenarios may want it.
