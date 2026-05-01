@@ -37,6 +37,12 @@ nix = { version = "0.29", default-features = false, features = ["fs", "signal", 
 # `?` propagation. anyhow gets us that without a custom error enum per module.
 anyhow = "1"
 
+# Transitive-dep ceiling: toml_datetime 1.x bumped to edition2024 (Rust 1.85+). Our toolchain
+# floor is 1.75 (what Ubuntu 22.04 jammy-backports ships). Pin to the 0.6 line which
+# stays edition2021-compatible. Same constraint applies to a couple of other crates that
+# the zbus tree pulls; if cargo's resolver complains, add similar pins.
+toml_datetime = "=0.6.5"
+
 [profile.release]
 # Strip symbols + LTO for distribution: cuts the binary from ~12 MB to ~3 MB. Helper is
 # tiny enough that LTO compile time isn't a concern.
