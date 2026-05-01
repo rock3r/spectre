@@ -88,8 +88,8 @@ pub fn open_screen_cast_session(
     // 1. CreateSession
     let create_token = next_token("create");
     let create_options = make_options([
-        ("handle_token", variant(create_token.as_str())),
-        ("session_handle_token", variant(next_token("session").as_str())),
+        ("handle_token", variant(create_token.clone())),
+        ("session_handle_token", variant(next_token("session"))),
     ]);
     let create_response = call_with_response(
         &conn,
@@ -302,10 +302,12 @@ fn call_with_response<A: dbus::arg::AppendAll>(
 /// connection's unique bus name in `:X.Y` form; the portal computes the path from that name
 /// with `:` and `.` replaced by `_`.
 fn sender_token(conn: &Connection) -> Result<String> {
-    let unique = conn
-        .unique_name()
-        .ok_or_else(|| anyhow!("session bus did not assign us a unique name"))?;
-    Ok(unique.trim_start_matches(':').replace('.', "_"))
+    let unique = conn.unique_name();
+    let s: &str = unique.as_ref();
+    if s.is_empty() {
+        return Err(anyhow!("session bus did not assign us a unique name"));
+    }
+    Ok(s.trim_start_matches(':').replace('.', "_"))
 }
 
 /// Build a `PropMap` (a{sv}) from a fixed list of (key, variant) pairs. Saves repeating the
