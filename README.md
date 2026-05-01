@@ -9,9 +9,13 @@ tree, sends real OS-level mouse and keyboard input via `java.awt.Robot`, and rec
 screen — against IDE-hosted Compose surfaces (IntelliJ, Jewel) and standalone desktop apps
 alike.
 
-macOS, Windows, and Linux Xorg. Wayland sessions are detected and rejected with an
-actionable error — native Wayland capture (PipeWire + xdg-desktop-portal) is tracked under
-[#77](https://github.com/rock3r/spectre/issues/77).
+macOS, Windows, and Linux Xorg. Wayland support is **partial**: the
+xdg-desktop-portal handshake is wired up and validated end-to-end (#77 stage 2 — recorder
+detects the session, opens the portal session, gets a PipeWire stream node from the
+compositor), but the encoder spawn needs JVM-to-subprocess file-descriptor inheritance that
+isn't built yet. The recorder throws an explicit `UnsupportedOperationException` rather than
+producing a 0-byte mp4. [#80](https://github.com/rock3r/spectre/issues/80) tracks the stage-3
+work.
 
 ## Modules
 

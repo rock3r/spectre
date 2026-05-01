@@ -3,6 +3,11 @@ androidx-lifecycle = "2.10.0"
 androidx-tracing = "2.0.0-alpha06"
 composeMultiplatform = "1.10.3"
 composeRules = "0.5.6"
+# dbus-java for the recording module's xdg-desktop-portal client (#77 stage 2). The
+# `transport-native-unixsocket` artefact requires Java 16+ and uses the JDK's built-in
+# UnixDomainSocketAddress, so no JNR / JNI native code is in the loop. dbus-java itself is
+# MIT-licensed.
+dbusJava = "5.1.0"
 detekt = "2.0.0-alpha.2"
 intellijIdea = "2026.1.1"
 # JetBrains' intellij-ide-starter for the #42 IDE-hosted UI test. Pinned to the same build
@@ -34,6 +39,21 @@ compose-rules-detekt = { module = "io.nlopez.compose.rules:detekt", version.ref 
 compose-ui = { module = "org.jetbrains.compose.ui:ui", version.ref = "composeMultiplatform" }
 compose-components-resources = { module = "org.jetbrains.compose.components:components-resources", version.ref = "composeMultiplatform" }
 compose-uiToolingPreview = { module = "org.jetbrains.compose.ui:ui-tooling-preview", version.ref = "composeMultiplatform" }
+# dbus-java — used only in `:recording` for the Wayland xdg-desktop-portal ScreenCast flow.
+# Two coordinates because dbus-java separates core (interface model + signal dispatch) from
+# transports (the Unix-socket / TCP plumbing). We pick the JNR-based unix-socket transport
+# rather than the JDK-native one because the session bus's EXTERNAL auth requires reading
+# SCM_CREDENTIALS over the socket — which JDK 21's `UnixDomainSocketChannel` doesn't expose,
+# but JNR's `unixsocket` library does. The native-unixsocket transport silently fails auth
+# with "Underlying transport returned -1" against the GNOME session bus on Ubuntu 22.04;
+# the JNR transport works there. JNR adds ~1.5 MB of JNI deps but is well-maintained.
+dbusJava-core = { module = "com.github.hypfvieh:dbus-java-core", version.ref = "dbusJava" }
+dbusJava-transport-jnrUnixSocket = { module = "com.github.hypfvieh:dbus-java-transport-jnr-unixsocket", version.ref = "dbusJava" }
+# Test-only — when present on the test runtime classpath, dbus-java's SLF4J calls land on the
+# console at the level set via -Dorg.slf4j.simpleLogger.defaultLogLevel. Used by the
+# `runWaylandPortalSmoke` task to surface the transport-layer trail when debugging the portal
+# handshake.
+slf4j-simple = { module = "org.slf4j:slf4j-simple", version = "2.0.16" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }

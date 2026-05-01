@@ -258,20 +258,117 @@ class AutoRecorderTest {
         }
     }
 
+    @Test
+    fun `Linux Wayland host with a configured waylandPortalRecorder routes there even with null window`() {
+        // The Wayland branch is unconditional on `window` because LinuxX11Grab can't be a
+        // fallback (it throws on Wayland). Both window=null and window=non-null land on the
+        // portal recorder; the SCK / Windows branches must NOT be reached.
+        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.ShouldNeverBeCalled)
+        val ffmpeg = StubFfmpegRecorder()
+        val portal = StubFfmpegRecorder()
+        val recorder =
+            autoRecorder(
+                sckRecorder = sck,
+                ffmpegRecorder = ffmpeg,
+                waylandPortalRecorder = portal,
+                isMacOs = { false },
+                isWindows = { false },
+                isWayland = { true },
+            )
+        val output = tempMov()
+        try {
+            // Null window — would have gone to ffmpeg without Wayland routing.
+            recorder.start(window = null, region = Rectangle(0, 0, 100, 100), output = output)
+
+            assertTrue(portal.startCalled, "Should route to Wayland portal recorder")
+            assertEquals(false, ffmpeg.startCalled)
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `Linux Wayland host with a windowed call still routes to the portal recorder`() {
+        // Windowed-capture call on Wayland: the title/window doesn't matter — there's no
+        // Wayland title-based recorder, the portal hands us a monitor-or-window stream
+        // depending on what the user picked at the dialog.
+        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.ShouldNeverBeCalled)
+        val ffmpeg = StubFfmpegRecorder()
+        val portal = StubFfmpegRecorder()
+        val window = StubTitledWindow(title = "MyApp")
+        val recorder =
+            autoRecorder(
+                sckRecorder = sck,
+                ffmpegRecorder = ffmpeg,
+                waylandPortalRecorder = portal,
+                isMacOs = { false },
+                isWindows = { false },
+                isWayland = { true },
+            )
+        val output = tempMov()
+        try {
+            recorder.start(window = window, region = Rectangle(0, 0, 100, 100), output = output)
+
+            assertTrue(portal.startCalled, "Should route to Wayland portal recorder")
+            assertEquals(0, sck.startCallCount)
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `Linux Wayland host without a configured waylandPortalRecorder falls through to ffmpeg`() {
+        // Defensive case: AutoRecorder construction couldn't resolve a Wayland portal recorder
+        // (e.g. gst-launch-1.0 not installed), but the user still got an AutoRecorder back. The
+        // ffmpeg path will throw via LinuxX11Grab.checkNotWayland, but that's the right error
+        // to surface — better than the router silently degrading to a broken recording.
+        val sck = StubWindowRecorder(name = "sck")
+        val ffmpeg = StubFfmpegRecorder()
+        val recorder =
+            autoRecorder(
+                sckRecorder = sck,
+                ffmpegRecorder = ffmpeg,
+                waylandPortalRecorder = null,
+                isMacOs = { false },
+                isWindows = { false },
+                isWayland = { true },
+            )
+        val output = tempMov()
+        try {
+            recorder.start(window = null, region = Rectangle(0, 0, 100, 100), output = output)
+
+            assertTrue(ffmpeg.startCalled, "No portal recorder → ffmpeg fallback fires")
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
     private fun tempMov(): Path = Files.createTempFile("spectre-auto-recorder-test-", ".mov")
 }
 
-// AutoRecorder's internal constructor takes the dispatch lambdas + the optional Windows window
-// recorder. Tests use this helper so the public 3-arg constructor (which detect the host OS at
-// runtime) doesn't leak through and make the suite host-dependent.
+// AutoRecorder's internal constructor takes the dispatch lambdas + the optional Windows / Wayland
+// recorders. Tests use this helper so the public default constructor (which detects the host OS
+// at runtime) doesn't leak through and make the suite host-dependent. The Wayland slot defaults
+// to null + isWayland=false so existing tests behave as before; tests that exercise the Wayland
+// routing pass them explicitly.
 private fun autoRecorder(
     sckRecorder: WindowRecorder,
     ffmpegRecorder: Recorder,
     windowsWindowRecorder: WindowRecorder? = null,
+    waylandPortalRecorder: Recorder? = null,
     isMacOs: () -> Boolean,
     isWindows: () -> Boolean = { false },
+    isWayland: () -> Boolean = { false },
 ): AutoRecorder =
-    AutoRecorder(sckRecorder, ffmpegRecorder, windowsWindowRecorder, isMacOs, isWindows)
+    AutoRecorder(
+        sckRecorder,
+        ffmpegRecorder,
+        windowsWindowRecorder,
+        waylandPortalRecorder,
+        isMacOs,
+        isWindows,
+        isWayland,
+    )
 
 private enum class StubBehavior {
     Succeeds,

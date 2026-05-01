@@ -22,15 +22,23 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
 - **Windows** — `gdigrab` region capture (#22). Plus title-based window capture via
   `FfmpegWindowRecorder` (#55).
 - **Linux Xorg sessions** — `x11grab` region capture (#75 / #76). Reads `DISPLAY`.
-- **Linux Wayland sessions** — **not supported**. `LinuxX11Grab` detects Wayland (via
-  `XDG_SESSION_TYPE`, `WAYLAND_DISPLAY`, or a `wayland-*` socket in `XDG_RUNTIME_DIR`) and
-  throws an explicit error rather than silently produce uniform-black frames. Wayland's
-  security model blocks framebuffer reads by clients other than the compositor, so x11grab
-  through XWayland succeeds without erroring but captures nothing useful. Workarounds: switch
-  the session to Xorg (`WaylandEnable=false` in `/etc/gdm3/custom.conf` + `systemctl restart
-  gdm`, or pick "Ubuntu on Xorg" at GDM), or run under Xvfb. Native Wayland capture (PipeWire
-  + xdg-desktop-portal) is tracked under
-  [#77](https://github.com/rock3r/spectre/issues/77).
+- **Linux Wayland sessions** — **partial: handshake works, encoder spawn doesn't yet.** `LinuxX11Grab`
+  detects Wayland (via `XDG_SESSION_TYPE`, `WAYLAND_DISPLAY`, or a `wayland-*` socket in
+  `XDG_RUNTIME_DIR`) and routes through `WaylandPortalRecorder` instead of producing the
+  uniform-black frames `x11grab`-through-XWayland would. The xdg-desktop-portal handshake
+  (`CreateSession` → `SelectSources` → `Start`) completes cleanly via dbus-java; the recorder
+  extracts a PipeWire stream node id from the response. **What it doesn't do** — yet — is spawn
+  the gst-launch encoder against that node. The portal's permission model is FD-scoped:
+  pipewiresrc reads the granted node only when given the file descriptor returned by
+  `OpenPipeWireRemote`, and the JDK's `ProcessBuilder` doesn't inherit arbitrary FDs across
+  exec. Without the FD, gst-launch reaches PLAYING but receives zero frames and the output
+  mp4 is 0 bytes. To avoid the silent-corruption antipattern, `WaylandPortalRecorder.start`
+  throws an `UnsupportedOperationException` after the handshake completes with an actionable
+  message naming the granted node + size. Workarounds in the meantime: switch the session to
+  Xorg (`WaylandEnable=false` in `/etc/gdm3/custom.conf` + `systemctl restart gdm`, or pick
+  "Ubuntu on Xorg" at GDM), or run under Xvfb. Stage 3 (the JNR-POSIX-based FD inheritance
+  plumbing that closes the loop) is tracked under
+  [#80](https://github.com/rock3r/spectre/issues/80).
 
 ## Capture mode
 

@@ -12,10 +12,31 @@ dependencies {
     // recording is intentionally isolated per docs/ARCHITECTURE.md — it has its own native /
     // ffmpeg boundary and shares no types with core. No projects.core dependency here.
     implementation(libs.kotlinx.coroutines.core)
+
+    // dbus-java for the Wayland xdg-desktop-portal ScreenCast flow (#77 stage 2). Pulled in
+    // unconditionally rather than gated on `OperatingSystem.current().isLinux` because (a)
+    // build configuration is OS-agnostic to keep cross-host CI deterministic, (b) the library
+    // is small relative to other module deps and (c) every reference is internal to the
+    // `recording.portal` package — cross-platform distribution jars carry the bytes without
+    // touching them on macOS/Windows.
+    //
+    // We use the JNR transport (not native) because the session bus's EXTERNAL auth requires
+    // reading SCM_CREDENTIALS over the Unix socket, which JDK 21's `UnixDomainSocketChannel`
+    // doesn't expose but JNR's `unixsocket` library does — see the catalog comment.
+    implementation(libs.dbusJava.core)
+    runtimeOnly(libs.dbusJava.transport.jnrUnixSocket)
+
     detektPlugins(libs.compose.rules.detekt)
 
     testImplementation(libs.kotlin.testJunit5)
     testImplementation(libs.kotlinx.coroutines.test)
+
+    // slf4j-simple on the test runtime classpath only. dbus-java is a noop without an SLF4J
+    // implementation present, which is what we want for production code (the recording-module
+    // jar shouldn't bind logging implementations on consumers' behalf). For the manual portal
+    // smoke we DO want the transport-layer chatter, so it's bound here and configured to
+    // DEBUG via the JavaExec task.
+    testRuntimeOnly(libs.slf4j.simple)
 }
 
 tasks.withType<Test>().configureEach { useJUnitPlatform() }
@@ -257,4 +278,32 @@ tasks.register<JavaExec>("runFfmpegX11GrabSmoke") {
     onlyIf { OperatingSystem.current().isLinux }
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("dev.sebastiano.spectre.recording.FfmpegX11GrabSmoke")
+}
+
+// Manual smoke for the Wayland portal + PipeWire path (#77 stage 2). Pops the compositor's
+// screen-cast permission dialog on first run; subsequent runs in the same login session reuse
+// the grant. Requires a Wayland session (the recorder's portal flow returns no node id on
+// Xorg). Linux-only; no-op on macOS/Windows where the gst-launch + xdg-desktop-portal stack
+// doesn't exist.
+tasks.register<JavaExec>("runWaylandPortalSmoke") {
+    group = "verification"
+    description =
+        "Boots a JFrame, records it for ~3s via xdg-desktop-portal + gst-launch (PipeWire), " +
+            "prints output stats."
+    onlyIf { OperatingSystem.current().isLinux }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.portal.WaylandPortalSmoke")
+    // slf4j-simple is on the test runtime classpath; route dbus-java's transport / connection
+    // logs to stderr at DEBUG so the smoke output captures the full handshake trail. Without
+    // this, dbus-java still works but a transport-level failure surfaces only as the wrapped
+    // DBusExecutionException at the call site, which doesn't say WHICH bytes the bus rejected.
+    // Override at invocation time with `-Dorg.slf4j.simpleLogger.defaultLogLevel=info` if the
+    // chatter gets too loud.
+    systemProperty("org.slf4j.simpleLogger.defaultLogLevel", "debug")
+    systemProperty("org.slf4j.simpleLogger.showDateTime", "true")
+    systemProperty("org.slf4j.simpleLogger.dateTimeFormat", "HH:mm:ss.SSS")
+    // Forward gst-launch / dbus-java output so the user sees what's happening live rather
+    // than waiting for the JavaExec task to terminate.
+    standardOutput = System.out
+    errorOutput = System.err
 }

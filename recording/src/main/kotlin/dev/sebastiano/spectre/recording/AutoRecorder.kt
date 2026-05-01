@@ -1,5 +1,7 @@
 package dev.sebastiano.spectre.recording
 
+import dev.sebastiano.spectre.recording.FfmpegBackend.Companion.detectWaylandSession
+import dev.sebastiano.spectre.recording.portal.WaylandPortalRecorder
 import dev.sebastiano.spectre.recording.screencapturekit.HelperNotBundledException
 import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitRecorder
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
@@ -26,12 +28,17 @@ import java.nio.file.Path
  *    Windows window-targeted path: window movement is followed automatically and occlusion doesn't
  *    matter. Jewel-in-IDE tool windows have no top-level title so they fall through to the region
  *    path (see step 4).
- * 4. Non-macOS host without an applicable [windowsWindowRecorder] OR with a blank/null title →
- *    ffmpeg region capture. The region path is the documented fallback when the target window title
- *    is missing, ambiguous, or points at a tool window with no top-level title. The underlying
- *    [FfmpegRecorder]'s [FfmpegBackend.detect] picks the platform device: gdigrab on Windows,
- *    x11grab on Linux. Wayland-without-XWayland sessions surface as a clear ffmpeg-side "cannot
- *    open display" at spawn time — Wayland-native capture is a separate, future backend.
+ * 4. Linux Wayland session (detected via env / runtime-dir signals; see
+ *    [FfmpegBackend.detectWaylandSession]) AND a [waylandPortalRecorder] is wired up → use the
+ *    portal-based recorder. xdg-desktop-portal hands us a PipeWire stream, gst-launch-1.0 encodes
+ *    it. First call pops a permission dialog; subsequent calls within the same JVM run reuse the
+ *    grant. See [WaylandPortalRecorder].
+ * 5. Non-macOS host without an applicable [windowsWindowRecorder] OR with a blank/null title, on a
+ *    non-Wayland host → ffmpeg region capture. The region path is the documented fallback when the
+ *    target window title is missing, ambiguous, or points at a tool window with no top-level title.
+ *    The underlying [FfmpegRecorder]'s [FfmpegBackend.detect] picks the platform device: gdigrab on
+ *    Windows, x11grab on Linux Xorg. (Linux Wayland is handled by step 4 before falling through
+ *    here, and `LinuxX11Grab` itself throws on Wayland — see `FfmpegBackend.checkNotWayland`.)
  *
  * The router always needs both a window AND a region: the region is used as the fallback when the
  * window-targeted path isn't applicable. If you don't have a region (e.g. no clear bounds for a
@@ -43,20 +50,25 @@ internal constructor(
     private val sckRecorder: WindowRecorder,
     private val ffmpegRecorder: Recorder,
     private val windowsWindowRecorder: WindowRecorder?,
+    private val waylandPortalRecorder: Recorder?,
     private val isMacOs: () -> Boolean,
     private val isWindows: () -> Boolean,
+    private val isWayland: () -> Boolean,
 ) {
 
     constructor(
         sckRecorder: WindowRecorder = ScreenCaptureKitRecorder(),
         ffmpegRecorder: Recorder = FfmpegRecorder(),
         windowsWindowRecorder: WindowRecorder? = defaultWindowsWindowRecorder(),
+        waylandPortalRecorder: Recorder? = defaultWaylandPortalRecorder(),
     ) : this(
         sckRecorder,
         ffmpegRecorder,
         windowsWindowRecorder,
+        waylandPortalRecorder,
         ::defaultIsMacOs,
         ::defaultIsWindows,
+        ::defaultIsWayland,
     )
 
     fun start(
@@ -66,6 +78,14 @@ internal constructor(
         options: RecordingOptions = RecordingOptions(),
         windowOwnerPid: Long = ProcessHandle.current().pid(),
     ): RecordingHandle {
+        // Linux Wayland routing has to happen BEFORE the window-null check below: a Wayland
+        // session can't fall through to FfmpegRecorder for either window-targeted OR region
+        // capture, because LinuxX11Grab throws on Wayland. The portal flow handles BOTH cases
+        // (window and no-window) by capturing the user-picked monitor and cropping to the
+        // requested region.
+        if (isWayland() && waylandPortalRecorder != null) {
+            return waylandPortalRecorder.start(region, output, options)
+        }
         if (window == null) {
             return ffmpegRecorder.start(region, output, options)
         }
@@ -112,6 +132,14 @@ internal constructor(
         fun defaultIsWindows(): Boolean =
             System.getProperty("os.name").orEmpty().lowercase().contains("windows")
 
+        @JvmStatic
+        fun defaultIsLinux(): Boolean =
+            System.getProperty("os.name").orEmpty().lowercase().contains("linux")
+
+        /** Wayland session detection — three-tier env+filesystem check, see #77 stage 1. */
+        @JvmStatic
+        fun defaultIsWayland(): Boolean = defaultIsLinux() && detectWaylandSession(System::getenv)
+
         /**
          * Constructs a [FfmpegWindowRecorder] only when the host is Windows (the only OS where
          * gdigrab is available). On other hosts the public [AutoRecorder] constructor still works —
@@ -130,6 +158,31 @@ internal constructor(
             if (!defaultIsWindows()) return null
             return try {
                 FfmpegWindowRecorder()
+            } catch (_: Throwable) {
+                null
+            }
+        }
+
+        /**
+         * Constructs a [WaylandPortalRecorder] only when the host is Linux. dbus-java + gst-launch
+         * are no-ops on macOS / Windows (the gst-launch binary doesn't exist there, the D-Bus
+         * session bus isn't running) — gating on `isLinux` keeps cross-host distribution jars from
+         * triggering construction-time failures. The recorder is null on non-Linux even if the
+         * AutoRecorder is constructed; the router never asks for it on those hosts.
+         *
+         * Failures resolving the gst-launch path or constructing the recorder are swallowed for the
+         * same reasons as [defaultWindowsWindowRecorder]: a Linux host without GStreamer installed
+         * should still be able to instantiate AutoRecorder for non-Wayland or non-recording flows.
+         * If the user actually triggers Wayland recording on such a host, the construction-time
+         * error from `WaylandPortalRecorder.init` would surface at start() time as a clear
+         * "gst-launch-1.0 not found, install gstreamer1.0-tools".
+         */
+        @JvmStatic
+        @Suppress("TooGenericExceptionCaught")
+        fun defaultWaylandPortalRecorder(): Recorder? {
+            if (!defaultIsLinux()) return null
+            return try {
+                WaylandPortalRecorder()
             } catch (_: Throwable) {
                 null
             }
