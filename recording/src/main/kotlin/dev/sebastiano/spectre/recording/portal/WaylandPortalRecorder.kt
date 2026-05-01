@@ -86,6 +86,17 @@ internal class WaylandPortalRecorder(
                     output = output,
                     options = options,
                 )
+            // Print the resolved argv to stderr so the manual smoke (which `tee`s the JVM's
+            // streams into a log file) captures the exact gst-launch invocation. Keeps the
+            // recorder silent in production paths because System.err is unconfigured —
+            // callers that route stderr to /dev/null see nothing; callers that route it to
+            // a file see the diagnostic.
+            System.err.println("[WaylandPortalRecorder] argv: $argv")
+            System.err.println(
+                "[WaylandPortalRecorder] portal stream node=${session.nodeId}, " +
+                    "size=${session.size}, position=${session.position}, " +
+                    "stream-relative region=$streamRelativeRegion"
+            )
             Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
             val process = processFactory.start(argv)
             val exitedDuringProbe =
@@ -122,12 +133,18 @@ internal class WaylandPortalRecorder(
     internal object SystemProcessFactory : ProcessFactory {
         override fun start(argv: List<String>): Process =
             ProcessBuilder(argv)
-                // Discard gst-launch's stdout/stderr by default. With the `-q` flag we pass in
-                // the argv, only true errors go to stderr; we explicitly route them to /dev/null
-                // because nobody is going to read them and a noisy startup could fill the
-                // pipe and stall the encoder.
+                // stdout: discard. With the `-q` flag we pass in the argv, gst-launch is silent
+                // on stdout during normal operation. Discarding avoids pipe-fill-and-stall.
                 .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                // stderr: INHERIT so warnings + real errors land on the JVM's stderr where
+                // callers can see them. gst-launch's `-q` already suppresses the version
+                // banner, so the chatter level on a healthy run is near-zero. On failures
+                // (missing plugin, PipeWire daemon refusing the node, encoder OOM, etc.)
+                // gst-launch writes a useful one-liner to stderr — without forwarding it,
+                // the recorder would silently produce a 0-byte file the way #77's first
+                // validation pass did. The trade-off vs DISCARD is that consumers who want
+                // a quiet recorder need to redirect stderr themselves.
+                .redirectError(ProcessBuilder.Redirect.INHERIT)
                 // gst-launch uses SIGTERM (with `-e` set) to mean "send EOS through the
                 // pipeline and finalise." No stdin protocol; we don't need a pipe here, but
                 // keeping it as PIPE matches FfmpegRecorder.SystemProcessFactory's shape.
