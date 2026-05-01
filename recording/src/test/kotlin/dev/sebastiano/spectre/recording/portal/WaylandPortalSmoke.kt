@@ -19,18 +19,24 @@ import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
 
 /**
- * Manual smoke for the **stage-2 Wayland portal handshake**. Run via `./gradlew
- * :recording:runWaylandPortalSmoke` on a Wayland session — opens a JFrame so the compositor's
- * "share your screen" dialog has something to point at, calls [WaylandPortalRecorder.start], and
- * **expects** a stage-2-limitation [UnsupportedOperationException]. A "PASS" result means the
- * portal handshake completed cleanly: `CreateSession` → `SelectSources` → `Start` round- tripped,
- * the response parsed into a non-zero PipeWire node id and stream size, and the recorder threw with
- * the documented stage-3 follow-up message instead of producing a 0-byte mp4.
+ * Manual end-to-end smoke for the Wayland portal + PipeWire recording path. Run via `./gradlew
+ * :recording:runWaylandPortalSmoke` on a Wayland session — opens a JFrame, asks the compositor for
+ * a screen-cast (this pops a permission dialog on first run, click "Share"), records for ~3 seconds
+ * via [WaylandPortalRecorder] + the bundled `spectre-wayland-helper` Rust binary +
+ * `gst-launch-1.0`, prints the resulting file path + size + bytes/sec.
+ *
+ * **Stage 3 (#80) closes the loop**: the recorder produces real frames via the helper's FD-passing
+ * pipeline. A "PASS" result means the mp4 is non-trivial in size (above the black-frame threshold)
+ * and ffprobe-readable.
  *
  * Counterpart to [dev.sebastiano.spectre.recording.FfmpegX11GrabSmoke] (Linux Xorg) and
- * [dev.sebastiano.spectre.recording.FfmpegGdigrabSmoke] (Windows). Once stage 3's FD-inheritance
- * piece lands, the recorder will start producing real frames and this smoke flips from "expected
- * throw" to "expected non-zero mp4 with non-trivial pixel content."
+ * [dev.sebastiano.spectre.recording.FfmpegGdigrabSmoke] (Windows). #76's smoke produced 99.7%-black
+ * frames on the dev VM (because the VM is Wayland and x11grab through XWayland silently captured
+ * nothing); this smoke is the proof that #77 stage 3 closes that gap.
+ *
+ * For dev iteration without rebuilding the helper jar resource, set the `SPECTRE_WAYLAND_HELPER`
+ * env var to a locally-built helper path — e.g.
+ * `SPECTRE_WAYLAND_HELPER=$HOME/spectre/recording/native/linux/target/release/spectre-wayland-helper`.
  */
 fun main() {
     var exitCode = 0
@@ -48,58 +54,66 @@ private fun runSmoke() {
     val output = Path.of(System.getProperty("java.io.tmpdir"), "spectre-wayland-portal-smoke.mp4")
     Files.deleteIfExists(output)
 
-    val (frame, _) = openSmokeWindow()
+    val (frame, label) = openSmokeWindow()
     Thread.sleep(WINDOW_SETTLE_MS)
 
     val recorder = WaylandPortalRecorder()
+    val frameBoundsAtStart = frame.bounds
     println(
         "(NOTE: a compositor permission dialog will pop on first run today; pick the monitor " +
             "with the JFrame and click \"Share.\" Subsequent runs reuse the grant silently.)"
     )
 
-    val expected = runCatching {
+    val handle =
         recorder.start(
-            region = frame.bounds,
+            region = frameBoundsAtStart,
             output = output,
             options = RecordingOptions(frameRate = 30, captureCursor = true),
         )
-    }
-    val throwable = expected.exceptionOrNull()
+    println("Recording started → $output (pid=${ProcessHandle.current().pid()})")
+
+    var ticks = 0
+    val animator =
+        Thread.ofPlatform().daemon().name("spectre-wayland-portal-smoke-animator").start {
+            val deadline = System.nanoTime() + RECORD_DURATION_MS * 1_000_000L
+            while (System.nanoTime() < deadline && !Thread.currentThread().isInterrupted) {
+                ticks += 1
+                val current = ticks
+                SwingUtilities.invokeLater { label.text = "tick=$current" }
+                Thread.sleep(ANIMATION_INTERVAL_MS.toLong())
+            }
+        }
+    animator.join()
+    println("Animation done — ticks fired: $ticks")
+
+    handle.stop()
+    val sizeBytes = if (Files.exists(output)) Files.size(output) else -1
+    val perSecond = if (sizeBytes > 0) sizeBytes / (RECORD_DURATION_MS / 1000) else 0
+    println("Recording stopped → $output ($sizeBytes bytes, ~$perSecond bytes/sec)")
 
     SwingUtilities.invokeLater {
         frame.isVisible = false
         frame.dispose()
     }
 
-    when {
-        expected.isSuccess -> {
-            println(
-                "FAIL — start() returned a handle, but stage 2 is supposed to throw before " +
-                    "spawning the encoder. Either stage 3 has landed (in which case update " +
-                    "this smoke to assert real frames) or the stage-2 guard regressed."
-            )
-            error("stage-2 smoke unexpectedly succeeded")
-        }
-        throwable is UnsupportedOperationException &&
-            (throwable.message?.contains("stage 2") == true ||
-                throwable.message?.contains("portal handshake completed") == true) -> {
-            println(
-                "PASS — portal handshake completed; recorder threw the documented stage-2 " +
-                    "limitation as expected. Stage 3 follow-up will replace the throw with the " +
-                    "FD-passing encoder spawn."
-            )
-            println("Stage-2 message: ${throwable.message}")
-        }
-        else -> {
-            println(
-                "FAIL — recorder.start() threw an unexpected exception. The stage-2 throw is " +
-                    "supposed to be an UnsupportedOperationException naming the portal " +
-                    "handshake state and the stage-3 follow-up. Got: $throwable"
-            )
-            throwable?.printStackTrace()
-            error("stage-2 smoke threw the wrong exception type")
-        }
+    val threshold = BLACK_FRAME_PER_SECOND_THRESHOLD * (RECORD_DURATION_MS / 1000)
+    if (sizeBytes < threshold) {
+        println(
+            "FAIL — file size $sizeBytes is below the black-frame threshold ($threshold). " +
+                "Most likely cause: FD inheritance didn't work (gst-launch fell back to " +
+                "fd=-1), or the encoder ran but received no frames. Inspect a frame with PIL " +
+                "to confirm: `ffmpeg -y -ss 1 -i $output -frames:v 1 /tmp/frame.png && " +
+                "python3 -c \"from PIL import Image; im = Image.open('/tmp/frame.png'); " +
+                "print('unique colors:', len(im.getcolors(maxcolors=99999) or []))\"`"
+        )
+        error("stage-3 smoke produced suspiciously small mp4 ($sizeBytes bytes)")
     }
+    println(
+        "PASS — file size is plausible for real captured pixels (>$threshold bytes for the " +
+            "${RECORD_DURATION_MS / 1000}s recording). Eyeball the .mp4 to confirm content " +
+            "matches the JFrame, then validate via PIL unique-color count if you want a " +
+            "harder gate (the #76 / #77-stage-2 black-frame symptom was 1-2 unique colors)."
+    )
 }
 
 private fun openSmokeWindow(): Pair<JFrame, JLabel> {
@@ -139,8 +153,16 @@ private fun openSmokeWindow(): Pair<JFrame, JLabel> {
     return frameRef!! to labelRef!!
 }
 
+// Threshold for "this looks like real captured pixels, not black frames." A 480×240 H.264
+// stream at 30fps with the JFrame's mostly-static white background and changing label text
+// typically lands in the 10-30 KB/s range; uniform-black frames compress to ~1-2 KB/s. 4 KB/s
+// is a generous floor that flags the bad case without false-positiving on the good one.
+private const val BLACK_FRAME_PER_SECOND_THRESHOLD: Long = 4_000
+
 private const val WINDOW_WIDTH = 480
 private const val WINDOW_HEIGHT = 240
 private const val WINDOW_SETTLE_MS = 500L
 private const val WINDOW_OPEN_TIMEOUT_SECONDS = 5L
+private const val RECORD_DURATION_MS = 3_000L
+private const val ANIMATION_INTERVAL_MS = 50
 private const val LABEL_FONT_SIZE = 48

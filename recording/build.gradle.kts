@@ -1,9 +1,28 @@
 import org.gradle.internal.os.OperatingSystem
 
+/**
+ * Maps the host's `os.arch` system property to the Rust target-triple architecture name we ship the
+ * Wayland helper under. JVM reports `amd64` for x86_64; Rust's targets call it `x86_64`. Same for
+ * `aarch64` (consistent with both JVM and Rust). Anything else falls through unchanged — the
+ * recorder's [WaylandHelperBinaryExtractor] will surface a HelperNotBundledException naming the
+ * unknown arch, which is more useful than a silent layout mismatch.
+ */
+fun linuxRustHostArch(): String =
+    when (val osArch = System.getProperty("os.arch").orEmpty().lowercase()) {
+        "amd64",
+        "x86_64",
+        "x64" -> "x86_64"
+        "aarch64",
+        "arm64" -> "aarch64"
+        else -> osArch
+    }
+
 plugins {
     alias(libs.plugins.detekt)
     alias(libs.plugins.ktfmt)
     alias(libs.plugins.kotlinJvm)
+    // kotlinx.serialization for the Wayland helper's JSON wire protocol (#77 stage 3).
+    alias(libs.plugins.kotlinSerialization)
 }
 
 kotlin { jvmToolchain(21) }
@@ -13,30 +32,17 @@ dependencies {
     // ffmpeg boundary and shares no types with core. No projects.core dependency here.
     implementation(libs.kotlinx.coroutines.core)
 
-    // dbus-java for the Wayland xdg-desktop-portal ScreenCast flow (#77 stage 2). Pulled in
-    // unconditionally rather than gated on `OperatingSystem.current().isLinux` because (a)
-    // build configuration is OS-agnostic to keep cross-host CI deterministic, (b) the library
-    // is small relative to other module deps and (c) every reference is internal to the
-    // `recording.portal` package — cross-platform distribution jars carry the bytes without
-    // touching them on macOS/Windows.
-    //
-    // We use the JNR transport (not native) because the session bus's EXTERNAL auth requires
-    // reading SCM_CREDENTIALS over the Unix socket, which JDK 21's `UnixDomainSocketChannel`
-    // doesn't expose but JNR's `unixsocket` library does — see the catalog comment.
-    implementation(libs.dbusJava.core)
-    runtimeOnly(libs.dbusJava.transport.jnrUnixSocket)
+    // kotlinx.serialization-json for the JVM ↔ spectre-wayland-helper protocol. The helper
+    // is a small Rust binary at `recording/native/linux/` that drives the xdg-desktop-portal
+    // handshake, holds the PipeWire FD, and spawns `gst-launch-1.0` with the FD inherited.
+    // The JVM talks to it over stdin/stdout via newline-delimited JSON. See
+    // [WaylandPortalRecorder] for the lifecycle.
+    implementation(libs.kotlinx.serialization.json)
 
     detektPlugins(libs.compose.rules.detekt)
 
     testImplementation(libs.kotlin.testJunit5)
     testImplementation(libs.kotlinx.coroutines.test)
-
-    // slf4j-simple on the test runtime classpath only. dbus-java is a noop without an SLF4J
-    // implementation present, which is what we want for production code (the recording-module
-    // jar shouldn't bind logging implementations on consumers' behalf). For the manual portal
-    // smoke we DO want the transport-layer chatter, so it's bound here and configured to
-    // DEBUG via the JavaExec task.
-    testRuntimeOnly(libs.slf4j.simple)
 }
 
 tasks.withType<Test>().configureEach { useJUnitPlatform() }
@@ -245,6 +251,64 @@ if (OperatingSystem.current().isMacOsX) {
     }
 }
 
+// --- Wayland Rust helper binary (issue #80) -------------------------------------------------
+//
+// `WaylandPortalRecorder` ships a small Rust CLI (`recording/native/linux/`) that drives the
+// xdg-desktop-portal ScreenCast handshake, holds the PipeWire FD, and spawns gst-launch with
+// the FD inherited. The shape mirrors the macOS SCK helper above — out-of-process boundary,
+// stdin/stdout JSON protocol, jar-bundled per-arch — and the rationale for going native is
+// also the same: the JVM-side stage-2 attempt with dbus-java + JNR-POSIX hit a UnixFD-
+// unmarshalling bug that wasn't fixable trivially. See #80 comments for the bake-off log.
+//
+// Build pipeline (Linux only — no-op on macOS/Windows):
+//   1. `cargo build --release` produces `target/release/spectre-wayland-helper`.
+//   2. `assembleWaylandHelper` copies it into the resource tree at
+//      `native/linux/<arch>/spectre-wayland-helper`.
+//   3. `processResources` depends on the assemble task on Linux, so the JAR carries the
+//      helper transparently and `WaylandHelperBinaryExtractor` finds it via the classloader.
+//
+// Cross-compilation (arm64 / x86_64) is currently NOT wired up — the host-arch build is
+// what ships in the dev-loop jar. Distribution builds will need a per-arch matrix similar
+// to the macOS lipo path; tracked as a follow-up. For dev iteration without re-bundling,
+// `WaylandHelperBinaryExtractor`'s `SPECTRE_WAYLAND_HELPER` env var override points the
+// recorder at `target/release/spectre-wayland-helper` directly.
+val waylandHelperSource = layout.projectDirectory.dir("native/linux")
+val waylandHelperBinary = waylandHelperSource.dir("target/release").file("spectre-wayland-helper")
+val waylandHelperResourceDest =
+    layout.buildDirectory.dir("generated/waylandHelper/native/linux/${linuxRustHostArch()}")
+
+val buildWaylandHelper by
+    tasks.registering(Exec::class) {
+        description = "Builds the Linux Wayland Rust helper for the host architecture."
+        group = "build"
+        onlyIf { OperatingSystem.current().isLinux }
+        workingDir = waylandHelperSource.asFile
+        commandLine("cargo", "build", "--release")
+        inputs.dir(waylandHelperSource.dir("src"))
+        inputs.file(waylandHelperSource.file("Cargo.toml"))
+        outputs.file(waylandHelperBinary)
+    }
+
+val assembleWaylandHelper by
+    tasks.registering(Copy::class) {
+        description = "Stages the Wayland helper binary into the resources tree."
+        group = "build"
+        onlyIf { OperatingSystem.current().isLinux }
+        dependsOn(buildWaylandHelper)
+        from(waylandHelperBinary) { rename { "spectre-wayland-helper" } }
+        into(waylandHelperResourceDest)
+    }
+
+// Same pattern as the SCK helper: register the generated resource srcDir unconditionally so
+// jar layouts are host-agnostic, but only attach the build task to processResources on
+// Linux. macOS/Windows builds will have an empty `native/linux/` directory in the jar — fine,
+// the recorder gates on the resource being present and falls back per HelperNotBundledException.
+sourceSets["main"].resources.srcDir(layout.buildDirectory.dir("generated/waylandHelper"))
+
+if (OperatingSystem.current().isLinux) {
+    tasks.named("processResources") { dependsOn(assembleWaylandHelper) }
+}
+
 // Manual smoke entry point — opens a JFrame, records it for ~3s via ScreenCaptureKitRecorder,
 // prints the resulting file path + size. Lives in the test source set because the helper class
 // it drives is `internal` and we don't want to publish it.
@@ -280,11 +344,13 @@ tasks.register<JavaExec>("runFfmpegX11GrabSmoke") {
     mainClass.set("dev.sebastiano.spectre.recording.FfmpegX11GrabSmoke")
 }
 
-// Manual smoke for the Wayland portal + PipeWire path (#77 stage 2). Pops the compositor's
-// screen-cast permission dialog on first run; subsequent runs in the same login session reuse
-// the grant. Requires a Wayland session (the recorder's portal flow returns no node id on
-// Xorg). Linux-only; no-op on macOS/Windows where the gst-launch + xdg-desktop-portal stack
-// doesn't exist.
+// Manual smoke for the Wayland portal + PipeWire path (#77 stage 3). Pops the compositor's
+// screen-cast permission dialog on first run; subsequent runs reuse the grant. Linux-only
+// — the JVM-side recorder spawns the `spectre-wayland-helper` Rust binary that does the
+// portal D-Bus handshake + FD-passing into gst-launch.
+//
+// For dev iteration without rebuilding the helper jar resource, set `SPECTRE_WAYLAND_HELPER`
+// to a locally-built helper path (e.g. `recording/native/linux/target/release/...`).
 tasks.register<JavaExec>("runWaylandPortalSmoke") {
     group = "verification"
     description =
@@ -293,17 +359,8 @@ tasks.register<JavaExec>("runWaylandPortalSmoke") {
     onlyIf { OperatingSystem.current().isLinux }
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("dev.sebastiano.spectre.recording.portal.WaylandPortalSmoke")
-    // slf4j-simple is on the test runtime classpath; route dbus-java's transport / connection
-    // logs to stderr at DEBUG so the smoke output captures the full handshake trail. Without
-    // this, dbus-java still works but a transport-level failure surfaces only as the wrapped
-    // DBusExecutionException at the call site, which doesn't say WHICH bytes the bus rejected.
-    // Override at invocation time with `-Dorg.slf4j.simpleLogger.defaultLogLevel=info` if the
-    // chatter gets too loud.
-    systemProperty("org.slf4j.simpleLogger.defaultLogLevel", "debug")
-    systemProperty("org.slf4j.simpleLogger.showDateTime", "true")
-    systemProperty("org.slf4j.simpleLogger.dateTimeFormat", "HH:mm:ss.SSS")
-    // Forward gst-launch / dbus-java output so the user sees what's happening live rather
-    // than waiting for the JavaExec task to terminate.
+    // Forward helper / gst-launch output (helper inherits stderr from JVM; gst-launch
+    // inherits from helper) so the user sees what's happening live.
     standardOutput = System.out
     errorOutput = System.err
 }
