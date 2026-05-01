@@ -291,6 +291,129 @@ class FfmpegCliTest {
             FfmpegCli.gdigrabWindowCapture(ffmpeg, "   ", output, RecordingOptions())
         }
     }
+
+    // -----------------------------------------------------------------------
+    // x11grabRegionCapture (Linux): -f x11grab with the offset baked into the
+    // input URL (`<display>+x,y`) and -video_size for the captured area. Like
+    // gdigrab this uses input-side region selection — no crop filter, no
+    // silent-clamp pitfall.
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `x11grab region argv starts with the ffmpeg path`() {
+        val argv = FfmpegCli.x11grabRegionCapture(ffmpeg, region, output, RecordingOptions(), ":0")
+        assertEquals(ffmpeg.toString(), argv.first())
+    }
+
+    @Test
+    fun `x11grab region argv selects x11grab device with framerate and cursor flag`() {
+        val argv =
+            FfmpegCli.x11grabRegionCapture(
+                ffmpeg,
+                region,
+                output,
+                RecordingOptions(frameRate = 60, captureCursor = false),
+                ":0",
+            )
+        assertContainsSequence(argv, listOf("-f", "x11grab"))
+        assertContainsSequence(argv, listOf("-framerate", "60"))
+        // x11grab uses -draw_mouse (input option) for cursor capture, matching gdigrab.
+        assertContainsSequence(argv, listOf("-draw_mouse", "0"))
+    }
+
+    @Test
+    fun `x11grab region argv bakes offset into the input URL after the display name`() {
+        // The x11grab URL form is `<display>+<x>,<y>` — the offset is part of the input URL,
+        // unlike gdigrab's separate `-offset_x` / `-offset_y` pair. Verifying the exact form
+        // here so a refactor that drops the `+` or swaps the comma surfaces in tests.
+        val argv =
+            FfmpegCli.x11grabRegionCapture(ffmpeg, region, output, RecordingOptions(), ":0.0")
+        assertContainsSequence(argv, listOf("-video_size", "640x480"))
+        assertContainsSequence(argv, listOf("-i", ":0.0+100,200"))
+        // No `-vf crop=...` — x11grab handles the region on the input side.
+        assertTrue("-vf" !in argv, "Should not use a crop filter for x11grab: $argv")
+    }
+
+    @Test
+    fun `x11grab region argv honours the requested display name`() {
+        // Multi-seat / multi-display X setups put each session on a different display number
+        // (`:0`, `:1`, `:2`...). Make sure the value the caller passes ends up in the input URL.
+        val argv = FfmpegCli.x11grabRegionCapture(ffmpeg, region, output, RecordingOptions(), ":1")
+        assertContainsSequence(argv, listOf("-i", ":1+100,200"))
+    }
+
+    @Test
+    fun `x11grab region argv allows negative offsets for non-primary monitors`() {
+        // X11 with XRandR composites monitors into one virtual screen; depending on the user's
+        // arrangement a monitor can sit at any offset within that combined space, including
+        // negative coords if it's positioned to the left/above. ffmpeg's x11grab handles
+        // negative offsets within the display's bounds.
+        val negative = Rectangle(-1920, 0, 1920, 1080)
+        val argv =
+            FfmpegCli.x11grabRegionCapture(ffmpeg, negative, output, RecordingOptions(), ":0.0")
+        assertContainsSequence(argv, listOf("-video_size", "1920x1080"))
+        assertContainsSequence(argv, listOf("-i", ":0.0+-1920,0"))
+    }
+
+    @Test
+    fun `x11grab region argv applies the configured codec and output path`() {
+        val argv =
+            FfmpegCli.x11grabRegionCapture(
+                ffmpeg,
+                region,
+                output,
+                RecordingOptions(codec = "libx264"),
+                ":0",
+            )
+        assertContainsSequence(argv, listOf("-c:v", "libx264"))
+        assertEquals(output.toString(), argv.last())
+    }
+
+    @Test
+    fun `x11grab region argv always passes -y to overwrite the output file`() {
+        val argv = FfmpegCli.x11grabRegionCapture(ffmpeg, region, output, RecordingOptions(), ":0")
+        assertTrue("-y" in argv, "Should pass -y to overwrite: $argv")
+    }
+
+    @Test
+    fun `x11grab region argv quiets ffmpeg log noise via -loglevel warning`() {
+        val argv = FfmpegCli.x11grabRegionCapture(ffmpeg, region, output, RecordingOptions(), ":0")
+        assertContainsSequence(argv, listOf("-loglevel", "warning"))
+    }
+
+    @Test
+    fun `x11grab region argv rejects non-positive dimensions`() {
+        assertFailsWith<IllegalArgumentException> {
+            FfmpegCli.x11grabRegionCapture(
+                ffmpeg,
+                Rectangle(0, 0, 0, 100),
+                output,
+                RecordingOptions(),
+                ":0",
+            )
+        }
+        assertFailsWith<IllegalArgumentException> {
+            FfmpegCli.x11grabRegionCapture(
+                ffmpeg,
+                Rectangle(0, 0, 100, 0),
+                output,
+                RecordingOptions(),
+                ":0",
+            )
+        }
+    }
+
+    @Test
+    fun `x11grab region argv rejects blank display name`() {
+        // A blank display selector is a configuration error, not a meaningful default — surface
+        // it here rather than letting ffmpeg report "cannot open display +0,0" at spawn time.
+        assertFailsWith<IllegalArgumentException> {
+            FfmpegCli.x11grabRegionCapture(ffmpeg, region, output, RecordingOptions(), "")
+        }
+        assertFailsWith<IllegalArgumentException> {
+            FfmpegCli.x11grabRegionCapture(ffmpeg, region, output, RecordingOptions(), "   ")
+        }
+    }
 }
 
 private fun assertContainsSequence(argv: List<String>, expected: List<String>) {

@@ -15,6 +15,8 @@ import java.nio.file.Path
  * - [gdigrabRegionCapture] — Windows region capture via the gdigrab device, with the region
  *   selected on the input side via offsets and `-video_size` (no crop filter).
  * - [gdigrabWindowCapture] — Windows title-based window capture via the gdigrab device.
+ * - [x11grabRegionCapture] — Linux X11 region capture via the x11grab device, with the region
+ *   selected on the input side via the `<display>+x,y` URL form and `-video_size`.
  */
 internal object FfmpegCli {
 
@@ -153,6 +155,65 @@ internal object FfmpegCli {
             // The full string after `title=` is the match key, including any spaces. Each argv
             // element is a separate token, so we don't need (and must not add) shell quoting.
             add("title=$windowTitle")
+            add("-c:v")
+            add(options.codec)
+            add(output.toString())
+        }
+    }
+
+    /**
+     * Builds the argv for a Linux X11 region capture via the x11grab device.
+     *
+     * x11grab takes the display + offset baked into the input URL (`<display>+x,y`) and the size
+     * via `-video_size`, mirroring gdigrab's input-side approach. No crop filter, no silent-clamp
+     * pitfall. Negative offsets are accepted: X11 multi-monitor setups can position monitors at any
+     * coordinate within the screen's pixel space, and ffmpeg's x11grab is documented to support
+     * negative offsets up to the display's `XDisplayWidth`/`XDisplayHeight` bounds.
+     *
+     * [displayName] is the X display selector, normally read from the `DISPLAY` env var (e.g. `:0`,
+     * `:0.0`, `:1`). Callers from Spectre go through [FfmpegBackend.LinuxX11Grab] which handles the
+     * env read; this function takes it explicitly so the argv stays a pure function of its inputs.
+     *
+     * X11-only: a Wayland session without XWayland produces ffmpeg "cannot open display" at spawn
+     * time. Wayland-native capture (PipeWire + xdg-desktop-portal) is a separate backend.
+     *
+     * [RecordingOptions.screenIndex] is intentionally unused here — X11 multi-monitor presents as a
+     * single combined display, and the region's origin already encodes which monitor is targeted.
+     */
+    fun x11grabRegionCapture(
+        ffmpegPath: Path,
+        region: Rectangle,
+        output: Path,
+        options: RecordingOptions,
+        displayName: String,
+    ): List<String> {
+        require(region.width > 0 && region.height > 0) {
+            "region must have positive dimensions, was ${region.width}x${region.height}"
+        }
+        require(displayName.isNotBlank()) {
+            "displayName must not be blank — pass the X display selector (e.g. \":0\", \":0.0\")"
+        }
+        return buildList {
+            add(ffmpegPath.toString())
+            add("-loglevel")
+            add("warning")
+            add("-y")
+            // x11grab input options must precede `-i`. -framerate is the capture rate;
+            // -draw_mouse toggles cursor compositing on the captured frames; -video_size sets
+            // the captured area dimensions. The offset goes into the `-i` URL after `+`.
+            add("-f")
+            add("x11grab")
+            add("-framerate")
+            add(options.frameRate.toString())
+            add("-draw_mouse")
+            add(if (options.captureCursor) "1" else "0")
+            add("-video_size")
+            add("${region.width}x${region.height}")
+            add("-i")
+            // x11grab's URL form is `<display>+<x>,<y>` (e.g. `:0.0+100,200`). The offset is
+            // part of the input URL itself, not a separate `-offset_x`/`-offset_y` pair like
+            // gdigrab — that's an x11grab-specific quirk in ffmpeg's input device API.
+            add("$displayName+${region.x},${region.y}")
             add("-c:v")
             add(options.codec)
             add(output.toString())
