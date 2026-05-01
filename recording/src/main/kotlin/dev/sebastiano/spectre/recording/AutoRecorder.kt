@@ -28,9 +28,10 @@ import java.nio.file.Path
  *    path (see step 4).
  * 4. Non-macOS host without an applicable [windowsWindowRecorder] OR with a blank/null title →
  *    ffmpeg region capture. The region path is the documented fallback when the target window title
- *    is missing, ambiguous, or points at a tool window with no top-level title. On Windows the
- *    underlying [FfmpegRecorder] uses gdigrab region selection ([FfmpegBackend.detect] picks the
- *    backend); on Linux it currently throws via [FfmpegBackend.detect] — tracked under v4.
+ *    is missing, ambiguous, or points at a tool window with no top-level title. The underlying
+ *    [FfmpegRecorder]'s [FfmpegBackend.detect] picks the platform device: gdigrab on Windows,
+ *    x11grab on Linux. Wayland-without-XWayland sessions surface as a clear ffmpeg-side "cannot
+ *    open display" at spawn time — Wayland-native capture is a separate, future backend.
  *
  * The router always needs both a window AND a region: the region is used as the fallback when the
  * window-targeted path isn't applicable. If you don't have a region (e.g. no clear bounds for a

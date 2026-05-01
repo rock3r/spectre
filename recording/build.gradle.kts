@@ -247,3 +247,14 @@ tasks.register<JavaExec>("runFfmpegGdigrabSmoke") {
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("dev.sebastiano.spectre.recording.FfmpegGdigrabSmoke")
 }
+
+// Manual smoke for the Linux x11grab path (#75). Counterpart to the gdigrab/SCK smokes.
+// Requires a working X display (`DISPLAY` env var) — Wayland-only sessions without XWayland
+// will fail at ffmpeg-spawn time, which is the right failure mode for a manual smoke.
+tasks.register<JavaExec>("runFfmpegX11GrabSmoke") {
+    group = "verification"
+    description = "Boots a JFrame, records it for ~3s via x11grab, prints output stats."
+    onlyIf { OperatingSystem.current().isLinux }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.FfmpegX11GrabSmoke")
+}
