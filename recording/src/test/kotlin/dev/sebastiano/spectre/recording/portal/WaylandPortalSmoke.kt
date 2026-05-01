@@ -21,17 +21,16 @@ import kotlin.system.exitProcess
 /**
  * Manual smoke for the **stage-2 Wayland portal handshake**. Run via `./gradlew
  * :recording:runWaylandPortalSmoke` on a Wayland session — opens a JFrame so the compositor's
- * "share your screen" dialog has something to point at, calls [WaylandPortalRecorder.start],
- * and **expects** a stage-2-limitation [UnsupportedOperationException]. A "PASS" result means
- * the portal handshake completed cleanly: `CreateSession` → `SelectSources` → `Start` round-
- * tripped, the response parsed into a non-zero PipeWire node id and stream size, and the
- * recorder threw with the documented stage-3 follow-up message instead of producing a 0-byte
- * mp4.
+ * "share your screen" dialog has something to point at, calls [WaylandPortalRecorder.start], and
+ * **expects** a stage-2-limitation [UnsupportedOperationException]. A "PASS" result means the
+ * portal handshake completed cleanly: `CreateSession` → `SelectSources` → `Start` round- tripped,
+ * the response parsed into a non-zero PipeWire node id and stream size, and the recorder threw with
+ * the documented stage-3 follow-up message instead of producing a 0-byte mp4.
  *
  * Counterpart to [dev.sebastiano.spectre.recording.FfmpegX11GrabSmoke] (Linux Xorg) and
  * [dev.sebastiano.spectre.recording.FfmpegGdigrabSmoke] (Windows). Once stage 3's FD-inheritance
- * piece lands, the recorder will start producing real frames and this smoke flips from
- * "expected throw" to "expected non-zero mp4 with non-trivial pixel content."
+ * piece lands, the recorder will start producing real frames and this smoke flips from "expected
+ * throw" to "expected non-zero mp4 with non-trivial pixel content."
  */
 fun main() {
     var exitCode = 0
@@ -58,14 +57,13 @@ private fun runSmoke() {
             "with the JFrame and click \"Share.\" Subsequent runs reuse the grant silently.)"
     )
 
-    val expected =
-        runCatching {
-            recorder.start(
-                region = frame.bounds,
-                output = output,
-                options = RecordingOptions(frameRate = 30, captureCursor = true),
-            )
-        }
+    val expected = runCatching {
+        recorder.start(
+            region = frame.bounds,
+            output = output,
+            options = RecordingOptions(frameRate = 30, captureCursor = true),
+        )
+    }
     val throwable = expected.exceptionOrNull()
 
     SwingUtilities.invokeLater {
@@ -85,9 +83,11 @@ private fun runSmoke() {
         throwable is UnsupportedOperationException &&
             (throwable.message?.contains("stage 2") == true ||
                 throwable.message?.contains("portal handshake completed") == true) -> {
-            println("PASS — portal handshake completed; recorder threw the documented stage-2 " +
-                "limitation as expected. Stage 3 follow-up will replace the throw with the " +
-                "FD-passing encoder spawn.")
+            println(
+                "PASS — portal handshake completed; recorder threw the documented stage-2 " +
+                    "limitation as expected. Stage 3 follow-up will replace the throw with the " +
+                    "FD-passing encoder spawn."
+            )
             println("Stage-2 message: ${throwable.message}")
         }
         else -> {

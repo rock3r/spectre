@@ -11,30 +11,29 @@ import java.nio.file.Paths
 
 /**
  * [Recorder] for Linux Wayland sessions, backed by `xdg-desktop-portal` (via [ScreenCastPortal])
- * for permission + PipeWire stream selection, and `gst-launch-1.0` for the actual encoding —
- * once the FD-passing piece is in place.
+ * for permission + PipeWire stream selection, and `gst-launch-1.0` for the actual encoding — once
+ * the FD-passing piece is in place.
  *
  * **STAGE 2 SHIPS THE ARCHITECTURE; STAGE 3 SHIPS THE ENCODER.** The portal handshake
- * ([ScreenCastPortal] — `CreateSession` → `SelectSources` → `Start`) works end-to-end on
- * GNOME mutter (validated on Hyper-V Ubuntu 22.04, 2026-05-01). What's not yet in place is the
+ * ([ScreenCastPortal] — `CreateSession` → `SelectSources` → `Start`) works end-to-end on GNOME
+ * mutter (validated on Hyper-V Ubuntu 22.04, 2026-05-01). What's not yet in place is the
  * JVM-to-gst-launch FD inheritance: pipewiresrc reads portal-granted nodes only via the file
  * descriptor returned by `OpenPipeWireRemote`, and the JDK's `ProcessBuilder` doesn't inherit
- * arbitrary FDs across exec. Without the FD, gst-launch reaches PLAYING state but receives
- * zero frames from the daemon and the output mp4 is 0 bytes — exactly the silent-corruption
- * antipattern that bit us in #76. To avoid shipping that for the second time, [start] throws
- * an [UnsupportedOperationException] with a specific, actionable message AFTER the portal
- * handshake completes, BEFORE doing anything that would produce a junk recording. Callers see
- * "the portal works; the FD plumbing doesn't" rather than "0-byte mp4."
+ * arbitrary FDs across exec. Without the FD, gst-launch reaches PLAYING state but receives zero
+ * frames from the daemon and the output mp4 is 0 bytes — exactly the silent-corruption antipattern
+ * that bit us in #76. To avoid shipping that for the second time, [start] throws an
+ * [UnsupportedOperationException] with a specific, actionable message AFTER the portal handshake
+ * completes, BEFORE doing anything that would produce a junk recording. Callers see "the portal
+ * works; the FD plumbing doesn't" rather than "0-byte mp4."
  *
- * Stage 3 replaces the throw with: `OpenPipeWireRemote` to obtain the FD, JNR-POSIX
- * `fcntl(F_SETFD, flags & ~FD_CLOEXEC)` to clear `O_CLOEXEC` on the FD, then spawn
- * `gst-launch-1.0 ... pipewiresrc fd=$N path=$nodeId ...` with the FD inherited. The argv
- * builder ([GstCli.pipewireRegionCapture]) is already in place and unit-tested — stage 3
- * just wires the spawn lifecycle.
+ * Stage 3 replaces the throw with: `OpenPipeWireRemote` to obtain the FD, JNR-POSIX `fcntl(F_SETFD,
+ * flags & ~FD_CLOEXEC)` to clear `O_CLOEXEC` on the FD, then spawn `gst-launch-1.0 ... pipewiresrc
+ * fd=$N path=$nodeId ...` with the FD inherited. The argv builder ([GstCli.pipewireRegionCapture])
+ * is already in place and unit-tested — stage 3 just wires the spawn lifecycle.
  *
- * Module-internal: callers go through [dev.sebastiano.spectre.recording.AutoRecorder]
- * (which routes Wayland sessions here) or construct [WaylandPortalRecorder] directly from
- * within the recording module / its tests.
+ * Module-internal: callers go through [dev.sebastiano.spectre.recording.AutoRecorder] (which routes
+ * Wayland sessions here) or construct [WaylandPortalRecorder] directly from within the recording
+ * module / its tests.
  */
 internal class WaylandPortalRecorder(
     private val portal: ScreenCastPortal = ScreenCastPortal(),
@@ -63,8 +62,7 @@ internal class WaylandPortalRecorder(
         val session =
             portal.openSession(
                 sourceTypes = sourceTypes,
-                cursorMode =
-                    if (options.captureCursor) CursorMode.EMBEDDED else CursorMode.HIDDEN,
+                cursorMode = if (options.captureCursor) CursorMode.EMBEDDED else CursorMode.HIDDEN,
             )
         try {
             // Translate the requested region into the PipeWire stream's coordinate space.

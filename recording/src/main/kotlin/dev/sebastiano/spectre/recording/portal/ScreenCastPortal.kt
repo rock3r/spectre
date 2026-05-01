@@ -280,10 +280,12 @@ internal class ScreenCastPortal(
             }
         }
 
-        /** Coerce a D-Bus container surfaced by dbus-java to a `List<*>`, regardless of whether
-         * it landed as a Java `Object[]` (the actual unmarshalling shape) or a `List<?>` (defensive
+        /**
+         * Coerce a D-Bus container surfaced by dbus-java to a `List<*>`, regardless of whether it
+         * landed as a Java `Object[]` (the actual unmarshalling shape) or a `List<?>` (defensive
          * for future dbus-java versions). Returns null if the value is neither shape — including
-         * when the value is missing entirely (the caller pipes a nullable in via `?.value`). */
+         * when the value is missing entirely (the caller pipes a nullable in via `?.value`).
+         */
         private fun toListOrNull(value: Any?): List<Any?>? =
             when (value) {
                 null -> null
@@ -292,16 +294,17 @@ internal class ScreenCastPortal(
                 else -> null
             }
 
-        /** Position / size come back as `(ii)` D-Bus structs of two int32s — see [parseStreams]
-         * for why they arrive as a generic list. Defensive about element types because dbus-java
-         * has been observed to surface int32 fields as either `Integer` or boxed `int` depending
-         * on the marshaller path. */
+        /**
+         * Position / size come back as `(ii)` D-Bus structs of two int32s — see [parseStreams] for
+         * why they arrive as a generic list. Defensive about element types because dbus-java has
+         * been observed to surface int32 fields as either `Integer` or boxed `int` depending on the
+         * marshaller path.
+         */
         private fun intPairOrZero(list: List<Any?>): Pair<Int, Int> {
             val first = (list.getOrNull(0) as? Number)?.toInt() ?: 0
             val second = (list.getOrNull(1) as? Number)?.toInt() ?: 0
             return first to second
         }
-
     }
 
     /**
