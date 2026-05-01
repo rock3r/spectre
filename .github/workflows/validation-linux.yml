@@ -1,0 +1,214 @@
+name: Validation tests (Linux)
+
+# Runs the opt-in :sample-desktop validationTest* tasks on a real Linux host so the
+# multi-window / popup / fidelity flows we built up under #7, #8, #14, #23 actually get
+# exercised on Linux. The base `ci.yml` job runs `:check` on Linux every PR; these validation
+# tasks aren't in `:check`'s default scope, so without this workflow a Linux-side regression
+# in popup discovery, HiDPI mapping, or Robot input would only surface in manual testing on
+# the dev VM.
+#
+# ## Display server
+#
+# `ubuntu-latest` runners ship without a display server, so we install `xvfb` and drive the
+# whole Gradle invocation under `xvfb-run`. That gives us a real Xorg server (NOT XWayland) —
+# framebuffer reads work normally, Robot input works normally, and the LinuxX11Grab Wayland
+# guard from #77 stage 1 stays out of the picture (`XDG_SESSION_TYPE` and `WAYLAND_DISPLAY`
+# are unset in xvfb-run's environment, no `wayland-*` socket exists in `XDG_RUNTIME_DIR`).
+#
+# Counterpart to `validation-windows.yml`. The Windows version carries an elaborate
+# protocol-flake workaround for a Gradle / Compose Desktop shutdown race that's
+# Windows-specific (#72); Linux doesn't see that race, so this workflow keeps a simpler
+# Gradle-exit-code path. The two-pass XML verifier is borrowed verbatim from the Windows
+# version because the "catch new ValidationTest classes added without updating this list"
+# property is generic, not Windows-specific.
+#
+# Local invocation (with a working DISPLAY):
+#   ./gradlew :sample-desktop:validationTest :sample-desktop:validationTestPopupLayers
+
+on:
+  pull_request:
+    paths:
+      - "core/**"
+      - "recording/**"
+      - "sample-desktop/**"
+      - "testing/**"
+      # Broad gradle/** rather than just libs.versions.toml so wrapper bumps and any other
+      # ./gradle/-resident config changes still trigger this validation job. Mirrors the
+      # filter shape of validation-windows.yml.
+      - "gradle/**"
+      - "settings.gradle.kts"
+      - "build.gradle.kts"
+      - ".github/workflows/validation-linux.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "core/**"
+      - "recording/**"
+      - "sample-desktop/**"
+      - "testing/**"
+      - "gradle/**"
+      - "settings.gradle.kts"
+      - "build.gradle.kts"
+      - ".github/workflows/validation-linux.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validation-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Install Xvfb
+        # Need a display for Compose Desktop to render and `java.awt.Robot` to inject input.
+        # Xvfb is the cheap, reliable choice for headless CI: real X11 server (no Wayland
+        # security restrictions on framebuffer reads), no compositor in the loop, no GPU
+        # required. `xvfb-run` wraps the whole `./gradlew` invocation with a transient X
+        # server bound to a free `:NN` display, sets `DISPLAY` for child processes, and
+        # tears the server down on exit. `-a` picks a free display number to avoid
+        # collisions if a future job parallelises.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      - name: Run validation tests under Xvfb
+        # `--continue` so a failure in one task doesn't skip subsequent tasks — every
+        # requested task gets a fair chance to produce its JUnit XML, and the verification
+        # step below sees the full picture instead of cascade-skips.
+        #
+        # No `continue-on-error` here (unlike validation-windows.yml): Linux doesn't see the
+        # Gradle/Compose test-executor protocol race that motivates Windows's tolerance, so
+        # Gradle's exit code is honoured directly. If we ever see an analogous race surface
+        # on Linux runners, fold in the same fail-tolerant + XML-source-of-truth pattern.
+        #
+        # Screen size 1280x1024 is xvfb-run's default; explicitly setting it via
+        # `--server-args` would let us bump it for a denser virtual desktop, but the
+        # validation tests don't need that and the default keeps the diff with
+        # validation-windows.yml's runner config minimal.
+        id: gradle
+        run: |
+          xvfb-run -a ./gradlew \
+            :sample-desktop:validationTest \
+            :sample-desktop:validationTestPopupLayers \
+            --continue
+        shell: bash
+
+      - name: Verify validation tests passed via JUnit XML
+        # Source-of-truth check that mirrors validation-windows.yml's two-pass verifier:
+        #
+        # 1. **Required-set existence pass**: an explicit list of expected (task, class) pairs
+        #    must each have a corresponding TEST-<fqn>.xml. A mid-class JVM crash that skipped
+        #    writing one XML, or a Gradle compile / dependency-resolution failure that
+        #    produced no XMLs at all, fails the verification with a clear error pointing at
+        #    the missing entry.
+        # 2. **Discovered-set inspection pass**: every TEST-*.xml found under any of the four
+        #    validation task directories — including ones NOT in the required set, e.g. a new
+        #    ValidationTest class added without updating this workflow — is parsed for
+        #    `failures="N"` / `errors="N"`. Any non-zero count fails the step. Missing or
+        #    unparsable attributes are treated as malformation (truncated XML, wrong schema)
+        #    and also fail the step.
+        #
+        # The flake-aware "envelope mention" branch from validation-windows.yml is omitted
+        # here because the Gradle/Compose protocol race that motivated it is Windows-specific
+        # (#72). If Linux ever sees an analogous race, copy the envelope-handling block over.
+        if: always()
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+
+          declare -A required_classes_by_task=(
+            ["validationTest"]="Issue7CompletionValidationTest Issue8CompletionValidationTest Issue8FidelityValidationTest Issue14PerfValidationTest MultiWindowAndPopupValidationTest PopupLayerVariantsValidationTest"
+            ["validationTestLayerComponent"]="PopupLayerVariantsValidationTest"
+            ["validationTestLayerSameCanvas"]="PopupLayerVariantsValidationTest"
+            ["validationTestLayerWindow"]="PopupLayerVariantsValidationTest"
+          )
+          # Derive task_dirs from the associative array's keys rather than maintaining a
+          # parallel list — see validation-windows.yml for the rationale.
+          task_dirs=("${!required_classes_by_task[@]}")
+
+          # Pass 1: required-set existence.
+          missing=()
+          for task_dir in "${!required_classes_by_task[@]}"; do
+            for class_name in ${required_classes_by_task[$task_dir]}; do
+              xml="sample-desktop/build/test-results/$task_dir/TEST-dev.sebastiano.spectre.sample.validation.${class_name}.xml"
+              if [ ! -f "$xml" ]; then
+                missing+=("$task_dir/${class_name}")
+              fi
+            done
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing JUnit XML reports for: ${missing[*]}. Gradle step outcome: ${{ steps.gradle.outcome }}"
+            exit 1
+          fi
+
+          # Pass 2: discovered-set inspection.
+          all_xml=()
+          for task_dir in "${task_dirs[@]}"; do
+            xmls=(sample-desktop/build/test-results/$task_dir/TEST-*.xml)
+            all_xml+=("${xmls[@]}")
+          done
+          if [ "${#all_xml[@]}" -eq 0 ]; then
+            echo "::error::No JUnit XML reports discovered under expected task directories — Gradle step outcome: ${{ steps.gradle.outcome }}"
+            exit 1
+          fi
+
+          fail_total=0
+          err_total=0
+          malformed_total=0
+          for f in "${all_xml[@]}"; do
+            # `set -euo pipefail` aborts the script if any pipeline component returns
+            # non-zero. `grep -oE` returns non-zero when no match is found, so wrap each
+            # pipeline in `|| true` to capture missing-attribute cases without exiting.
+            # Missing attributes are treated as MALFORMED (truncated XML, wrong schema)
+            # so a corrupted report can't quietly pass by reporting "no failures" simply
+            # because the failures="N" attribute didn't parse.
+            failures_raw=$(grep -oE 'failures="[0-9]+"' "$f" | head -n1 | grep -oE '[0-9]+' || true)
+            errors_raw=$(grep -oE 'errors="[0-9]+"' "$f" | head -n1 | grep -oE '[0-9]+' || true)
+            if [ -z "$failures_raw" ] || [ -z "$errors_raw" ]; then
+              echo "::error file=$f::Malformed JUnit XML — missing/unparsable failures or errors attribute"
+              malformed_total=$((malformed_total + 1))
+              continue
+            fi
+            if [ "$failures_raw" -gt 0 ] || [ "$errors_raw" -gt 0 ]; then
+              echo "::error file=$f::Test class reported failures=$failures_raw errors=$errors_raw"
+              fail_total=$((fail_total + failures_raw))
+              err_total=$((err_total + errors_raw))
+            fi
+          done
+          if [ "$malformed_total" -gt 0 ]; then
+            echo "::error::$malformed_total XML report(s) were malformed (missing failures/errors attribute)."
+            exit 1
+          fi
+          if [ "$fail_total" -gt 0 ] || [ "$err_total" -gt 0 ]; then
+            echo "::error::Validation tests reported $fail_total failure(s) and $err_total error(s) across ${#all_xml[@]} XML report(s)."
+            exit 1
+          fi
+          echo "All required classes present; ${#all_xml[@]} discovered XML report(s) clean."
+        shell: bash
+
+      - name: Upload validation artefacts
+        # Always upload — useful both for diagnosing failures and for confirming what ran on
+        # green builds.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-linux-artifacts
+          path: |
+            sample-desktop/build/reports/tests/
+            sample-desktop/build/test-results/
+            sample-desktop/hs_err_*.log
+          if-no-files-found: ignore
+          retention-days: 14

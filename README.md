@@ -71,6 +71,9 @@ because `setup-java`'s JBR 21 entry is missing.
 - [`validation-windows.yml`](.github/workflows/validation-windows.yml) —
   `:sample-desktop:validationTest*` on Windows, gated on `sample-desktop/**`. JUnit-XML-driven
   verifier so a Gradle/Compose protocol flake on shutdown can't hide a real failure.
+- [`validation-linux.yml`](.github/workflows/validation-linux.yml) — same validation matrix
+  on Linux under `xvfb-run` (real Xorg, no compositor in the loop), gated on the same
+  `sample-desktop/**` filter shape.
 
 ## Reference docs
 
