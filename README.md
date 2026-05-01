@@ -5,11 +5,11 @@
 </h1>
 
 A Kotlin library for driving Compose Desktop UIs from automated tests. Reads the semantics
-tree, sends real OS-level mouse and keyboard input via `java.awt.Robot`, records the screen,
-and works against IDE-hosted Compose surfaces (IntelliJ, Jewel) the same way as standalone
-desktop apps.
+tree, sends real OS-level mouse and keyboard input via `java.awt.Robot`, and records the
+screen — against IDE-hosted Compose surfaces (IntelliJ, Jewel) and standalone desktop apps
+alike.
 
-Supports macOS and Windows. Linux is on the roadmap.
+macOS and Windows. Linux is on the roadmap.
 
 ## Modules
 
@@ -20,8 +20,8 @@ Supports macOS and Windows. Linux is on the roadmap.
   [`docs/RECORDING-LIMITATIONS.md`](docs/RECORDING-LIMITATIONS.md).
 - `testing` — JUnit 5 extension and JUnit 4 rule.
 - `sample-desktop` — Compose Desktop app for manual smokes.
-- `sample-intellij-plugin` — IntelliJ plugin hosting a Jewel tool window. Not published; lives
-  in-tree as the IDE-hosted test bed.
+- `sample-intellij-plugin` — in-tree IntelliJ plugin hosting a Jewel tool window. Unpublished;
+  serves as the IDE-hosted test bed.
 
 ## Run the samples
 
@@ -31,13 +31,12 @@ Standalone Compose Desktop app:
 ./gradlew :sample-desktop:run
 ```
 
-IntelliJ plugin (then `Tools → Run Spectre Against the Sample Tool Window`):
+IntelliJ plugin — then `Tools → Run Spectre Against the Sample Tool Window`, or pass
+`-PspectreAutorun=true` to fire the action on project open:
 
 ```shell
 ./gradlew :sample-intellij-plugin:runIde
 ```
-
-Add `-PspectreAutorun=true` to fire the action automatically on project open.
 
 ## Quality checks
 
@@ -46,17 +45,18 @@ Add `-PspectreAutorun=true` to fire the action automatically on project open.
 ./gradlew ktfmtFormat  # rewrite Kotlin / .gradle.kts in place
 ```
 
-Two heavier checks are opt-in:
+Two heavier checks live outside `:check`:
 
 - `:sample-intellij-plugin:uiTest` — boots IntelliJ via `intellij-ide-starter`, installs the
-  plugin, fires `RunSpectreAction`, and looks for every tagged Compose node in `idea.log`.
+  plugin, fires `RunSpectreAction`, and asserts every tagged Compose node shows up in
+  `idea.log`.
 - `:recording:check` on macOS — covers the Swift ScreenCaptureKit helper.
 
 ## Supported JVMs
 
-JBR 21 is the dev-loop default. JBR 25 also gets exercised via the IDE-hosted test (it ships
-bundled with IntelliJ 2026.1). Any JDK 21+ should work for the non-IDE modules; CI itself
-runs on Temurin 21 because `setup-java`'s JBR 21 entry is currently missing.
+JBR 21 is the dev-loop default. JBR 25 also gets exercised via the IDE-hosted test (bundled
+with IntelliJ 2026.1). Any JDK 21+ works for the non-IDE modules; CI runs on Temurin 21
+because `setup-java`'s JBR 21 entry is missing.
 
 ## CI
 
@@ -65,9 +65,12 @@ runs on Temurin 21 because `setup-java`'s JBR 21 entry is currently missing.
 - [`windows.yml`](.github/workflows/windows.yml) — `:check` on Windows, broad path filter.
 - [`macos.yml`](.github/workflows/macos.yml) — Swift helper build + `:recording:check`, gated
   on `recording/**`.
-- [`ide-uitest.yml`](.github/workflows/ide-uitest.yml) — IDE-hosted UI test on macOS, gated on
-  plugin / core / recording changes. `out/ide-tests/{installers,cache}` is cached so warm
-  runs are ~30s.
+- [`ide-uitest.yml`](.github/workflows/ide-uitest.yml) — IDE-hosted UI test on macOS + Windows,
+  gated on plugin / core / recording changes. `out/ide-tests/{installers,cache}` is cached
+  between runs.
+- [`validation-windows.yml`](.github/workflows/validation-windows.yml) —
+  `:sample-desktop:validationTest*` on Windows, gated on `sample-desktop/**`. JUnit-XML-driven
+  verifier so a Gradle/Compose protocol flake on shutdown can't hide a real failure.
 
 ## Reference docs
 
