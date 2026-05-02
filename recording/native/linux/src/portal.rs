@@ -167,10 +167,9 @@ pub fn open_screen_cast_session(
             start_response.response_code
         );
     }
-    let stream = parse_first_stream(&start_response.results).ok_or_else(|| {
-        anyhow!(
-            "Start Response did not include a usable stream — portal returned no node id. \
-             Results: {:?}",
+    let stream = parse_first_stream(&start_response.results).with_context(|| {
+        format!(
+            "parsing Start Response streams field. Raw results: {:?}",
             start_response.results
         )
     })?;
@@ -347,42 +346,131 @@ fn cursor_mode_flag(mode: CursorMode) -> u32 {
     }
 }
 
-/// Pull the first stream out of the `Start.Response.streams` payload. The streams field is
-/// `a(ua{sv})` — array of (node_id, properties). Each property dict has `position` (ii) and
-/// `size` (ii). Spectre records one stream at a time, so we take the first.
-fn parse_first_stream(results: &PropMap) -> Option<StreamMetadata> {
-    let streams_variant = results.get("streams")?;
-    // Streams field comes as Variant<Vec<(u32, PropMap)>>. dbus-rs exposes this as a generic
-    // RefArg; we walk through `as_iter` to extract the structure.
-    let mut outer = streams_variant.0.as_iter()?;
-    let first = outer.next()?;
-    let mut struct_fields = first.as_iter()?;
-    let node_id = struct_fields.next()?.as_u64()? as u32;
-    let mut props_iter = struct_fields.next()?.as_iter()?;
-    // The dict-side `PropMap` for the stream's own a{sv}. dbus-rs serialises this as a
-    // sequence of alternating keys and variants when using `as_iter()`.
+/// Pull the first stream out of the `Start.Response.streams` payload.
+///
+/// The portal returns this field with signature `a(ua{sv})` — an array of `(node_id,
+/// properties)` structs. The `node_id` is the PipeWire node id (NOT the same as the inner
+/// dict's `id` string, which is the persistent restore key). The properties dict has:
+///
+/// - `position` (variant, signature `(ii)`) — top-left of the captured region in compositor
+///   coordinates.
+/// - `size` (variant, signature `(ii)`) — pixel dimensions of the captured region.
+/// - `source_type` (variant `u`) — bitmask: 1=monitor, 2=window, 4=virtual.
+/// - `id` (variant `s`) — restore-id (the restore_token-paired identifier), NOT the node id.
+///
+/// dbus-rs exposes the whole tree as untyped `&dyn RefArg`. Two non-obvious traversal rules:
+///
+/// 1. **Variants need an extra unwrap.** `Variant::as_iter()` yields exactly ONE inner item;
+///    you have to call `as_iter()` again on that item to walk into a struct/array. The values
+///    inside an `a{sv}` are all variants, so anything past a dict value needs this extra step.
+/// 2. **Don't bail the whole function on a sub-property parse error.** node_id is the only
+///    truly required field — without it we can't authorise the PipeWire connection. Position
+///    and size are nice-to-have for the encoder's videocrop and survive being defaulted to
+///    zero (the encoder treats `(0,0)` size as "full stream extent"). Failing the whole
+///    handshake because we couldn't parse one int would be a regression on the original
+///    bug we're fixing here.
+fn parse_first_stream(results: &PropMap) -> Result<StreamMetadata> {
+    let streams_variant = results
+        .get("streams")
+        .context("Start Response missing 'streams' key")?;
+    let mut outer = streams_variant
+        .0
+        .as_iter()
+        .context("'streams' value is not iterable (expected a(ua{sv}))")?;
+    let first = outer
+        .next()
+        .context("'streams' array is empty — portal returned 0 streams")?;
+    let mut struct_fields = first
+        .as_iter()
+        .context("first stream entry not iterable (expected (ua{sv}) struct)")?;
+    let node_id_arg = struct_fields
+        .next()
+        .context("first stream struct has no fields (expected u32 node_id then a{sv})")?;
+    let node_id = node_id_arg
+        .as_u64()
+        .with_context(|| {
+            format!(
+                "stream node_id field is not a u32 — got signature '{}', value {:?}",
+                node_id_arg.signature(),
+                node_id_arg
+            )
+        })? as u32;
+
+    // Properties dict — best-effort. Default position/size to zero on any parse trouble; the
+    // encoder treats `(0,0)` size as "use the stream's native extent" via the videocrop pass.
     let mut position = (0i32, 0i32);
     let mut size = (0u32, 0u32);
-    while let (Some(k), Some(v)) = (props_iter.next(), props_iter.next()) {
-        let key = k.as_str()?;
-        let mut tup = v.as_iter()?;
-        match key {
-            "position" => {
-                let x = tup.next()?.as_i64()? as i32;
-                let y = tup.next()?.as_i64()? as i32;
-                position = (x, y);
+    if let Some(props_arg) = struct_fields.next() {
+        if let Some(mut props_iter) = props_arg.as_iter() {
+            while let (Some(k), Some(v)) = (props_iter.next(), props_iter.next()) {
+                let Some(key) = k.as_str() else { continue };
+                match key {
+                    "position" => {
+                        if let Some(pair) = parse_int_pair(v) {
+                            position = (pair.0 as i32, pair.1 as i32);
+                        } else {
+                            eprintln!(
+                                "[portal] stream property 'position' had unexpected shape \
+                                 (signature '{}'): {:?}",
+                                v.signature(),
+                                v
+                            );
+                        }
+                    }
+                    "size" => {
+                        if let Some(pair) = parse_int_pair(v) {
+                            // Size is signed in the wire format (`(ii)`) but always non-negative
+                            // in practice. Clamp negatives to 0 defensively.
+                            size = (pair.0.max(0) as u32, pair.1.max(0) as u32);
+                        } else {
+                            eprintln!(
+                                "[portal] stream property 'size' had unexpected shape \
+                                 (signature '{}'): {:?}",
+                                v.signature(),
+                                v
+                            );
+                        }
+                    }
+                    _ => {}
+                }
             }
-            "size" => {
-                let w = tup.next()?.as_u64()? as u32;
-                let h = tup.next()?.as_u64()? as u32;
-                size = (w, h);
-            }
-            _ => {}
         }
     }
-    Some(StreamMetadata {
+
+    Ok(StreamMetadata {
         node_id,
         position,
         size,
     })
+}
+
+/// Read a `(ii)` pair from a variant-wrapped value. Handles the two-level unwrap required
+/// for values inside `a{sv}`: first `as_iter()` peels the variant (yielding one inner item),
+/// then a second `as_iter()` walks the struct fields.
+///
+/// Falls back to a one-level walk for the (theoretical) case where the value isn't variant-
+/// wrapped. Returns `None` only if neither shape produces two integers.
+fn parse_int_pair(arg: &dyn RefArg) -> Option<(i64, i64)> {
+    // Two-level unwrap: variant → inner struct → fields.
+    if let Some(mut variant_iter) = arg.as_iter() {
+        if let Some(inner) = variant_iter.next() {
+            if let Some(mut field_iter) = inner.as_iter() {
+                if let (Some(a), Some(b)) = (field_iter.next(), field_iter.next()) {
+                    if let (Some(av), Some(bv)) = (a.as_i64(), b.as_i64()) {
+                        return Some((av, bv));
+                    }
+                }
+            }
+            // Inner already looks like an int — maybe arg wasn't variant-wrapped after all
+            // and `variant_iter` is actually iterating fields directly.
+            if let Some(av) = inner.as_i64() {
+                if let Some(b) = variant_iter.next() {
+                    if let Some(bv) = b.as_i64() {
+                        return Some((av, bv));
+                    }
+                }
+            }
+        }
+    }
+    None
 }
