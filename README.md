@@ -5,10 +5,12 @@
 </h1>
 
 A Kotlin library for driving Compose Desktop UIs from automated tests. Reads the semantics
-tree, sends real OS-level mouse and keyboard input via `java.awt.Robot`, and records the
-screen — against IDE-hosted Compose surfaces (IntelliJ, Jewel) and standalone desktop apps
-alike.
+tree, drives mouse and keyboard input — either real OS-level events via `java.awt.Robot` or
+synthetic AWT events dispatched straight into the window hierarchy (`RobotDriver.synthetic(...)`,
+useful when tests run in parallel and can't fight over OS focus) — and records the screen,
+against IDE-hosted Compose surfaces (IntelliJ, Jewel) and standalone desktop apps alike.
 
+> [!IMPORTANT]
 > **Heads up: this repo is currently a lot of vibe slop.** Large parts were written with
 > heavy AI pair-programming and haven't yet had a proper human review pass end-to-end.
 > I'll be going through it manually to read, audit, and tighten things up. Until then,
@@ -21,7 +23,8 @@ handshake, the PipeWire FD lifetime, and the `gst-launch-1.0` subprocess; the JV
 recorder talks to it over stdin/stdout via a tiny JSON protocol. Same out-of-process
 architecture as the macOS Swift helper.
 
-> **Linux is best-effort.** Routine validation runs on one machine: Ubuntu 22.04,
+> [!NOTE]
+> **Linux support is best-effort.** Routine validation runs on one machine: Ubuntu 22.04,
 > exercising the Xorg session (input + popup + HiDPI + `x11grab`) and the GNOME / mutter
 > Wayland session (the portal-based recording path). Other distros, compositors (KDE /
 > Plasma, sway, wlroots), window managers, and Ubuntu versions aren't covered. Reports
