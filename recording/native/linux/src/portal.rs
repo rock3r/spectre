@@ -358,17 +358,21 @@ fn cursor_mode_flag(mode: CursorMode) -> u32 {
 /// - `source_type` (variant `u`) — bitmask: 1=monitor, 2=window, 4=virtual.
 /// - `id` (variant `s`) — restore-id (the restore_token-paired identifier), NOT the node id.
 ///
-/// dbus-rs exposes the whole tree as untyped `&dyn RefArg`. Two non-obvious traversal rules:
+/// dbus-rs exposes the whole tree as untyped `&dyn RefArg`. The non-obvious traversal rule:
+/// **variants need an extra unwrap.** `Variant::as_iter()` yields exactly ONE inner item; you
+/// have to call `as_iter()` again on that item to walk into a struct/array. Values inside an
+/// `a{sv}` are all variants, so anything past a dict value needs this extra step.
 ///
-/// 1. **Variants need an extra unwrap.** `Variant::as_iter()` yields exactly ONE inner item;
-///    you have to call `as_iter()` again on that item to walk into a struct/array. The values
-///    inside an `a{sv}` are all variants, so anything past a dict value needs this extra step.
-/// 2. **Don't bail the whole function on a sub-property parse error.** node_id is the only
-///    truly required field — without it we can't authorise the PipeWire connection. Position
-///    and size are nice-to-have for the encoder's videocrop and survive being defaulted to
-///    zero (the encoder treats `(0,0)` size as "full stream extent"). Failing the whole
-///    handshake because we couldn't parse one int would be a regression on the original
-///    bug we're fixing here.
+/// All four parse failures (`node_id`, `position`, `size`, malformed dict) bail with context.
+/// An earlier draft tried to default `position` and `size` to zero on parse failure, framing
+/// the silent fallback as "graceful degradation" — Bugbot caught the contradiction: the
+/// encoder's argv builder ([`crate::gst::build_pipewire_argv`]) explicitly rejects zero stream
+/// dimensions with `bail!`, so a parse miss would surface as a confusing
+/// `"stream_size must have positive dimensions"` instead of the promised soft-fail. Position
+/// has the same trap on multi-monitor setups: defaulting to `(0,0)` when the granted monitor
+/// is at `(1920, 0)` produces silently wrong AWT-region → stream-relative coordinates and a
+/// recording of the wrong area. Better to fail loudly here with a message naming the parse
+/// step that broke than to either crash later or record garbage.
 fn parse_first_stream(results: &PropMap) -> Result<StreamMetadata> {
     let streams_variant = results
         .get("streams")
@@ -396,45 +400,73 @@ fn parse_first_stream(results: &PropMap) -> Result<StreamMetadata> {
             )
         })? as u32;
 
-    // Properties dict — best-effort. Default position/size to zero on any parse trouble; the
-    // encoder treats `(0,0)` size as "use the stream's native extent" via the videocrop pass.
-    let mut position = (0i32, 0i32);
-    let mut size = (0u32, 0u32);
-    if let Some(props_arg) = struct_fields.next() {
-        if let Some(mut props_iter) = props_arg.as_iter() {
-            while let (Some(k), Some(v)) = (props_iter.next(), props_iter.next()) {
-                let Some(key) = k.as_str() else { continue };
-                match key {
-                    "position" => {
-                        if let Some(pair) = parse_int_pair(v) {
-                            position = (pair.0 as i32, pair.1 as i32);
-                        } else {
-                            eprintln!(
-                                "[portal] stream property 'position' had unexpected shape \
-                                 (signature '{}'): {:?}",
-                                v.signature(),
-                                v
-                            );
-                        }
-                    }
-                    "size" => {
-                        if let Some(pair) = parse_int_pair(v) {
-                            // Size is signed in the wire format (`(ii)`) but always non-negative
-                            // in practice. Clamp negatives to 0 defensively.
-                            size = (pair.0.max(0) as u32, pair.1.max(0) as u32);
-                        } else {
-                            eprintln!(
-                                "[portal] stream property 'size' had unexpected shape \
-                                 (signature '{}'): {:?}",
-                                v.signature(),
-                                v
-                            );
-                        }
-                    }
-                    _ => {}
-                }
+    // Properties dict. Both `position` and `size` are required for correct downstream
+    // behaviour — see the function-level doc-comment for the bail-don't-default reasoning.
+    let props_arg = struct_fields
+        .next()
+        .context("stream struct missing properties dict (expected (ua{sv}), got just u)")?;
+    let mut props_iter = props_arg
+        .as_iter()
+        .context("stream properties value not iterable (expected a{sv})")?;
+    let mut position: Option<(i32, i32)> = None;
+    let mut size: Option<(u32, u32)> = None;
+    while let (Some(k), Some(v)) = (props_iter.next(), props_iter.next()) {
+        let Some(key) = k.as_str() else { continue };
+        match key {
+            "position" => {
+                let pair = parse_int_pair(v).with_context(|| {
+                    format!(
+                        "stream property 'position' had unexpected shape (signature '{}'): {:?}",
+                        v.signature(),
+                        v
+                    )
+                })?;
+                position = Some((pair.0 as i32, pair.1 as i32));
             }
+            "size" => {
+                let pair = parse_int_pair(v).with_context(|| {
+                    format!(
+                        "stream property 'size' had unexpected shape (signature '{}'): {:?}",
+                        v.signature(),
+                        v
+                    )
+                })?;
+                // Size is signed in the wire format (`(ii)`) but the portal spec guarantees
+                // non-negative values. Reject negatives explicitly rather than silently
+                // clamping — a negative size would be a portal-spec violation worth seeing.
+                if pair.0 < 0 || pair.1 < 0 {
+                    bail!(
+                        "stream 'size' contained negative dimension(s): ({}, {}). Portal spec \
+                         requires non-negative.",
+                        pair.0,
+                        pair.1,
+                    );
+                }
+                size = Some((pair.0 as u32, pair.1 as u32));
+            }
+            _ => {}
         }
+    }
+
+    let position = position.ok_or_else(|| {
+        anyhow!(
+            "stream properties dict did not include 'position' — required for AWT-region → \
+             stream-relative coordinate translation."
+        )
+    })?;
+    let size = size.ok_or_else(|| {
+        anyhow!(
+            "stream properties dict did not include 'size' — required for the encoder's \
+             videocrop pass and bounds-checking."
+        )
+    })?;
+    if size.0 == 0 || size.1 == 0 {
+        bail!(
+            "stream 'size' was ({}, {}); the encoder's videocrop pass requires positive \
+             dimensions and will reject zero. The compositor returned an empty stream.",
+            size.0,
+            size.1,
+        );
     }
 
     Ok(StreamMetadata {
