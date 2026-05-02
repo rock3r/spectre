@@ -21,10 +21,11 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
 - **macOS** — `avfoundation` region capture. Requires the Screen Recording permission.
 - **Windows** — `gdigrab` region capture (#22). Plus title-based window capture via
   `FfmpegWindowRecorder` (#55).
-- **Linux Xorg sessions** — `x11grab` region capture (#75 / #76). Reads `DISPLAY`. Validated
-  on Ubuntu 22.04's Xorg session (one machine, one distro, one X server build) and on CI under
-  `xvfb-run` (Xorg protocol over a virtual framebuffer, no GPU). Other Xorg WMs / distros
-  fall under the "best-effort, contributions welcome" umbrella — see the README.
+- **Linux Xorg sessions** — `x11grab` region capture (#75 / #76). Reads `DISPLAY`. Routine
+  validation has only been on Ubuntu 22.04's Xorg session (one machine, one X server build)
+  and on CI under `xvfb-run` (Xorg protocol over a virtual framebuffer, no GPU). Other
+  Xorg WMs / distros fall under the "Linux is best-effort, contributions welcome" line in
+  the README.
 - **Linux Wayland sessions** — `gst-launch-1.0` driven through the
   `xdg-desktop-portal` ScreenCast interface, with the PipeWire FD passed to the encoder by a
   small Rust helper binary (`spectre-wayland-helper`, sources at

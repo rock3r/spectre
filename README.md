@@ -9,6 +9,12 @@ tree, sends real OS-level mouse and keyboard input via `java.awt.Robot`, and rec
 screen — against IDE-hosted Compose surfaces (IntelliJ, Jewel) and standalone desktop apps
 alike.
 
+> **Heads up: this repo is currently a lot of vibe slop.** Large parts were written with
+> heavy AI pair-programming and haven't yet had a proper human review pass end-to-end.
+> I'll be going through it manually to read, audit, and tighten things up. Until then,
+> treat design and implementation choices as "looks plausible, not yet hand-audited" and
+> expect follow-up commits to rework bits once I've actually read them.
+
 macOS, Windows, Linux Xorg, and Linux Wayland. The Wayland path goes through a small
 out-of-process Rust helper (`recording/native/linux/`) that owns the xdg-desktop-portal
 handshake, the PipeWire FD lifetime, and the `gst-launch-1.0` subprocess; the JVM-side
