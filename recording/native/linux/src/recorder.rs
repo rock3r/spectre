@@ -136,26 +136,32 @@ pub fn run(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
     });
 
     // 5. Stop watcher: spawn a thread that reads the next JSON line from stdin and, on
-    // `Command::Stop`, sends SIGTERM to gst-launch. Any other command (or EOF before Stop)
-    // is treated as an abort signal — same SIGTERM, same finalisation path.
+    // `Command::Stop`, sends SIGINT to gst-launch. Any other command (or EOF before Stop)
+    // is treated as an abort signal — same SIGINT, same finalisation path.
+    //
+    // Why SIGINT and not SIGTERM: gst-launch's `-e` flag only catches SIGINT (the Ctrl-C
+    // path) and routes it through the EOS-finalisation handler. SIGTERM is force-quit and
+    // bypasses `-e` entirely — empirically observed on gst-launch 1.20 (Ubuntu 22.04):
+    // SIGTERM exits the process with `unix_wait_status(15)` and leaves the mp4 file at
+    // 0 bytes because mp4mux never gets to write the moov atom (which `faststart=true`
+    // buffers in memory and emits only on EOS). SIGINT is the documented graceful-stop
+    // path for `-e`; gst-launch handles it, sends EOS into the pipeline, mp4mux drains
+    // and finalises, and we get a valid file.
     let stop_thread = thread::Builder::new()
         .name("stop-watcher".into())
         .spawn(move || {
             let stdin = std::io::stdin();
             let mut line = String::new();
-            // Block on stdin. When the JVM writes `{"command":"stop"}\n`, we trigger SIGTERM.
+            // Block on stdin. When the JVM writes `{"command":"stop"}\n`, we trigger SIGINT.
             // EOF on stdin is also treated as Stop — the JVM hung up, finalise what we have.
             let _ = stdin.lock().read_line(&mut line);
-            // gst-launch with `-e` interprets SIGTERM as End-Of-Stream; the pipeline drains,
-            // mp4mux finalises, exit code 0. Without `-e`, SIGTERM kills it dead and the
-            // mp4 is unfinalised. The argv builder always sets `-e` (see gst.rs).
-            let _ = kill(Pid::from_raw(gst_pid as i32), Signal::SIGTERM);
+            let _ = kill(Pid::from_raw(gst_pid as i32), Signal::SIGINT);
         })
         .context("spawning stop-watcher thread")?;
 
     // 6. Wait for gst-launch. The parent thread blocks here; the stop-watcher takes care of
-    // sending SIGTERM when the JVM asks for it. Hard deadline: SHUTDOWN_GRACE after the
-    // stop-watcher has sent SIGTERM. Without a deadline, a stuck mp4mux drain would leave
+    // sending SIGINT when the JVM asks for it. Hard deadline: SHUTDOWN_GRACE after the
+    // stop-watcher has sent SIGINT. Without a deadline, a stuck mp4mux drain would leave
     // us hung forever; with one, we escalate to SIGKILL.
     let mut exit_status: Option<std::process::ExitStatus> = None;
     let escalate_at = Instant::now() + SHUTDOWN_GRACE;
@@ -184,14 +190,13 @@ pub fn run(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
     let exit = exit_status.unwrap();
     let elapsed = started_at.elapsed();
 
-    // 7. Surface the outcome. Exit 0 = clean EOS via SIGTERM-with-`-e`. Other exit codes
-    // mean gst-launch crashed (encoder error, plugin missing, PipeWire daemon bounce). We
-    // accept SIGTERM exit codes 143 (POSIX 128+15) and -15 (Rust's signal-encoded exit) as
-    // expected since we sent the signal ourselves.
-    let success = exit.success()
-        || exit.code() == Some(0)
-        || exit.code() == Some(143)
-        || exit.code() == Some(-15);
+    // 7. Surface the outcome. The expected happy-path is exit code 0: gst-launch caught our
+    // SIGINT (because `-e` is set), sent EOS into the pipeline, drained, finalised the mp4,
+    // exited cleanly. Any other code means something went wrong (encoder error, plugin
+    // missing, PipeWire daemon bounce, the user pulled the rug). We do NOT special-case
+    // signal-killed status: with `-e` + SIGINT the EOS path always exits cleanly, and a
+    // signal-kill exit means the EOS-finalisation didn't happen (so the mp4 is broken).
+    let success = exit.success() || exit.code() == Some(0);
     if !success {
         let _ = events.send(Event::Error {
             kind: "EncoderCrashed".into(),
