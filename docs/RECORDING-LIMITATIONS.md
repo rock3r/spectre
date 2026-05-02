@@ -35,6 +35,20 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
   also matches the macOS SCK helper (`recording/native/macos/`) — same pattern, same
   bundling, same recorder-skeleton on the JVM side.
 
+  **Frame-rate fidelity tracks what the compositor delivers.** The pipeline runs the
+  PipeWire stream through a `videorate` element clamped to `RecordingOptions.frameRate`
+  (default 30). When the source delivers fewer frames than the target, `videorate` pads
+  the gaps by duplicating the last frame; when it delivers more, the excess gets dropped.
+  On real hardware with GPU-side compositor composition this is a no-op — the source
+  comfortably sustains 30 fps and the output is byte-clean. On a Hyper-V / VirtualBox VM
+  with a software-rendered virtual GPU, the source rate dips into the 5–25 fps range and
+  the output mp4 contains visible duplicate-frame runs even though the file metadata
+  reports a flat 30 fps. This is faithful capture, not a recording bug — the compositor
+  genuinely had no new frame to deliver during those gaps. If your scenario captures from
+  a VM and the visible stutter matters more than the frame-rate metadata, lower
+  `RecordingOptions.frameRate` to match what your VM actually produces (15 is usually a
+  safe floor for software-rendered VM GPUs).
+
 ## Capture mode
 
 - **Region capture, not window capture**. v1 records a fixed `Rectangle` of the virtual desktop —
