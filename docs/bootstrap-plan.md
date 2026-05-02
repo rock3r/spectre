@@ -82,6 +82,10 @@ already worked without changes; the recording backend needed real implementation
 the Wayland recording path arrived in three stages: detect (#77 stage 1), portal-handshake
 architecture (#77 stage 2), encoder integration via a Rust helper (#80).
 
+That single VM is the entirety of v4's Linux validation footprint — same caveat as the
+README: Linux is best-effort, broader distro / compositor / WM coverage is welcome
+contributions territory.
+
 - **`recording.FfmpegBackend.LinuxX11Grab` + `x11grabRegionCapture` argv builder** — Xorg
   region capture via `ffmpeg -f x11grab`. Mirrors the gdigrab pattern: input-side region
   selection (offset baked into the input URL as `<display>+x,y`, dimensions via

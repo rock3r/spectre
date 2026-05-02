@@ -21,7 +21,10 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
 - **macOS** — `avfoundation` region capture. Requires the Screen Recording permission.
 - **Windows** — `gdigrab` region capture (#22). Plus title-based window capture via
   `FfmpegWindowRecorder` (#55).
-- **Linux Xorg sessions** — `x11grab` region capture (#75 / #76). Reads `DISPLAY`.
+- **Linux Xorg sessions** — `x11grab` region capture (#75 / #76). Reads `DISPLAY`. Validated
+  on Ubuntu 22.04's Xorg session (one machine, one distro, one X server build) and on CI under
+  `xvfb-run` (Xorg protocol over a virtual framebuffer, no GPU). Other Xorg WMs / distros
+  fall under the "best-effort, contributions welcome" umbrella — see the README.
 - **Linux Wayland sessions** — `gst-launch-1.0` driven through the
   `xdg-desktop-portal` ScreenCast interface, with the PipeWire FD passed to the encoder by a
   small Rust helper binary (`spectre-wayland-helper`, sources at
@@ -34,6 +37,12 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
   doesn't expose the necessary `fcntl(F_SETFD, ...)` knob. The helper-as-subprocess shape
   also matches the macOS SCK helper (`recording/native/macos/`) — same pattern, same
   bundling, same recorder-skeleton on the JVM side.
+
+  Validated end-to-end on Ubuntu 22.04 / GNOME 42 / mutter (real-pixel mp4 with the smoke
+  runner, 2026-05-02). KDE / Plasma, sway, wlroots-based compositors, non-Ubuntu distros,
+  and other Ubuntu versions aren't part of the routine validation matrix yet — the
+  xdg-desktop-portal interface is standardised across compositors so most should "just
+  work", but bug reports are how we'll find out. See the README for the contribution invite.
 
   **Frame-rate fidelity tracks what the compositor delivers.** The pipeline runs the
   PipeWire stream through a `videorate` element clamped to `RecordingOptions.frameRate`

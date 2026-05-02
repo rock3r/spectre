@@ -15,6 +15,13 @@ handshake, the PipeWire FD lifetime, and the `gst-launch-1.0` subprocess; the JV
 recorder talks to it over stdin/stdout via a tiny JSON protocol. Same out-of-process
 architecture as the macOS Swift helper.
 
+> **Linux is best-effort.** Routine validation runs on one machine: Ubuntu 22.04,
+> exercising the Xorg session (input + popup + HiDPI + `x11grab`) and the GNOME / mutter
+> Wayland session (the portal-based recording path). Other distros, compositors (KDE /
+> Plasma, sway, wlroots), window managers, and Ubuntu versions aren't covered. Reports
+> and PRs widening the coverage are very welcome — open an issue with your distro /
+> compositor / session combo and we'll work through it.
+
 ## Modules
 
 - `core` — semantics tree, selectors, coordinate mapping, Robot-backed input.
