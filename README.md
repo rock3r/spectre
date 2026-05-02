@@ -5,9 +5,10 @@
 </h1>
 
 A Kotlin library for driving Compose Desktop UIs from automated tests. Reads the semantics
-tree, sends real OS-level mouse and keyboard input via `java.awt.Robot`, and records the
-screen — against IDE-hosted Compose surfaces (IntelliJ, Jewel) and standalone desktop apps
-alike.
+tree, drives mouse and keyboard input — either real OS-level events via `java.awt.Robot` or
+synthetic AWT events dispatched straight into the window hierarchy (`RobotDriver.synthetic(...)`,
+useful when tests run in parallel and can't fight over OS focus) — and records the screen,
+against IDE-hosted Compose surfaces (IntelliJ, Jewel) and standalone desktop apps alike.
 
 > [!IMPORTANT]
 > **Heads up: this repo is currently a lot of vibe slop.** Large parts were written with
