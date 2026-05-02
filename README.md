@@ -9,6 +9,12 @@ tree, sends real OS-level mouse and keyboard input via `java.awt.Robot`, and rec
 screen — against IDE-hosted Compose surfaces (IntelliJ, Jewel) and standalone desktop apps
 alike.
 
+> **Heads up: this repo is currently a lot of vibe slop.** Large parts were written with
+> heavy AI pair-programming and haven't yet had a proper human review pass end-to-end.
+> I'll be going through it manually to read, audit, and tighten things up. Until then,
+> treat design and implementation choices as "looks plausible, not yet hand-audited" and
+> expect follow-up commits to rework bits once I've actually read them.
+
 macOS, Windows, and Linux Xorg. Wayland support is **partial**: the
 xdg-desktop-portal handshake is wired up and validated end-to-end (#77 stage 2 — recorder
 detects the session, opens the portal session, gets a PipeWire stream node from the
