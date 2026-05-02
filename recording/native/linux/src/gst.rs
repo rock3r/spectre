@@ -57,7 +57,12 @@ pub fn build_pipewire_argv(
     output: &Path,
     codec: &str,
 ) -> Result<Vec<String>> {
-    if region.width == 0 || region.height == 0 {
+    // Region fields are i32 on both sides of the wire (matches `java.awt.Rectangle` shape).
+    // `Rectangle` doesn't enforce non-negative widths/heights, so a misbehaving caller could
+    // send (or compute) negatives. We catch both the negative case and the zero case with one
+    // domain check and a single clear error message, rather than relying on the JSON
+    // deserialiser to reject — see the `Region` doc-comment in protocol.rs for why.
+    if region.width <= 0 || region.height <= 0 {
         bail!(
             "region must have positive dimensions, was {}x{}",
             region.width,
@@ -165,7 +170,7 @@ mod tests {
     use crate::protocol::Region;
     use std::path::PathBuf;
 
-    fn region(x: i32, y: i32, w: u32, h: u32) -> Region {
+    fn region(x: i32, y: i32, w: i32, h: i32) -> Region {
         Region {
             x,
             y,
@@ -265,16 +270,31 @@ mod tests {
 
     #[test]
     fn argv_rejects_zero_or_negative_region_dimensions() {
-        let bad_w = build_pipewire_argv(
+        let bad_w_zero = build_pipewire_argv(
             42, 17, region(0, 0, 0, 100), (1920, 1080), 30, true,
             &PathBuf::from("/tmp/x"), "libx264",
         );
-        assert!(bad_w.is_err(), "zero width should be rejected");
-        let bad_h = build_pipewire_argv(
+        assert!(bad_w_zero.is_err(), "zero width should be rejected");
+        let bad_h_zero = build_pipewire_argv(
             42, 17, region(0, 0, 100, 0), (1920, 1080), 30, true,
             &PathBuf::from("/tmp/x"), "libx264",
         );
-        assert!(bad_h.is_err(), "zero height should be rejected");
+        assert!(bad_h_zero.is_err(), "zero height should be rejected");
+
+        // Region.{width,height} are signed i32 to match the JVM-side `Rectangle` shape, so
+        // a misbehaving caller could send negative dimensions across the wire. The single
+        // domain check rejects both at once with a clear error rather than letting them
+        // wrap into giant unsigned values further down the videocrop math.
+        let bad_w_neg = build_pipewire_argv(
+            42, 17, region(0, 0, -10, 100), (1920, 1080), 30, true,
+            &PathBuf::from("/tmp/x"), "libx264",
+        );
+        assert!(bad_w_neg.is_err(), "negative width should be rejected");
+        let bad_h_neg = build_pipewire_argv(
+            42, 17, region(0, 0, 100, -5), (1920, 1080), 30, true,
+            &PathBuf::from("/tmp/x"), "libx264",
+        );
+        assert!(bad_h_neg.is_err(), "negative height should be rejected");
     }
 
     #[test]

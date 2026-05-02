@@ -51,12 +51,25 @@ pub enum CursorMode {
     Metadata,
 }
 
+/// Recording region in pixel coordinates.
+///
+/// All four fields are signed `i32` to match the JVM-side `Region` (which serialises Kotlin
+/// `Int`s, themselves derived from `java.awt.Rectangle.{x,y,width,height}` — also signed).
+/// Wire-format compatibility on both sides is the primary reason: serde would otherwise
+/// reject a negative `width` from the JVM with a generic "invalid type: integer" rather
+/// than letting our domain check in [`crate::gst::build_pipewire_argv`] surface a clear
+/// "region must have positive dimensions" error.
+///
+/// Negative widths / heights *are* possible from `java.awt.Rectangle` (it doesn't enforce
+/// non-negative even though the geometry rarely makes sense), so accepting them at the
+/// boundary and validating downstream gives a better error trail than mid-deserialisation
+/// rejection.
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct Region {
     pub x: i32,
     pub y: i32,
-    pub width: u32,
-    pub height: u32,
+    pub width: i32,
+    pub height: i32,
 }
 
 #[derive(Debug, Clone, Serialize)]
