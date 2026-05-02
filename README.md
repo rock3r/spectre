@@ -9,6 +9,7 @@ tree, sends real OS-level mouse and keyboard input via `java.awt.Robot`, and rec
 screen — against IDE-hosted Compose surfaces (IntelliJ, Jewel) and standalone desktop apps
 alike.
 
+> [!IMPORTANT]
 > **Heads up: this repo is currently a lot of vibe slop.** Large parts were written with
 > heavy AI pair-programming and haven't yet had a proper human review pass end-to-end.
 > I'll be going through it manually to read, audit, and tighten things up. Until then,
@@ -23,7 +24,8 @@ isn't built yet. The recorder throws an explicit `UnsupportedOperationException`
 producing a 0-byte mp4. [#80](https://github.com/rock3r/spectre/issues/80) tracks the stage-3
 work.
 
-> **Linux is best-effort.** Routine validation runs on one machine: Ubuntu 22.04 with
+> [!NOTE]
+> **Linux support is best-effort.** Routine validation runs on one machine: Ubuntu 22.04 with
 > Xorg, exercising input + popup + HiDPI + `x11grab` recording. Other distros,
 > compositors (KDE / Plasma, sway, wlroots), window managers, and Ubuntu versions aren't
 > covered. Reports and PRs widening the coverage are very welcome — open an issue with
