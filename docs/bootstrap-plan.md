@@ -81,6 +81,10 @@ Validated on a Hyper-V Ubuntu 22.04 dev VM (2026-05-01). Most of v4's "Linux" su
 turned out to already work without changes; the recording backend needed real implementation
 work, and the Wayland recording path turned out to be a two-stage problem.
 
+That single VM is the entirety of v4's Linux validation footprint — same caveat as the
+README: Linux is best-effort, broader distro / compositor / WM coverage is welcome
+contributions territory.
+
 - **`recording.FfmpegBackend.LinuxX11Grab` + `x11grabRegionCapture` argv builder** — Xorg
   region capture via `ffmpeg -f x11grab`. Mirrors the gdigrab pattern: input-side region
   selection (offset baked into the input URL as `<display>+x,y`, dimensions via

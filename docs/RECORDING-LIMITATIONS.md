@@ -21,7 +21,11 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
 - **macOS** — `avfoundation` region capture. Requires the Screen Recording permission.
 - **Windows** — `gdigrab` region capture (#22). Plus title-based window capture via
   `FfmpegWindowRecorder` (#55).
-- **Linux Xorg sessions** — `x11grab` region capture (#75 / #76). Reads `DISPLAY`.
+- **Linux Xorg sessions** — `x11grab` region capture (#75 / #76). Reads `DISPLAY`. Routine
+  validation has only been on Ubuntu 22.04's Xorg session (one machine, one X server build)
+  and on CI under `xvfb-run` (Xorg protocol over a virtual framebuffer, no GPU). Other
+  Xorg WMs / distros fall under the "Linux is best-effort, contributions welcome" line in
+  the README.
 - **Linux Wayland sessions** — **partial: handshake works, encoder spawn doesn't yet.** `LinuxX11Grab`
   detects Wayland (via `XDG_SESSION_TYPE`, `WAYLAND_DISPLAY`, or a `wayland-*` socket in
   `XDG_RUNTIME_DIR`) and routes through `WaylandPortalRecorder` instead of producing the
