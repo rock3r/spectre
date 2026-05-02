@@ -22,7 +22,7 @@ use std::io::BufRead;
 use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -137,7 +137,9 @@ pub fn run(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
 
     // 5. Stop watcher: spawn a thread that reads the next JSON line from stdin and, on
     // `Command::Stop`, sends SIGINT to gst-launch. Any other command (or EOF before Stop)
-    // is treated as an abort signal — same SIGINT, same finalisation path.
+    // is treated as an abort signal — same SIGINT, same finalisation path. The thread also
+    // records the timestamp when it sent the signal, which step 6's wait loop uses to
+    // bound the post-shutdown grace period (and ONLY the post-shutdown grace — see below).
     //
     // Why SIGINT and not SIGTERM: gst-launch's `-e` flag only catches SIGINT (the Ctrl-C
     // path) and routes it through the EOS-finalisation handler. SIGTERM is force-quit and
@@ -147,7 +149,9 @@ pub fn run(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
     // buffers in memory and emits only on EOS). SIGINT is the documented graceful-stop
     // path for `-e`; gst-launch handles it, sends EOS into the pipeline, mp4mux drains
     // and finalises, and we get a valid file.
-    let stop_thread = thread::Builder::new()
+    let sigint_sent_at: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+    let sigint_sent_at_for_thread = Arc::clone(&sigint_sent_at);
+    let _stop_thread = thread::Builder::new()
         .name("stop-watcher".into())
         .spawn(move || {
             let stdin = std::io::stdin();
@@ -156,15 +160,34 @@ pub fn run(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
             // EOF on stdin is also treated as Stop — the JVM hung up, finalise what we have.
             let _ = stdin.lock().read_line(&mut line);
             let _ = kill(Pid::from_raw(gst_pid as i32), Signal::SIGINT);
+            *sigint_sent_at_for_thread.lock().unwrap() = Some(Instant::now());
         })
         .context("spawning stop-watcher thread")?;
 
-    // 6. Wait for gst-launch. The parent thread blocks here; the stop-watcher takes care of
-    // sending SIGINT when the JVM asks for it. Hard deadline: SHUTDOWN_GRACE after the
-    // stop-watcher has sent SIGINT. Without a deadline, a stuck mp4mux drain would leave
-    // us hung forever; with one, we escalate to SIGKILL.
+    // 6. Wait for gst-launch.
+    //
+    // The recording itself can run for arbitrarily long — there is no upper bound on how
+    // long the JVM keeps the RecordingHandle alive before calling stop(). So the wait loop
+    // sleeps unconditionally until either gst-launch exits on its own (crash, plugin
+    // error, PipeWire daemon bounce) OR the stop-watcher sends SIGINT.
+    //
+    // ONLY after SIGINT has been sent does the SHUTDOWN_GRACE deadline start counting.
+    // gst-launch's EOS drain + mp4mux finalisation should take well under a second on
+    // realistic recordings; SHUTDOWN_GRACE is the budget for the worst case. If gst is
+    // stuck past the grace period, escalate to SIGKILL — the file is already lost in
+    // that case (no clean EOS), so saving the helper from hanging takes priority.
+    //
+    // Bug #82 history: the previous version computed `escalate_at` at spawn time, so any
+    // recording lasting longer than SHUTDOWN_GRACE got force-killed mid-stream. Bugbot
+    // caught it on the first pass.
+    //
+    // Note: we deliberately don't `join()` the stop-watcher thread on the way out. If
+    // gst-launch exits on its own (e.g. crash) before any Stop arrives, the thread is
+    // still blocked on `read_line` and `join()` would deadlock the helper. Detaching the
+    // thread is fine: it's reading our own stdin, so when the helper process exits the
+    // descriptor is closed and the thread either reads EOF and exits, or gets killed by
+    // process teardown. Either way the thread doesn't outlive the helper.
     let mut exit_status: Option<std::process::ExitStatus> = None;
-    let escalate_at = Instant::now() + SHUTDOWN_GRACE;
     loop {
         match child.try_wait().context("polling gst-launch exit")? {
             Some(status) => {
@@ -172,21 +195,23 @@ pub fn run(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
                 break;
             }
             None => {
-                if Instant::now() > escalate_at {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(anyhow!(
-                        "gst-launch did not exit within {:?} of shutdown — output at {} is in \
-                         an undefined state.",
-                        SHUTDOWN_GRACE,
-                        start.output,
-                    ));
+                let sigint_at = *sigint_sent_at.lock().unwrap();
+                if let Some(sent_at) = sigint_at {
+                    if sent_at.elapsed() > SHUTDOWN_GRACE {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(anyhow!(
+                            "gst-launch did not exit within {:?} of SIGINT — output at {} is in \
+                             an undefined state.",
+                            SHUTDOWN_GRACE,
+                            start.output,
+                        ));
+                    }
                 }
                 thread::sleep(Duration::from_millis(50));
             }
         }
     }
-    let _ = stop_thread.join();
     let exit = exit_status.unwrap();
     let elapsed = started_at.elapsed();
 
@@ -195,8 +220,10 @@ pub fn run(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
     // exited cleanly. Any other code means something went wrong (encoder error, plugin
     // missing, PipeWire daemon bounce, the user pulled the rug). We do NOT special-case
     // signal-killed status: with `-e` + SIGINT the EOS path always exits cleanly, and a
-    // signal-kill exit means the EOS-finalisation didn't happen (so the mp4 is broken).
-    let success = exit.success() || exit.code() == Some(0);
+    // signal-kill exit (where `ExitStatus::code()` returns `None`, NOT `Some(128+signum)`
+    // — that's a Bash convention, not a Rust one) means the EOS-finalisation didn't happen
+    // and the mp4 is broken.
+    let success = exit.success();
     if !success {
         let _ = events.send(Event::Error {
             kind: "EncoderCrashed".into(),
