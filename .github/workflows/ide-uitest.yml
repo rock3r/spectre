@@ -9,11 +9,17 @@ name: IDE UI test
 #   - First run downloads ~1 GB IDE installer (cached afterwards via the `ide-starter-cache`
 #     step below).
 #   - Even cached, each scenario boots a real IDE — multi-second startup cost per test.
-#   - The OS matrix (macos-latest + windows-latest) covers both supported Spectre platforms.
-#     Linux is intentionally excluded — it would need `xvfb-run` plus a software-GL stack, and
-#     any rendering quirk in that stack would shift the failure mode away from "regression in
-#     our plugin code". macOS + Windows give us the same Compose runtime everyone develops
-#     against and match the manual `runIde` smokes.
+#   - The OS matrix covers all three desktop platforms Spectre supports — macOS + Windows +
+#     Linux. The Linux leg runs under `xvfb-run` (Xorg virtual framebuffer; no compositor, no
+#     real GPU) and ships the same apt + Rust toolchain setup as `validation-linux.yml`
+#     because `:sample-intellij-plugin` pulls in `:recording`, whose `processResources`
+#     builds the Rust helper on Linux hosts (#80).
+#
+#     Linux was originally excluded over rendering-stack risk; re-included once the Linux
+#     Wayland recording path landed in #82, on the principle that platforms we claim to
+#     support should be in the IDE-hosted matrix too. If skiko-under-xvfb starts producing
+#     flakes that don't reproduce on real Linux hardware, document the symptom here and
+#     take the leg back out.
 #   - Path filter keeps unrelated PRs from paying the IDE-runner cost.
 #
 # Local invocation: `./gradlew :sample-intellij-plugin:uiTest`.
@@ -50,11 +56,11 @@ permissions:
 jobs:
   uitest:
     strategy:
-      # `fail-fast: false` so a Windows-side regression doesn't cancel the macOS run mid-flight
-      # (or vice versa). Each platform's failure deserves its own diagnostic / artefact dump.
+      # `fail-fast: false` so a regression on one OS doesn't cancel the other legs mid-flight.
+      # Each platform's failure deserves its own diagnostic / artefact dump.
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -72,6 +78,26 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
 
+      - name: Install Xvfb + libdbus + pkg-config (Linux only)
+        # Linux runners need three things macOS / Windows don't:
+        #   - Xvfb so the IDE has a display (no real screen on the runner; we run gradle
+        #     under `xvfb-run` below).
+        #   - libdbus-1-dev + pkg-config for the spectre-wayland-helper Rust build that
+        #     :recording's processResources kicks off on Linux hosts (#80). The IDE plugin
+        #     depends on :recording transitively, so the helper has to build before the
+        #     plugin zip is assembled.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libdbus-1-dev pkg-config
+
+      - name: Set up Rust (Linux only, for spectre-wayland-helper)
+        # Mirrors the dtolnay/rust-toolchain@stable usage in ci.yml + validation-linux.yml.
+        # macOS / Windows runners don't run the cargo task (it's gated on `isLinux` in
+        # recording/build.gradle.kts) so they don't need Rust.
+        if: runner.os == 'Linux'
+        uses: dtolnay/rust-toolchain@stable
+
       # ide-starter writes IDE installers and extracted builds under
       # `out/ide-tests/{installers,cache}` — re-using these between runs cuts the cold-start
       # cost from ~10 minutes (DMG/EXE download + extract) to ~30 seconds (existence check).
@@ -79,10 +105,10 @@ jobs:
       # cached: it's per-test-method scratch space that includes the IDE config, indexes, and
       # idea.log, all of which must be fresh each run.
       #
-      # Cache key includes the runner OS so Windows and macOS get separate caches (different
-      # installer formats, different extracted layouts), and the IDE build number from
-      # libs.versions.toml so a version bump busts the cache rather than silently re-using
-      # stale bits.
+      # Cache key includes the runner OS so each platform gets its own cache (different
+      # installer formats — DMG / exe / tar.gz — and different extracted layouts), and the
+      # IDE build number from libs.versions.toml so a version bump busts the cache rather
+      # than silently re-using stale bits.
       - name: Restore ide-starter cache
         uses: actions/cache@v4
         with:
@@ -93,11 +119,22 @@ jobs:
           restore-keys: |
             ide-starter-${{ runner.os }}-
 
-      - name: Run IDE UI test
+      - name: Run IDE UI test (macOS / Windows)
+        if: runner.os != 'Linux'
         run: ./gradlew :sample-intellij-plugin:uiTest
         # Use bash explicitly on Windows so the `./gradlew` invocation is identical across the
-        # matrix. Default Windows shell is pwsh which has different path-resolution semantics
-        # for `./` prefixes; bash keeps the script identical to ci.yml + windows.yml.
+        # non-Linux legs. Default Windows shell is pwsh which has different path-resolution
+        # semantics for `./` prefixes; bash keeps the script identical to ci.yml + windows.yml.
+        shell: bash
+
+      - name: Run IDE UI test under Xvfb (Linux)
+        # Linux runners ship without a display server. `xvfb-run -a` provisions a virtual
+        # Xorg server for the lifetime of the wrapped command, sets `DISPLAY` automatically,
+        # and tears it down on exit. The IDE boots into that virtual display the same way it
+        # would into a real one — no compositor in the loop, so the failure surface is just
+        # skiko-on-software-GL rather than skiko + Mutter / KWin / etc.
+        if: runner.os == 'Linux'
+        run: xvfb-run -a ./gradlew :sample-intellij-plugin:uiTest
         shell: bash
 
       # Capture artefacts on failure so post-mortem doesn't require re-running the test.
