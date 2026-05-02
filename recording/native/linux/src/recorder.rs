@@ -19,6 +19,7 @@ use nix::fcntl::{fcntl, FcntlArg, FdFlag};
 use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
 use std::io::BufRead;
+use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -90,14 +91,36 @@ pub fn run(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
     );
     eprintln!("[helper] spawning: {argv:?}");
 
-    // 4. Spawn gst-launch. We don't need to do anything FD-special here — Command inherits
-    // all parent FDs by default, and we already cleared CLOEXEC on the PipeWire FD above.
-    // stdout/stderr go to the parent's stderr (forwarded to the JVM via the smoke runner)
-    // so encoder warnings + errors are visible without an extra log-file dance.
+    // 4. Spawn gst-launch.
+    //
+    // FD inheritance is the whole point of running gst-launch as a child of this helper:
+    // we already cleared CLOEXEC on the PipeWire FD above, and Command inherits parent FDs
+    // by default, so `pipewiresrc fd=N` in the argv finds the granted node.
+    //
+    // stdio routing is more subtle than "just inherit". gst-launch writes its progress
+    // narrative to stdout — `Setting pipeline to PAUSED ...`, `Setting pipeline to PLAYING
+    // ...`, `Got EOS from element ...`, etc. If we let that flow on the inherited stdout
+    // it lands on _our_ stdout pipe, which is the newline-delimited JSON channel to the
+    // JVM. The JVM's deserializer chokes on the first non-`{` line and bails the whole
+    // recording — observed empirically against gst-launch 1.20 on Ubuntu 22.04 mutter.
+    //
+    // Fix: redirect the child's stdout to a duplicate of _our_ stderr fd, so gst's progress
+    // output flows to helper stderr instead. Gradle's smoke runner surfaces helper stderr
+    // verbatim, so we keep the diagnostic output visible without polluting the protocol
+    // channel. Child stderr stays as plain `inherit()` — gst's actual error messages also
+    // come through the same way.
+    let gst_stdout_target: OwnedFd = unsafe {
+        // dup() returns a brand-new fd referring to the same open file description as our
+        // stderr. Passing it via `Stdio::from(OwnedFd)` lets std's spawn machinery dup2()
+        // it onto fd 1 in the child and then close the original — exactly what we want.
+        let raw = nix::unistd::dup(std::io::stderr().as_raw_fd())
+            .context("dup(stderr) so gst-launch stdout can redirect to helper stderr")?;
+        OwnedFd::from_raw_fd(raw)
+    };
     let mut child = Command::new(&argv[0])
         .args(&argv[1..])
         .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
+        .stdout(Stdio::from(gst_stdout_target))
         .stderr(Stdio::inherit())
         .spawn()
         .with_context(|| format!("spawning gst-launch from argv: {argv:?}"))?;
