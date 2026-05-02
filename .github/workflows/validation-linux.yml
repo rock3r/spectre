@@ -72,17 +72,17 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
 
-      - name: Install Xvfb
-        # Need a display for Compose Desktop to render and `java.awt.Robot` to inject input.
-        # Xvfb is the cheap, reliable choice for headless CI: real X11 server (no Wayland
-        # security restrictions on framebuffer reads), no compositor in the loop, no GPU
-        # required. `xvfb-run` wraps the whole `./gradlew` invocation with a transient X
-        # server bound to a free `:NN` display, sets `DISPLAY` for child processes, and
-        # tears the server down on exit. `-a` picks a free display number to avoid
-        # collisions if a future job parallelises.
+      - name: Install Xvfb + libdbus + pkg-config
+        # Xvfb: display for Compose Desktop + Robot input. libdbus / pkg-config: needed by
+        # the spectre-wayland-helper Rust build (`:recording`'s assembleWaylandHelper runs
+        # cargo build --release on Linux as part of processResources, and dbus-rs links
+        # libdbus-1).
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb
+          sudo apt-get install -y xvfb libdbus-1-dev pkg-config
+
+      - name: Set up Rust (for spectre-wayland-helper)
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Run validation tests under Xvfb
         # `--continue` so a failure in one task doesn't skip subsequent tasks — every

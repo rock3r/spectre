@@ -17,20 +17,19 @@ against IDE-hosted Compose surfaces (IntelliJ, Jewel) and standalone desktop app
 > treat design and implementation choices as "looks plausible, not yet hand-audited" and
 > expect follow-up commits to rework bits once I've actually read them.
 
-macOS, Windows, and Linux Xorg. Wayland support is **partial**: the
-xdg-desktop-portal handshake is wired up and validated end-to-end (#77 stage 2 — recorder
-detects the session, opens the portal session, gets a PipeWire stream node from the
-compositor), but the encoder spawn needs JVM-to-subprocess file-descriptor inheritance that
-isn't built yet. The recorder throws an explicit `UnsupportedOperationException` rather than
-producing a 0-byte mp4. [#80](https://github.com/rock3r/spectre/issues/80) tracks the stage-3
-work.
+macOS, Windows, Linux Xorg, and Linux Wayland. The Wayland path goes through a small
+out-of-process Rust helper (`recording/native/linux/`) that owns the xdg-desktop-portal
+handshake, the PipeWire FD lifetime, and the `gst-launch-1.0` subprocess; the JVM-side
+recorder talks to it over stdin/stdout via a tiny JSON protocol. Same out-of-process
+architecture as the macOS Swift helper.
 
 > [!NOTE]
-> **Linux support is best-effort.** Routine validation runs on one machine: Ubuntu 22.04 with
-> Xorg, exercising input + popup + HiDPI + `x11grab` recording. Other distros,
-> compositors (KDE / Plasma, sway, wlroots), window managers, and Ubuntu versions aren't
-> covered. Reports and PRs widening the coverage are very welcome — open an issue with
-> your distro / compositor / session combo and we'll work through it.
+> **Linux support is best-effort.** Routine validation runs on one machine: Ubuntu 22.04,
+> exercising the Xorg session (input + popup + HiDPI + `x11grab`) and the GNOME / mutter
+> Wayland session (the portal-based recording path). Other distros, compositors (KDE /
+> Plasma, sway, wlroots), window managers, and Ubuntu versions aren't covered. Reports
+> and PRs widening the coverage are very welcome — open an issue with your distro /
+> compositor / session combo and we'll work through it.
 
 ## Modules
 

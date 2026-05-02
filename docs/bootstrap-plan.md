@@ -75,11 +75,12 @@ what's done and what's planned. The original spike notes still live at
   with the Windows job. The pre-existing `macos.yml` stays focused on
   `:recording:check` + the Swift helper build.
 
-### v4 — Linux Xorg support + Wayland portal handshake
+### v4 — Linux Xorg + Wayland support
 
 Validated on a Hyper-V Ubuntu 22.04 dev VM (2026-05-01). Most of v4's "Linux" surface area
-turned out to already work without changes; the recording backend needed real implementation
-work, and the Wayland recording path turned out to be a two-stage problem.
+already worked without changes; the recording backend needed real implementation work, and
+the Wayland recording path arrived in three stages: detect (#77 stage 1), portal-handshake
+architecture (#77 stage 2), encoder integration via a Rust helper (#80).
 
 That single VM is the entirety of v4's Linux validation footprint — same caveat as the
 README: Linux is best-effort, broader distro / compositor / WM coverage is welcome
@@ -95,10 +96,16 @@ contributions territory.
   XWayland succeeds without erroring but produces uniform-black frames — Wayland's
   security model blocks framebuffer reads by clients other than the compositor. (`#77`
   stage 1.)
-- **Wayland portal handshake** — `dev.sebastiano.spectre.recording.portal.ScreenCastPortal`
-  is a dbus-java client for `org.freedesktop.portal.ScreenCast`. The three-call flow
-  (`CreateSession` → `SelectSources` → `Start`) round-trips cleanly on GNOME mutter and the
-  recorder extracts a PipeWire stream node id from the `Start.Response`. (`#77` stage 2.)
+- **Wayland recording via a Rust helper** — `recording/native/linux/spectre-wayland-helper`
+  is a small Rust binary that drives `xdg-desktop-portal`'s ScreenCast interface
+  (`CreateSession` → `SelectSources` → `Start` → `OpenPipeWireRemote`), obtains the
+  PipeWire FD authorising read access to the granted stream, clears `O_CLOEXEC`, and spawns
+  `gst-launch-1.0` with the FD inherited. The JVM-side `WaylandPortalRecorder` spawns the
+  helper and talks to it over stdin/stdout via newline-delimited JSON. Why a Rust helper
+  rather than pure JVM: dbus-java's `h` (UnixFD) return-type unmarshalling has a bug
+  against the GNOME mutter portal that we hit during the JNR-POSIX bake-off; Rust's
+  `dbus-rs` (or `zbus`) handles UnixFDs correctly, and `std::process::Command` makes FD
+  inheritance trivial. The helper-as-subprocess shape mirrors the macOS SCK helper. (`#80`.)
 - **Robot input + popup discovery + HiDPI + multi-window** — already worked on Linux
   Xorg out of the box. `:sample-desktop:validationTest*` was 15/15 + 3/3 popup-layer
   variants on the dev VM with no source changes.
@@ -107,17 +114,6 @@ contributions territory.
 
 The open work is platform-specific and tracked as labelled GitHub issues. Pick them up on a
 machine with the relevant runtime — the issues reference what blocks them.
-
-- **Linux Wayland — stage 3: encoder spawn with FD inheritance** ([`#80`](https://github.com/rock3r/spectre/issues/80)).
-  The portal grant is FD-scoped: pipewiresrc only reads the granted node when given the file
-  descriptor returned by `OpenPipeWireRemote`. JDK 21's `ProcessBuilder` doesn't inherit
-  arbitrary FDs across exec — only stdin/stdout/stderr — so we need to clear `O_CLOEXEC` on
-  the FD via JNR-POSIX, then spawn `gst-launch-1.0 ... pipewiresrc fd=$N path=$nodeId ...`
-  with the FD inherited. The architecture (`WaylandPortalRecorder`, `GstCli`, `AutoRecorder`
-  routing) is already in place from stage 2; stage 3 is the FD-passing plumbing plus the
-  encoder lifecycle. Stage 2's `WaylandPortalRecorder.start` throws an explicit
-  `UnsupportedOperationException` rather than producing a 0-byte mp4 — so users on Wayland
-  see a useful error, not silent corruption.
 - **Notarization** — `#49` covers signing + notarising the SCK helper for distribution. v2
   intentionally landed unsigned (the helper runs from inside the JVM's process, so end users
   never see a Gatekeeper prompt for it directly), but distribution scenarios may want it.

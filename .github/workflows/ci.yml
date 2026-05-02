@@ -32,5 +32,22 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
 
+      - name: Install libdbus + pkg-config (for spectre-wayland-helper Rust build)
+        # `:recording`'s build pipeline runs `cargo build --release` on `native/linux/` as
+        # part of processResources on Linux hosts. The helper's `dbus-rs` crate links
+        # libdbus-1; pkg-config locates it. Both are missing from `ubuntu-latest` runners
+        # by default. The cargo task is gated on `isLinux` so macOS/Windows runners don't
+        # need any of this.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+
+      - name: Set up Rust (stable, MSRV-pinned to spectre-wayland-helper's rust-version)
+        # `:recording:assembleWaylandHelper` runs `cargo build --release` from
+        # recording/native/linux/. The crate's `rust-version = "1.75"` pin matches what
+        # Ubuntu 22.04's jammy-backports apt provides on the dev VM; the action installs
+        # latest stable (≥ 1.75) on the runner.
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Run checks
         run: ./gradlew check
