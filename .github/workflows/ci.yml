@@ -18,12 +18,10 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set up JDK 21
-        # Switched from `jetbrains` to `temurin` because actions/setup-java@v5's JBR index is
-        # currently missing JBR 21 — the action errors with "Could not find satisfied version
-        # for SemVer '21'. Available versions: 11_0_10..., 11_0_11...". Temurin's CI build
-        # behaviour matches what we need (no Compose Desktop runtime tests rely on JBR-only
-        # patches; the toolchain stays at 21). Revert to `jetbrains` once JBR 21 is back in
-        # the setup-java index.
+        # CI uses Temurin 21; local dev keeps using JBR 21 via `JAVA_HOME`. The toolchain
+        # version is what matters here (production code targets 21) — no Compose Desktop
+        # runtime test in `:check` relies on JBR-only patches, so Temurin is the simpler
+        # CI choice.
         uses: actions/setup-java@v5
         with:
           distribution: temurin

@@ -60,10 +60,8 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set up JDK 21
-        # Same Temurin choice as `ci.yml` — JBR 21 isn't currently in setup-java's index, and
-        # the toolchain version is what matters here (production code targets 21). Local dev
-        # keeps using JBR 21 via `JAVA_HOME`; revert to `jetbrains` here too once setup-java's
-        # JBR 21 entry returns.
+        # Same Temurin choice as `ci.yml` — toolchain version (21) is what matters; local dev
+        # keeps using JBR 21 via `JAVA_HOME`.
         uses: actions/setup-java@v5
         with:
           distribution: temurin
