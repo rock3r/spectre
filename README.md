@@ -31,6 +31,14 @@ architecture as the macOS Swift helper.
 > and PRs widening the coverage are very welcome — open an issue with your distro /
 > compositor / session combo and we'll work through it.
 
+## Documentation
+
+User guide and API documentation: **<https://spectre.sebastiano.dev>**.
+
+Start at [Getting started](https://spectre.sebastiano.dev/guide/getting-started/) for the
+shape of a Spectre test, or [The automator](https://spectre.sebastiano.dev/guide/automator/)
+for the mental model.
+
 ## Modules
 
 - `core` — semantics tree, selectors, coordinate mapping, Robot-backed input.
@@ -95,6 +103,9 @@ with IntelliJ 2026.1). Any JDK 21+ works for the non-IDE modules. CI runs on Tem
   `sample-desktop/**` filter shape.
 
 ## Reference docs
+
+The user guide and these reference pages are also published as a single browseable site
+at <https://spectre.sebastiano.dev>.
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Testing](docs/TESTING.md)
