@@ -49,8 +49,8 @@ import kotlin.system.exitProcess
  * - **Pure Wayland** (Wayland session with `DISPLAY` unset): gate fires, smoke exits before
  *   constructing the JFrame.
  * - **Headless Xvfb**: 4/4 PASS against the virtual framebuffer; matches the focused smoke's CI
- *   path. Wiring this variant into `validation-linux.yml` is now eligible (the previous "stays
- *   manual until findings replace TBDs" condition is satisfied) and a separate change.
+ *   path. Wired into `validation-linux.yml` as its own step alongside the focused smoke (split for
+ *   independent failure attribution).
  */
 fun main() {
     var exitCode = 0
