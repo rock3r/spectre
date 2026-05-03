@@ -153,9 +153,7 @@ import com.intellij.openapi.application.ApplicationManager
 inline fun <T> runOnEdt(crossinline block: () -> T): T {
     if (ApplicationManager.getApplication().isDispatchThread) return block()
     var result: T? = null
-    @Suppress("UNCHECKED_CAST")
     ApplicationManager.getApplication().invokeAndWait { result = block() }
-    @Suppress("UNCHECKED_CAST")
     return result as T
 }
 
