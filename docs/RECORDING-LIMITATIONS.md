@@ -26,7 +26,8 @@ Backend → mode mapping:
 | Backend                       | Mode                                                |
 | ----------------------------- | --------------------------------------------------- |
 | `FfmpegRecorder`              | Region capture (`avfoundation`/`gdigrab`/`x11grab`).|
-| `WaylandPortalRecorder`       | Region capture, sourced from the Wayland portal.    |
+| `WaylandPortalRecorder`       | Region capture, sourced from the Wayland portal (`SourceType.MONITOR`). |
+| `WaylandPortalWindowRecorder` | Window-targeted (Linux Wayland, portal `SourceType.WINDOW` — only the picked window's pixels are captured). |
 | `ScreenCaptureKitRecorder`    | Window-targeted (macOS).                            |
 | `FfmpegWindowRecorder`        | Window-targeted (Windows, `gdigrab title=`).        |
 | `AutoRecorder`                | Routes to the right one based on `TitledWindow?`.   |
@@ -49,24 +50,51 @@ failure modes, and the section below
 - **Linux Wayland sessions** — `gst-launch-1.0` driven through the
   `xdg-desktop-portal` ScreenCast interface, with the PipeWire FD passed to the encoder by a
   small Rust helper binary (`spectre-wayland-helper`, sources at
-  `recording/native/linux/`). The JVM-side `WaylandPortalRecorder` spawns the helper and
-  talks to it over stdin/stdout via newline-delimited JSON. **First call within a session
-  pops the compositor's "share your screen" dialog**; subsequent calls reuse the grant via
-  the portal's `restore_token`. Why the helper: a pure-JVM attempt hit a dbus-java
-  UnixFD-unmarshalling bug that wasn't fixable trivially, and Rust's `std::process`
-  makes FD inheritance into `gst-launch` a one-liner where the JVM's `ProcessBuilder`
-  doesn't expose the necessary `fcntl(F_SETFD, ...)` knob. The helper-as-subprocess shape
-  also matches the macOS SCK helper (`recording/native/macos/`) — same pattern, same
-  bundling, same recorder-skeleton on the JVM side.
+  `recording/native/linux/`). Two JVM-side recorders share the helper:
+  `WaylandPortalRecorder` (region-targeted, portal `SourceType.MONITOR` — user picks a
+  monitor, helper crops to the requested rectangle) and `WaylandPortalWindowRecorder`
+  (window-targeted, portal `SourceType.WINDOW` — user picks a specific window, the
+  granted PipeWire stream contains only that window's pixels, the helper crops to the
+  window's pixel size, #85). Both spawn the helper and talk to it over stdin/stdout via
+  newline-delimited JSON. **First call within a session pops the compositor's
+  "share your screen" dialog** (asking for a window or a monitor depending on which
+  recorder is running); subsequent calls reuse the grant via the portal's `restore_token`.
+  Why the helper: a pure-JVM attempt hit a dbus-java UnixFD-unmarshalling bug that wasn't
+  fixable trivially, and Rust's `std::process` makes FD inheritance into `gst-launch` a
+  one-liner where the JVM's `ProcessBuilder` doesn't expose the necessary
+  `fcntl(F_SETFD, ...)` knob. The helper-as-subprocess shape also matches the macOS SCK
+  helper (`recording/native/macos/`) — same pattern, same bundling, same recorder-skeleton
+  on the JVM side.
 
-  Validated end-to-end on Ubuntu 22.04/GNOME 42/mutter and Ubuntu 24.04/GNOME 46/mutter
-  (real-pixel mp4 with the smoke runner, 2026-05-02 and 2026-05-03 — the 24.04 run also
-  confirmed `cursor_mode=Embedded` composites the system cursor into the captured frames
-  when `RecordingOptions.captureCursor=true`, #87). KDE/Plasma, sway, wlroots-based
-  compositors, non-Ubuntu distros, and other Ubuntu versions aren't part of the
-  routine validation matrix yet — the
-  xdg-desktop-portal interface is standardised across compositors so most should "just
-  work", but bug reports are how we'll find out. See the README for the contribution invite.
+  **Window-targeted Wayland needs `xprop` on `PATH`.** Mutter renders window-source-type
+  streams with the WM-imposed invisible-shadow extents around the visible window —
+  typically 25 px on each side for GTK CSD windows on GNOME — but AWT's
+  `Frame.getBounds()` reports only the inner window. `WaylandPortalWindowRecorder` queries
+  the X11 `_GTK_FRAME_EXTENTS(CARDINAL)` property on the JFrame's XWayland window via the
+  system `xprop` binary to compute the right stream-relative crop; without it the
+  close-button icon ends up clipped off the title bar. If `xprop` is not on `PATH` (it's
+  part of `x11-utils` on Debian/Ubuntu — installed by default on the desktop image,
+  separate package on minimal/server images), the WM doesn't publish
+  `_GTK_FRAME_EXTENTS` (older Mutter, non-GTK CSD, server-side decorations like KDE
+  Plasma's default), or the call to `WaylandPortalWindowRecorder.start` is given a
+  `TitledWindow` with a null/blank title, the recorder throws `IllegalStateException`
+  rather than producing a silently-misaligned recording. The fallback is to use
+  `WaylandPortalRecorder` (region capture) — pass `window = null` to
+  `AutoRecorder.start` and the router selects it automatically.
+
+  Validated end-to-end on Ubuntu 22.04/GNOME 42/mutter, Ubuntu 24.04/GNOME 46/mutter, and
+  Ubuntu 26.04/GNOME 50/mutter (real-pixel mp4 with the smoke runner, 2026-05-02 and
+  2026-05-03 — the 24.04 run also confirmed `cursor_mode=Embedded` composites the system
+  cursor into the captured frames when `RecordingOptions.captureCursor=true` (#87), and
+  the 26.04 run confirmed window-source-type cropping produces a window-sized mp4 with
+  no leakage from other apps and all WM decorations visible (#85)). KDE/Plasma, sway,
+  wlroots-based compositors, non-Ubuntu distros, and other Ubuntu versions aren't part of
+  the routine validation matrix yet — the xdg-desktop-portal interface is standardised
+  across compositors but the `_GTK_FRAME_EXTENTS` query is GNOME/Mutter-specific, so
+  window-targeted recording on KDE / sway will likely throw the
+  "Could not determine WM frame extents" error and the caller should fall through to
+  `WaylandPortalRecorder` until we wire compositor-specific frame-extent lookups. See
+  the README for the contribution invite.
 
   **Frame-rate fidelity tracks what the compositor delivers.** The pipeline runs the
   PipeWire stream through a `videorate` element clamped to `RecordingOptions.frameRate`
