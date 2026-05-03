@@ -43,16 +43,42 @@ jobs:
       - name: Enable arm64 dpkg multi-arch + install aarch64 cross-toolchain (issue #86)
         # `:recording:assembleWaylandHelperAllArches` cross-compiles the Wayland helper for
         # aarch64 from this x86_64 runner. Two prereqs:
-        #   - `gcc-aarch64-linux-gnu` provides the cross-linker the cargo target invokes
-        #     via CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER.
+        #   - `gcc-aarch64-linux-gnu` provides the cross-linker that cargo invokes via
+        #     CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER.
         #   - `libdbus-1-dev:arm64` provides the aarch64-arch sysroot libdbus + .pc files
-        #     pkg-config picks via PKG_CONFIG_PATH_aarch64. dpkg multi-arch must be enabled
-        #     before apt knows where to look for the foreign-arch package.
-        # Ubuntu 24.04 runners' default sources.list already includes ports.ubuntu.com
-        # mirrors for non-amd64 arches, so the `:arm64` install resolves without an extra
-        # sources.list edit. (Older Ubuntu releases would have needed a manual entry.)
+        #     pkg-config picks via PKG_CONFIG_PATH_aarch64_unknown_linux_gnu. dpkg
+        #     multi-arch must be enabled before apt resolves foreign-arch packages.
+        # Ubuntu 24.04 runners' default sources point at azure.archive.ubuntu.com which
+        # only ships amd64 binaries — so adding `arm64` to dpkg without redirecting arm64
+        # apt lookups to ports.ubuntu.com makes `apt-get update` 404 on every arm64 list.
+        # We restrict the default sources to amd64 (deb822 + legacy formats both, since
+        # the layout has shifted across Ubuntu releases) and add a ports.ubuntu.com source
+        # for arm64.
         run: |
+          set -euo pipefail
           sudo dpkg --add-architecture arm64
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+            # deb822 format (ubuntu 24.04+): inject `Architectures: amd64` into each
+            # stanza that doesn't already declare one.
+            sudo sed -i '/^Architectures:/!{ /^Signed-By:/i\
+          Architectures: amd64
+          }' /etc/apt/sources.list.d/ubuntu.sources
+          fi
+          if [ -f /etc/apt/sources.list ]; then
+            # Legacy one-line format (older runners or .list.d additions): add the
+            # [arch=amd64] qualifier in front of every existing `deb ` line that doesn't
+            # already specify an arch.
+            sudo sed -i 's|^deb \([^[]\)|deb [arch=amd64] \1|' /etc/apt/sources.list
+          fi
+          codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
+          sudo tee /etc/apt/sources.list.d/ubuntu-arm64.sources >/dev/null <<EOF
+          Types: deb
+          URIs: http://ports.ubuntu.com/ubuntu-ports/
+          Suites: $codename $codename-updates $codename-backports $codename-security
+          Components: main universe restricted multiverse
+          Architectures: arm64
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu libdbus-1-dev:arm64
 

@@ -338,60 +338,58 @@ data class LinuxHelperTarget(
     val pkgConfigLibPath: String,
 )
 
-val linuxHelperTargets =
-    linuxHelperArchitectures.map { arch ->
-        when (arch) {
-            "x86_64" ->
-                LinuxHelperTarget(
-                    arch = "x86_64",
-                    triple = "x86_64-unknown-linux-gnu",
-                    crossLinker = "x86_64-linux-gnu-gcc",
-                    pkgConfigLibPath = "/usr/lib/x86_64-linux-gnu/pkgconfig",
-                )
-            "aarch64" ->
-                LinuxHelperTarget(
-                    arch = "aarch64",
-                    triple = "aarch64-unknown-linux-gnu",
-                    crossLinker = "aarch64-linux-gnu-gcc",
-                    pkgConfigLibPath = "/usr/lib/aarch64-linux-gnu/pkgconfig",
-                )
-            else -> error("Unsupported linux helper arch: $arch")
-        }
-    }
-
-val perArchCargoBuildTasks =
-    linuxHelperTargets.map { target ->
-        val taskName = "buildWaylandHelper${target.arch.replaceFirstChar { it.uppercase() }}"
-        val perArchOutput =
-            waylandHelperSource
-                .dir("target/${target.triple}/release")
-                .file("spectre-wayland-helper")
-        tasks.register<Exec>(taskName) {
-            description = "Cross-builds the Wayland helper for ${target.arch}."
-            group = "build"
-            onlyIf { OperatingSystem.current().isLinux }
-            workingDir = waylandHelperSource.asFile
-            commandLine("cargo", "build", "--release", "--target", target.triple)
-            // Cargo accepts the per-target linker as
-            // `CARGO_TARGET_<TRIPLE_UPPER_UNDERSCORED>_LINKER` without needing a
-            // .cargo/config.toml. The `_LINKER` form is undocumented for direct env-var
-            // use but stable since cargo 1.0 — see rust-lang/cargo issues #4135 and #6133.
-            environment(
-                "CARGO_TARGET_${target.triple.uppercase().replace("-", "_")}_LINKER",
-                target.crossLinker,
+val linuxHelperTargets = linuxHelperArchitectures.map { arch ->
+    when (arch) {
+        "x86_64" ->
+            LinuxHelperTarget(
+                arch = "x86_64",
+                triple = "x86_64-unknown-linux-gnu",
+                crossLinker = "x86_64-linux-gnu-gcc",
+                pkgConfigLibPath = "/usr/lib/x86_64-linux-gnu/pkgconfig",
             )
-            // pkg-config arch-suffix lookup: PKG_CONFIG_PATH_<arch> overrides
-            // PKG_CONFIG_PATH for the matching target arch (the suffix is the Rust target
-            // arch, which matches our `target.arch`). PKG_CONFIG_ALLOW_CROSS=1 disables
-            // pkg-config's safety guard against cross-arch link config — required by
-            // dbus-rs's build.rs.
-            environment("PKG_CONFIG_PATH_${target.arch}", target.pkgConfigLibPath)
-            environment("PKG_CONFIG_ALLOW_CROSS", "1")
-            inputs.dir(waylandHelperSource.dir("src"))
-            inputs.file(waylandHelperSource.file("Cargo.toml"))
-            outputs.file(perArchOutput)
-        }
+        "aarch64" ->
+            LinuxHelperTarget(
+                arch = "aarch64",
+                triple = "aarch64-unknown-linux-gnu",
+                crossLinker = "aarch64-linux-gnu-gcc",
+                pkgConfigLibPath = "/usr/lib/aarch64-linux-gnu/pkgconfig",
+            )
+        else -> error("Unsupported linux helper arch: $arch")
     }
+}
+
+val perArchCargoBuildTasks = linuxHelperTargets.map { target ->
+    val taskName = "buildWaylandHelper${target.arch.replaceFirstChar { it.uppercase() }}"
+    val perArchOutput =
+        waylandHelperSource.dir("target/${target.triple}/release").file("spectre-wayland-helper")
+    tasks.register<Exec>(taskName) {
+        description = "Cross-builds the Wayland helper for ${target.arch}."
+        group = "build"
+        onlyIf { OperatingSystem.current().isLinux }
+        workingDir = waylandHelperSource.asFile
+        commandLine("cargo", "build", "--release", "--target", target.triple)
+        // Cargo accepts the per-target linker as
+        // `CARGO_TARGET_<TRIPLE_UPPER_UNDERSCORED>_LINKER` without needing a
+        // .cargo/config.toml. The `_LINKER` form is undocumented for direct env-var
+        // use but stable since cargo 1.0 — see rust-lang/cargo issues #4135 and #6133.
+        environment(
+            "CARGO_TARGET_${target.triple.uppercase().replace("-", "_")}_LINKER",
+            target.crossLinker,
+        )
+        // pkg-config crate's per-target lookup uses the full Rust target triple as the
+        // suffix, with hyphens converted to underscores (e.g.
+        // PKG_CONFIG_PATH_aarch64_unknown_linux_gnu) — see pkg-config-rs's
+        // `targeted_env_var`. The arch-only suffix doesn't match any lookup pattern, so
+        // it would silently fall through to plain PKG_CONFIG_PATH and pull host-arch
+        // .pc files. PKG_CONFIG_ALLOW_CROSS=1 disables pkg-config's safety guard
+        // against cross-arch link config — required by dbus-rs's build.rs.
+        environment("PKG_CONFIG_PATH_${target.triple.replace("-", "_")}", target.pkgConfigLibPath)
+        environment("PKG_CONFIG_ALLOW_CROSS", "1")
+        inputs.dir(waylandHelperSource.dir("src"))
+        inputs.file(waylandHelperSource.file("Cargo.toml"))
+        outputs.file(perArchOutput)
+    }
+}
 
 // Per-arch staging copies — one Copy task per arch so the destination layout matches the
 // resource path `WaylandHelperBinaryExtractor` probes.
@@ -412,16 +410,15 @@ val perArchStageTasks =
         }
     }
 
-val assembleWaylandHelperAllArches by
-    tasks.registering {
-        description =
-            "Stages the Wayland helper binary for both x86_64 and aarch64 Linux. Opt-in for " +
-                "distribution builds (slower than host-arch). Wire into processResources by " +
-                "passing -PallLinuxArches at invocation time."
-        group = "build"
-        onlyIf { OperatingSystem.current().isLinux }
-        dependsOn(perArchStageTasks)
-    }
+val assembleWaylandHelperAllArches by tasks.registering {
+    description =
+        "Stages the Wayland helper binary for both x86_64 and aarch64 Linux. Opt-in for " +
+            "distribution builds (slower than host-arch). Wire into processResources by " +
+            "passing -PallLinuxArches at invocation time."
+    group = "build"
+    onlyIf { OperatingSystem.current().isLinux }
+    dependsOn(perArchStageTasks)
+}
 
 // Same pattern as the SCK helper: register the generated resource srcDir unconditionally so
 // jar layouts are host-agnostic, but only attach the build task to processResources on
