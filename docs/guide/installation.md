@@ -2,12 +2,11 @@
 
 !!! warning "No published artifacts yet"
     Spectre is currently `0.1.0-SNAPSHOT` and isn't published to Maven Central or any
-    other public repository. Until a tagged release lands, you have two options:
-
-    1. **Build and consume from a local Maven repository** (recommended for trying it out).
-    2. **Include the modules directly** as composite/included builds.
-
-    Once releases start, this page will be updated with the artifact coordinates.
+    other public repository. The Gradle build also doesn't apply `maven-publish`, so
+    `./gradlew publishToMavenLocal` is not a working path either. Until a tagged
+    release lands, the supported way to consume Spectre is as a Gradle composite build
+    (`includeBuild`) — see below. Once releases start, this page will be updated with
+    artifact coordinates.
 
 ## Requirements
 
@@ -18,41 +17,41 @@
 - **Platform-specific recording dependencies** if you plan to use the recording module —
   see [Recording](recording.md) for the per-OS prerequisites.
 
-## Build from source
+## Consume as a composite build
+
+Clone Spectre next to the project that wants to use it:
 
 ```shell
 git clone https://github.com/rock3r/spectre.git
-cd spectre
-./gradlew publishToMavenLocal
 ```
 
-That installs the modules under `dev.sebastiano.spectre:<module>:0.1.0-SNAPSHOT` into your
-local Maven repository (`~/.m2/repository`).
-
-In the consuming project's `settings.gradle.kts`:
+In the consuming project's `settings.gradle.kts`, include Spectre's checkout as a
+composite build:
 
 ```kotlin
-dependencyResolutionManagement {
-    repositories {
-        mavenLocal()
-        mavenCentral()
-        // ...your other repositories
-    }
-}
+includeBuild("../spectre")
 ```
 
-In the consuming project's `build.gradle.kts`:
+In the consuming project's `build.gradle.kts`, depend on the modules you need by
+project coordinates — Gradle resolves them against the included build:
 
 ```kotlin
 dependencies {
-    testImplementation("dev.sebastiano.spectre:core:0.1.0-SNAPSHOT")
-    testImplementation("dev.sebastiano.spectre:testing:0.1.0-SNAPSHOT")
+    testImplementation("dev.sebastiano.spectre:core")
+    testImplementation("dev.sebastiano.spectre:testing")
 
     // optional, depending on what you need:
-    testImplementation("dev.sebastiano.spectre:recording:0.1.0-SNAPSHOT")
-    testImplementation("dev.sebastiano.spectre:server:0.1.0-SNAPSHOT")
+    testImplementation("dev.sebastiano.spectre:recording")
+    testImplementation("dev.sebastiano.spectre:server")
 }
 ```
+
+Versions are intentionally omitted: `includeBuild` substitutes the project dependency
+into the consumer's classpath using whatever version the included build declares, so
+the `0.1.0-SNAPSHOT` you see in `gradle.properties` is implicit.
+
+If you depend on `server`, you also need to add a Ktor server engine yourself — Spectre
+intentionally doesn't bundle one. See [Cross-JVM access](cross-jvm.md) for the choice.
 
 You also need the JUnit version that matches the wrapper you'll use:
 

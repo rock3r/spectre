@@ -105,12 +105,16 @@ output that records continuous video rather than per-step images, see
 
 ## Real vs. synthetic input
 
-The `RobotDriver` your automator wraps governs how input is actually dispatched. Three
-factory paths matter:
+The `RobotDriver` your automator wraps governs how input is actually dispatched. The
+public surface:
 
-- **`ComposeAutomator.inProcess()` with no `robotDriver` argument** — the default. Uses a
-  `java.awt.Robot`-backed driver that moves the real cursor, takes system-wide keyboard
-  focus, and is visible to other applications. This is what end users experience.
+- **`RobotDriver()`** — the default. Uses a fresh `java.awt.Robot` plus the system
+  clipboard. Moves the real cursor, takes system-wide keyboard focus, and is visible to
+  other applications. This is what end users experience and what
+  `ComposeAutomator.inProcess()` wires up by default.
+- **`RobotDriver(robot)`** — same as the no-arg form but reuses an existing
+  `java.awt.Robot` you've already constructed (e.g. one targeted at a non-default
+  `GraphicsDevice`).
 - **`RobotDriver.synthetic(rootWindow)`** — synthetic AWT events posted straight into the
   target window's event queue. No real cursor motion, no global focus, doesn't fight with
   other processes. `synthetic` is a companion extension function in the
@@ -121,7 +125,8 @@ factory paths matter:
   fake out the live `WindowTracker` / `SemanticsReader`. See
   [The automator](automator.md#what-an-automator-owns) for the full picture.
 
-The `RobotDriver` constructor itself is internal — go through the factories.
+The adapter-injecting constructor used internally by Spectre's tests is `internal` and
+not part of the public surface.
 
 Pass a non-default driver via the `inProcess` factory:
 

@@ -113,4 +113,4 @@ forces both onto the test classpath.
 
 If you see a `NoClassDefFoundError` for a JUnit class when the rule or extension runs,
 add the corresponding `testImplementation` dependency to your project — see
-[Installation](installation.md#build-from-source).
+[Installation](installation.md#consume-as-a-composite-build).

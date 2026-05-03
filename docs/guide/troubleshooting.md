@@ -61,21 +61,30 @@ global focus, no cursor motion. The trade-off is that some interactions (system-
 shortcuts, real OS drag-and-drop) won't behave the same way. See
 [Driving input](interactions.md#real-vs-synthetic-input).
 
-## "Recording produces black frames on Linux"
+## "Linux Wayland recording — `UnsupportedOperationException` from `x11grab`"
 
-You're on Wayland and the recorder fell back to `x11grab` through XWayland. `x11grab`
-succeeds without erroring under XWayland but produces uniform-black frames — Wayland's
-security model blocks framebuffer reads by clients other than the compositor.
+`FfmpegBackend.LinuxX11Grab` deliberately throws on Wayland sessions rather than
+silently capturing black frames (Wayland's security model blocks framebuffer reads by
+clients other than the compositor, so `x11grab` through XWayland would otherwise return
+uniform black). The error message points you at the fix:
 
-`AutoRecorder` handles Wayland sessions explicitly via the portal-based recorder; if
-you're driving `FfmpegRecorder` directly, switch to `AutoRecorder`. If you've forced
-the X11 path, verify the session type:
+> ffmpeg's x11grab silently captures black frames on Wayland sessions even with
+> XWayland in the loop … Use Wayland-native capture instead: construct
+> `dev.sebastiano.spectre.recording.AutoRecorder` (which routes Wayland sessions
+> through xdg-desktop-portal + PipeWire automatically), or instantiate
+> `WaylandPortalRecorder` directly.
+
+If you're driving `FfmpegRecorder` directly on Linux, switch to `AutoRecorder` — it
+detects the session type and routes through the portal-based recorder when the bundled
+helper is wired up. If you'd rather force an Xorg session, verify with:
 
 ```shell
-echo "$XDG_SESSION_TYPE"          # should be "x11"
-echo "$WAYLAND_DISPLAY"           # should be empty
+echo "$XDG_SESSION_TYPE"               # should be "x11"
+echo "$WAYLAND_DISPLAY"                # should be empty
 ls "$XDG_RUNTIME_DIR" | grep wayland   # should be empty
 ```
+
+(or pick "Ubuntu on Xorg" at the GDM login screen, or run under `Xvfb`).
 
 See [Recording limitations](../RECORDING-LIMITATIONS.md) for the full Wayland story.
 

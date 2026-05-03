@@ -16,7 +16,15 @@ to it through `HttpComposeAutomator`.
 ## Server side: mount the routes
 
 In the hosting JVM, build an in-process automator and install Spectre's routes on a
-Ktor application:
+Ktor application. `installSpectreRoutes` is engine-agnostic — Spectre intentionally
+doesn't bundle a Ktor server engine, so add one yourself:
+
+```kotlin
+dependencies {
+    // ...your existing Spectre + ktor-server-core comes via the server module
+    implementation("io.ktor:ktor-server-netty:2.3.12") // or :ktor-server-cio, :ktor-server-jetty
+}
+```
 
 ```kotlin
 import dev.sebastiano.spectre.core.ComposeAutomator
@@ -31,8 +39,11 @@ embeddedServer(Netty, port = 9274) {
 }.start(wait = false)
 ```
 
-`9274` is the default Spectre listens on (`HttpComposeAutomator.DEFAULT_PORT`); pick any
-free port and pass it to both sides if that's taken.
+`9274` is the default port the **client** uses
+(`HttpComposeAutomator.DEFAULT_PORT`) — `installSpectreRoutes` itself only mounts routes
+on whatever Ktor `Application` you give it, so the hosting engine picks the listener.
+Using `9274` on both sides keeps the defaults aligned; otherwise pass a matching port
+to both `embeddedServer(...)` and `ComposeAutomator.http(...)`.
 
 `installSpectreRoutes` mounts everything under `/spectre` by default; pass `basePath =
 "/foo"` if you need it elsewhere.
