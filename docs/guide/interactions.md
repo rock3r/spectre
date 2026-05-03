@@ -99,8 +99,28 @@ val sendShot = automator.screenshot(send)
 val region = automator.screenshot(Rectangle(0, 0, 800, 600))
 ```
 
-Returns a `BufferedImage` you can save, hash, or compare against a baseline. For test
-output that records continuous video rather than per-step images, see
+Returns a `BufferedImage` you can save, hash, or compare against a baseline.
+
+!!! warning "Bitmap comparison needs tolerance"
+    Don't compare screenshots byte-for-byte against a baseline. Identical-looking
+    frames routinely differ at the pixel level because of:
+
+    - Encoder / decoder round-trips (PNG re-saves can shift LSBs).
+    - Text rendering: subpixel positioning, hinting, font fallback, font version.
+    - Antialiasing on edges, gradients, and blurs.
+    - OS- and GPU-driven differences in compositing, gamma, and colour profiles.
+    - HiDPI scaling at non-integer factors.
+
+    Always compare with a tolerance — perceptual diff (e.g., a small ΔE threshold),
+    a per-channel allowance, or a structural metric like SSIM. Region-mask the
+    parts of the UI that are inherently noisy (timestamps, cursors, animations).
+
+    Spectre intentionally doesn't ship a screenshot comparison suite — it returns
+    `BufferedImage` and lets you wire whatever comparator fits your stack. If
+    there's demand, a built-in tolerant comparator could land later; open an
+    issue describing the use case if you'd find it valuable.
+
+For test output that records continuous video rather than per-step images, see
 [Recording](recording.md).
 
 ## Real vs. synthetic input
