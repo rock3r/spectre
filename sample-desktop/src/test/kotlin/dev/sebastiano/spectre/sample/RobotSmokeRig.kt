@@ -147,17 +147,21 @@ internal fun waitForLayout(state: SmokeState) {
     while (System.nanoTime() < deadline) {
         val counter = state.counterBounds
         val textField = state.textFieldBounds
+        val colorPatch = state.colorPatchBounds
         val ready =
             counter.width > 0f &&
                 counter.height > 0f &&
                 textField.width > 0f &&
-                textField.height > 0f
+                textField.height > 0f &&
+                colorPatch.width > 0f &&
+                colorPatch.height > 0f
         if (ready) return
         Thread.sleep(50)
     }
     error(
         "Compose targets never laid out within ${LAYOUT_TIMEOUT_MS}ms; " +
-            "counterBounds=${state.counterBounds} textFieldBounds=${state.textFieldBounds}"
+            "counterBounds=${state.counterBounds} textFieldBounds=${state.textFieldBounds} " +
+            "colorPatchBounds=${state.colorPatchBounds}"
     )
 }
 
