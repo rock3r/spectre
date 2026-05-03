@@ -198,3 +198,49 @@ tasks.register<JavaExec>("runWindowsRobotUnfocusedSmoke") {
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("dev.sebastiano.spectre.sample.WindowsRobotUnfocusedSmoke")
 }
+
+// Linux counterparts to the Windows Robot smokes — same six-scenario rig (see
+// `RobotSmokeRig.kt`) gated against pure Wayland sessions (java.awt.Robot drops cross-process
+// synthetic input on Wayland). CI wiring lives in `validation-linux.yml`, which runs the
+// focused smoke under `xvfb-run`; the unfocused variant stays manual unless empirical Xvfb
+// behaviour proves stable.
+tasks.register<JavaExec>("runLinuxRobotSmoke") {
+    group = "verification"
+    description = "Drives a Compose window via real RobotDriver on Linux; PASS/FAIL per scenario."
+    onlyIf { OperatingSystem.current().isLinux }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.sample.LinuxRobotSmoke")
+}
+
+tasks.register<JavaExec>("runLinuxRobotUnfocusedSmoke") {
+    group = "verification"
+    description =
+        "Drives Robot at an unfocused Compose window on Linux; pins click-to-focus + " +
+            "keystroke semantics."
+    onlyIf { OperatingSystem.current().isLinux }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.sample.LinuxRobotUnfocusedSmoke")
+}
+
+// macOS counterparts to the Windows Robot smokes. NOT wired into CI — GitHub-hosted macos-*
+// runners don't grant java.awt.Robot the Accessibility TCC permission required to dispatch
+// real synthetic input (same constraint that already prevents SCK end-to-end testing on
+// macos.yml). The smoke probes TCC at startup and exits 2 with a remediation message if input
+// is being dropped; manual run only on a developer Mac after granting Accessibility.
+tasks.register<JavaExec>("runMacOsRobotSmoke") {
+    group = "verification"
+    description = "Drives a Compose window via real RobotDriver on macOS; PASS/FAIL per scenario."
+    onlyIf { OperatingSystem.current().isMacOsX }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.sample.MacOsRobotSmoke")
+}
+
+tasks.register<JavaExec>("runMacOsRobotUnfocusedSmoke") {
+    group = "verification"
+    description =
+        "Drives Robot at an unfocused Compose window on macOS; pins click-to-focus + " +
+            "keystroke semantics."
+    onlyIf { OperatingSystem.current().isMacOsX }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.sample.MacOsRobotUnfocusedSmoke")
+}
