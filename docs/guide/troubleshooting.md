@@ -212,9 +212,9 @@ exercise on both Xorg and Wayland.
 The README is upfront about the validation footprint:
 
 - macOS, Windows, and Linux are exercised in CI.
-- Linux validation runs on a single Ubuntu 22.04 VM exercising one Xorg session and one
-  GNOME/mutter Wayland session. Other distros, compositors (KDE/Plasma, sway,
-  wlroots), and window managers aren't covered.
+- Linux validation: Xorg on Ubuntu 22.04, Wayland (GNOME/mutter) on Ubuntu 22.04 and
+  24.04. Other distros, compositors (KDE/Plasma, sway, wlroots), and window managers
+  aren't covered.
 
 If something is broken on a configuration not covered, [open an issue](https://github.com/rock3r/spectre/issues/new)
 with the distro/compositor/session combo. Reports and PRs widening the matrix are

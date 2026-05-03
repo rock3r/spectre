@@ -148,6 +148,13 @@ corresponding doc page is touched:
   Input".
 - **Code identifiers in backticks.** Class names, method names, property names,
   package names. Module names too: `core`, `testing`, `server`, `recording`.
+- **Don't pack multi-paragraph content into a single list item.** Mixing 2-space
+  list-continuation indent with 4-space sub-block indent breaks mkdocs-material's
+  list parser — subsequent top-level bullets get folded into the previous item as
+  continuation prose. If a bullet needs more than one paragraph plus a nested
+  list, promote the topic to its own H3 / H4 subsection or use prose paragraphs
+  instead. Verify in the rendered output that subsequent siblings still render as
+  siblings.
 
 ## Linking
 

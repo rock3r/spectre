@@ -133,7 +133,7 @@ for failure modes when permission is missing or attached to the wrong binary.
 - **Linux Wayland** — `gst-launch-1.0` plus the GStreamer plugins for H.264/Matroska.
   The Rust helper is bundled inside `recording`'s artifact. Recording requires a
   Wayland compositor that exposes `org.freedesktop.portal.ScreenCast`; tested against
-  GNOME/mutter on Ubuntu 22.04.
+  GNOME/mutter on Ubuntu 22.04 and 24.04.
 
 For the full set of trade-offs (frame drop behaviour, minimum dimensions, crop
 pitfalls, audio support) see [Recording limitations](../RECORDING-LIMITATIONS.md).
