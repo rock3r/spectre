@@ -106,6 +106,34 @@ jobs:
             --continue
         shell: bash
 
+      - name: Run real-Robot Linux smoke under Xvfb
+        # Counterpart to the manual `runWindowsRobotSmoke` (which stays manual on the Windows
+        # workflow because hosted Windows runners don't reliably handle the alwaysOnTop window
+        # manipulation the smoke needs). Linux + Xvfb is the one host configuration where a
+        # real `java.awt.Robot` smoke runs cleanly in CI: Xvfb gives us a real Xorg display,
+        # the smoke's Wayland gate stays out of the picture (no XDG_SESSION_TYPE=wayland, no
+        # WAYLAND_DISPLAY, no wayland-* socket in XDG_RUNTIME_DIR), and Robot input + screen
+        # capture work end-to-end.
+        #
+        # Extending this workflow rather than adding a sibling because the runner setup
+        # (Xvfb + JDK 21 + Gradle + Rust) is identical and the path filters already cover
+        # `sample-desktop/**`. A separate workflow file would just duplicate that setup with
+        # no scope difference.
+        #
+        # The smoke's main() exits 0/1 based on PASS/FAIL via exitProcess, so Gradle's
+        # JavaExec propagates failure naturally — no XML-verifier needed (unlike the test
+        # tasks above).
+        #
+        # The unfocused variant (`runLinuxRobotUnfocusedSmoke`) is NOT wired in here yet:
+        # focus / click-to-focus semantics under Xvfb are minimal-WM territory and likely
+        # behave differently from a real KWin / Mutter session. Run it manually on a
+        # developer Linux machine first to bank findings; once the unfocused-smoke KDoc has a
+        # real findings list (not the TBD placeholders) we can revisit adding it here.
+        if: always()
+        run: |
+          xvfb-run -a ./gradlew :sample-desktop:runLinuxRobotSmoke
+        shell: bash
+
       - name: Verify validation tests passed via JUnit XML
         # Source-of-truth check that mirrors validation-windows.yml's two-pass verifier:
         #
