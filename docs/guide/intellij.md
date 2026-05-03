@@ -44,6 +44,49 @@ class RunSpectreAction : AnAction() {
 Wire the action into `plugin.xml`, run the plugin with `./gradlew :your-plugin:runIde`,
 and trigger it from the **Tools** menu (or whatever group you registered it under).
 
+### Hide the action from end users
+
+A Spectre-driving action exists to validate the UI; it has no business showing up in a
+production plugin distribution's Tools menu. Hide it on two axes:
+
+- **Mark it internal in `plugin.xml`.** The `internal="true"` attribute makes the
+  action visible only when the IDE is launched in internal mode
+  (`-Didea.is.internal=true`):
+
+    ```xml
+    <action
+        id="dev.example.RunSpectreAction"
+        class="dev.example.RunSpectreAction"
+        text="Run Spectre"
+        internal="true">
+        <add-to-group group-id="ToolsMenu" anchor="last" />
+    </action>
+    ```
+
+- **Gate `update(...)` on a Registry flag and/or a JVM system property.** Belt and
+  braces: even if someone flips internal mode on, the action stays disabled unless
+  the gate is open. Both controls are easy for CI / dev launches and inert in
+  production:
+
+    ```kotlin
+    import com.intellij.openapi.actionSystem.AnActionEvent
+    import com.intellij.openapi.util.registry.Registry
+
+    override fun update(e: AnActionEvent) {
+        val enabled = Registry.`is`("my.plugin.spectre.enabled", false) ||
+            System.getProperty("my.plugin.spectre.enabled") == "true"
+        e.presentation.isEnabledAndVisible = enabled
+    }
+    ```
+
+    Set the registry key via **Help → Find Action → Registry…** in any IDE, or pass
+    `-Dmy.plugin.spectre.enabled=true` on the JVM command line for headless / CI
+    runs (which is also the natural shape if you're combining this with
+    [`-DspectreAutorun=true`](#auto-trigger-on-startup) for non-interactive smokes).
+
+The combination keeps the action discoverable to the right audience (developers,
+QA, CI) and invisible to the rest of the world.
+
 ### Pick the right `RobotDriver` for in-IDE work
 
 The three driver options behave differently when the JVM running the automator is
