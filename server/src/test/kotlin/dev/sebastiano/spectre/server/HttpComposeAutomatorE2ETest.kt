@@ -115,57 +115,14 @@ class HttpComposeAutomatorE2ETest {
         runBlocking { remote.windows() }
         remote.close()
 
-        // Strongest portable proof that close() shut the engine down: any subsequent request
-        // attempt fails because the engine is no longer accepting jobs. Without close(), the
-        // CIO selector threads would keep running and this call would simply succeed.
+        // Engine-shutdown proof that doesn't depend on thread enumeration: a post-close
+        // request hits the closed CIO engine and fails. A direct thread-leak assertion is
+        // not practical here — the in-test CIO server spawns request-handler threads on
+        // demand whose names overlap with client-side worker names, so a baseline diff
+        // can't reliably tell client-leaked threads apart from server-handler threads that
+        // simply haven't been reaped yet.
         assertFails("Calling a method after close() must fail; engine should be shut down") {
             runBlocking { remote.windows() }
         }
-    }
-
-    @Test
-    fun `close() does not leak CIO selector threads`() {
-        val baseline = Thread.getAllStackTraces().keys.toSet()
-
-        val remote = client()
-        runBlocking { remote.windows() }
-        remote.close()
-
-        // Selector threads exit asynchronously on close; poll a bounded window so the
-        // assertion stays robust on a busy CI host without blocking forever on a real leak.
-        val deadlineNanos = System.nanoTime() + LEAK_POLL_BUDGET_NANOS
-        var leaked: List<String> = collectLeakedClientThreads(baseline)
-        while (leaked.isNotEmpty() && System.nanoTime() < deadlineNanos) {
-            Thread.sleep(LEAK_POLL_INTERVAL_MS)
-            leaked = collectLeakedClientThreads(baseline)
-        }
-
-        assertTrue(leaked.isEmpty(), "HttpComposeAutomator.close() leaked client threads: $leaked")
-    }
-
-    private fun collectLeakedClientThreads(baseline: Set<Thread>): List<String> =
-        Thread.getAllStackTraces()
-            .keys
-            .asSequence()
-            .filter { it !in baseline && it.isAlive }
-            .map { it.name }
-            // The server in @BeforeTest is itself CIO-backed, so any thread that was already
-            // present in the baseline snapshot (including server-side selectors) is filtered
-            // out. What remains can only be threads spawned during the client lifecycle —
-            // exactly what close() is responsible for tearing down.
-            .filter { name ->
-                CLIENT_THREAD_NAME_HINTS.any { hint -> name.contains(hint, ignoreCase = true) }
-            }
-            .toList()
-
-    private companion object {
-        private const val LEAK_POLL_BUDGET_NANOS: Long = 5_000_000_000L
-        private const val LEAK_POLL_INTERVAL_MS: Long = 50L
-
-        // CIO's client engine names its workers around "selector" / "i/o" / "cio". Matching
-        // any of these is broad enough to catch a real leak while ignoring unrelated threads
-        // (GC, JIT, finalizer, JUnit) that may legitimately appear after the baseline snapshot.
-        private val CLIENT_THREAD_NAME_HINTS: List<String> =
-            listOf("selector", "i/o", "cio", "ktor")
     }
 }
