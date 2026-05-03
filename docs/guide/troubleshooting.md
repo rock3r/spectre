@@ -211,26 +211,6 @@ up the new entitlement.
 The IntelliJ plugin module needs JBR specifically for its sandbox JDK; the Gradle build
 configures that automatically.
 
-## "Linux: `:sample-desktop:validationTestPopupLayers` skipped on Wayland"
-
-The `OnWindow` popup layer hits a JBR/skiko native crash on Wayland that's tracked
-separately as [issue #56](https://github.com/rock3r/spectre/issues/56). The validation
-test `assumeFalse`-skips it on Wayland; `OnSameCanvas` and `OnComponent` continue to
-exercise on both Xorg and Wayland.
-
-## "My platform isn't covered"
-
-The README is upfront about the validation footprint:
-
-- macOS, Windows, and Linux are exercised in CI.
-- Linux validation: Xorg on Ubuntu 22.04, Wayland (GNOME/mutter) on Ubuntu 22.04 and
-  24.04. Other distros, compositors (KDE/Plasma, sway, wlroots), and window managers
-  aren't covered.
-
-If something is broken on a configuration not covered, [open an issue](https://github.com/rock3r/spectre/issues/new)
-with the distro/compositor/session combo. Reports and PRs widening the matrix are
-explicitly welcome.
-
 ## Still stuck?
 
 - Read [Architecture](../ARCHITECTURE.md) for the module-level invariants.
