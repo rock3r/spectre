@@ -180,18 +180,24 @@ See [Recording limitations](../RECORDING-LIMITATIONS.md) for the full Wayland st
 ## "macOS clicks and key presses silently no-op"
 
 `java.awt.Robot`'s mouse and keyboard methods need the **Accessibility** TCC entry
-on macOS, separately from Screen Recording. Without it, `automator.click(...)`,
-`typeText(...)`, `pressKey(...)`, and friends return without throwing, but the OS
-never delivers the events — the test silently misses every interaction.
+on macOS, separately from Screen Recording. Without it, the OS never delivers the
+events — `automator.click(...)`, `typeText(...)`, `pressKey(...)`, and friends
+return without dispatching anything.
 
-Same parent-process attribution rules as Screen Recording apply: grant System
-Settings → Privacy & Security → Accessibility to whichever app launched the JVM
-(IntelliJ, Terminal, etc.), then fully quit and relaunch that app.
+Fix: grant System Settings → Privacy & Security → Accessibility to whichever app
+launched the JVM (IntelliJ, Terminal, etc.) — same parent-process attribution
+rules as Screen Recording — then fully quit and relaunch that app so macOS picks
+up the new entitlement.
 
-`MacOsRecordingPermissions.diagnose()` returns a human-readable rollup of both
-entries (Screen Recording + Accessibility) you can dump at startup if your harness
-wants to surface the missing-permission case explicitly rather than letting tests
-fail mysteriously.
+!!! note "Tracking: hard-fail on missing TCC"
+    Today, `RobotDriver()` doesn't probe TCC; it just wraps `Robot` and lets the
+    silent no-op happen. That's a footgun — the cause is invisible from the
+    downstream assertion failure. Tracked as
+    [#98](https://github.com/rock3r/spectre/issues/98); the intended end state
+    is that constructing the default driver on a Mac without the right TCC
+    entries throws with an actionable message. `MacOsRecordingPermissions.diagnose()`
+    is available in the meantime as an opt-in startup probe that returns a
+    human-readable rollup of both entries.
 
 ## "Gradle behaves oddly inside a worktree"
 
