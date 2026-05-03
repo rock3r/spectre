@@ -6,9 +6,8 @@ Internal note for whoever (human or agent) writes or revises the user-facing doc
 
 The user guide lives under `docs/index.md` and `docs/guide/`; supporting reference
 material lives at `docs/ARCHITECTURE.md`, `docs/TESTING.md`, `docs/CONVENTIONS.md`,
-`docs/STATIC-ANALYSIS.md`, `docs/RECORDING-LIMITATIONS.md`, and
-`docs/WORKTREE-GRADLE-PITFALLS.md`. All of those render into the same site and follow
-the same rules.
+`docs/STATIC-ANALYSIS.md`, and `docs/RECORDING-LIMITATIONS.md`. All of those render
+into the same site and follow the same rules.
 
 ## The five rules that catch the most regressions
 

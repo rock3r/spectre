@@ -199,12 +199,6 @@ up the new entitlement.
     is available in the meantime as an opt-in startup probe that returns a
     human-readable rollup of both entries.
 
-## "Gradle behaves oddly inside a worktree"
-
-Spectre is a multi-module Gradle build with several quirks around worktrees,
-configuration cache, and the IntelliJ plugin sandbox. The repo has a dedicated
-write-up: [Worktree + Gradle pitfalls](../WORKTREE-GRADLE-PITFALLS.md).
-
 ## "JBR vs Temurin: which JDK should I use?"
 
 - **Locally**: JBR 21 is the dev-loop default. JBR 25 also gets exercised via the

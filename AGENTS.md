@@ -31,7 +31,6 @@ Keep this file focused on operating rules. Use the docs below for implementation
 | [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | File placement, coding style, and git/build workflow |
 | [docs/STATIC-ANALYSIS.md](docs/STATIC-ANALYSIS.md) | Detekt, ktfmt, and CI-backed quality expectations |
 | [docs/RECORDING-LIMITATIONS.md](docs/RECORDING-LIMITATIONS.md) | Per-platform recording trade-offs, frame drop behaviour, audio caveats |
-| [docs/WORKTREE-GRADLE-PITFALLS.md](docs/WORKTREE-GRADLE-PITFALLS.md) | Worktree-specific Gradle / configuration-cache / IDE-sandbox pitfalls |
 | [docs/DOCS-STYLE.md](docs/DOCS-STYLE.md) | Style guide and verification checklist for the user-facing docs site (excluded from the published site itself) |
 | [Compose Desktop automator spike gist](https://gist.github.com/rock3r/8e520bb3fe8fe5886367d5e22cefbab8) | External design notes and open spike questions |
 
@@ -70,6 +69,53 @@ Otherwise, prefer asking whether to create a worktree before starting feature wo
 Plans belong in `.plans/` at the repo root, which should stay gitignored.
 
 Use the local `using-git-worktree` skill when setting up an isolated workspace.
+
+### Worktree pitfalls
+
+Lessons learned from working in git worktrees on this project.
+
+#### ktfmt version mismatch
+
+The project's Gradle plugin bundles a specific ktfmt formatter version. If you have a
+different `ktfmt` CLI installed locally (e.g., via Homebrew), the two may format
+differently. Specifically:
+
+- The CLI may leave unused imports that the Gradle plugin removes.
+- Line-wrapping thresholds may differ slightly.
+
+**Always verify with `./gradlew check`, not the CLI.** CI uses Gradle.
+
+#### Rebase silently reverts fixes
+
+When rebasing a long-lived branch, git may silently revert changes that conflict with
+upstream. After every rebase:
+
+1. Find the merge base: `git merge-base HEAD origin/main` (note the commit hash).
+2. List your branch's changed files: `git diff --name-only <merge-base-hash>`.
+3. Verify your changes survived: `git diff origin/main -- <those-files>`.
+4. Re-run `./gradlew check` locally before pushing.
+5. Pay special attention to files that were modified by both your branch and main.
+
+Common casualties during rebase:
+
+- Conditional guards (`if (x > 0)` wrappers around existing code).
+- Import removals (git re-adds them from main's version).
+- Label/text changes that main also touched.
+
+#### Pre-push checklist
+
+Before every push from a worktree:
+
+- [ ] `./gradlew check` passes (this is the CI gate — detekt + ktfmt + tests).
+- [ ] After rebase: verified key changes survived (see above).
+
+For faster iteration *before* the final push, target individual checks:
+
+- `./gradlew :test --tests "*TestName*"` — run a specific failing test.
+- `./gradlew ktfmtCheckMain` — verify formatting only.
+- `./gradlew detektMain` — verify detekt only.
+
+**Always run `./gradlew check` before the actual push.**
 
 ### Regressions And Scope Discipline
 
