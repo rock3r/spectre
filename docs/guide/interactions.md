@@ -167,6 +167,10 @@ public surface:
   target window's event queue. No real cursor motion, no global focus, doesn't fight with
   other processes. `synthetic` is a companion extension function in the
   `dev.sebastiano.spectre.core` package, so it needs an explicit import.
+  `screenshot()` under a synthetic driver also bypasses the OS framebuffer — it renders
+  the target window via `Component.paint(Graphics)` into a `BufferedImage` instead of
+  calling `Robot.createScreenCapture`. Results are consistent for regression tests, but
+  will differ from what the user sees on wide-gamut displays, and skip TCC probing entirely.
 - **`RobotDriver.headless()`** — for read-only flows in headless CI where real OS I/O is
   unavailable. Every input, clipboard, and screenshot call throws
   `UnsupportedOperationException` so an accidental `automator.click(...)` /

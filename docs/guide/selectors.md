@@ -84,6 +84,7 @@ this dialog" style assertions, not as a primary selector.
 | `node.text`                 | First text on the node, or `null`.                                |
 | `node.texts`                | All text strings on the node.                                     |
 | `node.contentDescriptions`  | All content-description strings.                                  |
+| `node.contentDescription`   | First content-description string, or `null`.                      |
 | `node.role`                 | The semantics role, or `null`.                                    |
 | `node.isFocused`            | Focused state.                                                    |
 | `node.isDisabled`           | Disabled state.                                                   |
@@ -93,6 +94,7 @@ this dialog" style assertions, not as a primary selector.
 | `node.boundsOnScreen`       | Bounds in screen coordinates (HiDPI-corrected).                   |
 | `node.centerOnScreen`       | Centre point in screen coordinates — what input helpers click.    |
 | `node.children`             | Child nodes in the semantics tree.                                |
+| `node.parent`               | Parent node in the semantics tree, or `null` at a root.           |
 
 Use `boundsOnScreen` and `centerOnScreen` for screenshot regions or custom input. The
 [`HiDpiMapper`](https://github.com/rock3r/spectre/blob/main/core/src/main/kotlin/dev/sebastiano/spectre/core/HiDpiMapper.kt)

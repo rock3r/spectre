@@ -41,6 +41,24 @@ class RunSpectreAction : AnAction() {
 }
 ```
 
+`printTree()` is synchronous. Interaction and wait methods (`waitForNode`, `click`, `typeText`,
+etc.) are `suspend` — wrap them in `runBlocking { … }` inside the pooled thread:
+
+```kotlin
+ApplicationManager.getApplication().executeOnPooledThread {
+    val automator = ComposeAutomator.inProcess(
+        robotDriver = RobotDriver.synthetic(rootWindow = ideFrame),
+    )
+    runBlocking {
+        automator.waitForNode(tag = "ide.counter.text")
+        automator.click(automator.findOneByTestTag("ide.counter.button")!!)
+    }
+}
+```
+
+Alternatively, drive the automator from a `suspend fun` and reach it from a coroutine scope
+(e.g. the `ProjectActivity.execute(project)` override below).
+
 Wire the action into `plugin.xml`, run the plugin with `./gradlew :your-plugin:runIde`,
 and trigger it from the **Tools** menu (or whatever group you registered it under).
 

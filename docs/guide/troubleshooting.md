@@ -205,6 +205,15 @@ that opened the JVM, **not** the JVM binary itself. Fully quit and relaunch the
 wrapping app afterwards so macOS picks up the new entitlement, and `./gradlew
 --stop` the Gradle daemon if you launched from a shell.
 
+!!! note "macOS 26+ Screen Recording"
+    Starting with macOS 26, toggling Screen Recording in System Settings grants
+    picker-based access only. The first direct `Robot.createScreenCapture` call
+    (i.e. the first `automator.screenshot(...)`) pops a second system dialog —
+    "allow *App* to bypass the system private window picker" — that you must
+    accept. This dialog appears once per app per boot; subsequent calls are
+    silent. CI runners that require fully-headless captures should use a notarised
+    wrapper with the appropriate entitlement pre-granted.
+
 The two probes are independent: a consumer who only takes screenshots is not
 punished for missing Accessibility, and vice versa. Probe results are cached
 after the first call, so subsequent operations have no extra cost.
