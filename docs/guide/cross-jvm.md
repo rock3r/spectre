@@ -1,10 +1,18 @@
 # Cross-JVM access
 
 When the UI you want to drive lives in a different JVM than the test process — most
-commonly an IntelliJ IDE under test, or a Compose Desktop app you've launched as a
-separate process — Spectre's `server` module gives you an HTTP transport. The hosting
-JVM mounts a Ktor route on top of an in-process `ComposeAutomator`; the test JVM talks
-to it through `HttpComposeAutomator`.
+commonly a Compose Desktop app you've launched as a separate process — Spectre's
+`server` module gives you an HTTP transport. The hosting JVM mounts a Ktor route on
+top of an in-process `ComposeAutomator`; the test JVM talks to it through
+`HttpComposeAutomator`.
+
+!!! tip "IntelliJ-hosted Compose has its own page"
+    For driving Jewel-on-IntelliJ tool windows or any Compose surface hosted inside
+    an IntelliJ plugin, the in-process pattern with `intellij-ide-starter` for the
+    test side is the recommended path — it sidesteps the IDE's classloader isolation
+    and uses JetBrains' own IPC for the test ↔ IDE bridge. See
+    [IntelliJ-hosted Compose](intellij.md). The HTTP transport on this page is
+    aimed at the standalone-app case.
 
 !!! note "HTTP transport scope"
     The HTTP transport is a deliberate subset of the in-process automator: windows,
