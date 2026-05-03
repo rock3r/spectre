@@ -105,7 +105,7 @@ Returns a `BufferedImage` you can save, hash, or compare against a baseline.
     Don't compare screenshots byte-for-byte against a baseline. Identical-looking
     frames routinely differ at the pixel level because of:
 
-    - Encoder / decoder round-trips (PNG re-saves can shift LSBs).
+    - Encoder/decoder round-trips (PNG re-saves can shift LSBs).
     - Text rendering: subpixel positioning, hinting, font fallback, font version.
     - Antialiasing on edges, gradients, and blurs.
     - OS- and GPU-driven differences in compositing, gamma, and colour profiles.

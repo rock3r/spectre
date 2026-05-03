@@ -69,7 +69,7 @@ When in doubt, grep the source. `findOneByContentDescription` doesn't exist;
 
 Show the imports the sample actually needs, including extension-function imports. The
 `RobotDriver.synthetic(...)` and `Frame.asTitledWindow()` paths require explicit
-imports because they're companion / member extensions — leave those imports out and
+imports because they're companion/member extensions — leave those imports out and
 the sample doesn't compile.
 
 ### Default arguments and named parameters
@@ -104,19 +104,19 @@ corresponding doc page is touched:
 - **`TitledWindow` is an interface.** Production adapter is `Frame.asTitledWindow()`.
   Tests provide minimal `TitledWindow` implementations.
 - **`installSpectreRoutes` is engine-agnostic.** The `server` module deliberately
-  doesn't bundle Netty / CIO / Jetty — consumers add the engine themselves.
+  doesn't bundle Netty/CIO/Jetty — consumers add the engine themselves.
 - **`HttpComposeAutomator.DEFAULT_PORT` is `9274`.** That's the *client* default;
   the server-side port is whatever the consumer's Ktor engine listens on.
 - **`RobotDriver` public constructors.** `RobotDriver()` (default AWT), `RobotDriver(robot)`,
   `RobotDriver.headless()`, `RobotDriver.synthetic(rootWindow)`. The
   adapter-injecting constructor is `internal` and not for consumers.
 - **`RobotDriver.headless()` only stubs input/screenshot/clipboard side effects.**
-  It does **not** fake the live `WindowTracker` / `SemanticsReader`.
+  It does **not** fake the live `WindowTracker`/`SemanticsReader`.
 - **`typeText` is always clipboard-paste.** It writes the text, dispatches the
   platform paste shortcut, drains, then restores the previous clipboard contents.
   No per-key fallback.
 - **Linux Wayland + `LinuxX11Grab` throws.** It does not silently produce black
-  frames. The thrown message points users at `AutoRecorder` / `WaylandPortalRecorder`.
+  frames. The thrown message points users at `AutoRecorder`/`WaylandPortalRecorder`.
 
 ## Style conventions
 
@@ -151,7 +151,7 @@ corresponding doc page is touched:
   files, but anchor mismatches (`#build-from-source` after renaming the heading to
   "Consume as a composite build") slip past the file-level check.
 
-## Workflow / CI
+## Workflow/CI
 
 - **Permissions scoped per job, not per workflow.** The build job (which runs
   PR-controlled mkdocs config and pip dependencies) gets `contents: read` only.
