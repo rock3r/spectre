@@ -105,15 +105,23 @@ output that records continuous video rather than per-step images, see
 
 ## Real vs. synthetic input
 
-The `RobotDriver` factory governs how input is actually dispatched:
+The `RobotDriver` your automator wraps governs how input is actually dispatched. Three
+factory paths matter:
 
-- **`RobotDriver()`** — real OS-level input via `java.awt.Robot`. The mouse cursor moves,
-  the keyboard focus is system-wide, and other applications see the input too. This is
-  the default and what end users experience.
+- **`ComposeAutomator.inProcess()` with no `robotDriver` argument** — the default. Uses a
+  `java.awt.Robot`-backed driver that moves the real cursor, takes system-wide keyboard
+  focus, and is visible to other applications. This is what end users experience.
 - **`RobotDriver.synthetic(rootWindow)`** — synthetic AWT events posted straight into the
   target window's event queue. No real cursor motion, no global focus, doesn't fight with
   other processes. `synthetic` is a companion extension function in the
   `dev.sebastiano.spectre.core` package, so it needs an explicit import.
+- **`RobotDriver.headless()`** — a no-op adapter for tests and headless CI. Mouse / key
+  calls are silently dropped, screenshots return a 1×1 empty image, and clipboard access
+  is a no-op. Note that this only stubs out input/screenshot side effects; it does not
+  fake out the live `WindowTracker` / `SemanticsReader`. See
+  [The automator](automator.md#what-an-automator-owns) for the full picture.
+
+The `RobotDriver` constructor itself is internal — go through the factories.
 
 Pass a non-default driver via the `inProcess` factory:
 

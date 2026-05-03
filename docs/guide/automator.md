@@ -21,10 +21,21 @@ Build one with the default in-process configuration:
 val automator = ComposeAutomator.inProcess()
 ```
 
-For a headless setup that exercises the semantics-reading paths without driving real OS
-input, build one with `RobotDriver.headless()`. The `testing` module's own test sources
-include an internal `newHeadlessAutomator()` helper that wires this up — it's not a
-public API, but it's a useful reference recipe to copy.
+For headless CI where constructing a real `java.awt.Robot` (or touching the system
+clipboard / screen) is unavailable, swap in `RobotDriver.headless()`:
+
+```kotlin
+val automator = ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())
+```
+
+`headless()` only stubs out the input / screenshot / clipboard side effects — mouse and
+key calls are silently dropped, screenshots return a 1×1 empty image, and clipboard
+operations are no-ops. It does **not** fake out the live `WindowTracker` /
+`SemanticsReader`, so the automator still inspects whatever Compose surfaces are
+actually on screen. For unit-style tests that need full isolation, inject test-specific
+`WindowTracker` and `SemanticsReader` instances too — the `testing` module's own test
+sources include an internal `newHeadlessAutomator()` helper that wires this up. It
+isn't a public API, but it's a useful reference recipe to copy.
 
 ## Surfaces and the semantics tree
 

@@ -86,18 +86,30 @@ Use `AutomatorIdlingResource` to teach `waitForIdle` about background work the
 fingerprint can't see:
 
 ```kotlin
+import dev.sebastiano.spectre.core.AutomatorIdlingResource
+
 class NetworkIdlingResource(private val client: MyClient) : AutomatorIdlingResource {
-    override val name: String = "network"
-    override fun isIdle(): Boolean = client.inflightRequests == 0
+    override val isIdleNow: Boolean
+        get() = client.inflightRequests == 0
+
+    override fun diagnosticMessage(): String? =
+        "${client.inflightRequests} request(s) in flight"
 }
 
-automator.registerIdlingResource(NetworkIdlingResource(client))
-// ...
-automator.unregisterIdlingResource(NetworkIdlingResource(client))
+val networkIdling = NetworkIdlingResource(client)
+automator.registerIdlingResource(networkIdling)
+try {
+    // ...test body
+} finally {
+    automator.unregisterIdlingResource(networkIdling)
+}
 ```
 
-`waitForIdle` will keep waiting until every registered resource reports idle alongside
-its own checks.
+`waitForIdle` will keep waiting until every registered resource reports `isIdleNow ==
+true` alongside its own checks. The optional `diagnosticMessage()` shows up in
+`IdleTimeoutException`, so use it to describe what was still in flight when the wait
+ran out of time. Register and unregister the same instance — `unregister` is identity-
+based.
 
 ## `waitForVisualIdle`
 

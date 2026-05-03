@@ -72,8 +72,9 @@ class MyTest {
 }
 ```
 
-`@get:Rule` (note the `get:` prefix) is required — JUnit 4 looks for a public field, and
-Kotlin's default-property getter is what JUnit reflects on.
+`@get:Rule` (note the `get:` prefix) targets the annotation at the property's generated
+getter, which is what JUnit 4 reflects on. Without the `get:` prefix Kotlin would put
+the annotation on the property itself and JUnit wouldn't see it.
 
 ## Custom `AutomatorFactory`
 

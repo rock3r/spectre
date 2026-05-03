@@ -83,7 +83,7 @@ If you know exactly which backend you want, instantiate it directly and skip the
 
 | Backend                       | Use it for                                                                |
 | ----------------------------- | ------------------------------------------------------------------------- |
-| `FfmpegRecorder`              | Region capture on any platform. Default for "no window in mind".          |
+| `FfmpegRecorder`              | Region capture on macOS, Windows, and Linux Xorg. (Throws on Wayland — use `WaylandPortalRecorder` there.) Default for "no window in mind". |
 | `FfmpegWindowRecorder`        | Windows-only window-targeted capture via `gdigrab title=`.                |
 | `ScreenCaptureKitRecorder`    | macOS-only window-targeted capture via the bundled Swift helper.          |
 | `WaylandPortalRecorder`       | Linux Wayland-only via `xdg-desktop-portal` and a bundled Rust helper.    |
