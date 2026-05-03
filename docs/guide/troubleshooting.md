@@ -82,11 +82,11 @@ modes follow from that:
   manager or another process actively rewriting the clipboard, the poll can time
   out and the paste lands stale. Disable clipboard managers in the test
   environment.
-- **Headless adapters skip the readback.** `RobotDriver.headless()`'s clipboard
-  adapter doesn't support read-back, so it doesn't wait and doesn't drain the EDT
-  after dispatch. That's fine for headless tests that don't really care about
-  paste, but means real-input scenarios should not be exercised against a headless
-  driver.
+- **`RobotDriver.headless()` throws on `typeText`.** It throws on every input,
+  clipboard, and screenshot call by design (see [Driving input](interactions.md#real-vs-synthetic-input)),
+  so `typeText` against a headless driver surfaces an `UnsupportedOperationException`
+  at the call site rather than silently dropping. Use `RobotDriver.synthetic(rootWindow)`
+  or the default `RobotDriver()` for any real-input scenario.
 - **Compose's paste action runs on its own dispatcher.** After the keystroke,
   Spectre pumps the EDT and sleeps briefly so the paste handler can read the
   clipboard before the previous contents are restored. If you stack many

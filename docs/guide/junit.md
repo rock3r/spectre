@@ -79,7 +79,12 @@ the annotation on the property itself and JUnit wouldn't see it.
 ## Custom `AutomatorFactory`
 
 Both wrappers default to `ComposeAutomator.inProcess()`. Pass your own factory when you
-need a stub for headless CI or unit-style isolation:
+need a different driver for headless CI or unit-style isolation. `RobotDriver.headless()`
+throws on input, clipboard, and screenshot calls (see
+[Driving input](interactions.md#real-vs-synthetic-input)), so the example below is
+appropriate for tests that only exercise semantics-tree queries or rule/extension
+lifecycle — anything that needs real input should use `RobotDriver.synthetic(rootWindow)`
+or the default `RobotDriver()` instead:
 
 ```kotlin
 import dev.sebastiano.spectre.core.ComposeAutomator

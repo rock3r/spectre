@@ -136,9 +136,9 @@ class RunSpectreAction : AnAction() {
     /**
      * Invokes the Compose `OnClick` semantics action on [node] from the EDT — equivalent to a
      * synthetic click for the purpose of toggling state, without going through the OS input stack.
-     * The `RobotDriver.headless()` we use here can't deliver real input, so we drive the semantics
-     * tree directly. This is the same pattern Compose's own `composeTestRule.onNode` uses
-     * internally. Caller is responsible for ensuring this runs on the EDT.
+     * The `RobotDriver.headless()` we use here throws on real input, so we drive the semantics tree
+     * directly. This is the same pattern Compose's own `composeTestRule.onNode` uses internally.
+     * Caller is responsible for ensuring this runs on the EDT.
      */
     private fun triggerOnClick(node: AutomatorNode) {
         val onClick = node.semanticsNode.config.getOrNull(SemanticsActions.OnClick)

@@ -28,11 +28,15 @@ clipboard or screen) is unavailable, swap in `RobotDriver.headless()`:
 val automator = ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())
 ```
 
-`headless()` only stubs out the input/screenshot/clipboard side effects — mouse and
-key calls are silently dropped, screenshots return a 1×1 empty image, and clipboard
-operations are no-ops. It does **not** fake out the live `WindowTracker`/`SemanticsReader`, so the automator still inspects whatever Compose surfaces are
-actually on screen. For unit-style tests that need full isolation, inject test-specific
-`WindowTracker` and `SemanticsReader` instances too.
+`headless()` throws `UnsupportedOperationException` on every input, clipboard, and
+screenshot call — an accidental `automator.click(...)` / `typeText(...)` /
+`screenshot(...)` surfaces at the call site instead of silently dropping. It does
+**not** fake out the live `WindowTracker`/`SemanticsReader`, so semantics-tree
+queries still work against whatever Compose surfaces are actually on screen. Reach
+for it for read-only flows; pair it with `SemanticsActions.OnClick` (see
+[Driving input](interactions.md#real-vs-synthetic-input)) when you need to fire
+clicks without going through the OS. For unit-style tests that need full isolation,
+inject test-specific `WindowTracker` and `SemanticsReader` instances too.
 
 ## Surfaces and the semantics tree
 

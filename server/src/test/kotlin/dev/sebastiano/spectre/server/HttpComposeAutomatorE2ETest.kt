@@ -27,8 +27,9 @@ import kotlinx.coroutines.runBlocking
  *
  * The backing [ComposeAutomator] is headless, so assertions target the client/transport contract
  * (list shapes, status-code translation, body decoding, engine lifecycle) rather than live UI
- * behaviour. The `click()` happy path is intentionally not covered here — driving a real node
- * requires a live Compose surface, which the testing module's automator rules cover separately.
+ * behaviour. Endpoints that drive real input or capture (`click()` happy path, `typeText`,
+ * `screenshot`) are intentionally not covered here — driving them requires a live Compose surface,
+ * which the testing module's automator rules cover separately.
  */
 class HttpComposeAutomatorE2ETest {
 
@@ -87,25 +88,6 @@ class HttpComposeAutomatorE2ETest {
                 message.contains("nonexistent:0:1"),
                 "Expected node key in error message, got: $message",
             )
-        }
-    }
-
-    @Test
-    fun `typeText() succeeds against a running server`() = runBlocking {
-        // No exception means the client decoded the 204 No Content response correctly. The
-        // headless RobotDriver drops the synthetic key events, so we cannot assert on the UI
-        // side effect here — that is what the in-process automator tests are for.
-        client().use { remote -> remote.typeText(text = "hello") }
-    }
-
-    @Test
-    fun `screenshot() decodes the base64 PNG envelope into a BufferedImage`() = runBlocking {
-        client().use { remote ->
-            val image = remote.screenshot()
-            // The headless RobotDriver returns a 1x1 placeholder; the assertion is just that
-            // the client successfully base64-decoded the wire payload and ImageIO accepted it.
-            assertTrue(image.width > 0, "Width should be positive, got ${image.width}")
-            assertTrue(image.height > 0, "Height should be positive, got ${image.height}")
         }
     }
 

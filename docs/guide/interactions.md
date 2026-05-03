@@ -153,10 +153,13 @@ public surface:
   target window's event queue. No real cursor motion, no global focus, doesn't fight with
   other processes. `synthetic` is a companion extension function in the
   `dev.sebastiano.spectre.core` package, so it needs an explicit import.
-- **`RobotDriver.headless()`** — a no-op adapter for tests and headless CI. Mouse/key
-  calls are silently dropped, screenshots return a 1×1 empty image, and clipboard access
-  is a no-op. Note that this only stubs out input/screenshot side effects; it does not
-  fake out the live `WindowTracker` and `SemanticsReader`. See
+- **`RobotDriver.headless()`** — for read-only flows in headless CI where real OS I/O is
+  unavailable. Every input, clipboard, and screenshot call throws
+  `UnsupportedOperationException` so an accidental `automator.click(...)` /
+  `typeText(...)` / `screenshot(...)` surfaces at the call site instead of silently
+  dropping. `WindowTracker` and `SemanticsReader` are untouched, so semantics-tree
+  reads still work — pair this with `SemanticsActions.OnClick` if you need to fire
+  clicks without going through the OS. See
   [The automator](automator.md#what-an-automator-owns) for the full picture.
 
 Pass a non-default driver via the `inProcess` factory:
