@@ -26,7 +26,7 @@ JUnit test methods don't run on the EDT, but coroutines launched via
 `Dispatchers.Main` or any Swing-backed dispatcher do. See
 [Synchronization](synchronization.md#the-edt-rule).
 
-## "My selector returns null / an empty list"
+## "My selector returns null or an empty list"
 
 In order of likelihood:
 
@@ -35,9 +35,9 @@ In order of likelihood:
 2. **The node is composed but offscreen.** It still appears in the semantics tree, but
    `boundsOnScreen` may be empty. Scroll to it first.
 3. **You're reading after an interaction without waiting.** Add
-   `waitForIdle()` / `waitForVisualIdle()` after the click / type.
+   `waitForIdle()`/`waitForVisualIdle()` after the click or type.
 4. **The selector doesn't match.** Run `println(automator.printTree())` and check the
-   actual test tags / text / role. Localised text is the usual culprit.
+   actual test tags/text/role. Localised text is the usual culprit.
 
 ## "Tests fight over OS focus when run in parallel"
 
@@ -88,7 +88,7 @@ ls "$XDG_RUNTIME_DIR" | grep wayland   # should be empty
 
 See [Recording limitations](../RECORDING-LIMITATIONS.md) for the full Wayland story.
 
-## "macOS recording errors out / produces no file"
+## "macOS recording errors out or produces no file"
 
 - **Screen Recording permission.** macOS gates screen capture behind an explicit grant
   per binary. Grant it to the JVM that runs your tests (System Settings → Privacy &
@@ -132,11 +132,11 @@ The README is upfront about the validation footprint:
 
 - macOS, Windows, and Linux are exercised in CI.
 - Linux validation runs on a single Ubuntu 22.04 VM exercising one Xorg session and one
-  GNOME / mutter Wayland session. Other distros, compositors (KDE / Plasma, sway,
+  GNOME/mutter Wayland session. Other distros, compositors (KDE/Plasma, sway,
   wlroots), and window managers aren't covered.
 
 If something is broken on a configuration not covered, [open an issue](https://github.com/rock3r/spectre/issues/new)
-with the distro / compositor / session combo. Reports and PRs widening the matrix are
+with the distro/compositor/session combo. Reports and PRs widening the matrix are
 explicitly welcome.
 
 ## Still stuck?

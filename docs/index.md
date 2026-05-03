@@ -31,7 +31,7 @@ familiar — Spectre brings the same "find a node, do a thing, assert" loop to C
   windows. Semantics, layout, focus, popups, and HiDPI all come from the running UI rather
   than a parallel test harness.
 - **In-process or cross-JVM.** Use `ComposeAutomator.inProcess()` for the simple case, or
-  use the `server` module to drive a UI hosted in a different JVM (e.g. an IDE under test).
+  use the `server` module to drive a UI hosted in a different JVM (e.g., an IDE under test).
 - **Real or synthetic input.** [`ComposeAutomator.inProcess()`](guide/interactions.md)
   defaults to OS-level `java.awt.Robot` events. Swap in `RobotDriver.synthetic(...)` and
   AWT events go directly into the window hierarchy — useful when tests run in parallel
@@ -52,8 +52,8 @@ familiar — Spectre brings the same "find a node, do a thing, assert" loop to C
   semantics surfaces, queries vs. interactions, why there is no auto-wait.
 - :material-target: **[Finding nodes](guide/selectors.md)** — `findByTestTag`, `findByText`,
   `findByContentDescription`, `findByRole`, and the `printTree()` debugger.
-- :material-clock-fast: **[Synchronization](guide/synchronization.md)** —
-  `waitForIdle`, `waitForVisualIdle`, `waitForNode`, and the EDT rule.
+- :material-clock-fast: **[Synchronization](guide/synchronization.md)**
+  — `waitForIdle`, `waitForVisualIdle`, `waitForNode`, and the EDT rule.
 - :material-video: **[Recording](guide/recording.md)** — Region and window-targeted capture
   across macOS, Windows, and Linux.
 - :material-server: **[Cross-JVM](guide/cross-jvm.md)** — Drive a UI hosted in another JVM

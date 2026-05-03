@@ -2,10 +2,10 @@
 
 ## Expectations
 
-Always add tests for behavior changes.
+Always add tests for behaviour changes.
 
 1. Pure logic in `core` should get unit tests.
-2. Serialization, DTO mapping, and remote-call behavior in `server` should get contract tests.
+2. Serialisation, DTO mapping, and remote-call behaviour in `server` should get contract tests.
 3. Recording code should separate testable pure logic from OS-specific integration and test the
    pure parts directly.
 4. UI-facing spike work in `sample-desktop` may require manual validation, but any reusable logic
@@ -18,7 +18,7 @@ Always add tests for behavior changes.
 Follow this strictly:
 
 1. Write the test first.
-2. Run it and confirm it fails for the missing behavior.
+2. Run it and confirm it fails for the missing behaviour.
 3. Write the minimum implementation.
 4. Re-run the targeted test to green.
 5. Run the broader relevant suite.
@@ -42,7 +42,7 @@ Examples for Spectre:
 
 - HTTP request/response payloads in `server`
 - compound node identity formatting and parsing
-- coordinate conversion behavior across Compose/AWT/Robot units
+- coordinate conversion behaviour across Compose/AWT/Robot units
 - native helper invocation contracts for recording
 
 These tests should use the real payload or coordinate format rather than a hand-crafted idealized
@@ -52,10 +52,10 @@ version. Unit tests for internal math are necessary, but boundary tests catch dr
 
 Some concerns still need live manual verification even with good automated tests:
 
-- Retina / HiDPI coordinate accuracy
+- Retina/HiDPI coordinate accuracy
 - popup discovery across different layer modes
-- Robot focus behavior and click targeting
-- recording permission and capture behavior on macOS
+- Robot focus behaviour and click targeting
+- recording permission and capture behaviour on macOS
 
 Use `sample-desktop` to make those checks reproducible. If a manual validation step is required
 for a change, note it explicitly in the final report.
@@ -65,5 +65,5 @@ for a change, note it explicitly in the final report.
 - Prefer `runTest` for coroutine-based logic.
 - Avoid real sleeps when a deterministic scheduler or fake clock will do.
 - Cancel/close long-lived scopes created in tests.
-- If asynchronous behavior cannot be made deterministic, isolate the nondeterminism behind a small
+- If asynchronous behaviour cannot be made deterministic, isolate the nondeterminism behind a small
   interface and test the decision logic separately.

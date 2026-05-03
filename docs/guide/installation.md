@@ -14,8 +14,8 @@
   the IDE-hosted UI test. Any JDK 21+ works for the non-IDE modules.
 - **A Compose Desktop or Compose Multiplatform (desktop target) application.** Spectre
   reads Compose's semantics tree, so the UI under test must be a real Compose surface.
-- **Platform-specific recording dependencies** if you plan to use the recording module —
-  see [Recording](recording.md) for the per-OS prerequisites.
+- **Platform-specific recording dependencies** if you plan to use the recording module
+  — see [Recording](recording.md) for the per-OS prerequisites.
 
 ## Consume as a composite build
 

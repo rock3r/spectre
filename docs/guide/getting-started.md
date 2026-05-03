@@ -11,7 +11,7 @@ A typical Spectre test does four things, in order:
    for a standalone Compose Desktop app, or a custom harness for IDE-hosted Compose.
 2. **Wait until the UI has settled.** Spectre's queries don't auto-wait, so there must be a
    point where the window is visible and the first frame is composed before you query it.
-3. **Find nodes via the semantics tree** and drive them with mouse / keyboard / typing.
+3. **Find nodes via the semantics tree** and drive them with mouse, keyboard, and typing.
 4. **Assert on the resulting state** by reading the semantics tree again.
 
 ## Tag your UI
@@ -129,8 +129,8 @@ description, or role — see [Finding nodes](selectors.md).
 
 ## What just happened
 
-- `ComposeAutomatorExtension` / `ComposeAutomatorRule` builds a fresh `ComposeAutomator`
-  for each test. The default factory is `ComposeAutomator.inProcess()`, which uses
+- `ComposeAutomatorExtension` and `ComposeAutomatorRule` each build a fresh
+  `ComposeAutomator` for each test. The default factory is `ComposeAutomator.inProcess()`, which uses
   `RobotDriver` for real OS-level input.
 - `waitForNode(tag = "CounterValue")` polls the semantics tree until the node exists.
   It's how you bridge the gap between "the test started" and "the UI is on screen".

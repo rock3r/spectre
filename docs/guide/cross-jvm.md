@@ -109,14 +109,14 @@ recording integrations will rely on.
 
 The server module pays for itself when:
 
-- The UI under test is **an IntelliJ IDE** or a third-party application you can't
-  modify the run-loop of — install the routes inside a plugin and drive from a separate
-  test process.
-- You're running **multiple test JVMs in parallel** against a long-lived UI host (e.g.
+- The UI under test is **an IntelliJ IDE** or a third-party application whose run-loop
+  you can't modify — install the routes inside a plugin and drive from a separate test
+  process.
+- You're running **multiple test JVMs in parallel** against a long-lived UI host (e.g.,
   a sample app launched once, hit by many tests). Combine with `RobotDriver.synthetic`
   on the server side so each test doesn't fight for global focus.
-- You want to **separate test orchestration from rendering** for performance reasons —
-  e.g. running the test JVM with aggressive coroutine debugging while the UI runs lean.
+- You want to **separate test orchestration from rendering** for performance reasons,
+  e.g., to run the test JVM with aggressive coroutine debugging while the UI runs lean.
 
 If your test owns the UI and runs in the same JVM, stick with `ComposeAutomator.inProcess()`
 — it's cheaper and exposes the full automator surface.

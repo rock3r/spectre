@@ -12,7 +12,7 @@ The `recording` module ships:
   `gdigrab title=`. Mirrors the SCK ergonomics for Windows top-level Compose windows.
 
 The rest of this document describes the region-capture path (relevant on every platform when
-there's no host window to target). Use ScreenCaptureKit / FfmpegWindowRecorder when you have a
+there's no host window to target). Use ScreenCaptureKit/FfmpegWindowRecorder when you have a
 top-level `ComposeWindow` you want to record cleanly; use region capture for embedded
 `ComposePanel` surfaces or arbitrary screen rectangles.
 
@@ -24,7 +24,7 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
 - **Linux Xorg sessions** — `x11grab` region capture (#75 / #76). Reads `DISPLAY`. Routine
   validation has only been on Ubuntu 22.04's Xorg session (one machine, one X server build)
   and on CI under `xvfb-run` (Xorg protocol over a virtual framebuffer, no GPU). Other
-  Xorg WMs / distros fall under the "Linux is best-effort, contributions welcome" line in
+  Xorg WMs/distros fall under the "Linux is best-effort, contributions welcome" line in
   the README.
 - **Linux Wayland sessions** — `gst-launch-1.0` driven through the
   `xdg-desktop-portal` ScreenCast interface, with the PipeWire FD passed to the encoder by a
@@ -39,8 +39,8 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
   also matches the macOS SCK helper (`recording/native/macos/`) — same pattern, same
   bundling, same recorder-skeleton on the JVM side.
 
-  Validated end-to-end on Ubuntu 22.04 / GNOME 42 / mutter (real-pixel mp4 with the smoke
-  runner, 2026-05-02). KDE / Plasma, sway, wlroots-based compositors, non-Ubuntu distros,
+  Validated end-to-end on Ubuntu 22.04/GNOME 42/mutter (real-pixel mp4 with the smoke
+  runner, 2026-05-02). KDE/Plasma, sway, wlroots-based compositors, non-Ubuntu distros,
   and other Ubuntu versions aren't part of the routine validation matrix yet — the
   xdg-desktop-portal interface is standardised across compositors so most should "just
   work", but bug reports are how we'll find out. See the README for the contribution invite.
@@ -50,7 +50,7 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
   (default 30). When the source delivers fewer frames than the target, `videorate` pads
   the gaps by duplicating the last frame; when it delivers more, the excess gets dropped.
   On real hardware with GPU-side compositor composition this is a no-op — the source
-  comfortably sustains 30 fps and the output is byte-clean. On a Hyper-V / VirtualBox VM
+  comfortably sustains 30 fps and the output is byte-clean. On a Hyper-V/VirtualBox VM
   with a software-rendered virtual GPU, the source rate dips into the 5–25 fps range and
   the output mp4 contains visible duplicate-frame runs even though the file metadata
   reports a flat 30 fps. This is faithful capture, not a recording bug — the compositor
@@ -61,10 +61,10 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
 
 ## Capture mode
 
-- **Region capture, not window capture**. v1 records a fixed `Rectangle` of the virtual desktop —
-  whatever pixels the screen happens to be showing inside that region land in the file. The region
-  is bound at `Recorder.start(...)` time and does not follow a window; the v2 work surfaces a
-  proper window-targeted backend via ScreenCaptureKit.
+- **Region capture, not window capture**. v1 records a fixed `Rectangle` of the virtual
+  desktop — whatever pixels the screen happens to be showing inside that region land in
+  the file. The region is bound at `Recorder.start(...)` time and does not follow a
+  window; the v2 work surfaces a proper window-targeted backend via ScreenCaptureKit.
 - **Embedded `ComposePanel` surfaces always fall through to region capture.**
   `AutoRecorder.start(window: TitledWindow?, region: Rectangle, …)` picks window-targeted
   capture only when `window` is non-null and (on Windows) has a non-blank title. The
@@ -79,7 +79,7 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
     whatever is now under the original rectangle (often empty desktop).
   - Off-screen panels record black frames.
 
-## What window movement / popups do during a recording
+## What window movement/popups do during a recording
 
 - **Window movement isn't followed**. Move the host window after `start(...)` and the recording
   keeps capturing the original screen rectangle. Stop and restart to follow the new position.
@@ -88,7 +88,7 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
   rectangle the recording will not include it. `OnSameCanvas` and `OnComponent` popups stay inside
   the panel/window bounds and are recorded as long as the panel itself is.
 
-## HiDPI / Retina
+## HiDPI/Retina
 
 - The recorded resolution is the **screen-pixel** size of the region, not the dp size. A 400×300dp
   region on a 2× display becomes an 800×600 pixel video.
@@ -105,7 +105,7 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
   landing in the output file. A failure to spawn (binary not on PATH, codec unavailable, AVFoundation
   device busy) surfaces as an exception from `start(...)`, not as a silent "successful" handle.
 - The handle MUST be stopped (`RecordingHandle.stop(...)`) for the file to be flushed cleanly. A
-  JVM exit without stop leaves a partial / non-finalised file and an orphaned subprocess.
+  JVM exit without stop leaves a partial/non-finalised file and an orphaned subprocess.
 
 ## What's NOT a v1 limitation
 

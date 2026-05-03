@@ -14,12 +14,12 @@ what's done and what's planned. The original spike notes still live at
   `RobotDriver.headless()` for in-process semantics-only flows, coordinate mapping,
   `waitForVisualIdle` synchronization.
 - **`server`** — embedded HTTP transport via Ktor (`Application.installSpectreRoutes(...)`)
-  and matching `HttpComposeAutomator` client, with serialization DTOs and round-trip
+  and matching `HttpComposeAutomator` client, with serialisation DTOs and round-trip
   integration tests (`#9`). Cross-JVM access is wired end-to-end; consumers bring their
   own server engine.
 - **`testing`** — `ComposeAutomatorExtension` (JUnit 5) and `ComposeAutomatorRule` (JUnit 4)
   with pluggable `AutomatorFactory` so headless tests can substitute fakes.
-- **`sample-desktop`** — manual smoke surface with counter / popup / scrolling scenarios that
+- **`sample-desktop`** — manual smoke surface with counter/popup/scrolling scenarios that
   exercise popup discovery, focus tracking, and coordinate mapping.
 - **`sample-intellij-plugin`** — IntelliJ plugin that hosts a Jewel tool window and proves the
   in-process automator reaches IDE-hosted Compose surfaces (`#13` checklist). Includes
@@ -50,8 +50,7 @@ what's done and what's planned. The original spike notes still live at
 - **`:sample-intellij-plugin:uiTest`** — `intellij-ide-starter`-driven test that boots a real
   IntelliJ IDEA, installs the locally-built plugin, fires `RunSpectreAction` through the
   Driver API, and asserts every tagged Compose node lands in `idea.log`. CI runs it in
-  [`.github/workflows/ide-uitest.yml`](https://github.com/rock3r/spectre/blob/main/.github/workflows/ide-uitest.yml) when plugin / core /
-  recording sources change. (`#42`.)
+  [`.github/workflows/ide-uitest.yml`](https://github.com/rock3r/spectre/blob/main/.github/workflows/ide-uitest.yml) when plugin/core/recording sources change. (`#42`.)
 
 ### v3 — Windows platform support
 
@@ -87,7 +86,7 @@ the Wayland recording path arrived in three stages: detect (#77 stage 1), portal
 architecture (#77 stage 2), encoder integration via a Rust helper (#80).
 
 That single VM is the entirety of v4's Linux validation footprint — same caveat as the
-README: Linux is best-effort, broader distro / compositor / WM coverage is welcome
+README: Linux is best-effort, broader distro/compositor/WM coverage is welcome
 contributions territory.
 
 - **`recording.FfmpegBackend.LinuxX11Grab` + `x11grabRegionCapture` argv builder** — Xorg
@@ -121,8 +120,7 @@ machine with the relevant runtime — the issues reference what blocks them.
 - **Notarization** — `#49` covers signing + notarising the SCK helper for distribution. v2
   intentionally landed unsigned (the helper runs from inside the JVM's process, so end users
   never see a Gatekeeper prompt for it directly), but distribution scenarios may want it.
-- **v3 follow-ups** — `#56` (JBR/skiko OnWindow popup crash tracking). `#55` / `#57` /
-  `#58` shipped during the v3 cleanup pass. The backlog-only `#61` (audio capture) sits
+- **v3 follow-ups** — `#56` (JBR/skiko OnWindow popup crash tracking). `#55`/`#57`/`#58` shipped during the v3 cleanup pass. The backlog-only `#61` (audio capture) sits
   in the same problem space but with no scheduled work.
 
 ## Module map

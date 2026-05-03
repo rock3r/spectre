@@ -66,10 +66,10 @@ Routing logic, in order:
    and hands a PipeWire FD to `gst-launch-1.0`. First call pops a permission dialog;
    subsequent calls in the same JVM run reuse the grant.
 2. **`window == null`** (non-Wayland) → `ffmpeg` region capture. Use this shape when
-   there's no clear window to target (e.g. a `ComposePanel` embedded in a Swing host).
+   there's no clear window to target (e.g., a `ComposePanel` embedded in a Swing host).
 3. **macOS + a window** → bundled ScreenCaptureKit helper (`WindowRecorder`). The
    helper is a tiny Swift binary owned by Spectre. If the helper isn't bundled in the
-   running JAR (e.g. you built on Linux but ran on macOS), it falls back to `ffmpeg`
+   running JAR (e.g., you built on Linux but ran on macOS), it falls back to `ffmpeg`
    region capture and warns on stderr. Operational SCK failures (permission denied, target
    not found, helper crashed) propagate as exceptions instead of falling back silently.
 4. **Windows + a window with a non-blank title** → `FfmpegWindowRecorder` (`gdigrab
@@ -96,10 +96,10 @@ If you know exactly which backend you want, instantiate it directly and skip the
   `./gradlew :recording:assembleScreenCaptureKitHelper -PuniversalHelper`.
 - **Windows** — `ffmpeg` on `PATH`. `gdigrab` ships with `ffmpeg`.
 - **Linux Xorg** — `ffmpeg` with the `x11grab` input enabled (default in distro builds).
-- **Linux Wayland** — `gst-launch-1.0` plus the GStreamer plugins for H.264 / matroska.
+- **Linux Wayland** — `gst-launch-1.0` plus the GStreamer plugins for H.264/Matroska.
   The Rust helper is bundled inside `recording`'s artifact. Recording requires a
   Wayland compositor that exposes `org.freedesktop.portal.ScreenCast`; tested against
-  GNOME / mutter on Ubuntu 22.04.
+  GNOME/mutter on Ubuntu 22.04.
 
 For the full set of trade-offs (frame drop behaviour, minimum dimensions, crop
 pitfalls, audio support) see [Recording limitations](../RECORDING-LIMITATIONS.md).
@@ -107,7 +107,7 @@ pitfalls, audio support) see [Recording limitations](../RECORDING-LIMITATIONS.md
 ## Stopping cleanly
 
 `RecordingHandle.stop()` is synchronous and waits for the encoder to flush. If your
-test fails before reaching the stop call, wrap the recording in `try / finally`:
+test fails before reaching the stop call, wrap the recording in `try`/`finally`:
 
 ```kotlin
 val handle = recorder.start(/* ... */)

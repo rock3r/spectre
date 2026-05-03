@@ -4,7 +4,7 @@ Selectors are how you locate a Compose node in the semantics tree. The `ComposeA
 exposes four families of selectors plus a handful of convenience overloads.
 
 !!! note "All selectors are non-waiting"
-    Every `findBy…` / `findOneBy…` call is a single read against the current semantics
+    Every `findBy…`/`findOneBy…` call is a single read against the current semantics
     state. If you need to wait for a node to appear, use
     [`waitForNode(...)`](synchronization.md#waitfornode) instead.
 
@@ -87,7 +87,7 @@ this dialog" style assertions, not as a primary selector.
 | `node.role`                 | The semantics role, or `null`.                                    |
 | `node.isFocused`            | Focused state.                                                    |
 | `node.isDisabled`           | Disabled state.                                                   |
-| `node.isSelected`           | Selected state (toggleable / radio).                              |
+| `node.isSelected`           | Selected state (toggleable/radio).                              |
 | `node.editableText`         | Current text-field value.                                         |
 | `node.boundsInWindow`       | Layout bounds within the window's Compose surface.                |
 | `node.boundsOnScreen`       | Bounds in screen coordinates (HiDPI-corrected).                   |
@@ -122,6 +122,6 @@ If a selector doesn't return what you expect, dump the tree:
 println(automator.printTree())
 ```
 
-You'll see every window, every node, and the test tags / text / roles attached to them.
+You'll see every window, every node, and the test tags, text, and roles attached to them.
 This is usually the fastest way to find out whether the node simply isn't where you
 think it is, or hasn't been composed yet.

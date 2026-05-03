@@ -13,7 +13,7 @@ automator.longClick(send, holdFor = 600.milliseconds)
 ```
 
 All click helpers resolve the node's `centerOnScreen` and dispatch through `RobotDriver`,
-which compensates for HiDPI / display scaling.
+which compensates for HiDPI/display scaling.
 
 ## Mouse: swipes and scrolling
 
@@ -113,16 +113,16 @@ public surface:
   other applications. This is what end users experience and what
   `ComposeAutomator.inProcess()` wires up by default.
 - **`RobotDriver(robot)`** — same as the no-arg form but reuses an existing
-  `java.awt.Robot` you've already constructed (e.g. one targeted at a non-default
+  `java.awt.Robot` you've already constructed (e.g., one targeted at a non-default
   `GraphicsDevice`).
 - **`RobotDriver.synthetic(rootWindow)`** — synthetic AWT events posted straight into the
   target window's event queue. No real cursor motion, no global focus, doesn't fight with
   other processes. `synthetic` is a companion extension function in the
   `dev.sebastiano.spectre.core` package, so it needs an explicit import.
-- **`RobotDriver.headless()`** — a no-op adapter for tests and headless CI. Mouse / key
+- **`RobotDriver.headless()`** — a no-op adapter for tests and headless CI. Mouse/key
   calls are silently dropped, screenshots return a 1×1 empty image, and clipboard access
   is a no-op. Note that this only stubs out input/screenshot side effects; it does not
-  fake out the live `WindowTracker` / `SemanticsReader`. See
+  fake out the live `WindowTracker` and `SemanticsReader`. See
   [The automator](automator.md#what-an-automator-owns) for the full picture.
 
 The adapter-injecting constructor used internally by Spectre's tests is `internal` and
@@ -142,5 +142,5 @@ val automator = ComposeAutomator.inProcess(
 
 Synthetic input is the right choice when you're running tests in parallel JVMs, or when
 the test machine also runs unrelated UI work. Stick to real input for end-to-end smokes
-where the realism of the input matters (e.g. validating that a system shortcut reaches
+where the realism of the input matters (e.g., validating that a system shortcut reaches
 the app).

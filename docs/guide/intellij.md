@@ -67,7 +67,7 @@ That's the shape `:sample-intellij-plugin:uiTest` uses: it boots a real IntelliJ
 via `intellij-ide-starter`, installs the locally-built plugin, fires the action through
 the Driver API, and asserts every tagged Compose node lands in `idea.log`. CI runs it
 in [`ide-uitest.yml`](https://github.com/rock3r/spectre/blob/main/.github/workflows/ide-uitest.yml)
-when plugin / core / recording sources change.
+when plugin/core/recording sources change.
 
 ## Surface caveats
 

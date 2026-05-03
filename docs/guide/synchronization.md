@@ -31,7 +31,7 @@ fun mySpec() = runBlocking {
 }
 ```
 
-If you call `waitForIdle` / `waitForVisualIdle` from the EDT you'll get a clear
+If you call `waitForIdle`/`waitForVisualIdle` from the EDT you'll get a clear
 `IllegalStateException` rather than a deadlock.
 
 ## `waitForNode`
@@ -75,8 +75,8 @@ automator.waitForIdle(
 - The EDT has been drained.
 
 The fingerprint covers tracked windows, node identities, layout bounds, role, focus,
-disabled / selected flags, text, content descriptions, and editable text. If your
-animation only changes pixels (e.g. an indeterminate spinner that doesn't tick the
+disabled/selected flags, text, content descriptions, and editable text. If your
+animation only changes pixels (e.g., an indeterminate spinner that doesn't tick the
 semantics tree), the fingerprint will report idle even while the spinner spins — that's
 where `waitForVisualIdle` comes in.
 

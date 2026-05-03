@@ -5,7 +5,7 @@ Lessons learned from working in git worktrees on this project.
 ## ktfmt Version Mismatch
 
 The project's Gradle plugin bundles a specific ktfmt formatter version. If you have a
-different `ktfmt` CLI installed locally (e.g. via Homebrew), the two may format
+different `ktfmt` CLI installed locally (e.g., via Homebrew), the two may format
 differently. Specifically:
 
 - The CLI may leave unused imports that the Gradle plugin removes.

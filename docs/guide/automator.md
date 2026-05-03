@@ -22,16 +22,15 @@ val automator = ComposeAutomator.inProcess()
 ```
 
 For headless CI where constructing a real `java.awt.Robot` (or touching the system
-clipboard / screen) is unavailable, swap in `RobotDriver.headless()`:
+clipboard or screen) is unavailable, swap in `RobotDriver.headless()`:
 
 ```kotlin
 val automator = ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())
 ```
 
-`headless()` only stubs out the input / screenshot / clipboard side effects — mouse and
+`headless()` only stubs out the input/screenshot/clipboard side effects — mouse and
 key calls are silently dropped, screenshots return a 1×1 empty image, and clipboard
-operations are no-ops. It does **not** fake out the live `WindowTracker` /
-`SemanticsReader`, so the automator still inspects whatever Compose surfaces are
+operations are no-ops. It does **not** fake out the live `WindowTracker`/`SemanticsReader`, so the automator still inspects whatever Compose surfaces are
 actually on screen. For unit-style tests that need full isolation, inject test-specific
 `WindowTracker` and `SemanticsReader` instances too — the `testing` module's own test
 sources include an internal `newHeadlessAutomator()` helper that wires this up. It
@@ -136,7 +135,7 @@ AWT events directly into the target window's event queue:
 
 - No real cursor moves, no keyboard focus stolen.
 - Tests in parallel processes can run without coordinating focus.
-- Some interactions (e.g. system-level shortcuts) won't behave the same way as real input.
+- Some interactions (e.g., system-level shortcuts) won't behave the same way as real input.
 
 See [Driving input](interactions.md) for the per-call differences.
 

@@ -54,7 +54,7 @@ Notes:
 ### ktfmt
 
 - Prefer running `ktfmtFormat` over hand-formatting large Kotlin/Gradle changes.
-- If formatting changes are unrelated noise, split them from behavior changes when practical.
+- If formatting changes are unrelated noise, split them from behaviour changes when practical.
 - Treat the formatter output as canonical unless there is a compelling repo-level reason to change
   the style configuration.
 
