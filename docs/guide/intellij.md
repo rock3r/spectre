@@ -17,18 +17,23 @@ import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.thisLogger
+import com.intellij.openapi.wm.WindowManager
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.RobotDriver
+import dev.sebastiano.spectre.core.synthetic
 
 class RunSpectreAction : AnAction() {
     override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+        val ideFrame = WindowManager.getInstance().getFrame(project) ?: return
+
         // Build the automator on a pooled background thread — never on the EDT.
         // The polling loop below sleeps between ticks; sleeping on the EDT would
         // freeze AWT and prevent Compose from recomposing the very state we're
         // polling for.
         ApplicationManager.getApplication().executeOnPooledThread {
             val automator = ComposeAutomator.inProcess(
-                robotDriver = RobotDriver.headless(),
+                robotDriver = RobotDriver.synthetic(rootWindow = ideFrame),
             )
             thisLogger().info(automator.printTree())
         }
@@ -39,25 +44,46 @@ class RunSpectreAction : AnAction() {
 Wire the action into `plugin.xml`, run the plugin with `./gradlew :your-plugin:runIde`,
 and trigger it from the **Tools** menu (or whatever group you registered it under).
 
-### `RobotDriver.headless()` is the right choice here
+### Pick the right `RobotDriver` for in-IDE work
 
-For an IDE-hosted automator, prefer `RobotDriver.headless()` over the default real-OS
-driver. Two reasons:
+The three driver options behave differently when the JVM running the automator is
+also the JVM hosting the UI under test:
 
-- The IDE already owns the screen and keyboard focus you'd otherwise be fighting for
-  via `java.awt.Robot`.
-- "Clicks" inside the IDE-hosted panel are typically better delivered through Compose's
-  own `OnClick` semantics action than through OS-level mouse events — see the next
-  section.
+- **`RobotDriver.synthetic(rootWindow = ideFrame)`** — synthetic AWT events posted
+  directly into the IDE's window hierarchy. The full `automator.click(...)` /
+  `doubleClick(...)` / `swipe(...)` / `typeText(...)` / `pressKey(...)` surface
+  works as you'd expect, but events skip the OS input layer: no real cursor motion,
+  no global focus, no fight with other applications on the same machine. **Good
+  default for in-IDE automators**, especially under parallel test execution.
+  `synthetic` is a companion extension function in `dev.sebastiano.spectre.core`,
+  so it needs an explicit import.
+- **`RobotDriver()`** — real OS-level input via `java.awt.Robot`. The mouse cursor
+  moves, keyboard focus is global, and the input traverses the OS event chain.
+  This is the most realistic path and the only one that exercises OS-level
+  shortcut handling (Cmd+S, Cmd+Tab, etc.), focus transitions, and cross-window
+  interactions — pick this when the test is specifically validating those. The
+  trade-off is that the cursor visibly moves on screen and the IDE has to be the
+  focused window, so two parallel test JVMs racing for focus on the same screen
+  will collide.
+- **`RobotDriver.headless()`** — every input call (mouse, keyboard, clipboard) and
+  every screenshot becomes a silent no-op. Useful only when you're driving the UI
+  exclusively through Compose semantics actions (see below) and you actively want
+  to suppress side effects. With this driver, **`automator.click(...)` and friends
+  do nothing** — that's the point, but it's also the trap.
 
-Headless stubs out input / screenshot / clipboard side effects without affecting the
-live `WindowTracker` and `SemanticsReader`, so the automator still reads real semantics
-from the live tool window.
+All three leave `WindowTracker` and `SemanticsReader` alone, so the automator reads
+real semantics from the live tool window in every case.
 
-### Driving interactions via semantics actions
+### Optional: drive interactions via semantics actions
 
-OS-level input is the wrong tool for in-IDE automation. Instead, walk the semantics
-tree and invoke the `SemanticsActions.OnClick` action directly on the EDT:
+There's a third interaction style that doesn't go through any `RobotDriver` at all:
+walk the semantics tree and invoke the `SemanticsActions.OnClick` action directly on
+the EDT. This is what Compose's own test rule does internally. It's useful when:
+
+- You're using `RobotDriver.headless()` and need clicks to do something.
+- You want clicks that are robust against window focus, occlusion, parallel test
+  runs, and animation timing — semantics actions toggle state synchronously, no
+  layout dependency.
 
 ```kotlin
 import androidx.compose.ui.semantics.SemanticsActions
@@ -76,9 +102,10 @@ ApplicationManager.getApplication().invokeAndWait {
 }
 ```
 
-This is the same pattern Compose's own test rule uses internally. It bypasses input
-dispatch entirely and toggles state through the semantics tree — robust against window
-focus, occlusion, and parallel test runs.
+The trade-off: only nodes that expose an `OnClick` action (most `Modifier.clickable`
+content does) can be driven this way, and you bypass any composable that reacts to
+real pointer events but doesn't expose a semantics action. With `synthetic`, the
+real-pointer-style path is also available.
 
 ### EDT marshalling
 
