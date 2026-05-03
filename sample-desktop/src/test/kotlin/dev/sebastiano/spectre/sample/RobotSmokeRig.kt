@@ -134,17 +134,17 @@ internal fun SmokeContent(state: SmokeState) {
 
 internal data class ScenarioResult(val label: String, val passed: Boolean, val detail: String)
 
-internal fun waitForFrame(ref: AtomicReference<JFrame>) {
+internal suspend fun waitForFrame(ref: AtomicReference<JFrame>) {
     val deadline = System.nanoTime() + WINDOW_OPEN_TIMEOUT_MS * 1_000_000L
     while (System.nanoTime() < deadline) {
         val frame = ref.get()
         if (frame != null && frame.isShowing) return
-        Thread.sleep(50)
+        delay(50.milliseconds)
     }
     error("frame never showed within ${WINDOW_OPEN_TIMEOUT_MS}ms")
 }
 
-internal fun waitForLayout(state: SmokeState) {
+internal suspend fun waitForLayout(state: SmokeState) {
     val deadline = System.nanoTime() + LAYOUT_TIMEOUT_MS * 1_000_000L
     while (System.nanoTime() < deadline) {
         val counter = state.counterBounds
@@ -158,7 +158,7 @@ internal fun waitForLayout(state: SmokeState) {
                 colorPatch.width > 0f &&
                 colorPatch.height > 0f
         if (ready) return
-        Thread.sleep(50)
+        delay(50.milliseconds)
     }
     error(
         "Compose targets never laid out within ${LAYOUT_TIMEOUT_MS}ms; " +
