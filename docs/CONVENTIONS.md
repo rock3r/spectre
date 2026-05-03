@@ -52,7 +52,11 @@ These rules apply to new and modified code:
 
 ## CI
 
-- GitHub Actions lives in `.github/workflows/ci.yml`.
+- The primary code CI is `.github/workflows/ci.yml`. Other workflows under
+  `.github/workflows/` cover platform-specific builds (`macos.yml`, `macos-check.yml`,
+  `windows.yml`), the IDE-hosted UI test (`ide-uitest.yml`), `:sample-desktop`
+  validation on Windows and Linux (`validation-windows.yml`, `validation-linux.yml`),
+  and the docs site (`docs.yml`).
 - The default CI job runs on pull requests and pushes to `main`.
 - Keep local verification aligned with CI to avoid “works on my machine” drift.
 

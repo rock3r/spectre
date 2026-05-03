@@ -31,6 +31,14 @@ architecture as the macOS Swift helper.
 > and PRs widening the coverage are very welcome — open an issue with your distro /
 > compositor / session combo and we'll work through it.
 
+## Documentation
+
+User guide and API documentation: **<https://spectre.sebastiano.dev>**.
+
+Start at [Getting started](https://spectre.sebastiano.dev/guide/getting-started/) for the
+shape of a Spectre test, or [The automator](https://spectre.sebastiano.dev/guide/automator/)
+for the mental model.
+
 ## Modules
 
 - `core` — semantics tree, selectors, coordinate mapping, Robot-backed input.
@@ -75,8 +83,7 @@ Two heavier checks live outside `:check`:
 ## Supported JVMs
 
 JBR 21 is the dev-loop default. JBR 25 also gets exercised via the IDE-hosted test (bundled
-with IntelliJ 2026.1). Any JDK 21+ works for the non-IDE modules; CI runs on Temurin 21
-because `setup-java`'s JBR 21 entry is missing.
+with IntelliJ 2026.1). Any JDK 21+ works for the non-IDE modules. CI runs on Temurin 21.
 
 ## CI
 
@@ -97,11 +104,13 @@ because `setup-java`'s JBR 21 entry is missing.
 
 ## Reference docs
 
+The user guide and these reference pages are also published as a single browseable site
+at <https://spectre.sebastiano.dev>.
+
 - [Architecture](docs/ARCHITECTURE.md)
 - [Testing](docs/TESTING.md)
 - [Conventions](docs/CONVENTIONS.md)
 - [Static analysis](docs/STATIC-ANALYSIS.md)
 - [Recording limitations](docs/RECORDING-LIMITATIONS.md)
-- [Bootstrap plan](docs/bootstrap-plan.md)
 - [Spike gist](https://gist.github.com/rock3r/8e520bb3fe8fe5886367d5e22cefbab8) — original
   design notes.

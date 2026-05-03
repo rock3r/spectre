@@ -1,30 +1,50 @@
 # Recording limitations
 
-The `recording` module ships:
-- `FfmpegRecorder` — region capture via `ffmpeg` against the platform's native capture device.
-  Three backends auto-selected from `os.name`: `avfoundation` (macOS), `gdigrab` (Windows),
-  `x11grab` (Linux Xorg). Trade-offs below.
-- `ScreenCaptureKitRecorder` (#18 — landed) — macOS-only window-targeted capture via a bundled
-  Swift helper. Removes the "anything overlapping the region appears in the recording" class
-  of problems for top-level windows. Falls outside the region-capture trade-off list below; see
-  the recording module README for usage.
-- `FfmpegWindowRecorder` (#22 / #55 — landed) — Windows-only title-based window capture via
-  `gdigrab title=`. Mirrors the SCK ergonomics for Windows top-level Compose windows.
+## Two recording modes
 
-The rest of this document describes the region-capture path (relevant on every platform when
-there's no host window to target). Use ScreenCaptureKit / FfmpegWindowRecorder when you have a
-top-level `ComposeWindow` you want to record cleanly; use region capture for embedded
-`ComposePanel` surfaces or arbitrary screen rectangles.
+Before reading the rest of this page, it's worth being explicit about what "recording"
+means here. The `recording` module exposes two structurally different ways of producing
+a video file, and each has its own limitations:
+
+- **Region capture** — records a fixed `Rectangle` of the virtual desktop, frame by
+  frame. The source of pixels is the OS framebuffer (or the platform's nearest
+  equivalent — `avfoundation` on macOS, `gdigrab` on Windows, `x11grab` on Linux Xorg,
+  or the Wayland compositor's PipeWire stream on Linux Wayland). Whatever is showing
+  on screen inside that rectangle goes into the file, regardless of which window is
+  there. Region capture is the only path available for embedded surfaces (a
+  `ComposePanel` inside an IntelliJ tool window, a `JFrame`, etc.) because there's no
+  top-level OS window to target.
+- **Window-targeted capture** — captures a specific OS window's pixels directly, not
+  the screen rectangle the window happens to occupy. The source is the window's own
+  backing store (`ScreenCaptureKit` on macOS) or the OS-level `gdigrab title=` capture
+  on Windows. Because the source is the window itself, movement, occlusion, and
+  off-screen position don't break the recording. This path is the right choice when
+  you have a top-level `ComposeWindow`.
+
+Backend → mode mapping:
+
+| Backend                       | Mode                                                |
+| ----------------------------- | --------------------------------------------------- |
+| `FfmpegRecorder`              | Region capture (`avfoundation`/`gdigrab`/`x11grab`).|
+| `WaylandPortalRecorder`       | Region capture, sourced from the Wayland portal.    |
+| `ScreenCaptureKitRecorder`    | Window-targeted (macOS).                            |
+| `FfmpegWindowRecorder`        | Window-targeted (Windows, `gdigrab title=`).        |
+| `AutoRecorder`                | Routes to the right one based on `TitledWindow?`.   |
+
+The rest of this document is mostly about region capture's constraints, because that's
+where the failure modes are. The window-targeted backends exist to sidestep those
+failure modes, and the section below
+([Window-targeted capture](#window-targeted-capture)) explains how they do it.
 
 ## Platform
 
 - **macOS** — `avfoundation` region capture. Requires the Screen Recording permission.
-- **Windows** — `gdigrab` region capture (#22). Plus title-based window capture via
-  `FfmpegWindowRecorder` (#55).
-- **Linux Xorg sessions** — `x11grab` region capture (#75 / #76). Reads `DISPLAY`. Routine
+- **Windows** — `gdigrab` region capture, plus title-based window capture via
+  `FfmpegWindowRecorder`.
+- **Linux Xorg sessions** — `x11grab` region capture. Reads `DISPLAY`. Routine
   validation has only been on Ubuntu 22.04's Xorg session (one machine, one X server build)
   and on CI under `xvfb-run` (Xorg protocol over a virtual framebuffer, no GPU). Other
-  Xorg WMs / distros fall under the "Linux is best-effort, contributions welcome" line in
+  Xorg WMs/distros fall under the "Linux is best-effort, contributions welcome" line in
   the README.
 - **Linux Wayland sessions** — `gst-launch-1.0` driven through the
   `xdg-desktop-portal` ScreenCast interface, with the PipeWire FD passed to the encoder by a
@@ -32,16 +52,17 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
   `recording/native/linux/`). The JVM-side `WaylandPortalRecorder` spawns the helper and
   talks to it over stdin/stdout via newline-delimited JSON. **First call within a session
   pops the compositor's "share your screen" dialog**; subsequent calls reuse the grant via
-  the portal's `restore_token`. Why the helper: the JVM-only attempt (#77 stage 2) hit a
-  dbus-java UnixFD-unmarshalling bug that wasn't fixable trivially, and Rust's `std::process`
+  the portal's `restore_token`. Why the helper: a pure-JVM attempt hit a dbus-java
+  UnixFD-unmarshalling bug that wasn't fixable trivially, and Rust's `std::process`
   makes FD inheritance into `gst-launch` a one-liner where the JVM's `ProcessBuilder`
   doesn't expose the necessary `fcntl(F_SETFD, ...)` knob. The helper-as-subprocess shape
   also matches the macOS SCK helper (`recording/native/macos/`) — same pattern, same
   bundling, same recorder-skeleton on the JVM side.
 
-  Validated end-to-end on Ubuntu 22.04 / GNOME 42 / mutter (real-pixel mp4 with the smoke
-  runner, 2026-05-02). KDE / Plasma, sway, wlroots-based compositors, non-Ubuntu distros,
-  and other Ubuntu versions aren't part of the routine validation matrix yet — the
+  Validated end-to-end on Ubuntu 22.04/GNOME 42/mutter and Ubuntu 24.04/GNOME/mutter
+  (real-pixel mp4 with the smoke runner, 2026-05-02). KDE/Plasma, sway, wlroots-based
+  compositors, non-Ubuntu distros, and other Ubuntu versions aren't part of the
+  routine validation matrix yet — the
   xdg-desktop-portal interface is standardised across compositors so most should "just
   work", but bug reports are how we'll find out. See the README for the contribution invite.
 
@@ -50,7 +71,7 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
   (default 30). When the source delivers fewer frames than the target, `videorate` pads
   the gaps by duplicating the last frame; when it delivers more, the excess gets dropped.
   On real hardware with GPU-side compositor composition this is a no-op — the source
-  comfortably sustains 30 fps and the output is byte-clean. On a Hyper-V / VirtualBox VM
+  comfortably sustains 30 fps and the output is byte-clean. On a Hyper-V/VirtualBox VM
   with a software-rendered virtual GPU, the source rate dips into the 5–25 fps range and
   the output mp4 contains visible duplicate-frame runs even though the file metadata
   reports a flat 30 fps. This is faithful capture, not a recording bug — the compositor
@@ -59,17 +80,21 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
   `RecordingOptions.frameRate` to match what your VM actually produces (15 is usually a
   safe floor for software-rendered VM GPUs).
 
-## Capture mode
+## Region capture
 
-- **Region capture, not window capture**. v1 records a fixed `Rectangle` of the virtual desktop —
-  whatever pixels the screen happens to be showing inside that region land in the file. The region
-  is bound at `Recorder.start(...)` time and does not follow a window; the v2 work surfaces a
-  proper window-targeted backend via ScreenCaptureKit.
-- **Embedded `ComposePanel` surfaces always fall through to region capture.** Window-targeted
-  capture is gated on a non-zero `windowHandle`, which Spectre populates only for top-level
-  `ComposeWindow`s. A panel embedded inside an IntelliJ tool window, a `JFrame`, a `JDialog`, or a
-  `SwingPanel` host inside Compose has `windowHandle == 0L` and gets the region path. Practical
-  consequences:
+- **Region capture, not window capture**. Region capture records a fixed `Rectangle` of
+  the virtual desktop — whatever pixels the screen happens to be showing inside that
+  region land in the file. The region is bound at `Recorder.start(...)` time and does
+  not follow a window. Use `ScreenCaptureKitRecorder` (macOS) or `FfmpegWindowRecorder`
+  (Windows) when you have a top-level window to target — the next section covers what
+  the window-targeted backends do differently.
+- **Embedded `ComposePanel` surfaces always fall through to region capture.**
+  `AutoRecorder.start(window: TitledWindow?, region: Rectangle, …)` picks window-targeted
+  capture only when `window` is non-null and (on Windows) has a non-blank title. The
+  `Frame.asTitledWindow()` adapter exposes that title for top-level `ComposeWindow`s, but
+  a panel embedded inside an IntelliJ tool window, a `JFrame`, a `JDialog`, or a
+  `SwingPanel` host inside Compose has no top-level `Frame` to adapt — callers pass
+  `window = null` and get the region path. Practical consequences:
   - Anything that visually overlaps the panel — other windows, the menu bar, OS notifications, a
     floating popup that escapes the panel's bounds — appears in the recording.
   - The captured region is the panel's screen-space bounds at start. If the host window moves or
@@ -77,16 +102,50 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
     whatever is now under the original rectangle (often empty desktop).
   - Off-screen panels record black frames.
 
-## What window movement / popups do during a recording
+### Window movement and popups under region capture
 
-- **Window movement isn't followed**. Move the host window after `start(...)` and the recording
-  keeps capturing the original screen rectangle. Stop and restart to follow the new position.
-- **Popups that escape the captured region are partially clipped**. Compose Desktop's `OnWindow`
-  popup layer renders in a separate top-level OS window; if that popup pops up outside the recorded
-  rectangle the recording will not include it. `OnSameCanvas` and `OnComponent` popups stay inside
-  the panel/window bounds and are recorded as long as the panel itself is.
+These limitations are specific to the region path; the window-targeted backends below
+solve them.
 
-## HiDPI / Retina
+- **Window movement isn't followed.** Move the host window after `start(...)` and the
+  recording keeps capturing the original screen rectangle. Stop and restart to follow
+  the new position.
+- **Popups that escape the captured region are clipped.** Compose Desktop's `OnWindow`
+  popup layer renders in a separate top-level OS window; if that popup appears outside
+  the recorded rectangle the recording does not include it. `OnSameCanvas` and
+  `OnComponent` popups stay inside the panel / window bounds and are recorded as long
+  as the panel itself is.
+
+## Window-targeted capture
+
+`ScreenCaptureKitRecorder` (macOS) and `FfmpegWindowRecorder` (Windows, `gdigrab title=`)
+target a specific OS window rather than a screen rectangle, which removes the
+region-capture failure modes described above:
+
+- **Window movement is followed automatically.** Drag the window across the screen
+  while recording and the file keeps capturing its pixels — no need to stop and
+  restart.
+- **Occlusion doesn't matter.** Other windows passing in front of the target window
+  do not appear in the recording. The capture reads the target's own backing store,
+  not the composited screen.
+- **Off-screen target keeps recording.** A window dragged off the visible desktop
+  still has its pixels composed, so capture continues. (Compare the region path,
+  which would record whatever's now under the original rectangle.)
+- **`OnWindow` popups are not captured by the target's recorder**, because the popup
+  is a separate OS window with its own title — it isn't the window being targeted.
+  `OnSameCanvas` and `OnComponent` popups are part of the target window's surface
+  and are recorded normally.
+
+`WaylandPortalRecorder` is structurally a third path: the portal hands the capture a
+PipeWire stream from the compositor, scoped to a user-picked monitor, which then gets
+cropped to the requested region. The monitor-level source means it doesn't follow a
+specific window the way SCK and `FfmpegWindowRecorder` do — moving the target window
+within the same monitor stays within the captured stream, but moving it off-monitor
+or to another display does not. Treat its movement-and-popup behaviour as closer to
+region capture than to window-targeted, with the bonus that the source is the
+compositor and not raw framebuffer reads.
+
+## HiDPI/Retina
 
 - The recorded resolution is the **screen-pixel** size of the region, not the dp size. A 400×300dp
   region on a 2× display becomes an 800×600 pixel video.
@@ -103,21 +162,20 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
   landing in the output file. A failure to spawn (binary not on PATH, codec unavailable, AVFoundation
   device busy) surfaces as an exception from `start(...)`, not as a silent "successful" handle.
 - The handle MUST be stopped (`RecordingHandle.stop(...)`) for the file to be flushed cleanly. A
-  JVM exit without stop leaves a partial / non-finalised file and an orphaned subprocess.
+  JVM exit without stop leaves a partial/non-finalised file and an orphaned subprocess.
 
-## What's NOT a v1 limitation
+## Current non-limitations
 
 - Cursor capture is configurable via `RecordingOptions.captureCursor` and works under the region
   path. The cursor pixels are baked into the frames; there is no overlay you can toggle in
   post-processing.
-- Audio capture is intentionally absent — v1 records video only. Adding audio is a follow-up.
+- Audio capture is intentionally absent — Spectre currently records video only.
 
-## What v2 changed
+## Window-targeted recording
 
-- Window-targeted capture via `ScreenCaptureKitRecorder` (#18) is now the recommended path for
-  top-level `ComposeWindow` surfaces. It removes the "anything overlapping the region appears
-  in the video" class of problems and follows the window across the screen.
-- The embedded-panel path is still region capture only — there's no host window for SCK to
-  target. A future "render the panel into a frame buffer and feed `ffmpeg` on stdin" backend
-  (the synthetic-screenshot path in `SyntheticRobotAdapter` is the blueprint) would close that
-  gap; not currently scoped.
+- Window-targeted capture via `ScreenCaptureKitRecorder` is the recommended path for
+  top-level `ComposeWindow` surfaces on macOS. It removes the "anything overlapping the
+  region appears in the video" class of problems and follows the window across the
+  screen. Windows has the equivalent path via `FfmpegWindowRecorder` (`gdigrab title=`).
+- The embedded-panel path is still region capture only — there's no host window for SCK
+  or `gdigrab title=` to target.

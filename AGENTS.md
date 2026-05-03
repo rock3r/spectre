@@ -22,14 +22,29 @@ repo docs as the current source of truth.
 
 Keep this file focused on operating rules. Use the docs below for implementation guidance:
 
+### Contributor / agent-facing
+
 | Document | Use it for |
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Module map, dependency direction, and project invariants |
 | [docs/TESTING.md](docs/TESTING.md) | TDD flow, contract tests, and validation expectations |
 | [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | File placement, coding style, and git/build workflow |
 | [docs/STATIC-ANALYSIS.md](docs/STATIC-ANALYSIS.md) | Detekt, ktfmt, and CI-backed quality expectations |
-| [docs/bootstrap-plan.md](docs/bootstrap-plan.md) | Current repo bootstrap scope and near-term module intent |
+| [docs/RECORDING-LIMITATIONS.md](docs/RECORDING-LIMITATIONS.md) | Per-platform recording trade-offs, frame drop behaviour, audio caveats |
+| [docs/DOCS-STYLE.md](docs/DOCS-STYLE.md) | Style guide and verification checklist for the user-facing docs site (excluded from the published site itself) |
 | [Compose Desktop automator spike gist](https://gist.github.com/rock3r/8e520bb3fe8fe5886367d5e22cefbab8) | External design notes and open spike questions |
+
+### User-facing
+
+| Document | Use it for |
+|---|---|
+| [docs/index.md](docs/index.md) + [docs/guide/](docs/guide/) | End-user user guide (installation, getting started, automator concepts, selectors, input, synchronization, JUnit integration, recording, cross-JVM, IntelliJ-hosted Compose, troubleshooting) |
+| [mkdocs.yml](mkdocs.yml), [requirements-docs.txt](requirements-docs.txt), [.github/workflows/docs.yml](.github/workflows/docs.yml) | Docs site config — MkDocs Material, deployed to GitHub Pages at <https://spectre.sebastiano.dev> |
+
+The contents of `docs/` are published as a MkDocs site, so all internal links inside
+`docs/` must resolve relative to `docs/` itself. Files outside `docs/` (workflows,
+sources at repo root) must be linked as absolute `https://github.com/rock3r/spectre/...`
+URLs, or the `mkdocs build --strict` step in CI will fail.
 
 ## Non-Negotiables
 
@@ -54,6 +69,21 @@ Otherwise, prefer asking whether to create a worktree before starting feature wo
 Plans belong in `.plans/` at the repo root, which should stay gitignored.
 
 Use the local `using-git-worktree` skill when setting up an isolated workspace.
+
+### Pre-push checklist
+
+Before every push from a worktree:
+
+- [ ] `./gradlew check` passes (this is the CI gate — detekt + ktfmt + tests).
+- [ ] After rebase: verified key changes survived.
+
+For faster iteration *before* the final push, target individual checks:
+
+- `./gradlew :test --tests "*TestName*"` — run a specific failing test.
+- `./gradlew ktfmtCheckMain` — verify formatting only.
+- `./gradlew detektMain` — verify detekt only.
+
+**Always run `./gradlew check` before the actual push.**
 
 ### Regressions And Scope Discipline
 

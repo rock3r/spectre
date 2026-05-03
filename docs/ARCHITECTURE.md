@@ -30,7 +30,7 @@ Guidelines:
 - `sample-desktop` is a harness, not the source of truth for automation logic.
 - `testing` should exercise public seams and reusable fixtures, not reach through private internals
   without a strong reason.
-- `recording` should isolate OS- and native-library-specific behavior from the core query/input
+- `recording` should isolate OS- and native-library-specific behaviour from the core query/input
   APIs.
 
 ## Spike Constraints
@@ -67,7 +67,7 @@ Expected long-term responsibilities:
 Expected long-term responsibilities:
 
 - request/response DTOs
-- serialization
+- serialisation
 - embedded HTTP server
 - remote client
 
@@ -84,10 +84,24 @@ Expected long-term responsibilities:
 Keep native capture boundaries narrow and test the pure pieces separately from OS integration.
 
 Current backends:
-- `FfmpegRecorder` — region capture via `ffmpeg` + `avfoundation` (v1).
-- `screencapturekit.ScreenCaptureKitRecorder` — window-targeted capture on macOS via a bundled
-  Swift helper (`recording/native/macos/`, v2 / #18). The helper is built by Gradle on macOS and
-  staged into the module's `src/main/resources/native/macos/` so the JAR carries it.
+
+- `FfmpegRecorder` — region capture via a system `ffmpeg` binary, with the input device
+  picked per OS by `FfmpegBackend.detect()`: `avfoundation` on macOS, `gdigrab` on
+  Windows, and `x11grab` on Linux Xorg. (Linux Wayland is rejected here; see
+  `LinuxX11Grab.checkNotWayland`.)
+- `FfmpegWindowRecorder` — Windows-only window-targeted capture via `gdigrab title=`.
+  Window movement is followed automatically; occlusion doesn't matter.
+- `screencapturekit.ScreenCaptureKitRecorder` — macOS-only window-targeted capture via a
+  bundled Swift helper (`recording/native/macos/`). The helper is built by Gradle on
+  macOS and staged into the module's `src/main/resources/native/macos/` so the JAR
+  carries it.
+- `portal.WaylandPortalRecorder` — Linux Wayland capture via `xdg-desktop-portal`'s
+  ScreenCast interface, driven by a bundled Rust helper
+  (`recording/native/linux/spectre-wayland-helper`) that hands the PipeWire FD to
+  `gst-launch-1.0`.
+- `AutoRecorder` — high-level router that picks per call from `TitledWindow?` + region +
+  OS detection: Wayland portal first, then `window == null` → ffmpeg region, then macOS
+  SCK, then Windows title-based capture, then ffmpeg region as fallback.
 
 ### `testing`
 
@@ -109,10 +123,10 @@ Do not let the sample app become a dumping ground for production logic.
 ### `sample-intellij-plugin`
 
 A minimal IntelliJ plugin used to validate that Spectre's in-process automator works against
-IDE-hosted Compose surfaces (Jewel-on-IntelliJ tool windows). The plugin is **never published**
-— it exists only for `runIde` validation against #13's checklist (popup discovery and
-`ComposePanel` semantics in the IDE-hosted case). Same constraint as `sample-desktop`: do not
-move production logic here.
+IDE-hosted Compose surfaces (Jewel-on-IntelliJ tool windows). The plugin is **never
+published** — it exists only for `runIde` validation against #13's checklist (popup
+discovery and `ComposePanel` semantics in the IDE-hosted case). Same constraint as
+`sample-desktop`: do not move production logic here.
 
 Run via `./gradlew :sample-intellij-plugin:runIde`, then `Tools → Run Spectre Against the
 Sample Tool Window`. The action drives the in-process `ComposeAutomator` against the Jewel
@@ -123,7 +137,7 @@ The non-interactive counterpart is `./gradlew :sample-intellij-plugin:uiTest`
 installs the locally-built plugin zip, fires `RunSpectreAction` through the Driver API, and
 asserts every tagged Compose node from `SpectreSampleToolWindowContent` appears in
 `idea.log`. Same assertions as the manual smoke, no human in the loop. Opt-in (not wired into
-`:check`); CI runs it in `.github/workflows/ide-uitest.yml` when plugin / core / recording
+`:check`); CI runs it in `.github/workflows/ide-uitest.yml` when plugin/core/recording
 sources change.
 
 ## Architectural Invariants
@@ -132,9 +146,9 @@ These should remain true as the codebase grows:
 
 1. `core` stays usable in-process without requiring the server.
 2. Selector/query logic lives in `core`, not in the sample app or transport layer.
-3. Transport modules serialize public/core-facing models instead of inventing parallel ones unless
+3. Transport modules serialise public/core-facing models instead of inventing parallel ones unless
    there is a strong compatibility reason.
 4. Platform-specific integrations should be isolated behind small interfaces at module boundaries.
-5. Research-only shortcuts are acceptable in the sample app, but reusable behavior must be moved
+5. Research-only shortcuts are acceptable in the sample app, but reusable behaviour must be moved
    into the proper module before it is treated as part of the product surface.
 
