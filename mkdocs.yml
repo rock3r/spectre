@@ -75,6 +75,9 @@ markdown_extensions:
   - pymdownx.tasklist:
       custom_checkbox: true
 
+exclude_docs: |
+  DOCS-STYLE.md
+
 plugins:
   - search
 
