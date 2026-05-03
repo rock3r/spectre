@@ -85,6 +85,7 @@ import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.RobotDriver
 import dev.sebastiano.spectre.testing.AutomatorFactory
 import dev.sebastiano.spectre.testing.ComposeAutomatorExtension
+import org.junit.jupiter.api.extension.RegisterExtension
 
 private val headlessFactory: AutomatorFactory = {
     ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())

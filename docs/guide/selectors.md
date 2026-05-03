@@ -106,9 +106,13 @@ When you need more than the canonical selectors, drop down to
 
 ```kotlin
 val secondWindow = automator.tree(windowIndex = 1)
-val firstRoot    = secondWindow.roots().first()
-val matching     = firstRoot.descendants().filter { it.isFocused && it.role == Role.Button }
+val matching = secondWindow.allNodes()
+    .filter { it.isFocused && it.role == Role.Button }
 ```
+
+`AutomatorWindow.allNodes()` returns every node in the window in tree order.
+`AutomatorWindow.roots()` returns the top-level nodes only; from there you can recurse
+through `node.children` to walk the tree manually.
 
 ## Debugging
 

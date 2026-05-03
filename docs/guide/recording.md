@@ -33,13 +33,13 @@ and picks the appropriate backend:
 ```kotlin
 import dev.sebastiano.spectre.recording.AutoRecorder
 import dev.sebastiano.spectre.recording.RecordingOptions
-import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
+import dev.sebastiano.spectre.recording.screencapturekit.asTitledWindow
 import java.awt.Rectangle
 import java.nio.file.Path
 
 val recorder = AutoRecorder()
 val handle = recorder.start(
-    window = TitledWindow(title = "My App"),
+    window = composeWindow.asTitledWindow(), // any java.awt.Frame works
     region = Rectangle(100, 100, 800, 600),
     output = Path.of("build/recordings/my-test.mp4"),
     options = RecordingOptions(),
@@ -52,25 +52,30 @@ try {
 }
 ```
 
+`TitledWindow` is an interface. The production adapter is the `Frame.asTitledWindow()`
+extension shown above; tests typically wire a small in-memory implementation.
+
 Routing logic, in order:
 
-1. **`window == null`** → `ffmpeg` region capture. Use this when there's no clear window
-   to target (e.g. a `ComposePanel` embedded in a Swing host).
-2. **macOS + a window** → bundled ScreenCaptureKit helper (`WindowRecorder`). The
+1. **Linux Wayland session with a portal recorder wired up** → `WaylandPortalRecorder`,
+   regardless of whether `window` is null. The portal flow handles both cases by
+   capturing the user-picked monitor and cropping to the requested region. This branch
+   wins first because Wayland can't fall through to `x11grab` — `LinuxX11Grab` throws on
+   Wayland sessions. The portal recorder runs a Rust helper
+   (`spectre-wayland-helper`) that drives `xdg-desktop-portal`'s ScreenCast interface
+   and hands a PipeWire FD to `gst-launch-1.0`. First call pops a permission dialog;
+   subsequent calls in the same JVM run reuse the grant.
+2. **`window == null`** (non-Wayland) → `ffmpeg` region capture. Use this shape when
+   there's no clear window to target (e.g. a `ComposePanel` embedded in a Swing host).
+3. **macOS + a window** → bundled ScreenCaptureKit helper (`WindowRecorder`). The
    helper is a tiny Swift binary owned by Spectre. If the helper isn't bundled in the
    running JAR (e.g. you built on Linux but ran on macOS), it falls back to `ffmpeg`
    region capture and warns on stderr. Operational SCK failures (permission denied, target
    not found, helper crashed) propagate as exceptions instead of falling back silently.
-3. **Windows + a window with a non-blank title** → `FfmpegWindowRecorder` (`gdigrab
+4. **Windows + a window with a non-blank title** → `FfmpegWindowRecorder` (`gdigrab
    title=` capture). Window movement is followed automatically; occlusion doesn't matter.
-4. **Linux Wayland session** → `WaylandPortalRecorder`. The portal-based recorder runs a
-   Rust helper (`spectre-wayland-helper`) that drives `xdg-desktop-portal`'s ScreenCast
-   interface and hands a PipeWire FD to `gst-launch-1.0`. First call pops a permission
-   dialog; subsequent calls in the same JVM run reuse the grant.
 5. **Otherwise** → `ffmpeg` region capture. The backend resolves to `gdigrab` on Windows
-   and `x11grab` on Linux Xorg. Linux Wayland is caught earlier (step 4) and `x11grab`
-   would refuse anyway because Wayland blocks framebuffer reads from non-compositor
-   clients.
+   and `x11grab` on Linux Xorg.
 
 ## Lower-level backends
 

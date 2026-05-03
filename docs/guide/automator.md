@@ -109,8 +109,9 @@ By default `ComposeAutomator.inProcess()` uses `RobotDriver()` — `java.awt.Rob
 real OS-level input. That's what end users actually do, so it's the most realistic.
 
 The trade-off is that real OS input fights for global focus. Two parallel test JVMs
-clicking at the same time will collide. For that case `RobotDriver.synthetic(...)`
-dispatches AWT events directly into the target window's event queue:
+clicking at the same time will collide. For that case `RobotDriver.synthetic(rootWindow)`
+(a companion extension function in the `dev.sebastiano.spectre.core` package) dispatches
+AWT events directly into the target window's event queue:
 
 - No real cursor moves, no keyboard focus stolen.
 - Tests in parallel processes can run without coordinating focus.

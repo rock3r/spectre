@@ -26,10 +26,13 @@ import io.ktor.server.netty.Netty
 
 val automator = ComposeAutomator.inProcess()
 
-embeddedServer(Netty, port = 8765) {
+embeddedServer(Netty, port = 9274) {
     installSpectreRoutes(automator)
 }.start(wait = false)
 ```
+
+`9274` is the default Spectre listens on (`HttpComposeAutomator.DEFAULT_PORT`); pick any
+free port and pass it to both sides if that's taken.
 
 `installSpectreRoutes` mounts everything under `/spectre` by default; pass `basePath =
 "/foo"` if you need it elsewhere.
@@ -58,7 +61,7 @@ import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.server.http
 import kotlinx.coroutines.runBlocking
 
-ComposeAutomator.http(host = "localhost", port = 8765).use { remote ->
+ComposeAutomator.http(host = "localhost", port = 9274).use { remote ->
     runBlocking {
         val nodes = remote.findByTestTag("Submit")
         if (nodes.isNotEmpty()) {
@@ -84,7 +87,7 @@ shapes:
 | `NodesResponse`      | List wrapper around `NodeSnapshotDto`.                     |
 | `WindowsResponse`    | List wrapper around `WindowSummaryDto`.                    |
 | `ClickRequest`       | `{ "nodeKey": "surfaceId:ownerIndex:nodeId" }`.            |
-| `TypeTextRequest`    | `{ "nodeKey": "...", "text": "..." }`.                     |
+| `TypeTextRequest`    | `{ "text": "..." }`. Types into whatever has focus.        |
 | `ScreenshotResponse` | Base64-encoded PNG bytes.                                  |
 
 Node keys travel as the canonical string form `surfaceId:ownerIndex:nodeId` — the same

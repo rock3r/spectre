@@ -46,8 +46,12 @@ same screen will collide.
 Use synthetic input:
 
 ```kotlin
+import dev.sebastiano.spectre.core.ComposeAutomator
+import dev.sebastiano.spectre.core.RobotDriver
+import dev.sebastiano.spectre.core.synthetic
+
 val automator = ComposeAutomator.inProcess(
-    robotDriver = RobotDriver.synthetic(window = composeWindow),
+    robotDriver = RobotDriver.synthetic(rootWindow = composeWindow),
 )
 ```
 

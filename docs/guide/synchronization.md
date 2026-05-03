@@ -41,9 +41,11 @@ val node = automator.waitForNode(
 )
 ```
 
-Polls the semantics tree until **either** a node with the given test tag exists, **or**
-a node with the given visible text exists. You must pass at least one of `tag` or
-`text`. Returns the node when found; throws on timeout.
+Polls the semantics tree until a node matches every non-null criterion you pass, then
+returns it; throws on timeout. You must pass at least one of `tag` or `text`. If you
+pass both, the helper waits for a node whose test tag matches **and** whose text (or
+editable text) matches — `tag` and `text` together describe a single node, not a choice
+between two.
 
 Use it once after launching the UI to know your test can start touching things, and
 optionally after each interaction that introduces new content (a dialog opening, a list

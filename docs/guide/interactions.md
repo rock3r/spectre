@@ -54,17 +54,26 @@ automator.typeText("Hello, Spectre!")
 automator.clearAndTypeText(input, "replacement text")
 
 // raw key events
+import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 automator.pressKey(KeyEvent.VK_TAB)
-automator.pressKey(KeyEvent.VK_S, modifiers = KeyEvent.CTRL_DOWN_MASK) // Ctrl+S
+automator.pressKey(KeyEvent.VK_S, modifiers = InputEvent.CTRL_DOWN_MASK) // Ctrl+S
 
 // shorthand
 automator.pressEnter()
 ```
 
-`typeText` falls back through several strategies depending on the platform — it can hit
-the system clipboard for non-ASCII content, and uses the AWT key map for plain keys. See
-[Troubleshooting](troubleshooting.md) for the platform-specific quirks.
+`pressKey`'s `modifiers` parameter takes an AWT modifier mask (`InputEvent.CTRL_DOWN_MASK`,
+`InputEvent.SHIFT_DOWN_MASK`, …) — not a `KeyEvent` constant. The driver translates the
+mask into the right modifier-key presses around the main `keyCode`.
+
+`typeText` always works through the system clipboard: it stashes the previous clipboard
+contents, writes the requested text, dispatches the platform paste shortcut
+(<kbd>Cmd</kbd>+<kbd>V</kbd> on macOS, <kbd>Ctrl</kbd>+<kbd>V</kbd> elsewhere), waits for
+the paste handler to drain, then restores the previous clipboard contents. It does not
+fall back to per-key dispatch, so `typeText` works for any text the system clipboard can
+carry — non-ASCII included. See [Troubleshooting](troubleshooting.md) for the
+platform-specific quirks.
 
 ## Screenshots
 
@@ -100,15 +109,20 @@ The `RobotDriver` factory governs how input is actually dispatched:
 - **`RobotDriver()`** — real OS-level input via `java.awt.Robot`. The mouse cursor moves,
   the keyboard focus is system-wide, and other applications see the input too. This is
   the default and what end users experience.
-- **`RobotDriver.synthetic(window)`** — synthetic AWT events posted straight into the
-  target window's event queue. No real cursor motion, no global focus, doesn't fight
-  with other processes.
+- **`RobotDriver.synthetic(rootWindow)`** — synthetic AWT events posted straight into the
+  target window's event queue. No real cursor motion, no global focus, doesn't fight with
+  other processes. `synthetic` is a companion extension function in the
+  `dev.sebastiano.spectre.core` package, so it needs an explicit import.
 
 Pass a non-default driver via the `inProcess` factory:
 
 ```kotlin
+import dev.sebastiano.spectre.core.ComposeAutomator
+import dev.sebastiano.spectre.core.RobotDriver
+import dev.sebastiano.spectre.core.synthetic
+
 val automator = ComposeAutomator.inProcess(
-    robotDriver = RobotDriver.synthetic(window = composeWindow),
+    robotDriver = RobotDriver.synthetic(rootWindow = composeWindow),
 )
 ```
 
@@ -116,11 +130,3 @@ Synthetic input is the right choice when you're running tests in parallel JVMs, 
 the test machine also runs unrelated UI work. Stick to real input for end-to-end smokes
 where the realism of the input matters (e.g. validating that a system shortcut reaches
 the app).
-
-## Beyond the high-level helpers
-
-Anything not exposed via `ComposeAutomator` interactions can be done directly against
-the wrapped `RobotDriver`. The driver exposes lower-level helpers for raw mouse moves,
-modifier-only key state, swipe interpolation parameters, and clipboard control. See the
-[`RobotDriver` source](https://github.com/rock3r/spectre/blob/main/core/src/main/kotlin/dev/sebastiano/spectre/core/RobotDriver.kt)
-for the current surface.
