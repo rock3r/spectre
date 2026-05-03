@@ -149,12 +149,19 @@ internal fun robotScreenRecordingProbe(robot: RobotAdapter): TccStatus {
     return TccStatus.Denied
 }
 
+@Suppress("TooGenericExceptionCaught")
 private fun runOsascript(script: String): OsascriptResult? {
+    // Mirrors `dev.sebastiano.spectre.recording.MacOsRecordingPermissions.runOsascript` — kept in
+    // sync deliberately, since `:core` and `:recording` are isolated modules (see ARCHITECTURE.md)
+    // and neither can import the other. Unexpected exceptions from `waitFor` / stream reads / the
+    // process API surface should yield `null` (Unknown probe outcome), not propagate up and crash
+    // the caller: a probe that crashes is strictly worse than a probe that says "I don't know".
     val process =
-        runCatching { ProcessBuilder("osascript", "-e", script).redirectErrorStream(true).start() }
-            .getOrElse {
-                return null
-            }
+        try {
+            ProcessBuilder("osascript", "-e", script).redirectErrorStream(true).start()
+        } catch (_: Throwable) {
+            return null
+        }
     return try {
         if (!process.waitFor(OSASCRIPT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
             process.destroyForcibly()
@@ -169,7 +176,7 @@ private fun runOsascript(script: String): OsascriptResult? {
         process.destroyForcibly()
         Thread.currentThread().interrupt()
         null
-    } catch (_: java.io.IOException) {
+    } catch (_: Throwable) {
         process.destroyForcibly()
         null
     }
