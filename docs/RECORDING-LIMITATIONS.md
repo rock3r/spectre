@@ -1,6 +1,7 @@
 # Recording limitations
 
 The `recording` module ships:
+
 - `FfmpegRecorder` — region capture via `ffmpeg` against the platform's native capture device.
   Three backends auto-selected from `os.name`: `avfoundation` (macOS), `gdigrab` (Windows),
   `x11grab` (Linux Xorg). Trade-offs below.

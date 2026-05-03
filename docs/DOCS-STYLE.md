@@ -154,6 +154,11 @@ corresponding doc page is touched:
   list, promote the topic to its own H3 / H4 subsection or use prose paragraphs
   instead. Verify in the rendered output that subsequent siblings still render as
   siblings.
+- **Always leave a blank line between a paragraph and a list that follows it.**
+  Pattern: a line ending in `:` (or any prose continuation) directly above a `-`
+  list item without a blank line in between. CommonMark / mkdocs-material renders
+  the whole thing as a single paragraph with literal `- ` separators inline. The
+  cure is one blank line between the paragraph and the first list item.
 
 ## Linking
 
