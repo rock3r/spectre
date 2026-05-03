@@ -102,8 +102,8 @@ internal constructor(
             // field's paste handler reads stale (often empty) contents and the typed characters
             // never land. Poll the clipboard until it reports our string, with a bounded budget
             // so a misbehaving clipboard adapter cannot wedge the call indefinitely. Skip the
-            // poll for adapters that don't support read-back (the headless no-op clipboard) so
-            // that path doesn't burn the full settle timeout for nothing.
+            // poll for adapters that don't support read-back so that path doesn't burn the
+            // full settle timeout against a permanently-null reader.
             if (clipboard.supportsRead) {
                 awaitClipboardContents(text, CLIPBOARD_SETTLE_TIMEOUT_MS, CLIPBOARD_SETTLE_POLL_MS)
             }
@@ -124,7 +124,7 @@ internal constructor(
                 // also wait a short interval to let the OS-side paste read complete before we
                 // clobber the clipboard contents. Skip the whole block for adapters that don't
                 // support clipboard read-back — there's no real paste handler to drain, so the
-                // sleep would just add fixed latency to every headless typeText call.
+                // sleep would just add fixed latency for nothing.
                 repeat(POST_PASTE_EDT_PUMPS) { robot.waitForIdle() }
                 try {
                     Thread.sleep(POST_PASTE_SETTLE_MS)
@@ -245,24 +245,34 @@ internal constructor(
     companion object {
 
         /**
-         * Returns a [RobotDriver] that performs no real OS input or capture.
+         * Returns a [RobotDriver] that throws [UnsupportedOperationException] on every input,
+         * clipboard, and screenshot call. [WindowTracker] / [SemanticsReader] are untouched, so
+         * semantics-tree reads still work.
          *
-         * Intended for tests and headless CI environments where constructing a real
-         * `java.awt.Robot` (or touching the system clipboard / screen) is unavailable. Mouse and
-         * key calls are silently dropped, screenshots return a 1×1 empty image, and clipboard
-         * access is a no-op. Combine with the testing module's `ComposeAutomatorRule` /
-         * `ComposeAutomatorExtension` to exercise the rule/extension lifecycle without an EDT.
+         * Reach for this in headless CI or any context where real OS I/O is unavailable, **and**
+         * the code under test is genuinely read-only (semantics queries, rule/extension lifecycle
+         * wiring). The loud-failure contract means an accidental `automator.click(...)` /
+         * `typeText(...)` / `screenshot(...)` surfaces at the call site instead of silently
+         * dropping the operation and tripping a downstream assertion three layers later.
+         *
+         * If you do need real input or capture in a non-OS environment, use
+         * [RobotDriver.Companion.synthetic] against a known root window for synthetic AWT events,
+         * or invoke `SemanticsActions.OnClick` directly on the target node for click-only flows.
          */
         fun headless(): RobotDriver =
-            RobotDriver(NoopRobotAdapter, NoopClipboardAdapter, MacOsTccGuard.noop())
+            RobotDriver(
+                HeadlessThrowingRobotAdapter,
+                HeadlessThrowingClipboardAdapter,
+                MacOsTccGuard.noop(),
+            )
     }
 }
 
 /**
  * Builds the default [MacOsTccGuard] for a given adapter. Returns a real probe-backed guard only
  * when the adapter delegates to a real `java.awt.Robot` AND we're running on macOS — every other
- * combination (synthetic adapter, headless adapter, non-macOS host) gets the noop guard so the
- * probe never touches an OS that isn't being driven by Robot.
+ * combination (synthetic adapter, headless-throwing adapter, non-macOS host) gets the noop guard so
+ * the probe never touches an OS that isn't being driven by Robot.
  */
 internal fun defaultTccGuardFor(adapter: RobotAdapter): MacOsTccGuard =
     if (adapter.gatesMacOsTcc && detectMacOs()) {
@@ -293,8 +303,8 @@ internal interface RobotAdapter {
     /**
      * `true` when this adapter delegates input/capture to the real OS `java.awt.Robot`, and
      * therefore needs to be gated on macOS TCC entitlements (Accessibility for input, Screen
-     * Recording for capture). The synthetic and noop adapters bypass `Robot` entirely, so they
-     * declare `false` and skip the guard regardless of platform.
+     * Recording for capture). The synthetic and headless-throwing adapters bypass `Robot` entirely,
+     * so they declare `false` and skip the guard regardless of platform.
      */
     val gatesMacOsTcc: Boolean
         get() = false
@@ -319,9 +329,10 @@ internal interface RobotAdapter {
 internal interface ClipboardAdapter {
 
     /**
-     * `true` when [getContents] reads back values written by [setContents]. The headless / no-op
-     * adapter returns `false` so callers can skip clipboard-settle polling that would otherwise
-     * spin its full timeout against a permanently-null reader.
+     * `true` when [getContents] reads back values written by [setContents]. Adapters that don't
+     * read back (a one-way write-only sink, or one that always throws) should return `false` so
+     * callers can skip clipboard-settle polling that would otherwise spin its full timeout against
+     * a permanently-null or always-throwing reader.
      */
     val supportsRead: Boolean
         get() = true
@@ -341,7 +352,7 @@ private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) : Rob
     override val requiresOffEdt: Boolean = true
 
     // The only adapter that actually drives the OS through Robot, so the only one that ever
-    // hits macOS TCC. Synthetic and noop adapters override the default `false`.
+    // hits macOS TCC. Synthetic and headless-throwing adapters inherit the default `false`.
     override val gatesMacOsTcc: Boolean = true
 
     override fun mouseMove(x: Int, y: Int) = robot.mouseMove(x, y)
@@ -362,43 +373,54 @@ private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) : Rob
     override fun waitForIdle() = robot.waitForIdle()
 }
 
-private object NoopRobotAdapter : RobotAdapter {
+private object HeadlessThrowingRobotAdapter : RobotAdapter {
 
     override val autoDelayMs: Int = 0
 
-    // No-op input never blocks the EDT, so the worker-thread hop is unnecessary.
+    // We throw before reaching any worker-hop logic, so the off-EDT marshal is irrelevant; pick
+    // the cheaper inline path so EDT callers see the throw without a thread spin-up.
     override val requiresOffEdt: Boolean = false
 
-    override fun mouseMove(x: Int, y: Int) = Unit
+    override fun mouseMove(x: Int, y: Int): Unit = throwHeadless("mouseMove")
 
-    override fun mousePress(buttons: Int) = Unit
+    override fun mousePress(buttons: Int): Unit = throwHeadless("mousePress")
 
-    override fun mouseRelease(buttons: Int) = Unit
+    override fun mouseRelease(buttons: Int): Unit = throwHeadless("mouseRelease")
 
-    override fun keyPress(keyCode: Int) = Unit
+    override fun keyPress(keyCode: Int): Unit = throwHeadless("keyPress")
 
-    override fun keyRelease(keyCode: Int) = Unit
+    override fun keyRelease(keyCode: Int): Unit = throwHeadless("keyRelease")
 
-    override fun mouseWheel(wheelClicks: Int) = Unit
+    override fun mouseWheel(wheelClicks: Int): Unit = throwHeadless("mouseWheel")
 
-    // Always return a fresh 1×1 image regardless of region size. RobotDriver.headless() is
-    // documented as no-OS-contact (so we don't probe screen devices) and screenshot returns
-    // are conceptually owned by the caller (BufferedImage is mutable; setRGB/createGraphics
-    // are normal post-screenshot operations), so a per-call instance is required for safety.
     override fun createScreenCapture(region: Rectangle): BufferedImage =
-        BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB)
+        throwHeadless("createScreenCapture")
 
+    // waitForIdle is purely a synchronisation barrier — it produces no observable side effect, so
+    // making it a no-op keeps internal pump loops (e.g. the post-paste drain in typeText) callable
+    // without triggering throws on a path where they'd be unreachable anyway.
     override fun waitForIdle() = Unit
 }
 
-private object NoopClipboardAdapter : ClipboardAdapter {
+private object HeadlessThrowingClipboardAdapter : ClipboardAdapter {
 
+    // The driver short-circuits clipboard polling and post-paste settles when this is `false`.
+    // Even though every read/write throws, leaving it `false` keeps the typeText fast path
+    // honest: callers reach the throwing setContents directly without first burning the
+    // clipboard-settle timeout against an adapter that will never read back.
     override val supportsRead: Boolean = false
 
-    override fun getContents(): Transferable? = null
+    override fun getContents(): Transferable = throwHeadless("clipboard read")
 
-    override fun setContents(contents: Transferable) = Unit
+    override fun setContents(contents: Transferable): Unit = throwHeadless("clipboard write")
 }
+
+private fun throwHeadless(operation: String): Nothing =
+    throw UnsupportedOperationException(
+        "RobotDriver.headless() does not perform real I/O — $operation was called. Use " +
+            "RobotDriver.synthetic(rootWindow) for a synthetic-event driver, or invoke " +
+            "SemanticsActions.OnClick directly on the target node for click-only flows."
+    )
 
 internal class SystemClipboardAdapter : ClipboardAdapter {
     // Lazy: looking up the system clipboard at construction time would couple every
@@ -420,9 +442,10 @@ private fun createAwtRobot(): Robot =
     }
 
 private fun runOffEdt(robot: RobotAdapter, block: () -> Unit) {
-    // Adapters that don't need the off-EDT marshal (synthetic, no-op) can run inline even
-    // on the EDT — spawning a worker would deadlock the synthetic adapter, whose internal
-    // `SwingUtilities.invokeAndWait` would wait forever for an EDT blocked on `Thread.join()`.
+    // Adapters that don't need the off-EDT marshal (synthetic, headless-throwing) can run
+    // inline even on the EDT — spawning a worker would deadlock the synthetic adapter, whose
+    // internal `SwingUtilities.invokeAndWait` would wait forever for an EDT blocked on
+    // `Thread.join()`.
     if (!robot.requiresOffEdt || !SwingUtilities.isEventDispatchThread()) {
         block()
         return
@@ -470,10 +493,9 @@ fun detectMacOs(): Boolean = System.getProperty("os.name").lowercase().contains(
 
 private fun virtualDesktopBounds(): Rectangle {
     // GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices throws HeadlessException
-    // when the JVM is running with -Djava.awt.headless=true (e.g. CI). RobotDriver.headless()
-    // is documented as safe in that environment, so fall back to a 1×1 rectangle here so the
-    // headless path never reaches a real device probe. The NoopRobotAdapter will still produce
-    // an empty BufferedImage of that size.
+    // when the JVM is running with -Djava.awt.headless=true (e.g. CI). Fall back to a 1×1
+    // rectangle here so the bounds lookup itself doesn't throw; the underlying adapter's
+    // createScreenCapture is what decides whether the call is supported in this environment.
     if (GraphicsEnvironment.isHeadless()) return Rectangle(0, 0, 1, 1)
 
     val ge = GraphicsEnvironment.getLocalGraphicsEnvironment()

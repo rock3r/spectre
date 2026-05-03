@@ -6,8 +6,6 @@ import dev.sebastiano.spectre.core.SemanticsReader
 import dev.sebastiano.spectre.core.WindowTracker
 import dev.sebastiano.spectre.server.dto.ClickRequest
 import dev.sebastiano.spectre.server.dto.NodesResponse
-import dev.sebastiano.spectre.server.dto.ScreenshotResponse
-import dev.sebastiano.spectre.server.dto.TypeTextRequest
 import dev.sebastiano.spectre.server.dto.WindowsResponse
 import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -33,6 +31,10 @@ import kotlin.test.assertTrue
  * real headless `ComposeAutomator` backing them. The automator has no Compose surfaces in this
  * environment, so the assertions are about the request/response *envelope* contract — list shapes,
  * status codes, body decoding — not about live UI behaviour.
+ *
+ * Endpoints that drive real input or capture (`typeText`, `screenshot`) are intentionally not
+ * covered here: the headless driver throws on those, and asserting that the route surfaces a 5xx is
+ * not particularly informative — the in-process automator tests cover the success path.
  */
 class SpectreServerRoundTripTest {
 
@@ -101,32 +103,6 @@ class SpectreServerRoundTripTest {
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
         assertTrue(response.bodyAsText().contains("Malformed node key"))
-    }
-
-    @Test
-    fun `typeText returns 204 No Content`() = testApplication {
-        application { installSpectreRoutes(headlessAutomator()) }
-        val client = createClient { install(ContentNegotiation) { json() } }
-
-        val response =
-            client.post("/spectre/typeText") {
-                contentType(ContentType.Application.Json)
-                setBody(TypeTextRequest(text = "hello"))
-            }
-
-        assertEquals(HttpStatusCode.NoContent, response.status)
-    }
-
-    @Test
-    fun `screenshot returns a base64-encoded PNG envelope`() = testApplication {
-        application { installSpectreRoutes(headlessAutomator()) }
-        val client = createClient { install(ContentNegotiation) { json() } }
-
-        val response = client.get("/spectre/screenshot").body<ScreenshotResponse>()
-
-        assertTrue(response.pngBase64.isNotEmpty(), "PNG payload should be present")
-        assertTrue(response.width > 0, "Width should be positive")
-        assertTrue(response.height > 0, "Height should be positive")
     }
 
     @Test

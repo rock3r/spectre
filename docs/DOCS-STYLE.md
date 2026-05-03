@@ -119,8 +119,10 @@ corresponding doc page is touched:
 - **`RobotDriver` public constructors.** `RobotDriver()` (default AWT), `RobotDriver(robot)`,
   `RobotDriver.headless()`, `RobotDriver.synthetic(rootWindow)`. The
   adapter-injecting constructor is `internal` and not for consumers.
-- **`RobotDriver.headless()` only stubs input/screenshot/clipboard side effects.**
-  It does **not** fake the live `WindowTracker`/`SemanticsReader`.
+- **`RobotDriver.headless()` throws on input/screenshot/clipboard.** Every input,
+  clipboard, and screenshot call raises `UnsupportedOperationException` so accidental
+  real-I/O calls fail at the call site. `WindowTracker`/`SemanticsReader` are
+  untouched, so semantics-tree reads still work.
 - **`typeText` is always clipboard-paste.** It writes the text, dispatches the
   platform paste shortcut, drains, then restores the previous clipboard contents.
   No per-key fallback.

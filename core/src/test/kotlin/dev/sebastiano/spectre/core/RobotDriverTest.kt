@@ -263,51 +263,55 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `headless driver never invokes the TCC guard probes`() {
-        // The default headless() factory wires in MacOsTccGuard.noop() which has lambda probes
-        // that return NotApplicable. We verify by exercising every public input/screenshot
-        // method — none should throw, and the noop guard never warns or short-circuits.
+    fun `headless click throws UnsupportedOperationException naming the operation`() {
         val driver = RobotDriver.headless()
-
-        driver.click(10, 20)
-        driver.doubleClick(10, 20)
-        driver.longClick(10, 20, holdFor = 1.milliseconds)
-        driver.swipe(0, 0, 5, 5, steps = 2, duration = ZERO)
-        driver.scrollWheel(0, 0, 1)
-        driver.pressKey(KeyEvent.VK_ENTER)
-        driver.typeText("noop")
-        driver.clearAndTypeText("noop")
-        driver.screenshot(Rectangle(0, 0, 4, 4))
-    }
-
-    @Test
-    fun `typeText with no-op clipboard adapter does not spin or settle for the headless path`() {
-        // RobotDriver.headless() pairs the noop robot with the noop clipboard. The clipboard
-        // never reads back what was written and the noop robot has no real paste pipeline to
-        // drain, so neither the awaitClipboardContents poll nor the post-paste settle delay
-        // should run. This test pins headless typeText latency at well under a single
-        // POST_PASTE_SETTLE_MS so a future change can't accidentally re-introduce either delay.
-        // We invoke typeText several times because per-call settle accumulates: a 50ms sleep
-        // per call would push 5 calls to 250ms+, which is what Codex P2 on PR #37 flagged.
-        val driver = RobotDriver.headless()
-        val elapsedMs =
-            kotlin.system.measureTimeMillis {
-                repeat(HEADLESS_TYPE_TEXT_INVOCATIONS) { driver.typeText("hello") }
-            }
+        val error = assertFailsWith<UnsupportedOperationException> { driver.click(0, 0) }
+        // The thrown message names the adapter operation that ran, not the public method, but it
+        // includes the alternative-driver pointers the issue calls for so the user has a clear
+        // path forward without re-reading the factory KDoc.
+        val message = checkNotNull(error.message)
         assertTrue(
-            elapsedMs < HEADLESS_TYPE_TEXT_BUDGET_MS,
-            "headless typeText × $HEADLESS_TYPE_TEXT_INVOCATIONS should return immediately " +
-                "(no clipboard wait, no post-paste settle), took ${elapsedMs}ms " +
-                "(budget ${HEADLESS_TYPE_TEXT_BUDGET_MS}ms)",
+            message.contains("RobotDriver.synthetic(rootWindow)"),
+            "Expected pointer to RobotDriver.synthetic, got: $message",
+        )
+        assertTrue(
+            message.contains("SemanticsActions.OnClick"),
+            "Expected pointer to SemanticsActions.OnClick, got: $message",
         )
     }
 
-    private companion object {
-        const val HEADLESS_TYPE_TEXT_INVOCATIONS: Int = 5
-        // Tight budget — comfortably under POST_PASTE_SETTLE_MS (50ms) × invocation count so
-        // the test fails if either the clipboard poll or the post-paste sleep ever fires for
-        // a no-op adapter.
-        const val HEADLESS_TYPE_TEXT_BUDGET_MS: Long = 30L
+    @Test
+    fun `headless typeText throws UnsupportedOperationException`() {
+        val driver = RobotDriver.headless()
+        assertFailsWith<UnsupportedOperationException> { driver.typeText("hello") }
+    }
+
+    @Test
+    fun `headless screenshot throws UnsupportedOperationException`() {
+        val driver = RobotDriver.headless()
+        assertFailsWith<UnsupportedOperationException> { driver.screenshot() }
+    }
+
+    @Test
+    fun `headless pressKey throws UnsupportedOperationException`() {
+        val driver = RobotDriver.headless()
+        assertFailsWith<UnsupportedOperationException> { driver.pressKey(KeyEvent.VK_ENTER) }
+    }
+
+    @Test
+    fun `headless scrollWheel throws UnsupportedOperationException`() {
+        val driver = RobotDriver.headless()
+        assertFailsWith<UnsupportedOperationException> {
+            driver.scrollWheel(screenX = 0, screenY = 0, wheelClicks = 1)
+        }
+    }
+
+    @Test
+    fun `headless swipe throws UnsupportedOperationException`() {
+        val driver = RobotDriver.headless()
+        assertFailsWith<UnsupportedOperationException> {
+            driver.swipe(startX = 0, startY = 0, endX = 1, endY = 1, steps = 1, duration = ZERO)
+        }
     }
 }
 
