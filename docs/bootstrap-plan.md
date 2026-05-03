@@ -46,7 +46,7 @@ what's done and what's planned. The original spike notes still live at
 - **`:sample-intellij-plugin:uiTest`** — `intellij-ide-starter`-driven test that boots a real
   IntelliJ IDEA, installs the locally-built plugin, fires `RunSpectreAction` through the
   Driver API, and asserts every tagged Compose node lands in `idea.log`. CI runs it in
-  [`.github/workflows/ide-uitest.yml`](../.github/workflows/ide-uitest.yml) when plugin / core /
+  [`.github/workflows/ide-uitest.yml`](https://github.com/rock3r/spectre/blob/main/.github/workflows/ide-uitest.yml) when plugin / core /
   recording sources change. (`#42`.)
 
 ### v3 — Windows platform support
