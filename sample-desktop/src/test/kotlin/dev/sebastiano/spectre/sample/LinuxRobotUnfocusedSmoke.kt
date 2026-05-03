@@ -21,16 +21,36 @@ import kotlin.system.exitProcess
  * Same gate as [LinuxRobotSmoke]: aborts with exit 2 on pure Wayland (Robot input is dropped at the
  * protocol layer; would report 0/N PASS for opaque reasons).
  *
- * Findings from running this on Linux (placeholder — bank empirical results here on first real run,
- * mirroring the Windows unfocused smoke's findings list):
+ * Findings from running this on Ubuntu 24.04 (Hyper-V VM, GNOME Wayland session, validated under
+ * both the XWayland bridge and headless Xvfb):
  *
- * 1. (TBD — does focus actually leave the SUT after the distractor's `requestFocus()` under KWin /
- *    Mutter / Xvfb? WMs honour focus requests differently than Windows.)
- * 2. (TBD — pressKey-on-unfocused-SUT behaviour: dropped, or routed to focus owner?)
- * 3. (TBD — click-to-focus semantics: does the first click both register AND transfer focus, or is
- *    a separate activation click required on the user's WM?)
- * 4. (TBD — typeText-after-focus-click stability under Xorg's clipboard semantics — XSelection
- *    timing differs from Windows OLE clipboard.)
+ * 1. **Focus actually leaves the SUT after the distractor's `requestFocus()`.** Validated on
+ *    Mutter-via-XWayland (GNOME Wayland's X11 server) and on Xvfb's minimal WM. The starting-state
+ *    scenario reports `sut.isFocused=false distractor.isFocused=true` reliably across runs — no
+ *    additional `toFront()` ceremony or sleep-after-focus-request was needed beyond what the rig
+ *    already provides.
+ * 2. **pressKey on an unfocused SUT is dropped, not routed to the focus owner.** The empty-text
+ *    field stays empty (`before="" after=""`) when keystrokes arrive while the distractor holds
+ *    focus, matching Windows behaviour. This is the OS / WM enforcing focus, not a Spectre quirk —
+ *    `java.awt.Robot` injects at the X server layer, the X server delivers to the focused window,
+ *    XWayland routes to the X-side focus owner.
+ * 3. **A single click on the unfocused counter both registers AND transfers focus.** No separate
+ *    activation click is needed — `clickCount 0 → 1` increments AND `sut.isFocused false → true` in
+ *    the same scenario step, on both XWayland and Xvfb. (Reflects the X11 click-to-focus
+ *    convention; differs from macOS, where the first click on an inactive app traditionally
+ *    activates without delivering — to be verified separately when MacOsRobotUnfocusedSmoke runs.)
+ * 4. **typeText-after-focus-click works through XSelection on XWayland.** No clipboard-settle
+ *    pressure observed; the existing `CLIPBOARD_SETTLE_TIMEOUT_MS = 1_000L` budget tuned for macOS
+ *    NSPasteboard latency is never approached on X11. Both XWayland and Xvfb produce the expected
+ *    text after the focus-handoff click.
+ *
+ * Three Linux session modes validated (mirrors [LinuxRobotSmoke]'s focused-smoke findings):
+ * - **XWayland** (Wayland session with `DISPLAY=:0` set): 4/4 PASS through XWayland's X11 bridge.
+ * - **Pure Wayland** (Wayland session with `DISPLAY` unset): gate fires, smoke exits before
+ *   constructing the JFrame.
+ * - **Headless Xvfb**: 4/4 PASS against the virtual framebuffer; matches the focused smoke's CI
+ *   path. Wiring this variant into `validation-linux.yml` is now eligible (the previous "stays
+ *   manual until findings replace TBDs" condition is satisfied) and a separate change.
  */
 fun main() {
     var exitCode = 0
