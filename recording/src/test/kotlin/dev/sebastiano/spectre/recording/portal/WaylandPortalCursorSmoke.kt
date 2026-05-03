@@ -60,7 +60,11 @@ private fun runSmoke() {
     Files.deleteIfExists(output)
 
     val durationMs =
-        System.getenv("SPECTRE_SMOKE_DURATION_MS")?.toLongOrNull() ?: DEFAULT_DURATION_MS
+        (System.getenv("SPECTRE_SMOKE_DURATION_MS")?.toLongOrNull() ?: DEFAULT_DURATION_MS).also {
+            require(it >= MIN_DURATION_MS) {
+                "SPECTRE_SMOKE_DURATION_MS must be >= $MIN_DURATION_MS, got $it"
+            }
+        }
     val useRobot = System.getenv("SPECTRE_SMOKE_ROBOT") == "1"
 
     val (frame, label) = openSmokeWindow()
@@ -129,7 +133,8 @@ private fun runSmoke() {
 
     handle.stop()
     val sizeBytes = if (Files.exists(output)) Files.size(output) else -1
-    val perSecond = if (sizeBytes > 0) sizeBytes / (durationMs / 1000) else 0
+    // Compute bytes/sec directly from milliseconds so sub-1s test durations don't truncate to 0.
+    val perSecond = if (sizeBytes > 0) sizeBytes * 1_000L / durationMs else 0
     println("Recording stopped → $output ($sizeBytes bytes, ~$perSecond bytes/sec)")
 
     SwingUtilities.invokeLater {
@@ -137,7 +142,9 @@ private fun runSmoke() {
         frame.dispose()
     }
 
-    val threshold = BLACK_FRAME_PER_SECOND_THRESHOLD * (durationMs / 1000)
+    // Same shape: derive the byte-floor straight from durationMs so a sub-1s smoke run
+    // doesn't silently zero out the gate (which would let any size pass).
+    val threshold = BLACK_FRAME_PER_SECOND_THRESHOLD * durationMs / 1_000L
     if (sizeBytes < threshold) {
         println(
             "FAIL — file size $sizeBytes is below the black-frame threshold ($threshold). " +
@@ -192,6 +199,11 @@ private fun openSmokeWindow(): Pair<JFrame, JLabel> {
 }
 
 private const val BLACK_FRAME_PER_SECOND_THRESHOLD: Long = 4_000
+
+// Floor on SPECTRE_SMOKE_DURATION_MS — anything shorter doesn't produce enough
+// frames for the size-based gate to be meaningful, and would also push the
+// human-driven cursor wave into impossible territory.
+private const val MIN_DURATION_MS = 500L
 
 private const val WINDOW_WIDTH = 480
 private const val WINDOW_HEIGHT = 240
