@@ -34,18 +34,25 @@ class PopupLayerVariantsValidationTest {
         // fatal native crash in skiko-windows-x64.dll during the first `SkiaLayer.update`
         // (PictureRecorder.finishRecordingAsPicture). The crash kills the worker JVM before
         // the test can run, so Gradle reports the suite as a non-informative `<skipped/>`
-        // with the test executor's "Could not write 127.0.0.1:NNNN" error. Until JBR / skiko
-        // ships a fix, gate the Window-mode variant out of the Windows runner cleanly so the
-        // suite reports the actual reason and the rest of the test class still validates the
-        // SameCanvas + Component layer modes Windows users can actually use today.
+        // with the test executor's "Could not write 127.0.0.1:NNNN" error.
+        //
+        // Tracking:
+        //   - Spectre side: https://github.com/rock3r/spectre/issues/56
+        //   - Upstream: https://youtrack.jetbrains.com/issue/SKIKO-488
+        //
+        // Until JBR / skiko ships a fix, gate the Window-mode variant out of the Windows runner
+        // cleanly so the suite reports the actual reason and the rest of the test class still
+        // validates the SameCanvas + Component layer modes Windows users can actually use today.
+        // Drop this assumeFalse when SKIKO-488 reports a fix in a JBR / Compose Multiplatform
+        // release we've bumped to.
         val isOnWindowLayer = layerType.equals("WINDOW", ignoreCase = true)
         val isWindowsHost =
             System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
         assumeFalse(
             isOnWindowLayer && isWindowsHost,
             "compose.layers.type=WINDOW currently crashes JBR's skiko-windows-x64.dll on " +
-                "Windows; SameCanvas + Component modes work and cover the same WindowTracker " +
-                "discovery paths.",
+                "Windows (SKIKO-488 / spectre#56); SameCanvas + Component modes work and cover " +
+                "the same WindowTracker discovery paths.",
         )
         fixture.start()
     }
