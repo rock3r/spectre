@@ -84,6 +84,7 @@ Expected long-term responsibilities:
 Keep native capture boundaries narrow and test the pure pieces separately from OS integration.
 
 Current backends:
+
 - `FfmpegRecorder` — region capture via a system `ffmpeg` binary, with the input device
   picked per OS by `FfmpegBackend.detect()`: `avfoundation` on macOS, `gdigrab` on
   Windows, and `x11grab` on Linux Xorg. (Linux Wayland is rejected here; see
