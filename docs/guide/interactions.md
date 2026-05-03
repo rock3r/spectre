@@ -101,6 +101,17 @@ val region = automator.screenshot(Rectangle(0, 0, 800, 600))
 
 Returns a `BufferedImage` you can save, hash, or compare against a baseline.
 
+!!! note "Captures are normalised to sRGB"
+    The returned `BufferedImage` is always sRGB (`TYPE_INT_ARGB` with an sRGB
+    `ColorModel`), regardless of the source display's colour profile. Capturing on a
+    wide-gamut display (Display P3 on a modern Mac, Adobe RGB, etc.) goes through
+    the OS's display pipeline and lands in the buffer as sRGB pixels. This keeps
+    captures portable — a baseline collected on one machine compares meaningfully
+    against a capture from another — but it means the captured pixel values are
+    post-display-pipeline, not the raw `Color(...)` your Compose code passed.
+    Plan for ±1–2 per-channel rounding noise from the gamma round-trip when you
+    assert on colour, and use a tolerant comparator (see below).
+
 !!! warning "Bitmap comparison needs tolerance"
     Don't compare screenshots byte-for-byte against a baseline. Identical-looking
     frames routinely differ at the pixel level because of:
