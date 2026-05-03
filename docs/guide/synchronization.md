@@ -128,12 +128,12 @@ consecutive identical hashes per surface.
 
 A few details worth knowing:
 
-- **Per-surface, not full screen.** The implementation hashes each Compose surface
-  rectangle on its own, then combines them. Pixel churn outside the app (notifications,
+- **Per-surface, not full screen.** Each tracked Compose surface is hashed on its own,
+  then the per-surface hashes are combined. Pixel churn outside the app (notifications,
   cursor movement on another monitor) doesn't reset the streak.
-- **No surfaces tracked → never idle.** If `windows` is empty or all of them have empty
-  bounds, the implementation deliberately returns a different value every poll so the
-  call times out rather than reporting fake stability.
+- **No surfaces tracked → never idle.** If no Compose surfaces are tracked, or all of
+  them have empty bounds, `waitForVisualIdle` returns a different value every poll and
+  times out rather than reporting fake stability.
 - **Bounded sampling budget.** Each frame hash runs on a worker thread with a hard
   budget. A hung Robot or stuck EDT can't out-block the wait loop's overall timeout.
 

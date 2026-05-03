@@ -28,6 +28,16 @@ the same rules.
    versions) and stay neutral elsewhere. No marketing tone.
 5. **`mkdocs build --strict` is part of the contract.** It catches broken links,
    missing anchors, and pages-not-in-nav. Run it before pushing any docs change.
+6. **Don't leak implementation details into the user guide.** Users care about the
+   public contract: what they call, what they get back, what behaviour to expect.
+   They do not care about visibility modifiers (no "the X constructor is
+   `internal`"), about test-source helpers (no "`newHeadlessAutomator()` is
+   internal but you can copy the recipe"), or about how the implementation
+   achieves the contract (no "the implementation hashes each surface…", just
+   "Spectre/`waitForVisualIdle` hashes each surface…"). If you're tempted to
+   write "the implementation does X", ask whether the user needs to know X is
+   load-bearing or whether you're just narrating the source. If it's narration,
+   cut it.
 
 ## Writing for the user
 

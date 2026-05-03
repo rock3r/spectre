@@ -32,9 +32,7 @@ val automator = ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())
 key calls are silently dropped, screenshots return a 1×1 empty image, and clipboard
 operations are no-ops. It does **not** fake out the live `WindowTracker`/`SemanticsReader`, so the automator still inspects whatever Compose surfaces are
 actually on screen. For unit-style tests that need full isolation, inject test-specific
-`WindowTracker` and `SemanticsReader` instances too — the `testing` module's own test
-sources include an internal `newHeadlessAutomator()` helper that wires this up. It
-isn't a public API, but it's a useful reference recipe to copy.
+`WindowTracker` and `SemanticsReader` instances too.
 
 ## Surfaces and the semantics tree
 

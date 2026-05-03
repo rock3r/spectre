@@ -145,9 +145,6 @@ public surface:
   fake out the live `WindowTracker` and `SemanticsReader`. See
   [The automator](automator.md#what-an-automator-owns) for the full picture.
 
-The adapter-injecting constructor used internally by Spectre's tests is `internal` and
-not part of the public surface.
-
 Pass a non-default driver via the `inProcess` factory:
 
 ```kotlin

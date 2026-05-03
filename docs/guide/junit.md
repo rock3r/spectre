@@ -100,9 +100,6 @@ class HeadlessTest {
 }
 ```
 
-The `testing` module's own test sources include an internal `newHeadlessAutomator()`
-helper that follows this pattern. It isn't part of the public API, but it's worth
-borrowing as a reference recipe.
 
 ## JUnit dependency model
 
