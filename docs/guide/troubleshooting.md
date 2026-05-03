@@ -61,6 +61,42 @@ global focus, no cursor motion. The trade-off is that some interactions (system-
 shortcuts, real OS drag-and-drop) won't behave the same way. See
 [Driving input](interactions.md#real-vs-synthetic-input).
 
+## "`typeText` didn't reach my field"
+
+`typeText` writes to the system clipboard, dispatches the platform paste shortcut
+(<kbd>Cmd</kbd>+<kbd>V</kbd> on macOS, <kbd>Ctrl</kbd>+<kbd>V</kbd> elsewhere), waits
+for the paste to land, and restores the previous clipboard contents. A few failure
+modes follow from that:
+
+- **Nothing has focus.** `typeText` types into whatever the focused component is. If
+  your test never clicked into the field — or the click landed on something else,
+  e.g. a parent that absorbed it — the paste either no-ops or lands in the wrong
+  place. Use `clearAndTypeText(node, …)` (which clicks first) or precede the call
+  with an explicit `automator.click(field)`.
+- **The field doesn't accept paste.** Some Compose components (and any read-only
+  text field) ignore the system paste shortcut. Verify the field accepts pasted
+  input outside the test before assuming Spectre is at fault.
+- **macOS pasteboard race.** macOS's `NSPasteboard` writes are asynchronous, so
+  Spectre polls the clipboard until it reads back the requested text before
+  dispatching <kbd>Cmd</kbd>+<kbd>V</kbd>. If your environment has a clipboard
+  manager or another process actively rewriting the clipboard, the poll can time
+  out and the paste lands stale. Disable clipboard managers in the test
+  environment.
+- **Headless adapters skip the readback.** `RobotDriver.headless()`'s clipboard
+  adapter doesn't support read-back, so it doesn't wait and doesn't drain the EDT
+  after dispatch. That's fine for headless tests that don't really care about
+  paste, but means real-input scenarios should not be exercised against a headless
+  driver.
+- **Compose's paste action runs on its own dispatcher.** After the keystroke,
+  Spectre pumps the EDT and sleeps briefly so the paste handler can read the
+  clipboard before the previous contents are restored. If you stack many
+  `typeText` calls back-to-back in a tight loop and observe truncated text, give
+  the field a `waitForIdle()` between calls.
+
+Use `pressKey(...)` for individual key events (modifier shortcuts, navigation keys,
+`<kbd>Tab</kbd>`, `<kbd>Esc</kbd>`) — those go through the AWT key map, not the
+clipboard, so none of the above applies.
+
 ## "Linux Wayland recording — `UnsupportedOperationException` from `x11grab`"
 
 `FfmpegBackend.LinuxX11Grab` deliberately throws on Wayland sessions rather than
