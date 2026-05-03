@@ -32,8 +32,11 @@ top-level `Window`, but Compose also creates separate roots for popups, menus, a
 dialogs. Spectre tracks all of them so a node inside a dropdown is just as findable as
 one in the main window.
 
-Calling `automator.refreshWindows()` rescans the live surface list. The query helpers do
-this for you, so you rarely call it directly.
+Calling `automator.refreshWindows()` rescans the live surface list. Only `tree()`
+refreshes for you; the per-query helpers (`findByTestTag`, `findByText`,
+`findByContentDescription`, `findByRole`, `allNodes`) read against the windows that
+were tracked at the last refresh. If a window or popup may have appeared or closed
+since the last query, call `refreshWindows()` (or `tree()`) before reading.
 
 `automator.tree()` returns an `AutomatorTree` snapshot — a list of `AutomatorWindow`s,
 each with its own root nodes:
@@ -54,8 +57,11 @@ window with its node hierarchy, test tags, text, and roles.
 The API is split into two layers:
 
 - **Queries** — `tree()`, `allNodes()`, `findByTestTag(...)`, `findByText(...)`,
-  `findByContentDescription(...)`, `findByRole(...)`, and the `findOneBy…` variants.
-  These do a single read against the current semantics state and return what they see.
+  `findByContentDescription(...)`, `findByRole(...)`, plus `findOneByTestTag(...)` and
+  `findOneByText(...)` for the single-result cases. (Content-description and role
+  selectors don't have `findOneBy…` variants — call `.firstOrNull()` on the list result
+  yourself if you want one.) These do a single read against the current semantics state
+  and return what they see.
 - **Interactions** — `click`, `doubleClick`, `longClick`, `swipe`, `scrollWheel`,
   `typeText`, `clearAndTypeText`, `pressKey`, `pressEnter`, `screenshot`. These dispatch
   input via `RobotDriver` (or capture pixels).

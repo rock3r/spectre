@@ -44,6 +44,9 @@ wheel events rather than touch-style drags.
 ## Keyboard: typing and key events
 
 ```kotlin
+import java.awt.event.InputEvent
+import java.awt.event.KeyEvent
+
 val input = automator.findOneByTestTag("MessageInput") ?: error("input missing")
 
 // click-then-type
@@ -54,8 +57,6 @@ automator.typeText("Hello, Spectre!")
 automator.clearAndTypeText(input, "replacement text")
 
 // raw key events
-import java.awt.event.InputEvent
-import java.awt.event.KeyEvent
 automator.pressKey(KeyEvent.VK_TAB)
 automator.pressKey(KeyEvent.VK_S, modifiers = InputEvent.CTRL_DOWN_MASK) // Ctrl+S
 
