@@ -267,9 +267,10 @@ if (OperatingSystem.current().isMacOsX) {
 //   3. `processResources` depends on the assemble task on Linux, so the JAR carries the
 //      helper transparently and `WaylandHelperBinaryExtractor` finds it via the classloader.
 //
-// Cross-compilation (arm64 / x86_64) is currently NOT wired up — the host-arch build is
-// what ships in the dev-loop jar. Distribution builds will need a per-arch matrix similar
-// to the macOS lipo path; tracked as a follow-up. For dev iteration without re-bundling,
+// Default `assembleWaylandHelper` builds the host-arch helper only — keeps contributor
+// builds fast and free of cross-compile toolchain prereqs. The opt-in
+// `assembleWaylandHelperAllArches` block below builds both x86_64 and aarch64 from any
+// Linux host for distribution. For dev iteration without re-bundling at all,
 // `WaylandHelperBinaryExtractor`'s `SPECTRE_WAYLAND_HELPER` env var override points the
 // recorder at `target/release/spectre-wayland-helper` directly.
 val waylandHelperSource = layout.projectDirectory.dir("native/linux")
@@ -299,14 +300,145 @@ val assembleWaylandHelper by
         into(waylandHelperResourceDest)
     }
 
+// --- Cross-arch bundling (release distribution) ---------------------------------------------
+//
+// Opt-in path producing helpers for both x86_64 and aarch64 Linux from any Linux host —
+// mirrors the macOS `assembleScreenCaptureKitHelperUniversal` shape (per-arch builds +
+// per-arch staging) but without a lipo step (Linux ELF has no fat-binary equivalent; we
+// keep the per-arch resource directories and let `WaylandHelperBinaryExtractor` pick at
+// runtime).
+//
+// Cross-compile mechanism: stock rustup target + system cross-linker + apt multi-arch
+// libdbus-1 sysroot. Picked over `cross` (would add a Docker-daemon prereq + a privileged
+// container to CI) and `cargo-zigbuild` (would need a hand-built libdbus sysroot since
+// `dbus-rs` links via pkg-config). The bare-metal recipe is:
+//   1. `rustup target add <triple>` for the non-host arch.
+//   2. apt: `gcc-<arch>-linux-gnu` (cross linker) + `libdbus-1-dev:<dpkg-arch>`. dpkg
+//      multi-arch must be enabled (`dpkg --add-architecture <arch> && apt update`) before
+//      installing foreign-arch packages — the CI step in `.github/workflows/ci.yml` does
+//      this.
+//   3. cargo invocation: `cargo build --release --target=<triple>` with env
+//      `CARGO_TARGET_<TRIPLE_UPPER>_LINKER=<arch>-linux-gnu-gcc` and
+//      `PKG_CONFIG_PATH_<arch>=/usr/lib/<arch>-linux-gnu/pkgconfig` +
+//      `PKG_CONFIG_ALLOW_CROSS=1` so `dbus-rs`'s build script picks the foreign-arch `.pc`
+//      files instead of the host's.
+//
+// Use `:recording:assembleWaylandHelperAllArches` to invoke the cross-arch staging
+// explicitly. Distribution invocation: `./gradlew :recording:jar -PallLinuxArches`. CI
+// release jobs (when #84 lands the publish pipeline) wire this in as the
+// `processResources` dependency to bundle both arches.
+val linuxHelperArchitectures = listOf("x86_64", "aarch64")
+
+// Architecture metadata kept together so the per-arch task wiring below stays one
+// straight loop rather than three when/lookups.
+data class LinuxHelperTarget(
+    val arch: String,
+    val triple: String,
+    val crossLinker: String,
+    val pkgConfigLibPath: String,
+)
+
+val linuxHelperTargets =
+    linuxHelperArchitectures.map { arch ->
+        when (arch) {
+            "x86_64" ->
+                LinuxHelperTarget(
+                    arch = "x86_64",
+                    triple = "x86_64-unknown-linux-gnu",
+                    crossLinker = "x86_64-linux-gnu-gcc",
+                    pkgConfigLibPath = "/usr/lib/x86_64-linux-gnu/pkgconfig",
+                )
+            "aarch64" ->
+                LinuxHelperTarget(
+                    arch = "aarch64",
+                    triple = "aarch64-unknown-linux-gnu",
+                    crossLinker = "aarch64-linux-gnu-gcc",
+                    pkgConfigLibPath = "/usr/lib/aarch64-linux-gnu/pkgconfig",
+                )
+            else -> error("Unsupported linux helper arch: $arch")
+        }
+    }
+
+val perArchCargoBuildTasks =
+    linuxHelperTargets.map { target ->
+        val taskName = "buildWaylandHelper${target.arch.replaceFirstChar { it.uppercase() }}"
+        val perArchOutput =
+            waylandHelperSource
+                .dir("target/${target.triple}/release")
+                .file("spectre-wayland-helper")
+        tasks.register<Exec>(taskName) {
+            description = "Cross-builds the Wayland helper for ${target.arch}."
+            group = "build"
+            onlyIf { OperatingSystem.current().isLinux }
+            workingDir = waylandHelperSource.asFile
+            commandLine("cargo", "build", "--release", "--target", target.triple)
+            // Cargo accepts the per-target linker as
+            // `CARGO_TARGET_<TRIPLE_UPPER_UNDERSCORED>_LINKER` without needing a
+            // .cargo/config.toml. The `_LINKER` form is undocumented for direct env-var
+            // use but stable since cargo 1.0 — see rust-lang/cargo issues #4135 and #6133.
+            environment(
+                "CARGO_TARGET_${target.triple.uppercase().replace("-", "_")}_LINKER",
+                target.crossLinker,
+            )
+            // pkg-config arch-suffix lookup: PKG_CONFIG_PATH_<arch> overrides
+            // PKG_CONFIG_PATH for the matching target arch (the suffix is the Rust target
+            // arch, which matches our `target.arch`). PKG_CONFIG_ALLOW_CROSS=1 disables
+            // pkg-config's safety guard against cross-arch link config — required by
+            // dbus-rs's build.rs.
+            environment("PKG_CONFIG_PATH_${target.arch}", target.pkgConfigLibPath)
+            environment("PKG_CONFIG_ALLOW_CROSS", "1")
+            inputs.dir(waylandHelperSource.dir("src"))
+            inputs.file(waylandHelperSource.file("Cargo.toml"))
+            outputs.file(perArchOutput)
+        }
+    }
+
+// Per-arch staging copies — one Copy task per arch so the destination layout matches the
+// resource path `WaylandHelperBinaryExtractor` probes.
+val perArchStageTasks =
+    linuxHelperTargets.zip(perArchCargoBuildTasks).map { (target, buildTask) ->
+        val taskName = "stageWaylandHelper${target.arch.replaceFirstChar { it.uppercase() }}"
+        val perArchOutput =
+            waylandHelperSource
+                .dir("target/${target.triple}/release")
+                .file("spectre-wayland-helper")
+        tasks.register<Copy>(taskName) {
+            description = "Stages the ${target.arch} Wayland helper into the resources tree."
+            group = "build"
+            onlyIf { OperatingSystem.current().isLinux }
+            dependsOn(buildTask)
+            from(perArchOutput) { rename { "spectre-wayland-helper" } }
+            into(layout.buildDirectory.dir("generated/waylandHelper/native/linux/${target.arch}"))
+        }
+    }
+
+val assembleWaylandHelperAllArches by
+    tasks.registering {
+        description =
+            "Stages the Wayland helper binary for both x86_64 and aarch64 Linux. Opt-in for " +
+                "distribution builds (slower than host-arch). Wire into processResources by " +
+                "passing -PallLinuxArches at invocation time."
+        group = "build"
+        onlyIf { OperatingSystem.current().isLinux }
+        dependsOn(perArchStageTasks)
+    }
+
 // Same pattern as the SCK helper: register the generated resource srcDir unconditionally so
 // jar layouts are host-agnostic, but only attach the build task to processResources on
 // Linux. macOS/Windows builds will have an empty `native/linux/` directory in the jar — fine,
 // the recorder gates on the resource being present and falls back per HelperNotBundledException.
 sourceSets["main"].resources.srcDir(layout.buildDirectory.dir("generated/waylandHelper"))
 
+// Switch `processResources` to either the host-arch staging (default, fast) or the
+// cross-arch staging (release). Single-staging-task wiring follows the macOS universal
+// helper precedent — see the comment block above the `useUniversalHelper` declaration for
+// why `mustRunAfter`-based ordering wouldn't work here.
+val useAllLinuxArches = providers.gradleProperty("allLinuxArches").isPresent
+
 if (OperatingSystem.current().isLinux) {
-    tasks.named("processResources") { dependsOn(assembleWaylandHelper) }
+    tasks.named("processResources") {
+        dependsOn(if (useAllLinuxArches) assembleWaylandHelperAllArches else assembleWaylandHelper)
+    }
 }
 
 // Manual smoke entry point — opens a JFrame, records it for ~3s via ScreenCaptureKitRecorder,
