@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.recording
 
 import dev.sebastiano.spectre.recording.FfmpegBackend.Companion.detectWaylandSession
 import dev.sebastiano.spectre.recording.portal.WaylandPortalRecorder
+import dev.sebastiano.spectre.recording.portal.WaylandPortalWindowRecorder
 import dev.sebastiano.spectre.recording.screencapturekit.HelperNotBundledException
 import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitRecorder
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
@@ -15,29 +16,35 @@ import java.nio.file.Path
  * per call, so callers don't have to know which backend is appropriate.
  *
  * Routing logic (in order):
- * 1. `window == null` → ffmpeg region capture. Caller doesn't have a window in mind, or is
+ * 1. Linux Wayland session (detected via env / runtime-dir signals; see
+ *    [FfmpegBackend.detectWaylandSession]) — handled before the `window == null` check below
+ *    because `LinuxX11Grab` throws on Wayland and can't be the fallback. Sub-routing:
+ *     - `window != null` AND [waylandPortalWindowRecorder] wired → window-targeted portal recorder
+ *       (uses `SourceType.WINDOW`; the compositor follows the window across the screen, occlusion
+ *       doesn't matter, no region cropping).
+ *     - Otherwise (`window == null` OR no window-targeted recorder) AND [waylandPortalRecorder]
+ *       wired → region-targeted portal recorder (uses `SourceType.MONITOR`; user picks a monitor at
+ *       the dialog, then the compositor crops to [region]). First call pops a permission dialog;
+ *       subsequent calls within the same JVM run reuse the grant. See [WaylandPortalRecorder].
+ *     - Neither portal recorder wired → falls through to ffmpeg, which fails fast on Wayland.
+ * 2. `window == null` → ffmpeg region capture. Caller doesn't have a window in mind, or is
  *    capturing an embedded `ComposePanel` where there's no top-level window to target.
- * 2. macOS host with a window → SCK ([WindowRecorder]). If SCK fails because the helper isn't
+ * 3. macOS host with a window → SCK ([WindowRecorder]). If SCK fails because the helper isn't
  *    bundled (e.g. a jar built on Linux running on macOS), falls back to ffmpeg region capture with
  *    a stderr warning so the degradation is visible. **Only** [HelperNotBundledException] triggers
  *    fallback — operational SCK failures (Screen Recording permission denied, target window not
  *    found, helper crashed during init) propagate as `IllegalStateException` so the caller sees the
  *    real error rather than getting a silently-different recording.
- * 3. Non-macOS host with a window whose [TitledWindow.title] is non-blank, AND a non-null
+ * 4. Non-macOS host with a window whose [TitledWindow.title] is non-blank, AND a non-null
  *    [windowsWindowRecorder] — uses [FfmpegWindowRecorder] (gdigrab `title=` capture). This is the
  *    Windows window-targeted path: window movement is followed automatically and occlusion doesn't
  *    matter. Jewel-in-IDE tool windows have no top-level title so they fall through to the region
- *    path (see step 4).
- * 4. Linux Wayland session (detected via env / runtime-dir signals; see
- *    [FfmpegBackend.detectWaylandSession]) AND a [waylandPortalRecorder] is wired up → use the
- *    portal-based recorder. xdg-desktop-portal hands us a PipeWire stream, gst-launch-1.0 encodes
- *    it. First call pops a permission dialog; subsequent calls within the same JVM run reuse the
- *    grant. See [WaylandPortalRecorder].
+ *    path (see step 5).
  * 5. Non-macOS host without an applicable [windowsWindowRecorder] OR with a blank/null title, on a
  *    non-Wayland host → ffmpeg region capture. The region path is the documented fallback when the
  *    target window title is missing, ambiguous, or points at a tool window with no top-level title.
  *    The underlying [FfmpegRecorder]'s [FfmpegBackend.detect] picks the platform device: gdigrab on
- *    Windows, x11grab on Linux Xorg. (Linux Wayland is handled by step 4 before falling through
+ *    Windows, x11grab on Linux Xorg. (Linux Wayland is handled by step 1 before falling through
  *    here, and `LinuxX11Grab` itself throws on Wayland — see `FfmpegBackend.checkNotWayland`.)
  *
  * The router always needs both a window AND a region: the region is used as the fallback when the
@@ -51,6 +58,7 @@ internal constructor(
     private val ffmpegRecorder: Recorder,
     private val windowsWindowRecorder: WindowRecorder?,
     private val waylandPortalRecorder: Recorder?,
+    private val waylandPortalWindowRecorder: WindowRecorder?,
     private val isMacOs: () -> Boolean,
     private val isWindows: () -> Boolean,
     private val isWayland: () -> Boolean,
@@ -61,11 +69,13 @@ internal constructor(
         ffmpegRecorder: Recorder = FfmpegRecorder(),
         windowsWindowRecorder: WindowRecorder? = defaultWindowsWindowRecorder(),
         waylandPortalRecorder: Recorder? = defaultWaylandPortalRecorder(),
+        waylandPortalWindowRecorder: WindowRecorder? = defaultWaylandPortalWindowRecorder(),
     ) : this(
         sckRecorder,
         ffmpegRecorder,
         windowsWindowRecorder,
         waylandPortalRecorder,
+        waylandPortalWindowRecorder,
         ::defaultIsMacOs,
         ::defaultIsWindows,
         ::defaultIsWayland,
@@ -80,9 +90,21 @@ internal constructor(
     ): RecordingHandle {
         // Linux Wayland routing has to happen BEFORE the window-null check below: a Wayland
         // session can't fall through to FfmpegRecorder for either window-targeted OR region
-        // capture, because LinuxX11Grab throws on Wayland. The portal flow handles BOTH cases
-        // (window and no-window) by capturing the user-picked monitor and cropping to the
-        // requested region.
+        // capture, because LinuxX11Grab throws on Wayland.
+        //
+        // Window-targeted (#85) takes precedence when both wired and the caller has a window in
+        // mind: SourceType.WINDOW makes the compositor follow the window across the screen and
+        // hand us its pixels directly, matching the SCK / gdigrab title= ergonomics on the other
+        // OSes. Falls back to the region recorder when no window is supplied OR the window-
+        // targeted recorder isn't wired (e.g. older callers, helper construction failed).
+        if (isWayland() && window != null && waylandPortalWindowRecorder != null) {
+            return waylandPortalWindowRecorder.start(
+                window = window,
+                windowOwnerPid = windowOwnerPid,
+                output = output,
+                options = options,
+            )
+        }
         if (isWayland() && waylandPortalRecorder != null) {
             return waylandPortalRecorder.start(region, output, options)
         }
@@ -183,6 +205,23 @@ internal constructor(
             if (!defaultIsLinux()) return null
             return try {
                 WaylandPortalRecorder()
+            } catch (_: Throwable) {
+                null
+            }
+        }
+
+        /**
+         * Constructs a [WaylandPortalWindowRecorder] only when the host is Linux. Same gating as
+         * [defaultWaylandPortalRecorder] — the helper binary, GStreamer, and the portal D-Bus
+         * service are all Linux-only, so wiring this on macOS / Windows would throw at construction
+         * time. Failures resolving dependencies are swallowed for the same reasons.
+         */
+        @JvmStatic
+        @Suppress("TooGenericExceptionCaught")
+        fun defaultWaylandPortalWindowRecorder(): WindowRecorder? {
+            if (!defaultIsLinux()) return null
+            return try {
+                WaylandPortalWindowRecorder()
             } catch (_: Throwable) {
                 null
             }

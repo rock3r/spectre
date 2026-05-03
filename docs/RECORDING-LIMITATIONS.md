@@ -27,6 +27,7 @@ Backend → mode mapping:
 | ----------------------------- | --------------------------------------------------- |
 | `FfmpegRecorder`              | Region capture (`avfoundation`/`gdigrab`/`x11grab`).|
 | `WaylandPortalRecorder`       | Region capture, sourced from the Wayland portal.    |
+| `WaylandPortalWindowRecorder` | Window-targeted (Linux Wayland, portal `Window` source-type — follows the picked window). |
 | `ScreenCaptureKitRecorder`    | Window-targeted (macOS).                            |
 | `FfmpegWindowRecorder`        | Window-targeted (Windows, `gdigrab title=`).        |
 | `AutoRecorder`                | Routes to the right one based on `TitledWindow?`.   |
@@ -49,24 +50,30 @@ failure modes, and the section below
 - **Linux Wayland sessions** — `gst-launch-1.0` driven through the
   `xdg-desktop-portal` ScreenCast interface, with the PipeWire FD passed to the encoder by a
   small Rust helper binary (`spectre-wayland-helper`, sources at
-  `recording/native/linux/`). The JVM-side `WaylandPortalRecorder` spawns the helper and
-  talks to it over stdin/stdout via newline-delimited JSON. **First call within a session
-  pops the compositor's "share your screen" dialog**; subsequent calls reuse the grant via
-  the portal's `restore_token`. Why the helper: a pure-JVM attempt hit a dbus-java
-  UnixFD-unmarshalling bug that wasn't fixable trivially, and Rust's `std::process`
-  makes FD inheritance into `gst-launch` a one-liner where the JVM's `ProcessBuilder`
-  doesn't expose the necessary `fcntl(F_SETFD, ...)` knob. The helper-as-subprocess shape
-  also matches the macOS SCK helper (`recording/native/macos/`) — same pattern, same
-  bundling, same recorder-skeleton on the JVM side.
+  `recording/native/linux/`). Two JVM-side recorders share the helper:
+  `WaylandPortalRecorder` (region-targeted, portal `Monitor` source type — user picks a
+  monitor, the helper crops to the requested rectangle) and `WaylandPortalWindowRecorder`
+  (window-targeted, portal `Window` source type — user picks a specific window, the
+  compositor follows it across the screen and the helper records the stream uncropped, #85).
+  Both spawn the helper and talk to it over stdin/stdout via newline-delimited JSON.
+  **First call within a session pops the compositor's "share your screen" dialog**;
+  subsequent calls reuse the grant via the portal's `restore_token`. Why the helper: a
+  pure-JVM attempt hit a dbus-java UnixFD-unmarshalling bug that wasn't fixable trivially,
+  and Rust's `std::process` makes FD inheritance into `gst-launch` a one-liner where the
+  JVM's `ProcessBuilder` doesn't expose the necessary `fcntl(F_SETFD, ...)` knob. The
+  helper-as-subprocess shape also matches the macOS SCK helper
+  (`recording/native/macos/`) — same pattern, same bundling, same recorder-skeleton on
+  the JVM side.
 
   Validated end-to-end on Ubuntu 22.04/GNOME 42/mutter and Ubuntu 24.04/GNOME 46/mutter
   (real-pixel mp4 with the smoke runner, 2026-05-02 and 2026-05-03 — the 24.04 run also
   confirmed `cursor_mode=Embedded` composites the system cursor into the captured frames
-  when `RecordingOptions.captureCursor=true`, #87). KDE/Plasma, sway, wlroots-based
-  compositors, non-Ubuntu distros, and other Ubuntu versions aren't part of the
-  routine validation matrix yet — the
-  xdg-desktop-portal interface is standardised across compositors so most should "just
-  work", but bug reports are how we'll find out. See the README for the contribution invite.
+  when `RecordingOptions.captureCursor=true`, #87, and the window-targeted path follows the
+  picked window across a programmatic `Frame.location` animation, #85). KDE/Plasma, sway,
+  wlroots-based compositors, non-Ubuntu distros, and other Ubuntu versions aren't part of
+  the routine validation matrix yet — the xdg-desktop-portal interface is standardised
+  across compositors so most should "just work", but bug reports are how we'll find out.
+  See the README for the contribution invite.
 
   **Frame-rate fidelity tracks what the compositor delivers.** The pipeline runs the
   PipeWire stream through a `videorate` element clamped to `RecordingOptions.frameRate`
@@ -138,14 +145,38 @@ region-capture failure modes described above:
   `OnSameCanvas` and `OnComponent` popups are part of the target window's surface
   and are recorded normally.
 
-`WaylandPortalRecorder` is structurally a third path: the portal hands the capture a
-PipeWire stream from the compositor, scoped to a user-picked monitor, which then gets
-cropped to the requested region. The monitor-level source means it doesn't follow a
-specific window the way SCK and `FfmpegWindowRecorder` do — moving the target window
-within the same monitor stays within the captured stream, but moving it off-monitor
-or to another display does not. Treat its movement-and-popup behaviour as closer to
-region capture than to window-targeted, with the bonus that the source is the
-compositor and not raw framebuffer reads.
+There are two Wayland portal recorders, picked between by `AutoRecorder` at runtime:
+
+- **`WaylandPortalRecorder`** — region-targeted. The portal hands back a PipeWire stream
+  scoped to a user-picked monitor, which the helper then crops to the requested
+  rectangle. Used for embedded `ComposePanel` surfaces and any caller that passes
+  `window = null`. Movement-and-popup behaviour is closer to region capture than to the
+  SCK / `gdigrab title=` paths: moving the target window within the captured monitor
+  stays within the stream, but moving it off-monitor or to another display does not.
+- **`WaylandPortalWindowRecorder`** (#85) — window-targeted. The portal asks the user to
+  pick a specific window at the dialog and hands back a PipeWire stream containing only
+  the window's pixels. As the window moves on the desktop the stream tracks it: occluding
+  windows, the wallpaper, other apps don't leak into the recording the way they would
+  under MONITOR + region capture. Selected by `AutoRecorder` whenever the caller passes a
+  non-null `TitledWindow`.
+
+  **Mutter quirk: monitor-shaped output with black surround.** xdg-desktop-portal-gnome
+  46 (Ubuntu 24.04) returns a PipeWire stream sized to the granted **monitor**, not the
+  window — Mutter renders the window's pixels into the stream wherever the window
+  currently sits and fills the rest with a constant black, instead of giving us a
+  window-sized stream. The recording is genuinely window-targeted (look at any frame: no
+  other app or desktop pixels appear), but the mp4 dimensions match the monitor and the
+  window occupies a sub-rectangle. This is the compositor's call; the portal spec leaves
+  stream sizing to the implementation, and SCK on macOS and `gdigrab title=` on Windows
+  both produce window-sized output by happenstance, not by spec. If a window-sized mp4
+  matters, post-process with
+  `ffmpeg -i in.mp4 -vf "crop=W:H:0:0" out.mp4`. KDE Plasma's portal reportedly returns a
+  window-sized stream, but that hasn't been validated yet — see the Linux Wayland
+  validation note above.
+
+Both share the same `spectre-wayland-helper` binary and protocol — the only difference
+is the `SourceType` value the JVM sends and whether the helper emits a `videocrop`
+element in the gst pipeline.
 
 ## HiDPI/Retina
 
@@ -175,9 +206,20 @@ compositor and not raw framebuffer reads.
 
 ## Window-targeted recording
 
-- Window-targeted capture via `ScreenCaptureKitRecorder` is the recommended path for
-  top-level `ComposeWindow` surfaces on macOS. It removes the "anything overlapping the
-  region appears in the video" class of problems and follows the window across the
-  screen. Windows has the equivalent path via `FfmpegWindowRecorder` (`gdigrab title=`).
-- The embedded-panel path is still region capture only — there's no host window for SCK
-  or `gdigrab title=` to target.
+- Window-targeted capture is the recommended path for top-level `ComposeWindow` surfaces
+  on every platform. `AutoRecorder` picks the right backend per call:
+  `ScreenCaptureKitRecorder` on macOS, `FfmpegWindowRecorder` (`gdigrab title=`) on
+  Windows, `WaylandPortalWindowRecorder` (xdg-desktop-portal `Window` source type) on
+  Linux Wayland (#85). It removes the "anything overlapping the region appears in the
+  video" class of problems and follows the window across the screen.
+- The embedded-panel path is still region capture only — there's no host window for SCK,
+  `gdigrab title=`, or the portal's `Window` source type to target. On Wayland those
+  fall through to `WaylandPortalRecorder` (region-targeted, monitor source type).
+- **Linux Wayland window-targeted UX caveat.** The portal dialog asks the user to pick
+  the window at every fresh-session start, exactly the same way it asks for a monitor
+  on the region path. There is no Wayland API for the JVM to pre-select the target
+  window programmatically (the title isn't sent to the portal because Wayland doesn't
+  expose window titles to non-privileged clients). The user's pick is the source of
+  truth; the `TitledWindow` argument on `WaylandPortalWindowRecorder.start(...)` exists
+  for `WindowRecorder` interface parity with the macOS / Windows backends but doesn't
+  flow into the portal call.

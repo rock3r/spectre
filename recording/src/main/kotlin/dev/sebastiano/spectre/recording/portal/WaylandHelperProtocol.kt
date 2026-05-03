@@ -32,7 +32,12 @@ internal sealed interface Command {
         @SerialName("source_types") val sourceTypes: List<SourceType>,
         @SerialName("cursor_mode") val cursorMode: CursorMode,
         @SerialName("frame_rate") val frameRate: Int,
-        @SerialName("region") val region: Region,
+        // Null when the helper should record the entire PipeWire stream uncropped — required
+        // for `SourceType.WINDOW` because the granted stream IS the window and any post-portal
+        // crop would fight the compositor's auto-follow on window movement (#85). For
+        // `SourceType.MONITOR` (region capture), this is a screen-pixel rectangle the helper
+        // crops the monitor stream down to.
+        @SerialName("region") val region: Region?,
         @SerialName("output") val output: String,
         @SerialName("codec") val codec: String,
     ) : Command

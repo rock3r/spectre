@@ -379,3 +379,19 @@ tasks.register<JavaExec>("runWaylandPortalCursorSmoke") {
     standardOutput = System.out
     errorOutput = System.err
 }
+
+// Manual smoke for the window-targeted Wayland recording path (#85). Boots a JFrame, starts
+// a window-targeted capture (SourceType.WINDOW so the user picks the JFrame at the portal
+// dialog), animates the window's position during the recording, and reports the mp4 size /
+// path so the human can confirm the recording followed the window across the screen.
+tasks.register<JavaExec>("runWaylandPortalWindowSmoke") {
+    group = "verification"
+    description =
+        "Boots a JFrame, starts a window-targeted Wayland portal capture, moves the JFrame " +
+            "during recording, prints output stats. User picks the window at the portal dialog."
+    onlyIf { OperatingSystem.current().isLinux }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.portal.WaylandPortalWindowSmoke")
+    standardOutput = System.out
+    errorOutput = System.err
+}

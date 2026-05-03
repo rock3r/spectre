@@ -63,9 +63,28 @@ internal class WaylandPortalRecorder(
         // [Event] — `command` and `event` respectively. No global override needed here.
     }
 
-    @Suppress("LongMethod")
     override fun start(
         region: Rectangle,
+        output: Path,
+        options: RecordingOptions,
+    ): RecordingHandle =
+        startInternal(
+            sourceTypes = sourceTypes,
+            region =
+                Region(x = region.x, y = region.y, width = region.width, height = region.height),
+            output = output,
+            options = options,
+        )
+
+    /**
+     * Internal entry point shared with [WaylandPortalWindowRecorder]. Pass [region] = null to
+     * record the entire PipeWire stream uncropped (required for `SourceType.WINDOW`, see
+     * [WaylandHelperProtocol.Command.Start.region] for why).
+     */
+    @Suppress("LongMethod")
+    internal fun startInternal(
+        sourceTypes: List<SourceType>,
+        region: Region?,
         output: Path,
         options: RecordingOptions,
     ): RecordingHandle {
@@ -97,13 +116,7 @@ internal class WaylandPortalRecorder(
                     cursorMode =
                         if (options.captureCursor) CursorMode.EMBEDDED else CursorMode.HIDDEN,
                     frameRate = options.frameRate,
-                    region =
-                        Region(
-                            x = region.x,
-                            y = region.y,
-                            width = region.width,
-                            height = region.height,
-                        ),
+                    region = region,
                     output = output.toAbsolutePath().toString(),
                     codec = options.codec,
                 ),

@@ -17,17 +17,22 @@ pub enum Command {
 }
 
 /// Initial parameters from the JVM. Mirrors `RecordingOptions` + the geometry needed for the
-/// gst-launch pipeline. Region is in AWT screen-pixel coordinates; the helper translates to
-/// stream-relative coordinates internally once the portal hands back a stream position.
+/// gst-launch pipeline. When `region` is `Some`, it's in AWT screen-pixel coordinates and the
+/// helper translates it to stream-relative coordinates + emits a `videocrop` element. When
+/// `region` is `None`, the helper records the entire PipeWire stream uncropped — required for
+/// `SourceType::Window` (#85) because the granted stream IS the picked window and any post-portal
+/// crop would fight the compositor's auto-follow on window movement.
 #[derive(Debug, Clone, Deserialize)]
 pub struct StartCommand {
-    /// Subset of source types the user can pick at the portal dialog. `monitor` is the only
-    /// one Spectre's region recording supports today; window-targeted capture would need
-    /// `window` plus a different post-portal flow.
+    /// Subset of source types the user can pick at the portal dialog. `monitor` is the
+    /// region-capture path; `window` is the window-targeted path that follows the picked
+    /// window across the screen (#85, paired with `region == None`).
     pub source_types: Vec<SourceType>,
     pub cursor_mode: CursorMode,
     pub frame_rate: u32,
-    pub region: Region,
+    /// Crop rectangle in AWT screen-pixel coordinates. `None` means "no crop, record the whole
+    /// stream as-is" — the documented mode for window-targeted capture.
+    pub region: Option<Region>,
     pub output: String,
     pub codec: String,
 }

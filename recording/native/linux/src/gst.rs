@@ -44,38 +44,26 @@ use std::path::Path;
 /// Always emits `-e` (EOS-on-SIGTERM) — the recorder lifecycle relies on SIGTERM for clean
 /// shutdown.
 ///
-/// The `region` is interpreted relative to the PipeWire stream's own coordinate space (so
-/// `(0, 0)` is the top-left of the granted monitor's pixel area). Pre-translation from
-/// AWT-screen coords to stream-relative happens in [`crate::recorder::run`].
+/// `region == Some(...)` selects region-capture mode: the rectangle is interpreted relative to
+/// the PipeWire stream's own coordinate space (so `(0, 0)` is the top-left of the granted
+/// monitor's pixel area; pre-translation from AWT-screen coords to stream-relative happens in
+/// [`crate::recorder::run`]). The pipeline emits a `videocrop` element with pixel insets
+/// derived from the rectangle.
+///
+/// `region == None` selects window-targeted capture (#85): no `videocrop`, the encoder consumes
+/// the entire PipeWire stream as-is. The granted stream is already scoped to the user-picked
+/// window, and the compositor re-aims it as the window moves — adding our own crop would fight
+/// that and silently miss pixels off the original rectangle.
 pub fn build_pipewire_argv(
     pipewire_node_id: u32,
     pipewire_fd: i32,
-    region: Region,
+    region: Option<Region>,
     stream_size: (u32, u32),
     frame_rate: u32,
     capture_cursor: bool,
     output: &Path,
     codec: &str,
 ) -> Result<Vec<String>> {
-    // Region fields are i32 on both sides of the wire (matches `java.awt.Rectangle` shape).
-    // `Rectangle` doesn't enforce non-negative widths/heights, so a misbehaving caller could
-    // send (or compute) negatives. We catch both the negative case and the zero case with one
-    // domain check and a single clear error message, rather than relying on the JSON
-    // deserialiser to reject — see the `Region` doc-comment in protocol.rs for why.
-    if region.width <= 0 || region.height <= 0 {
-        bail!(
-            "region must have positive dimensions, was {}x{}",
-            region.width,
-            region.height
-        );
-    }
-    if region.x < 0 || region.y < 0 {
-        bail!(
-            "region origin must be non-negative for the videocrop filter, was ({}, {})",
-            region.x,
-            region.y
-        );
-    }
     if pipewire_fd < 0 {
         bail!(
             "pipewire_fd must be a valid Unix FD (>= 0), was {}. Did OpenPipeWireRemote \
@@ -91,26 +79,52 @@ pub fn build_pipewire_argv(
             stream_h
         );
     }
-    let region_right = region.x as i64 + region.width as i64;
-    let region_bottom = region.y as i64 + region.height as i64;
-    if region_right > stream_w as i64 {
-        bail!(
-            "region right edge {} exceeds stream width {}",
-            region_right,
-            stream_w
-        );
-    }
-    if region_bottom > stream_h as i64 {
-        bail!(
-            "region bottom edge {} exceeds stream height {}",
-            region_bottom,
-            stream_h
-        );
-    }
-    let top = region.y as u32;
-    let bottom = stream_h - region_bottom as u32;
-    let left = region.x as u32;
-    let right = stream_w - region_right as u32;
+    // Validate region domain when present. None is the documented "no crop, record the whole
+    // stream" mode for window-targeted capture and bypasses these checks entirely.
+    let crop_insets = if let Some(region) = region {
+        // Region fields are i32 on both sides of the wire (matches `java.awt.Rectangle` shape).
+        // `Rectangle` doesn't enforce non-negative widths/heights, so a misbehaving caller could
+        // send (or compute) negatives. We catch both the negative case and the zero case with one
+        // domain check and a single clear error message, rather than relying on the JSON
+        // deserialiser to reject — see the `Region` doc-comment in protocol.rs for why.
+        if region.width <= 0 || region.height <= 0 {
+            bail!(
+                "region must have positive dimensions, was {}x{}",
+                region.width,
+                region.height
+            );
+        }
+        if region.x < 0 || region.y < 0 {
+            bail!(
+                "region origin must be non-negative for the videocrop filter, was ({}, {})",
+                region.x,
+                region.y
+            );
+        }
+        let region_right = region.x as i64 + region.width as i64;
+        let region_bottom = region.y as i64 + region.height as i64;
+        if region_right > stream_w as i64 {
+            bail!(
+                "region right edge {} exceeds stream width {}",
+                region_right,
+                stream_w
+            );
+        }
+        if region_bottom > stream_h as i64 {
+            bail!(
+                "region bottom edge {} exceeds stream height {}",
+                region_bottom,
+                stream_h
+            );
+        }
+        let top = region.y as u32;
+        let bottom = stream_h - region_bottom as u32;
+        let left = region.x as u32;
+        let right = stream_w - region_right as u32;
+        Some((top, bottom, left, right))
+    } else {
+        None
+    };
     // Cursor is rendered into the captured frames by PipeWire (cursor_mode=EMBEDDED on
     // SelectSources). gst-launch's pipewiresrc has no per-element cursor knob — the
     // capture_cursor param is consumed at portal-handshake time, not here. We accept it on
@@ -130,15 +144,18 @@ pub fn build_pipewire_argv(
         "!".to_string(),
         format!("video/x-raw,framerate={frame_rate}/1"),
         "!".to_string(),
-        "videocrop".to_string(),
-        format!("top={top}"),
-        format!("bottom={bottom}"),
-        format!("left={left}"),
-        format!("right={right}"),
-        "!".to_string(),
-        "videoconvert".to_string(),
-        "!".to_string(),
     ];
+    if let Some((top, bottom, left, right)) = crop_insets {
+        argv.extend([
+            "videocrop".to_string(),
+            format!("top={top}"),
+            format!("bottom={bottom}"),
+            format!("left={left}"),
+            format!("right={right}"),
+            "!".to_string(),
+        ]);
+    }
+    argv.extend(["videoconvert".to_string(), "!".to_string()]);
     // x264 is the default codec. Other values are passed through unmodified — accepting any
     // GStreamer encoder name here (e.g. `x265enc` for HEVC, `vaapih264enc` for hardware-
     // accelerated H.264) without re-coding tuning flags.
@@ -170,13 +187,13 @@ mod tests {
     use crate::protocol::Region;
     use std::path::PathBuf;
 
-    fn region(x: i32, y: i32, w: i32, h: i32) -> Region {
-        Region {
+    fn region(x: i32, y: i32, w: i32, h: i32) -> Option<Region> {
+        Some(Region {
             x,
             y,
             width: w,
             height: h,
-        }
+        })
     }
 
     fn argv_for_default() -> Vec<String> {
@@ -188,6 +205,23 @@ mod tests {
             30,
             true,
             &PathBuf::from("/tmp/spectre/out.mp4"),
+            "libx264",
+        )
+        .unwrap()
+    }
+
+    fn argv_for_window_targeted() -> Vec<String> {
+        // #85: window-targeted capture sends `region: None` so the helper records the entire
+        // PipeWire stream as-is. The compositor follows the picked window across the screen;
+        // any post-portal crop would silently drop pixels off the original rectangle.
+        build_pipewire_argv(
+            42,
+            17,
+            None,
+            (640, 480),
+            30,
+            true,
+            &PathBuf::from("/tmp/spectre/window.mp4"),
             "libx264",
         )
         .unwrap()
@@ -326,6 +360,42 @@ mod tests {
             &PathBuf::from("/tmp/x"), "libx264",
         );
         assert!(too_tall.is_err(), "region taller than stream should be rejected");
+    }
+
+    #[test]
+    fn argv_omits_videocrop_for_window_targeted_capture() {
+        // None region → no `videocrop` element. The pipeline goes straight from the framerate
+        // caps filter to videoconvert, leaving the stream's pixels untouched so the compositor
+        // can re-aim the window-targeted PipeWire stream as the user moves the window.
+        let argv = argv_for_window_targeted();
+        assert!(
+            !argv.contains(&"videocrop".to_string()),
+            "argv must not contain a videocrop element when region is None: {argv:?}"
+        );
+        // The framerate cap → videoconvert hand-off must remain intact even without the crop.
+        assert_contains_sequence(&argv, &["video/x-raw,framerate=30/1", "!", "videoconvert"]);
+    }
+
+    #[test]
+    fn argv_keeps_pipewire_and_encoder_for_window_targeted_capture() {
+        // Sanity: the rest of the pipeline (pipewiresrc, x264enc tuning, mp4mux faststart)
+        // is identical between region- and window-targeted modes.
+        let argv = argv_for_window_targeted();
+        assert_contains_sequence(&argv, &["pipewiresrc", "fd=17", "path=42"]);
+        assert_contains_sequence(
+            &argv,
+            &["x264enc", "tune=zerolatency", "speed-preset=ultrafast"],
+        );
+        assert_contains_sequence(
+            &argv,
+            &[
+                "mp4mux",
+                "faststart=true",
+                "!",
+                "filesink",
+                "location=/tmp/spectre/window.mp4",
+            ],
+        );
     }
 
     #[test]

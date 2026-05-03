@@ -56,12 +56,17 @@ pub fn run(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
     // us a stream covering one monitor (or the user-selected window); its top-left is in
     // monitor coords, which can be non-(0,0) on multi-monitor setups. Our AWT-side region is
     // already relative to the screen origin, so subtract the stream position.
-    let stream_relative_region = crate::protocol::Region {
-        x: start.region.x - session.stream.position.0,
-        y: start.region.y - session.stream.position.1,
-        width: start.region.width,
-        height: start.region.height,
-    };
+    //
+    // For window-targeted capture (#85) the JVM sends `region: None` — the granted stream is
+    // already scoped to the picked window, so we want the whole stream uncropped and any
+    // window movement is handled by the compositor (we'd otherwise fight it with a fixed
+    // crop). `build_pipewire_argv` skips the videocrop element entirely on `None`.
+    let stream_relative_region = start.region.map(|r| crate::protocol::Region {
+        x: r.x - session.stream.position.0,
+        y: r.y - session.stream.position.1,
+        width: r.width,
+        height: r.height,
+    });
 
     let argv = build_pipewire_argv(
         session.stream.node_id,
@@ -82,12 +87,7 @@ pub fn run(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
         session.pipewire_fd,
         session.stream.size,
         session.stream.position,
-        (
-            stream_relative_region.x,
-            stream_relative_region.y,
-            stream_relative_region.width,
-            stream_relative_region.height,
-        )
+        stream_relative_region.map(|r| (r.x, r.y, r.width, r.height))
     );
     eprintln!("[helper] spawning: {argv:?}");
 
