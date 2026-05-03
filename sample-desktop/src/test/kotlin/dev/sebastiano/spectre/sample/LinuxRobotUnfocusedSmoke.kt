@@ -95,7 +95,7 @@ private fun runSmoke(): Int {
     waitForFrame(sutRef)
     waitForFrame(distractorRef)
     waitForLayout(state)
-    Thread.sleep(POST_LAYOUT_WARMUP_MS)
+    Thread.sleep(POST_LAYOUT_UNFOCUSED_WARMUP_MS)
 
     val driver = RobotDriver()
     val distractor = requireNotNull(distractorRef.get()) { "distractor frame missing" }

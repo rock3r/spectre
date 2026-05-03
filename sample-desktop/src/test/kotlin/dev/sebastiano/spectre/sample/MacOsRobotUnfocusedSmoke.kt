@@ -94,7 +94,7 @@ private fun runSmoke(): Int {
     waitForFrame(sutRef)
     waitForFrame(distractorRef)
     waitForLayout(state)
-    Thread.sleep(POST_LAYOUT_WARMUP_MS)
+    Thread.sleep(POST_LAYOUT_UNFOCUSED_WARMUP_MS)
 
     val driver = RobotDriver()
     // Reuse the focused smoke's TCC probe — the unfocused SUT can still receive Robot input

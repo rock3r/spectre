@@ -466,5 +466,10 @@ internal const val SMOKE_PANEL_HEIGHT = 320
 internal const val WINDOW_OPEN_TIMEOUT_MS = 5_000L
 internal const val LAYOUT_TIMEOUT_MS = 5_000L
 internal const val POST_LAYOUT_WARMUP_MS = 500L
+// Unfocused smokes spawn a sibling distractor JFrame and exercise focus transfers between two
+// AWT windows; the AWT input handlers attach a few frames later than the focused case, so the
+// original WindowsRobotUnfocusedSmoke used 600ms here. Restored as a separate constant after
+// the rig refactor standardised on 500ms — the focus-transfer settle is the why.
+internal const val POST_LAYOUT_UNFOCUSED_WARMUP_MS = 600L
 internal const val POST_CLICK_SETTLE_MS = 250L
 internal const val POST_TYPE_SETTLE_MS = 800L
