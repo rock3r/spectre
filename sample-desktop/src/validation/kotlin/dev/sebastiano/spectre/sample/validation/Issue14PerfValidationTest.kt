@@ -5,6 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.BeforeAll
@@ -39,7 +40,7 @@ class Issue14PerfValidationTest {
 
     @Test
     @Order(1)
-    fun `tree traversal over a 200-item LazyColumn stays under the budget`() {
+    fun `tree traversal over a 200-item LazyColumn stays under the budget`() = runBlocking {
         with(fixture.automator) {
             navigateToScenario("scenario.scroll")
             waitForTestTag("scroll.list")
@@ -73,7 +74,7 @@ class Issue14PerfValidationTest {
 
     @Test
     @Order(2)
-    fun `popup discoverability latency stays under the budget`() {
+    fun `popup discoverability latency stays under the budget`() = runBlocking {
         with(fixture.automator) {
             navigateToScenario("scenario.popup")
             val toggle = waitForTestTag("popup.toggleButton")
@@ -107,7 +108,7 @@ class Issue14PerfValidationTest {
 
     @Test
     @Order(3)
-    fun `screenshot warmup completes within a reasonable budget`() {
+    fun `screenshot warmup completes within a reasonable budget`() = runBlocking {
         with(fixture.automator) {
             navigateToScenario("scenario.counter")
             val button = waitForTestTag("incrementButton")

@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.sample.validation
 import java.awt.GraphicsEnvironment
 import kotlin.test.Test
 import kotlin.test.assertNotNull
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.BeforeAll
@@ -60,7 +61,7 @@ class PopupLayerVariantsValidationTest {
     @AfterAll fun stop() = fixture.stop()
 
     @Test
-    fun `popup body resolves under the active layer type`() {
+    fun `popup body resolves under the active layer type`() = runBlocking {
         with(fixture.automator) {
             navigateToScenario("scenario.popup")
             click(waitForTestTag("popup.toggleButton"))

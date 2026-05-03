@@ -4,6 +4,7 @@ import java.awt.GraphicsEnvironment
 import kotlin.test.Test
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.BeforeAll
@@ -38,7 +39,7 @@ class MultiWindowAndPopupValidationTest {
 
     @Test
     @Order(1)
-    fun `popup body is discoverable when popup is open`() {
+    fun `popup body is discoverable when popup is open`() = runBlocking {
         with(fixture.automator) {
             navigateToScenario("scenario.popup")
             val toggleButton = waitForTestTag("popup.toggleButton")
@@ -56,7 +57,7 @@ class MultiWindowAndPopupValidationTest {
 
     @Test
     @Order(2)
-    fun `popup nodes disappear after dismiss`() {
+    fun `popup nodes disappear after dismiss`() = runBlocking {
         with(fixture.automator) {
             navigateToScenario("scenario.popup")
             click(waitForTestTag("popup.toggleButton"))
@@ -68,7 +69,7 @@ class MultiWindowAndPopupValidationTest {
 
     @Test
     @Order(3)
-    fun `secondary Window appears in tracked windows when opened`() {
+    fun `secondary Window appears in tracked windows when opened`() = runBlocking {
         with(fixture.automator) {
             navigateToScenario("scenario.multiwindow")
             // Capture the main window's surfaceIds BEFORE opening the secondary — the order
