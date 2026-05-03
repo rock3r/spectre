@@ -6,15 +6,19 @@ where to put them. This page covers all three.
 
 ## The EDT rule
 
-All wait helpers refuse to run on the AWT event dispatch thread:
+`waitForIdle` and `waitForVisualIdle` refuse to run on the AWT event dispatch thread:
 
 ```
 waitForIdle must not be called from the AWT event dispatch thread;
 wrap the call with withContext(Dispatchers.Default) or similar.
 ```
 
-This is enforced because the wait loops drain the EDT and snapshot semantics via
-`invokeAndWait`. The standard pattern in tests:
+This is enforced because their wait loops drain the EDT and snapshot semantics via
+`invokeAndWait` — running on the EDT would either deadlock or skip the bounded worker
+that enforces the timeout. `waitForNode` is exempt: it polls via `readOnEdt`, so it's
+safe to call from anywhere a coroutine can suspend.
+
+The standard pattern in tests:
 
 ```kotlin
 @Test
@@ -27,7 +31,8 @@ fun mySpec() = runBlocking {
 }
 ```
 
-If you forget, you'll get a clear `IllegalStateException` rather than a deadlock.
+If you call `waitForIdle` / `waitForVisualIdle` from the EDT you'll get a clear
+`IllegalStateException` rather than a deadlock.
 
 ## `waitForNode`
 

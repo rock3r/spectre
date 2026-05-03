@@ -15,6 +15,7 @@ A minimal action looks like:
 ```kotlin
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.diagnostic.thisLogger
 import dev.sebastiano.spectre.core.ComposeAutomator
 
 class RunSpectreAction : AnAction() {
@@ -40,6 +41,9 @@ activity:
 ```
 
 ```kotlin
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.startup.ProjectActivity
+
 class SpectreAutorun : ProjectActivity {
     override suspend fun execute(project: Project) {
         if (System.getProperty("spectre.autorun") != "true") return

@@ -9,9 +9,10 @@ java.lang.IllegalStateException: waitForIdle must not be called from the AWT eve
 dispatch thread; wrap the call with withContext(Dispatchers.Default) or similar.
 ```
 
-The wait helpers drain the EDT and snapshot semantics via `invokeAndWait`. Running them
-on the EDT would either deadlock or skip the bounded worker that enforces their
-timeout. Wrap your wait calls:
+`waitForIdle` and `waitForVisualIdle` drain the EDT and snapshot semantics via
+`invokeAndWait`. Running them on the EDT would either deadlock or skip the bounded
+worker that enforces their timeout. (`waitForNode` polls through `readOnEdt` and is
+exempt.) Wrap your wait calls:
 
 ```kotlin
 runBlocking {

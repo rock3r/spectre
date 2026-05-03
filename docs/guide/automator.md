@@ -22,8 +22,9 @@ val automator = ComposeAutomator.inProcess()
 ```
 
 For a headless setup that exercises the semantics-reading paths without driving real OS
-input, build one with `RobotDriver.headless()`. The `testing` module's
-`newHeadlessAutomator()` fixture has the recipe.
+input, build one with `RobotDriver.headless()`. The `testing` module's own test sources
+include an internal `newHeadlessAutomator()` helper that wires this up — it's not a
+public API, but it's a useful reference recipe to copy.
 
 ## Surfaces and the semantics tree
 
@@ -94,16 +95,19 @@ See [Synchronization](synchronization.md) for the full toolkit.
 
 ## The EDT rule
 
-The wait helpers refuse to run on the AWT event dispatch thread (EDT):
+`waitForIdle` and `waitForVisualIdle` refuse to run on the AWT event dispatch thread (EDT):
 
 ```
 waitForIdle must not be called from the AWT event dispatch thread;
 wrap the call with withContext(Dispatchers.Default) or similar.
 ```
 
-This is enforced at runtime because the wait loops drain the EDT and snapshot semantics
-via `invokeAndWait`. If they ran on the EDT they would either deadlock or quietly skip
-the bounded worker that enforces their timeout.
+This is enforced at runtime because their wait loops drain the EDT and snapshot
+semantics via `invokeAndWait`. If they ran on the EDT they would either deadlock or
+quietly skip the bounded worker that enforces their timeout.
+
+`waitForNode` is the exception: it polls through `readOnEdt`, so it's safe to call from
+anywhere a coroutine can suspend.
 
 JUnit test methods don't run on the EDT, but coroutines launched on `Dispatchers.Main`
 or any dispatcher backed by Swing's EDT will. The standard pattern is `runBlocking

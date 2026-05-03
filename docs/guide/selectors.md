@@ -33,8 +33,8 @@ fun MyButton() {
 ## By visible text
 
 ```kotlin
-val nodes = automator.findByText("Submit")            // exact match
-val nodes = automator.findByText("Sub", exact = false) // substring match
+val nodes = automator.findByText("Submit")            // exact, case-sensitive
+val nodes = automator.findByText("Sub", exact = false) // substring, case-insensitive
 val node  = automator.findOneByText("Submit")
 ```
 
