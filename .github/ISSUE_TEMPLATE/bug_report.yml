@@ -1,0 +1,92 @@
+name: Bug report
+description: Something Spectre does that it shouldn't, or doesn't do that it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, please skim [CONTRIBUTING.md](https://github.com/rock3r/spectre/blob/main/CONTRIBUTING.md). The **"no clanker PRs or issues"** rule applies — LLM-generated reports get closed without engagement.
+
+        The fields below map to what triage would ask for anyway. Fill in what's relevant; "n/a" is fine for the rest.
+
+  - type: input
+    id: summary
+    attributes:
+      label: One-line summary
+      placeholder: "validationTestPopupLayers fails on KDE/Plasma Wayland because ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: What you tried
+      description: |
+        Command, scenario, the path through Spectre's API. Useful Gradle reproductions:
+
+        - `./gradlew :sample-desktop:validationTest`
+        - `./gradlew :sample-desktop:validationTestPopupLayers`
+        - `./gradlew :recording:runWaylandPortalSmoke` (Linux Wayland)
+        - `./gradlew :sample-desktop:run` (manual smoke surface)
+      placeholder: "Ran `./gradlew :recording:runWaylandPortalSmoke` after switching to Fedora 40."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+      description: What you expected, what actually happened. Stack traces and log snippets beat screenshots; both beat vibes.
+      placeholder: "Expected a non-empty mp4. Got 0 bytes; helper stderr says ..."
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS + version
+      placeholder: "Ubuntu 24.04 / macOS 15.1 / Windows 11 24H2"
+    validations:
+      required: true
+
+  - type: input
+    id: linux-extras
+    attributes:
+      label: Linux session details (Linux only)
+      description: "Output of `echo $XDG_CURRENT_DESKTOP` + `echo $XDG_SESSION_TYPE` + the compositor or window manager."
+      placeholder: "GNOME / wayland / mutter 46"
+
+  - type: input
+    id: jvm
+    attributes:
+      label: JVM
+      description: JBR vs Temurin, plus version.
+      placeholder: "JBR 21.0.9 / Temurin 21.0.10"
+    validations:
+      required: true
+
+  - type: input
+    id: spectre-version
+    attributes:
+      label: Spectre version / commit
+      description: Tag, commit hash, or "main as of YYYY-MM-DD".
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Stack traces, helper stderr, idea.log (for the IDE plugin path), Gradle output. Will be wrapped in a code block automatically.
+      render: shell
+
+  - type: dropdown
+    id: pr-intent
+    attributes:
+      label: Are you planning to send a PR for this?
+      options:
+        - "No — filing for tracking"
+        - "Maybe — if you point me at the right module"
+        - "Yes — pickup soon"
+    validations:
+      required: true

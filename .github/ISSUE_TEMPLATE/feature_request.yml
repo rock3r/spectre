@@ -1,0 +1,49 @@
+name: Feature request
+description: A change to what Spectre does, or a new thing it should do
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, please skim [CONTRIBUTING.md](https://github.com/rock3r/spectre/blob/main/CONTRIBUTING.md). The **"no clanker PRs or issues"** rule applies — LLM-generated requests get closed without engagement.
+
+        For non-trivial changes, file the issue first so we can sanity-check the approach before anyone sinks time into a PR.
+
+  - type: input
+    id: summary
+    attributes:
+      label: One-line summary
+      placeholder: "Add `RobotDriver.synthetic(...)` support for X11 root windows"
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: What you're trying to do
+      description: The user-visible problem. Skip "implement X" and explain what the current code makes hard or impossible.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Sketch of the change
+      description: Optional. Module, API surface, anything else worth landing in the proposal.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional. Other approaches you ruled out and why.
+
+  - type: dropdown
+    id: pr-intent
+    attributes:
+      label: Are you planning to send the PR?
+      options:
+        - "No — filing for tracking"
+        - "Maybe — if the approach makes sense"
+        - "Yes — happy to pick up"
+    validations:
+      required: true

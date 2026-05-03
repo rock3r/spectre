@@ -1,0 +1,9 @@
+# Disable blank issues so reporters land in either the bug or feature template, both of
+# which surface CONTRIBUTING.md's no-clanker rule + the OS / JVM / version fields we'd ask
+# for in triage anyway.
+blank_issues_enabled: false
+
+contact_links:
+  - name: Contributing guide
+    url: https://github.com/rock3r/spectre/blob/main/CONTRIBUTING.md
+    about: Read this before filing. The "no clanker PRs or issues" rule applies — LLM-generated reports are closed without engagement.
