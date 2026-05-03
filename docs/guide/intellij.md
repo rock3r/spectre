@@ -89,33 +89,20 @@ QA, CI) and invisible to the rest of the world.
 
 ### Pick the right `RobotDriver` for in-IDE work
 
-The three driver options behave differently when the JVM running the automator is
-also the JVM hosting the UI under test:
+See [Driving input → Real vs. synthetic input](interactions.md#real-vs-synthetic-input)
+for the full trade-off rundown across `RobotDriver()`, `RobotDriver.synthetic(...)`,
+and `RobotDriver.headless()`. Two IDE-specific notes on top of that page:
 
-- **`RobotDriver.synthetic(rootWindow = ideFrame)`** — synthetic AWT events posted
-  directly into the IDE's window hierarchy. The full `automator.click(...)` /
-  `doubleClick(...)` / `swipe(...)` / `typeText(...)` / `pressKey(...)` surface
-  works as you'd expect, but events skip the OS input layer: no real cursor motion,
-  no global focus, no fight with other applications on the same machine. **Good
-  default for in-IDE automators**, especially under parallel test execution.
-  `synthetic` is a companion extension function in `dev.sebastiano.spectre.core`,
-  so it needs an explicit import.
-- **`RobotDriver()`** — real OS-level input via `java.awt.Robot`. The mouse cursor
-  moves, keyboard focus is global, and the input traverses the OS event chain.
-  This is the most realistic path and the only one that exercises OS-level
-  shortcut handling (Cmd+S, Cmd+Tab, etc.), focus transitions, and cross-window
-  interactions — pick this when the test is specifically validating those. The
-  trade-off is that the cursor visibly moves on screen and the IDE has to be the
-  focused window, so two parallel test JVMs racing for focus on the same screen
-  will collide.
-- **`RobotDriver.headless()`** — every input call (mouse, keyboard, clipboard) and
-  every screenshot becomes a silent no-op. Useful only when you're driving the UI
-  exclusively through Compose semantics actions (see below) and you actively want
-  to suppress side effects. With this driver, **`automator.click(...)` and friends
-  do nothing** — that's the point, but it's also the trap.
-
-All three leave `WindowTracker` and `SemanticsReader` alone, so the automator reads
-real semantics from the live tool window in every case.
+- **`synthetic` is the usual default.** When the JVM running the automator is also
+  the JVM hosting the UI, real OS input would dispatch events back to the IDE
+  you're inside, fight with whatever else has focus on the host machine, and move
+  the user's cursor visibly. Synthetic AWT events skip all of that. The
+  IntelliJ-specific recipe for the `rootWindow` argument is
+  `WindowManager.getInstance().getFrame(project)` — that's the `Window` shown in
+  the action sample above.
+- **`RobotDriver()` is still valid** when you specifically need to exercise
+  OS-level shortcut chains, focus transitions, or cross-window interactions —
+  those are the only things synthetic input doesn't cover.
 
 ### Optional: drive interactions via semantics actions
 
