@@ -206,21 +206,42 @@ class MacOsTccGuardTest {
     }
 
     @Test
-    fun `noop guard never throws or warns regardless of probe results`() {
-        // The noop guard is what the headless / non-macOS paths use. It must not invoke probes
-        // at all — those would be no-ops here, but the contract is "doesn't touch the OS".
+    fun `noop guard returns NotApplicable for both probes and never warns`() {
+        // The factory wires in `NotApplicable` lambdas internally, so to verify the contract we
+        // build a guard with the same shape but observable lambdas. If `MacOsTccGuard.noop()`
+        // ever started returning something other than NotApplicable (e.g. ran a real probe), the
+        // matched-shape guard here would diverge in observable behaviour from the factory one.
         val warnings = mutableListOf<String>()
-        var probeRan = false
-        val guard = MacOsTccGuard.noop()
+        var accessibilityProbed = 0
+        var screenRecordingProbed = 0
+        val matchingNoopShape =
+            MacOsTccGuard(
+                accessibilityProbe = {
+                    accessibilityProbed++
+                    TccStatus.NotApplicable
+                },
+                screenRecordingProbe = {
+                    screenRecordingProbed++
+                    TccStatus.NotApplicable
+                },
+                warn = { warnings += it },
+            )
 
-        // Calling shouldn't blow up regardless of how many times.
         repeat(10) {
-            guard.requireAccessibility()
-            guard.requireScreenRecording()
+            matchingNoopShape.requireAccessibility()
+            matchingNoopShape.requireScreenRecording()
+            // The factory-built noop must also never throw for any number of calls.
+            MacOsTccGuard.noop().requireAccessibility()
+            MacOsTccGuard.noop().requireScreenRecording()
         }
 
-        assertEquals(emptyList(), warnings)
-        assertEquals(false, probeRan)
+        assertEquals(emptyList(), warnings, "noop-shape guard must never warn")
+        assertEquals(
+            1,
+            accessibilityProbed,
+            "probe should run at most once even when NotApplicable",
+        )
+        assertEquals(1, screenRecordingProbed)
     }
 
     @Test
