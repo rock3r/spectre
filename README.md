@@ -102,6 +102,5 @@ because `setup-java`'s JBR 21 entry is missing.
 - [Conventions](docs/CONVENTIONS.md)
 - [Static analysis](docs/STATIC-ANALYSIS.md)
 - [Recording limitations](docs/RECORDING-LIMITATIONS.md)
-- [Bootstrap plan](docs/bootstrap-plan.md)
 - [Spike gist](https://gist.github.com/rock3r/8e520bb3fe8fe5886367d5e22cefbab8) — original
   design notes.

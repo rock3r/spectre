@@ -32,7 +32,6 @@ Keep this file focused on operating rules. Use the docs below for implementation
 | [docs/STATIC-ANALYSIS.md](docs/STATIC-ANALYSIS.md) | Detekt, ktfmt, and CI-backed quality expectations |
 | [docs/RECORDING-LIMITATIONS.md](docs/RECORDING-LIMITATIONS.md) | Per-platform recording trade-offs, frame drop behaviour, audio caveats |
 | [docs/WORKTREE-GRADLE-PITFALLS.md](docs/WORKTREE-GRADLE-PITFALLS.md) | Worktree-specific Gradle / configuration-cache / IDE-sandbox pitfalls |
-| [docs/bootstrap-plan.md](docs/bootstrap-plan.md) | Current repo bootstrap scope and near-term module intent |
 | [Compose Desktop automator spike gist](https://gist.github.com/rock3r/8e520bb3fe8fe5886367d5e22cefbab8) | External design notes and open spike questions |
 
 ### User-facing

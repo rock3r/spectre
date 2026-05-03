@@ -79,15 +79,15 @@ The API is split into two layers:
 
 The split matters because **queries do not auto-wait**. If you call `findOneByTestTag(...)`
 on a frame where the node isn't there yet, you get `null` — there's no implicit retry.
-This is a deliberate v1 contract; see the next section.
+See the next section.
 
 ## No auto-wait
 
-Frameworks like Espresso wrap every read and action in an idle barrier. Spectre v1 does
+Frameworks like Espresso wrap every read and action in an idle barrier. Spectre does
 not. The reasoning lives in [`ComposeAutomator.kt`](https://github.com/rock3r/spectre/blob/main/core/src/main/kotlin/dev/sebastiano/spectre/core/ComposeAutomator.kt):
 
 ```kotlin
-// V1 contract: queries and actions do not auto-wait. Callers must invoke waitForIdle() /
+// Queries and actions do not auto-wait. Callers must invoke waitForIdle() /
 // waitForVisualIdle() / waitForNode() explicitly when synchronisation matters.
 ```
 

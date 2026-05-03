@@ -4,12 +4,12 @@ The `recording` module ships:
 - `FfmpegRecorder` — region capture via `ffmpeg` against the platform's native capture device.
   Three backends auto-selected from `os.name`: `avfoundation` (macOS), `gdigrab` (Windows),
   `x11grab` (Linux Xorg). Trade-offs below.
-- `ScreenCaptureKitRecorder` (#18 — landed) — macOS-only window-targeted capture via a bundled
-  Swift helper. Removes the "anything overlapping the region appears in the recording" class
-  of problems for top-level windows. Falls outside the region-capture trade-off list below; see
-  the recording module README for usage.
-- `FfmpegWindowRecorder` (#22 / #55 — landed) — Windows-only title-based window capture via
-  `gdigrab title=`. Mirrors the SCK ergonomics for Windows top-level Compose windows.
+- `ScreenCaptureKitRecorder` — macOS-only window-targeted capture via a bundled Swift
+  helper. Removes the "anything overlapping the region appears in the recording" class
+  of problems for top-level windows. Falls outside the region-capture trade-off list
+  below; see the recording module README for usage.
+- `FfmpegWindowRecorder` — Windows-only title-based window capture via `gdigrab title=`.
+  Mirrors the SCK ergonomics for Windows top-level Compose windows.
 
 The rest of this document describes the region-capture path (relevant on every platform when
 there's no host window to target). Use ScreenCaptureKit/FfmpegWindowRecorder when you have a
@@ -19,9 +19,9 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
 ## Platform
 
 - **macOS** — `avfoundation` region capture. Requires the Screen Recording permission.
-- **Windows** — `gdigrab` region capture (#22). Plus title-based window capture via
-  `FfmpegWindowRecorder` (#55).
-- **Linux Xorg sessions** — `x11grab` region capture (#75 / #76). Reads `DISPLAY`. Routine
+- **Windows** — `gdigrab` region capture, plus title-based window capture via
+  `FfmpegWindowRecorder`.
+- **Linux Xorg sessions** — `x11grab` region capture. Reads `DISPLAY`. Routine
   validation has only been on Ubuntu 22.04's Xorg session (one machine, one X server build)
   and on CI under `xvfb-run` (Xorg protocol over a virtual framebuffer, no GPU). Other
   Xorg WMs/distros fall under the "Linux is best-effort, contributions welcome" line in
@@ -32,8 +32,8 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
   `recording/native/linux/`). The JVM-side `WaylandPortalRecorder` spawns the helper and
   talks to it over stdin/stdout via newline-delimited JSON. **First call within a session
   pops the compositor's "share your screen" dialog**; subsequent calls reuse the grant via
-  the portal's `restore_token`. Why the helper: the JVM-only attempt (#77 stage 2) hit a
-  dbus-java UnixFD-unmarshalling bug that wasn't fixable trivially, and Rust's `std::process`
+  the portal's `restore_token`. Why the helper: a pure-JVM attempt hit a dbus-java
+  UnixFD-unmarshalling bug that wasn't fixable trivially, and Rust's `std::process`
   makes FD inheritance into `gst-launch` a one-liner where the JVM's `ProcessBuilder`
   doesn't expose the necessary `fcntl(F_SETFD, ...)` knob. The helper-as-subprocess shape
   also matches the macOS SCK helper (`recording/native/macos/`) — same pattern, same
@@ -61,10 +61,11 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
 
 ## Capture mode
 
-- **Region capture, not window capture**. v1 records a fixed `Rectangle` of the virtual
-  desktop — whatever pixels the screen happens to be showing inside that region land in
-  the file. The region is bound at `Recorder.start(...)` time and does not follow a
-  window; the v2 work surfaces a proper window-targeted backend via ScreenCaptureKit.
+- **Region capture, not window capture**. Region capture records a fixed `Rectangle` of
+  the virtual desktop — whatever pixels the screen happens to be showing inside that
+  region land in the file. The region is bound at `Recorder.start(...)` time and does
+  not follow a window. Use `ScreenCaptureKitRecorder` (macOS) or `FfmpegWindowRecorder`
+  (Windows) when you have a top-level window to target.
 - **Embedded `ComposePanel` surfaces always fall through to region capture.**
   `AutoRecorder.start(window: TitledWindow?, region: Rectangle, …)` picks window-targeted
   capture only when `window` is non-null and (on Windows) has a non-blank title. The
@@ -107,19 +108,18 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
 - The handle MUST be stopped (`RecordingHandle.stop(...)`) for the file to be flushed cleanly. A
   JVM exit without stop leaves a partial/non-finalised file and an orphaned subprocess.
 
-## What's NOT a v1 limitation
+## Current non-limitations
 
 - Cursor capture is configurable via `RecordingOptions.captureCursor` and works under the region
   path. The cursor pixels are baked into the frames; there is no overlay you can toggle in
   post-processing.
-- Audio capture is intentionally absent — v1 records video only. Adding audio is a follow-up.
+- Audio capture is intentionally absent — Spectre currently records video only.
 
-## What v2 changed
+## Window-targeted recording
 
-- Window-targeted capture via `ScreenCaptureKitRecorder` (#18) is now the recommended path for
-  top-level `ComposeWindow` surfaces. It removes the "anything overlapping the region appears
-  in the video" class of problems and follows the window across the screen.
-- The embedded-panel path is still region capture only — there's no host window for SCK to
-  target. A future "render the panel into a frame buffer and feed `ffmpeg` on stdin" backend
-  (the synthetic-screenshot path in `SyntheticRobotAdapter` is the blueprint) would close that
-  gap; not currently scoped.
+- Window-targeted capture via `ScreenCaptureKitRecorder` is the recommended path for
+  top-level `ComposeWindow` surfaces on macOS. It removes the "anything overlapping the
+  region appears in the video" class of problems and follows the window across the
+  screen. Windows has the equivalent path via `FfmpegWindowRecorder` (`gdigrab title=`).
+- The embedded-panel path is still region capture only — there's no host window for SCK
+  or `gdigrab title=` to target.

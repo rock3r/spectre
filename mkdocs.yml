@@ -105,4 +105,3 @@ nav:
       - Static analysis: STATIC-ANALYSIS.md
       - Recording limitations: RECORDING-LIMITATIONS.md
       - Worktree + Gradle pitfalls: WORKTREE-GRADLE-PITFALLS.md
-      - Bootstrap plan: bootstrap-plan.md

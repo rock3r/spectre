@@ -6,8 +6,8 @@ separate process — Spectre's `server` module gives you an HTTP transport. The 
 JVM mounts a Ktor route on top of an in-process `ComposeAutomator`; the test JVM talks
 to it through `HttpComposeAutomator`.
 
-!!! note "v1 surface"
-    The HTTP transport is a deliberate v1 subset of the in-process automator: windows,
+!!! note "HTTP transport scope"
+    The HTTP transport is a deliberate subset of the in-process automator: windows,
     nodes by tag, click, type-text, and screenshot. Advanced features that need live
     JVM objects (idling resources, `withTracing`) or stateful long-poll semantics
     (`waitForVisualIdle`) are in-process only. If you need them, run the test JVM in
@@ -101,9 +101,9 @@ shapes:
 | `TypeTextRequest`    | `{ "text": "..." }`. Types into whatever has focus.        |
 | `ScreenshotResponse` | Base64-encoded PNG bytes.                                  |
 
-Node keys travel as the canonical string form `surfaceId:ownerIndex:nodeId` — the same
-form pinned by `NodeKeyContractTest` in the testing module, and the form future
-recording integrations will rely on.
+Node keys travel as the canonical string form `surfaceId:ownerIndex:nodeId` — the
+stable string form used by the transport contract and pinned by `NodeKeyContractTest`
+in the testing module.
 
 ## Use cases
 
