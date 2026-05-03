@@ -103,20 +103,29 @@ clipboard, so none of the above applies.
 about the node's interaction state first.** If the node is currently focused,
 hovered, or pressed, the captured pixels include whatever indication overlay the
 component's theme draws on top — a translucent state layer for press / hover, a focus
-halo, a ripple, etc. The overlay alpha-blends with your underlying colour, so the
+halo, a ripple, etc. The overlay alpha-blends with the underlying colour, so the
 bytes that come out of `screenshot()` are the blended result, not the raw painted
 colour. The effect is platform-independent (same on macOS, Windows, and Linux) and
 easy to mistake for a colour-space or render-pipeline bug.
 
-Two reliable fixes:
+The fix is to **assert against the right expected colour for the state you're
+actually capturing**, not to reach for tricks that bypass the indication. If your
+node is focused at capture time, your expected value is *raw colour + focus
+overlay*; if it's pressed, *raw colour + press overlay*; if it's idle, the raw
+colour. The indication is part of the rendered output, not noise to suppress.
 
-1. **Assert against a dedicated non-interactive element.** A plain `Box` with a
-   `Modifier.background(...)`, no `clickable`, no children to glyph-contaminate the
-   sample. The element exists purely to be screenshotted, so it never picks up
-   indication state.
-2. **Move focus or hover state elsewhere before capturing.**
-   `automator.click(someOtherNode)` immediately before the screenshot drops the
-   indication overlay off the node you actually care about.
+In practice that means either:
+
+- **Pin the node to a known interaction state before capture** and compute the
+  expected colour for that state. If you want the raw colour, make sure the node
+  isn't focused / hovered / pressed when `screenshot()` runs. If you specifically
+  want to verify the focused appearance, focus the node first and compare against
+  the blended expected value.
+- **Compute the blended expected value at assertion time** if reproducing the
+  exact theme overlay yourself. Compose Foundation's default state-layer alphas
+  are part of the public theme contract; for ad-hoc baselines, capture the
+  expected pixels once from a known-good run and store those as the baseline
+  rather than hard-coding RGB literals derived from the unblended source colour.
 
 ## "Linux Wayland recording — `UnsupportedOperationException` from `x11grab`"
 
