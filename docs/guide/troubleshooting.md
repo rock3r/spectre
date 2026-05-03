@@ -147,10 +147,18 @@ See [Recording limitations](../RECORDING-LIMITATIONS.md) for the full Wayland st
 
 ## "macOS recording errors out or produces no file"
 
-- **Screen Recording permission.** macOS gates screen capture behind an explicit grant
-  per binary. Grant it to the JVM that runs your tests (System Settings → Privacy &
-  Security → Screen Recording). After granting, restart the JVM; macOS doesn't pick up
-  the new permission for already-running processes.
+- **Screen Recording permission.** macOS gates screen capture behind an explicit
+  grant. Open System Settings → Privacy & Security → Screen Recording and toggle on
+  the responsible parent process — see the next bullet for what that actually means.
+- **TCC attaches to the launching app, not to `java`.** macOS attributes
+  Screen Recording (and Accessibility) to whichever binary opened the JVM
+  process: IntelliJ IDEA when you run tests from the IDE, Terminal.app or iTerm
+  when you `./gradlew test` from a shell, a third-party launcher otherwise. If
+  the wrong app is granted, capture still fails. Check the entry that's actually
+  ticked in the Screen Recording list; it should match the icon you launched.
+- **TCC doesn't refresh live.** After granting, fully quit and relaunch the
+  parent app — not just the JVM child. macOS only picks up the new entitlement on
+  process start.
 - **The SCK helper isn't bundled.** If you built `recording` on a non-macOS host and
   shipped the jar to macOS, the bundled Swift helper isn't present and `AutoRecorder`
   will fall back to `ffmpeg` region capture with a warning on stderr. To fix, build on
@@ -159,6 +167,22 @@ See [Recording limitations](../RECORDING-LIMITATIONS.md) for the full Wayland st
 - **Operational SCK errors propagate.** Permission denied, target window not found,
   helper crashed during init — these all throw `IllegalStateException` rather than
   silently falling back, so you see the real cause.
+
+## "macOS clicks and key presses silently no-op"
+
+`java.awt.Robot`'s mouse and keyboard methods need the **Accessibility** TCC entry
+on macOS, separately from Screen Recording. Without it, `automator.click(...)`,
+`typeText(...)`, `pressKey(...)`, and friends return without throwing, but the OS
+never delivers the events — the test silently misses every interaction.
+
+Same parent-process attribution rules as Screen Recording apply: grant System
+Settings → Privacy & Security → Accessibility to whichever app launched the JVM
+(IntelliJ, Terminal, etc.), then fully quit and relaunch that app.
+
+`MacOsRecordingPermissions.diagnose()` returns a human-readable rollup of both
+entries (Screen Recording + Accessibility) you can dump at startup if your harness
+wants to surface the missing-permission case explicitly rather than letting tests
+fail mysteriously.
 
 ## "Gradle behaves oddly inside a worktree"
 

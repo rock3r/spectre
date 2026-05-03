@@ -98,15 +98,28 @@ If you know exactly which backend you want, instantiate it directly and skip the
 ## Per-OS prerequisites
 
 - **macOS** — `ffmpeg` on `PATH`. The Swift ScreenCaptureKit helper is bundled inside
-  `recording`'s artifact. You also need to grant Screen Recording permission to the
-  JVM running your tests in System Settings → Privacy & Security → Screen Recording.
-  macOS doesn't refresh TCC for already-running processes, so after granting you
-  must restart the JVM for the permission to take effect — the typical first-time
-  flow is "run, fail, grant, restart JVM, run again". See
-  [Troubleshooting](troubleshooting.md#macos-recording-errors-out-or-produces-no-file)
-  for the failure modes when permission is missing. Universal-binary opt-in for the
-  helper is available via
-  `./gradlew :recording:assembleScreenCaptureKitHelper -PuniversalHelper`.
+  `recording`'s artifact. You also need to grant Screen Recording permission under
+  System Settings → Privacy & Security → Screen Recording.
+
+    macOS attributes TCC to the **responsible parent process** — the binary that
+    launched the JVM, not the `java` executable itself. Grant the permission to
+    whichever app opened the test JVM:
+
+    - Running tests from IntelliJ IDEA → grant **IntelliJ IDEA**.
+    - `./gradlew test` from a terminal → grant **Terminal.app** (or **iTerm**, etc.).
+    - A standalone `java` invocation from a third-party launcher → grant **that
+      launcher**.
+    - On CI (e.g. GitHub Actions macOS runners) → the runner image either needs
+      to be pre-granted or use a notarised wrapper that has its own TCC entry.
+
+    macOS doesn't refresh TCC for already-running processes, so after granting,
+    fully quit and relaunch the parent app (not just the JVM child) for the
+    permission to take effect. The typical first-time flow is "run, fail, grant,
+    relaunch parent app, run again". See
+    [Troubleshooting](troubleshooting.md#macos-recording-errors-out-or-produces-no-file)
+    for the failure modes when permission is missing or attached to the wrong
+    binary. Universal-binary opt-in for the helper is available via
+    `./gradlew :recording:assembleScreenCaptureKitHelper -PuniversalHelper`.
 - **Windows** — `ffmpeg` on `PATH`. `gdigrab` ships with `ffmpeg`.
 - **Linux Xorg** — `ffmpeg` with the `x11grab` input enabled (default in distro builds).
 - **Linux Wayland** — `gst-launch-1.0` plus the GStreamer plugins for H.264/Matroska.
