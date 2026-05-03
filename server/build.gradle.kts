@@ -30,6 +30,10 @@ dependencies {
     testImplementation(libs.kotlin.testJunit5)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.ktor.server.testHost)
+    // ktor-server-cio is only needed for HttpComposeAutomatorE2ETest, which boots a real
+    // CIO-backed server on an ephemeral port to exercise the client class over an actual
+    // TCP socket. Production callers bring their own server engine.
+    testImplementation(libs.ktor.server.cio)
     testImplementation(libs.ktor.client.contentNegotiation)
     testImplementation(libs.ktor.serialization.json)
 }
