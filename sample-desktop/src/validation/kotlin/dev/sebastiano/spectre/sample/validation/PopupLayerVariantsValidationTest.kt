@@ -38,12 +38,12 @@ class PopupLayerVariantsValidationTest {
         //
         // Tracking:
         //   - Spectre side: https://github.com/rock3r/spectre/issues/56
-        //   - Upstream: https://youtrack.jetbrains.com/issue/SKIKO-488
+        //   - Upstream: https://youtrack.jetbrains.com/issue/SKIKO-1132
         //
         // Until JBR / skiko ships a fix, gate the Window-mode variant out of the Windows runner
         // cleanly so the suite reports the actual reason and the rest of the test class still
         // validates the SameCanvas + Component layer modes Windows users can actually use today.
-        // Drop this assumeFalse when SKIKO-488 reports a fix in a JBR / Compose Multiplatform
+        // Drop this assumeFalse when SKIKO-1132 reports a fix in a JBR / Compose Multiplatform
         // release we've bumped to.
         val isOnWindowLayer = layerType.equals("WINDOW", ignoreCase = true)
         val isWindowsHost =
@@ -51,7 +51,7 @@ class PopupLayerVariantsValidationTest {
         assumeFalse(
             isOnWindowLayer && isWindowsHost,
             "compose.layers.type=WINDOW currently crashes JBR's skiko-windows-x64.dll on " +
-                "Windows (SKIKO-488 / spectre#56); SameCanvas + Component modes work and cover " +
+                "Windows (SKIKO-1132 / spectre#56); SameCanvas + Component modes work and cover " +
                 "the same WindowTracker discovery paths.",
         )
         fixture.start()
