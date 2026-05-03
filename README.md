@@ -75,8 +75,7 @@ Two heavier checks live outside `:check`:
 ## Supported JVMs
 
 JBR 21 is the dev-loop default. JBR 25 also gets exercised via the IDE-hosted test (bundled
-with IntelliJ 2026.1). Any JDK 21+ works for the non-IDE modules; CI runs on Temurin 21
-because `setup-java`'s JBR 21 entry is missing.
+with IntelliJ 2026.1). Any JDK 21+ works for the non-IDE modules. CI runs on Temurin 21.
 
 ## CI
 

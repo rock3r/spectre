@@ -209,7 +209,9 @@ write-up: [Worktree + Gradle pitfalls](../WORKTREE-GRADLE-PITFALLS.md).
 
 - **Locally**: JBR 21 is the dev-loop default. JBR 25 also gets exercised via the
   IDE-hosted UI test (it's bundled with IntelliJ 2026.1).
-- **On CI**: Temurin 21, because GitHub `setup-java`'s JBR 21 entry is missing.
+- **On CI**: Temurin 21. `actions/setup-java` does support the `jetbrains`
+  distribution if you'd rather mirror the local toolchain — the choice here is
+  pragmatic, not a constraint.
 - **For consumers**: any JDK 21+ works for the non-IDE modules.
 
 The IntelliJ plugin module needs JBR specifically for its sandbox JDK; the Gradle build
