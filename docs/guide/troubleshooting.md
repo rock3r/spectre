@@ -97,6 +97,27 @@ Use `pressKey(...)` for individual key events (modifier shortcuts, navigation ke
 `<kbd>Tab</kbd>`, `<kbd>Esc</kbd>`) — those go through the AWT key map, not the
 clipboard, so none of the above applies.
 
+## "Captured screenshot pixels look slightly off"
+
+**Rule of thumb: when you're validating colours from a `screenshot()`, always think
+about the node's interaction state first.** If the node is currently focused,
+hovered, or pressed, the captured pixels include whatever indication overlay the
+component's theme draws on top — a translucent state layer for press / hover, a focus
+halo, a ripple, etc. The overlay alpha-blends with your underlying colour, so the
+bytes that come out of `screenshot()` are the blended result, not the raw painted
+colour. The effect is platform-independent (same on macOS, Windows, and Linux) and
+easy to mistake for a colour-space or render-pipeline bug.
+
+Two reliable fixes:
+
+1. **Assert against a dedicated non-interactive element.** A plain `Box` with a
+   `Modifier.background(...)`, no `clickable`, no children to glyph-contaminate the
+   sample. The element exists purely to be screenshotted, so it never picks up
+   indication state.
+2. **Move focus or hover state elsewhere before capturing.**
+   `automator.click(someOtherNode)` immediately before the screenshot drops the
+   indication overlay off the node you actually care about.
+
 ## "Linux Wayland recording — `UnsupportedOperationException` from `x11grab`"
 
 `FfmpegBackend.LinuxX11Grab` deliberately throws on Wayland sessions rather than
