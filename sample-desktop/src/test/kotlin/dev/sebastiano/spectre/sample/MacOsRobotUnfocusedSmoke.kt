@@ -12,6 +12,8 @@ import javax.swing.JLabel
 import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
+import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -121,7 +123,7 @@ private suspend fun runSmokeSuspend(): Int {
         distractor.toFront()
         distractor.requestFocus()
     }
-    Thread.sleep(POST_CLICK_SETTLE_MS)
+    delay(POST_CLICK_SETTLE_MS.milliseconds)
 
     val results = runUnfocusedScenarios(driver, state, distractor)
     val exitCode = printResults("MacOsRobotUnfocusedSmoke", results)

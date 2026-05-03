@@ -9,6 +9,8 @@ import java.util.concurrent.atomic.AtomicReference
 import javax.swing.JFrame
 import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
+import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -117,7 +119,7 @@ private suspend fun runSmokeSuspend(): Int {
     // mouse-input handlers attach a few frames later — empirically the first Robot click can
     // arrive before they're wired and gets dropped. A short warmup after layout closes that
     // race without wasting time on cold-JVM boots that took longer to lay out anyway.
-    Thread.sleep(POST_LAYOUT_WARMUP_MS)
+    delay(POST_LAYOUT_WARMUP_MS.milliseconds)
 
     printEnvironment("WindowsRobotSmoke", state)
 

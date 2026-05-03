@@ -12,6 +12,8 @@ import javax.swing.JLabel
 import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
+import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -118,7 +120,7 @@ private suspend fun runSmokeSuspend(): Int {
     waitForFrame(sutRef)
     waitForFrame(distractorRef)
     waitForLayout(state)
-    Thread.sleep(POST_LAYOUT_UNFOCUSED_WARMUP_MS)
+    delay(POST_LAYOUT_UNFOCUSED_WARMUP_MS.milliseconds)
 
     val driver = RobotDriver()
     val distractor = requireNotNull(distractorRef.get()) { "distractor frame missing" }

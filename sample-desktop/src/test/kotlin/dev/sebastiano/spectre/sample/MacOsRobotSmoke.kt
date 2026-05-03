@@ -122,7 +122,7 @@ private suspend fun runSmokeSuspend(): Int {
 
     waitForFrame(frameRef)
     waitForLayout(state)
-    Thread.sleep(POST_LAYOUT_WARMUP_MS)
+    delay(POST_LAYOUT_WARMUP_MS.milliseconds)
 
     printEnvironment("MacOsRobotSmoke", state)
 

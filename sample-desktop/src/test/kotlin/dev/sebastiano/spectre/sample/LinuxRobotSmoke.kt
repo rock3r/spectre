@@ -10,6 +10,8 @@ import java.util.concurrent.atomic.AtomicReference
 import javax.swing.JFrame
 import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
+import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -142,7 +144,7 @@ private suspend fun runSmokeSuspend(): Int {
 
     waitForFrame(frameRef)
     waitForLayout(state)
-    Thread.sleep(POST_LAYOUT_WARMUP_MS)
+    delay(POST_LAYOUT_WARMUP_MS.milliseconds)
 
     printEnvironment("LinuxRobotSmoke", state)
 
