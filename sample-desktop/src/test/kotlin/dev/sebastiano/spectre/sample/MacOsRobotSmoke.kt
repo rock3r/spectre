@@ -12,16 +12,36 @@ import kotlin.system.exitProcess
 
 /**
  * Manual smoke for [RobotDriver] on macOS. Run via `./gradlew :sample-desktop:runMacOsRobotSmoke`.
- * Mirrors [WindowsRobotSmoke] / [LinuxRobotSmoke] — same six scenarios via the shared
+ * Mirrors [WindowsRobotSmoke] / [LinuxRobotSmoke] — same seven scenarios via the shared
  * [runFocusedScenarios] rig — and reports PASS/FAIL per scenario.
  *
- * **TCC permission gate.** `java.awt.Robot.mousePress` on modern macOS requires the JVM process to
- * hold **Accessibility** permission (System Settings → Privacy & Security → Accessibility), even
- * for input into its own window. Screenshots additionally require **Screen Recording**. Without
- * these permissions, events are silently dropped — the smoke would appear to run but report 0/6
- * PASS for opaque reasons. There's no clean API to query TCC state, so the smoke fires a probe
- * click against the counter; if `clickCount` doesn't increment it prints a remediation message
- * naming the JVM binary path and exits with code 2 BEFORE running the scenario suite.
+ * **TCC permission gate (Accessibility).** `java.awt.Robot.mousePress` on modern macOS requires the
+ * wrapping process (Terminal, IntelliJ, Claude.app, etc.) to hold **Accessibility** permission
+ * (System Settings → Privacy & Security → Accessibility), even for input into its own window —
+ * macOS attributes Robot input to the user-visible parent process, not the forked JVM. Without the
+ * grant, events are silently dropped. The smoke fires a probe click against the counter BEFORE
+ * running the scenario suite; if `clickCount` doesn't increment it prints a remediation message
+ * naming the wrapping app + JVM binary and exits with code 2.
+ *
+ * **TCC permission gate (Screen Recording).** `java.awt.Robot.createScreenCapture` (used by the 7th
+ * scenario, [scenarioScreenshot]) needs **Screen Recording** — and on macOS 26 this is a *two-tier*
+ * grant:
+ *
+ * 1. The toggle in System Settings → Privacy & Security → Screen & System Audio Recording grants
+ *    *picker-based* access only (the system-mediated screen-capture picker UI).
+ * 2. `createScreenCapture()` needs *direct* access. macOS prompts separately the first time the
+ *    capture fires ("Claude is requesting to bypass the system private window picker" or similar
+ *    for the relevant wrapping app); you must hit Allow on that dialog too.
+ *
+ * Until the direct-access grant is accepted, captures silently return an all-black image (no
+ * exception). The screenshot scenario detects this by sampling the captured pixel and failing if
+ * it's `#000000` — see [scenarioScreenshot] in the rig.
+ *
+ * **First-run flake on Screen Recording.** The bypass-picker dialog steals focus when it appears,
+ * which would break any subsequent keystroke scenario. The rig orders the screenshot scenario
+ * *last* in [runFocusedScenarios] so the prompt only impacts itself: on the first ever run with
+ * Screen Recording denied, scenarios 1-6 pass and the screenshot fails opaquely-but-recoverably. A
+ * second run after granting passes 7/7. Inherent Robot hazard, not a Spectre bug.
  *
  * **No CI for this smoke.** GitHub-hosted `macos-*` runners don't grant TCC Accessibility, so this
  * smoke can't run there — same constraint that already keeps SCK end-to-end recording tests off the
@@ -34,19 +54,20 @@ import kotlin.system.exitProcess
  * `scenarioShortcut` uses the same helper, so the Ctrl+S → Cmd+S translation happens automatically
  * without per-platform conditionals here.
  *
- * Findings from running this on macOS (placeholder — bank empirical results here on first real run,
- * mirroring the Windows smoke's findings list):
+ * Findings from running this on macOS 26.4.1 / Temurin 21 (Retina 2× HiDPI):
  *
- * 1. (TBD — does macOS need the alwaysOnTop foreground hack? AppKit has no foreground-stealing-
- *    prevention analogous to Windows, so plain `toFront()` may suffice. Default to alwaysOnTop for
- *    safety and revise after empirical observation.)
- * 2. (TBD — NSPasteboard latency budget under typeText: the existing
- *    `CLIPBOARD_SETTLE_TIMEOUT_MS=1000` was tuned partly for macOS — confirm it holds on cold JVM +
- *    freshly-woken machine.)
- * 3. (TBD — Cmd+S shortcut delivery: `pressKey(VK_S, META_DOWN_MASK)` should fire the Compose
- *    `onPreviewKeyEvent` handler the same way Ctrl+S does on Windows; the handler accepts either
- *    `isCtrlPressed || isMetaPressed`, so a regression here would isolate to Robot's modifier-mask
- *    path, not the smoke's content.)
+ * 1. **`alwaysOnTop` is NOT needed on macOS.** AppKit has no foreground-stealing-prevention
+ *    analogous to Windows, so `toFront()` + `requestFocus()` unconditionally raises the window. The
+ *    focused smoke runs with `isAlwaysOnTop = true` removed and reports 6/6 PASS. Kept off for
+ *    symmetry with `MacOsRobotUnfocusedSmoke`, which never set it.
+ * 2. **`CLIPBOARD_SETTLE_TIMEOUT_MS = 1_000L` holds on macOS.** `typeText` saw no NSPasteboard
+ *    settle pressure on a developer Mac (cold JVM + normal load) — the budget tuned for
+ *    NSPasteboard's worst-case latency was never approached during the focused-smoke run.
+ * 3. **Cmd+S delivery via `pressKey(VK_S, META_DOWN_MASK)` works.** The shared rig's
+ *    `scenarioShortcut` uses `shortcutModifierKeyCode(detectMacOs())` which returns `VK_META`
+ *    (keyCode 157) on macOS, the modifier-mask path correctly translates to `META_DOWN_MASK`, and
+ *    Compose's `onPreviewKeyEvent` handler (which accepts either `isCtrlPressed` or
+ *    `isMetaPressed`) fires on the first attempt — `shortcutFiredCount 0 → 1`.
  *
  * What this *doesn't* exercise:
  * - SCK / screen recording — that's `:recording`'s territory and gated on the macos.yml workflow's
@@ -82,11 +103,9 @@ private fun runSmoke(): Int {
                 contentPane = composePanel
                 pack()
                 setLocationRelativeTo(null)
-                // Default to alwaysOnTop for safety. macOS has no foreground-stealing-prevention
-                // (unlike Windows), but keeping the fixture predictable regardless of host
-                // configuration costs nothing at the OS level. Findings should bank whether
-                // this is actually needed once the smoke runs on a real Mac.
-                isAlwaysOnTop = true
+                // macOS does NOT need alwaysOnTop — AppKit has no foreground-stealing-prevention,
+                // so toFront() + requestFocus() unconditionally raises the window. Confirmed
+                // empirically: 6/6 PASS without isAlwaysOnTop on macOS 26.4.1 / Temurin 21.
                 isVisible = true
                 toFront()
                 requestFocus()
@@ -149,20 +168,24 @@ internal fun probeTccAccessibility(driver: RobotDriver, state: SmokeState): Stri
             "  This almost always means the JVM running this smoke lacks macOS Accessibility " +
                 "permission (TCC), so java.awt.Robot input is being silently dropped."
         )
-        appendLine("  JVM binary: $javaHome/bin/java")
+        appendLine("  JVM binary (informational): $javaHome/bin/java")
         appendLine("  Remediation:")
         appendLine(
-            "    1. Open System Settings → Privacy & Security → Accessibility, click +, and " +
-                "add the JVM binary above (or the wrapping app — IntelliJ, Terminal — that " +
-                "spawned it)."
+            "    1. Open System Settings → Privacy & Security → Accessibility and grant the " +
+                "*wrapping app* — typically Terminal, iTerm2, IntelliJ, or Claude.app — not the " +
+                "JVM binary itself. macOS attributes Robot input to the user-visible parent " +
+                "process, not the forked JVM. When Gradle is launched via Claude Code's CLI the " +
+                "chain is Claude.app → claude.app (CLI helper) → Gradle daemon → forked JVM, so " +
+                "BOTH Claude.app entries need the grant."
         )
         appendLine(
-            "    2. For the screenshot scenario (not exercised here), also add the JVM under " +
-                "Privacy & Security → Screen Recording."
+            "    2. For the screenshot scenario (not exercised here), also grant Privacy & " +
+                "Security → Screen Recording to the same wrapping app."
         )
         appendLine(
-            "    3. Quit and re-launch Gradle / IntelliJ after granting; macOS only " +
-                "re-evaluates TCC at process start."
+            "    3. Stop the Gradle daemon (`./gradlew --stop`) and any existing IDE/Terminal " +
+                "processes after granting; macOS only re-evaluates TCC at process start, so an " +
+                "already-running daemon keeps its old (denied) state until restarted."
         )
     }
 }

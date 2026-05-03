@@ -35,9 +35,11 @@ import dev.sebastiano.spectre.core.RobotDriver
 import dev.sebastiano.spectre.core.composeBoundsToAwtCenter
 import dev.sebastiano.spectre.core.detectMacOs
 import dev.sebastiano.spectre.core.shortcutModifierKeyCode
+import java.awt.Rectangle
 import java.awt.Window
 import java.util.concurrent.atomic.AtomicReference
 import javax.swing.JFrame
+import kotlin.math.abs
 
 internal class SmokeState {
     var frame: JFrame? = null
@@ -48,6 +50,7 @@ internal class SmokeState {
     @Volatile var shortcutFiredCount: Int = 0
     @Volatile var counterBounds: Rect = Rect.Zero
     @Volatile var textFieldBounds: Rect = Rect.Zero
+    @Volatile var colorPatchBounds: Rect = Rect.Zero
 }
 
 @Composable
@@ -108,6 +111,22 @@ internal fun SmokeContent(state: SmokeState) {
         )
         BasicText("textValue = \"${state.textValue.text}\"")
         BasicText("shortcutFiredCount = ${state.shortcutFiredCount}")
+        // Dedicated colour patch for the screenshot scenario. Same RGB as the counter Box
+        // background, but no `clickable` modifier and no children — so Compose Foundation's
+        // default LocalIndication can never apply its ~10% black focus overlay here, and no
+        // glyph rendering can contaminate sampled pixels. The counter Box (which IS clickable
+        // and gets focused by every prior interaction scenario) would have been captured at
+        // 0.9 × #3366CC + 0.1 × #000000 = #2E5CB7 — the patch reads the raw colour with no
+        // overlay, so SCREENSHOT_TOLERANCE_PER_CHANNEL only needs to absorb 8-bit rounding.
+        Box(
+            modifier =
+                Modifier.height(24.dp)
+                    .fillMaxWidth()
+                    .background(Color(red = 0x33, green = 0x66, blue = 0xCC))
+                    .onGloballyPositioned { coords ->
+                        state.colorPatchBounds = coords.boundsInWindow()
+                    }
+        )
     }
 }
 
@@ -338,6 +357,76 @@ internal fun scenarioShortcut(driver: RobotDriver, state: SmokeState): ScenarioR
     )
 }
 
+internal fun scenarioScreenshot(driver: RobotDriver, state: SmokeState): ScenarioResult {
+    val target = awtCenter(state, state.colorPatchBounds)
+    if (target == null) {
+        return ScenarioResult("screenshot of color patch", false, "no target rect available")
+    }
+    // The colour patch is a non-clickable, no-children Box dedicated to this scenario, so the
+    // sampled pixel is the raw background colour with no focus-indication overlay or glyph
+    // contamination — see SmokeContent's colorPatchBounds element for the rationale.
+    val captureRegion =
+        Rectangle(
+            target.x - SCREENSHOT_CAPTURE_HALF_WIDTH,
+            target.y - SCREENSHOT_CAPTURE_HEIGHT / 2,
+            SCREENSHOT_CAPTURE_HALF_WIDTH * 2,
+            SCREENSHOT_CAPTURE_HEIGHT,
+        )
+    val image =
+        try {
+            driver.screenshot(captureRegion)
+        } catch (t: Throwable) {
+            return ScenarioResult(
+                "screenshot of color patch",
+                false,
+                "screenshot threw: ${t.javaClass.simpleName}: ${t.message}",
+            )
+        }
+    if (image.width <= 0 || image.height <= 0) {
+        return ScenarioResult(
+            "screenshot of color patch",
+            false,
+            "image had non-positive dimensions ${image.width}x${image.height}",
+        )
+    }
+    val sampledArgb = image.getRGB(image.width / 2, image.height / 2)
+    val sampledRgb = sampledArgb and 0xFFFFFF
+    if (sampledRgb == 0) {
+        // macOS Screen Recording denied returns an all-black image rather than throwing.
+        // Linux/Windows can't normally hit this — the JFrame is alwaysOnTop and visible —
+        // so a black sample on those platforms suggests the panel was off-screen, occluded,
+        // or the capture rect landed outside the frame.
+        return ScenarioResult(
+            "screenshot of color patch",
+            false,
+            "sampled center pixel is solid black (#000000) — on macOS this typically means " +
+                "Screen Recording TCC was not granted (createScreenCapture returns black " +
+                "rather than throwing); on Linux/Windows it suggests the JFrame was occluded " +
+                "or off-screen when the capture fired",
+        )
+    }
+    val expectedRgb = SCREENSHOT_COUNTER_BG_RGB
+    val passed = colourWithinTolerance(sampledRgb, expectedRgb, SCREENSHOT_TOLERANCE_PER_CHANNEL)
+    return ScenarioResult(
+        "screenshot of color patch",
+        passed = passed,
+        detail =
+            "sampled=#${"%06X".format(sampledRgb)} expected=#${"%06X".format(expectedRgb)} " +
+                "image=${image.width}x${image.height} captureRegion=" +
+                "(${captureRegion.x},${captureRegion.y})+${captureRegion.width}x${captureRegion.height}",
+    )
+}
+
+private fun colourWithinTolerance(a: Int, b: Int, perChannel: Int): Boolean {
+    val ar = (a shr 16) and 0xFF
+    val ag = (a shr 8) and 0xFF
+    val ab = a and 0xFF
+    val br = (b shr 16) and 0xFF
+    val bg = (b shr 8) and 0xFF
+    val bb = b and 0xFF
+    return abs(ar - br) <= perChannel && abs(ag - bg) <= perChannel && abs(ab - bb) <= perChannel
+}
+
 internal fun runFocusedScenarios(
     driver: RobotDriver,
     state: SmokeState,
@@ -347,13 +436,18 @@ internal fun runFocusedScenarios(
     // Order matters: typeText asserts exact equality on a freshly-empty field, so it has to
     // run before any keystroke that would have left state in the BasicTextField. After that,
     // pressKey appends one character (verifying focus + raw keystrokes), and clearAndTypeText
-    // wipes and re-types (verifying the Ctrl+A / Cmd+A + Backspace path).
+    // wipes and re-types (verifying the Ctrl+A / Cmd+A + Backspace path). Screenshot runs
+    // last because it's the only scenario that triggers macOS's Screen Recording TCC prompt;
+    // a mid-run prompt steals focus and would break any subsequent keystroke scenario, so by
+    // running it after all input scenarios, the worst case is just the screenshot scenario
+    // failing on a first-run grant attempt — re-running passes once TCC is granted.
     results += scenarioCounterClick(driver, state)
     results += scenarioCounterDoubleClick(driver, state)
     results += scenarioTypeText(driver, state, expected = typeTextExpected)
     results += scenarioPressKeySingleChar(driver, state)
     results += scenarioClearAndTypeText(driver, state)
     results += scenarioShortcut(driver, state)
+    results += scenarioScreenshot(driver, state)
     return results
 }
 
@@ -473,3 +567,20 @@ internal const val POST_LAYOUT_WARMUP_MS = 500L
 internal const val POST_LAYOUT_UNFOCUSED_WARMUP_MS = 600L
 internal const val POST_CLICK_SETTLE_MS = 250L
 internal const val POST_TYPE_SETTLE_MS = 800L
+
+// Screenshot scenario constants. The colour patch in SmokeContent uses
+// Color(0x33, 0x66, 0xCC) and is intentionally non-clickable + has no children, so the
+// captured pixel is the raw background colour with no overlays. ±3 per channel covers
+// 8-bit rounding (sRGB→display→pixel quantisation) with no further headroom needed.
+//
+// The earlier ±24 tolerance was a workaround for ~21-channel drift observed when the
+// scenario captured the *counter* Box: that Box has `.clickable {}`, every prior interaction
+// scenario clicked it, and Compose Foundation's default LocalIndication painted a persistent
+// ~10% black overlay on focused clickables. The captured pixel was 0.9 × #3366CC + 0.1 ×
+// #000000 = #2E5CB7 — exactly the observed drift. Capturing a dedicated non-interactive
+// patch eliminates the overlay entirely; the previous "sRGB↔linear" hypothesis was wrong.
+private const val SCREENSHOT_COUNTER_BG_RGB = 0x3366CC
+private const val SCREENSHOT_TOLERANCE_PER_CHANNEL = 3
+private const val SCREENSHOT_CAPTURE_HALF_WIDTH = 8
+private const val SCREENSHOT_CAPTURE_HEIGHT = 8
+private const val SCREENSHOT_CAPTURE_Y_OFFSET = 4
