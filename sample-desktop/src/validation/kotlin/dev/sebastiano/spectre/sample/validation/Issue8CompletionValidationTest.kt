@@ -6,6 +6,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.BeforeAll
@@ -34,7 +35,7 @@ class Issue8CompletionValidationTest {
 
     @Test
     @Order(1)
-    fun `automator reads coherent snapshots while the tree mutates at 60 Hz`() {
+    fun `automator reads coherent snapshots while the tree mutates at 60 Hz`() = runBlocking {
         with(fixture.automator) {
             navigateToScenario("scenario.recomposition")
             click(waitForTestTag("recomp.toggleButton"))
@@ -71,25 +72,27 @@ class Issue8CompletionValidationTest {
 
     @Test
     @Order(2)
-    fun `eventually settles on event-driven targets while a background animation never settles`() {
-        with(fixture.automator) {
-            navigateToScenario("scenario.animation")
-            // The spinner is rotating forever — confirm it's there but don't wait for it to stop.
-            assertNotNull(waitForTestTag("anim.spinner"))
-            // anim.settled does not exist yet. The wait helper must not block forever just
-            // because the animation is running; eventually() should return as soon as the
-            // event-driven node appears.
-            click(waitForTestTag("anim.toggleButton"))
-            val settled =
-                eventually(description = "anim.settled appears", timeout = 5.seconds) {
-                    findOneByTestTag("anim.settled")
-                }
-            assertNotNull(
-                settled.text,
-                "Settled marker should expose its text once the click lands",
-            )
+    fun `eventually settles on event-driven targets while a background animation never settles`() =
+        runBlocking {
+            with(fixture.automator) {
+                navigateToScenario("scenario.animation")
+                // The spinner is rotating forever — confirm it's there but don't wait for it to
+                // stop.
+                assertNotNull(waitForTestTag("anim.spinner"))
+                // anim.settled does not exist yet. The wait helper must not block forever just
+                // because the animation is running; eventually() should return as soon as the
+                // event-driven node appears.
+                click(waitForTestTag("anim.toggleButton"))
+                val settled =
+                    eventually(description = "anim.settled appears", timeout = 5.seconds) {
+                        findOneByTestTag("anim.settled")
+                    }
+                assertNotNull(
+                    settled.text,
+                    "Settled marker should expose its text once the click lands",
+                )
+            }
         }
-    }
 
     private companion object {
         val STRESS_DURATION = 3.seconds

@@ -10,6 +10,9 @@ import java.util.concurrent.atomic.AtomicReference
 import javax.swing.JFrame
 import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
+import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 
 /**
  * Manual + CI smoke for [RobotDriver] on Linux. Run via `./gradlew
@@ -109,7 +112,9 @@ internal fun checkWaylandGate(): String? {
     return null
 }
 
-private fun runSmoke(): Int {
+private fun runSmoke(): Int = runBlocking { runSmokeSuspend() }
+
+private suspend fun runSmokeSuspend(): Int {
     val state = SmokeState()
     val frameRef = AtomicReference<JFrame>()
     SwingUtilities.invokeLater {
@@ -139,7 +144,7 @@ private fun runSmoke(): Int {
 
     waitForFrame(frameRef)
     waitForLayout(state)
-    Thread.sleep(POST_LAYOUT_WARMUP_MS)
+    delay(POST_LAYOUT_WARMUP_MS.milliseconds)
 
     printEnvironment("LinuxRobotSmoke", state)
 

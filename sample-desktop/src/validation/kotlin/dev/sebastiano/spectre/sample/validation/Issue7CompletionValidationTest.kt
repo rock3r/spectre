@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.sample.validation
 import java.awt.GraphicsEnvironment
 import kotlin.test.Test
 import kotlin.test.assertNotNull
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.BeforeAll
@@ -36,7 +37,7 @@ class Issue7CompletionValidationTest {
 
     @Test
     @Order(1)
-    fun `dual-panel scenario surfaces both Compose roots`() {
+    fun `dual-panel scenario surfaces both Compose roots`() = runBlocking {
         with(fixture.automator) {
             navigateToScenario("scenario.dualpanel")
             // Both nodes live in the same Window but the SwingPanel host installs an extra
@@ -53,7 +54,7 @@ class Issue7CompletionValidationTest {
 
     @Test
     @Order(2)
-    fun `JDialog hosting ComposePanel exposes its tree to the automator`() {
+    fun `JDialog hosting ComposePanel exposes its tree to the automator`() = runBlocking {
         with(fixture.automator) {
             navigateToScenario("scenario.jdialog")
             val initialWindows = windows.size

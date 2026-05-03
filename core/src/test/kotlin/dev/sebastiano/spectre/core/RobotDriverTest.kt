@@ -14,6 +14,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.ZERO
 import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.test.runTest
 
 class RobotDriverTest {
 
@@ -103,7 +104,7 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `click moves and presses left button`() {
+    fun `click moves and presses left button`() = runTest {
         val robot = RecordingRobotAdapter()
         val driver = RobotDriver(robot, RecordingClipboardAdapter())
 
@@ -120,34 +121,36 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `typeText waits for the clipboard to reflect the new text before dispatching paste`() {
-        // Simulate a slow OS pasteboard: the first N reads after setContents still return the
-        // previous value. typeText must not press Cmd+V until the clipboard has settled, otherwise
-        // the paste handler reads stale contents.
-        val clipboard = LatentClipboardAdapter(latencyReads = 3)
-        clipboard.setContentsImmediate(StringSelection("previous"))
-        val driver = RobotDriver(clipboard.robotAdapter, clipboard)
+    fun `typeText waits for the clipboard to reflect the new text before dispatching paste`() =
+        runTest {
+            // Simulate a slow OS pasteboard: the first N reads after setContents still return the
+            // previous value. typeText must not press Cmd+V until the clipboard has settled,
+            // otherwise the paste handler reads stale contents.
+            val clipboard = LatentClipboardAdapter(latencyReads = 3)
+            clipboard.setContentsImmediate(StringSelection("previous"))
+            val driver = RobotDriver(clipboard.robotAdapter, clipboard)
 
-        driver.typeText("spectre")
+            driver.typeText("spectre")
 
-        // The first key event must come AFTER the clipboard has the new value. Reconstruct by
-        // looking at the recorded order: each call to clipboard.getContents() interleaves with
-        // robot events, and we check the clipboard read at the moment of the first keyPress.
-        val firstKeyPressIndex = clipboard.eventLog.indexOfFirst { it.startsWith("robot:keyPress") }
-        check(firstKeyPressIndex >= 0) { "Expected a keyPress event in ${clipboard.eventLog}" }
-        val readsBeforePaste =
-            clipboard.eventLog.subList(0, firstKeyPressIndex).count {
-                it == "clipboard:get=spectre"
-            }
-        assertTrue(
-            readsBeforePaste >= 1,
-            "typeText must observe the new clipboard contents at least once before pressing " +
-                "Cmd+V (event log: ${clipboard.eventLog})",
-        )
-    }
+            // The first key event must come AFTER the clipboard has the new value. Reconstruct by
+            // looking at the recorded order: each call to clipboard.getContents() interleaves with
+            // robot events, and we check the clipboard read at the moment of the first keyPress.
+            val firstKeyPressIndex =
+                clipboard.eventLog.indexOfFirst { it.startsWith("robot:keyPress") }
+            check(firstKeyPressIndex >= 0) { "Expected a keyPress event in ${clipboard.eventLog}" }
+            val readsBeforePaste =
+                clipboard.eventLog.subList(0, firstKeyPressIndex).count {
+                    it == "clipboard:get=spectre"
+                }
+            assertTrue(
+                readsBeforePaste >= 1,
+                "typeText must observe the new clipboard contents at least once before pressing " +
+                    "Cmd+V (event log: ${clipboard.eventLog})",
+            )
+        }
 
     @Test
-    fun `typeText pumps the EDT after key release before restoring the clipboard`() {
+    fun `typeText pumps the EDT after key release before restoring the clipboard`() = runTest {
         // The OS paste handler reads the clipboard asynchronously after Cmd+V is released, so
         // restoring the previous contents synchronously can clobber the value before the paste
         // lands. typeText must give the AWT event queue (and any post-press settle) a chance to
@@ -181,7 +184,7 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `swipe presses drags and releases in order`() {
+    fun `swipe presses drags and releases in order`() = runTest {
         val robot = RecordingRobotAdapter()
         val driver = RobotDriver(robot, RecordingClipboardAdapter())
 
@@ -201,7 +204,7 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `click consults the TCC guard before invoking the robot`() {
+    fun `click consults the TCC guard before invoking the robot`() = runTest {
         val guard = RecordingTccGuard()
         val robot = RecordingRobotAdapter()
         val driver = RobotDriver(robot, RecordingClipboardAdapter(), guard)
@@ -213,7 +216,7 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `click that fails the accessibility check does not dispatch any input`() {
+    fun `click that fails the accessibility check does not dispatch any input`() = runTest {
         val guard = RecordingTccGuard(accessibilityThrows = true)
         val robot = RecordingRobotAdapter()
         val driver = RobotDriver(robot, RecordingClipboardAdapter(), guard)
@@ -247,7 +250,7 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `typeText consults the accessibility guard before mutating the clipboard`() {
+    fun `typeText consults the accessibility guard before mutating the clipboard`() = runTest {
         // typeText writes to and restores the clipboard, so a failed accessibility check
         // must short-circuit BEFORE the clipboard is touched. Otherwise a failing macOS run
         // would still pollute the user's clipboard.
@@ -263,7 +266,7 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `headless click throws UnsupportedOperationException naming the operation`() {
+    fun `headless click throws UnsupportedOperationException naming the operation`() = runTest {
         val driver = RobotDriver.headless()
         val error = assertFailsWith<UnsupportedOperationException> { driver.click(0, 0) }
         // The thrown message names the adapter operation that ran, not the public method, but it
@@ -281,7 +284,7 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `headless typeText throws UnsupportedOperationException`() {
+    fun `headless typeText throws UnsupportedOperationException`() = runTest {
         val driver = RobotDriver.headless()
         assertFailsWith<UnsupportedOperationException> { driver.typeText("hello") }
     }
@@ -293,13 +296,13 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `headless pressKey throws UnsupportedOperationException`() {
+    fun `headless pressKey throws UnsupportedOperationException`() = runTest {
         val driver = RobotDriver.headless()
         assertFailsWith<UnsupportedOperationException> { driver.pressKey(KeyEvent.VK_ENTER) }
     }
 
     @Test
-    fun `headless scrollWheel throws UnsupportedOperationException`() {
+    fun `headless scrollWheel throws UnsupportedOperationException`() = runTest {
         val driver = RobotDriver.headless()
         assertFailsWith<UnsupportedOperationException> {
             driver.scrollWheel(screenX = 0, screenY = 0, wheelClicks = 1)
@@ -307,7 +310,7 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `headless swipe throws UnsupportedOperationException`() {
+    fun `headless swipe throws UnsupportedOperationException`() = runTest {
         val driver = RobotDriver.headless()
         assertFailsWith<UnsupportedOperationException> {
             driver.swipe(startX = 0, startY = 0, endX = 1, endY = 1, steps = 1, duration = ZERO)

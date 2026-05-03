@@ -12,6 +12,9 @@ import javax.swing.JLabel
 import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
+import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 
 /**
  * Manual smoke for [RobotDriver] driven at a deliberately-unfocused Compose window on Linux.
@@ -69,7 +72,9 @@ fun main() {
     }
 }
 
-private fun runSmoke(): Int {
+private fun runSmoke(): Int = runBlocking { runSmokeSuspend() }
+
+private suspend fun runSmokeSuspend(): Int {
     val state = SmokeState()
     val sutRef = AtomicReference<JFrame>()
     val distractorRef = AtomicReference<JFrame>()
@@ -115,7 +120,7 @@ private fun runSmoke(): Int {
     waitForFrame(sutRef)
     waitForFrame(distractorRef)
     waitForLayout(state)
-    Thread.sleep(POST_LAYOUT_UNFOCUSED_WARMUP_MS)
+    delay(POST_LAYOUT_UNFOCUSED_WARMUP_MS.milliseconds)
 
     val driver = RobotDriver()
     val distractor = requireNotNull(distractorRef.get()) { "distractor frame missing" }

@@ -142,8 +142,12 @@ description, or role — see [Finding nodes](selectors.md).
   click via `java.awt.Robot`.
 
 The `withContext(Dispatchers.Default)` wrapper keeps the wait helpers off the AWT event
-dispatch thread. Calling them from the EDT is rejected at runtime — see
-[Synchronization](synchronization.md).
+dispatch thread. `waitForIdle` / `waitForVisualIdle` reject EDT callers at runtime —
+see [Synchronization](synchronization.md). The interaction methods (`click`,
+`typeText`, …) are themselves `suspend` and marshal their blocking AWT work onto
+`Dispatchers.IO` internally, so they don't need the wrap; a normal JUnit test that
+already runs off the EDT could equivalently drop the `withContext(Dispatchers.Default)`
+block entirely.
 
 ## Where to go next
 

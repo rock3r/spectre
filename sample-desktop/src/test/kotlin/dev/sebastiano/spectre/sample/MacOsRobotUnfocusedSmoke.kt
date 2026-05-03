@@ -12,6 +12,9 @@ import javax.swing.JLabel
 import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
+import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 
 /**
  * Manual smoke for [RobotDriver] driven at a deliberately-unfocused Compose window on macOS.
@@ -48,7 +51,9 @@ fun main() {
     }
 }
 
-private fun runSmoke(): Int {
+private fun runSmoke(): Int = runBlocking { runSmokeSuspend() }
+
+private suspend fun runSmokeSuspend(): Int {
     val state = SmokeState()
     val sutRef = AtomicReference<JFrame>()
     val distractorRef = AtomicReference<JFrame>()
@@ -118,7 +123,7 @@ private fun runSmoke(): Int {
         distractor.toFront()
         distractor.requestFocus()
     }
-    Thread.sleep(POST_CLICK_SETTLE_MS)
+    delay(POST_CLICK_SETTLE_MS.milliseconds)
 
     val results = runUnfocusedScenarios(driver, state, distractor)
     val exitCode = printResults("MacOsRobotUnfocusedSmoke", results)

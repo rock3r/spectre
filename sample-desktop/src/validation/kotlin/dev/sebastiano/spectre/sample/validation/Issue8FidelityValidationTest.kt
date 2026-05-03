@@ -8,6 +8,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.BeforeAll
@@ -45,7 +46,7 @@ class Issue8FidelityValidationTest {
 
     @Test
     @Order(1)
-    fun `HiDPI target bounds reflect real on-screen geometry`() {
+    fun `HiDPI target bounds reflect real on-screen geometry`() = runBlocking {
         with(fixture.automator) {
             navigateToScenario("scenario.hidpi")
             val target1 = waitForTestTag("hidpi.target.40x0")
@@ -89,7 +90,7 @@ class Issue8FidelityValidationTest {
 
     @Test
     @Order(2)
-    fun `focus jump button transfers isFocused to the second field`() {
+    fun `focus jump button transfers isFocused to the second field`() = runBlocking {
         with(fixture.automator) {
             navigateToScenario("scenario.focus")
             val firstField = waitForTestTag("focus.field.first")
@@ -117,7 +118,7 @@ class Issue8FidelityValidationTest {
 
     @Test
     @Order(3)
-    fun `typeText writes characters into the focused text field`() {
+    fun `typeText writes characters into the focused text field`() = runBlocking {
         // The default validation Gradle tasks boot the worker JVM as a macOS UI element so the
         // spawned window doesn't pop to the front while tests run, but UI-element processes get
         // restricted NSPasteboard access — Cmd+V never sees the value `typeText` writes. Skip
@@ -165,30 +166,34 @@ class Issue8FidelityValidationTest {
 
     @Test
     @Order(4)
-    fun `scrolling shifts boundsOnScreen so click coordinates follow the visible item`() {
-        with(fixture.automator) {
-            navigateToScenario("scenario.scroll")
-            val item0Initial = waitForTestTag("scroll.item.0")
-            val initialY = item0Initial.boundsOnScreen.y
-            val list = waitForTestTag("scroll.list")
+    fun `scrolling shifts boundsOnScreen so click coordinates follow the visible item`() =
+        runBlocking {
+            with(fixture.automator) {
+                navigateToScenario("scenario.scroll")
+                val item0Initial = waitForTestTag("scroll.item.0")
+                val initialY = item0Initial.boundsOnScreen.y
+                val list = waitForTestTag("scroll.list")
 
-            // Compose Desktop scrollables respond to wheel input, not drag — issue several wheel
-            // ticks to push the LazyColumn down past item.0's row height.
-            repeat(WHEEL_TICKS_TO_SCROLL) { scrollWheel(list, wheelClicks = 1) }
+                // Compose Desktop scrollables respond to wheel input, not drag — issue several
+                // wheel
+                // ticks to push the LazyColumn down past item.0's row height.
+                repeat(WHEEL_TICKS_TO_SCROLL) { scrollWheel(list, wheelClicks = 1) }
 
-            // After scrolling, item.0 either moves up (its boundsOnScreen.y decreases) or leaves
-            // the viewport entirely (LazyColumn unrenders it). Both prove the live-bounds contract:
-            // the snapshot is fresh, not cached at first observation.
-            eventually(description = "item.0 shifted up or left the viewport") {
-                val current = findOneByTestTag("scroll.item.0")
-                when {
-                    current == null -> Unit // item unrendered — also valid
-                    current.boundsOnScreen.y < initialY -> Unit
-                    else -> null
+                // After scrolling, item.0 either moves up (its boundsOnScreen.y decreases) or
+                // leaves
+                // the viewport entirely (LazyColumn unrenders it). Both prove the live-bounds
+                // contract:
+                // the snapshot is fresh, not cached at first observation.
+                eventually(description = "item.0 shifted up or left the viewport") {
+                    val current = findOneByTestTag("scroll.item.0")
+                    when {
+                        current == null -> Unit // item unrendered — also valid
+                        current.boundsOnScreen.y < initialY -> Unit
+                        else -> null
+                    }
                 }
             }
         }
-    }
 
     private companion object {
         const val WHEEL_TICKS_TO_SCROLL: Int = 10
