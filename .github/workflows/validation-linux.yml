@@ -124,14 +124,26 @@ jobs:
         # JavaExec propagates failure naturally — no XML-verifier needed (unlike the test
         # tasks above).
         #
-        # The unfocused variant (`runLinuxRobotUnfocusedSmoke`) is NOT wired in here yet:
-        # focus / click-to-focus semantics under Xvfb are minimal-WM territory and likely
-        # behave differently from a real KWin / Mutter session. Run it manually on a
-        # developer Linux machine first to bank findings; once the unfocused-smoke KDoc has a
-        # real findings list (not the TBD placeholders) we can revisit adding it here.
+        # The unfocused variant (`runLinuxRobotUnfocusedSmoke`) runs as a separate step
+        # below — split for independent failure attribution (so a regression in one doesn't
+        # mask the other in the workflow summary).
         if: always()
         run: |
           xvfb-run -a ./gradlew :sample-desktop:runLinuxRobotSmoke
+        shell: bash
+
+      - name: Run real-Robot Linux unfocused smoke under Xvfb
+        # Companion to the focused-smoke step above, exercising the `RobotDriver` path against
+        # a deliberately-unfocused Compose window with a sibling distractor JFrame holding focus.
+        # Wired in once the unfocused-smoke KDoc gained a real findings list (validated on
+        # Ubuntu 24.04 GNOME under both XWayland and Xvfb — see `LinuxRobotUnfocusedSmoke.kt`'s
+        # KDoc for the banked observations).
+        #
+        # `if: always()` so a focused-smoke failure above doesn't skip this — both smokes get
+        # a fair chance to surface their own diagnostic output on every run.
+        if: always()
+        run: |
+          xvfb-run -a ./gradlew :sample-desktop:runLinuxRobotUnfocusedSmoke
         shell: bash
 
       - name: Verify validation tests passed via JUnit XML

@@ -24,12 +24,30 @@ import kotlin.system.exitProcess
  * input is dropped at the protocol layer, not by the JVM. Same constraint Spectre's `LinuxX11Grab`
  * documents from #77.
  *
- * Findings from running this on Linux (placeholder — bank empirical results here on first real run,
- * mirroring the Windows smoke's findings list):
+ * Findings from running this on Ubuntu 24.04 (Hyper-V VM, GNOME Wayland session) and on the GitHub
+ * `ubuntu-latest` runner under Xvfb:
  *
- * 1. (TBD — Xvfb + KWin + Mutter foreground / focus behaviour with `isAlwaysOnTop`)
- * 2. (TBD — cold-JVM warmup click necessity under Xvfb)
- * 3. (TBD — clipboard-paste path on X11 vs the macOS NSPasteboard latency budget)
+ * 1. **Three Linux session modes, all valid.** Validated empirically:
+ *     - **XWayland** (Wayland session with `DISPLAY=:0` set): the gate stays out (DISPLAY is set,
+ *       so the abort branch doesn't trigger), the JFrame becomes an XWayland client, and Robot
+ *       input flows through XWayland's X11 protocol. 6/6 PASS. This is the most common mode for
+ *       modern Linux desktops (GNOME / KDE Plasma default to Wayland with XWayland for legacy X
+ *       clients), so end users on a typical Linux box get this path.
+ *     - **Pure Wayland** (Wayland session with `DISPLAY` unset, no XWayland fallback): gate fires,
+ *       smoke exits 2 with the remediation message before constructing the JFrame. Verified by
+ *       running `env -u DISPLAY bash …` from a GNOME Wayland terminal.
+ *     - **Headless Xvfb** (no Wayland indicators, `xvfb-run -a` provides a virtual Xorg display):
+ *       gate stays out, smoke runs against the virtual framebuffer with no visible window. 6/6
+ *       PASS. This is the CI mode in `validation-linux.yml`.
+ * 2. **Cold-JVM warmup click is unnecessary under Xvfb but kept for parity.** Empirically the first
+ *    Robot click lands cleanly on Xvfb (the late-attach race that flakes Windows ~half the time was
+ *    not observed across multiple CI runs). The rig keeps the warmup unconditionally because
+ *    removing it asymmetrically across platforms would obscure the Windows justification, and the
+ *    cost is one extra click per smoke (~250ms).
+ * 3. **Clipboard-paste path works through XWayland.** The `typeText` clipboard-poll budget
+ *    (`CLIPBOARD_SETTLE_TIMEOUT_MS = 1_000L`) tuned for macOS NSPasteboard latency was never
+ *    approached on X11 — observed settle is essentially synchronous. The path validates with
+ *    XWayland transparently bridging clipboard ownership.
  *
  * What this *doesn't* exercise:
  * - Native Wayland input — gated above; not testable without a synthetic compositor that grants the
