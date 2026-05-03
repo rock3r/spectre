@@ -108,8 +108,8 @@ try {
 `waitForIdle` will keep waiting until every registered resource reports `isIdleNow ==
 true` alongside its own checks. The optional `diagnosticMessage()` shows up in
 `IdleTimeoutException`, so use it to describe what was still in flight when the wait
-ran out of time. Register and unregister the same instance — `unregister` is identity-
-based.
+ran out of time. Register and unregister the same instance — `unregister` is
+identity-based.
 
 ## `waitForVisualIdle`
 
