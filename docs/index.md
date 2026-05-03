@@ -64,6 +64,3 @@ familiar — Spectre brings the same "find a node, do a thing, assert" loop to C
 
 - [GitHub repository](https://github.com/rock3r/spectre)
 - [Issue tracker](https://github.com/rock3r/spectre/issues)
-- [Contributing guide](https://github.com/rock3r/spectre/blob/main/CONTRIBUTING.md)
-- [Security policy](https://github.com/rock3r/spectre/blob/main/SECURITY.md)
-- [Code of Conduct](https://github.com/rock3r/spectre/blob/main/CODE_OF_CONDUCT.md)
