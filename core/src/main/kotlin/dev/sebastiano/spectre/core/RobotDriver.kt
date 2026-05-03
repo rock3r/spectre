@@ -20,6 +20,7 @@ class RobotDriver
 internal constructor(
     private val robot: RobotAdapter = AwtRobotAdapter(),
     private val clipboard: ClipboardAdapter = SystemClipboardAdapter(),
+    private val tccGuard: MacOsTccGuard = defaultTccGuardFor(robot),
 ) {
 
     // Public surface: callers may instantiate without arguments (defaults to a fresh
@@ -29,21 +30,28 @@ internal constructor(
 
     constructor(robot: Robot) : this(AwtRobotAdapter(robot))
 
-    fun click(screenX: Int, screenY: Int) = runOffEdt {
-        robot.mouseMove(screenX, screenY)
-        robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
-        robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
-    }
-
-    fun doubleClick(screenX: Int, screenY: Int) = runOffEdt {
-        robot.mouseMove(screenX, screenY)
-        repeat(DOUBLE_CLICK_COUNT) {
+    fun click(screenX: Int, screenY: Int) {
+        tccGuard.requireAccessibility()
+        runOffEdt {
+            robot.mouseMove(screenX, screenY)
             robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
             robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
         }
     }
 
-    fun longClick(screenX: Int, screenY: Int, holdFor: Duration = DEFAULT_LONG_CLICK_DURATION) =
+    fun doubleClick(screenX: Int, screenY: Int) {
+        tccGuard.requireAccessibility()
+        runOffEdt {
+            robot.mouseMove(screenX, screenY)
+            repeat(DOUBLE_CLICK_COUNT) {
+                robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
+                robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
+            }
+        }
+    }
+
+    fun longClick(screenX: Int, screenY: Int, holdFor: Duration = DEFAULT_LONG_CLICK_DURATION) {
+        tccGuard.requireAccessibility()
         runOffEdt {
             robot.mouseMove(screenX, screenY)
             robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
@@ -53,6 +61,7 @@ internal constructor(
                 robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
             }
         }
+    }
 
     fun swipe(
         startX: Int,
@@ -61,25 +70,29 @@ internal constructor(
         endY: Int,
         steps: Int = DEFAULT_SWIPE_STEPS,
         duration: Duration = DEFAULT_SWIPE_DURATION,
-    ) = runOffEdt {
-        val points = interpolateSwipePoints(startX, startY, endX, endY, steps)
-        val pausePerStepMs = swipePauseMillis(duration, steps, autoDelayMs = robot.autoDelayMs)
-        val firstPoint = points.first()
-        robot.mouseMove(firstPoint.x, firstPoint.y)
-        robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
-        try {
-            for (point in points.drop(1)) {
-                robot.mouseMove(point.x, point.y)
-                if (pausePerStepMs > 0) {
-                    Thread.sleep(pausePerStepMs)
+    ) {
+        tccGuard.requireAccessibility()
+        runOffEdt {
+            val points = interpolateSwipePoints(startX, startY, endX, endY, steps)
+            val pausePerStepMs = swipePauseMillis(duration, steps, autoDelayMs = robot.autoDelayMs)
+            val firstPoint = points.first()
+            robot.mouseMove(firstPoint.x, firstPoint.y)
+            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
+            try {
+                for (point in points.drop(1)) {
+                    robot.mouseMove(point.x, point.y)
+                    if (pausePerStepMs > 0) {
+                        Thread.sleep(pausePerStepMs)
+                    }
                 }
+            } finally {
+                robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
             }
-        } finally {
-            robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
         }
     }
 
     fun typeText(text: String) {
+        tccGuard.requireAccessibility()
         val previousContents = runCatching { clipboard.getContents() }.getOrNull()
         try {
             clipboard.setContents(StringSelection(text))
@@ -150,6 +163,7 @@ internal constructor(
     }
 
     fun clearAndTypeText(text: String) {
+        tccGuard.requireAccessibility()
         val selectAllModifier = shortcutModifierKeyCode(detectMacOs())
         runOffEdt {
             robot.keyPress(selectAllModifier)
@@ -168,17 +182,23 @@ internal constructor(
      * desk); negative scrolls up. Drives Compose's `Modifier.scrollable` and lazy-list scroll on
      * desktop, which respond to wheel events rather than touch-style drag gestures.
      */
-    fun scrollWheel(screenX: Int, screenY: Int, wheelClicks: Int) = runOffEdt {
-        robot.mouseMove(screenX, screenY)
-        robot.mouseWheel(wheelClicks)
+    fun scrollWheel(screenX: Int, screenY: Int, wheelClicks: Int) {
+        tccGuard.requireAccessibility()
+        runOffEdt {
+            robot.mouseMove(screenX, screenY)
+            robot.mouseWheel(wheelClicks)
+        }
     }
 
-    fun pressKey(keyCode: Int, modifiers: Int = 0) = runOffEdt {
-        val modifierKeys = modifierMaskToKeyCodes(modifiers)
-        for (mod in modifierKeys) robot.keyPress(mod)
-        robot.keyPress(keyCode)
-        robot.keyRelease(keyCode)
-        for (mod in modifierKeys.reversed()) robot.keyRelease(mod)
+    fun pressKey(keyCode: Int, modifiers: Int = 0) {
+        tccGuard.requireAccessibility()
+        runOffEdt {
+            val modifierKeys = modifierMaskToKeyCodes(modifiers)
+            for (mod in modifierKeys) robot.keyPress(mod)
+            robot.keyPress(keyCode)
+            robot.keyRelease(keyCode)
+            for (mod in modifierKeys.reversed()) robot.keyRelease(mod)
+        }
     }
 
     /**
@@ -199,9 +219,13 @@ internal constructor(
      *   Wide-gamut display profiles can amplify this further. Use a small per-channel tolerance for
      *   any equality-style assertion.
      *
-     * On macOS, [createScreenCapture] requires the wrapping process to hold Screen Recording TCC
-     * permission — without it the call returns silently with an all-black image rather than
-     * throwing. See `MacOsRobotSmoke` for a worked TCC-probe example.
+     * On macOS, the underlying `java.awt.Robot.createScreenCapture` requires the wrapping process
+     * to hold Screen Recording TCC permission. Without it the call returns silently with an
+     * all-black image rather than throwing. The default [RobotDriver] guards against this: on the
+     * first `screenshot` call from a Mac, it probes Screen Recording TCC and throws
+     * [IllegalStateException] with an actionable remediation message if the probe sees an all-black
+     * capture. The probe and the resulting status are cached, so subsequent calls have no extra
+     * cost. Use [headless] to opt out entirely.
      *
      * On Linux, captures work against X11 (real Xorg or XWayland-bridged X clients) but not against
      * native Wayland surfaces — Wayland's security model forbids cross-process framebuffer reads.
@@ -211,6 +235,7 @@ internal constructor(
      * downstream pipelines.
      */
     fun screenshot(region: Rectangle? = null): BufferedImage {
+        tccGuard.requireScreenRecording()
         val captureRegion = region ?: virtualDesktopBounds()
         return robot.createScreenCapture(captureRegion)
     }
@@ -228,9 +253,26 @@ internal constructor(
          * access is a no-op. Combine with the testing module's `ComposeAutomatorRule` /
          * `ComposeAutomatorExtension` to exercise the rule/extension lifecycle without an EDT.
          */
-        fun headless(): RobotDriver = RobotDriver(NoopRobotAdapter, NoopClipboardAdapter)
+        fun headless(): RobotDriver =
+            RobotDriver(NoopRobotAdapter, NoopClipboardAdapter, MacOsTccGuard.noop())
     }
 }
+
+/**
+ * Builds the default [MacOsTccGuard] for a given adapter. Returns a real probe-backed guard only
+ * when the adapter delegates to a real `java.awt.Robot` AND we're running on macOS — every other
+ * combination (synthetic adapter, headless adapter, non-macOS host) gets the noop guard so the
+ * probe never touches an OS that isn't being driven by Robot.
+ */
+internal fun defaultTccGuardFor(adapter: RobotAdapter): MacOsTccGuard =
+    if (adapter.gatesMacOsTcc && detectMacOs()) {
+        MacOsTccGuard(
+            accessibilityProbe = ::osascriptAccessibilityProbe,
+            screenRecordingProbe = { robotScreenRecordingProbe(adapter) },
+        )
+    } else {
+        MacOsTccGuard.noop()
+    }
 
 internal interface RobotAdapter {
 
@@ -247,6 +289,15 @@ internal interface RobotAdapter {
      * that was itself stuck in `SwingUtilities.invokeAndWait` waiting for the EDT.
      */
     val requiresOffEdt: Boolean
+
+    /**
+     * `true` when this adapter delegates input/capture to the real OS `java.awt.Robot`, and
+     * therefore needs to be gated on macOS TCC entitlements (Accessibility for input, Screen
+     * Recording for capture). The synthetic and noop adapters bypass `Robot` entirely, so they
+     * declare `false` and skip the guard regardless of platform.
+     */
+    val gatesMacOsTcc: Boolean
+        get() = false
 
     fun mouseMove(x: Int, y: Int)
 
@@ -288,6 +339,10 @@ private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) : Rob
     // Real `java.awt.Robot` calls block when invoked on the EDT, so RobotDriver must marshal
     // them onto a worker thread.
     override val requiresOffEdt: Boolean = true
+
+    // The only adapter that actually drives the OS through Robot, so the only one that ever
+    // hits macOS TCC. Synthetic and noop adapters override the default `false`.
+    override val gatesMacOsTcc: Boolean = true
 
     override fun mouseMove(x: Int, y: Int) = robot.mouseMove(x, y)
 

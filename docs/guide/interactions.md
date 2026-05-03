@@ -142,7 +142,10 @@ public surface:
 - **`RobotDriver()`** — the default. Uses a fresh `java.awt.Robot` plus the system
   clipboard. Moves the real cursor, takes system-wide keyboard focus, and is visible to
   other applications. This is what end users experience and what
-  `ComposeAutomator.inProcess()` wires up by default.
+  `ComposeAutomator.inProcess()` wires up by default. On macOS, the first input or
+  screenshot call lazily probes TCC permissions (Accessibility for input, Screen
+  Recording for capture) and throws `IllegalStateException` with remediation guidance
+  when either is denied — see [Troubleshooting](troubleshooting.md#macos-robotdriver-throws-illegalstateexception-about-tcc).
 - **`RobotDriver(robot)`** — same as the no-arg form but reuses an existing
   `java.awt.Robot` you've already constructed (e.g., one targeted at a non-default
   `GraphicsDevice`).
