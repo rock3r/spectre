@@ -2,6 +2,8 @@ package dev.sebastiano.spectre.recording
 
 import dev.sebastiano.spectre.recording.FfmpegBackend.Companion.detectWaylandSession
 import dev.sebastiano.spectre.recording.portal.WaylandPortalRecorder
+import dev.sebastiano.spectre.recording.portal.WaylandPortalWindowRecorder
+import dev.sebastiano.spectre.recording.portal.WaylandWindowSourceRecorder
 import dev.sebastiano.spectre.recording.screencapturekit.HelperNotBundledException
 import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitRecorder
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
@@ -15,29 +17,40 @@ import java.nio.file.Path
  * per call, so callers don't have to know which backend is appropriate.
  *
  * Routing logic (in order):
- * 1. `window == null` → ffmpeg region capture. Caller doesn't have a window in mind, or is
+ * 1. Linux Wayland session (detected via env / runtime-dir signals; see
+ *    [FfmpegBackend.detectWaylandSession]) — handled BEFORE the window-null check below because
+ *    `LinuxX11Grab` throws on Wayland and can't be a fallback. Sub-routing:
+ *     - `window != null` AND [waylandPortalWindowRecorder] wired (#85) → window-targeted portal
+ *       recorder. Uses `SourceType.WINDOW`: the dialog asks the user to pick a specific window and
+ *       the granted PipeWire stream contains only that window's pixels (no leakage from occluding
+ *       apps). The helper still crops to the JVM-supplied `region` (the window's bounds at start),
+ *       so the mp4 dimensions match the window's pixel size.
+ *     - Otherwise (`window == null`, OR no window-targeted recorder wired) AND
+ *       [waylandPortalRecorder] wired → region-targeted portal recorder. Uses `SourceType.MONITOR`:
+ *       the dialog asks the user to pick a monitor, and the helper crops the monitor stream to
+ *       [region]. This is the embedded `ComposePanel` path and the backwards-compatible fallback
+ *       for callers from before #85.
+ *     - Neither portal recorder wired → falls through to ffmpeg, which fails fast on Wayland. Both
+ *       portal paths pop a compositor permission dialog on first call within a session and reuse
+ *       the grant via the portal's `restore_token` afterwards. See [WaylandPortalRecorder].
+ * 2. `window == null` → ffmpeg region capture. Caller doesn't have a window in mind, or is
  *    capturing an embedded `ComposePanel` where there's no top-level window to target.
- * 2. macOS host with a window → SCK ([WindowRecorder]). If SCK fails because the helper isn't
+ * 3. macOS host with a window → SCK ([WindowRecorder]). If SCK fails because the helper isn't
  *    bundled (e.g. a jar built on Linux running on macOS), falls back to ffmpeg region capture with
  *    a stderr warning so the degradation is visible. **Only** [HelperNotBundledException] triggers
  *    fallback — operational SCK failures (Screen Recording permission denied, target window not
  *    found, helper crashed during init) propagate as `IllegalStateException` so the caller sees the
  *    real error rather than getting a silently-different recording.
- * 3. Non-macOS host with a window whose [TitledWindow.title] is non-blank, AND a non-null
+ * 4. Non-macOS host with a window whose [TitledWindow.title] is non-blank, AND a non-null
  *    [windowsWindowRecorder] — uses [FfmpegWindowRecorder] (gdigrab `title=` capture). This is the
  *    Windows window-targeted path: window movement is followed automatically and occlusion doesn't
  *    matter. Jewel-in-IDE tool windows have no top-level title so they fall through to the region
- *    path (see step 4).
- * 4. Linux Wayland session (detected via env / runtime-dir signals; see
- *    [FfmpegBackend.detectWaylandSession]) AND a [waylandPortalRecorder] is wired up → use the
- *    portal-based recorder. xdg-desktop-portal hands us a PipeWire stream, gst-launch-1.0 encodes
- *    it. First call pops a permission dialog; subsequent calls within the same JVM run reuse the
- *    grant. See [WaylandPortalRecorder].
+ *    path (see step 5).
  * 5. Non-macOS host without an applicable [windowsWindowRecorder] OR with a blank/null title, on a
  *    non-Wayland host → ffmpeg region capture. The region path is the documented fallback when the
  *    target window title is missing, ambiguous, or points at a tool window with no top-level title.
  *    The underlying [FfmpegRecorder]'s [FfmpegBackend.detect] picks the platform device: gdigrab on
- *    Windows, x11grab on Linux Xorg. (Linux Wayland is handled by step 4 before falling through
+ *    Windows, x11grab on Linux Xorg. (Linux Wayland is handled by step 1 before falling through
  *    here, and `LinuxX11Grab` itself throws on Wayland — see `FfmpegBackend.checkNotWayland`.)
  *
  * The router always needs both a window AND a region: the region is used as the fallback when the
@@ -51,6 +64,7 @@ internal constructor(
     private val ffmpegRecorder: Recorder,
     private val windowsWindowRecorder: WindowRecorder?,
     private val waylandPortalRecorder: Recorder?,
+    private val waylandPortalWindowRecorder: WaylandWindowSourceRecorder?,
     private val isMacOs: () -> Boolean,
     private val isWindows: () -> Boolean,
     private val isWayland: () -> Boolean,
@@ -61,11 +75,14 @@ internal constructor(
         ffmpegRecorder: Recorder = FfmpegRecorder(),
         windowsWindowRecorder: WindowRecorder? = defaultWindowsWindowRecorder(),
         waylandPortalRecorder: Recorder? = defaultWaylandPortalRecorder(),
+        waylandPortalWindowRecorder: WaylandWindowSourceRecorder? =
+            defaultWaylandPortalWindowRecorder(),
     ) : this(
         sckRecorder,
         ffmpegRecorder,
         windowsWindowRecorder,
         waylandPortalRecorder,
+        waylandPortalWindowRecorder,
         ::defaultIsMacOs,
         ::defaultIsWindows,
         ::defaultIsWayland,
@@ -80,9 +97,18 @@ internal constructor(
     ): RecordingHandle {
         // Linux Wayland routing has to happen BEFORE the window-null check below: a Wayland
         // session can't fall through to FfmpegRecorder for either window-targeted OR region
-        // capture, because LinuxX11Grab throws on Wayland. The portal flow handles BOTH cases
-        // (window and no-window) by capturing the user-picked monitor and cropping to the
-        // requested region.
+        // capture, because LinuxX11Grab throws on Wayland.
+        //
+        // Window-targeted (#85) takes precedence when both wired and the caller has a window
+        // in mind: SourceType.WINDOW makes the portal scope the granted stream to the picked
+        // window's pixels (no leakage from occluding apps the way MONITOR + region capture
+        // suffers from). Falls back to the region recorder when no window is supplied OR the
+        // window-targeted recorder isn't wired (e.g. older callers, helper construction
+        // failed). Both pass the same `region` to the helper; the difference is the
+        // SourceType the portal hands to the compositor.
+        if (isWayland() && window != null && waylandPortalWindowRecorder != null) {
+            return waylandPortalWindowRecorder.start(window, region, output, options)
+        }
         if (isWayland() && waylandPortalRecorder != null) {
             return waylandPortalRecorder.start(region, output, options)
         }
@@ -183,6 +209,23 @@ internal constructor(
             if (!defaultIsLinux()) return null
             return try {
                 WaylandPortalRecorder()
+            } catch (_: Throwable) {
+                null
+            }
+        }
+
+        /**
+         * Constructs a [WaylandPortalWindowRecorder] only when the host is Linux. Same gating as
+         * [defaultWaylandPortalRecorder] — the helper binary, GStreamer, and the portal D-Bus
+         * service are all Linux-only. Failures resolving dependencies are swallowed for the same
+         * reasons.
+         */
+        @JvmStatic
+        @Suppress("TooGenericExceptionCaught")
+        fun defaultWaylandPortalWindowRecorder(): WaylandWindowSourceRecorder? {
+            if (!defaultIsLinux()) return null
+            return try {
+                WaylandPortalWindowRecorder()
             } catch (_: Throwable) {
                 null
             }

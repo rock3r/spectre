@@ -64,7 +64,8 @@ The routing is platform-keyed. Read the row that matches your OS:
 | **Windows**             | non-null with a non-blank title   | `FfmpegWindowRecorder` (`gdigrab title=`).                           |
 | **Windows**             | `null`, or non-null with no title | `FfmpegRecorder` region capture (`gdigrab`).                         |
 | **Linux Xorg**          | any                               | `FfmpegRecorder` region capture (`x11grab`).                         |
-| **Linux Wayland**       | any                               | `WaylandPortalRecorder` (xdg-desktop-portal + bundled Rust helper).  |
+| **Linux Wayland**       | non-null                          | `WaylandPortalWindowRecorder` (portal `Window` source type — only the picked window's pixels, window-sized output). |
+| **Linux Wayland**       | `null`                            | `WaylandPortalRecorder` (portal `Monitor` source type — region capture). |
 
 A few details worth knowing:
 
@@ -76,13 +77,31 @@ A few details worth knowing:
   the real cause.
 - **Linux Wayland always uses the portal** (when a portal recorder is wired up),
   regardless of whether `window` is null, because `LinuxX11Grab` refuses to run on
-  Wayland sessions. The portal flow captures the user-picked monitor and crops to
-  the requested region. The first call pops the compositor's "share your screen"
-  dialog; subsequent calls in the same JVM run reuse the grant.
-- **Linux Wayland helper.** The portal recorder runs a small Rust binary
+  Wayland sessions. With `window != null` the router picks the window-targeted portal
+  recorder (`WaylandPortalWindowRecorder`, `SourceType.WINDOW`): the dialog asks the
+  user to pick a window, the granted PipeWire stream contains only that window's pixels
+  (no leakage from occluding apps the way region capture suffers from), and the helper
+  crops to the window's pixel size. With `window == null` (e.g., embedded `ComposePanel`
+  capture) the router uses the region recorder (`WaylandPortalRecorder`,
+  `SourceType.MONITOR`): the dialog asks for a monitor, and the helper crops the
+  monitor stream to the requested rectangle. The first call pops the compositor's
+  "share your screen" dialog; subsequent calls in the same JVM run reuse the grant.
+- **Linux Wayland helper.** Both portal recorders run the same small Rust binary
   (`spectre-wayland-helper`) bundled in the `recording` artifact. It drives
   `xdg-desktop-portal`'s ScreenCast interface and hands a PipeWire FD to
   `gst-launch-1.0`.
+- **Window-targeted Wayland needs `xprop`.** `WaylandPortalWindowRecorder` queries the
+  X11 `_GTK_FRAME_EXTENTS` property on the JFrame's XWayland window via the `xprop`
+  binary to compute the right stream-relative crop (Mutter renders window-source streams
+  with a ~25 px GTK shadow margin around the visible window that AWT's `frame.getBounds()`
+  doesn't see, so without the extents the close button gets clipped). `xprop` is part of
+  `x11-utils` on Debian/Ubuntu — installed by default on the desktop image, separate
+  package on minimal images. If `xprop` isn't available or the window's WM doesn't
+  publish `_GTK_FRAME_EXTENTS` (older Mutter, non-GTK CSD, KDE / sway with server-side
+  decorations), the recorder throws `IllegalStateException` rather than producing a
+  misaligned mp4. Fall back to `WaylandPortalRecorder` (region capture) — pass
+  `window = null` and the router selects it automatically. See
+  [Recording limitations](../RECORDING-LIMITATIONS.md#platform) for more.
 
 ## Lower-level backends
 
@@ -93,7 +112,8 @@ If you know exactly which backend you want, instantiate it directly and skip the
 | `FfmpegRecorder`              | Region capture on macOS, Windows, and Linux Xorg. (Throws on Wayland — use `WaylandPortalRecorder` there.) Default for "no window in mind". |
 | `FfmpegWindowRecorder`        | Windows-only window-targeted capture via `gdigrab title=`.                |
 | `ScreenCaptureKitRecorder`    | macOS-only window-targeted capture via the bundled Swift helper.          |
-| `WaylandPortalRecorder`       | Linux Wayland-only via `xdg-desktop-portal` and a bundled Rust helper.    |
+| `WaylandPortalRecorder`       | Linux Wayland region capture via `xdg-desktop-portal` (`SourceType.MONITOR`) and a bundled Rust helper. |
+| `WaylandPortalWindowRecorder` | Linux Wayland window-targeted capture via `xdg-desktop-portal` (`SourceType.WINDOW`). Window-sized output containing only the picked window's pixels. |
 
 ## Per-OS prerequisites
 

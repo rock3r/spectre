@@ -363,16 +363,19 @@ fn cursor_mode_flag(mode: CursorMode) -> u32 {
 /// have to call `as_iter()` again on that item to walk into a struct/array. Values inside an
 /// `a{sv}` are all variants, so anything past a dict value needs this extra step.
 ///
-/// All four parse failures (`node_id`, `position`, `size`, malformed dict) bail with context.
-/// An earlier draft tried to default `position` and `size` to zero on parse failure, framing
-/// the silent fallback as "graceful degradation" — Bugbot caught the contradiction: the
-/// encoder's argv builder ([`crate::gst::build_pipewire_argv`]) explicitly rejects zero stream
-/// dimensions with `bail!`, so a parse miss would surface as a confusing
-/// `"stream_size must have positive dimensions"` instead of the promised soft-fail. Position
-/// has the same trap on multi-monitor setups: defaulting to `(0,0)` when the granted monitor
-/// is at `(1920, 0)` produces silently wrong AWT-region → stream-relative coordinates and a
-/// recording of the wrong area. Better to fail loudly here with a message naming the parse
-/// step that broke than to either crash later or record garbage.
+/// `position` is required for `source_type = Monitor` — the AWT-region → stream-relative
+/// translation in [`crate::recorder::run`] subtracts it from the JVM-supplied rectangle, and
+/// defaulting to `(0,0)` when the granted monitor is at e.g. `(1920, 0)` produces silently
+/// wrong coordinates and a recording of the wrong area on multi-monitor setups. For
+/// `source_type = Window` (#85) the portal genuinely omits `position` because the stream IS
+/// the window's surface — there is nothing to translate against. Mutter on Ubuntu 24.04 /
+/// GNOME 46 and Ubuntu 26.04 / GNOME 50 was observed returning `{size, id, source_type}`
+/// with no `position` key for window streams. The parser therefore defaults `position` to
+/// `(0, 0)` only when `source_type = Window`; monitor streams still bail loudly on missing
+/// position. `size` is required regardless of source type because the encoder's argv
+/// builder ([`crate::gst::build_pipewire_argv`]) needs it for bounds-checking and pipeline
+/// construction; defaulting it would surface as a confusing
+/// `"stream_size must have positive dimensions"` instead of a clear "portal misbehaved" error.
 fn parse_first_stream(results: &PropMap) -> Result<StreamMetadata> {
     let streams_variant = results
         .get("streams")
@@ -400,8 +403,12 @@ fn parse_first_stream(results: &PropMap) -> Result<StreamMetadata> {
             )
         })? as u32;
 
-    // Properties dict. Both `position` and `size` are required for correct downstream
-    // behaviour — see the function-level doc-comment for the bail-don't-default reasoning.
+    // Properties dict. `size` is required regardless of source type. `position` is required
+    // for monitor source streams (used in AWT-region → stream-relative coordinate translation
+    // on multi-monitor setups) but is intentionally omitted by Mutter for **window** source
+    // streams — the granted stream is already scoped to the picked window's surface, so
+    // there's no compositor-coordinate origin to report. We track `source_type` as we walk
+    // so we can default `position` to `(0, 0)` only on window streams.
     let props_arg = struct_fields
         .next()
         .context("stream struct missing properties dict (expected (ua{sv}), got just u)")?;
@@ -410,6 +417,7 @@ fn parse_first_stream(results: &PropMap) -> Result<StreamMetadata> {
         .context("stream properties value not iterable (expected a{sv})")?;
     let mut position: Option<(i32, i32)> = None;
     let mut size: Option<(u32, u32)> = None;
+    let mut source_type: Option<u32> = None;
     while let (Some(k), Some(v)) = (props_iter.next(), props_iter.next()) {
         let Some(key) = k.as_str() else { continue };
         match key {
@@ -444,16 +452,45 @@ fn parse_first_stream(results: &PropMap) -> Result<StreamMetadata> {
                 }
                 size = Some((pair.0 as u32, pair.1 as u32));
             }
+            "source_type" => {
+                // Both `(ua{sv})` and direct `u` shapes have been observed across portal
+                // versions; the inner value is a u32 bitmask (1=monitor, 2=window, 4=virtual).
+                if let Some(mut variant_iter) = v.as_iter() {
+                    if let Some(inner) = variant_iter.next() {
+                        if let Some(n) = inner.as_u64() {
+                            source_type = Some(n as u32);
+                        }
+                    }
+                }
+                if source_type.is_none() {
+                    if let Some(n) = v.as_u64() {
+                        source_type = Some(n as u32);
+                    }
+                }
+            }
             _ => {}
         }
     }
 
-    let position = position.ok_or_else(|| {
-        anyhow!(
-            "stream properties dict did not include 'position' — required for AWT-region → \
-             stream-relative coordinate translation."
-        )
-    })?;
+    // Window source-type streams (bit 2) genuinely omit `position` — the portal lets the
+    // compositor leave it out because the stream is already scoped to the window surface
+    // and there's no monitor-relative origin to report. Mutter on Ubuntu 24.04 / GNOME 46
+    // and Ubuntu 26.04 / GNOME 50 was empirically observed returning `{size, id, source_type}`
+    // with no `position` for window streams (#85). Monitor streams still bail loudly on
+    // missing position so the multi-monitor coordinate translation in [`crate::recorder::run`]
+    // stays correct.
+    const SOURCE_TYPE_WINDOW: u32 = 2;
+    let position = match position {
+        Some(p) => p,
+        None if matches!(source_type, Some(SOURCE_TYPE_WINDOW)) => (0, 0),
+        None => {
+            return Err(anyhow!(
+                "stream properties dict did not include 'position' — required for AWT-region → \
+                 stream-relative coordinate translation on monitor streams (source_type={:?}).",
+                source_type
+            ));
+        }
+    };
     let size = size.ok_or_else(|| {
         anyhow!(
             "stream properties dict did not include 'size' — required for the encoder's \
