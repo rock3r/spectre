@@ -18,21 +18,21 @@ This is enforced because their wait loops drain the EDT and snapshot semantics v
 that enforces the timeout. `waitForNode` is exempt: it polls via `readOnEdt`, so it's
 safe to call from anywhere a coroutine can suspend.
 
-The standard pattern in tests:
+The standard pattern in tests — JUnit runs off the EDT, so no `withContext` is needed:
 
 ```kotlin
 @Test
 fun mySpec() = runBlocking {
     launchApp()
-    withContext(Dispatchers.Default) {
-        automator.waitForNode(tag = "Root")
-        // ...your test body
-    }
+    automator.waitForNode(tag = "Root")
+    // ...your test body
 }
 ```
 
 If you call `waitForIdle`/`waitForVisualIdle` from the EDT you'll get a clear
-`IllegalStateException` rather than a deadlock.
+`IllegalStateException` rather than a deadlock. The fix in that case is
+`withContext(Dispatchers.Default)` around the offending call — see
+[Troubleshooting](troubleshooting.md#i-called-a-wait-helper-from-the-edt).
 
 ## `waitForNode`
 

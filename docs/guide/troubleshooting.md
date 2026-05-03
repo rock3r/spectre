@@ -12,19 +12,23 @@ dispatch thread; wrap the call with withContext(Dispatchers.Default) or similar.
 `waitForIdle` and `waitForVisualIdle` drain the EDT and snapshot semantics via
 `invokeAndWait`. Running them on the EDT would either deadlock or skip the bounded
 worker that enforces their timeout. (`waitForNode` polls through `readOnEdt` and is
-exempt.) Wrap your wait calls:
+exempt.)
+
+JUnit test methods don't run on the EDT, so a plain `runBlocking { … }` body is fine
+there — no `withContext` needed. The error appears when the call originates from a
+coroutine on `Dispatchers.Main` or any Swing-backed dispatcher, e.g.:
 
 ```kotlin
-runBlocking {
-    withContext(Dispatchers.Default) {
-        automator.waitForVisualIdle()
-    }
+// inside a Dispatchers.Main coroutine — wrong:
+automator.waitForVisualIdle() // throws IllegalStateException
+
+// fix: hop off the EDT first
+withContext(Dispatchers.Default) {
+    automator.waitForVisualIdle()
 }
 ```
 
-JUnit test methods don't run on the EDT, but coroutines launched via
-`Dispatchers.Main` or any Swing-backed dispatcher do. See
-[Synchronization](synchronization.md#the-edt-rule).
+See [Synchronization](synchronization.md#the-edt-rule).
 
 ## "My selector returns null or an empty list"
 

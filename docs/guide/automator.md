@@ -121,9 +121,10 @@ quietly skip the bounded worker that enforces their timeout.
 `waitForNode` is the exception: it polls through `readOnEdt`, so it's safe to call from
 anywhere a coroutine can suspend.
 
-JUnit test methods don't run on the EDT, but coroutines launched on `Dispatchers.Main`
-or any dispatcher backed by Swing's EDT will. The standard pattern is `runBlocking
-{ withContext(Dispatchers.Default) { … } }`.
+JUnit test methods don't run on the EDT, so a plain `runBlocking { … }` body is all you
+need — no extra `withContext` required. Only add `withContext(Dispatchers.Default)` if
+your test body runs inside a coroutine already dispatched on `Dispatchers.Main` or any
+other Swing-backed dispatcher.
 
 ## Real input vs. synthetic input
 

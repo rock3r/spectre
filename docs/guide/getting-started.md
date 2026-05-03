@@ -45,11 +45,8 @@ description, or role — see [Finding nodes](selectors.md).
 === "JUnit 5"
 
     ```kotlin
-    import dev.sebastiano.spectre.core.ComposeAutomator
     import dev.sebastiano.spectre.testing.ComposeAutomatorExtension
-    import kotlinx.coroutines.Dispatchers
     import kotlinx.coroutines.runBlocking
-    import kotlinx.coroutines.withContext
     import org.junit.jupiter.api.Test
     import org.junit.jupiter.api.extension.RegisterExtension
 
@@ -63,24 +60,22 @@ description, or role — see [Finding nodes](selectors.md).
         fun `clicking increment bumps the counter`() = runBlocking {
             launchCounterApp() // your harness — opens the Compose window
 
-            withContext(Dispatchers.Default) {
-                val automator = automatorExt.automator
+            val automator = automatorExt.automator
 
-                automator.waitForNode(tag = "CounterValue")
-                automator.waitForVisualIdle()
+            automator.waitForNode(tag = "CounterValue")
+            automator.waitForVisualIdle()
 
-                val initial = automator.findOneByTestTag("CounterValue")
-                check(initial?.text == "Count: 0")
+            val initial = automator.findOneByTestTag("CounterValue")
+            check(initial?.text == "Count: 0")
 
-                val increment = automator.findOneByTestTag("Increment")
-                    ?: error("Could not find Increment button")
-                automator.click(increment)
+            val increment = automator.findOneByTestTag("Increment")
+                ?: error("Could not find Increment button")
+            automator.click(increment)
 
-                automator.waitForVisualIdle()
+            automator.waitForVisualIdle()
 
-                val updated = automator.findOneByTestTag("CounterValue")
-                check(updated?.text == "Count: 1")
-            }
+            val updated = automator.findOneByTestTag("CounterValue")
+            check(updated?.text == "Count: 1")
         }
     }
     ```
@@ -88,11 +83,8 @@ description, or role — see [Finding nodes](selectors.md).
 === "JUnit 4"
 
     ```kotlin
-    import dev.sebastiano.spectre.core.ComposeAutomator
     import dev.sebastiano.spectre.testing.ComposeAutomatorRule
-    import kotlinx.coroutines.Dispatchers
     import kotlinx.coroutines.runBlocking
-    import kotlinx.coroutines.withContext
     import org.junit.Rule
     import org.junit.Test
 
@@ -105,24 +97,22 @@ description, or role — see [Finding nodes](selectors.md).
         fun clickingIncrementBumpsTheCounter() = runBlocking {
             launchCounterApp()
 
-            withContext(Dispatchers.Default) {
-                val automator = automatorRule.automator
+            val automator = automatorRule.automator
 
-                automator.waitForNode(tag = "CounterValue")
-                automator.waitForVisualIdle()
+            automator.waitForNode(tag = "CounterValue")
+            automator.waitForVisualIdle()
 
-                val initial = automator.findOneByTestTag("CounterValue")
-                check(initial?.text == "Count: 0")
+            val initial = automator.findOneByTestTag("CounterValue")
+            check(initial?.text == "Count: 0")
 
-                val increment = automator.findOneByTestTag("Increment")
-                    ?: error("Could not find Increment button")
-                automator.click(increment)
+            val increment = automator.findOneByTestTag("Increment")
+                ?: error("Could not find Increment button")
+            automator.click(increment)
 
-                automator.waitForVisualIdle()
+            automator.waitForVisualIdle()
 
-                val updated = automator.findOneByTestTag("CounterValue")
-                check(updated?.text == "Count: 1")
-            }
+            val updated = automator.findOneByTestTag("CounterValue")
+            check(updated?.text == "Count: 1")
         }
     }
     ```
@@ -138,16 +128,29 @@ description, or role — see [Finding nodes](selectors.md).
   a row — useful between an interaction and a read-back.
 - `findOneByTestTag(...)` does a single semantics-tree read — no waiting. If the result
   isn't what you expect, your UI probably wasn't idle yet.
-- `automator.click(node)` resolves the node's centre on screen and dispatches a real mouse
-  click via `java.awt.Robot`.
+- `automator.click(node)` is `suspend` — it resolves the node's centre on screen,
+  marshals the blocking AWT work onto `Dispatchers.IO` internally, and dispatches a
+  real mouse click via `java.awt.Robot`.
 
-The `withContext(Dispatchers.Default)` wrapper keeps the wait helpers off the AWT event
-dispatch thread. `waitForIdle` / `waitForVisualIdle` reject EDT callers at runtime —
-see [Synchronization](synchronization.md). The interaction methods (`click`,
-`typeText`, …) are themselves `suspend` and marshal their blocking AWT work onto
-`Dispatchers.IO` internally, so they don't need the wrap; a normal JUnit test that
-already runs off the EDT could equivalently drop the `withContext(Dispatchers.Default)`
-block entirely.
+All interaction methods (`click`, `doubleClick`, `swipe`, `typeText`, …) and all wait
+helpers (`waitForNode`, `waitForIdle`, `waitForVisualIdle`) are `suspend`, so the test
+body runs inside `runBlocking { … }`. JUnit test methods don't run on the AWT event
+dispatch thread, so no extra `withContext` is needed here. If you ever call wait helpers
+from a coroutine on `Dispatchers.Main` (Swing EDT), wrap them in
+`withContext(Dispatchers.Default)` — they reject EDT callers at runtime. See
+[Synchronization](synchronization.md).
+
+!!! warning "Use `runBlocking`, not `runTest`"
+    `runTest` from `kotlinx-coroutines-test` controls time via a virtual scheduler and
+    skips `delay()` calls, advancing the clock instantly. Spectre uses `delay` internally
+    for timing-sensitive operations — `longClick` hold durations, `swipe` step pacing, and
+    clipboard-settle polling in `typeText` — so running under `runTest` silently collapses
+    those pauses to zero. The result is that `longClick` doesn't actually hold, `swipe`
+    jumps to the end position instantly, and clipboard operations may race.
+
+    Stick with `runBlocking` for Spectre tests. A future `runSpectreTest` helper may
+    provide `runTest`-style structured concurrency while preserving real time for
+    Spectre's internal delays.
 
 ## Where to go next
 

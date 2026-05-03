@@ -161,8 +161,9 @@ real-pointer-style path is also available.
 Compose semantics owners hosted by `ComposePanel` are not thread-safe and must be read
 on the EDT. The pattern is:
 
-- Run the **outer loop** (polling, retries, `Thread.sleep` between ticks) on a pooled
-  background thread.
+- Run the **outer loop** (polling, retries, `delay` between ticks) on a pooled
+  background thread inside a `runBlocking { … }` — interaction and wait methods are
+  `suspend`.
 - Marshal each **per-tick semantics read** back to the EDT via
   `ApplicationManager.getApplication().invokeAndWait { ... }`.
 
