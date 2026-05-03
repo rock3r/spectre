@@ -201,6 +201,86 @@ class RobotDriverTest {
     }
 
     @Test
+    fun `click consults the TCC guard before invoking the robot`() {
+        val guard = RecordingTccGuard()
+        val robot = RecordingRobotAdapter()
+        val driver = RobotDriver(robot, RecordingClipboardAdapter(), guard)
+
+        driver.click(10, 20)
+
+        assertEquals(1, guard.accessibilityCalls)
+        assertEquals(0, guard.screenRecordingCalls)
+    }
+
+    @Test
+    fun `click that fails the accessibility check does not dispatch any input`() {
+        val guard = RecordingTccGuard(accessibilityThrows = true)
+        val robot = RecordingRobotAdapter()
+        val driver = RobotDriver(robot, RecordingClipboardAdapter(), guard)
+
+        assertFailsWith<IllegalStateException> { driver.click(10, 20) }
+
+        assertEquals(emptyList(), robot.events)
+    }
+
+    @Test
+    fun `screenshot consults the screen-recording guard before capturing`() {
+        val guard = RecordingTccGuard()
+        val robot = RecordingRobotAdapter()
+        val driver = RobotDriver(robot, RecordingClipboardAdapter(), guard)
+
+        driver.screenshot(Rectangle(0, 0, 4, 4))
+
+        assertEquals(0, guard.accessibilityCalls)
+        assertEquals(1, guard.screenRecordingCalls)
+    }
+
+    @Test
+    fun `screenshot that fails the screen-recording check does not capture`() {
+        val guard = RecordingTccGuard(screenRecordingThrows = true)
+        val robot = RecordingRobotAdapter()
+        val driver = RobotDriver(robot, RecordingClipboardAdapter(), guard)
+
+        assertFailsWith<IllegalStateException> { driver.screenshot(Rectangle(0, 0, 4, 4)) }
+
+        assertEquals(0, robot.captureCalls)
+    }
+
+    @Test
+    fun `typeText consults the accessibility guard before mutating the clipboard`() {
+        // typeText writes to and restores the clipboard, so a failed accessibility check
+        // must short-circuit BEFORE the clipboard is touched. Otherwise a failing macOS run
+        // would still pollute the user's clipboard.
+        val guard = RecordingTccGuard(accessibilityThrows = true)
+        val clipboard = RecordingClipboardAdapter()
+        val robot = RecordingRobotAdapter()
+        val driver = RobotDriver(robot, clipboard, guard)
+
+        assertFailsWith<IllegalStateException> { driver.typeText("hello") }
+
+        assertEquals(0, clipboard.setCalls, "clipboard must not be mutated when guard blocks")
+        assertEquals(emptyList(), robot.events)
+    }
+
+    @Test
+    fun `headless driver never invokes the TCC guard probes`() {
+        // The default headless() factory wires in MacOsTccGuard.noop() which has lambda probes
+        // that return NotApplicable. We verify by exercising every public input/screenshot
+        // method — none should throw, and the noop guard never warns or short-circuits.
+        val driver = RobotDriver.headless()
+
+        driver.click(10, 20)
+        driver.doubleClick(10, 20)
+        driver.longClick(10, 20, holdFor = 1.milliseconds)
+        driver.swipe(0, 0, 5, 5, steps = 2, duration = ZERO)
+        driver.scrollWheel(0, 0, 1)
+        driver.pressKey(KeyEvent.VK_ENTER)
+        driver.typeText("noop")
+        driver.clearAndTypeText("noop")
+        driver.screenshot(Rectangle(0, 0, 4, 4))
+    }
+
+    @Test
     fun `typeText with no-op clipboard adapter does not spin or settle for the headless path`() {
         // RobotDriver.headless() pairs the noop robot with the noop clipboard. The clipboard
         // never reads back what was written and the noop robot has no real paste pipeline to
@@ -231,12 +311,41 @@ class RobotDriverTest {
     }
 }
 
+private class RecordingTccGuard(
+    private val accessibilityThrows: Boolean = false,
+    private val screenRecordingThrows: Boolean = false,
+) :
+    MacOsTccGuard(
+        accessibilityProbe = { TccStatus.Granted },
+        screenRecordingProbe = { TccStatus.Granted },
+        warn = {},
+    ) {
+
+    var accessibilityCalls: Int = 0
+        private set
+
+    var screenRecordingCalls: Int = 0
+        private set
+
+    override fun requireAccessibility() {
+        accessibilityCalls++
+        if (accessibilityThrows) error("test: accessibility denied")
+    }
+
+    override fun requireScreenRecording() {
+        screenRecordingCalls++
+        if (screenRecordingThrows) error("test: screen recording denied")
+    }
+}
+
 private class RecordingRobotAdapter(
     override val autoDelayMs: Int = 0,
     private val sharedLog: MutableList<String>? = null,
 ) : RobotAdapter {
     override val requiresOffEdt: Boolean = false
     val events = mutableListOf<String>()
+    var captureCalls: Int = 0
+        private set
 
     private fun log(event: String) {
         events += event
@@ -255,12 +364,14 @@ private class RecordingRobotAdapter(
 
     override fun mouseWheel(wheelClicks: Int) = log("mouseWheel($wheelClicks)")
 
-    override fun createScreenCapture(region: Rectangle): BufferedImage =
-        BufferedImage(
+    override fun createScreenCapture(region: Rectangle): BufferedImage {
+        captureCalls++
+        return BufferedImage(
             region.width.coerceAtLeast(1),
             region.height.coerceAtLeast(1),
             BufferedImage.TYPE_INT_ARGB,
         )
+    }
 
     override fun waitForIdle() = log("waitForIdle()")
 }
@@ -268,9 +379,13 @@ private class RecordingRobotAdapter(
 private class RecordingClipboardAdapter : ClipboardAdapter {
     private var current: Transferable? = null
 
+    var setCalls: Int = 0
+        private set
+
     override fun getContents(): Transferable? = current
 
     override fun setContents(contents: Transferable) {
+        setCalls++
         current = contents
     }
 }

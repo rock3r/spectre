@@ -177,27 +177,45 @@ See [Recording limitations](../RECORDING-LIMITATIONS.md) for the full Wayland st
   helper crashed during init — these all throw `IllegalStateException` rather than
   silently falling back, so you see the real cause.
 
-## "macOS clicks and key presses silently no-op"
+## "macOS RobotDriver throws `IllegalStateException` about TCC"
 
-`java.awt.Robot`'s mouse and keyboard methods need the **Accessibility** TCC entry
-on macOS, separately from Screen Recording. Without it, the OS never delivers the
-events — `automator.click(...)`, `typeText(...)`, `pressKey(...)`, and friends
-return without dispatching anything.
+The default `RobotDriver()` lazily probes the two macOS TCC entries `java.awt.Robot`
+needs and throws on first use if either is denied:
 
-Fix: grant System Settings → Privacy & Security → Accessibility to whichever app
-launched the JVM (IntelliJ, Terminal, etc.) — same parent-process attribution
-rules as Screen Recording — then fully quit and relaunch that app so macOS picks
-up the new entitlement.
+- **Accessibility** — required for mouse and keyboard delivery. Without it,
+  `Robot.mouseMove`, `Robot.mousePress`, `Robot.keyPress`, etc. return without the
+  OS delivering anything. The probe runs on the first `click(...)`, `typeText(...)`,
+  `pressKey(...)`, etc. and asks `System Events` (via `osascript`) for the active
+  process. A "not allowed assistive access" denial throws with an actionable
+  message naming the wrapping app to grant; an inconclusive probe (no `osascript`,
+  AppleEvents/Automation refusal, etc.) prints a one-shot stderr warning and
+  proceeds.
+- **Screen Recording** — required for `Robot.createScreenCapture` to return real
+  pixels. Without it the call silently returns an all-black image. The probe runs
+  on the first `screenshot(...)` call: it captures a small region near the screen
+  origin (which on macOS overlaps the menu bar) and treats an all-black result as
+  denial. False positives are vanishingly rare in practice; if your screen really
+  is fully black at the origin, switch to `RobotDriver.headless()` for tests
+  or grant Screen Recording to silence the probe.
 
-!!! note "Tracking: hard-fail on missing TCC"
-    Today, `RobotDriver()` doesn't probe TCC; it just wraps `Robot` and lets the
-    silent no-op happen. That's a footgun — the cause is invisible from the
-    downstream assertion failure. Tracked as
-    [#98](https://github.com/rock3r/spectre/issues/98); the intended end state
-    is that constructing the default driver on a Mac without the right TCC
-    entries throws with an actionable message. `MacOsRecordingPermissions.diagnose()`
-    is available in the meantime as an opt-in startup probe that returns a
-    human-readable rollup of both entries.
+Fix: grant System Settings → Privacy & Security → Accessibility (or → Screen &
+System Audio Recording) to whichever app launched the JVM — IntelliJ, Terminal,
+iTerm2, Claude.app, etc. macOS attributes Robot operations to the wrapping app
+that opened the JVM, **not** the JVM binary itself. Fully quit and relaunch the
+wrapping app afterwards so macOS picks up the new entitlement, and `./gradlew
+--stop` the Gradle daemon if you launched from a shell.
+
+The two probes are independent: a consumer who only takes screenshots is not
+punished for missing Accessibility, and vice versa. Probe results are cached
+after the first call, so subsequent operations have no extra cost.
+
+If you don't need real OS input or capture (in CI, in tests, etc.) use
+`RobotDriver.headless()` — it bypasses the AWT Robot entirely and skips the TCC
+probe.
+
+For a passive, opt-in startup rollup of both entries (handy for harnesses that
+want to log a banner), `MacOsRecordingPermissions.diagnose()` in `:recording`
+returns a human-readable diagnostic without throwing.
 
 ## "JBR vs Temurin: which JDK should I use?"
 
