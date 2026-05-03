@@ -65,11 +65,13 @@ top-level `ComposeWindow` you want to record cleanly; use region capture for emb
   whatever pixels the screen happens to be showing inside that region land in the file. The region
   is bound at `Recorder.start(...)` time and does not follow a window; the v2 work surfaces a
   proper window-targeted backend via ScreenCaptureKit.
-- **Embedded `ComposePanel` surfaces always fall through to region capture.** Window-targeted
-  capture is gated on a non-zero `windowHandle`, which Spectre populates only for top-level
-  `ComposeWindow`s. A panel embedded inside an IntelliJ tool window, a `JFrame`, a `JDialog`, or a
-  `SwingPanel` host inside Compose has `windowHandle == 0L` and gets the region path. Practical
-  consequences:
+- **Embedded `ComposePanel` surfaces always fall through to region capture.**
+  `AutoRecorder.start(window: TitledWindow?, region: Rectangle, …)` picks window-targeted
+  capture only when `window` is non-null and (on Windows) has a non-blank title. The
+  `Frame.asTitledWindow()` adapter exposes that title for top-level `ComposeWindow`s, but
+  a panel embedded inside an IntelliJ tool window, a `JFrame`, a `JDialog`, or a
+  `SwingPanel` host inside Compose has no top-level `Frame` to adapt — callers pass
+  `window = null` and get the region path. Practical consequences:
   - Anything that visually overlaps the panel — other windows, the menu bar, OS notifications, a
     floating popup that escapes the panel's bounds — appears in the recording.
   - The captured region is the panel's screen-space bounds at start. If the host window moves or

@@ -84,10 +84,23 @@ Expected long-term responsibilities:
 Keep native capture boundaries narrow and test the pure pieces separately from OS integration.
 
 Current backends:
-- `FfmpegRecorder` — region capture via `ffmpeg` + `avfoundation` (v1).
-- `screencapturekit.ScreenCaptureKitRecorder` — window-targeted capture on macOS via a bundled
-  Swift helper (`recording/native/macos/`, v2 / #18). The helper is built by Gradle on macOS and
-  staged into the module's `src/main/resources/native/macos/` so the JAR carries it.
+- `FfmpegRecorder` — region capture via a system `ffmpeg` binary, with the input device
+  picked per OS by `FfmpegBackend.detect()`: `avfoundation` on macOS, `gdigrab` on
+  Windows, and `x11grab` on Linux Xorg. (Linux Wayland is rejected here; see
+  `LinuxX11Grab.checkNotWayland`.)
+- `FfmpegWindowRecorder` — Windows-only window-targeted capture via `gdigrab title=`.
+  Window movement is followed automatically; occlusion doesn't matter.
+- `screencapturekit.ScreenCaptureKitRecorder` — macOS-only window-targeted capture via a
+  bundled Swift helper (`recording/native/macos/`, v2 / #18). The helper is built by
+  Gradle on macOS and staged into the module's `src/main/resources/native/macos/` so
+  the JAR carries it.
+- `portal.WaylandPortalRecorder` — Linux Wayland capture via `xdg-desktop-portal`'s
+  ScreenCast interface, driven by a bundled Rust helper
+  (`recording/native/linux/spectre-wayland-helper`) that hands the PipeWire FD to
+  `gst-launch-1.0`.
+- `AutoRecorder` — high-level router that picks per call from `TitledWindow?` + region +
+  OS detection: Wayland portal first, then `window == null` → ffmpeg region, then macOS
+  SCK, then Windows title-based capture, then ffmpeg region as fallback.
 
 ### `testing`
 

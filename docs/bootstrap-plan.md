@@ -13,9 +13,10 @@ what's done and what's planned. The original spike notes still live at
   owner-scoped node identity, selector/query API, `RobotDriver` (real OS input) +
   `RobotDriver.headless()` for in-process semantics-only flows, coordinate mapping,
   `waitForVisualIdle` synchronization.
-- **`server`** — embedded HTTP transport via Ktor (`SpectreServer`) and matching
-  `HttpComposeAutomator` client, with serialization DTOs and round-trip integration tests
-  (`#9`). Cross-JVM access is wired end-to-end; consumers bring their own server engine.
+- **`server`** — embedded HTTP transport via Ktor (`Application.installSpectreRoutes(...)`)
+  and matching `HttpComposeAutomator` client, with serialization DTOs and round-trip
+  integration tests (`#9`). Cross-JVM access is wired end-to-end; consumers bring their
+  own server engine.
 - **`testing`** — `ComposeAutomatorExtension` (JUnit 5) and `ComposeAutomatorRule` (JUnit 4)
   with pluggable `AutomatorFactory` so headless tests can substitute fakes.
 - **`sample-desktop`** — manual smoke surface with counter / popup / scrolling scenarios that
@@ -35,8 +36,11 @@ what's done and what's planned. The original spike notes still live at
 - **`recording.screencapturekit.ScreenCaptureKitRecorder`** — window-targeted capture via a
   bundled Swift helper (`recording/native/macos/`). Removes the "anything overlapping the
   region appears in the recording" failure mode for top-level Compose windows.
-- **`recording.AutoRecorder`** — picks SCK or ffmpeg per call based on whether the target has
-  a usable window handle.
+- **`recording.AutoRecorder`** — picks the right backend per call from
+  `TitledWindow?` + `Rectangle` + OS detection. On macOS with a non-null window, SCK
+  wins; otherwise ffmpeg region capture. (Wayland portal and Windows title-based
+  capture were added in later milestones — see `AutoRecorder.start(...)` for the
+  current routing order.)
 - **Universal-binary opt-in** — `./gradlew :recording:assembleScreenCaptureKitHelper
   -PuniversalHelper` builds an arm64+x86_64 lipo'd helper using only the Xcode CLT (no full
   Xcode required). Off by default to keep local iteration fast.
