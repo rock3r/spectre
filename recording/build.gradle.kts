@@ -364,3 +364,18 @@ tasks.register<JavaExec>("runWaylandPortalSmoke") {
     standardOutput = System.out
     errorOutput = System.err
 }
+
+// Sibling of `runWaylandPortalSmoke` for #87: drives the cursor across the JFrame via
+// `java.awt.Robot.mouseMove` during capture so the resulting mp4 can be eyeballed for
+// cursor pixels (verifies portal `cursor_mode=Embedded` actually delivers).
+tasks.register<JavaExec>("runWaylandPortalCursorSmoke") {
+    group = "verification"
+    description =
+        "Like runWaylandPortalSmoke, but sweeps the cursor across the JFrame during capture " +
+            "so the mp4 can be eyeballed for cursor pixels."
+    onlyIf { OperatingSystem.current().isLinux }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.portal.WaylandPortalCursorSmoke")
+    standardOutput = System.out
+    errorOutput = System.err
+}
