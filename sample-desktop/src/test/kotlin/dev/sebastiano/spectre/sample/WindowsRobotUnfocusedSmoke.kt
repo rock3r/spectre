@@ -12,6 +12,7 @@ import javax.swing.JLabel
 import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
+import kotlinx.coroutines.runBlocking
 
 /**
  * Manual smoke for #59: drive [RobotDriver] against a Compose window that is **deliberately not the
@@ -66,7 +67,9 @@ fun main() {
     }
 }
 
-private fun runSmoke(): Int {
+private fun runSmoke(): Int = runBlocking { runSmokeSuspend() }
+
+private suspend fun runSmokeSuspend(): Int {
     val state = SmokeState()
     val sutRef = AtomicReference<JFrame>()
     val distractorRef = AtomicReference<JFrame>()

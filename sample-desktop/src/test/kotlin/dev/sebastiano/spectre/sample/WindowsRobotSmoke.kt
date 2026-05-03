@@ -9,6 +9,7 @@ import java.util.concurrent.atomic.AtomicReference
 import javax.swing.JFrame
 import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
+import kotlinx.coroutines.runBlocking
 
 /**
  * Manual smoke for [RobotDriver] on Windows. Run via `./gradlew
@@ -72,7 +73,9 @@ fun main() {
     }
 }
 
-private fun runSmoke(): Int {
+private fun runSmoke(): Int = runBlocking { runSmokeSuspend() }
+
+private suspend fun runSmokeSuspend(): Int {
     val state = SmokeState()
     val frameRef = AtomicReference<JFrame>()
     SwingUtilities.invokeLater {

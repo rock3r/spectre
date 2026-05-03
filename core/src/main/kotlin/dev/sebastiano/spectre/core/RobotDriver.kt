@@ -15,6 +15,9 @@ import java.awt.image.BufferedImage
 import javax.swing.SwingUtilities
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 class RobotDriver
 internal constructor(
@@ -30,7 +33,7 @@ internal constructor(
 
     constructor(robot: Robot) : this(AwtRobotAdapter(robot))
 
-    fun click(screenX: Int, screenY: Int) {
+    suspend fun click(screenX: Int, screenY: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
             robot.mouseMove(screenX, screenY)
@@ -39,7 +42,7 @@ internal constructor(
         }
     }
 
-    fun doubleClick(screenX: Int, screenY: Int) {
+    suspend fun doubleClick(screenX: Int, screenY: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
             robot.mouseMove(screenX, screenY)
@@ -50,20 +53,24 @@ internal constructor(
         }
     }
 
-    fun longClick(screenX: Int, screenY: Int, holdFor: Duration = DEFAULT_LONG_CLICK_DURATION) {
+    suspend fun longClick(
+        screenX: Int,
+        screenY: Int,
+        holdFor: Duration = DEFAULT_LONG_CLICK_DURATION,
+    ) {
         tccGuard.requireAccessibility()
         runOffEdt {
             robot.mouseMove(screenX, screenY)
             robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
             try {
-                Thread.sleep(holdFor.inWholeMilliseconds)
+                delay(holdFor)
             } finally {
                 robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
             }
         }
     }
 
-    fun swipe(
+    suspend fun swipe(
         startX: Int,
         startY: Int,
         endX: Int,
@@ -82,7 +89,7 @@ internal constructor(
                 for (point in points.drop(1)) {
                     robot.mouseMove(point.x, point.y)
                     if (pausePerStepMs > 0) {
-                        Thread.sleep(pausePerStepMs)
+                        delay(pausePerStepMs.milliseconds)
                     }
                 }
             } finally {
@@ -91,56 +98,58 @@ internal constructor(
         }
     }
 
-    fun typeText(text: String) {
+    suspend fun typeText(text: String) {
         tccGuard.requireAccessibility()
-        val previousContents = runCatching { clipboard.getContents() }.getOrNull()
-        try {
-            clipboard.setContents(StringSelection(text))
-            // OS pasteboard writes (notably macOS NSPasteboard) are asynchronous: setContents
-            // returns immediately, but readers can observe the previous value for a short
-            // window. If we dispatch Cmd+V before the pasteboard surfaces our text, the focused
-            // field's paste handler reads stale (often empty) contents and the typed characters
-            // never land. Poll the clipboard until it reports our string, with a bounded budget
-            // so a misbehaving clipboard adapter cannot wedge the call indefinitely. Skip the
-            // poll for adapters that don't support read-back so that path doesn't burn the
-            // full settle timeout against a permanently-null reader.
-            if (clipboard.supportsRead) {
-                awaitClipboardContents(text, CLIPBOARD_SETTLE_TIMEOUT_MS, CLIPBOARD_SETTLE_POLL_MS)
-            }
-            runOffEdt {
+        runOffEdt {
+            val previousContents = runCatching { clipboard.getContents() }.getOrNull()
+            try {
+                clipboard.setContents(StringSelection(text))
+                // OS pasteboard writes (notably macOS NSPasteboard) are asynchronous:
+                // setContents returns immediately, but readers can observe the previous value
+                // for a short window. If we dispatch Cmd+V before the pasteboard surfaces our
+                // text, the focused field's paste handler reads stale (often empty) contents
+                // and the typed characters never land. Poll the clipboard until it reports our
+                // string, with a bounded budget so a misbehaving clipboard adapter cannot
+                // wedge the call indefinitely. Skip the poll for adapters that don't support
+                // read-back so that path doesn't burn the full settle timeout against a
+                // permanently-null reader.
+                if (clipboard.supportsRead) {
+                    awaitClipboardContents(
+                        text,
+                        CLIPBOARD_SETTLE_TIMEOUT_MS,
+                        CLIPBOARD_SETTLE_POLL_MS,
+                    )
+                }
                 val modifier = shortcutModifierKeyCode(detectMacOs())
                 robot.keyPress(modifier)
                 robot.keyPress(KeyEvent.VK_V)
                 robot.keyRelease(KeyEvent.VK_V)
                 robot.keyRelease(modifier)
-            }
-            if (!SwingUtilities.isEventDispatchThread() && clipboard.supportsRead) {
-                // Drain queued AWT events (KEY_PRESSED/RELEASED + Compose's input pipeline) so
-                // the paste handler has a chance to read the clipboard before we restore it.
-                // Without this, the finally block can clobber the clipboard mid-paste and the
-                // field receives empty text — the exact symptom that flaked the live validation.
-                // One waitForIdle pump is not enough: Compose's paste action runs on its own
-                // coroutine dispatcher which posts back to the EDT, so we pump a few times and
-                // also wait a short interval to let the OS-side paste read complete before we
-                // clobber the clipboard contents. Skip the whole block for adapters that don't
-                // support clipboard read-back — there's no real paste handler to drain, so the
-                // sleep would just add fixed latency for nothing.
-                repeat(POST_PASTE_EDT_PUMPS) { robot.waitForIdle() }
-                try {
-                    Thread.sleep(POST_PASTE_SETTLE_MS)
-                } catch (_: InterruptedException) {
-                    Thread.currentThread().interrupt()
+                if (clipboard.supportsRead) {
+                    // Drain queued AWT events (KEY_PRESSED/RELEASED + Compose's input
+                    // pipeline) so the paste handler has a chance to read the clipboard before
+                    // we restore it. Without this, the finally block can clobber the clipboard
+                    // mid-paste and the field receives empty text — the exact symptom that
+                    // flaked the live validation. One waitForIdle pump is not enough:
+                    // Compose's paste action runs on its own coroutine dispatcher which posts
+                    // back to the EDT, so we pump a few times and also wait a short interval
+                    // to let the OS-side paste read complete before we clobber the clipboard
+                    // contents. Skip the whole block for adapters that don't support
+                    // clipboard read-back — there's no real paste handler to drain, so the
+                    // delay would just add fixed latency for nothing.
+                    repeat(POST_PASTE_EDT_PUMPS) { robot.waitForIdle() }
+                    delay(POST_PASTE_SETTLE_MS.milliseconds)
+                    repeat(POST_PASTE_EDT_PUMPS) { robot.waitForIdle() }
                 }
-                repeat(POST_PASTE_EDT_PUMPS) { robot.waitForIdle() }
-            }
-        } finally {
-            if (previousContents != null) {
-                runCatching { clipboard.setContents(previousContents) }
+            } finally {
+                if (previousContents != null) {
+                    runCatching { clipboard.setContents(previousContents) }
+                }
             }
         }
     }
 
-    private fun awaitClipboardContents(expected: String, timeoutMs: Long, pollMs: Long) {
+    private suspend fun awaitClipboardContents(expected: String, timeoutMs: Long, pollMs: Long) {
         val deadline = System.nanoTime() + timeoutMs * NANOS_PER_MILLI
         while (true) {
             val current =
@@ -153,16 +162,11 @@ internal constructor(
                     .getOrNull() as? String
             if (current == expected) return
             if (System.nanoTime() >= deadline) return
-            try {
-                Thread.sleep(pollMs)
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-                return
-            }
+            delay(pollMs.milliseconds)
         }
     }
 
-    fun clearAndTypeText(text: String) {
+    suspend fun clearAndTypeText(text: String) {
         tccGuard.requireAccessibility()
         val selectAllModifier = shortcutModifierKeyCode(detectMacOs())
         runOffEdt {
@@ -182,7 +186,7 @@ internal constructor(
      * desk); negative scrolls up. Drives Compose's `Modifier.scrollable` and lazy-list scroll on
      * desktop, which respond to wheel events rather than touch-style drag gestures.
      */
-    fun scrollWheel(screenX: Int, screenY: Int, wheelClicks: Int) {
+    suspend fun scrollWheel(screenX: Int, screenY: Int, wheelClicks: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
             robot.mouseMove(screenX, screenY)
@@ -190,7 +194,7 @@ internal constructor(
         }
     }
 
-    fun pressKey(keyCode: Int, modifiers: Int = 0) {
+    suspend fun pressKey(keyCode: Int, modifiers: Int = 0) {
         tccGuard.requireAccessibility()
         runOffEdt {
             val modifierKeys = modifierMaskToKeyCodes(modifiers)
@@ -240,7 +244,7 @@ internal constructor(
         return robot.createScreenCapture(captureRegion)
     }
 
-    private fun runOffEdt(block: () -> Unit) = runOffEdt(robot, block)
+    private suspend fun runOffEdt(block: suspend () -> Unit) = runOffEdt(robot, block)
 
     companion object {
 
@@ -441,20 +445,19 @@ private fun createAwtRobot(): Robot =
         isAutoWaitForIdle = false
     }
 
-private fun runOffEdt(robot: RobotAdapter, block: () -> Unit) {
+private suspend fun runOffEdt(robot: RobotAdapter, block: suspend () -> Unit) {
     // Adapters that don't need the off-EDT marshal (synthetic, headless-throwing) can run
-    // inline even on the EDT — spawning a worker would deadlock the synthetic adapter, whose
-    // internal `SwingUtilities.invokeAndWait` would wait forever for an EDT blocked on
-    // `Thread.join()`.
+    // inline even on the EDT — switching to another dispatcher would force the synthetic
+    // adapter to bounce IO → EDT for every dispatch when the caller is already on the EDT,
+    // and used to deadlock the older thread-spawning marshal entirely (the EDT-blocking
+    // `Thread.join()` waited for a worker stuck in `SwingUtilities.invokeAndWait`).
     if (!robot.requiresOffEdt || !SwingUtilities.isEventDispatchThread()) {
         block()
         return
     }
-    var result: Result<Unit>? = null
-    val thread = Thread({ result = runCatching(block) }, "spectre-robot")
-    thread.start()
-    thread.join()
-    result!!.getOrThrow()
+    // Real `java.awt.Robot` calls block. `Dispatchers.IO` is sized for blocking I/O work and
+    // suspends the calling EDT coroutine without parking the EDT thread.
+    withContext(Dispatchers.IO) { block() }
 }
 
 fun shortcutModifierKeyCode(isMacOs: Boolean): Int =

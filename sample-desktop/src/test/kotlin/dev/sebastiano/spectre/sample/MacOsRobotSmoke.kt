@@ -9,6 +9,9 @@ import java.util.concurrent.atomic.AtomicReference
 import javax.swing.JFrame
 import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
+import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 
 /**
  * Manual smoke for [RobotDriver] on macOS. Run via `./gradlew :sample-desktop:runMacOsRobotSmoke`.
@@ -88,7 +91,9 @@ fun main() {
     }
 }
 
-private fun runSmoke(): Int {
+private fun runSmoke(): Int = runBlocking { runSmokeSuspend() }
+
+private suspend fun runSmokeSuspend(): Int {
     val state = SmokeState()
     val frameRef = AtomicReference<JFrame>()
     SwingUtilities.invokeLater {
@@ -149,14 +154,14 @@ private fun runSmoke(): Int {
 // The probe click counts toward `clickCount`, so the rig's scenarios capture their own deltas
 // (this prime click is effectively the macOS analogue of the cold-JVM warmup click on Windows
 // + an effective TCC check).
-internal fun probeTccAccessibility(driver: RobotDriver, state: SmokeState): String? {
+internal suspend fun probeTccAccessibility(driver: RobotDriver, state: SmokeState): String? {
     val target = awtCenter(state, state.counterBounds)
     if (target == null) {
         return "TCC probe skipped: counter target rect not available; cannot infer permission state."
     }
     val before = state.clickCount
     driver.click(target.x, target.y)
-    Thread.sleep(POST_CLICK_SETTLE_MS)
+    delay(POST_CLICK_SETTLE_MS.milliseconds)
     val after = state.clickCount
     if (after > before) return null
     val javaHome = System.getProperty("java.home")

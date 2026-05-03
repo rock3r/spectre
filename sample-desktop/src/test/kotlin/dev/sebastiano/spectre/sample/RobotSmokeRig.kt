@@ -40,6 +40,8 @@ import java.awt.Window
 import java.util.concurrent.atomic.AtomicReference
 import javax.swing.JFrame
 import kotlin.math.abs
+import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.delay
 
 internal class SmokeState {
     var frame: JFrame? = null
@@ -223,13 +225,13 @@ internal fun awtCenter(state: SmokeState, rect: Rect): java.awt.Point? {
     )
 }
 
-internal fun warmupRobot(driver: RobotDriver, state: SmokeState) {
+internal suspend fun warmupRobot(driver: RobotDriver, state: SmokeState) {
     // Click on the counter button, fire-and-forget. counterBounds is non-zero by here
     // (waitForLayout already proved it). Each scenario captures its own `before` snapshot,
     // so we don't need to reset state — the warmup click just primes the input pipeline.
     val target = awtCenter(state, state.counterBounds) ?: return
     driver.click(target.x, target.y)
-    Thread.sleep(POST_CLICK_SETTLE_MS)
+    delay(POST_CLICK_SETTLE_MS.milliseconds)
 }
 
 internal fun focusOwnerSummary(state: SmokeState): String {
@@ -238,14 +240,14 @@ internal fun focusOwnerSummary(state: SmokeState): String {
         ?: "null (frame.isFocused=${state.frame?.isFocused})"
 }
 
-internal fun scenarioCounterClick(driver: RobotDriver, state: SmokeState): ScenarioResult {
+internal suspend fun scenarioCounterClick(driver: RobotDriver, state: SmokeState): ScenarioResult {
     val before = state.clickCount
     val target = awtCenter(state, state.counterBounds)
     if (target == null) {
         return ScenarioResult("mouseMove + click on counter", false, "no target rect available")
     }
     driver.click(target.x, target.y)
-    Thread.sleep(POST_CLICK_SETTLE_MS)
+    delay(POST_CLICK_SETTLE_MS.milliseconds)
     val after = state.clickCount
     return ScenarioResult(
         "mouseMove + click on counter",
@@ -254,14 +256,17 @@ internal fun scenarioCounterClick(driver: RobotDriver, state: SmokeState): Scena
     )
 }
 
-internal fun scenarioCounterDoubleClick(driver: RobotDriver, state: SmokeState): ScenarioResult {
+internal suspend fun scenarioCounterDoubleClick(
+    driver: RobotDriver,
+    state: SmokeState,
+): ScenarioResult {
     val before = state.clickCount
     val target = awtCenter(state, state.counterBounds)
     if (target == null) {
         return ScenarioResult("doubleClick on counter", false, "no target rect available")
     }
     driver.doubleClick(target.x, target.y)
-    Thread.sleep(POST_CLICK_SETTLE_MS)
+    delay(POST_CLICK_SETTLE_MS.milliseconds)
     val after = state.clickCount
     return ScenarioResult(
         "doubleClick on counter",
@@ -270,7 +275,10 @@ internal fun scenarioCounterDoubleClick(driver: RobotDriver, state: SmokeState):
     )
 }
 
-internal fun scenarioPressKeySingleChar(driver: RobotDriver, state: SmokeState): ScenarioResult {
+internal suspend fun scenarioPressKeySingleChar(
+    driver: RobotDriver,
+    state: SmokeState,
+): ScenarioResult {
     // Baseline for the typeText scenario: if the BasicTextField is focused after a click and
     // accepts direct keystrokes (no clipboard involved), the focus path works and any
     // typeText failure isolates to the clipboard-paste path.
@@ -279,10 +287,10 @@ internal fun scenarioPressKeySingleChar(driver: RobotDriver, state: SmokeState):
         return ScenarioResult("pressKey 'h' into BasicTextField", false, "no target rect available")
     }
     driver.click(target.x, target.y)
-    Thread.sleep(POST_CLICK_SETTLE_MS)
+    delay(POST_CLICK_SETTLE_MS.milliseconds)
     val before = state.textValue.text
     driver.pressKey(java.awt.event.KeyEvent.VK_H)
-    Thread.sleep(POST_TYPE_SETTLE_MS)
+    delay(POST_TYPE_SETTLE_MS.milliseconds)
     val after = state.textValue.text
     return ScenarioResult(
         "pressKey 'h' into BasicTextField",
@@ -291,7 +299,7 @@ internal fun scenarioPressKeySingleChar(driver: RobotDriver, state: SmokeState):
     )
 }
 
-internal fun scenarioTypeText(
+internal suspend fun scenarioTypeText(
     driver: RobotDriver,
     state: SmokeState,
     expected: String,
@@ -301,10 +309,10 @@ internal fun scenarioTypeText(
         return ScenarioResult("typeText into BasicTextField", false, "no target rect available")
     }
     driver.click(target.x, target.y)
-    Thread.sleep(POST_CLICK_SETTLE_MS)
+    delay(POST_CLICK_SETTLE_MS.milliseconds)
     val focusOwnerBefore = focusOwnerSummary(state)
     driver.typeText(expected)
-    Thread.sleep(POST_TYPE_SETTLE_MS)
+    delay(POST_TYPE_SETTLE_MS.milliseconds)
     val actual = state.textValue.text
     // Exact equality: the field starts empty (typeText runs first in the scenario order
     // before any keystroke leaves state behind), so the only correct outcome is the typed
@@ -314,16 +322,19 @@ internal fun scenarioTypeText(
     return ScenarioResult("typeText into BasicTextField", passed = passed, detail = detail)
 }
 
-internal fun scenarioClearAndTypeText(driver: RobotDriver, state: SmokeState): ScenarioResult {
+internal suspend fun scenarioClearAndTypeText(
+    driver: RobotDriver,
+    state: SmokeState,
+): ScenarioResult {
     val expected = "replaced"
     val target = awtCenter(state, state.textFieldBounds)
     if (target == null) {
         return ScenarioResult("clearAndTypeText", false, "no target rect available")
     }
     driver.click(target.x, target.y)
-    Thread.sleep(POST_CLICK_SETTLE_MS)
+    delay(POST_CLICK_SETTLE_MS.milliseconds)
     driver.clearAndTypeText(expected)
-    Thread.sleep(POST_TYPE_SETTLE_MS)
+    delay(POST_TYPE_SETTLE_MS.milliseconds)
     val actual = state.textValue.text
     return ScenarioResult(
         "clearAndTypeText",
@@ -332,14 +343,14 @@ internal fun scenarioClearAndTypeText(driver: RobotDriver, state: SmokeState): S
     )
 }
 
-internal fun scenarioShortcut(driver: RobotDriver, state: SmokeState): ScenarioResult {
+internal suspend fun scenarioShortcut(driver: RobotDriver, state: SmokeState): ScenarioResult {
     state.shortcutFiredCount = 0
     val before = state.shortcutFiredCount
     // Click somewhere inside the panel first to ensure focus is on the Compose root.
     val anchor = awtCenter(state, state.counterBounds)
     if (anchor != null) {
         driver.click(anchor.x, anchor.y)
-        Thread.sleep(POST_CLICK_SETTLE_MS)
+        delay(POST_CLICK_SETTLE_MS.milliseconds)
     }
     // Use the platform-aware modifier so the same scenario exercises Ctrl+S on Windows/Linux
     // and Cmd+S on macOS — `shortcutModifierKeyCode` is what RobotDriver itself uses for
@@ -349,7 +360,7 @@ internal fun scenarioShortcut(driver: RobotDriver, state: SmokeState): ScenarioR
         if (detectMacOs()) java.awt.event.InputEvent.META_DOWN_MASK
         else java.awt.event.InputEvent.CTRL_DOWN_MASK
     driver.pressKey(java.awt.event.KeyEvent.VK_S, modifierMask)
-    Thread.sleep(POST_CLICK_SETTLE_MS)
+    delay(POST_CLICK_SETTLE_MS.milliseconds)
     val after = state.shortcutFiredCount
     val modifierLabel = if (detectMacOs()) "Cmd+S" else "Ctrl+S"
     return ScenarioResult(
@@ -361,7 +372,7 @@ internal fun scenarioShortcut(driver: RobotDriver, state: SmokeState): ScenarioR
     )
 }
 
-internal fun scenarioScreenshot(driver: RobotDriver, state: SmokeState): ScenarioResult {
+internal suspend fun scenarioScreenshot(driver: RobotDriver, state: SmokeState): ScenarioResult {
     val target = awtCenter(state, state.colorPatchBounds)
     if (target == null) {
         return ScenarioResult("screenshot of color patch", false, "no target rect available")
@@ -431,7 +442,7 @@ private fun colourWithinTolerance(a: Int, b: Int, perChannel: Int): Boolean {
     return abs(ar - br) <= perChannel && abs(ag - bg) <= perChannel && abs(ab - bb) <= perChannel
 }
 
-internal fun runFocusedScenarios(
+internal suspend fun runFocusedScenarios(
     driver: RobotDriver,
     state: SmokeState,
     typeTextExpected: String,
@@ -455,7 +466,10 @@ internal fun runFocusedScenarios(
     return results
 }
 
-internal fun scenarioStartsUnfocused(state: SmokeState, distractor: JFrame?): ScenarioResult {
+internal suspend fun scenarioStartsUnfocused(
+    state: SmokeState,
+    distractor: JFrame?,
+): ScenarioResult {
     val sut = state.frame
     val sutFocused = sut?.isFocused == true
     val distractorFocused = distractor?.isFocused == true
@@ -466,7 +480,7 @@ internal fun scenarioStartsUnfocused(state: SmokeState, distractor: JFrame?): Sc
     )
 }
 
-internal fun scenarioPressKeyOnUnfocusedField(
+internal suspend fun scenarioPressKeyOnUnfocusedField(
     driver: RobotDriver,
     state: SmokeState,
 ): ScenarioResult {
@@ -475,7 +489,7 @@ internal fun scenarioPressKeyOnUnfocusedField(
     // somewhere we don't expect (or Robot is targeting the distractor's contents instead).
     val before = state.textValue.text
     driver.pressKey(java.awt.event.KeyEvent.VK_X)
-    Thread.sleep(POST_TYPE_SETTLE_MS)
+    delay(POST_TYPE_SETTLE_MS.milliseconds)
     val after = state.textValue.text
     return ScenarioResult(
         "pressKey on unfocused SUT does NOT alter the text field",
@@ -484,7 +498,7 @@ internal fun scenarioPressKeyOnUnfocusedField(
     )
 }
 
-internal fun scenarioClickOnUnfocusedCounter(
+internal suspend fun scenarioClickOnUnfocusedCounter(
     driver: RobotDriver,
     state: SmokeState,
 ): ScenarioResult {
@@ -495,7 +509,7 @@ internal fun scenarioClickOnUnfocusedCounter(
     val before = state.clickCount
     val sutFocusedBefore = state.frame?.isFocused == true
     driver.click(target.x, target.y)
-    Thread.sleep(POST_CLICK_SETTLE_MS)
+    delay(POST_CLICK_SETTLE_MS.milliseconds)
     val after = state.clickCount
     val sutFocusedAfter = state.frame?.isFocused == true
     return ScenarioResult(
@@ -507,7 +521,7 @@ internal fun scenarioClickOnUnfocusedCounter(
     )
 }
 
-internal fun scenarioTypeTextAfterFocusClick(
+internal suspend fun scenarioTypeTextAfterFocusClick(
     driver: RobotDriver,
     state: SmokeState,
 ): ScenarioResult {
@@ -517,9 +531,9 @@ internal fun scenarioTypeTextAfterFocusClick(
         return ScenarioResult("typeText after focus-handoff click", false, "no target rect")
     }
     driver.click(target.x, target.y)
-    Thread.sleep(POST_CLICK_SETTLE_MS)
+    delay(POST_CLICK_SETTLE_MS.milliseconds)
     driver.clearAndTypeText(expected)
-    Thread.sleep(POST_TYPE_SETTLE_MS)
+    delay(POST_TYPE_SETTLE_MS.milliseconds)
     val actual = state.textValue.text
     return ScenarioResult(
         "typeText after focus-handoff click",
@@ -528,7 +542,7 @@ internal fun scenarioTypeTextAfterFocusClick(
     )
 }
 
-internal fun runUnfocusedScenarios(
+internal suspend fun runUnfocusedScenarios(
     driver: RobotDriver,
     state: SmokeState,
     distractor: JFrame,
@@ -540,7 +554,7 @@ internal fun runUnfocusedScenarios(
     // clicking SUT would transfer focus to it and ruin the unfocused starting state.
     val distractorBounds = distractor.bounds
     driver.click(distractorBounds.centerX.toInt(), distractorBounds.centerY.toInt())
-    Thread.sleep(POST_CLICK_SETTLE_MS)
+    delay(POST_CLICK_SETTLE_MS.milliseconds)
     results += scenarioPressKeyOnUnfocusedField(driver, state)
     results += scenarioClickOnUnfocusedCounter(driver, state)
     results += scenarioTypeTextAfterFocusClick(driver, state)

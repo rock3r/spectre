@@ -11,6 +11,7 @@ import javax.swing.JFrame
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
 import kotlin.test.assertTrue
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
@@ -21,15 +22,18 @@ class SyntheticInputTest {
      * Regression test for the EDT deadlock between [RobotDriver]'s `runOffEdt` and the synthetic
      * adapter's `runOnEdt`.
      *
-     * Before the fix, `RobotDriver.runOffEdt` always spawned a worker and `Thread.join()`-ed on it
-     * even when the underlying [RobotAdapter] was the synthetic one. The synthetic adapter then
-     * called `SwingUtilities.invokeAndWait` to marshal the dispatch back to the EDT — which was
-     * blocked on the join. Calls from a UI callback (any code path that runs `automator.click(...)`
-     * inside `SwingUtilities.invokeAndWait { ... }`) would deadlock indefinitely.
+     * Before the original fix, `RobotDriver.runOffEdt` always spawned a worker and
+     * `Thread.join()`-ed on it even when the underlying [RobotAdapter] was the synthetic one. The
+     * synthetic adapter then called `SwingUtilities.invokeAndWait` to marshal the dispatch back to
+     * the EDT — which was blocked on the join. Calls from a UI callback (any code path that runs
+     * `automator.click(...)` inside `SwingUtilities.invokeAndWait { ... }`) would deadlock
+     * indefinitely.
      *
      * The synthetic adapter doesn't need the off-EDT worker (it does its own EDT marshalling inside
-     * `runOnEdt`), so [RobotAdapter.requiresOffEdt] now lets `runOffEdt` skip the worker thread for
-     * synthetic and headless adapters.
+     * `runOnEdt`), so [RobotAdapter.requiresOffEdt] lets `runOffEdt` skip the dispatcher switch
+     * (today: `withContext(Dispatchers.IO)`) for synthetic and headless adapters. The suspend
+     * conversion in #93 preserved that contract — calling `driver.click(...)` from an EDT coroutine
+     * via `runBlocking` still runs the synthetic dispatch inline on the EDT.
      *
      * Uses a plain Swing [JFrame] rather than a Compose `Window` because:
      * - the deadlock is purely an AWT/EDT scheduling bug; it surfaces identically for any AWT
@@ -56,7 +60,14 @@ class SyntheticInputTest {
                 Thread(
                         {
                             SwingUtilities.invokeAndWait {
-                                driver.click(targetCenter.first, targetCenter.second)
+                                // runBlocking on EDT is a deliberate choice here — the test
+                                // pins the contract that a synthetic-adapter click invoked from
+                                // an EDT coroutine does not deadlock. With requiresOffEdt = false
+                                // for the synthetic adapter, runOffEdt skips the dispatcher
+                                // switch and the synthetic adapter inlines its own runOnEdt.
+                                runBlocking {
+                                    driver.click(targetCenter.first, targetCenter.second)
+                                }
                             }
                             invokeAndWaitFinished.countDown()
                         },

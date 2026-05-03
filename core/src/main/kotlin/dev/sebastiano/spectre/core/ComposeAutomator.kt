@@ -69,22 +69,22 @@ sealed class ComposeAutomatorInteractions : ComposeAutomatorQueries() {
 
     protected abstract val robotDriver: RobotDriver
 
-    fun click(node: AutomatorNode) {
+    suspend fun click(node: AutomatorNode) {
         val center = node.centerOnScreen
         robotDriver.click(center.x, center.y)
     }
 
-    fun doubleClick(node: AutomatorNode) {
+    suspend fun doubleClick(node: AutomatorNode) {
         val center = node.centerOnScreen
         robotDriver.doubleClick(center.x, center.y)
     }
 
-    fun longClick(node: AutomatorNode, holdFor: Duration = 500.milliseconds) {
+    suspend fun longClick(node: AutomatorNode, holdFor: Duration = 500.milliseconds) {
         val center = node.centerOnScreen
         robotDriver.longClick(center.x, center.y, holdFor)
     }
 
-    fun swipe(
+    suspend fun swipe(
         startX: Int,
         startY: Int,
         endX: Int,
@@ -95,7 +95,7 @@ sealed class ComposeAutomatorInteractions : ComposeAutomatorQueries() {
         robotDriver.swipe(startX, startY, endX, endY, steps, duration)
     }
 
-    fun swipe(
+    suspend fun swipe(
         from: AutomatorNode,
         to: AutomatorNode,
         steps: Int = 12,
@@ -111,25 +111,25 @@ sealed class ComposeAutomatorInteractions : ComposeAutomatorQueries() {
      * lower in the list); negative scrolls up. Drives Compose's `Modifier.scrollable` /
      * `LazyColumn` on desktop, which respond to wheel events rather than touch-style drags.
      */
-    fun scrollWheel(node: AutomatorNode, wheelClicks: Int) {
+    suspend fun scrollWheel(node: AutomatorNode, wheelClicks: Int) {
         val center = node.centerOnScreen
         robotDriver.scrollWheel(center.x, center.y, wheelClicks)
     }
 
-    fun typeText(text: String) {
+    suspend fun typeText(text: String) {
         robotDriver.typeText(text)
     }
 
-    fun clearAndTypeText(node: AutomatorNode, text: String) {
+    suspend fun clearAndTypeText(node: AutomatorNode, text: String) {
         click(node)
         robotDriver.clearAndTypeText(text)
     }
 
-    fun pressKey(keyCode: Int, modifiers: Int = 0) {
+    suspend fun pressKey(keyCode: Int, modifiers: Int = 0) {
         robotDriver.pressKey(keyCode, modifiers)
     }
 
-    fun pressEnter() {
+    suspend fun pressEnter() {
         robotDriver.pressKey(KeyEvent.VK_ENTER)
     }
 
