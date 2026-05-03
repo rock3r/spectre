@@ -59,8 +59,10 @@ failure modes, and the section below
   also matches the macOS SCK helper (`recording/native/macos/`) — same pattern, same
   bundling, same recorder-skeleton on the JVM side.
 
-  Validated end-to-end on Ubuntu 22.04/GNOME 42/mutter and Ubuntu 24.04/GNOME/mutter
-  (real-pixel mp4 with the smoke runner, 2026-05-02). KDE/Plasma, sway, wlroots-based
+  Validated end-to-end on Ubuntu 22.04/GNOME 42/mutter and Ubuntu 24.04/GNOME 46/mutter
+  (real-pixel mp4 with the smoke runner, 2026-05-02 and 2026-05-03 — the 24.04 run also
+  confirmed `cursor_mode=Embedded` composites the system cursor into the captured frames
+  when `RecordingOptions.captureCursor=true`, #87). KDE/Plasma, sway, wlroots-based
   compositors, non-Ubuntu distros, and other Ubuntu versions aren't part of the
   routine validation matrix yet — the
   xdg-desktop-portal interface is standardised across compositors so most should "just
