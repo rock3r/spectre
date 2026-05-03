@@ -134,8 +134,24 @@ A few details worth knowing:
 - **No surfaces tracked → never idle.** If no Compose surfaces are tracked, or all of
   them have empty bounds, `waitForVisualIdle` returns a different value every poll and
   times out rather than reporting fake stability.
-- **Bounded sampling budget.** Each frame hash runs on a worker thread with a hard
-  budget. A hung Robot or stuck EDT can't out-block the wait loop's overall timeout.
+- **`pollInterval` is a floor, not the real cadence.** Each poll captures the pixel
+  buffer of every tracked surface (`java.awt.Robot.createScreenCapture`) and hashes
+  it. The native capture call is the dominant cost — typically tens of milliseconds
+  per surface on a desktop, more on Wayland, large displays, or software-rendered VMs.
+  In practice the gap between completed polls is whatever the capture takes, with
+  `pollInterval` only kicking in when the capture is faster than that floor. The
+  default `16.milliseconds` is a 60Hz *target*, not a guarantee of 60 polls per
+  second.
+- **Bounded sampling budget.** Each frame hash runs on a worker thread capped at 500ms.
+  If the capture or hash exceeds that, `waitForVisualIdle` returns a value that differs
+  every call, so the streak never completes and the wait times out rather than silently
+  succeeding against an unsampleable UI.
+- **Pixel hashing isn't free.** Multiple large surfaces, full-screen windows on a 4K /
+  Retina monitor, or running under a software-rendered virtual GPU all push the
+  per-poll cost up. If `waitForVisualIdle` is timing out or burning more CPU than you
+  expect, lengthen `pollInterval` (e.g., to `100.milliseconds` or `250.milliseconds`)
+  and / or drop `stableFrames` to 2. There's no information loss — you're just
+  sampling less often.
 
 Reach for `waitForVisualIdle` after:
 
