@@ -70,44 +70,12 @@ Plans belong in `.plans/` at the repo root, which should stay gitignored.
 
 Use the local `using-git-worktree` skill when setting up an isolated workspace.
 
-### Worktree pitfalls
-
-Lessons learned from working in git worktrees on this project.
-
-#### ktfmt version mismatch
-
-The project's Gradle plugin bundles a specific ktfmt formatter version. If you have a
-different `ktfmt` CLI installed locally (e.g., via Homebrew), the two may format
-differently. Specifically:
-
-- The CLI may leave unused imports that the Gradle plugin removes.
-- Line-wrapping thresholds may differ slightly.
-
-**Always verify with `./gradlew check`, not the CLI.** CI uses Gradle.
-
-#### Rebase silently reverts fixes
-
-When rebasing a long-lived branch, git may silently revert changes that conflict with
-upstream. After every rebase:
-
-1. Find the merge base: `git merge-base HEAD origin/main` (note the commit hash).
-2. List your branch's changed files: `git diff --name-only <merge-base-hash>`.
-3. Verify your changes survived: `git diff origin/main -- <those-files>`.
-4. Re-run `./gradlew check` locally before pushing.
-5. Pay special attention to files that were modified by both your branch and main.
-
-Common casualties during rebase:
-
-- Conditional guards (`if (x > 0)` wrappers around existing code).
-- Import removals (git re-adds them from main's version).
-- Label/text changes that main also touched.
-
-#### Pre-push checklist
+### Pre-push checklist
 
 Before every push from a worktree:
 
 - [ ] `./gradlew check` passes (this is the CI gate — detekt + ktfmt + tests).
-- [ ] After rebase: verified key changes survived (see above).
+- [ ] After rebase: verified key changes survived.
 
 For faster iteration *before* the final push, target individual checks:
 

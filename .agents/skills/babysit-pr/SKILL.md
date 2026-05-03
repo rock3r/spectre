@@ -182,9 +182,8 @@ The watcher surfaces feedback from:
 
 When working from a git worktree, watch out for ktfmt CLI vs Gradle plugin version
 mismatches and rebases silently reverting fixes. Always run `./gradlew check`
-before pushing. See the "Worktree pitfalls" section in
-[AGENTS.md](../../../AGENTS.md#worktree-pitfalls) for details and a pre-push
-checklist.
+before pushing — see the
+[pre-push checklist](../../../AGENTS.md#pre-push-checklist) in AGENTS.md.
 
 ## Choosing a mode based on harness capabilities
 
