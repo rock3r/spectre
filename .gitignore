@@ -36,6 +36,9 @@ out/
 # Temp
 .tmp/
 
+# MkDocs build output
+/site/
+
 # SwiftPM (recording/native/macos)
 recording/native/macos/.build/
 recording/native/macos/.swiftpm/
