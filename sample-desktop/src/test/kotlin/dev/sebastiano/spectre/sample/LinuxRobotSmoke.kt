@@ -14,8 +14,8 @@ import kotlin.system.exitProcess
 /**
  * Manual + CI smoke for [RobotDriver] on Linux. Run via `./gradlew
  * :sample-desktop:runLinuxRobotSmoke` (locally needs a working `DISPLAY`; CI runs it under
- * `xvfb-run` from `validation-linux.yml`). Mirrors [WindowsRobotSmoke] — same six scenarios via the
- * shared [runFocusedScenarios] rig — and reports PASS/FAIL per scenario.
+ * `xvfb-run` from `validation-linux.yml`). Mirrors [WindowsRobotSmoke] — same seven scenarios via
+ * the shared [runFocusedScenarios] rig — and reports PASS/FAIL per scenario.
  *
  * **Wayland gate.** Native Wayland forbids cross-process synthetic input, so `java.awt.Robot` only
  * works against X11 (real Xorg or XWayland-bridged X clients). When `XDG_SESSION_TYPE=wayland` AND

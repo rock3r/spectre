@@ -181,6 +181,35 @@ internal constructor(
         for (mod in modifierKeys.reversed()) robot.keyRelease(mod)
     }
 
+    /**
+     * Captures the given screen [region] (or the entire virtual desktop, if `null`) and returns the
+     * pixels as a [BufferedImage].
+     *
+     * **Colour space.** The returned image is sRGB (`TYPE_INT_ARGB` / sRGB `ColorModel`), matching
+     * `java.awt.Robot.createScreenCapture`'s contract. Pixel values are post-display-pipeline: what
+     * the OS composited and what the framebuffer holds, not the source values your Compose code
+     * passed to `Color(...)`. Two consequences worth knowing for pixel assertions:
+     *
+     * - Compose Foundation's default `LocalIndication` paints a persistent ~10% black overlay on
+     *   focused / pressed `Modifier.clickable` elements. A blue button at `Color(0x33, 0x66, 0xCC)`
+     *   captures as roughly `#2E5CB7` (`0.9 × #3366CC + 0.1 × #000000`) once it's been clicked.
+     *   Easy to mistake for a render bug. Avoid by asserting against a non-interactive element, or
+     *   shifting focus before capture.
+     * - 8-bit channels mean ±1-2 of rounding noise from the sRGB → display-gamma → pixel roundtrip.
+     *   Wide-gamut display profiles can amplify this further. Use a small per-channel tolerance for
+     *   any equality-style assertion.
+     *
+     * On macOS, [createScreenCapture] requires the wrapping process to hold Screen Recording TCC
+     * permission — without it the call returns silently with an all-black image rather than
+     * throwing. See `MacOsRobotSmoke` for a worked TCC-probe example.
+     *
+     * On Linux, captures work against X11 (real Xorg or XWayland-bridged X clients) but not against
+     * native Wayland surfaces — Wayland's security model forbids cross-process framebuffer reads.
+     * For headless capture in CI use `xvfb-run` to provide a virtual Xorg display.
+     *
+     * The returned [BufferedImage] is owned by the caller and safe to read, mutate, or pass to
+     * downstream pipelines.
+     */
     fun screenshot(region: Rectangle? = null): BufferedImage {
         val captureRegion = region ?: virtualDesktopBounds()
         return robot.createScreenCapture(captureRegion)

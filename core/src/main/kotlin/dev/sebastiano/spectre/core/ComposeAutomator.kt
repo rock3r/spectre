@@ -133,10 +133,26 @@ sealed class ComposeAutomatorInteractions : ComposeAutomatorQueries() {
         robotDriver.pressKey(KeyEvent.VK_ENTER)
     }
 
+    /**
+     * Captures the given screen [region] (or the entire virtual desktop, if `null`) and returns
+     * sRGB pixels as a [BufferedImage]. Delegates to [RobotDriver.screenshot] — see that method's
+     * KDoc for colour-space, focus-overlay, and per-platform TCC / Wayland gotchas before using the
+     * result for pixel-level assertions.
+     */
     fun screenshot(region: Rectangle? = null): BufferedImage = robotDriver.screenshot(region)
 
+    /**
+     * Captures the on-screen bounds of [node] as an sRGB [BufferedImage]. Delegates to
+     * [RobotDriver.screenshot] — see that method's KDoc before using the result for pixel-level
+     * assertions.
+     */
     fun screenshot(node: AutomatorNode): BufferedImage = robotDriver.screenshot(node.boundsOnScreen)
 
+    /**
+     * Captures the Compose surface bounds of the tracked window at [windowIndex] as an sRGB
+     * [BufferedImage]. Refreshes the window list first. Delegates to [RobotDriver.screenshot] — see
+     * that method's KDoc before using the result for pixel-level assertions.
+     */
     fun screenshot(windowIndex: Int): BufferedImage {
         refreshWindows()
         val trackedWindow =

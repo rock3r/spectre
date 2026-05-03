@@ -23,6 +23,8 @@ import kotlin.system.exitProcess
  * - clearAndTypeText (Ctrl+A on Windows, Cmd+A on macOS — uses the platform-aware
  *   `shortcutModifierKeyCode`)
  * - pressKey with Ctrl+S — verifies the modifier-mask → keyCode path Spectre uses for shortcuts
+ * - createScreenCapture against the counter button — verifies pixel content (`scenarioScreenshot`
+ *   in the rig samples the counter Box's blue background and asserts it matches within tolerance)
  *
  * Findings from running this on Windows 11 + JBR 21:
  *
