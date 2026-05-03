@@ -228,9 +228,36 @@ when plugin / core / recording sources change.
 
 A few things to know about IDE-hosted Compose surfaces:
 
-- **Tool windows have no top-level OS title**, so the recording router falls back to
-  region capture (or SCK on macOS, where the IDE's main frame is the window). See
-  [Recording](recording.md) for the routing logic.
+- **Tool windows have no top-level OS title**, so window-targeted recording can't
+  pick them out by title the way it does standalone Compose windows. You still have
+  three options:
+
+    1. **Region-capture the tool window's screen bounds.** Compute the tool window
+       component's `boundsOnScreen` and pass it as the `region` argument with
+       `window = null`. `AutoRecorder` routes that through `ffmpeg` region capture
+       (or the Wayland portal on Linux Wayland). Works everywhere; the trade-off is
+       that anything overlapping the captured rectangle — the IDE's chrome,
+       notifications, popups that escape the tool window's bounds — appears in the
+       recording.
+    2. **Window-target the whole IDE frame.** Pass
+       `WindowManager.getInstance().getFrame(project)?.asTitledWindow()` as
+       `window` and the IDE frame's screen bounds as `region`. The IDE main frame
+       *does* have a top-level OS title (e.g. "IntelliJ IDEA – ProjectName"), so
+       this hits the macOS SCK helper, Windows `gdigrab title=` capture, or the
+       Linux Wayland portal — window-targeted across all three. Useful when the
+       interesting state is in the tool window plus its surrounding IDE chrome
+       (run output, status bar, etc.).
+    3. **Float the tool window first.** IntelliJ tool windows can be detached into
+       their own top-level OS windows ("Window" view mode). Once detached, the
+       floating window has its own title bar and behaves like a standalone Compose
+       window for capture purposes. Switching modes from a test action is
+       possible via the platform's tool-window APIs; from
+       [`intellij-ide-starter`](#validating-from-a-separate-test-jvm) tests, the
+       cleanest route is to invoke the IDE action that triggers the same change.
+       Verify the floated frame's title is what your tests expect before relying
+       on title-based capture.
+
+    See [Recording](recording.md) for the full routing logic.
 - **Popups inside the IDE** are still tracked. Compose creates separate roots for them,
   and the `WindowTracker` enumerates each one — your selectors find nodes regardless of
   whether they live in the main tool window or a dropdown.
