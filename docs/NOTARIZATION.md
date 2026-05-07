@@ -58,7 +58,7 @@ Store notarization credentials in Keychain once. Let `notarytool` prompt for the
 password:
 
 ```bash
-xcrun notarytool store-credentials spectre-notary \
+xcrun notarytool store-credentials <notary-profile> \
   --apple-id "developer@example.com" \
   --team-id "TEAMID"
 ```
@@ -72,7 +72,7 @@ Add non-secret release properties to `~/.gradle/gradle.properties`:
 
 ```properties
 compose.desktop.mac.signing.identity=Developer ID Application: Example Developer (TEAMID)
-compose.desktop.mac.notarization.keychainProfile=spectre-notary
+compose.desktop.mac.notarization.keychainProfile=<notary-profile>
 ```
 
 Then run:
@@ -86,7 +86,7 @@ If Apple keeps the submission in `In Progress` past the timeout, the Gradle task
 the submission continues processing on Apple's side. Query it with:
 
 ```bash
-xcrun notarytool info <submission-id> --keychain-profile spectre-notary
+xcrun notarytool info <submission-id> --keychain-profile <notary-profile>
 ```
 
 ## CI release workflow

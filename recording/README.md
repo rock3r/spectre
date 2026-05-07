@@ -104,14 +104,14 @@ The distribution path is opt-in so local development does not require Apple cred
 
 ```bash
 APPLE_DEVELOPER_IDENTITY="Developer ID Application: Example, Inc. (TEAMID1234)" \
-APPLE_NOTARY_KEYCHAIN_PROFILE="spectre-notary" \
+APPLE_NOTARY_KEYCHAIN_PROFILE="<notary-profile>" \
 ./gradlew :recording:jar -PuniversalHelper -PnotarizeScreenCaptureKitHelper
 ```
 
 Create the keychain profile once with:
 
 ```bash
-xcrun notarytool store-credentials spectre-notary \
+xcrun notarytool store-credentials <notary-profile> \
   --apple-id "developer@example.com" \
   --team-id "TEAMID1234"
 ```
@@ -125,7 +125,7 @@ properties from `~/.gradle/gradle.properties`:
 
 ```properties
 compose.desktop.mac.signing.identity=Developer ID Application: Example Developer (TEAMID)
-compose.desktop.mac.notarization.keychainProfile=spectre-notary
+compose.desktop.mac.notarization.keychainProfile=<notary-profile>
 ```
 
 CI should use App Store Connect API key auth instead of an app-specific password. Set
