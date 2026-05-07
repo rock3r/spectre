@@ -63,6 +63,7 @@ jobs:
           APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
           APPLE_NOTARY_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER }}
         run: |
+          test -n "$APPLE_DEVELOPER_IDENTITY"
           test -n "$APPLE_NOTARY_API_KEY"
           test -n "$APPLE_NOTARY_API_KEY_ID"
           test -n "$APPLE_NOTARY_API_ISSUER"

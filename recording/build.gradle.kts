@@ -272,7 +272,7 @@ val signScreenCaptureKitHelper by
         description = "Codesigns the universal ScreenCaptureKit helper for distribution."
         group = "build"
         enabled = notarizationTaskEnabled
-        dependsOn(lipoScreenCaptureKitHelper)
+        dependsOn(verifyUniversalScreenCaptureKitHelper)
         commandLine(
             "codesign",
             "--sign",
