@@ -1,3 +1,4 @@
+import org.gradle.api.GradleException
 import org.gradle.internal.os.OperatingSystem
 
 /**
@@ -135,6 +136,8 @@ val perArchSwiftBuildTasks = universalArchitectures.map { arch ->
 // vals that goes with it (Gradle's configuration cache refuses to serialise that).
 val universalHelperBinary =
     layout.buildDirectory.file("generated/screenCaptureHelperUniversal/SpectreScreenCapture")
+val universalHelperNotaryArchive =
+    layout.buildDirectory.file("generated/screenCaptureHelperUniversal/SpectreScreenCapture.zip")
 
 // Precompute everything as plain String/File outside the task action bodies. Capturing
 // `swiftHelperSource` / `universalHelperBinary` (which are Gradle Layout types) inside an
@@ -147,6 +150,81 @@ val perArchOutputFiles = universalArchitectures.map { arch ->
 }
 val perArchOutputAbsolutePaths = perArchOutputFiles.map { it.asFile.absolutePath }
 val universalHelperAbsolutePath = universalHelperBinary.get().asFile.absolutePath
+val universalHelperNotaryArchiveAbsolutePath =
+    universalHelperNotaryArchive.get().asFile.absolutePath
+val shouldNotarizeScreenCaptureKitHelper =
+    providers.gradleProperty("notarizeScreenCaptureKitHelper").isPresent
+val notarizationTaskEnabled =
+    OperatingSystem.current().isMacOsX && shouldNotarizeScreenCaptureKitHelper
+val appleDeveloperIdIdentity =
+    providers
+        .gradleProperty("appleDeveloperIdIdentity")
+        .orElse(providers.gradleProperty("compose.desktop.mac.signing.identity"))
+        .orElse(providers.environmentVariable("APPLE_DEVELOPER_IDENTITY"))
+val appleNotaryKeychainProfile =
+    providers
+        .gradleProperty("appleNotaryKeychainProfile")
+        .orElse(providers.gradleProperty("compose.desktop.mac.notarization.keychainProfile"))
+        .orElse(providers.environmentVariable("APPLE_NOTARY_KEYCHAIN_PROFILE"))
+val appleNotaryApiKeyPath =
+    providers
+        .gradleProperty("appleNotaryApiKeyPath")
+        .orElse(providers.environmentVariable("APPLE_NOTARY_API_KEY_PATH"))
+val appleNotaryApiKeyId =
+    providers
+        .gradleProperty("appleNotaryApiKeyId")
+        .orElse(providers.environmentVariable("APPLE_NOTARY_API_KEY_ID"))
+val appleNotaryApiIssuer =
+    providers
+        .gradleProperty("appleNotaryApiIssuer")
+        .orElse(providers.environmentVariable("APPLE_NOTARY_API_ISSUER"))
+
+fun notarizationInput(provider: Provider<String>, displayName: String): String =
+    provider.orNull?.takeIf { it.isNotBlank() }
+        ?: when {
+            !notarizationTaskEnabled -> ""
+            else ->
+                throw GradleException(
+                    "$displayName is required when -PnotarizeScreenCaptureKitHelper is set. " +
+                        "Use Spectre's apple* Gradle properties, the matching APPLE_* " +
+                        "environment variables, or the Compose Desktop macOS signing and " +
+                        "notarization property names."
+                )
+        }
+
+val appleDeveloperIdIdentityValue =
+    notarizationInput(appleDeveloperIdIdentity, "APPLE_DEVELOPER_IDENTITY")
+val appleNotaryKeychainProfileValue = appleNotaryKeychainProfile.orNull?.takeIf { it.isNotBlank() }
+val appleNotaryApiKeyPathValue = appleNotaryApiKeyPath.orNull?.takeIf { it.isNotBlank() }
+val appleNotaryApiKeyIdValue = appleNotaryApiKeyId.orNull?.takeIf { it.isNotBlank() }
+val appleNotaryApiIssuerValue = appleNotaryApiIssuer.orNull?.takeIf { it.isNotBlank() }
+val hasAppleNotaryApiKey =
+    appleNotaryApiKeyPathValue != null &&
+        appleNotaryApiKeyIdValue != null &&
+        appleNotaryApiIssuerValue != null
+val appleNotaryAuthArguments: List<String> =
+    when {
+        appleNotaryKeychainProfileValue != null ->
+            listOf("--keychain-profile", appleNotaryKeychainProfileValue)
+        hasAppleNotaryApiKey ->
+            listOf(
+                "--key",
+                requireNotNull(appleNotaryApiKeyPathValue),
+                "--key-id",
+                requireNotNull(appleNotaryApiKeyIdValue),
+                "--issuer",
+                requireNotNull(appleNotaryApiIssuerValue),
+            )
+        !notarizationTaskEnabled -> emptyList()
+        else ->
+            throw GradleException(
+                "A safe Apple notarization credential source is required when " +
+                    "-PnotarizeScreenCaptureKitHelper is set. Configure " +
+                    "APPLE_NOTARY_KEYCHAIN_PROFILE for a local notarytool keychain profile, " +
+                    "or APPLE_NOTARY_API_KEY_PATH / APPLE_NOTARY_API_KEY_ID / " +
+                    "APPLE_NOTARY_API_ISSUER for App Store Connect API key auth."
+            )
+    }
 
 val lipoScreenCaptureKitHelper by
     tasks.registering(Exec::class) {
@@ -189,6 +267,73 @@ val verifyUniversalScreenCaptureKitHelper by
         inputs.file(universalHelperBinary)
     }
 
+val signScreenCaptureKitHelper by
+    tasks.registering(Exec::class) {
+        description = "Codesigns the universal ScreenCaptureKit helper for distribution."
+        group = "build"
+        enabled = notarizationTaskEnabled
+        dependsOn(verifyUniversalScreenCaptureKitHelper)
+        commandLine(
+            "codesign",
+            "--sign",
+            appleDeveloperIdIdentityValue,
+            "--options",
+            "runtime",
+            "--timestamp",
+            "--force",
+            universalHelperAbsolutePath,
+        )
+        inputs.file(universalHelperBinary)
+        outputs.file(universalHelperBinary)
+    }
+
+val zipScreenCaptureKitHelperForNotarization by
+    tasks.registering(Exec::class) {
+        description = "Archives the signed ScreenCaptureKit helper for Apple notarization."
+        group = "build"
+        enabled = notarizationTaskEnabled
+        dependsOn(signScreenCaptureKitHelper)
+        commandLine(
+            "ditto",
+            "-c",
+            "-k",
+            "--keepParent",
+            universalHelperAbsolutePath,
+            universalHelperNotaryArchiveAbsolutePath,
+        )
+        inputs.file(universalHelperBinary)
+        outputs.file(universalHelperNotaryArchive)
+    }
+
+val notarizeScreenCaptureKitHelper by
+    tasks.registering(Exec::class) {
+        description = "Submits the signed ScreenCaptureKit helper archive to Apple notarization."
+        group = "build"
+        enabled = notarizationTaskEnabled
+        dependsOn(zipScreenCaptureKitHelperForNotarization)
+        commandLine(
+            "xcrun",
+            "notarytool",
+            "submit",
+            universalHelperNotaryArchiveAbsolutePath,
+            *appleNotaryAuthArguments.toTypedArray(),
+            "--timeout",
+            "30m",
+            "--wait",
+        )
+        inputs.file(universalHelperNotaryArchive)
+    }
+
+val verifyNotarizedScreenCaptureKitHelper by
+    tasks.registering(Exec::class) {
+        description = "Verifies the signed and notarized ScreenCaptureKit helper's code signature."
+        group = "verification"
+        enabled = notarizationTaskEnabled
+        dependsOn(notarizeScreenCaptureKitHelper)
+        commandLine("codesign", "--verify", "--strict", "--verbose=4", universalHelperAbsolutePath)
+        inputs.file(universalHelperBinary)
+    }
+
 val assembleScreenCaptureKitHelper by
     tasks.registering(Copy::class) {
         description = "Stages the ScreenCaptureKit helper binary into the resources tree."
@@ -207,7 +352,10 @@ val assembleScreenCaptureKitHelperUniversal by
                 "processResources by passing -PuniversalHelper at invocation time."
         group = "build"
         onlyIf { OperatingSystem.current().isMacOsX }
-        dependsOn(verifyUniversalScreenCaptureKitHelper)
+        dependsOn(
+            if (shouldNotarizeScreenCaptureKitHelper) verifyNotarizedScreenCaptureKitHelper
+            else verifyUniversalScreenCaptureKitHelper
+        )
         from(universalHelperBinary) { rename { "spectre-screencapture" } }
         into(helperResourceDest.get().asFile.parentFile)
     }
@@ -240,7 +388,10 @@ sourceSets["main"].resources.srcDir(layout.buildDirectory.dir("generated/screenC
 //
 // Default invocation: `./gradlew :recording:jar` → host-arch (fast iteration).
 // Distribution invocation: `./gradlew :recording:jar -PuniversalHelper` → universal binary.
-val useUniversalHelper = providers.gradleProperty("universalHelper").isPresent
+// Notarization always implies the universal helper; signing/notarizing a host-arch helper would
+// be misleading for a distribution build.
+val useUniversalHelper =
+    providers.gradleProperty("universalHelper").isPresent || shouldNotarizeScreenCaptureKitHelper
 
 if (OperatingSystem.current().isMacOsX) {
     tasks.named("processResources") {
