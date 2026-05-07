@@ -50,7 +50,7 @@ capture (ScreenCaptureKit) live side by side — pick by what you need.
 | Windows `gdigrab` recording | ⏸ v3 (#22) |
 | Linux `x11grab` / pipewire recording | ⏸ v4 (#27) |
 | Audio | ⏸ deferred — add when asked |
-| Notarization of the SCK helper | ⏸ deferred — local dev relies on Screen Recording grant inheriting from the host JVM |
+| Notarization of the SCK helper | ✅ release workflow signs and notarizes the universal helper |
 
 ## ScreenCaptureKit helper build
 
@@ -63,8 +63,8 @@ produce a structurally-correct jar that just doesn't contain the helper file (co
 
 **Distribution must be built on macOS.** A jar published from a Linux CI runner won't carry
 the helper, so any macOS consumer of that jar would fail with "helper binary not found" the
-first time `ScreenCaptureKitRecorder.start()` runs. A future macOS CI workflow will guard
-against this — see the v2 follow-ups doc.
+first time `ScreenCaptureKitRecorder.start()` runs. The release workflow builds on
+`macos-latest`, signs and notarizes the universal helper, then packages the recording jar.
 
 For local dev the default `:recording:assembleScreenCaptureKitHelper` builds host-arch only
 — faster iteration. The universal `arm64+x86_64` binary is opt-in via a project property:
@@ -95,8 +95,87 @@ deliberately avoids `swift build --arch arm64 --arch x86_64` (which delegates to
 and requires a full Xcode install). `lipo` ships with CLT.
 
 Universal builds roughly double the helper build time (two `swift build` invocations + the
-`lipo` step), which is why the default stays single-arch. The publish workflow (when we add
-one) sets `-PuniversalHelper` so distribution jars always contain the fat binary.
+`lipo` step), which is why the default stays single-arch. The release workflow sets
+`-PuniversalHelper` so distribution jars always contain the fat binary.
+
+## ScreenCaptureKit helper notarization
+
+The distribution path is opt-in so local development does not require Apple credentials:
+
+```bash
+APPLE_DEVELOPER_IDENTITY="Developer ID Application: Example, Inc. (TEAMID1234)" \
+APPLE_NOTARY_KEYCHAIN_PROFILE="spectre-notary" \
+./gradlew :recording:jar -PuniversalHelper -PnotarizeScreenCaptureKitHelper
+```
+
+Create the keychain profile once with:
+
+```bash
+xcrun notarytool store-credentials spectre-notary \
+  --apple-id "developer@example.com" \
+  --team-id "TEAMID1234"
+```
+
+Let `notarytool` prompt for the app-specific password. Do not pass the password on the
+command line: macOS process listings can expose command arguments while notarization is
+running.
+
+For local consistency with Compose Desktop apps, the same task also accepts these user Gradle
+properties from `~/.gradle/gradle.properties`:
+
+```properties
+compose.desktop.mac.signing.identity=Developer ID Application: Example Developer (TEAMID)
+compose.desktop.mac.notarization.keychainProfile=spectre-notary
+```
+
+CI should use App Store Connect API key auth instead of an app-specific password. Set
+`APPLE_NOTARY_API_KEY_PATH`, `APPLE_NOTARY_API_KEY_ID`, and `APPLE_NOTARY_API_ISSUER`; the
+release workflow writes the key file from a base64 secret before invoking Gradle.
+
+The Gradle pipeline:
+
+1. Builds the universal helper with the `arm64` + `x86_64` SwiftPM/lipo path described above.
+2. Signs the Mach-O with `codesign --options runtime --timestamp --force`.
+3. Archives the signed helper with `ditto -c -k --keepParent` because `notarytool submit`
+   expects an archive for this shape of software.
+4. Submits the archive with `xcrun notarytool submit --keychain-profile ... --wait --timeout
+   30m`.
+5. Runs `codesign --verify --strict --verbose=4` against the signed helper before staging it
+   into the jar resources.
+
+Apple's notary service creates tickets for standalone binaries inside the submitted archive,
+but Apple's stapler does not currently attach tickets directly to bare command-line
+executables. `spctl --assess --type execute` also reports a bare helper as valid code that is
+not an app. That is why Spectre notarizes and verifies the helper signature but does not run
+`xcrun stapler staple` or use `spctl` as the Gradle gate for `SpectreScreenCapture`.
+Gatekeeper can fetch the ticket online on first run; the jar-bundled helper is still
+Developer ID signed and notarized.
+
+### GitHub release secrets
+
+The tag workflow in
+[`../.github/workflows/release.yml`](https://github.com/rock3r/spectre/blob/main/.github/workflows/release.yml)
+expects these repository secrets:
+
+| Secret | Purpose |
+|---|---|
+| `APPLE_DEVELOPER_ID_P12` | Base64-encoded Developer ID Application `.p12`. |
+| `APPLE_DEVELOPER_ID_P12_PASSWORD` | Password for that `.p12` export. |
+| `APPLE_SIGNING_KEYCHAIN_PASSWORD` | Temporary CI keychain password. Generate a long random value. |
+| `APPLE_DEVELOPER_IDENTITY` | Exact `codesign` identity, for example `Developer ID Application: Example, Inc. (TEAMID1234)`. |
+| `APPLE_NOTARY_API_KEY` | Base64-encoded App Store Connect API `.p8` key. |
+| `APPLE_NOTARY_API_KEY_ID` | App Store Connect API key ID. |
+| `APPLE_NOTARY_API_ISSUER` | App Store Connect API issuer UUID. |
+
+To rotate the certificate:
+
+1. Create or renew a Developer ID Application certificate in the Apple Developer portal.
+2. Export it from Keychain Access as a password-protected `.p12`.
+3. Base64-encode it with `base64 -i DeveloperID.p12 | pbcopy`.
+4. Update `APPLE_DEVELOPER_ID_P12`, `APPLE_DEVELOPER_ID_P12_PASSWORD`, and
+   `APPLE_DEVELOPER_IDENTITY` in the repository secrets.
+5. Rotate the App Store Connect API key secrets if needed.
+6. Push a test tag and verify the `Release` workflow reaches the `codesign --verify` step.
 
 ### Manual end-to-end smoke
 After granting the host JVM Screen Recording permission, point a `ScreenCaptureKitRecorder`

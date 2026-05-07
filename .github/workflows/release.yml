@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  recording-release:
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Import Developer ID certificate
+        env:
+          APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.APPLE_SIGNING_KEYCHAIN_PASSWORD }}
+        run: |
+          test -n "$APPLE_DEVELOPER_ID_P12"
+          test -n "$APPLE_DEVELOPER_ID_P12_PASSWORD"
+          test -n "$KEYCHAIN_PASSWORD"
+
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/spectre-signing.keychain-db"
+
+          echo "$APPLE_DEVELOPER_ID_P12" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" \
+            -P "$APPLE_DEVELOPER_ID_P12_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Build, sign, notarize, and package recording jar
+        env:
+          APPLE_DEVELOPER_IDENTITY: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}
+          APPLE_NOTARY_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY }}
+          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_NOTARY_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER }}
+        run: |
+          test -n "$APPLE_NOTARY_API_KEY"
+          test -n "$APPLE_NOTARY_API_KEY_ID"
+          test -n "$APPLE_NOTARY_API_ISSUER"
+
+          API_KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_API_KEY_ID}.p8"
+          echo "$APPLE_NOTARY_API_KEY" | base64 --decode > "$API_KEY_PATH"
+
+          APPLE_NOTARY_API_KEY_PATH="$API_KEY_PATH" \
+            ./gradlew :recording:jar \
+              -PuniversalHelper \
+              -PnotarizeScreenCaptureKitHelper
+
+      - name: Upload recording jar to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          JAR_PATH="$(find recording/build/libs -maxdepth 1 -type f -name 'recording-*.jar' ! -name '*sources*' | sort | tail -n 1)"
+          test -n "$JAR_PATH"
+          gh release view "$GITHUB_REF_NAME" || gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME"
+          gh release upload "$GITHUB_REF_NAME" "$JAR_PATH" --clobber
