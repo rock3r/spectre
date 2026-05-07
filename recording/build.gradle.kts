@@ -388,7 +388,10 @@ sourceSets["main"].resources.srcDir(layout.buildDirectory.dir("generated/screenC
 //
 // Default invocation: `./gradlew :recording:jar` → host-arch (fast iteration).
 // Distribution invocation: `./gradlew :recording:jar -PuniversalHelper` → universal binary.
-val useUniversalHelper = providers.gradleProperty("universalHelper").isPresent
+// Notarization always implies the universal helper; signing/notarizing a host-arch helper would
+// be misleading for a distribution build.
+val useUniversalHelper =
+    providers.gradleProperty("universalHelper").isPresent || shouldNotarizeScreenCaptureKitHelper
 
 if (OperatingSystem.current().isMacOsX) {
     tasks.named("processResources") {
