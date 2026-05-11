@@ -322,16 +322,18 @@ internal const val DEFAULT_PROCESS_EXIT_TIMEOUT_MS: Long = 5_000
  * [readerThread] unbounded (the kill propagates EOF on the helper's stdout, so the reader
  * terminates promptly). Throws [IllegalStateException] if the process is still alive after the
  * forced-reap window — that should never happen with SIGKILL but is surfaced rather than silently
- * leaked.
+ * leaked. The error message uses [phase] (e.g. `"during a failed start"`, `"during stop"`) so
+ * callers from different lifecycle stages produce accurate diagnostics.
  *
- * Shared by every `start()` failure path so the contract is consistent: when a partial start
- * throws, the helper process is reaped and the reader thread is gone before the exception
- * propagates.
+ * Shared by every `start()` and `stop()` failure path so the contract is consistent: when the
+ * caller is about to throw, the helper process is reaped and the reader thread is gone before the
+ * exception propagates.
  */
 internal fun killAndReapOrThrow(
     process: Process,
     readerThread: Thread,
     pendingFailure: Throwable? = null,
+    phase: String = "during a failed start",
 ) {
     process.destroyForcibly()
     if (!process.waitFor(FORCED_REAP_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
@@ -343,7 +345,7 @@ internal fun killAndReapOrThrow(
         val cleanupFailure =
             IllegalStateException(
                 "spectre-wayland-helper did not exit within ${FORCED_REAP_TIMEOUT_MS}ms after " +
-                    "SIGKILL during a failed start. Helper process may be leaked."
+                    "SIGKILL $phase. Helper process may be leaked."
             )
         if (pendingFailure != null) cleanupFailure.addSuppressed(pendingFailure)
         throw cleanupFailure
@@ -423,17 +425,19 @@ private class GstRecordingHandle(
                     "spectre-wayland-helper did not emit Stopped within ${shutdownGraceMillis}ms " +
                         "of stop(). Output at $output may be truncated or empty."
                 )
-            killAndReapOrThrow(process, readerThread, stopTimeoutFailure)
+            killAndReapOrThrow(process, readerThread, stopTimeoutFailure, phase = "during stop")
             throw stopTimeoutFailure
         }
         errorRef.get()?.let { err ->
             // Error event during recording: drain reader, then surface. The helper exits on
             // its own after an Error event, so the process should already be terminating.
-            waitForGracefulExitOrReap(process, readerThread)
-            throw IllegalStateException(
-                "spectre-wayland-helper reported an error during recording: kind=${err.kind} " +
-                    "message=${err.message}"
-            )
+            val errorFailure =
+                IllegalStateException(
+                    "spectre-wayland-helper reported an error during recording: " +
+                        "kind=${err.kind} message=${err.message}"
+                )
+            waitForGracefulExitOrReap(process, readerThread, errorFailure)
+            throw errorFailure
         }
         // Stopped event received cleanly. Wait for the helper to exit, then join the reader
         // unbounded (EOF on stdout follows process exit).
@@ -443,7 +447,7 @@ private class GstRecordingHandle(
                     "spectre-wayland-helper did not exit within ${processExitTimeoutMillis}ms " +
                         "after Stopped event. Output at $output may be in an undefined state."
                 )
-            killAndReapOrThrow(process, readerThread, exitTimeoutFailure)
+            killAndReapOrThrow(process, readerThread, exitTimeoutFailure, phase = "during stop")
             throw exitTimeoutFailure
         }
         readerThread.join()
@@ -457,9 +461,13 @@ private class GstRecordingHandle(
         }
     }
 
-    private fun waitForGracefulExitOrReap(process: Process, readerThread: Thread) {
+    private fun waitForGracefulExitOrReap(
+        process: Process,
+        readerThread: Thread,
+        pendingFailure: Throwable?,
+    ) {
         if (!process.waitFor(processExitTimeoutMillis, TimeUnit.MILLISECONDS)) {
-            killAndReapOrThrow(process, readerThread)
+            killAndReapOrThrow(process, readerThread, pendingFailure, phase = "during stop")
         } else {
             readerThread.join()
         }
