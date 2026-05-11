@@ -225,3 +225,67 @@ returns a human-readable summary you can dump at startup to surface this to deve
 
 The SCK helper is a child process, so it inherits the host JVM's TCC grant — no separate
 permission grant needed for it.
+
+## Build matrix: which helpers each host can produce
+
+Spectre's recording module ships two native helpers — the macOS ScreenCaptureKit helper
+(Swift, requires `swiftc` + macOS frameworks) and the Linux Wayland helper (Rust, requires
+`cargo` + `libdbus-1-dev`). Neither toolchain works cross-host, so a single build host
+can only produce a subset of helpers. The recording jar's layout is host-agnostic — the
+non-producible directories are simply empty or absent depending on Gradle's jar-packing
+behavior — and the recorder gates on resource presence at runtime, throwing
+`HelperNotBundledException` with a clear message when the helper its current backend
+needs is missing.
+
+| Host                | Default `./gradlew :recording:build`                                 | `-PuniversalHelper`               | `-PallLinuxArches`                                      |
+| ------------------- | -------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------- |
+| macOS (arm64)       | host-arch SCK (`native/macos/spectre-screencapture` thin arm64)      | universal SCK (arm64 + x86_64)    | no-op (host can't build Wayland helper)                 |
+| macOS (x86_64)      | host-arch SCK (thin x86_64)                                          | universal SCK (arm64 + x86_64)    | no-op (same)                                            |
+| Linux x86_64        | host-arch Wayland (`native/linux/x86_64/spectre-wayland-helper`)     | no-op (host can't build SCK)      | x86_64 + aarch64 Wayland helpers                        |
+| Linux aarch64       | host-arch Wayland (`native/linux/aarch64/spectre-wayland-helper`)    | no-op (same)                      | x86_64 + aarch64 Wayland helpers                        |
+| Windows             | (no helpers produced)                                                | no-op                             | no-op                                                   |
+
+### Project-property reference
+
+- `-PuniversalHelper` — on macOS hosts, build the SCK helper as a universal arm64+x86_64
+  binary via `lipo -create`. Off by default to keep contributor builds fast; on for
+  distribution.
+- `-PnotarizeScreenCaptureKitHelper` — implies `-PuniversalHelper`. Codesigns the
+  universal helper, archives it, and submits it to Apple notarization via
+  `xcrun notarytool`. Only used by the release workflow; needs Developer ID + notary
+  credentials in env vars.
+- `-PallLinuxArches` — on Linux hosts, cross-compile both `x86_64` and `aarch64` Wayland
+  helpers from a single host. Requires the Rust `rustup target add` for the foreign
+  arch and the matching cross-linker (`gcc-aarch64-linux-gnu` / `gcc-x86_64-linux-gnu`)
+  plus the foreign-arch `libdbus-1-dev` sysroot. The CI workflow at
+  `.github/workflows/ci.yml` installs all of these on the Linux runner.
+
+### Verifying bundled helpers
+
+`./gradlew :recording:check` runs `verifyBundledRecordingHelpers`, which inspects the
+recording jar's staged resources and asserts the helpers that *should* be there given
+the current host + project-property combination actually are, and that each one matches
+its expected arch (lipo for the macOS helper, JVM-side ELF header parse for the Linux
+helper). The task is verification-only — it never triggers a universal or cross-arch
+build that wasn't already requested.
+
+When `-PallLinuxArches` is set the task expects both `x86_64` and `aarch64` Wayland
+helpers. CI invokes it as
+
+    ./gradlew :recording:assembleWaylandHelperAllArches :recording:verifyBundledRecordingHelpers -PallLinuxArches
+
+to lock in both-arch coverage explicitly.
+
+### Publishing intent (not yet implemented — gated on #84)
+
+The eventual publish flow merges artifacts from two release runners:
+
+- A macOS runner builds the SCK helper with `-PuniversalHelper -PnotarizeScreenCaptureKitHelper`
+  so `native/macos/spectre-screencapture` carries a notarized universal binary.
+- A Linux runner builds the Wayland helpers with `-PallLinuxArches` so
+  `native/linux/<arch>/spectre-wayland-helper` carries both supported architectures.
+
+The merged jar then has the full helper set regardless of which platform a downstream
+consumer runs Spectre on. Until #84's publish pipeline lands, building locally produces
+a host-shaped subset of helpers — useful for development, not yet a distribution
+artifact.
