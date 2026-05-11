@@ -1,10 +1,12 @@
+@file:OptIn(InternalSpectreApi::class)
+
 package dev.sebastiano.spectre.sample.validation
 
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import dev.sebastiano.spectre.core.ComposeAutomator
+import dev.sebastiano.spectre.core.InternalSpectreApi
 import dev.sebastiano.spectre.core.RobotDriver
-import dev.sebastiano.spectre.core.SemanticsReader
 import dev.sebastiano.spectre.core.WindowTracker
 import dev.sebastiano.spectre.core.synthetic
 import java.awt.GraphicsEnvironment
@@ -91,11 +93,7 @@ class SampleAppFixture(
                 }
             if (tracked != null) {
                 _automator =
-                    ComposeAutomator.inProcess(
-                        windowTracker = WindowTracker(),
-                        semanticsReader = SemanticsReader(),
-                        robotDriver = RobotDriver.synthetic(tracked.window),
-                    )
+                    ComposeAutomator.inProcess(robotDriver = RobotDriver.synthetic(tracked.window))
                 _automator.refreshWindows()
                 return
             }

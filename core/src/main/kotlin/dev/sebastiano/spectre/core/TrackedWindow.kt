@@ -8,6 +8,7 @@ import java.awt.Rectangle
 import java.awt.Window
 import javax.swing.JFrame
 
+@InternalSpectreApi
 data class TrackedWindow
 @OptIn(ExperimentalComposeUiApi::class)
 internal constructor(

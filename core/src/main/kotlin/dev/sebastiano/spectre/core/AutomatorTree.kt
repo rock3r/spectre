@@ -1,3 +1,5 @@
+@file:OptIn(InternalSpectreApi::class)
+
 package dev.sebastiano.spectre.core
 
 import androidx.compose.ui.semantics.Role
@@ -16,7 +18,7 @@ class AutomatorTree internal constructor(private val windows: List<AutomatorWind
 class AutomatorWindow
 internal constructor(
     val windowIndex: Int,
-    val trackedWindow: TrackedWindow,
+    internal val trackedWindow: TrackedWindow,
     private val nodes: List<AutomatorNode>,
 ) {
 
@@ -27,13 +29,13 @@ internal constructor(
 
     fun roots(): List<AutomatorNode> = nodes.filter { it.parent == null }
 
-    fun findByTestTag(tag: String): List<AutomatorNode> = nodes.filter { it.testTag == tag }
+    fun findByTestTag(tag: String): List<AutomatorNode> =
+        nodes.filter(NodeMatchers.hasTestTag(tag)::matches)
 
     fun findOneByTestTag(tag: String): AutomatorNode? = findByTestTag(tag).firstOrNull()
 
-    fun findByText(query: TextQuery): List<AutomatorNode> = nodes.filter { node ->
-        node.texts.any(query::matches) || query.matches(node.editableText)
-    }
+    fun findByText(query: TextQuery): List<AutomatorNode> =
+        nodes.filter(NodeMatchers.hasText(query)::matches)
 
     fun findByText(text: String, exact: Boolean = true): List<AutomatorNode> =
         findByText(
@@ -49,9 +51,9 @@ internal constructor(
     fun findOneByText(text: String, exact: Boolean = true): AutomatorNode? =
         findByText(text, exact).firstOrNull()
 
-    fun findByContentDescription(description: String): List<AutomatorNode> = nodes.filter { node ->
-        node.contentDescriptions.any { it == description }
-    }
+    fun findByContentDescription(description: String): List<AutomatorNode> =
+        nodes.filter(NodeMatchers.hasContentDescription(description)::matches)
 
-    fun findByRole(role: Role): List<AutomatorNode> = nodes.filter { it.role == role }
+    fun findByRole(role: Role): List<AutomatorNode> =
+        nodes.filter(NodeMatchers.hasRole(role)::matches)
 }

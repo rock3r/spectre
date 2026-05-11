@@ -6,7 +6,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 
-suspend fun <T : Any> waitUntil(
+internal suspend fun <T : Any> waitUntil(
     timeout: Duration = 5.seconds,
     pollInterval: Duration = 100.milliseconds,
     predicate: () -> T?,

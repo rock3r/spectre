@@ -1,3 +1,5 @@
+@file:OptIn(InternalSpectreApi::class)
+
 package dev.sebastiano.spectre.core
 
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -6,6 +8,7 @@ import androidx.compose.ui.awt.ComposeWindow
 import java.awt.Container
 import java.awt.Window
 
+@InternalSpectreApi
 class WindowTracker {
 
     @Volatile private var _trackedWindows: List<TrackedWindow> = emptyList()
@@ -126,7 +129,7 @@ class WindowTracker {
     }
 }
 
-fun findComposePanels(container: Container): List<ComposePanel> {
+internal fun findComposePanels(container: Container): List<ComposePanel> {
     val result = mutableListOf<ComposePanel>()
     findComposePanelsRecursive(container, result)
     return result

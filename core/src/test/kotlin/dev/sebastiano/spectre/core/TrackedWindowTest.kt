@@ -1,3 +1,5 @@
+@file:OptIn(InternalSpectreApi::class)
+
 package dev.sebastiano.spectre.core
 
 import java.awt.GraphicsEnvironment

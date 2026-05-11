@@ -1,6 +1,10 @@
+@file:OptIn(InternalSpectreApi::class)
+
 package dev.sebastiano.spectre.core
 
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.getOrNull
 import java.awt.Rectangle
 import java.awt.event.KeyEvent
 import java.awt.image.BufferedImage
@@ -15,13 +19,34 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
-sealed class ComposeAutomatorQueries {
+/**
+ * Single user-facing entry point for driving live Compose Desktop UIs: tracked-window discovery,
+ * node lookup, input dispatch, screenshot capture, and synchronisation. The R1 design choice is
+ * intentionally to keep this surface in one place — splitting it into extension-function files
+ * would force private wait/fingerprint helpers to widen to `internal` and would force every caller
+ * to add explicit per-symbol imports for `click` / `findByTestTag` / `screenshot` / etc., which is
+ * friction without a corresponding win for discoverability.
+ */
+@Suppress("TooManyFunctions")
+class ComposeAutomator
+private constructor(
+    private val windowTracker: WindowTracker,
+    private val semanticsReader: SemanticsReader,
+    private val robotDriver: RobotDriver,
+) {
 
-    protected abstract val windowTracker: WindowTracker
-    protected abstract val semanticsReader: SemanticsReader
-
+    /**
+     * Snapshot of the currently tracked windows. Returns the live `TrackedWindow` collaborator
+     * type, which is part of Spectre's internal escape hatch — typical users should call
+     * [surfaceIds] instead. The HTTP transport in `:server` is the one in-repo consumer that needs
+     * the rich type.
+     */
+    @InternalSpectreApi
     val windows: List<TrackedWindow>
         get() = windowTracker.trackedWindows
+
+    /** Stable surface IDs of every tracked window, in tracking order. */
+    fun surfaceIds(): List<String> = windowTracker.trackedWindows.map { it.surfaceId }
 
     fun refreshWindows() {
         windowTracker.refresh()
@@ -63,11 +88,6 @@ sealed class ComposeAutomatorQueries {
         semanticsReader.findByContentDescription(description, windows)
 
     fun findByRole(role: Role): List<AutomatorNode> = semanticsReader.findByRole(role, windows)
-}
-
-sealed class ComposeAutomatorInteractions : ComposeAutomatorQueries() {
-
-    protected abstract val robotDriver: RobotDriver
 
     suspend fun click(node: AutomatorNode) {
         val center = node.centerOnScreen
@@ -134,6 +154,53 @@ sealed class ComposeAutomatorInteractions : ComposeAutomatorQueries() {
     }
 
     /**
+     * Raises and requests focus on the AWT window that hosts [node]. Useful before a sequence of
+     * Robot-driven inputs on a non-focused window. The actual focus change is dispatched on the
+     * EDT.
+     */
+    fun focusWindow(node: AutomatorNode) {
+        val window = node.trackedWindow.window
+        if (SwingUtilities.isEventDispatchThread()) {
+            window.toFront()
+            window.requestFocus()
+        } else {
+            SwingUtilities.invokeAndWait {
+                window.toFront()
+                window.requestFocus()
+            }
+        }
+    }
+
+    /**
+     * Invokes the Compose `OnClick` semantics action on [node] directly. This bypasses the OS input
+     * stack — no AWT Robot event is generated, no real cursor moves, and no platform focus/raise
+     * side effects fire. It is **not** equivalent to a real user click; use [click] (which routes
+     * through [RobotDriver]) when verifying input plumbing. The intended use cases are headless
+     * contexts and IntelliJ tool-window flows where the OS input stack is unavailable.
+     *
+     * Throws [IllegalStateException] if [node] has no `OnClick` semantics action attached, or if
+     * the action's invocable body is null (a semantics property without a wired-up handler).
+     */
+    fun performSemanticsClick(node: AutomatorNode) {
+        val accessibilityAction =
+            node.semanticsNode.config.getOrNull(SemanticsActions.OnClick)
+                ?: error(
+                    "Node ${node.key} has no OnClick semantics action; cannot performSemanticsClick"
+                )
+        val action =
+            accessibilityAction.action
+                ?: error(
+                    "Node ${node.key} declares OnClick but its action is null; " +
+                        "cannot performSemanticsClick"
+                )
+        if (SwingUtilities.isEventDispatchThread()) {
+            action.invoke()
+        } else {
+            SwingUtilities.invokeAndWait { action.invoke() }
+        }
+    }
+
+    /**
      * Captures the given screen [region] (or the entire virtual desktop, if `null`) and returns
      * sRGB pixels as a [BufferedImage]. Delegates to [RobotDriver.screenshot] — see that method's
      * KDoc for colour-space, focus-overlay, and per-platform TCC / Wayland gotchas before using the
@@ -160,14 +227,6 @@ sealed class ComposeAutomatorInteractions : ComposeAutomatorQueries() {
                 ?: error("No tracked window at index $windowIndex (have ${windows.size})")
         return robotDriver.screenshot(trackedWindow.composeSurfaceBoundsOnScreen)
     }
-}
-
-class ComposeAutomator
-private constructor(
-    override val windowTracker: WindowTracker,
-    override val semanticsReader: SemanticsReader,
-    override val robotDriver: RobotDriver,
-) : ComposeAutomatorInteractions() {
 
     // V1 contract: queries and actions do not auto-wait. Callers must invoke waitForIdle() /
     // waitForVisualIdle() / waitForNode() explicitly when synchronisation matters. Auto-wait
@@ -447,11 +506,8 @@ private constructor(
 
     companion object {
 
-        fun inProcess(
-            windowTracker: WindowTracker = WindowTracker(),
-            semanticsReader: SemanticsReader = SemanticsReader(),
-            robotDriver: RobotDriver = RobotDriver(),
-        ): ComposeAutomator = ComposeAutomator(windowTracker, semanticsReader, robotDriver)
+        fun inProcess(robotDriver: RobotDriver = RobotDriver()): ComposeAutomator =
+            ComposeAutomator(WindowTracker(), SemanticsReader(), robotDriver)
     }
 }
 

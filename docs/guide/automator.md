@@ -6,14 +6,10 @@ the deliberate design choices that affect how you write tests.
 
 ## What an automator owns
 
-Every `ComposeAutomator` wraps three collaborators:
-
-- **`WindowTracker`** — keeps a list of the running Compose surfaces (top-level windows
-  and popup roots) the automator can see.
-- **`SemanticsReader`** — reads Compose's semantics tree out of those surfaces and
-  produces `AutomatorNode`s.
-- **`RobotDriver`** — dispatches mouse, keyboard, and clipboard input, and captures
-  screenshots.
+A `ComposeAutomator` discovers the running Compose surfaces (top-level windows and
+popup roots), reads their semantics tree as `AutomatorNode`s, and dispatches input
+via a `RobotDriver`. The window discovery and semantics reading happen internally —
+the only collaborator users inject is the `RobotDriver`.
 
 Build one with the default in-process configuration:
 
@@ -30,13 +26,12 @@ val automator = ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())
 
 `headless()` throws `UnsupportedOperationException` on every input, clipboard, and
 screenshot call — an accidental `automator.click(...)` / `typeText(...)` /
-`screenshot(...)` surfaces at the call site instead of silently dropping. It does
-**not** fake out the live `WindowTracker`/`SemanticsReader`, so semantics-tree
-queries still work against whatever Compose surfaces are actually on screen. Reach
-for it for read-only flows; pair it with `SemanticsActions.OnClick` (see
-[Driving input](interactions.md#real-vs-synthetic-input)) when you need to fire
-clicks without going through the OS. For unit-style tests that need full isolation,
-inject test-specific `WindowTracker` and `SemanticsReader` instances too.
+`screenshot(...)` surfaces at the call site instead of silently dropping. The
+semantics-tree queries still work against whatever Compose surfaces are actually on
+screen. When you need to fire a click without going through the OS input stack (e.g.
+in IntelliJ-hosted Compose, where Robot input is blocked), call
+`automator.performSemanticsClick(node)` instead of `click(node)` — see
+[Driving input](interactions.md#real-vs-synthetic-input).
 
 ## Surfaces and the semantics tree
 

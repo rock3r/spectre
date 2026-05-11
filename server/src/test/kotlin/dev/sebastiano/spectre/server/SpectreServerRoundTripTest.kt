@@ -2,8 +2,6 @@ package dev.sebastiano.spectre.server
 
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.RobotDriver
-import dev.sebastiano.spectre.core.SemanticsReader
-import dev.sebastiano.spectre.core.WindowTracker
 import dev.sebastiano.spectre.server.dto.ClickRequest
 import dev.sebastiano.spectre.server.dto.NodesResponse
 import dev.sebastiano.spectre.server.dto.WindowsResponse
@@ -39,11 +37,7 @@ import kotlin.test.assertTrue
 class SpectreServerRoundTripTest {
 
     private fun headlessAutomator(): ComposeAutomator =
-        ComposeAutomator.inProcess(
-            windowTracker = WindowTracker(),
-            semanticsReader = SemanticsReader(),
-            robotDriver = RobotDriver.headless(),
-        )
+        ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())
 
     @Test
     fun `windows endpoint returns an empty list for an empty automator`() = testApplication {

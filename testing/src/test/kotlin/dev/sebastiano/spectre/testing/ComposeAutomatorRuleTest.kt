@@ -2,8 +2,6 @@ package dev.sebastiano.spectre.testing
 
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.RobotDriver
-import dev.sebastiano.spectre.core.SemanticsReader
-import dev.sebastiano.spectre.core.WindowTracker
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
@@ -54,8 +52,4 @@ class ComposeAutomatorRuleTest {
 }
 
 internal fun newHeadlessAutomator(): ComposeAutomator =
-    ComposeAutomator.inProcess(
-        windowTracker = WindowTracker(),
-        semanticsReader = SemanticsReader(),
-        robotDriver = RobotDriver.headless(),
-    )
+    ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())

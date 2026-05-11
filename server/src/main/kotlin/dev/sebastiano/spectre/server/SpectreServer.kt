@@ -1,6 +1,9 @@
+@file:OptIn(InternalSpectreApi::class)
+
 package dev.sebastiano.spectre.server
 
 import dev.sebastiano.spectre.core.ComposeAutomator
+import dev.sebastiano.spectre.core.InternalSpectreApi
 import dev.sebastiano.spectre.core.NodeKey
 import dev.sebastiano.spectre.server.dto.ClickRequest
 import dev.sebastiano.spectre.server.dto.NodesResponse

@@ -175,9 +175,9 @@ public surface:
   unavailable. Every input, clipboard, and screenshot call throws
   `UnsupportedOperationException` so an accidental `automator.click(...)` /
   `typeText(...)` / `screenshot(...)` surfaces at the call site instead of silently
-  dropping. `WindowTracker` and `SemanticsReader` are untouched, so semantics-tree
-  reads still work — pair this with `SemanticsActions.OnClick` if you need to fire
-  clicks without going through the OS. See
+  dropping. Semantics-tree reads still work — pair this with
+  `ComposeAutomator.performSemanticsClick(node)` if you need to fire clicks without
+  going through the OS. See
   [The automator](automator.md#what-an-automator-owns) for the full picture.
 
 Pass a non-default driver via the `inProcess` factory:

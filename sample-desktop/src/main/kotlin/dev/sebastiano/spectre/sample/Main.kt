@@ -31,7 +31,7 @@ private suspend fun runAutomatorDemo() {
     automator.refreshWindows()
 
     println("=== Spectre Automator Demo ===")
-    println("Tracked windows: ${automator.windows.size}")
+    println("Tracked windows: ${automator.surfaceIds().size}")
     println()
     print(automator.printTree())
     println()
@@ -41,10 +41,7 @@ private suspend fun runAutomatorDemo() {
 
     val button = automator.findOneByTestTag("incrementButton")
     if (button != null) {
-        javax.swing.SwingUtilities.invokeAndWait {
-            button.trackedWindow.window.toFront()
-            button.trackedWindow.window.requestFocus()
-        }
+        automator.focusWindow(button)
         delay(BETWEEN_ACTION_DELAY_MS)
 
         println("Clicking button $CLICK_REPETITIONS times...")

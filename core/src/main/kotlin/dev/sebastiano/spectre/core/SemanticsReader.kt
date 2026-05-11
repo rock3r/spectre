@@ -1,3 +1,5 @@
+@file:OptIn(InternalSpectreApi::class)
+
 package dev.sebastiano.spectre.core
 
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -6,23 +8,17 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsOwner
 
-class SemanticsReader {
+internal class SemanticsReader {
 
     fun readAllNodes(trackedWindows: List<TrackedWindow>): List<AutomatorNode> = readOnEdt {
         collectAllNodes(trackedWindows)
     }
 
     fun findByTestTag(tag: String, trackedWindows: List<TrackedWindow>): List<AutomatorNode> =
-        readOnEdt {
-            collectAllNodes(trackedWindows).filter { it.testTag == tag }
-        }
+        findMatching(trackedWindows, NodeMatchers.liveHasTestTag(tag))
 
     fun findByText(query: TextQuery, trackedWindows: List<TrackedWindow>): List<AutomatorNode> =
-        readOnEdt {
-            collectAllNodes(trackedWindows).filter { node ->
-                node.texts.any(query::matches) || query.matches(node.editableText)
-            }
-        }
+        findMatching(trackedWindows, NodeMatchers.liveHasText(query))
 
     fun findByText(
         text: String,
@@ -42,19 +38,34 @@ class SemanticsReader {
     fun findByContentDescription(
         description: String,
         trackedWindows: List<TrackedWindow>,
-    ): List<AutomatorNode> = readOnEdt {
-        collectAllNodes(trackedWindows).filter { node ->
-            node.contentDescriptions.any { it == description }
-        }
-    }
+    ): List<AutomatorNode> =
+        findMatching(trackedWindows, NodeMatchers.liveHasContentDescription(description))
 
     fun findByRole(role: Role, trackedWindows: List<TrackedWindow>): List<AutomatorNode> =
-        readOnEdt {
-            collectAllNodes(trackedWindows).filter { it.role == role }
-        }
+        findMatching(trackedWindows, NodeMatchers.liveHasRole(role))
+
+    /**
+     * Walks the live semantics tree on the EDT, marking entries that satisfy [matcher] against the
+     * raw [SemanticsNode]. Every traversed entry is still projected into an [AutomatorNode] so
+     * parent/child relations remain valid for matched nodes; only matched ones are returned.
+     */
+    private fun findMatching(
+        trackedWindows: List<TrackedWindow>,
+        matcher: LiveNodeMatcher,
+    ): List<AutomatorNode> = readOnEdt {
+        val entries = collectEntries(trackedWindows)
+        val nodes = projectEntriesToNodes(entries)
+        entries.filter { matcher.matches(it.node) }.mapNotNull { nodes[it.key] }
+    }
+
+    private fun collectAllNodes(trackedWindows: List<TrackedWindow>): List<AutomatorNode> {
+        val entries = collectEntries(trackedWindows)
+        val nodes = projectEntriesToNodes(entries)
+        return entries.mapNotNull { nodes[it.key] }
+    }
 
     @OptIn(ExperimentalComposeUiApi::class)
-    private fun collectAllNodes(trackedWindows: List<TrackedWindow>): List<AutomatorNode> {
+    private fun collectEntries(trackedWindows: List<TrackedWindow>): List<NodeEntry> {
         val entries = mutableListOf<NodeEntry>()
         for (trackedWindow in trackedWindows) {
             val owners = getOwnersForWindow(trackedWindow)
@@ -68,7 +79,10 @@ class SemanticsReader {
                 )
             }
         }
+        return entries
+    }
 
+    private fun projectEntriesToNodes(entries: List<NodeEntry>): Map<NodeKey, AutomatorNode> {
         val parentKeyByNodeKey = entries.associate { it.key to it.parentKey }
         val nodeKeysByParentKey =
             entries.groupBy(keySelector = NodeEntry::parentKey, valueTransform = NodeEntry::key)
@@ -81,7 +95,6 @@ class SemanticsReader {
                 override fun childrenOf(key: NodeKey): List<AutomatorNode> =
                     nodeKeysByParentKey[key].orEmpty().mapNotNull(nodesByKey::get)
             }
-
         for (entry in entries) {
             nodesByKey[entry.key] =
                 AutomatorNode(
@@ -91,8 +104,7 @@ class SemanticsReader {
                     relations = relations,
                 )
         }
-
-        return entries.mapNotNull { entry -> nodesByKey[entry.key] }
+        return nodesByKey
     }
 
     @OptIn(ExperimentalComposeUiApi::class)
