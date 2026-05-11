@@ -1,5 +1,9 @@
+import java.io.ByteArrayOutputStream
+import java.io.RandomAccessFile
+import javax.inject.Inject
 import org.gradle.api.GradleException
 import org.gradle.internal.os.OperatingSystem
+import org.gradle.process.ExecOperations
 
 /**
  * Maps the host's `os.arch` system property to the Rust target-triple architecture name we ship the
@@ -676,3 +680,194 @@ tasks.register<JavaExec>("runWaylandPortalWindowSmoke") {
     standardOutput = System.out
     errorOutput = System.err
 }
+
+// --- Bundled helper artifact verification (R3) -----------------------------------------------
+//
+// `verifyBundledRecordingHelpers` is the single entry point that asserts the recording jar
+// being built actually contains the helpers it claims to. The task's expectations are computed
+// from the host OS + project properties at configuration time:
+//
+//   - macOS host, default                : expect host-arch SCK helper, `lipo -verify_arch
+// <host-arch>`.
+//   - macOS host + `-PuniversalHelper`   : expect universal SCK helper, `lipo -verify_arch arm64
+// x86_64`.
+//   - Linux host, default                : expect host-arch Wayland helper, JVM-side ELF parse.
+//   - Linux host + `-PallLinuxArches`    : expect both x86_64 + aarch64 Wayland helpers, JVM-side
+// ELF
+//                                          parse for each.
+//   - Other hosts (Windows etc.)         : no expectations, task is a no-op success.
+//
+// Verification only — the task depends on `processResources` and inspects whatever was already
+// staged. It deliberately does NOT depend on `lipoScreenCaptureKitHelper` /
+// `assembleScreenCaptureKitHelperUniversal` / `assembleWaylandHelperAllArches` directly, so
+// running `./gradlew check` on macOS without `-PuniversalHelper` does not trigger a universal
+// build. The same project-property switches that drive `processResources` (above) drive the
+// task's expectations in parallel.
+//
+// The Linux ELF parse is JVM-side (no `readelf` dependency, works on every dev host where this
+// task might run for sanity-checking). The macOS check shells out to `lipo` because lipo only
+// runs on macOS anyway, and the existing `verifyUniversalScreenCaptureKitHelper` pattern
+// proves it. ELF magic + `e_machine` is the entirety of the parse — see the constants in
+// `VerifyBundledRecordingHelpers` for the per-arch machine fields.
+
+/**
+ * Reports which helper artifacts should be in the recording jar and verifies each. Expectations are
+ * configured at task-registration time from the host OS + project properties; the action itself
+ * just walks the list and fails fast on the first missing or wrong-arch helper.
+ */
+abstract class VerifyBundledRecordingHelpers
+@Inject
+constructor(private val execOperations: ExecOperations) : DefaultTask() {
+
+    /** Directory `processResources` writes into. Helper paths are resolved relative to this. */
+    @get:InputDirectory abstract val resourcesDir: DirectoryProperty
+
+    /**
+     * macOS architectures expected in `native/macos/spectre-screencapture`. Empty list means "no
+     * macOS expectation" (e.g. running on Linux/Windows). One arch = host-arch build; two arches =
+     * universal build (the order matters only for the error message — `lipo -verify_arch` requires
+     * all listed arches to be present).
+     */
+    @get:Input abstract val expectedMacOsArchs: ListProperty<String>
+
+    /**
+     * Linux architectures expected in `native/linux/<arch>/spectre-wayland-helper`. Empty means "no
+     * Linux expectation". `["x86_64"]` or `["aarch64"]` = host-arch; `["x86_64", "aarch64"]` =
+     * `-PallLinuxArches`.
+     */
+    @get:Input abstract val expectedLinuxArches: ListProperty<String>
+
+    @TaskAction
+    fun verify() {
+        val errors = mutableListOf<String>()
+        val macOsArchs = expectedMacOsArchs.get()
+        if (macOsArchs.isNotEmpty()) {
+            verifyMacOsHelper(macOsArchs)?.let(errors::add)
+        }
+        for (arch in expectedLinuxArches.get()) {
+            verifyLinuxHelper(arch)?.let(errors::add)
+        }
+        if (errors.isNotEmpty()) {
+            throw GradleException(
+                "Recording helper verification failed:\n" + errors.joinToString("\n") { "  - $it" }
+            )
+        }
+    }
+
+    private fun verifyMacOsHelper(expectedArchs: List<String>): String? {
+        val helperPath = "native/macos/spectre-screencapture"
+        val file = resourcesDir.file(helperPath).get().asFile
+        if (!file.isFile) {
+            return "Expected macOS helper missing at $helperPath (resolved to ${file.absolutePath})"
+        }
+        // `lipo -verify_arch <arch>...` exits 0 only if EVERY listed arch is present in the
+        // binary. Works for both thin (single-arch) and fat (universal) binaries. The macOS
+        // universal helper task already uses this — see verifyUniversalScreenCaptureKitHelper.
+        val stdout = ByteArrayOutputStream()
+        val stderr = ByteArrayOutputStream()
+        val result = execOperations.exec {
+            commandLine(
+                buildList {
+                    add("lipo")
+                    add(file.absolutePath)
+                    add("-verify_arch")
+                    addAll(expectedArchs)
+                }
+            )
+            standardOutput = stdout
+            errorOutput = stderr
+            isIgnoreExitValue = true
+        }
+        if (result.exitValue != 0) {
+            return "lipo -verify_arch ${expectedArchs.joinToString(" ")} failed for " +
+                "${file.absolutePath}: exit=${result.exitValue} stdout=${stdout.toString().trim()} " +
+                "stderr=${stderr.toString().trim()}"
+        }
+        return null
+    }
+
+    private fun verifyLinuxHelper(expectedArch: String): String? {
+        val relative = "native/linux/$expectedArch/spectre-wayland-helper"
+        val file = resourcesDir.file(relative).get().asFile
+        if (!file.isFile) {
+            return "Expected Linux helper missing at $relative (resolved to ${file.absolutePath})"
+        }
+        val expectedMachine =
+            ELF_MACHINE_BY_ARCH[expectedArch]
+                ?: return "Unknown expected Linux arch '$expectedArch' for $relative"
+        val header = ByteArray(ELF_HEADER_PREFIX_BYTES)
+        RandomAccessFile(file, "r").use { raf ->
+            if (raf.length() < ELF_HEADER_PREFIX_BYTES) {
+                return "File too short to be ELF ($file)"
+            }
+            raf.readFully(header)
+        }
+        if (
+            header[0].toInt() and 0xff != 0x7F ||
+                header[1] != 'E'.code.toByte() ||
+                header[2] != 'L'.code.toByte() ||
+                header[3] != 'F'.code.toByte()
+        ) {
+            return "Not an ELF file (bad magic) at ${file.absolutePath}"
+        }
+        // ELF spec: e_machine is a 2-byte little-endian field at offset 18.
+        val machine =
+            (header[ELF_E_MACHINE_OFFSET].toInt() and 0xff) or
+                ((header[ELF_E_MACHINE_OFFSET + 1].toInt() and 0xff) shl 8)
+        if (machine != expectedMachine) {
+            return "Expected e_machine=0x${expectedMachine.toString(16)} ($expectedArch) " +
+                "but ELF reports 0x${machine.toString(16)} at ${file.absolutePath}"
+        }
+        return null
+    }
+
+    companion object {
+        private const val ELF_HEADER_PREFIX_BYTES: Int = 20
+        private const val ELF_E_MACHINE_OFFSET: Int = 18
+        // e_machine constants from the ELF spec. Stable for the lifetime of the ABI.
+        private const val EM_X86_64: Int = 0x3E
+        private const val EM_AARCH64: Int = 0xB7
+        private val ELF_MACHINE_BY_ARCH: Map<String, Int> =
+            mapOf("x86_64" to EM_X86_64, "aarch64" to EM_AARCH64)
+    }
+}
+
+val verifyBundledRecordingHelpers by
+    tasks.registering(VerifyBundledRecordingHelpers::class) {
+        description =
+            "Verifies the recording jar contains the native helpers it should, per host OS and " +
+                "project-property selection (-PuniversalHelper, -PallLinuxArches). Inspection " +
+                "only — does not trigger universal SCK or all-arches Wayland builds."
+        group = "verification"
+        // Read whatever processResources staged. Depending on the project flags, that's either
+        // host-arch or the wider distribution build — the expectations below stay in sync.
+        dependsOn(tasks.named("processResources"))
+        resourcesDir.set(layout.buildDirectory.dir("resources/main"))
+
+        val os = OperatingSystem.current()
+        // macOS expectations. `useUniversalHelper` (declared above) is true when
+        // `-PuniversalHelper` or `-PnotarizeScreenCaptureKitHelper` is set. The host-arch case
+        // uses `lipo -verify_arch <host-arch>`; lipo handles thin binaries fine.
+        val macOsArchs: List<String> =
+            when {
+                !os.isMacOsX -> emptyList()
+                useUniversalHelper -> universalArchitectures
+                else ->
+                    listOf(
+                        if (System.getProperty("os.arch").lowercase() == "aarch64") "arm64"
+                        else "x86_64"
+                    )
+            }
+        expectedMacOsArchs.set(macOsArchs)
+
+        // Linux expectations. `useAllLinuxArches` is true when `-PallLinuxArches` is set.
+        val linuxArches: List<String> =
+            when {
+                !os.isLinux -> emptyList()
+                useAllLinuxArches -> linuxHelperArchitectures
+                else -> listOf(linuxRustHostArch())
+            }
+        expectedLinuxArches.set(linuxArches)
+    }
+
+tasks.named("check") { dependsOn(verifyBundledRecordingHelpers) }

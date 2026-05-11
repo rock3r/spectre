@@ -102,19 +102,11 @@ jobs:
         # contributor builds without the cross toolchain still pass `check` cleanly. When
         # #84's publish pipeline lands, the release job will pass `-PallLinuxArches` so
         # `processResources` bundles both arches into the published jar.
-        run: |
-          ./gradlew :recording:assembleWaylandHelperAllArches
-          for arch in x86_64 aarch64; do
-            bin="recording/build/generated/waylandHelper/native/linux/$arch/spectre-wayland-helper"
-            if [ ! -f "$bin" ]; then
-              echo "::error::Missing per-arch helper binary: $bin"
-              exit 1
-            fi
-            machine=$(readelf -h "$bin" | awk -F: '/Machine:/{print $2}' | xargs)
-            case "$arch:$machine" in
-              "x86_64:Advanced Micro Devices X86-64") ;;
-              "aarch64:AArch64") ;;
-              *) echo "::error::$bin reports ELF machine '$machine' (expected $arch)"; exit 1 ;;
-            esac
-            echo "$bin → $machine ✓"
-          done
+        #
+        # `-PallLinuxArches` makes `processResources` depend on the cross-arch staging task
+        # and `verifyBundledRecordingHelpers` expect both arches in `build/resources/main`.
+        # The verify task parses each ELF header in-JVM (no `readelf` dependency) and
+        # asserts the e_machine field matches the expected arch — same assertion strength
+        # as the previous shell loop, now reusable from any host that wants to sanity-check
+        # a build.
+        run: ./gradlew :recording:assembleWaylandHelperAllArches :recording:verifyBundledRecordingHelpers -PallLinuxArches
