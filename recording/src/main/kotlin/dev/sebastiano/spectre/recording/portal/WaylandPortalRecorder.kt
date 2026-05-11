@@ -49,13 +49,40 @@ import kotlinx.serialization.json.Json
  * natively, and Rust's `Command` makes FD inheritance trivial. The helper is ~600 LOC, ships as a
  * per-arch binary in the recording module's jar resources, and uses a tiny stdin/stdout JSON
  * protocol.
+ *
+ * ## Strict direct-use contract
+ *
+ * Instantiating `WaylandPortalRecorder` directly assumes the bundled helper binary is present and
+ * the host's xdg-desktop-portal is reachable. Failures from either are surfaced as
+ * [IllegalStateException] with precise context — there is **no** silent no-op or automatic fallback
+ * to another recorder. If you want a "just record" experience that degrades to ffmpeg region
+ * capture when the portal isn't available, use [dev.sebastiano.spectre.recording.AutoRecorder]
+ * instead; it owns the fallback-with-warning policy.
  */
-internal class WaylandPortalRecorder(
-    private val helperExtractor: WaylandHelperBinaryExtractor = WaylandHelperBinaryExtractor(),
-    private val processFactory: ProcessFactory = SystemProcessFactory,
-    private val sourceTypes: List<SourceType> = listOf(SourceType.MONITOR),
-    private val startedTimeout: Long = DEFAULT_STARTED_TIMEOUT_MS,
+public class WaylandPortalRecorder
+private constructor(
+    private val helperExtractor: WaylandHelperBinaryExtractor,
+    private val processFactory: ProcessFactory,
+    private val sourceTypes: List<SourceType>,
+    private val startedTimeout: Long,
+    private val shutdownGraceMillis: Long,
+    private val processExitTimeoutMillis: Long,
 ) : Recorder {
+
+    /**
+     * Default user-facing constructor. Uses the bundled helper binary, the JVM's
+     * `ProcessBuilder`-based process factory, `SourceType.MONITOR` (region capture), a 90s
+     * portal-handshake timeout, a 30s stop-graceful-window, and a 5s post-Stopped exit window.
+     */
+    public constructor() :
+        this(
+            helperExtractor = WaylandHelperBinaryExtractor(),
+            processFactory = SystemProcessFactory,
+            sourceTypes = listOf(SourceType.MONITOR),
+            startedTimeout = DEFAULT_STARTED_TIMEOUT_MS,
+            shutdownGraceMillis = DEFAULT_SHUTDOWN_GRACE_MS,
+            processExitTimeoutMillis = DEFAULT_PROCESS_EXIT_TIMEOUT_MS,
+        )
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -109,35 +136,46 @@ internal class WaylandPortalRecorder(
                 ),
             )
         } catch (e: IOException) {
-            process.destroyForcibly()
-            throw IllegalStateException(
-                "Failed to send Start command to spectre-wayland-helper (it died on launch?). " +
-                    "Helper path: $helperPath",
-                e,
-            )
+            val launchFailure =
+                IllegalStateException(
+                    "Failed to send Start command to spectre-wayland-helper (it died on launch?). " +
+                        "Helper path: $helperPath",
+                    e,
+                )
+            killAndReapOrThrow(process, readerThread, launchFailure)
+            throw launchFailure
         }
 
         if (!startedLatch.await(startedTimeout, TimeUnit.MILLISECONDS)) {
-            process.destroyForcibly()
-            throw IllegalStateException(
-                "spectre-wayland-helper did not emit a Started or Error event within " +
-                    "${startedTimeout}ms. Likely portal-handshake stall (user dialog hidden, " +
-                    "compositor unresponsive, D-Bus session bus not reachable from helper)."
-            )
+            val timeoutFailure =
+                IllegalStateException(
+                    "spectre-wayland-helper did not emit a Started or Error event within " +
+                        "${startedTimeout}ms. Likely portal-handshake stall (user dialog hidden, " +
+                        "compositor unresponsive, D-Bus session bus not reachable from helper)."
+                )
+            killAndReapOrThrow(process, readerThread, timeoutFailure)
+            throw timeoutFailure
         }
         errorEvent.get()?.let { err ->
-            process.destroyForcibly()
-            throw IllegalStateException(
-                "spectre-wayland-helper reported an error before recording could start: " +
-                    "kind=${err.kind} message=${err.message}"
-            )
+            val helperErrorFailure =
+                IllegalStateException(
+                    "spectre-wayland-helper reported an error before recording could start: " +
+                        "kind=${err.kind} message=${err.message}"
+                )
+            killAndReapOrThrow(process, readerThread, helperErrorFailure)
+            throw helperErrorFailure
         }
         val startedEvent =
             started.get()
-                ?: error(
-                    "Started latch fired but neither Started nor Error event captured — " +
-                        "synchronisation bug in WaylandPortalRecorder."
-                )
+                ?: run {
+                    val syncFailure =
+                        IllegalStateException(
+                            "Started latch fired but neither Started nor Error event captured — " +
+                                "synchronisation bug in WaylandPortalRecorder."
+                        )
+                    killAndReapOrThrow(process, readerThread, syncFailure)
+                    throw syncFailure
+                }
         return GstRecordingHandle(
             process = process,
             output = output,
@@ -147,6 +185,8 @@ internal class WaylandPortalRecorder(
             errorRef = errorEvent,
             stoppedLatch = stoppedLatch,
             readerThread = readerThread,
+            shutdownGraceMillis = shutdownGraceMillis,
+            processExitTimeoutMillis = processExitTimeoutMillis,
         )
     }
 
@@ -223,7 +263,7 @@ internal class WaylandPortalRecorder(
     }
 
     /** Indirection over `ProcessBuilder.start()` so tests can drive the subprocess lifecycle. */
-    interface ProcessFactory {
+    internal interface ProcessFactory {
         fun start(helperPath: Path): Process
     }
 
@@ -239,16 +279,81 @@ internal class WaylandPortalRecorder(
                 .start()
     }
 
-    private companion object {
-        const val DEFAULT_STARTED_TIMEOUT_MS: Long = 90_000
+    internal companion object {
 
-        // Cap on how much of a malformed JSON line we echo back into the Error event message.
-        // Long enough to be useful for debugging (typical helper event lines are ~150 chars),
-        // short enough that a runaway helper writing megabytes of garbage doesn't blow the
-        // event channel.
-        const val MALFORMED_LINE_PREVIEW_LENGTH: Int = 200
+        /**
+         * In-module factory for tests and [WaylandPortalWindowRecorder]'s delegate path. Annotated
+         * `@JvmSynthetic` so Java consumers don't see it — the JVM-public `WaylandPortalRecorder`
+         * class is supposed to expose only its no-arg constructor. Reflection-based access still
+         * works for genuinely needs-the-internals callers but stays absent from IDE autocomplete
+         * and javap's default view.
+         */
+        @JvmSynthetic
+        internal fun createForInternalUse(
+            helperExtractor: WaylandHelperBinaryExtractor = WaylandHelperBinaryExtractor(),
+            processFactory: ProcessFactory = SystemProcessFactory,
+            sourceTypes: List<SourceType> = listOf(SourceType.MONITOR),
+            startedTimeout: Long = DEFAULT_STARTED_TIMEOUT_MS,
+            shutdownGraceMillis: Long = DEFAULT_SHUTDOWN_GRACE_MS,
+            processExitTimeoutMillis: Long = DEFAULT_PROCESS_EXIT_TIMEOUT_MS,
+        ): WaylandPortalRecorder =
+            WaylandPortalRecorder(
+                helperExtractor,
+                processFactory,
+                sourceTypes,
+                startedTimeout,
+                shutdownGraceMillis,
+                processExitTimeoutMillis,
+            )
     }
 }
+
+// File-level private so the constant stays out of WaylandPortalRecorder's public JVM surface.
+// `private companion object const val` is JVM-public on the outer class; file-level `private`
+// compiles to a private static final on the synthetic Kt facade.
+private const val MALFORMED_LINE_PREVIEW_LENGTH: Int = 200
+
+internal const val DEFAULT_STARTED_TIMEOUT_MS: Long = 90_000
+internal const val DEFAULT_SHUTDOWN_GRACE_MS: Long = 30_000
+internal const val DEFAULT_PROCESS_EXIT_TIMEOUT_MS: Long = 5_000
+
+/**
+ * Force-kills [process] and waits up to [FORCED_REAP_TIMEOUT_MS] for the OS to reap it, then joins
+ * [readerThread] unbounded (the kill propagates EOF on the helper's stdout, so the reader
+ * terminates promptly). Throws [IllegalStateException] if the process is still alive after the
+ * forced-reap window — that should never happen with SIGKILL but is surfaced rather than silently
+ * leaked. The error message uses [phase] (e.g. `"during a failed start"`, `"during stop"`) so
+ * callers from different lifecycle stages produce accurate diagnostics.
+ *
+ * Shared by every `start()` and `stop()` failure path so the contract is consistent: when the
+ * caller is about to throw, the helper process is reaped and the reader thread is gone before the
+ * exception propagates.
+ */
+internal fun killAndReapOrThrow(
+    process: Process,
+    readerThread: Thread,
+    pendingFailure: Throwable? = null,
+    phase: String = "during a failed start",
+) {
+    process.destroyForcibly()
+    if (!process.waitFor(FORCED_REAP_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+        // Don't join the reader on this path — without a confirmed reap the helper could keep
+        // stdout open and the join would block indefinitely. The leak is logged via the
+        // exception below; this is a "should never happen with SIGKILL" diagnostic. If the
+        // caller is mid-failure-handling, the pending failure is attached as suppressed so the
+        // original cause stays visible.
+        val cleanupFailure =
+            IllegalStateException(
+                "spectre-wayland-helper did not exit within ${FORCED_REAP_TIMEOUT_MS}ms after " +
+                    "SIGKILL $phase. Helper process may be leaked."
+            )
+        if (pendingFailure != null) cleanupFailure.addSuppressed(pendingFailure)
+        throw cleanupFailure
+    }
+    readerThread.join()
+}
+
+internal const val FORCED_REAP_TIMEOUT_MS: Long = 2_000
 
 /**
  * Recording handle for the helper-process pair. `stop()` writes a Stop command, blocks until the
@@ -266,6 +371,8 @@ private class GstRecordingHandle(
     private val errorRef: AtomicReference<Event.Error?>,
     private val stoppedLatch: CountDownLatch,
     private val readerThread: Thread,
+    private val shutdownGraceMillis: Long,
+    private val processExitTimeoutMillis: Long,
 ) : RecordingHandle {
 
     private val stopInitiated = AtomicBoolean(false)
@@ -308,27 +415,42 @@ private class GstRecordingHandle(
         } catch (_: IOException) {
             // Helper may have already exited; the latch wait below confirms.
         }
-        if (!stoppedLatch.await(SHUTDOWN_GRACE_SECONDS, TimeUnit.SECONDS)) {
-            process.destroyForcibly()
-            throw IllegalStateException(
-                "spectre-wayland-helper did not emit Stopped within ${SHUTDOWN_GRACE_SECONDS}s " +
-                    "of stop(). Output at $output may be truncated or empty."
-            )
+        if (!stoppedLatch.await(shutdownGraceMillis, TimeUnit.MILLISECONDS)) {
+            // Helper ignored the Stop command. Force-kill, wait for the OS to reap, then join
+            // the reader (the kill propagates EOF on stdout so the join is guaranteed to
+            // return). Only after termination is confirmed do we throw — otherwise we'd leak
+            // the reader thread.
+            val stopTimeoutFailure =
+                IllegalStateException(
+                    "spectre-wayland-helper did not emit Stopped within ${shutdownGraceMillis}ms " +
+                        "of stop(). Output at $output may be truncated or empty."
+                )
+            killAndReapOrThrow(process, readerThread, stopTimeoutFailure, phase = "during stop")
+            throw stopTimeoutFailure
         }
         errorRef.get()?.let { err ->
-            throw IllegalStateException(
-                "spectre-wayland-helper reported an error during recording: kind=${err.kind} " +
-                    "message=${err.message}"
-            )
+            // Error event during recording: drain reader, then surface. The helper exits on
+            // its own after an Error event, so the process should already be terminating.
+            val errorFailure =
+                IllegalStateException(
+                    "spectre-wayland-helper reported an error during recording: " +
+                        "kind=${err.kind} message=${err.message}"
+                )
+            waitForGracefulExitOrReap(process, readerThread, errorFailure)
+            throw errorFailure
         }
-        readerThread.join(READER_JOIN_TIMEOUT_MS)
-        if (!process.waitFor(PROCESS_EXIT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            process.destroyForcibly()
-            throw IllegalStateException(
-                "spectre-wayland-helper did not exit within ${PROCESS_EXIT_TIMEOUT_SECONDS}s " +
-                    "after Stopped event. Output at $output may be in an undefined state."
-            )
+        // Stopped event received cleanly. Wait for the helper to exit, then join the reader
+        // unbounded (EOF on stdout follows process exit).
+        if (!process.waitFor(processExitTimeoutMillis, TimeUnit.MILLISECONDS)) {
+            val exitTimeoutFailure =
+                IllegalStateException(
+                    "spectre-wayland-helper did not exit within ${processExitTimeoutMillis}ms " +
+                        "after Stopped event. Output at $output may be in an undefined state."
+                )
+            killAndReapOrThrow(process, readerThread, exitTimeoutFailure, phase = "during stop")
+            throw exitTimeoutFailure
         }
+        readerThread.join()
         val exit = process.exitValue()
         if (exit != 0) {
             throw IllegalStateException(
@@ -339,9 +461,15 @@ private class GstRecordingHandle(
         }
     }
 
-    private companion object {
-        const val SHUTDOWN_GRACE_SECONDS: Long = 30
-        const val PROCESS_EXIT_TIMEOUT_SECONDS: Long = 5
-        const val READER_JOIN_TIMEOUT_MS: Long = 1_000
+    private fun waitForGracefulExitOrReap(
+        process: Process,
+        readerThread: Thread,
+        pendingFailure: Throwable?,
+    ) {
+        if (!process.waitFor(processExitTimeoutMillis, TimeUnit.MILLISECONDS)) {
+            killAndReapOrThrow(process, readerThread, pendingFailure, phase = "during stop")
+        } else {
+            readerThread.join()
+        }
     }
 }

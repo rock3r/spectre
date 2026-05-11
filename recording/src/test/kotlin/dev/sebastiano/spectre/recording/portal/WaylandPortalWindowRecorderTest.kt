@@ -23,7 +23,7 @@ class WaylandPortalWindowRecorderTest {
         // window-aligned mp4. Verify the recorder forwards the stream-relative crop.
         val captured = StubRecorderCapture()
         val recorder =
-            WaylandPortalWindowRecorder(
+            WaylandPortalWindowRecorder.createForInternalUse(
                 delegate = captured.asWaylandPortalRecorder(),
                 frameExtentsLookup = {
                     Insets(/* top= */ 25, /* left= */ 25, /* bottom= */ 25, /* right= */ 25)
@@ -51,7 +51,7 @@ class WaylandPortalWindowRecorderTest {
         // instead so the failure mode is visible.
         val captured = StubRecorderCapture()
         val recorder =
-            WaylandPortalWindowRecorder(
+            WaylandPortalWindowRecorder.createForInternalUse(
                 delegate = captured.asWaylandPortalRecorder(),
                 frameExtentsLookup = { null },
             )
@@ -88,7 +88,7 @@ class WaylandPortalWindowRecorderTest {
         // region path (WaylandPortalRecorder), which AutoRecorder routes for null windows.
         val captured = StubRecorderCapture()
         val recorder =
-            WaylandPortalWindowRecorder(
+            WaylandPortalWindowRecorder.createForInternalUse(
                 delegate = captured.asWaylandPortalRecorder(),
                 frameExtentsLookup = { error("should not be called") },
             )

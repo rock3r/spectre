@@ -73,11 +73,36 @@ interface WaylandWindowSourceRecorder {
  * window for the compositor to scope a window-source stream to.
  * [dev.sebastiano.spectre.recording.AutoRecorder] routes those automatically.
  */
-internal class WaylandPortalWindowRecorder(
-    private val delegate: dev.sebastiano.spectre.recording.Recorder =
-        WaylandPortalRecorder(sourceTypes = listOf(SourceType.WINDOW)),
-    private val frameExtentsLookup: (String) -> Insets? = ::queryGtkFrameExtentsViaXprop,
+public class WaylandPortalWindowRecorder
+private constructor(
+    private val delegate: dev.sebastiano.spectre.recording.Recorder,
+    private val frameExtentsLookup: (String) -> Insets?,
 ) : WaylandWindowSourceRecorder {
+
+    /**
+     * Default user-facing constructor. Wraps a [WaylandPortalRecorder] configured for
+     * `SourceType.WINDOW` and the system `xprop` lookup for GTK frame extents.
+     */
+    public constructor() :
+        this(
+            delegate =
+                WaylandPortalRecorder.createForInternalUse(sourceTypes = listOf(SourceType.WINDOW)),
+            frameExtentsLookup = ::queryGtkFrameExtentsViaXprop,
+        )
+
+    internal companion object {
+
+        /**
+         * In-module factory for tests. See [WaylandPortalRecorder.createForInternalUse] for the
+         * rationale on the `@JvmSynthetic` annotation.
+         */
+        @JvmSynthetic
+        internal fun createForInternalUse(
+            delegate: dev.sebastiano.spectre.recording.Recorder =
+                WaylandPortalRecorder.createForInternalUse(sourceTypes = listOf(SourceType.WINDOW)),
+            frameExtentsLookup: (String) -> Insets? = ::queryGtkFrameExtentsViaXprop,
+        ): WaylandPortalWindowRecorder = WaylandPortalWindowRecorder(delegate, frameExtentsLookup)
+    }
 
     /**
      * Start the window-targeted recording. The caller passes [window] and the [region] containing
