@@ -721,12 +721,15 @@ constructor(private val execOperations: ExecOperations) : DefaultTask() {
 
     /**
      * Directory `processResources` writes into. Helper paths are resolved relative to this.
-     * `@Optional` because hosts that produce no helpers (Windows; macOS/Linux with
-     * `processResources` skipped because no inputs landed) may not create the directory at all. The
-     * action below treats an absent directory as a fail iff there are real expectations, and a
-     * clean no-op when expectations are empty.
+     * `@Internal` rather than `@InputDirectory`: on hosts that produce no helpers (Windows;
+     * macOS/Linux with no other resources triggering processResources to create the dir),
+     * `build/resources/main` may not exist at all, and Gradle's `@InputDirectory` validation fails
+     * at task-graph time before the action runs (even with `@Optional`, because the value *is* set
+     * — we only fail to set it on hosts where no expectations exist). The task is pure verification
+     * with no incremental-build benefit anyway, so dropping input tracking is fine — the action
+     * below handles "expectations but no directory" as a real failure mode.
      */
-    @get:Optional @get:InputDirectory abstract val resourcesDir: DirectoryProperty
+    @get:Internal abstract val resourcesDir: DirectoryProperty
 
     /**
      * macOS architectures expected in `native/macos/spectre-screencapture`. Empty list means "no
