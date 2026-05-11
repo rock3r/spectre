@@ -119,6 +119,82 @@ class AutoRecorderTest {
     }
 
     @Test
+    fun `Wayland portal construction failure logs warning on the fallback path`() {
+        // Wayland session detected, both portal recorder slots null because their construction
+        // failed at AutoRecorder init time. The router falls through to ffmpeg (which will
+        // itself fail loudly on a real Wayland session), but before that we want one stderr
+        // line naming the underlying portal failure so the user knows what to fix.
+        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.ShouldNeverBeCalled)
+        val ffmpeg = StubFfmpegRecorder()
+        val failure = IllegalStateException("dbus-launch not found on PATH")
+        val recorder =
+            autoRecorder(
+                sckRecorder = sck,
+                ffmpegRecorder = ffmpeg,
+                waylandPortalRecorder = null,
+                waylandPortalWindowRecorder = null,
+                waylandPortalRecorderFailure = failure,
+                waylandPortalWindowRecorderFailure = failure,
+                isMacOs = { false },
+                isWayland = { true },
+            )
+        val output = tempMov()
+        val originalErr = System.err
+        val captured = ByteArrayOutputStream()
+        System.setErr(PrintStream(captured))
+        try {
+            recorder.start(window = null, region = Rectangle(0, 0, 100, 100), output = output)
+        } finally {
+            System.setErr(originalErr)
+            output.deleteIfExists()
+        }
+        val warning = captured.toString(Charsets.UTF_8)
+        assertTrue(
+            warning.contains("AutoRecorder", ignoreCase = true) &&
+                warning.contains("Wayland portal recorder unavailable", ignoreCase = true) &&
+                warning.contains("dbus-launch not found"),
+            "Expected Wayland fallback warning naming the underlying cause, got: $warning",
+        )
+    }
+
+    @Test
+    fun `Wayland portal fallback warning fires at most once per AutoRecorder instance`() {
+        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.ShouldNeverBeCalled)
+        val ffmpeg = StubFfmpegRecorder()
+        val recorder =
+            autoRecorder(
+                sckRecorder = sck,
+                ffmpegRecorder = ffmpeg,
+                waylandPortalRecorder = null,
+                waylandPortalWindowRecorder = null,
+                waylandPortalRecorderFailure = IllegalStateException("dbus-launch missing"),
+                waylandPortalWindowRecorderFailure = IllegalStateException("dbus-launch missing"),
+                isMacOs = { false },
+                isWayland = { true },
+            )
+        val outputs = listOf(tempMov(), tempMov())
+        val originalErr = System.err
+        val captured = ByteArrayOutputStream()
+        System.setErr(PrintStream(captured))
+        try {
+            outputs.forEach {
+                recorder.start(window = null, region = Rectangle(0, 0, 100, 100), output = it)
+            }
+        } finally {
+            System.setErr(originalErr)
+            outputs.forEach { it.deleteIfExists() }
+        }
+        val warning = captured.toString(Charsets.UTF_8)
+        val occurrences = warning.split("Wayland portal recorder unavailable").size - 1
+        assertEquals(
+            1,
+            occurrences,
+            "Expected the Wayland fallback warning to fire exactly once across repeated " +
+                "start() calls; saw $occurrences. Full stderr: $warning",
+        )
+    }
+
+    @Test
     fun `helper-not-bundled fallback writes a warning to stderr so the degradation is visible`() {
         val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.HelperNotBundled)
         val ffmpeg = StubFfmpegRecorder()
@@ -427,6 +503,8 @@ private fun autoRecorder(
     windowsWindowRecorder: WindowRecorder? = null,
     waylandPortalRecorder: Recorder? = null,
     waylandPortalWindowRecorder: WaylandWindowSourceRecorder? = null,
+    waylandPortalRecorderFailure: Throwable? = null,
+    waylandPortalWindowRecorderFailure: Throwable? = null,
     isMacOs: () -> Boolean,
     isWindows: () -> Boolean = { false },
     isWayland: () -> Boolean = { false },
@@ -437,6 +515,8 @@ private fun autoRecorder(
         windowsWindowRecorder,
         waylandPortalRecorder,
         waylandPortalWindowRecorder,
+        waylandPortalRecorderFailure,
+        waylandPortalWindowRecorderFailure,
         isMacOs,
         isWindows,
         isWayland,

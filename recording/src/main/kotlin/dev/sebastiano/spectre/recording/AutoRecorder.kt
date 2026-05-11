@@ -11,6 +11,7 @@ import dev.sebastiano.spectre.recording.screencapturekit.WindowRecorder
 import java.awt.Rectangle
 import java.lang.ProcessHandle
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * High-level recorder that picks between window-targeted capture and region-based ffmpeg capture
@@ -65,6 +66,8 @@ internal constructor(
     private val windowsWindowRecorder: WindowRecorder?,
     private val waylandPortalRecorder: Recorder?,
     private val waylandPortalWindowRecorder: WaylandWindowSourceRecorder?,
+    private val waylandPortalRecorderFailure: Throwable?,
+    private val waylandPortalWindowRecorderFailure: Throwable?,
     private val isMacOs: () -> Boolean,
     private val isWindows: () -> Boolean,
     private val isWayland: () -> Boolean,
@@ -74,19 +77,30 @@ internal constructor(
         sckRecorder: WindowRecorder = ScreenCaptureKitRecorder(),
         ffmpegRecorder: Recorder = FfmpegRecorder(),
         windowsWindowRecorder: WindowRecorder? = defaultWindowsWindowRecorder(),
-        waylandPortalRecorder: Recorder? = defaultWaylandPortalRecorder(),
-        waylandPortalWindowRecorder: WaylandWindowSourceRecorder? =
-            defaultWaylandPortalWindowRecorder(),
+        waylandPortalRecorder: Recorder? = defaultPortals.region,
+        waylandPortalWindowRecorder: WaylandWindowSourceRecorder? = defaultPortals.window,
     ) : this(
-        sckRecorder,
-        ffmpegRecorder,
-        windowsWindowRecorder,
-        waylandPortalRecorder,
-        waylandPortalWindowRecorder,
-        ::defaultIsMacOs,
-        ::defaultIsWindows,
-        ::defaultIsWayland,
+        sckRecorder = sckRecorder,
+        ffmpegRecorder = ffmpegRecorder,
+        windowsWindowRecorder = windowsWindowRecorder,
+        waylandPortalRecorder = waylandPortalRecorder,
+        waylandPortalWindowRecorder = waylandPortalWindowRecorder,
+        // A user who passed a non-null recorder owns its construction; we only surface our own
+        // resolution failure for slots the caller left as null (i.e. accepted the default).
+        waylandPortalRecorderFailure =
+            if (waylandPortalRecorder == null) defaultPortals.regionFailure else null,
+        waylandPortalWindowRecorderFailure =
+            if (waylandPortalWindowRecorder == null) defaultPortals.windowFailure else null,
+        isMacOs = ::defaultIsMacOs,
+        isWindows = ::defaultIsWindows,
+        isWayland = ::defaultIsWayland,
     )
+
+    /**
+     * Latched to true the first time we emit the Wayland portal fallback warning, so repeated
+     * `start()` calls on the same AutoRecorder instance don't spam stderr.
+     */
+    private val waylandFallbackWarned = AtomicBoolean(false)
 
     fun start(
         window: TitledWindow?,
@@ -111,6 +125,14 @@ internal constructor(
         }
         if (isWayland() && waylandPortalRecorder != null) {
             return waylandPortalRecorder.start(region, output, options)
+        }
+        if (isWayland()) {
+            // Wayland session detected but no portal recorder could be constructed. The
+            // ffmpeg fallback below will fail loudly ("Wayland detected, x11grab unavailable")
+            // — but the underlying construction failure for the portal recorder is the more
+            // useful diagnostic, so surface it once via stderr before we let ffmpeg complete
+            // the routing.
+            maybeWarnWaylandFallback(window)
         }
         if (window == null) {
             return ffmpegRecorder.start(region, output, options)
@@ -147,6 +169,32 @@ internal constructor(
             )
         }
         return ffmpegRecorder.start(region, output, options)
+    }
+
+    /**
+     * Emit the Wayland portal fallback warning at most once per AutoRecorder instance. Picks the
+     * window-recorder failure when a [window] is supplied (that's the slot the router checked
+     * first), otherwise the region-recorder failure. Both being null means the caller explicitly
+     * passed `null` recorders without going through our defaults — we still emit the warning so the
+     * silent downgrade is visible, just with a less specific cause.
+     */
+    private fun maybeWarnWaylandFallback(window: TitledWindow?) {
+        if (!waylandFallbackWarned.compareAndSet(false, true)) return
+        val failure =
+            if (window != null) {
+                waylandPortalWindowRecorderFailure ?: waylandPortalRecorderFailure
+            } else {
+                waylandPortalRecorderFailure ?: waylandPortalWindowRecorderFailure
+            }
+        val cause =
+            failure?.message?.takeIf { it.isNotBlank() }
+                ?: failure?.javaClass?.simpleName
+                ?: "no construction failure recorded — recorder slot was passed as null"
+        System.err.println(
+            "AutoRecorder: Wayland portal recorder unavailable ($cause); falling back to " +
+                "ffmpeg region capture (which will fail on Wayland — install the portal helper " +
+                "prerequisites or supply a custom recorder)."
+        )
     }
 
     private companion object {
@@ -190,45 +238,61 @@ internal constructor(
         }
 
         /**
-         * Constructs a [WaylandPortalRecorder] only when the host is Linux. dbus-java + gst-launch
-         * are no-ops on macOS / Windows (the gst-launch binary doesn't exist there, the D-Bus
-         * session bus isn't running) — gating on `isLinux` keeps cross-host distribution jars from
-         * triggering construction-time failures. The recorder is null on non-Linux even if the
-         * AutoRecorder is constructed; the router never asks for it on those hosts.
+         * Lazily resolves both portal recorders once per JVM (the first time the public no-arg
+         * `AutoRecorder` constructor's defaults fire). Captures any construction failure so the
+         * router can surface it via the fallback warning instead of silently dropping it.
          *
-         * Failures resolving the gst-launch path or constructing the recorder are swallowed for the
-         * same reasons as [defaultWindowsWindowRecorder]: a Linux host without GStreamer installed
-         * should still be able to instantiate AutoRecorder for non-Wayland or non-recording flows.
-         * If the user actually triggers Wayland recording on such a host, the construction-time
-         * error from `WaylandPortalRecorder.init` would surface at start() time as a clear
-         * "gst-launch-1.0 not found, install gstreamer1.0-tools".
+         * Tests bypass this entirely by going through the internal constructor.
          */
-        @JvmStatic
-        @Suppress("TooGenericExceptionCaught")
-        fun defaultWaylandPortalRecorder(): Recorder? {
-            if (!defaultIsLinux()) return null
-            return try {
-                WaylandPortalRecorder()
-            } catch (_: Throwable) {
-                null
-            }
+        val defaultPortals: WaylandPortalRecorders by lazy {
+            WaylandPortalRecorders.resolveDefaults(::defaultIsLinux)
         }
+    }
+}
+
+/**
+ * Internal routing state for the Wayland portal recorders + the construction failures (if any) that
+ * produced their null slots. Stays out of the public API so `AutoRecorder`'s public constructor
+ * doesn't have to take `Throwable` parameters.
+ */
+internal data class WaylandPortalRecorders(
+    val region: Recorder?,
+    val window: WaylandWindowSourceRecorder?,
+    val regionFailure: Throwable?,
+    val windowFailure: Throwable?,
+) {
+
+    companion object {
 
         /**
-         * Constructs a [WaylandPortalWindowRecorder] only when the host is Linux. Same gating as
-         * [defaultWaylandPortalRecorder] — the helper binary, GStreamer, and the portal D-Bus
-         * service are all Linux-only. Failures resolving dependencies are swallowed for the same
-         * reasons.
+         * Constructs the default portal recorders on Linux; returns all-null on other hosts.
+         *
+         * dbus-java + gst-launch are no-ops on macOS / Windows (the gst-launch binary doesn't exist
+         * there, the D-Bus session bus isn't running) — gating on `isLinux` keeps cross-host
+         * distribution jars from triggering construction-time failures. On Linux, failures
+         * resolving the gst-launch path or constructing either recorder are captured rather than
+         * dropped, so a Linux host without GStreamer installed can still instantiate AutoRecorder
+         * for non-Wayland flows but a user who triggers Wayland recording sees the diagnostic via
+         * the stderr fallback warning.
          */
-        @JvmStatic
         @Suppress("TooGenericExceptionCaught")
-        fun defaultWaylandPortalWindowRecorder(): WaylandWindowSourceRecorder? {
-            if (!defaultIsLinux()) return null
-            return try {
-                WaylandPortalWindowRecorder()
-            } catch (_: Throwable) {
-                null
+        fun resolveDefaults(isLinux: () -> Boolean): WaylandPortalRecorders {
+            if (!isLinux()) return WaylandPortalRecorders(null, null, null, null)
+            var region: Recorder? = null
+            var regionFailure: Throwable? = null
+            try {
+                region = WaylandPortalRecorder()
+            } catch (t: Throwable) {
+                regionFailure = t
             }
+            var window: WaylandWindowSourceRecorder? = null
+            var windowFailure: Throwable? = null
+            try {
+                window = WaylandPortalWindowRecorder()
+            } catch (t: Throwable) {
+                windowFailure = t
+            }
+            return WaylandPortalRecorders(region, window, regionFailure, windowFailure)
         }
     }
 }
