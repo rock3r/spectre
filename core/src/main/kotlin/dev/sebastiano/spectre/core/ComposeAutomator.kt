@@ -477,7 +477,11 @@ private constructor(
         timeout: Duration = 5.seconds,
         pollInterval: Duration = 100.milliseconds,
     ): AutomatorNode {
+        // Argument validation runs before the EDT check so `waitForNode()` from the EDT still
+        // surfaces the bad-input error rather than the curated EDT error — bad arguments are
+        // the more actionable signal in that case.
         require(tag != null || text != null) { "Either tag or text must be specified" }
+        rejectEdtCaller("waitForNode")
         return waitUntil(timeout = timeout, pollInterval = pollInterval) {
             readOnEdt {
                 refreshWindows()
