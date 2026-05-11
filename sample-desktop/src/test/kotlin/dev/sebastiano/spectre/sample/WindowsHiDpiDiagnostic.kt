@@ -1,4 +1,5 @@
 @file:JvmName("WindowsHiDpiDiagnostic")
+@file:OptIn(InternalSpectreApi::class)
 
 package dev.sebastiano.spectre.sample
 
@@ -24,6 +25,7 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import dev.sebastiano.spectre.core.InternalSpectreApi
 import dev.sebastiano.spectre.core.composeBoundsToAwtCenter
 import dev.sebastiano.spectre.core.composeBoundsToAwtRectangle
 import java.awt.BorderLayout

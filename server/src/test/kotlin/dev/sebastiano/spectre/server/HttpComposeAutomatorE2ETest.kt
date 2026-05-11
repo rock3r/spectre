@@ -2,8 +2,6 @@ package dev.sebastiano.spectre.server
 
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.RobotDriver
-import dev.sebastiano.spectre.core.SemanticsReader
-import dev.sebastiano.spectre.core.WindowTracker
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
@@ -38,12 +36,7 @@ class HttpComposeAutomatorE2ETest {
 
     @BeforeTest
     fun startServer() {
-        val automator =
-            ComposeAutomator.inProcess(
-                windowTracker = WindowTracker(),
-                semanticsReader = SemanticsReader(),
-                robotDriver = RobotDriver.headless(),
-            )
+        val automator = ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())
         server =
             embeddedServer(CIO, port = 0) { installSpectreRoutes(automator) }.start(wait = false)
         port = runBlocking { server.engine.resolvedConnectors().first().port }

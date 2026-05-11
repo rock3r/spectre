@@ -21,12 +21,13 @@ import kotlin.math.floor
  * `panelScreenX` simply carries any negative offset through. Empirical scenarios are pinned in
  * `WindowsHiDpiScenariosTest`.
  */
-fun composeToAwtX(composeX: Float, scaleX: Float, panelScreenX: Int): Int =
+internal fun composeToAwtX(composeX: Float, scaleX: Float, panelScreenX: Int): Int =
     (composeX / scaleX).toInt() + panelScreenX
 
-fun composeToAwtY(composeY: Float, scaleY: Float, panelScreenY: Int): Int =
+internal fun composeToAwtY(composeY: Float, scaleY: Float, panelScreenY: Int): Int =
     (composeY / scaleY).toInt() + panelScreenY
 
+@InternalSpectreApi
 fun composeBoundsToAwtCenter(
     left: Float,
     top: Float,
@@ -44,6 +45,7 @@ fun composeBoundsToAwtCenter(
     return Point((awtLeft + awtRight) / 2, (awtTop + awtBottom) / 2)
 }
 
+@InternalSpectreApi
 fun composeBoundsToAwtRectangle(
     left: Float,
     top: Float,

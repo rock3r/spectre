@@ -57,13 +57,14 @@ class Issue7CompletionValidationTest {
     fun `JDialog hosting ComposePanel exposes its tree to the automator`() = runBlocking {
         with(fixture.automator) {
             navigateToScenario("scenario.jdialog")
-            val initialWindows = windows.size
+            val initialWindows = surfaceIds().size
             click(waitForTestTag("jdialog.toggleButton"))
             // The JDialog enters the AWT hierarchy a frame or two after the Swing call returns,
             // and the Compose semantics owner inside its embedded ComposePanel attaches
             // asynchronously. Wait until both the window count grew AND the body resolves.
             eventually(description = "jdialog window registered + body discoverable") {
-                if (windows.size > initialWindows && findOneByTestTag("jdialog.body") != null) Unit
+                if (surfaceIds().size > initialWindows && findOneByTestTag("jdialog.body") != null)
+                    Unit
                 else null
             }
             val body = waitForTestTag("jdialog.body")

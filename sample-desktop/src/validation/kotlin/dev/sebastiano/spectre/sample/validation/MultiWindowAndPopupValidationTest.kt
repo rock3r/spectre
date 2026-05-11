@@ -73,25 +73,26 @@ class MultiWindowAndPopupValidationTest {
         with(fixture.automator) {
             navigateToScenario("scenario.multiwindow")
             // Capture the main window's surfaceIds BEFORE opening the secondary — the order
-            // returned by `windows` (built from `Window.getWindows()`) is not contractually
-            // guaranteed, so taking `windows.first()` after the open could pick the secondary.
-            val mainSurfaceIds = windows.map { it.surfaceId }.toSet()
-            val initialCount = windows.size
+            // returned by `surfaceIds()` (built from `Window.getWindows()`) is not contractually
+            // guaranteed, so taking `surfaceIds().first()` after the open could pick the
+            // secondary.
+            val mainSurfaceIds = surfaceIds().toSet()
+            val initialCount = surfaceIds().size
             click(waitForTestTag("multiwindow.toggleButton"))
-            eventually(description = "windows.size > $initialCount") {
-                if (windows.size > initialCount) Unit else null
+            eventually(description = "surfaceIds size > $initialCount") {
+                if (surfaceIds().size > initialCount) Unit else null
             }
             // Find a node specific to the secondary window — proves we can introspect it.
             val secondaryText = waitForTestTag("multiwindow.secondary.text")
             assertNotNull(secondaryText)
             assertTrue(
-                secondaryText.trackedWindow.surfaceId !in mainSurfaceIds,
-                "Secondary window's surfaceId should be new, was ${secondaryText.trackedWindow.surfaceId} (mains: $mainSurfaceIds)",
+                secondaryText.surfaceId !in mainSurfaceIds,
+                "Secondary window's surfaceId should be new, was ${secondaryText.surfaceId} (mains: $mainSurfaceIds)",
             )
             // Tear down: dismiss the secondary window and wait for the count to drop.
             click(waitForTestTag("multiwindow.secondary.dismissButton"))
-            eventually(description = "windows.size back to $initialCount") {
-                if (windows.size == initialCount) Unit else null
+            eventually(description = "surfaceIds size back to $initialCount") {
+                if (surfaceIds().size == initialCount) Unit else null
             }
         }
     }

@@ -32,9 +32,6 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import dev.sebastiano.spectre.core.RobotDriver
-import dev.sebastiano.spectre.core.composeBoundsToAwtCenter
-import dev.sebastiano.spectre.core.detectMacOs
-import dev.sebastiano.spectre.core.shortcutModifierKeyCode
 import java.awt.Rectangle
 import java.awt.Window
 import java.util.concurrent.atomic.AtomicReference
@@ -213,17 +210,19 @@ internal fun awtCenter(state: SmokeState, rect: Rect): java.awt.Point? {
         } catch (_: java.awt.IllegalComponentStateException) {
             return null
         }
-    return composeBoundsToAwtCenter(
-        left = rect.left,
-        top = rect.top,
-        right = rect.right,
-        bottom = rect.bottom,
-        scaleX = xform.scaleX.toFloat(),
-        scaleY = xform.scaleY.toFloat(),
-        panelScreenX = panelLoc.x,
-        panelScreenY = panelLoc.y,
-    )
+    val scaleX = xform.scaleX.toFloat()
+    val scaleY = xform.scaleY.toFloat()
+    val awtLeft = (rect.left / scaleX).toInt() + panelLoc.x
+    val awtTop = (rect.top / scaleY).toInt() + panelLoc.y
+    val awtRight = (rect.right / scaleX).toInt() + panelLoc.x
+    val awtBottom = (rect.bottom / scaleY).toInt() + panelLoc.y
+    return java.awt.Point((awtLeft + awtRight) / 2, (awtTop + awtBottom) / 2)
 }
+
+private fun isMacOs(): Boolean = System.getProperty("os.name").lowercase().contains("mac")
+
+private fun shortcutModifierKeyCode(isMac: Boolean): Int =
+    if (isMac) java.awt.event.KeyEvent.VK_META else java.awt.event.KeyEvent.VK_CONTROL
 
 internal suspend fun warmupRobot(driver: RobotDriver, state: SmokeState) {
     // Click on the counter button, fire-and-forget. counterBounds is non-zero by here
@@ -356,19 +355,20 @@ internal suspend fun scenarioShortcut(driver: RobotDriver, state: SmokeState): S
     // and Cmd+S on macOS — `shortcutModifierKeyCode` is what RobotDriver itself uses for
     // typeText/clearAndTypeText, so the smoke proves the same modifier-mask → keyCode path
     // Spectre callers use for shortcut keystrokes.
+    val mac = isMacOs()
     val modifierMask =
-        if (detectMacOs()) java.awt.event.InputEvent.META_DOWN_MASK
+        if (mac) java.awt.event.InputEvent.META_DOWN_MASK
         else java.awt.event.InputEvent.CTRL_DOWN_MASK
     driver.pressKey(java.awt.event.KeyEvent.VK_S, modifierMask)
     delay(POST_CLICK_SETTLE_MS.milliseconds)
     val after = state.shortcutFiredCount
-    val modifierLabel = if (detectMacOs()) "Cmd+S" else "Ctrl+S"
+    val modifierLabel = if (mac) "Cmd+S" else "Ctrl+S"
     return ScenarioResult(
         "$modifierLabel shortcut via pressKey",
         passed = after == before + 1,
         detail =
             "shortcutFiredCount $before → $after (modifier keyCode=" +
-                "${shortcutModifierKeyCode(detectMacOs())})",
+                "${shortcutModifierKeyCode(mac)})",
     )
 }
 

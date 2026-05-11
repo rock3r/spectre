@@ -463,10 +463,10 @@ private suspend fun runOffEdt(robot: RobotAdapter, block: suspend () -> Unit) {
     withContext(Dispatchers.IO) { block() }
 }
 
-fun shortcutModifierKeyCode(isMacOs: Boolean): Int =
+internal fun shortcutModifierKeyCode(isMacOs: Boolean): Int =
     if (isMacOs) KeyEvent.VK_META else KeyEvent.VK_CONTROL
 
-fun modifierMaskToKeyCodes(mask: Int): List<Int> = buildList {
+internal fun modifierMaskToKeyCodes(mask: Int): List<Int> = buildList {
     if (mask and InputEvent.CTRL_DOWN_MASK != 0) add(KeyEvent.VK_CONTROL)
     if (mask and InputEvent.SHIFT_DOWN_MASK != 0) add(KeyEvent.VK_SHIFT)
     if (mask and InputEvent.ALT_DOWN_MASK != 0) add(KeyEvent.VK_ALT)
@@ -479,7 +479,7 @@ internal fun swipePauseMillis(duration: Duration, steps: Int, autoDelayMs: Int):
     return (perStepBudgetMs - autoDelayMs).coerceAtLeast(0)
 }
 
-fun interpolateSwipePoints(
+internal fun interpolateSwipePoints(
     startX: Int,
     startY: Int,
     endX: Int,
@@ -495,7 +495,7 @@ fun interpolateSwipePoints(
     }
 }
 
-fun detectMacOs(): Boolean = System.getProperty("os.name").lowercase().contains("mac")
+internal fun detectMacOs(): Boolean = System.getProperty("os.name").lowercase().contains("mac")
 
 private fun virtualDesktopBounds(): Rectangle {
     // GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices throws HeadlessException

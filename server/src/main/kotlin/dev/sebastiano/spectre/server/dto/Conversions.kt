@@ -1,6 +1,9 @@
+@file:OptIn(InternalSpectreApi::class)
+
 package dev.sebastiano.spectre.server.dto
 
 import dev.sebastiano.spectre.core.AutomatorNode
+import dev.sebastiano.spectre.core.InternalSpectreApi
 import dev.sebastiano.spectre.core.TrackedWindow
 import java.awt.Rectangle
 

@@ -1,7 +1,5 @@
 package dev.sebastiano.spectre.intellij
 
-import androidx.compose.ui.semantics.SemanticsActions
-import androidx.compose.ui.semantics.getOrNull
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -12,8 +10,6 @@ import com.intellij.openapi.wm.ToolWindowManager
 import dev.sebastiano.spectre.core.AutomatorNode
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.RobotDriver
-import dev.sebastiano.spectre.core.SemanticsReader
-import dev.sebastiano.spectre.core.WindowTracker
 
 /**
  * Manual validation entry point for #13: opens the "Spectre Sample" tool window and runs the
@@ -65,12 +61,7 @@ class RunSpectreAction : AnAction() {
     }
 
     private fun driveAutomator() {
-        val automator =
-            ComposeAutomator.inProcess(
-                windowTracker = WindowTracker(),
-                semanticsReader = SemanticsReader(),
-                robotDriver = RobotDriver.headless(),
-            )
+        val automator = ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())
         val log = thisLogger()
 
         // 1. Wait for the Jewel `ComposePanel` to attach its semantics owner. Compose
@@ -80,7 +71,8 @@ class RunSpectreAction : AnAction() {
         //    access is marshalled back to EDT.
         val panelReady = pollOnEdt {
             automator.refreshWindows()
-            automator.windows.isNotEmpty() && automator.findOneByTestTag("ide.counter.text") != null
+            automator.surfaceIds().isNotEmpty() &&
+                automator.findOneByTestTag("ide.counter.text") != null
         }
         if (!panelReady) {
             log.warn(
@@ -92,7 +84,7 @@ class RunSpectreAction : AnAction() {
         }
 
         // 2. Dump the initial tree (popup closed).
-        log.info("[Spectre] tracked windows (initial): ${automator.windows.map { it.surfaceId }}")
+        log.info("[Spectre] tracked windows (initial): ${automator.surfaceIds()}")
         runOnEdt { dumpTaggedNodes(automator, "[Spectre] (initial)") }
 
         // 3. Open the popup so the Jewel-hosted popup discovery path actually runs. Without
@@ -105,7 +97,7 @@ class RunSpectreAction : AnAction() {
             log.warn("[Spectre] popup toggle node not discoverable — popup discovery skipped")
             return
         }
-        runOnEdt { triggerOnClick(toggle) }
+        runOnEdt { automator.performSemanticsClick(toggle) }
 
         val popupReady = pollOnEdt {
             automator.refreshWindows()
@@ -119,9 +111,7 @@ class RunSpectreAction : AnAction() {
             return
         }
 
-        log.info(
-            "[Spectre] tracked windows (with popup): ${automator.windows.map { it.surfaceId }}"
-        )
+        log.info("[Spectre] tracked windows (with popup): ${automator.surfaceIds()}")
         runOnEdt { dumpTaggedNodes(automator, "[Spectre] (with popup)") }
     }
 
@@ -131,18 +121,6 @@ class RunSpectreAction : AnAction() {
             node.testTag ?: continue
             log.info("$prefix ${formatNode(node)}")
         }
-    }
-
-    /**
-     * Invokes the Compose `OnClick` semantics action on [node] from the EDT — equivalent to a
-     * synthetic click for the purpose of toggling state, without going through the OS input stack.
-     * The `RobotDriver.headless()` we use here throws on real input, so we drive the semantics tree
-     * directly. This is the same pattern Compose's own `composeTestRule.onNode` uses internally.
-     * Caller is responsible for ensuring this runs on the EDT.
-     */
-    private fun triggerOnClick(node: AutomatorNode) {
-        val onClick = node.semanticsNode.config.getOrNull(SemanticsActions.OnClick)
-        onClick?.action?.invoke()
     }
 
     /**
@@ -188,7 +166,7 @@ class RunSpectreAction : AnAction() {
         append(node.testTag)
         node.text?.let { append(" text=\"$it\"") }
         node.editableText?.let { append(" editableText=\"$it\"") }
-        append(" surface=").append(node.trackedWindow.surfaceId)
+        append(" surface=").append(node.surfaceId)
     }
 
     private companion object {

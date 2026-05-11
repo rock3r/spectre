@@ -1,3 +1,5 @@
+@file:OptIn(InternalSpectreApi::class)
+
 package dev.sebastiano.spectre.core
 
 import androidx.compose.ui.geometry.Rect
@@ -33,10 +35,13 @@ data class NodeKey(val surfaceId: String, val ownerIndex: Int, val nodeId: Int) 
 class AutomatorNode
 internal constructor(
     val key: NodeKey,
-    val semanticsNode: SemanticsNode,
-    val trackedWindow: TrackedWindow,
+    internal val semanticsNode: SemanticsNode,
+    internal val trackedWindow: TrackedWindow,
     private val relations: NodeRelations = EmptyNodeRelations,
 ) {
+
+    /** Stable identifier of the tracked window/surface this node belongs to. */
+    val surfaceId: String = trackedWindow.surfaceId
 
     // Eagerly snapshot all semantics properties at construction time (which runs on
     // the EDT inside readAllNodes) so callers can safely read them from any thread.

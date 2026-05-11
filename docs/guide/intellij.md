@@ -135,21 +135,13 @@ the EDT. This is what Compose's own test rule does internally. It's useful when:
   layout dependency.
 
 ```kotlin
-import androidx.compose.ui.semantics.SemanticsActions
-import androidx.compose.ui.semantics.getOrNull
-import com.intellij.openapi.application.ApplicationManager
-
-private fun triggerOnClick(node: AutomatorNode) {
-    val onClick = node.semanticsNode.config.getOrNull(SemanticsActions.OnClick)
-    onClick?.action?.invoke()
-}
-
-// caller (must run on EDT):
-ApplicationManager.getApplication().invokeAndWait {
-    val toggle = automator.findOneByTestTag("popup.toggleButton") ?: return@invokeAndWait
-    triggerOnClick(toggle)
-}
+val toggle = automator.findOneByTestTag("popup.toggleButton") ?: return
+automator.performSemanticsClick(toggle)
 ```
+
+`performSemanticsClick` marshals onto the EDT itself and invokes the Compose
+`OnClick` semantics action directly. It throws `IllegalStateException` if the node
+has no `OnClick` attached.
 
 The trade-off: only nodes that expose an `OnClick` action (most `Modifier.clickable`
 content does) can be driven this way, and you bypass any composable that reacts to
@@ -279,8 +271,8 @@ A few things to know about IDE-hosted Compose surfaces:
 
     See [Recording](recording.md) for the full routing logic.
 - **Popups inside the IDE** are still tracked. Compose creates separate roots for them,
-  and the `WindowTracker` enumerates each one — your selectors find nodes regardless of
-  whether they live in the main tool window or a dropdown.
+  and Spectre's window tracking enumerates each one — your selectors find nodes regardless
+  of whether they live in the main tool window or a dropdown.
 - **The IDE owns its own EDT**. Spectre's `waitForIdle` and `waitForVisualIdle` still
   refuse to run on it, so any code path triggered from a UI handler needs to bounce
   off to a pooled background thread before calling them.
