@@ -85,7 +85,7 @@ private fun Route.spectreRoutes(automator: ComposeAutomator) {
 
     post("/click") {
         automator.refreshWindows()
-        val request = call.receive<ClickRequest>()
+        val request = receiveOrRespond400<ClickRequest>(call, "ClickRequest") ?: return@post
         // NodeKey.parse throws on malformed input — surface that as a client error (400)
         // rather than letting it bubble up as a generic 500.
         val key =
@@ -105,7 +105,7 @@ private fun Route.spectreRoutes(automator: ComposeAutomator) {
     }
 
     post("/typeText") {
-        val request = call.receive<TypeTextRequest>()
+        val request = receiveOrRespond400<TypeTextRequest>(call, "TypeTextRequest") ?: return@post
         automator.typeText(request.text)
         call.respond(HttpStatusCode.NoContent)
     }
@@ -128,3 +128,30 @@ internal fun BufferedImage.toScreenshotResponse(): ScreenshotResponse {
         height = height,
     )
 }
+
+/**
+ * Narrow decode-error mapping for `call.receive<T>()` (R4): Ktor's default response when
+ * kotlinx-serialization fails to decode a request body (invalid JSON, missing required field) is
+ * `400 Bad Request` with an empty body. That's a poor user experience — the client gets a 4xx but
+ * no clue what request shape was expected. Wrap each `receive<T>()` so the response carries the
+ * request type name plus the underlying decode message; the type name is what the negative-contract
+ * tests pin.
+ *
+ * Scope is intentionally narrow: only `BadRequestException` (which `ContentTransformation` raises
+ * on decode failures) is caught. Everything else propagates. Wrong Content-Type still surfaces as
+ * `415 Unsupported Media Type` via Ktor's content-negotiation precheck — Ktor doesn't even get to
+ * `receive<T>()` in that case.
+ */
+private suspend inline fun <reified T : Any> receiveOrRespond400(
+    call: io.ktor.server.application.ApplicationCall,
+    requestTypeName: String,
+): T? =
+    try {
+        call.receive<T>()
+    } catch (e: io.ktor.server.plugins.BadRequestException) {
+        call.respond(
+            HttpStatusCode.BadRequest,
+            "Could not decode $requestTypeName: ${e.message ?: e.javaClass.simpleName}",
+        )
+        null
+    }

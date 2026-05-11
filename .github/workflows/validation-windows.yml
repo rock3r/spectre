@@ -95,6 +95,12 @@ jobs:
         shell: bash
 
       - name: Verify validation tests passed via JUnit XML
+        # Envelope-detection safety net (issue #72): the last 8 validation runs since
+        # 2026-05-11 16:05Z showed no protocol-flake marker. Kept in place as a dormant safety
+        # net — if #72 resurfaces we'll see the existing `::warning::` rather than silent
+        # missing-XML failures. R-future may garbage-collect this block if the dormancy
+        # persists across a broader sample.
+        #
         # Source-of-truth check that ignores Gradle's exit code but does NOT rubber-stamp every
         # failure. Two passes over the JUnit XMLs:
         #

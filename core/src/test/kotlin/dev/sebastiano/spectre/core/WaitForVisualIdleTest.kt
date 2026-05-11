@@ -138,4 +138,23 @@ class WaitForVisualIdleTest {
             )
         }
     }
+
+    @Test
+    fun `waitForVisualIdle rejects EDT callers with a curated error`() {
+        val automator = ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())
+        val errorRef = java.util.concurrent.atomic.AtomicReference<Throwable?>()
+        javax.swing.SwingUtilities.invokeAndWait {
+            kotlinx.coroutines.runBlocking {
+                errorRef.set(runCatching { automator.waitForVisualIdle() }.exceptionOrNull())
+            }
+        }
+        val error = errorRef.get()
+        assertTrue(error is IllegalStateException, "expected IllegalStateException, got $error")
+        assertTrue(
+            error.message?.contains(
+                "waitForVisualIdle must not be called from the AWT event dispatch thread"
+            ) == true,
+            "expected curated EDT message, got: ${error.message}",
+        )
+    }
 }
