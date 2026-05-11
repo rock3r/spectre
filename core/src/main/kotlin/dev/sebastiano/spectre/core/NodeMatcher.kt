@@ -14,6 +14,10 @@ import androidx.compose.ui.semantics.getOrNull
  * an [AutomatorNode] (with eagerly-snapshotted properties) before matching, so it must match
  * against [AutomatorNode]; the live path matches against [SemanticsNode] directly to avoid an extra
  * allocation per traversal.
+ *
+ * A logical `and` combinator is intentionally not provided yet — the bucket that needs combined
+ * tag+text matching (R4) will introduce one alongside its first caller, to avoid shipping unused
+ * matcher surface ahead of demand.
  */
 internal fun interface SnapshotNodeMatcher {
     fun matches(node: AutomatorNode): Boolean
@@ -22,16 +26,6 @@ internal fun interface SnapshotNodeMatcher {
 internal fun interface LiveNodeMatcher {
     fun matches(node: SemanticsNode): Boolean
 }
-
-internal infix fun SnapshotNodeMatcher.and(other: SnapshotNodeMatcher): SnapshotNodeMatcher =
-    SnapshotNodeMatcher { node ->
-        this@and.matches(node) && other.matches(node)
-    }
-
-internal infix fun LiveNodeMatcher.and(other: LiveNodeMatcher): LiveNodeMatcher =
-    LiveNodeMatcher { node ->
-        this@and.matches(node) && other.matches(node)
-    }
 
 internal object NodeMatchers {
 
