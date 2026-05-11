@@ -719,8 +719,14 @@ abstract class VerifyBundledRecordingHelpers
 @Inject
 constructor(private val execOperations: ExecOperations) : DefaultTask() {
 
-    /** Directory `processResources` writes into. Helper paths are resolved relative to this. */
-    @get:InputDirectory abstract val resourcesDir: DirectoryProperty
+    /**
+     * Directory `processResources` writes into. Helper paths are resolved relative to this.
+     * `@Optional` because hosts that produce no helpers (Windows; macOS/Linux with
+     * `processResources` skipped because no inputs landed) may not create the directory at all. The
+     * action below treats an absent directory as a fail iff there are real expectations, and a
+     * clean no-op when expectations are empty.
+     */
+    @get:Optional @get:InputDirectory abstract val resourcesDir: DirectoryProperty
 
     /**
      * macOS architectures expected in `native/macos/spectre-screencapture`. Empty list means "no
@@ -739,12 +745,27 @@ constructor(private val execOperations: ExecOperations) : DefaultTask() {
 
     @TaskAction
     fun verify() {
-        val errors = mutableListOf<String>()
         val macOsArchs = expectedMacOsArchs.get()
+        val linuxArches = expectedLinuxArches.get()
+        if (macOsArchs.isEmpty() && linuxArches.isEmpty()) {
+            logger.lifecycle(
+                "verifyBundledRecordingHelpers: no helpers expected on this host — nothing to verify."
+            )
+            return
+        }
+        val resources = resourcesDir.orNull?.asFile
+        if (resources == null || !resources.isDirectory) {
+            throw GradleException(
+                "Recording helper verification failed: expected resources directory does not " +
+                    "exist (${resourcesDir.orNull?.asFile}). processResources must have run with " +
+                    "the helper staging tasks for this host wired in."
+            )
+        }
+        val errors = mutableListOf<String>()
         if (macOsArchs.isNotEmpty()) {
             verifyMacOsHelper(macOsArchs)?.let(errors::add)
         }
-        for (arch in expectedLinuxArches.get()) {
+        for (arch in linuxArches) {
             verifyLinuxHelper(arch)?.let(errors::add)
         }
         if (errors.isNotEmpty()) {
