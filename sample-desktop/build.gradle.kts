@@ -1,3 +1,5 @@
+import org.gradle.api.services.BuildService
+import org.gradle.api.services.BuildServiceParameters
 import org.gradle.internal.os.OperatingSystem
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
@@ -48,6 +50,33 @@ dependencies {
 }
 
 tasks.withType<Test>().configureEach { useJUnitPlatform() }
+
+// Configuration Cache "Runs tasks in parallel within the same project"
+// (https://docs.gradle.org/current/userguide/configuration_cache.html#config_cache:intro), so the
+// validation Test tasks below — sibling Test tasks with `forkEvery = 1` and class-name filters —
+// get scheduled across separate `Execution worker` threads when CC is on (which it is, globally,
+// via `gradle.properties`). Concurrent worker JVMs occasionally race the Gradle daemon's
+// test-event channel, producing two observed shapes:
+//   - "No tests found for given includes" on filtered tasks (Linux 2026-05-11 run 25697771548)
+//   - "Could not write '/127.0.0.1:NNNN'" historically on Windows (originally #72)
+// Both vanish if the sibling tasks run sequentially. Rather than turning off CC for this
+// invocation (`--no-configuration-cache`, the bigger hammer), pin the validation Test tasks to
+// a single-usage shared `BuildService` so Gradle serializes them while CC stays on. Idea: Nelson
+// Osacky / Emil Kantis — https://kantis.github.io/posts/preventing-gradle-task-parallelism/.
+abstract class ValidationTestSerialiser : BuildService<BuildServiceParameters.None>
+
+val validationTestSerialiser =
+    gradle.sharedServices.registerIfAbsent(
+        "validationTestSerialiser",
+        ValidationTestSerialiser::class,
+    ) {
+        maxParallelUsages.set(1)
+    }
+
+tasks
+    .withType<Test>()
+    .matching { it.name.startsWith("validationTest") }
+    .configureEach { usesService(validationTestSerialiser) }
 
 // Mark every validation-driven worker JVM as a macOS UI element. AppKit treats UI-element
 // processes as background-only — no Dock icon, no menu bar, and (the part the user cares about)

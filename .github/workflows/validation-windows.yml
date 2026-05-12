@@ -76,21 +76,17 @@ jobs:
         uses: gradle/actions/setup-gradle@v5
 
       - name: Run validation tests
-        # `--no-configuration-cache` to suppress the Gradle test-executor protocol race.
-        # Empirically (Linux probe, 2026-05-12), enabling the Configuration Cache flips
-        # `configurationCacheParallelLoad=true` in Gradle's operational model, and that
-        # makes Gradle pick up sibling Test tasks on separate `Execution worker` threads
-        # even with `org.gradle.parallel=false`. The validation suite's
-        # `validationTestLayer*` + `validationTest` tasks are sibling Test tasks with
-        # `forkEvery = 1`; when CC runs them concurrently their worker JVMs occasionally
-        # race the daemon's test-event channel, producing the Windows-shape
-        # `Could not write '/127.0.0.1:NNNN'` originally tracked at #72 (and the
-        # Linux-shape "No tests found for given includes" observed in run 25697771548).
-        # CC stays enabled for the rest of the build — we just opt this one invocation out.
+        # The Gradle test-executor protocol race that historically motivated this step's
+        # tolerance is suppressed at its source by serialising the validation Test tasks
+        # via a `ValidationTestSerialiser` `BuildService` in `sample-desktop/build.gradle.kts`
+        # (see the comment block there for the full mechanism — CC's "tasks in parallel
+        # within the same project" intent collides with `forkEvery = 1` racing the
+        # daemon's test-event channel; the Windows shape is `Could not write
+        # '/127.0.0.1:NNNN'`, originally #72).
         #
         # `continue-on-error: true` + the XML-source-of-truth verification step stay in as
-        # belt + braces in case `--no-configuration-cache` doesn't fully eliminate the
-        # race on Windows.
+        # belt + braces in case the serialisation doesn't fully eliminate the race on
+        # Windows.
         #
         # `--continue` is essential: without it Gradle aborts after the first task to
         # exit non-zero, and the protocol-flake "failure" reliably trips on the first task.
@@ -104,8 +100,7 @@ jobs:
           ./gradlew \
             :sample-desktop:validationTest \
             :sample-desktop:validationTestPopupLayers \
-            --continue \
-            --no-configuration-cache
+            --continue
         shell: bash
 
       - name: Verify validation tests passed via JUnit XML

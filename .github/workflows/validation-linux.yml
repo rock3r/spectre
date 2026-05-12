@@ -93,31 +93,17 @@ jobs:
         # requested task gets a fair chance to produce its JUnit XML, and the verification
         # step below sees the full picture instead of cascade-skips.
         #
-        # `--no-configuration-cache` to suppress the Gradle test-executor protocol race
-        # that motivates the rest of this step's tolerance. Empirically, enabling the
-        # Configuration Cache (set globally in `gradle.properties`) flips
-        # `configurationCacheParallelLoad=true` in Gradle's operational model, and that
-        # makes Gradle pick up sibling Test tasks on separate `Execution worker` threads
-        # even with `org.gradle.parallel=false`. The validation suite's three
-        # `validationTestLayer*` tasks (plus `validationTest`) are sibling Test tasks with
-        # `forkEvery = 1` + `filter { includeTestsMatching(...) }`; when CC runs them
-        # concurrently their worker JVMs occasionally race the daemon's test-event
-        # channel, producing two observed shapes:
-        #   - "No tests found for given includes" on filtered tasks (the JUnit Platform
-        #     discovery scan in a worker returns zero matches under concurrent contention)
-        #   - one class's per-class XML never lands and the listener synthesises
-        #     `<skipped/>` at suite finalisation, while the task itself is not marked
-        #     FAILED (Linux 2026-05-11 run 25697771548; same family as the Windows-shape
-        #     `Could not write '/127.0.0.1:NNNN'` historically tracked at #72)
-        # Reproduced locally by toggling `--no-configuration-cache`: with CC on, three
-        # Layer* tasks land on three distinct worker threads; with CC off, all three land
-        # on the same thread and run sequentially. CC stays enabled for the rest of the
-        # build (it's a real perf win) — we just opt this one validation invocation out.
+        # The Gradle test-executor protocol race that historically motivated this step's
+        # tolerance is suppressed at its source by serialising the validation Test tasks
+        # via a `ValidationTestSerialiser` `BuildService` in `sample-desktop/build.gradle.kts`
+        # (see the comment block there for the full mechanism — CC's "tasks in parallel
+        # within the same project" intent collides with `forkEvery = 1` + filtered Test
+        # tasks racing the daemon's test-event channel).
         #
         # `continue-on-error: true` + the XML-source-of-truth verification step below stay
-        # as belt + braces: if `--no-configuration-cache` doesn't fully eliminate the
-        # race, the workflow still surfaces flakes as `::warning::` instead of failing,
-        # and a genuinely missing class still trips the verifier.
+        # as belt + braces: if the serialisation doesn't fully eliminate the race, the
+        # workflow still surfaces flakes as `::warning::` instead of failing, and a
+        # genuinely missing class still trips the verifier.
         #
         # Screen size 1280x1024 is xvfb-run's default; explicitly setting it via
         # `--server-args` would let us bump it for a denser virtual desktop, but the
@@ -129,8 +115,7 @@ jobs:
           xvfb-run -a ./gradlew \
             :sample-desktop:validationTest \
             :sample-desktop:validationTestPopupLayers \
-            --continue \
-            --no-configuration-cache
+            --continue
         shell: bash
 
       - name: Run real-Robot Linux smoke under Xvfb
