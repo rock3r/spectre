@@ -77,9 +77,13 @@ class HttpComposeAutomatorE2ETest {
                 assertFailsWith<IllegalStateException> { remote.click(nodeKey = "nonexistent:0:1") }
             val message = checkNotNull(ex.message)
             assertTrue(message.contains("404"), "Expected 404 in error message, got: $message")
+            // R5/F5d: client `check {}` no longer interpolates `response.bodyAsText()`, so the
+            // node key must not appear in the exception message even when the server's 404
+            // body somehow surfaced it. The no-echo contract is pinned by
+            // `HttpNegativeContractTest`; here we just confirm the absence on the round-trip.
             assertTrue(
-                message.contains("nonexistent:0:1"),
-                "Expected node key in error message, got: $message",
+                !message.contains("nonexistent:0:1"),
+                "Expected node key NOT to appear in error message, got: $message",
             )
         }
     }

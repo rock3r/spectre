@@ -39,6 +39,24 @@ import javax.imageio.ImageIO
  * require live JVM objects (Tracer, IdlingResource) or stateful long-poll semantics that are out of
  * scope for the v1 transport.
  *
+ * ## Trust boundary
+ *
+ * The HTTP transport is **experimental** and intended for trusted local / test environments only:
+ *
+ * - **Unauthenticated.** Every route is open to any caller that can reach the bound port. There are
+ *   no tokens, headers, or origin checks.
+ * - **Plaintext.** Communication is HTTP, not HTTPS. There is no TLS support.
+ * - **Privileged side effects.** `click` and `typeText` drive real OS input; `screenshot` captures
+ *   pixels visible to the host JVM. Anything that can reach this server can do all of the above.
+ * - **Binding is the host application's responsibility.** This function does not start a server —
+ *   pick an engine and bind to `127.0.0.1`. Do not expose the routes to a network interface.
+ * - **Authentication, authorization, and TLS** are tracked for a separately reviewed future design
+ *   (#96).
+ *
+ * See [the cross-JVM guide](https://spectre.sebastiano.dev/guide/cross-jvm/) and
+ * [the security notes](https://spectre.sebastiano.dev/SECURITY/) for the published exposure model
+ * and risk register.
+ *
  * ## ContentNegotiation contract
  *
  * The Spectre routes exchange JSON DTOs, so a JSON-capable [ContentNegotiation] plugin must be
@@ -87,17 +105,21 @@ private fun Route.spectreRoutes(automator: ComposeAutomator) {
         automator.refreshWindows()
         val request = receiveOrRespond400<ClickRequest>(call, "ClickRequest") ?: return@post
         // NodeKey.parse throws on malformed input — surface that as a client error (400)
-        // rather than letting it bubble up as a generic 500.
+        // rather than letting it bubble up as a generic 500. The body must NOT echo the
+        // attacker-supplied key (R5/F5b): `NodeKey.parse` raises `Invalid NodeKey: $key`
+        // and pre-R5 we interpolated that message verbatim.
         val key =
             try {
                 NodeKey.parse(request.nodeKey)
-            } catch (e: IllegalArgumentException) {
-                call.respond(HttpStatusCode.BadRequest, "Malformed node key: ${e.message}")
+            } catch (_: IllegalArgumentException) {
+                call.respond(HttpStatusCode.BadRequest, "Malformed node key")
                 return@post
             }
         val node = automator.allNodes().firstOrNull { it.key == key }
         if (node == null) {
-            call.respond(HttpStatusCode.NotFound, "No node with key ${request.nodeKey}")
+            // R5/F5c: do NOT echo `request.nodeKey` here — caller-controlled content must
+            // not be reflected in the response body.
+            call.respond(HttpStatusCode.NotFound, "No matching node")
             return@post
         }
         automator.click(node)
@@ -134,13 +156,17 @@ internal fun BufferedImage.toScreenshotResponse(): ScreenshotResponse {
  * kotlinx-serialization fails to decode a request body (invalid JSON, missing required field) is
  * `400 Bad Request` with an empty body. That's a poor user experience — the client gets a 4xx but
  * no clue what request shape was expected. Wrap each `receive<T>()` so the response carries the
- * request type name plus the underlying decode message; the type name is what the negative-contract
- * tests pin.
+ * request type name; the type name is what the negative-contract tests pin.
  *
  * Scope is intentionally narrow: only `BadRequestException` (which `ContentTransformation` raises
  * on decode failures) is caught. Everything else propagates. Wrong Content-Type still surfaces as
  * `415 Unsupported Media Type` via Ktor's content-negotiation precheck — Ktor doesn't even get to
  * `receive<T>()` in that case.
+ *
+ * R5/F5a: the response body deliberately omits the underlying exception message. Decode exceptions
+ * from kotlinx-serialization can quote fragments of the request body, which would reflect
+ * attacker-controlled content back to the caller. The curated request-type name alone is enough for
+ * diagnostics; serializer prose belongs in server-side logs, not on the wire.
  */
 private suspend inline fun <reified T : Any> receiveOrRespond400(
     call: io.ktor.server.application.ApplicationCall,
@@ -148,10 +174,7 @@ private suspend inline fun <reified T : Any> receiveOrRespond400(
 ): T? =
     try {
         call.receive<T>()
-    } catch (e: io.ktor.server.plugins.BadRequestException) {
-        call.respond(
-            HttpStatusCode.BadRequest,
-            "Could not decode $requestTypeName: ${e.message ?: e.javaClass.simpleName}",
-        )
+    } catch (_: io.ktor.server.plugins.BadRequestException) {
+        call.respond(HttpStatusCode.BadRequest, "Could not decode $requestTypeName")
         null
     }

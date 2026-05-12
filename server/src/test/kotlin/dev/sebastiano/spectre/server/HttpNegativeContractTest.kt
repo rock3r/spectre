@@ -65,12 +65,58 @@ class HttpNegativeContractTest {
 
     @Test
     fun `POST click with invalid JSON returns 400 with a useful message`() = testApplication {
+        // The body is deliberately an attacker-shaped payload: if the server ever regresses to
+        // echoing the underlying decoder message back to the caller (as it did pre-R5), this
+        // assertion fails. The test pins the no-echo behaviour without depending on Ktor's
+        // exact serializer prose — only the curated type name is part of the contract.
         application { installSpectreRoutes(headlessAutomator()) }
         val response =
-            postRaw("/spectre/click", body = "not json", contentType = ContentType.Application.Json)
+            postRaw(
+                "/spectre/click",
+                body = "<script>alert(1)</script>",
+                contentType = ContentType.Application.Json,
+            )
         assertEquals(HttpStatusCode.BadRequest, response.status)
         assertBodyMentions(response, "ClickRequest")
+        assertBodyDoesNotContain(response, "<script>")
     }
+
+    @Test
+    fun `POST click with a malformed node key returns 400 without echoing the key`() =
+        testApplication {
+            // Reaches `SpectreServer.kt`'s malformed-key 400 branch, not the schema-decode 400
+            // branch: the JSON parses cleanly, so `receiveOrRespond400` succeeds, and only then
+            // does `NodeKey.parse` throw `IllegalArgumentException("Invalid NodeKey: $key")`.
+            // Pre-R5 that exception message was interpolated into the response body, echoing the
+            // attacker key. Pin that no-echo behaviour here.
+            application { installSpectreRoutes(headlessAutomator()) }
+            val response =
+                postRaw(
+                    "/spectre/click",
+                    body = "{\"nodeKey\": \"<script>alert(1)</script>\"}",
+                    contentType = ContentType.Application.Json,
+                )
+            assertEquals(HttpStatusCode.BadRequest, response.status)
+            assertBodyDoesNotContain(response, "<script>")
+        }
+
+    @Test
+    fun `POST click with a well-formed but unknown node key returns 404 without echoing the key`() =
+        testApplication {
+            // Reaches the 404 no-matching-node branch (not the malformed-key 400 branch): the
+            // key parses as surfaceId=`<script>alert(1)</script>`, ownerIndex=0, nodeId=1, so
+            // `NodeKey.parse` succeeds and the handler falls through to "no node with this key".
+            // Pre-R5 that branch interpolated `request.nodeKey` into the response body.
+            application { installSpectreRoutes(headlessAutomator()) }
+            val response =
+                postRaw(
+                    "/spectre/click",
+                    body = "{\"nodeKey\": \"<script>alert(1)</script>:0:1\"}",
+                    contentType = ContentType.Application.Json,
+                )
+            assertEquals(HttpStatusCode.NotFound, response.status)
+            assertBodyDoesNotContain(response, "<script>")
+        }
 
     @Test
     fun `POST click with missing nodeKey returns 400 with a useful message`() = testApplication {
@@ -123,11 +169,15 @@ class HttpNegativeContractTest {
     // factory at it.
 
     @Test
-    fun `click against a 500 response surfaces an IllegalStateException`() {
+    fun `click against a 500 response surfaces an IllegalStateException without echoing body`() {
+        // The peer reply body is an attacker-shaped payload. Pre-R5 the client's `check {}`
+        // lambda interpolated `response.bodyAsText()` into the thrown message, reflecting
+        // arbitrary peer content into logs / test output. The fix retains the status code in
+        // the message but drops the body. Pin both halves: status present, body absent.
         val server = startEphemeralServer {
             routing {
                 serverPost("/spectre/click") {
-                    call.respond(HttpStatusCode.InternalServerError, "synthetic server failure")
+                    call.respond(HttpStatusCode.InternalServerError, "<script>alert(1)</script>")
                 }
             }
         }
@@ -139,6 +189,41 @@ class HttpNegativeContractTest {
             assertTrue(
                 error.message?.contains("500") == true,
                 "expected status=500 to appear in the error, got: ${error.message}",
+            )
+            assertTrue(
+                error.message?.contains("<script>") != true,
+                "expected peer body NOT to be echoed in the error, got: ${error.message}",
+            )
+        } finally {
+            server.server.stop(gracePeriodMillis = 0L, timeoutMillis = 0L)
+        }
+    }
+
+    @Test
+    fun `typeText against a 500 response surfaces an IllegalStateException without echoing body`() {
+        // Symmetry test for `HttpComposeAutomator.typeText`. Same `check {}` pattern as click,
+        // same body-echo concern, same fix shape.
+        val server = startEphemeralServer {
+            routing {
+                serverPost("/spectre/typeText") {
+                    call.respond(HttpStatusCode.InternalServerError, "<script>alert(1)</script>")
+                }
+            }
+        }
+        try {
+            val error =
+                ComposeAutomator.http(host = "127.0.0.1", port = server.port).use {
+                    assertFailsWith<IllegalStateException> {
+                        runBlocking { it.typeText("ignored") }
+                    }
+                }
+            assertTrue(
+                error.message?.contains("500") == true,
+                "expected status=500 to appear in the error, got: ${error.message}",
+            )
+            assertTrue(
+                error.message?.contains("<script>") != true,
+                "expected peer body NOT to be echoed in the error, got: ${error.message}",
             )
         } finally {
             server.server.stop(gracePeriodMillis = 0L, timeoutMillis = 0L)
@@ -197,6 +282,14 @@ class HttpNegativeContractTest {
         assertTrue(
             text.contains(needle, ignoreCase = true),
             "expected response body to mention '$needle', got: $text",
+        )
+    }
+
+    private suspend fun assertBodyDoesNotContain(response: HttpResponse, needle: String) {
+        val text = response.bodyAsText()
+        assertTrue(
+            !text.contains(needle, ignoreCase = true),
+            "expected response body NOT to contain '$needle', got: $text",
         )
     }
 }

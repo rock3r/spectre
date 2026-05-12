@@ -21,6 +21,23 @@ top of an in-process `ComposeAutomator`; the test JVM talks to it through
     (`waitForVisualIdle`) are in-process only. If you need them, run the test JVM in
     the same process as the UI.
 
+!!! warning "Trust boundary"
+    The HTTP transport is **experimental** and intended for **trusted local / test
+    environments only**.
+
+    - Every route is **unauthenticated**. Anything that can reach the bound port
+      can click, type, and capture screenshots.
+    - Communication is **plaintext HTTP**. There is no TLS support.
+    - `click` and `typeText` drive **real OS input**; `screenshot` captures
+      whatever pixels the host JVM can see, including content from other windows.
+    - **Bind to `127.0.0.1`.** Do not expose this server on a network-reachable
+      interface. The examples below pin the loopback bind explicitly.
+    - Authentication, authorization, and TLS are tracked for a separately
+      reviewed future design (#96).
+
+    See [Security notes](../SECURITY.md) for the full risk register and the
+    accepted-risk list.
+
 ## Server side: mount the routes
 
 In the hosting JVM, build an in-process automator and install Spectre's routes on a
@@ -42,7 +59,10 @@ import io.ktor.server.netty.Netty
 
 val automator = ComposeAutomator.inProcess()
 
-embeddedServer(Netty, port = 9274) {
+// `host = "127.0.0.1"` is intentional: the HTTP transport is unauthenticated, so the
+// server must not be reachable from outside the local machine. See the "Trust boundary"
+// warning above.
+embeddedServer(Netty, host = "127.0.0.1", port = 9274) {
     installSpectreRoutes(automator)
 }.start(wait = false)
 ```
@@ -80,7 +100,8 @@ import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.server.http
 import kotlinx.coroutines.runBlocking
 
-ComposeAutomator.http(host = "localhost", port = 9274).use { remote ->
+// Connect to the loopback server mounted above.
+ComposeAutomator.http(host = "127.0.0.1", port = 9274).use { remote ->
     runBlocking {
         val nodes = remote.findByTestTag("Submit")
         if (nodes.isNotEmpty()) {
