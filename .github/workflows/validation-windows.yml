@@ -27,6 +27,7 @@ name: Validation tests (Windows)
 # (Same caveat applies — Gradle may exit non-zero with the protocol noise even when tests pass.)
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - "core/**"
@@ -75,23 +76,36 @@ jobs:
         uses: gradle/actions/setup-gradle@v5
 
       - name: Run validation tests
-        # `continue-on-error: true` so the Gradle test-executor protocol flake (see workflow
-        # header) doesn't fail the job. Real test outcomes are verified against the JUnit XML
-        # reports in the next step.
+        # `--no-configuration-cache` to suppress the Gradle test-executor protocol race.
+        # Empirically (Linux probe, 2026-05-12), enabling the Configuration Cache flips
+        # `configurationCacheParallelLoad=true` in Gradle's operational model, and that
+        # makes Gradle pick up sibling Test tasks on separate `Execution worker` threads
+        # even with `org.gradle.parallel=false`. The validation suite's
+        # `validationTestLayer*` + `validationTest` tasks are sibling Test tasks with
+        # `forkEvery = 1`; when CC runs them concurrently their worker JVMs occasionally
+        # race the daemon's test-event channel, producing the Windows-shape
+        # `Could not write '/127.0.0.1:NNNN'` originally tracked at #72 (and the
+        # Linux-shape "No tests found for given includes" observed in run 25697771548).
+        # CC stays enabled for the rest of the build — we just opt this one invocation out.
         #
-        # `--continue` is essential here: without it Gradle aborts after the first task to
+        # `continue-on-error: true` + the XML-source-of-truth verification step stay in as
+        # belt + braces in case `--no-configuration-cache` doesn't fully eliminate the
+        # race on Windows.
+        #
+        # `--continue` is essential: without it Gradle aborts after the first task to
         # exit non-zero, and the protocol-flake "failure" reliably trips on the first task.
-        # That means downstream tasks would never run, the verification step would see their
-        # XMLs missing, and the job would fail for a reason unrelated to the actual tests.
-        # `--continue` makes Gradle run every requested task regardless of earlier failures,
-        # so each task gets a fair chance to produce its XML.
+        # That means downstream tasks would never run, the verification step would see
+        # their XMLs missing, and the job would fail for a reason unrelated to the actual
+        # tests. `--continue` makes Gradle run every requested task regardless of earlier
+        # failures, so each task gets a fair chance to produce its XML.
         continue-on-error: true
         id: gradle
         run: |
           ./gradlew \
             :sample-desktop:validationTest \
             :sample-desktop:validationTestPopupLayers \
-            --continue
+            --continue \
+            --no-configuration-cache
         shell: bash
 
       - name: Verify validation tests passed via JUnit XML

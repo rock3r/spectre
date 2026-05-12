@@ -29,6 +29,7 @@ name: Validation tests (Linux)
 #   ./gradlew :sample-desktop:validationTest :sample-desktop:validationTestPopupLayers
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - "core/**"
@@ -92,13 +93,31 @@ jobs:
         # requested task gets a fair chance to produce its JUnit XML, and the verification
         # step below sees the full picture instead of cascade-skips.
         #
-        # `continue-on-error: true` matches validation-windows.yml: the Gradle / Compose
-        # test-executor protocol race was first observed on Linux on 2026-05-11 (PR #125,
-        # run 25697771548 — `validationTestLayer*` reported "No tests found for given
-        # includes" for an enrolled class; a second-run on the same SHA was green). Real
-        # test outcomes are determined from the JUnit XML reports in the verification step
-        # below; compile / dependency-resolution failures still trip that step (no XMLs
-        # written → exit 1).
+        # `--no-configuration-cache` to suppress the Gradle test-executor protocol race
+        # that motivates the rest of this step's tolerance. Empirically, enabling the
+        # Configuration Cache (set globally in `gradle.properties`) flips
+        # `configurationCacheParallelLoad=true` in Gradle's operational model, and that
+        # makes Gradle pick up sibling Test tasks on separate `Execution worker` threads
+        # even with `org.gradle.parallel=false`. The validation suite's three
+        # `validationTestLayer*` tasks (plus `validationTest`) are sibling Test tasks with
+        # `forkEvery = 1` + `filter { includeTestsMatching(...) }`; when CC runs them
+        # concurrently their worker JVMs occasionally race the daemon's test-event
+        # channel, producing two observed shapes:
+        #   - "No tests found for given includes" on filtered tasks (the JUnit Platform
+        #     discovery scan in a worker returns zero matches under concurrent contention)
+        #   - one class's per-class XML never lands and the listener synthesises
+        #     `<skipped/>` at suite finalisation, while the task itself is not marked
+        #     FAILED (Linux 2026-05-11 run 25697771548; same family as the Windows-shape
+        #     `Could not write '/127.0.0.1:NNNN'` historically tracked at #72)
+        # Reproduced locally by toggling `--no-configuration-cache`: with CC on, three
+        # Layer* tasks land on three distinct worker threads; with CC off, all three land
+        # on the same thread and run sequentially. CC stays enabled for the rest of the
+        # build (it's a real perf win) — we just opt this one validation invocation out.
+        #
+        # `continue-on-error: true` + the XML-source-of-truth verification step below stay
+        # as belt + braces: if `--no-configuration-cache` doesn't fully eliminate the
+        # race, the workflow still surfaces flakes as `::warning::` instead of failing,
+        # and a genuinely missing class still trips the verifier.
         #
         # Screen size 1280x1024 is xvfb-run's default; explicitly setting it via
         # `--server-args` would let us bump it for a denser virtual desktop, but the
@@ -110,7 +129,8 @@ jobs:
           xvfb-run -a ./gradlew \
             :sample-desktop:validationTest \
             :sample-desktop:validationTestPopupLayers \
-            --continue
+            --continue \
+            --no-configuration-cache
         shell: bash
 
       - name: Run real-Robot Linux smoke under Xvfb
