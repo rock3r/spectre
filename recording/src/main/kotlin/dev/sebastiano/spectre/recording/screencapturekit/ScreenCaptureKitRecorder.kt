@@ -206,48 +206,13 @@ internal constructor(
     }
 
     internal companion object {
-        // Helper CLI exit codes — kept in lockstep with main.swift's `CLIError`.
-        const val HELPER_EXIT_BAD_ARGS: Int = 2
-        const val HELPER_EXIT_WINDOW_NOT_FOUND: Int = 3
-        const val HELPER_EXIT_TCC_DENIED: Int = 4
-        const val HELPER_EXIT_PIPELINE: Int = 5
-
-        // Discovery timeout that the helper uses internally when scanning for the target
-        // window before timing out with exit code 3. Callers can override via the recorder's
-        // own configuration in the future; the default here balances giving the window time
-        // to actually appear on screen against surfacing genuine "wrong title" mistakes
-        // quickly.
-        const val DEFAULT_DISCOVERY_TIMEOUT_MS: Int = 2000
-
-        // Upper bound on how long start() will wait for the helper to either signal READY on
-        // stdout or exit with one of the documented fast-fail codes. Must be greater than the
-        // helper's own [DEFAULT_DISCOVERY_TIMEOUT_MS] plus a margin for SCK init, otherwise
-        // start() can return before the helper has finished window discovery and the user
-        // would only learn of a window-not-found failure when stop() throws.
-        const val READY_WAIT_MILLIS: Long = (DEFAULT_DISCOVERY_TIMEOUT_MS + 1500).toLong()
-
-        // Single-line marker the helper writes to stdout once SCK + AVAssetWriter are
-        // running. start() blocks until either this line appears (success) or the helper
-        // exits (failure surfaced via the helper's exit code).
-        const val READY_MARKER: String = "READY"
-
-        // How often the ready-wait loop polls the atomic flag + process aliveness. Small
-        // enough to surface failures quickly, large enough that we don't burn CPU spinning.
-        const val POLL_INTERVAL_MILLIS: Long = 50
-
-        // Brief join budget for the reader thread when the helper process has exited but the
-        // reader may still be mid-read of buffered bytes. Without this, a helper that writes
-        // READY immediately followed by a clean exit can be misreported as a startup failure.
-        const val READER_DRAIN_MILLIS: Long = 100
-
-        // Bounded wait after `destroyForcibly()` in the start-failure path. Unbounded
-        // `waitFor()` would pin the calling thread if the kernel hasn't reaped the helper
-        // yet; a small budget bounds the worst case.
-        const val FORCE_KILL_DURING_START_SECONDS: Long = 2
-
-        // Sentinel exit code surfaced when the helper is still alive after destroyForcibly()
-        // + the bounded wait. Distinct from any real helper exit code (1..5).
-        const val EXIT_HELPER_NOT_REAPED: Int = -1
+        // `const val` members of any companion — including an `internal` one — are emitted
+        // by the Kotlin compiler as `public static final` JVM fields on the outer class and
+        // therefore appear in the ABI baseline. The const-vals below live at file level as
+        // `private const val` to keep them out of the public surface (same shape as the
+        // `STORE_KEY` fix in `testing/.../ComposeAutomatorExtension.kt`). `messageForHelperExit`
+        // and `messageForHelperExitDuringRecording` are functions, which the Kotlin compiler
+        // does keep behind the companion's `internal` visibility, so they stay here.
 
         fun messageForHelperExit(exit: Int, output: Path, argv: List<String>): String =
             when (exit) {
@@ -420,3 +385,51 @@ private class ScreenCaptureKitRecordingHandle(
         const val FORCE_KILL_SECONDS: Long = 2
     }
 }
+
+// File-level private constants for `ScreenCaptureKitRecorder`'s `internal companion object`.
+// `const val` inside any companion — even an `internal` one — is emitted by the Kotlin compiler
+// as a `public static final` JVM field on the outer class and would otherwise leak into the
+// committed ABI baseline. The constants below stay private to this file and out of the public
+// surface. Same pattern as `STORE_KEY` in `testing/.../ComposeAutomatorExtension.kt`.
+
+// Helper CLI exit codes — kept in lockstep with main.swift's `CLIError`.
+private const val HELPER_EXIT_BAD_ARGS: Int = 2
+private const val HELPER_EXIT_WINDOW_NOT_FOUND: Int = 3
+private const val HELPER_EXIT_TCC_DENIED: Int = 4
+private const val HELPER_EXIT_PIPELINE: Int = 5
+
+// Discovery timeout the helper uses internally when scanning for the target window before
+// timing out with exit code 3. Callers can override via the recorder's own configuration in
+// the future; the default here balances giving the window time to actually appear on screen
+// against surfacing genuine "wrong title" mistakes quickly.
+private const val DEFAULT_DISCOVERY_TIMEOUT_MS: Int = 2000
+
+// Upper bound on how long start() will wait for the helper to either signal READY on stdout
+// or exit with one of the documented fast-fail codes. Must be greater than the helper's own
+// [DEFAULT_DISCOVERY_TIMEOUT_MS] plus a margin for SCK init, otherwise start() can return
+// before the helper has finished window discovery and the user would only learn of a
+// window-not-found failure when stop() throws.
+private const val READY_WAIT_MILLIS: Long = (DEFAULT_DISCOVERY_TIMEOUT_MS + 1500).toLong()
+
+// Single-line marker the helper writes to stdout once SCK + AVAssetWriter are running.
+// start() blocks until either this line appears (success) or the helper exits (failure
+// surfaced via the helper's exit code).
+private const val READY_MARKER: String = "READY"
+
+// How often the ready-wait loop polls the atomic flag + process aliveness. Small enough to
+// surface failures quickly, large enough that we don't burn CPU spinning.
+private const val POLL_INTERVAL_MILLIS: Long = 50
+
+// Brief join budget for the reader thread when the helper process has exited but the reader
+// may still be mid-read of buffered bytes. Without this, a helper that writes READY
+// immediately followed by a clean exit can be misreported as a startup failure.
+private const val READER_DRAIN_MILLIS: Long = 100
+
+// Bounded wait after `destroyForcibly()` in the start-failure path. Unbounded `waitFor()`
+// would pin the calling thread if the kernel hasn't reaped the helper yet; a small budget
+// bounds the worst case.
+private const val FORCE_KILL_DURING_START_SECONDS: Long = 2
+
+// Sentinel exit code surfaced when the helper is still alive after destroyForcibly() + the
+// bounded wait. Distinct from any real helper exit code (1..5).
+private const val EXIT_HELPER_NOT_REAPED: Int = -1

@@ -33,11 +33,12 @@ import javax.imageio.ImageIO
  * Mounts the Spectre HTTP transport on this Ktor [Application], backed by the supplied in-process
  * [automator]. All routes live under [basePath] (default `/spectre`).
  *
- * The route surface is intentionally a v1 subset of the public automator API — windows, nodes by
- * tag, click, typeText, screenshot — enough to drive cross-JVM smoke tests. Advanced features
- * (idling resources, withTracing, waitForVisualIdle) are in-process only because they either
- * require live JVM objects (Tracer, IdlingResource) or stateful long-poll semantics that are out of
- * scope for the v1 transport.
+ * The route surface is intentionally a subset of the public automator API — windows, nodes by tag,
+ * click, typeText, screenshot — enough to drive cross-JVM smoke tests. Advanced features (idling
+ * resources, withTracing, waitForVisualIdle) are in-process only because they either require live
+ * JVM objects (Tracer, IdlingResource) or stateful long-poll semantics that are out of scope for
+ * the experimental transport. See [the stability policy](https://spectre.sebastiano.dev/STABILITY/)
+ * for the API tier definitions.
  *
  * ## Trust boundary
  *

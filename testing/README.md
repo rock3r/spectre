@@ -25,7 +25,7 @@ testing module never forces both onto the test classpath.
 Contract tests pin the wire-level guarantees that cross module boundaries:
 
 - `NodeKeyContractTest` — round-trip and parse safety for the `surfaceId:ownerIndex:nodeId`
-  string form that future HTTP transport and recording integrations will rely on.
+  string form the HTTP transport's `ClickRequest.nodeKey` and the recording module's
+  `TitleDiscriminator` both depend on.
 
-More contract tests will land here as cross-module surfaces grow (HTTP transport in #9,
-recording integration in #10).
+More contract tests will land here as cross-module surfaces grow.
