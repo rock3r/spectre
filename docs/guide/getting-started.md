@@ -148,9 +148,7 @@ from a coroutine on `Dispatchers.Main` (Swing EDT), wrap them in
     those pauses to zero. The result is that `longClick` doesn't actually hold, `swipe`
     jumps to the end position instantly, and clipboard operations may race.
 
-    Stick with `runBlocking` for Spectre tests. A future `runSpectreTest` helper may
-    provide `runTest`-style structured concurrency while preserving real time for
-    Spectre's internal delays.
+    Stick with `runBlocking` for Spectre tests.
 
 ## Where to go next
 

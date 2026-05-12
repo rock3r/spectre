@@ -25,6 +25,33 @@ You start a recording, you get a `RecordingHandle`, you stop the handle when you
 done. Implementations must spawn the underlying process eagerly so frames are landing
 in `output` by the time `start()` returns.
 
+## Recorder capability matrix
+
+Five concrete recorders ship today. `AutoRecorder` (next section) picks one of them per
+call based on platform and whether you pass a window; the matrix below is the per-recorder
+view for when you want to know what each backend can and cannot do.
+
+| Recorder | Capture shape | Follows window resize? | Captures occluding windows / popups? | Prerequisites | Platforms |
+| --- | --- | --- | --- | --- | --- |
+| `FfmpegRecorder` | Screen region (fixed `Rectangle`) | No — region fixed at `start()` | Yes — anything visible inside the region lands in the frame, including occluding apps and overlapping Compose `OnWindow` popups | `ffmpeg` on `PATH`; macOS Screen Recording TCC for the launching app | macOS · Windows · Linux Xorg |
+| `FfmpegWindowRecorder` | Named window (`gdigrab title=`) | Yes — `gdigrab` retracks the window across moves and resizes | No — only the window's pixels are captured. Compose `OnWindow` popups land in a separate OS window with a different title, so they are **not** captured. `OnSameCanvas` / `OnComponent` popups are part of the window surface and are captured | `ffmpeg` on `PATH`; visible window with a non-blank exact title | Windows |
+| `ScreenCaptureKitRecorder` | Named window (pid + title substring) | Yes — reads the window backing store directly, follows moves and resizes | No — same window-source semantics as `FfmpegWindowRecorder`. `OnWindow` popups not captured; `OnSameCanvas` / `OnComponent` captured | Bundled Swift helper (`spectre-screencapture`); macOS Screen Recording TCC for the launching app | macOS |
+| `WaylandPortalRecorder` | Monitor region (portal `SourceType.MONITOR`, cropped) | No — monitor-level source | Depends on the compositor. Validated on GNOME/Mutter to include the user's overlays but exclude apps occluding the recorded region | Bundled Rust helper (`spectre-wayland-helper`); `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`. First call pops the compositor's "share screen" dialog | Linux Wayland |
+| `WaylandPortalWindowRecorder` | Named window (portal `SourceType.WINDOW` + fixed crop) | **No.** The crop is computed once from `_GTK_FRAME_EXTENTS` at `start()` and stays at those pixel coordinates for the rest of the recording. If the user moves or resizes the window during the recording, the crop no longer aligns with the window's pixels (typically the recording shows blank / black for the unrendered area of the original rectangle) — see `WaylandPortalWindowRecorder`'s KDoc for the detailed rationale | No — only the picked window's pixels are in the stream. `OnWindow` popups not captured | Bundled Rust helper; `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`; `xprop` on `PATH`; compositor must publish `_GTK_FRAME_EXTENTS` (GNOME/Mutter verified; older Mutter / KDE / sway may not — the recorder throws rather than producing misaligned video) | Linux Wayland |
+
+A note on the Wayland window row: window-source isolation (no leakage from other apps) is
+what makes window-targeted Wayland capture different from ffmpeg-on-X11 region capture. The
+crop is fixed at `start()`, so the recording is robust against occluders but not against the
+user moving or resizing the window mid-recording.
+
+Embedded-host implications: `ComposePanel`s without a top-level OS window — including
+Jewel-hosted Compose inside an IntelliJ plugin tool window — have no exact window title for
+`FfmpegWindowRecorder` to bind to and no top-level window for the SCK helper to discover.
+`AutoRecorder` falls through to region capture (`FfmpegRecorder` on macOS / Windows / Linux
+Xorg; `WaylandPortalRecorder` on Linux Wayland) for those surfaces. Linux support is
+best-effort: portal capture is exercised against GNOME/Mutter on Ubuntu 22.04 and 24.04;
+KDE / sway / wlroots may behave differently and are not validated.
+
 ## `AutoRecorder` — pick a backend per call
 
 `AutoRecorder` is the entry point you should reach for first. It looks at what you pass

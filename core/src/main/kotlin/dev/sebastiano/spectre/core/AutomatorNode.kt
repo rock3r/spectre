@@ -10,12 +10,29 @@ import androidx.compose.ui.semantics.getOrNull
 import java.awt.Point
 import java.awt.Rectangle
 
+/**
+ * Stable identifier for a node in the semantics tree across refreshes.
+ *
+ * Three parts:
+ * - [surfaceId] — the surface this node belongs to (a window or popup root); may contain colons.
+ * - [ownerIndex] — index of the SemanticsOwner inside that surface (Compose can host multiple).
+ * - [nodeId] — the SemanticsNode id assigned by Compose, stable across recompositions as long as
+ *   the node is not re-keyed or removed.
+ *
+ * The string form is `surfaceId:ownerIndex:nodeId` — used on the HTTP transport's
+ * `ClickRequest.nodeKey` field and produced by [toString]. Parse with [parse]; parsing splits from
+ * the right so colons inside [surfaceId] are preserved.
+ */
 data class NodeKey(val surfaceId: String, val ownerIndex: Int, val nodeId: Int) {
 
     override fun toString(): String = "$surfaceId:$ownerIndex:$nodeId"
 
     companion object {
 
+        /**
+         * Parses a string of the form `surfaceId:ownerIndex:nodeId` into a [NodeKey]. Throws
+         * [IllegalArgumentException] on malformed input.
+         */
         fun parse(key: String): NodeKey {
             // Split from the right: last segment is nodeId, second-to-last is ownerIndex,
             // everything before is surfaceId (which may contain colons).
@@ -32,6 +49,20 @@ data class NodeKey(val surfaceId: String, val ownerIndex: Int, val nodeId: Int) 
     }
 }
 
+/**
+ * Snapshot of a Compose `SemanticsNode` plus enough live geometry to act on it.
+ *
+ * Spectre reads the semantics tree on the EDT (where it must) and constructs `AutomatorNode`s with
+ * **eagerly-snapshotted properties** ([testTag], [texts], [contentDescriptions], …) so callers can
+ * read those fields from any thread without touching the tree again. Geometry properties (bounds,
+ * hit-test rectangles) are computed lazily and may consult the underlying `SemanticsNode` if read
+ * after a recomposition — treat them as snapshots that may not match the node's current on-screen
+ * position after a subsequent refresh.
+ *
+ * Instances are produced by [ComposeAutomator.allNodes] / [ComposeAutomator.findByTestTag] and the
+ * other query entry points; consumers should not construct them directly. The [key] uniquely
+ * identifies the node across refreshes (see [NodeKey]).
+ */
 class AutomatorNode
 internal constructor(
     val key: NodeKey,

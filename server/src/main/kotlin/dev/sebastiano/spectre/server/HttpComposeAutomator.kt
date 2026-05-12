@@ -28,10 +28,9 @@ import javax.imageio.ImageIO
 /**
  * Cross-JVM client for a `ComposeAutomator` running behind [installSpectreRoutes].
  *
- * Created via the companion extension `ComposeAutomator.http(host, port)` (see
- * [HttpFactory.kt][http]). The v1 client surface mirrors the in-process automator's most-used
- * queries and actions; advanced features (idling resources, `withTracing`, `waitForVisualIdle`)
- * remain in-process only and are documented as such.
+ * Created via the companion extension [ComposeAutomator.http][http]. The client surface mirrors the
+ * in-process automator's most-used queries and actions; advanced features (idling resources,
+ * `withTracing`, `waitForVisualIdle`) remain in-process only and are documented as such.
  *
  * The instance owns its [HttpClient] and must be `close()`d to release pooled connections. Use `use
  * { ... }` from `kotlin.AutoCloseable` for scoped lifecycles.
@@ -44,15 +43,23 @@ class HttpComposeAutomator internal constructor(private val baseUrl: String) : A
     // leak the engine on close, since Ktor only auto-closes engines it constructed itself.
     private val client: HttpClient = HttpClient(CIO) { install(ContentNegotiation) { json() } }
 
+    /** Fetches the current list of tracked windows from the remote automator. */
     suspend fun windows(): List<WindowSummaryDto> =
         client.get("$baseUrl/windows").body<WindowsResponse>().windows
 
+    /** Fetches every visible semantics node from every tracked surface on the remote automator. */
     suspend fun allNodes(): List<NodeSnapshotDto> =
         client.get("$baseUrl/nodes").body<NodesResponse>().nodes
 
+    /** Fetches semantics nodes carrying the given `testTag` from the remote automator. */
     suspend fun findByTestTag(tag: String): List<NodeSnapshotDto> =
         client.get("$baseUrl/nodes") { parameter("testTag", tag) }.body<NodesResponse>().nodes
 
+    /**
+     * Asks the remote automator to click the node addressed by [nodeKey] (the canonical string form
+     * of [dev.sebastiano.spectre.core.NodeKey] — `surfaceId:ownerIndex:nodeId`). Throws
+     * [IllegalStateException] on any non-2xx response.
+     */
     suspend fun click(nodeKey: String) {
         val response =
             client.post("$baseUrl/click") {
@@ -65,6 +72,11 @@ class HttpComposeAutomator internal constructor(private val baseUrl: String) : A
         check(response.status.isSuccess()) { "click failed: ${response.status}" }
     }
 
+    /**
+     * Asks the remote automator to type [text] into whatever currently has focus, via the same
+     * clipboard-backed paste as the in-process driver. Throws [IllegalStateException] on any
+     * non-2xx response.
+     */
     suspend fun typeText(text: String) {
         val response =
             client.post("$baseUrl/typeText") {
@@ -75,6 +87,10 @@ class HttpComposeAutomator internal constructor(private val baseUrl: String) : A
         check(response.status.isSuccess()) { "typeText failed: ${response.status}" }
     }
 
+    /**
+     * Fetches a screenshot from the remote automator and decodes it as a [BufferedImage]. Throws
+     * [IllegalStateException] if the decoded PNG bytes can't be parsed.
+     */
     suspend fun screenshot(): BufferedImage {
         val response = client.get("$baseUrl/screenshot").body<ScreenshotResponse>()
         val bytes = Base64.getDecoder().decode(response.pngBase64)

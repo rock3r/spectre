@@ -24,8 +24,13 @@ import java.util.concurrent.atomic.AtomicReference
  *   for the JVM process** (see [MacOsRecordingPermissions]).
  * - Windows: gdigrab device with input-side region selection (`-offset_x`/`-offset_y`/
  *   `-video_size`). No equivalent TCC permission gate, but gdigrab can't capture minimised windows.
- * - Linux / BSD: not yet implemented — [FfmpegBackend.detect] throws on those hosts. Tracked under
- *   v4.
+ * - Linux Xorg: x11grab device with input-side region selection. Works against real Xorg and
+ *   against XWayland-bridged X clients.
+ * - Linux Wayland: not handled by this recorder — Wayland's security model forbids cross-process
+ *   framebuffer reads. [FfmpegBackend.detect] throws on Wayland sessions; route through
+ *   `WaylandPortalRecorder` / `WaylandPortalWindowRecorder` instead (`AutoRecorder` does this
+ *   automatically).
+ * - BSD: not supported.
  *
  * The platform backend is picked at construction time via [FfmpegBackend.detect] and can be
  * overridden via the internal constructor for tests (so the produced argv is deterministic
