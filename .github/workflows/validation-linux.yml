@@ -15,12 +15,15 @@ name: Validation tests (Linux)
 # guard from #77 stage 1 stays out of the picture (`XDG_SESSION_TYPE` and `WAYLAND_DISPLAY`
 # are unset in xvfb-run's environment, no `wayland-*` socket exists in `XDG_RUNTIME_DIR`).
 #
-# Counterpart to `validation-windows.yml`. The Windows version carries an elaborate
-# protocol-flake workaround for a Gradle / Compose Desktop shutdown race that's
-# Windows-specific (#72); Linux doesn't see that race, so this workflow keeps a simpler
-# Gradle-exit-code path. The two-pass XML verifier is borrowed verbatim from the Windows
-# version because the "catch new ValidationTest classes added without updating this list"
-# property is generic, not Windows-specific.
+# Counterpart to `validation-windows.yml`. The Windows version's elaborate protocol-flake
+# workaround was originally believed to be Windows-only (#72), but the same Gradle / Compose
+# test-executor race was observed on Linux on 2026-05-11 during PR #125 babysit (run
+# 25697771548: `validationTestLayer{Component,SameCanvas,Window}` reported "No tests found
+# for given includes: [PopupLayerVariantsValidationTest]" plus Issue14PerfValidationTest's
+# XML missing; a `gh run rerun --failed` on the same SHA was immediately green). This
+# workflow therefore mirrors the Windows fail-tolerant + XML-source-of-truth pattern,
+# including the `::warning::` envelope-detection branch so a recurrence stays visible
+# instead of silently passing.
 #
 # Local invocation (with a working DISPLAY):
 #   ./gradlew :sample-desktop:validationTest :sample-desktop:validationTestPopupLayers
@@ -89,15 +92,19 @@ jobs:
         # requested task gets a fair chance to produce its JUnit XML, and the verification
         # step below sees the full picture instead of cascade-skips.
         #
-        # No `continue-on-error` here (unlike validation-windows.yml): Linux doesn't see the
-        # Gradle/Compose test-executor protocol race that motivates Windows's tolerance, so
-        # Gradle's exit code is honoured directly. If we ever see an analogous race surface
-        # on Linux runners, fold in the same fail-tolerant + XML-source-of-truth pattern.
+        # `continue-on-error: true` matches validation-windows.yml: the Gradle / Compose
+        # test-executor protocol race was first observed on Linux on 2026-05-11 (PR #125,
+        # run 25697771548 — `validationTestLayer*` reported "No tests found for given
+        # includes" for an enrolled class; a second-run on the same SHA was green). Real
+        # test outcomes are determined from the JUnit XML reports in the verification step
+        # below; compile / dependency-resolution failures still trip that step (no XMLs
+        # written → exit 1).
         #
         # Screen size 1280x1024 is xvfb-run's default; explicitly setting it via
         # `--server-args` would let us bump it for a denser virtual desktop, but the
         # validation tests don't need that and the default keeps the diff with
         # validation-windows.yml's runner config minimal.
+        continue-on-error: true
         id: gradle
         run: |
           xvfb-run -a ./gradlew \
@@ -161,9 +168,12 @@ jobs:
         #    unparsable attributes are treated as malformation (truncated XML, wrong schema)
         #    and also fail the step.
         #
-        # The flake-aware "envelope mention" branch from validation-windows.yml is omitted
-        # here because the Gradle/Compose protocol race that motivated it is Windows-specific
-        # (#72). If Linux ever sees an analogous race, copy the envelope-handling block over.
+        # Mirrors validation-windows.yml's envelope-detection branch (first observed on
+        # Linux 2026-05-11, PR #125 run 25697771548 — see workflow header). Gradle writes a
+        # synthetic `TEST-Gradle-Test-Run--sample-desktop-<task>.xml` envelope mentioning
+        # any class it enrolled but whose per-class XML never landed; that lets us tell
+        # apart a genuinely-missing class (hard fail) from one chewed by the protocol race
+        # (warning, not fatal).
         if: always()
         run: |
           set -euo pipefail
@@ -179,19 +189,29 @@ jobs:
           # parallel list — see validation-windows.yml for the rationale.
           task_dirs=("${!required_classes_by_task[@]}")
 
-          # Pass 1: required-set existence.
+          # Pass 1: required-set existence + protocol-flake distinction.
           missing=()
+          flaked=()
           for task_dir in "${!required_classes_by_task[@]}"; do
+            envelope="sample-desktop/build/test-results/$task_dir/TEST-Gradle-Test-Run--sample-desktop-${task_dir}.xml"
             for class_name in ${required_classes_by_task[$task_dir]}; do
               xml="sample-desktop/build/test-results/$task_dir/TEST-dev.sebastiano.spectre.sample.validation.${class_name}.xml"
-              if [ ! -f "$xml" ]; then
+              if [ -f "$xml" ]; then
+                continue
+              fi
+              if [ -f "$envelope" ] && grep -qE "<testcase name=\"${class_name}\"" "$envelope"; then
+                flaked+=("$task_dir/${class_name}")
+              else
                 missing+=("$task_dir/${class_name}")
               fi
             done
           done
           if [ "${#missing[@]}" -gt 0 ]; then
-            echo "::error::Missing JUnit XML reports for: ${missing[*]}. Gradle step outcome: ${{ steps.gradle.outcome }}"
+            echo "::error::Missing JUnit XML reports (no Gradle envelope mention either) for: ${missing[*]}. Gradle step outcome: ${{ steps.gradle.outcome }}"
             exit 1
+          fi
+          if [ "${#flaked[@]}" -gt 0 ]; then
+            echo "::warning::Protocol-flake skipped per-class XMLs (Gradle envelope confirms the class was enrolled): ${flaked[*]}. First observed on Linux in PR #125, run 25697771548; tracked at https://github.com/rock3r/spectre/issues/72."
           fi
 
           # Pass 2: discovered-set inspection.
@@ -236,7 +256,7 @@ jobs:
             echo "::error::Validation tests reported $fail_total failure(s) and $err_total error(s) across ${#all_xml[@]} XML report(s)."
             exit 1
           fi
-          echo "All required classes present; ${#all_xml[@]} discovered XML report(s) clean."
+          echo "All required classes present; ${#all_xml[@]} discovered XML report(s) clean (Gradle exit ignored due to known executor-protocol flake)."
         shell: bash
 
       - name: Upload validation artefacts
