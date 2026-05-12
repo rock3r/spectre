@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalSpectreHttpApi::class)
+
 package dev.sebastiano.spectre.server
 
 import dev.sebastiano.spectre.core.ComposeAutomator
@@ -35,7 +37,9 @@ import javax.imageio.ImageIO
  * The instance owns its [HttpClient] and must be `close()`d to release pooled connections. Use `use
  * { ... }` from `kotlin.AutoCloseable` for scoped lifecycles.
  */
-class HttpComposeAutomator internal constructor(private val baseUrl: String) : AutoCloseable {
+@ExperimentalSpectreHttpApi
+public class HttpComposeAutomator internal constructor(private val baseUrl: String) :
+    AutoCloseable {
 
     // HttpClient(CIO) — the engine *factory* form — makes the client own the engine, so
     // close() shuts down both the client and the underlying CIO engine (its connection pool
@@ -44,15 +48,15 @@ class HttpComposeAutomator internal constructor(private val baseUrl: String) : A
     private val client: HttpClient = HttpClient(CIO) { install(ContentNegotiation) { json() } }
 
     /** Fetches the current list of tracked windows from the remote automator. */
-    suspend fun windows(): List<WindowSummaryDto> =
+    public suspend fun windows(): List<WindowSummaryDto> =
         client.get("$baseUrl/windows").body<WindowsResponse>().windows
 
     /** Fetches every visible semantics node from every tracked surface on the remote automator. */
-    suspend fun allNodes(): List<NodeSnapshotDto> =
+    public suspend fun allNodes(): List<NodeSnapshotDto> =
         client.get("$baseUrl/nodes").body<NodesResponse>().nodes
 
     /** Fetches semantics nodes carrying the given `testTag` from the remote automator. */
-    suspend fun findByTestTag(tag: String): List<NodeSnapshotDto> =
+    public suspend fun findByTestTag(tag: String): List<NodeSnapshotDto> =
         client.get("$baseUrl/nodes") { parameter("testTag", tag) }.body<NodesResponse>().nodes
 
     /**
@@ -60,7 +64,7 @@ class HttpComposeAutomator internal constructor(private val baseUrl: String) : A
      * of [dev.sebastiano.spectre.core.NodeKey] — `surfaceId:ownerIndex:nodeId`). Throws
      * [IllegalStateException] on any non-2xx response.
      */
-    suspend fun click(nodeKey: String) {
+    public suspend fun click(nodeKey: String) {
         val response =
             client.post("$baseUrl/click") {
                 contentType(ContentType.Application.Json)
@@ -77,7 +81,7 @@ class HttpComposeAutomator internal constructor(private val baseUrl: String) : A
      * clipboard-backed paste as the in-process driver. Throws [IllegalStateException] on any
      * non-2xx response.
      */
-    suspend fun typeText(text: String) {
+    public suspend fun typeText(text: String) {
         val response =
             client.post("$baseUrl/typeText") {
                 contentType(ContentType.Application.Json)
@@ -91,7 +95,7 @@ class HttpComposeAutomator internal constructor(private val baseUrl: String) : A
      * Fetches a screenshot from the remote automator and decodes it as a [BufferedImage]. Throws
      * [IllegalStateException] if the decoded PNG bytes can't be parsed.
      */
-    suspend fun screenshot(): BufferedImage {
+    public suspend fun screenshot(): BufferedImage {
         val response = client.get("$baseUrl/screenshot").body<ScreenshotResponse>()
         val bytes = Base64.getDecoder().decode(response.pngBase64)
         return checkNotNull(ImageIO.read(ByteArrayInputStream(bytes))) {
@@ -103,10 +107,10 @@ class HttpComposeAutomator internal constructor(private val baseUrl: String) : A
         client.close()
     }
 
-    companion object {
+    public companion object {
 
         /** Default port suggested by the gist's HTTP example. */
-        const val DEFAULT_PORT: Int = 9274
+        public const val DEFAULT_PORT: Int = 9274
 
         internal fun create(host: String, port: Int, basePath: String): HttpComposeAutomator =
             HttpComposeAutomator(baseUrl = normaliseBaseUrl(host, port, basePath))
@@ -136,7 +140,8 @@ class HttpComposeAutomator internal constructor(private val baseUrl: String) : A
  * [the published security notes](https://spectre.sebastiano.dev/SECURITY/) for the full exposure
  * model.
  */
-fun ComposeAutomator.Companion.http(
+@ExperimentalSpectreHttpApi
+public fun ComposeAutomator.Companion.http(
     host: String = "localhost",
     port: Int = HttpComposeAutomator.DEFAULT_PORT,
     basePath: String = "/spectre",

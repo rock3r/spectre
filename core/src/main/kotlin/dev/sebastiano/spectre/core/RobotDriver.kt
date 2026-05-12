@@ -19,7 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
-class RobotDriver
+public class RobotDriver
 internal constructor(
     private val robot: RobotAdapter = AwtRobotAdapter(),
     private val clipboard: ClipboardAdapter = SystemClipboardAdapter(),
@@ -29,9 +29,9 @@ internal constructor(
     // Public surface: callers may instantiate without arguments (defaults to a fresh
     // AWT Robot + system clipboard) or hand in an existing Robot. The internal
     // adapter-injecting constructor is reserved for tests within this module.
-    constructor() : this(AwtRobotAdapter(), SystemClipboardAdapter())
+    public constructor() : this(AwtRobotAdapter(), SystemClipboardAdapter())
 
-    constructor(robot: Robot) : this(AwtRobotAdapter(robot))
+    public constructor(robot: Robot) : this(AwtRobotAdapter(robot))
 
     /**
      * Dispatches a single left-button click at the given screen coordinates: move, press, release.
@@ -40,7 +40,7 @@ internal constructor(
      * (real `java.awt.Robot`), and dispatches inline otherwise (synthetic adapter). Throws
      * [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
-    suspend fun click(screenX: Int, screenY: Int) {
+    public suspend fun click(screenX: Int, screenY: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
             robot.mouseMove(screenX, screenY)
@@ -57,7 +57,7 @@ internal constructor(
      * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
-    suspend fun doubleClick(screenX: Int, screenY: Int) {
+    public suspend fun doubleClick(screenX: Int, screenY: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
             robot.mouseMove(screenX, screenY)
@@ -79,7 +79,7 @@ internal constructor(
      * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
-    suspend fun longClick(
+    public suspend fun longClick(
         screenX: Int,
         screenY: Int,
         holdFor: Duration = DEFAULT_LONG_CLICK_DURATION,
@@ -110,7 +110,7 @@ internal constructor(
      * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
-    suspend fun swipe(
+    public suspend fun swipe(
         startX: Int,
         startY: Int,
         endX: Int,
@@ -153,7 +153,7 @@ internal constructor(
      * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
-    suspend fun typeText(text: String) {
+    public suspend fun typeText(text: String) {
         tccGuard.requireAccessibility()
         runOffEdt {
             val previousContents = runCatching { clipboard.getContents() }.getOrNull()
@@ -236,7 +236,7 @@ internal constructor(
      * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
-    suspend fun clearAndTypeText(text: String) {
+    public suspend fun clearAndTypeText(text: String) {
         tccGuard.requireAccessibility()
         val selectAllModifier = shortcutModifierKeyCode(detectMacOs())
         runOffEdt {
@@ -256,7 +256,7 @@ internal constructor(
      * desk); negative scrolls up. Drives Compose's `Modifier.scrollable` and lazy-list scroll on
      * desktop, which respond to wheel events rather than touch-style drag gestures.
      */
-    suspend fun scrollWheel(screenX: Int, screenY: Int, wheelClicks: Int) {
+    public suspend fun scrollWheel(screenX: Int, screenY: Int, wheelClicks: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
             robot.mouseMove(screenX, screenY)
@@ -273,7 +273,7 @@ internal constructor(
      * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
-    suspend fun pressKey(keyCode: Int, modifiers: Int = 0) {
+    public suspend fun pressKey(keyCode: Int, modifiers: Int = 0) {
         tccGuard.requireAccessibility()
         runOffEdt {
             val modifierKeys = modifierMaskToKeyCodes(modifiers)
@@ -328,7 +328,7 @@ internal constructor(
      * [the published security notes](https://spectre.sebastiano.dev/SECURITY/) for the full
      * exposure model.
      */
-    fun screenshot(region: Rectangle? = null): BufferedImage {
+    public fun screenshot(region: Rectangle? = null): BufferedImage {
         tccGuard.requireScreenRecording()
         val captureRegion = region ?: virtualDesktopBounds()
         return robot.createScreenCapture(captureRegion)
@@ -336,7 +336,7 @@ internal constructor(
 
     private suspend fun runOffEdt(block: suspend () -> Unit) = runOffEdt(robot, block)
 
-    companion object {
+    public companion object {
 
         /**
          * Returns a [RobotDriver] that throws [UnsupportedOperationException] on every input,
@@ -353,7 +353,7 @@ internal constructor(
          * [RobotDriver.Companion.synthetic] against a known root window for synthetic AWT events,
          * or invoke `SemanticsActions.OnClick` directly on the target node for click-only flows.
          */
-        fun headless(): RobotDriver =
+        public fun headless(): RobotDriver =
             RobotDriver(
                 HeadlessThrowingRobotAdapter,
                 HeadlessThrowingClipboardAdapter,

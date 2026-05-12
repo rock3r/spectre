@@ -9,4 +9,4 @@ import dev.sebastiano.spectre.core.ComposeAutomator
  * display. Headless or unit-style tests that only need the test ergonomics (rule/extension
  * plumbing) without a real Robot/EDT can supply a custom factory that returns a stub or a fake.
  */
-typealias AutomatorFactory = () -> ComposeAutomator
+public typealias AutomatorFactory = () -> ComposeAutomator

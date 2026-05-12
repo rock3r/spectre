@@ -15,7 +15,7 @@ import java.nio.file.Path
  * a different recorder (an in-memory event collector for tests, a JFR adapter, etc.) can plug their
  * own `Tracer` into [ComposeAutomator.withTracing].
  */
-interface Tracer {
+public interface Tracer {
 
     /**
      * Begin a recording, writing captured trace data into [output]. Implementations may interpret
@@ -23,10 +23,10 @@ interface Tracer {
      * writes one file per sequence). Implementations may throw if a recording is already in
      * progress.
      */
-    fun start(output: Path)
+    public fun start(output: Path)
 
     /** Stop the recording and flush any buffered events to disk. */
-    fun stop()
+    public fun stop()
 }
 
 /**

@@ -25,6 +25,13 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
 
+      - name: Validate public API against committed baselines
+        # R7 defensive depth: PR-time `check` already runs `checkKotlinAbi` via the Kotlin
+        # Gradle Plugin's built-in abiValidation extension, but a tag pushed from a
+        # feature branch that wasn't merged through PR review would otherwise skip the
+        # ABI check. Running it here catches that path.
+        run: ./gradlew checkKotlinAbi
+
       - name: Import Developer ID certificate
         env:
           APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}

@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.server.dto
 
+import dev.sebastiano.spectre.server.ExperimentalSpectreHttpApi
 import kotlinx.serialization.Serializable
 
 /**
@@ -9,8 +10,9 @@ import kotlinx.serialization.Serializable
  * boundary). The `index` field matches the position in the in-process `windows` list, so HTTP
  * callers can address a specific window the same way in-process callers do.
  */
+@ExperimentalSpectreHttpApi
 @Serializable
-data class WindowSummaryDto(
+public data class WindowSummaryDto(
     val index: Int,
     val surfaceId: String,
     val isPopup: Boolean,
@@ -26,8 +28,9 @@ data class WindowSummaryDto(
  * the live `TrackedWindow`) are intentionally omitted — callers that need them have to use the
  * in-process automator.
  */
+@ExperimentalSpectreHttpApi
 @Serializable
-data class NodeSnapshotDto(
+public data class NodeSnapshotDto(
     val key: String,
     val testTag: String? = null,
     val texts: List<String> = emptyList(),
@@ -45,20 +48,27 @@ data class NodeSnapshotDto(
  * AWT rectangle in screen / window coordinates. Doubles are used for the in-window form to preserve
  * sub-pixel precision; the on-screen form is rounded into ints by callers when feeding Robot APIs.
  */
+@ExperimentalSpectreHttpApi
 @Serializable
-data class RectangleDto(val x: Double, val y: Double, val width: Double, val height: Double)
+public data class RectangleDto(val x: Double, val y: Double, val width: Double, val height: Double)
 
 /** Request body for `POST /click`. */
-@Serializable data class ClickRequest(val nodeKey: String)
+@ExperimentalSpectreHttpApi @Serializable public data class ClickRequest(val nodeKey: String)
 
 /** Request body for `POST /typeText`. */
-@Serializable data class TypeTextRequest(val text: String)
+@ExperimentalSpectreHttpApi @Serializable public data class TypeTextRequest(val text: String)
 
 /** Response body for `GET /screenshot` — the captured image as base64-encoded PNG bytes. */
-@Serializable data class ScreenshotResponse(val pngBase64: String, val width: Int, val height: Int)
+@ExperimentalSpectreHttpApi
+@Serializable
+public data class ScreenshotResponse(val pngBase64: String, val width: Int, val height: Int)
 
 /** Response body for `GET /nodes` and similar list endpoints. */
-@Serializable data class NodesResponse(val nodes: List<NodeSnapshotDto>)
+@ExperimentalSpectreHttpApi
+@Serializable
+public data class NodesResponse(val nodes: List<NodeSnapshotDto>)
 
 /** Response body for `GET /windows`. */
-@Serializable data class WindowsResponse(val windows: List<WindowSummaryDto>)
+@ExperimentalSpectreHttpApi
+@Serializable
+public data class WindowsResponse(val windows: List<WindowSummaryDto>)

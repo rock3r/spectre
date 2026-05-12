@@ -34,7 +34,7 @@ import javax.swing.SwingUtilities
  * Clipboard access is left as the system clipboard — paste-based [RobotDriver.typeText] still works
  * with synthetic Cmd/Ctrl+V keystrokes.
  */
-fun RobotDriver.Companion.synthetic(rootWindow: Window): RobotDriver =
+public fun RobotDriver.Companion.synthetic(rootWindow: Window): RobotDriver =
     RobotDriver(SyntheticRobotAdapter(rootWindow), SystemClipboardAdapter())
 
 internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdapter {

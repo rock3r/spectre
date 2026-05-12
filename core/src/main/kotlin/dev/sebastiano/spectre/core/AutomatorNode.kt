@@ -23,17 +23,17 @@ import java.awt.Rectangle
  * `ClickRequest.nodeKey` field and produced by [toString]. Parse with [parse]; parsing splits from
  * the right so colons inside [surfaceId] are preserved.
  */
-data class NodeKey(val surfaceId: String, val ownerIndex: Int, val nodeId: Int) {
+public data class NodeKey(val surfaceId: String, val ownerIndex: Int, val nodeId: Int) {
 
     override fun toString(): String = "$surfaceId:$ownerIndex:$nodeId"
 
-    companion object {
+    public companion object {
 
         /**
          * Parses a string of the form `surfaceId:ownerIndex:nodeId` into a [NodeKey]. Throws
          * [IllegalArgumentException] on malformed input.
          */
-        fun parse(key: String): NodeKey {
+        public fun parse(key: String): NodeKey {
             // Split from the right: last segment is nodeId, second-to-last is ownerIndex,
             // everything before is surfaceId (which may contain colons).
             val lastColon = key.lastIndexOf(':')
@@ -63,40 +63,43 @@ data class NodeKey(val surfaceId: String, val ownerIndex: Int, val nodeId: Int) 
  * other query entry points; consumers should not construct them directly. The [key] uniquely
  * identifies the node across refreshes (see [NodeKey]).
  */
-class AutomatorNode
+public class AutomatorNode
 internal constructor(
-    val key: NodeKey,
+    public val key: NodeKey,
     internal val semanticsNode: SemanticsNode,
     internal val trackedWindow: TrackedWindow,
     private val relations: NodeRelations = EmptyNodeRelations,
 ) {
 
     /** Stable identifier of the tracked window/surface this node belongs to. */
-    val surfaceId: String = trackedWindow.surfaceId
+    public val surfaceId: String = trackedWindow.surfaceId
 
     // Eagerly snapshot all semantics properties at construction time (which runs on
     // the EDT inside readAllNodes) so callers can safely read them from any thread.
-    val testTag: String? = semanticsNode.config.getOrNull(SemanticsProperties.TestTag)
-    val texts: List<String> =
+    public val testTag: String? = semanticsNode.config.getOrNull(SemanticsProperties.TestTag)
+    public val texts: List<String> =
         semanticsNode.config.getOrNull(SemanticsProperties.Text)?.map { it.text }.orEmpty()
-    val text: String? = texts.firstOrNull()
-    val editableText: String? =
+    public val text: String? = texts.firstOrNull()
+    public val editableText: String? =
         semanticsNode.config.getOrNull(SemanticsProperties.EditableText)?.text
-    val contentDescriptions: List<String> =
+    public val contentDescriptions: List<String> =
         semanticsNode.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty()
-    val contentDescription: String? = contentDescriptions.firstOrNull()
-    val role: Role? = semanticsNode.config.getOrNull(SemanticsProperties.Role)
-    val isDisabled: Boolean = semanticsNode.config.getOrNull(SemanticsProperties.Disabled) != null
-    val isFocused: Boolean = semanticsNode.config.getOrNull(SemanticsProperties.Focused) == true
-    val isSelected: Boolean = semanticsNode.config.getOrNull(SemanticsProperties.Selected) == true
+    public val contentDescription: String? = contentDescriptions.firstOrNull()
+    public val role: Role? = semanticsNode.config.getOrNull(SemanticsProperties.Role)
+    public val isDisabled: Boolean =
+        semanticsNode.config.getOrNull(SemanticsProperties.Disabled) != null
+    public val isFocused: Boolean =
+        semanticsNode.config.getOrNull(SemanticsProperties.Focused) == true
+    public val isSelected: Boolean =
+        semanticsNode.config.getOrNull(SemanticsProperties.Selected) == true
 
     // Geometry is always read live: layout can change between node lookup and action,
     // so a snapshot would let click/screenshot drift to stale coordinates after scrolling
     // or recomposition-driven repositioning.
-    val boundsInWindow: Rect
+    public val boundsInWindow: Rect
         get() = readOnEdt { semanticsNode.boundsInWindow }
 
-    val centerOnScreen: Point
+    public val centerOnScreen: Point
         get() = readOnEdt {
             val bounds = semanticsNode.boundsInWindow
             val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
@@ -113,7 +116,7 @@ internal constructor(
             )
         }
 
-    val boundsOnScreen: Rectangle
+    public val boundsOnScreen: Rectangle
         get() = readOnEdt {
             val bounds = semanticsNode.boundsInWindow
             val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
@@ -136,7 +139,7 @@ internal constructor(
      * same underlying layout state. Reading the two getters separately would issue two independent
      * EDT bounces, between which layout could shift.
      */
-    fun bothBounds(): BothBounds = readOnEdt {
+    public fun bothBounds(): BothBounds = readOnEdt {
         val bounds = semanticsNode.boundsInWindow
         val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
         val contentOrigin = trackedWindow.composeContentOrigin
@@ -156,10 +159,10 @@ internal constructor(
         )
     }
 
-    val parent: AutomatorNode?
+    public val parent: AutomatorNode?
         get() = relations.parentOf(key)
 
-    val children: List<AutomatorNode>
+    public val children: List<AutomatorNode>
         get() = relations.childrenOf(key)
 
     override fun toString(): String = buildString {
@@ -172,7 +175,7 @@ internal constructor(
 }
 
 /** Atomic snapshot of [AutomatorNode.boundsInWindow] and [AutomatorNode.boundsOnScreen]. */
-data class BothBounds(val inWindow: Rect, val onScreen: Rectangle)
+public data class BothBounds(val inWindow: Rect, val onScreen: Rectangle)
 
 internal interface NodeRelations {
 

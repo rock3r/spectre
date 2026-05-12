@@ -4,7 +4,13 @@ plugins {
     alias(libs.plugins.kotlinJvm)
 }
 
-kotlin { jvmToolchain(21) }
+kotlin {
+    jvmToolchain(21)
+    explicitApi()
+
+    @OptIn(org.jetbrains.kotlin.gradle.dsl.abi.ExperimentalAbiValidation::class)
+    abiValidation { enabled.set(true) }
+}
 
 dependencies {
     api(projects.core)

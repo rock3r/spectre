@@ -32,4 +32,4 @@ package dev.sebastiano.spectre.core
     AnnotationTarget.CONSTRUCTOR,
     AnnotationTarget.TYPEALIAS,
 )
-annotation class InternalSpectreApi
+public annotation class InternalSpectreApi

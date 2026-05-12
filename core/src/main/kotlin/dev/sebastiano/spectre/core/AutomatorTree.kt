@@ -12,15 +12,15 @@ import androidx.compose.ui.semantics.Role
  * need the full picture rather than a single match — most user-facing queries
  * ([ComposeAutomator.findByTestTag], etc.) go through this snapshot too.
  */
-class AutomatorTree internal constructor(private val windows: List<AutomatorWindow>) {
+public class AutomatorTree internal constructor(private val windows: List<AutomatorWindow>) {
 
-    fun windows(): List<AutomatorWindow> = windows
+    public fun windows(): List<AutomatorWindow> = windows
 
-    fun window(windowIndex: Int): AutomatorWindow = windows[windowIndex]
+    public fun window(windowIndex: Int): AutomatorWindow = windows[windowIndex]
 
-    fun allNodes(): List<AutomatorNode> = windows.flatMap(AutomatorWindow::allNodes)
+    public fun allNodes(): List<AutomatorNode> = windows.flatMap(AutomatorWindow::allNodes)
 
-    fun roots(): List<AutomatorNode> = windows.flatMap(AutomatorWindow::roots)
+    public fun roots(): List<AutomatorNode> = windows.flatMap(AutomatorWindow::roots)
 }
 
 /**
@@ -32,29 +32,29 @@ class AutomatorTree internal constructor(private val windows: List<AutomatorWind
  * `findBy*` methods filter the surface's nodes using the same matchers as the top-level
  * [ComposeAutomator] queries.
  */
-class AutomatorWindow
+public class AutomatorWindow
 internal constructor(
-    val windowIndex: Int,
+    public val windowIndex: Int,
     internal val trackedWindow: TrackedWindow,
     private val nodes: List<AutomatorNode>,
 ) {
 
-    val surfaceId: String = trackedWindow.surfaceId
-    val isPopup: Boolean = trackedWindow.isPopup
+    public val surfaceId: String = trackedWindow.surfaceId
+    public val isPopup: Boolean = trackedWindow.isPopup
 
-    fun allNodes(): List<AutomatorNode> = nodes
+    public fun allNodes(): List<AutomatorNode> = nodes
 
-    fun roots(): List<AutomatorNode> = nodes.filter { it.parent == null }
+    public fun roots(): List<AutomatorNode> = nodes.filter { it.parent == null }
 
-    fun findByTestTag(tag: String): List<AutomatorNode> =
+    public fun findByTestTag(tag: String): List<AutomatorNode> =
         nodes.filter(NodeMatchers.hasTestTag(tag)::matches)
 
-    fun findOneByTestTag(tag: String): AutomatorNode? = findByTestTag(tag).firstOrNull()
+    public fun findOneByTestTag(tag: String): AutomatorNode? = findByTestTag(tag).firstOrNull()
 
-    fun findByText(query: TextQuery): List<AutomatorNode> =
+    public fun findByText(query: TextQuery): List<AutomatorNode> =
         nodes.filter(NodeMatchers.hasText(query)::matches)
 
-    fun findByText(text: String, exact: Boolean = true): List<AutomatorNode> =
+    public fun findByText(text: String, exact: Boolean = true): List<AutomatorNode> =
         findByText(
             if (exact) {
                 TextQuery.exact(text)
@@ -63,14 +63,14 @@ internal constructor(
             }
         )
 
-    fun findOneByText(query: TextQuery): AutomatorNode? = findByText(query).firstOrNull()
+    public fun findOneByText(query: TextQuery): AutomatorNode? = findByText(query).firstOrNull()
 
-    fun findOneByText(text: String, exact: Boolean = true): AutomatorNode? =
+    public fun findOneByText(text: String, exact: Boolean = true): AutomatorNode? =
         findByText(text, exact).firstOrNull()
 
-    fun findByContentDescription(description: String): List<AutomatorNode> =
+    public fun findByContentDescription(description: String): List<AutomatorNode> =
         nodes.filter(NodeMatchers.hasContentDescription(description)::matches)
 
-    fun findByRole(role: Role): List<AutomatorNode> =
+    public fun findByRole(role: Role): List<AutomatorNode> =
         nodes.filter(NodeMatchers.hasRole(role)::matches)
 }

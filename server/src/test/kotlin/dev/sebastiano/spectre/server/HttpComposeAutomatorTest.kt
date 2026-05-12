@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalSpectreHttpApi::class)
+
 package dev.sebastiano.spectre.server
 
 import kotlin.test.Test

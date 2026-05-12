@@ -5,7 +5,7 @@ package dev.sebastiano.spectre.recording
  * scenario-level test recordings: 30fps, cursor visible, hardware-accelerated H.264 on macOS where
  * available.
  */
-data class RecordingOptions(
+public data class RecordingOptions(
     val frameRate: Int = DEFAULT_FRAME_RATE,
     val captureCursor: Boolean = true,
     /**
@@ -32,10 +32,10 @@ data class RecordingOptions(
         require(screenIndex >= 0) { "screenIndex must be non-negative, was $screenIndex" }
     }
 
-    companion object {
+    public companion object {
 
-        const val DEFAULT_FRAME_RATE: Int = 30
-        const val DEFAULT_CODEC: String = "libx264"
-        const val DEFAULT_SCREEN_INDEX: Int = 0
+        public const val DEFAULT_FRAME_RATE: Int = 30
+        public const val DEFAULT_CODEC: String = "libx264"
+        public const val DEFAULT_SCREEN_INDEX: Int = 0
     }
 }

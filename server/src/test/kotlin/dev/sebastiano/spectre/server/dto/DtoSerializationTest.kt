@@ -1,5 +1,8 @@
+@file:OptIn(ExperimentalSpectreHttpApi::class)
+
 package dev.sebastiano.spectre.server.dto
 
+import dev.sebastiano.spectre.server.ExperimentalSpectreHttpApi
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.serialization.encodeToString

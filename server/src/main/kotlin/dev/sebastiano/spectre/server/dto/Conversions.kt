@@ -1,10 +1,11 @@
-@file:OptIn(InternalSpectreApi::class)
+@file:OptIn(InternalSpectreApi::class, ExperimentalSpectreHttpApi::class)
 
 package dev.sebastiano.spectre.server.dto
 
 import dev.sebastiano.spectre.core.AutomatorNode
 import dev.sebastiano.spectre.core.InternalSpectreApi
 import dev.sebastiano.spectre.core.TrackedWindow
+import dev.sebastiano.spectre.server.ExperimentalSpectreHttpApi
 import java.awt.Rectangle
 
 internal fun TrackedWindow.toDto(index: Int): WindowSummaryDto =

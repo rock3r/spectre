@@ -20,7 +20,7 @@ import java.nio.file.Path
  * recompositions, RPC calls, state updates, etc.) — this tracer just provides the recording
  * lifecycle that brackets the scenario.
  */
-class PerfettoTracer(private val sequenceId: Int = DEFAULT_SEQUENCE_ID) : Tracer {
+public class PerfettoTracer(private val sequenceId: Int = DEFAULT_SEQUENCE_ID) : Tracer {
 
     private var driver: TraceDriver? = null
 
@@ -42,8 +42,8 @@ class PerfettoTracer(private val sequenceId: Int = DEFAULT_SEQUENCE_ID) : Tracer
         }
     }
 
-    companion object {
+    public companion object {
 
-        const val DEFAULT_SEQUENCE_ID: Int = 1
+        public const val DEFAULT_SEQUENCE_ID: Int = 1
     }
 }

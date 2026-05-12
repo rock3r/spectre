@@ -19,8 +19,8 @@ import java.nio.file.Path
  * [WindowRecorder] and a [dev.sebastiano.spectre.recording.Recorder] and picks the right one per
  * call based on whether a window was supplied + the current host OS.
  */
-interface WindowRecorder {
-    fun start(
+public interface WindowRecorder {
+    public fun start(
         window: TitledWindow,
         windowOwnerPid: Long = ProcessHandle.current().pid(),
         output: Path,

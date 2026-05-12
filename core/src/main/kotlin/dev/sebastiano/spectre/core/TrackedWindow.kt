@@ -9,7 +9,7 @@ import java.awt.Window
 import javax.swing.JFrame
 
 @InternalSpectreApi
-data class TrackedWindow
+public data class TrackedWindow
 @OptIn(ExperimentalComposeUiApi::class)
 internal constructor(
     val surfaceId: String,
@@ -32,7 +32,7 @@ internal constructor(
      * `TrackedWindow` directly (notably `core`'s own unit tests).
      */
     @OptIn(ExperimentalComposeUiApi::class)
-    constructor(
+    public constructor(
         surfaceId: String,
         window: Window,
         composePanel: ComposePanel?,

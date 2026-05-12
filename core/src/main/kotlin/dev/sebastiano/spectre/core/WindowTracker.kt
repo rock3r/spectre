@@ -9,14 +9,14 @@ import java.awt.Container
 import java.awt.Window
 
 @InternalSpectreApi
-class WindowTracker {
+public class WindowTracker {
 
     @Volatile private var _trackedWindows: List<TrackedWindow> = emptyList()
 
-    val trackedWindows: List<TrackedWindow>
+    public val trackedWindows: List<TrackedWindow>
         get() = _trackedWindows
 
-    fun refresh() = readOnEdt {
+    public fun refresh(): Unit = readOnEdt {
         val pending = mutableListOf<TrackedWindow>()
         // Iterate every top-level window (`owner == null`) regardless of visibility — Swing's
         // `SharedOwnerFrame` is a hidden parent for `JDialog(null as Frame?, ...)`, so filtering

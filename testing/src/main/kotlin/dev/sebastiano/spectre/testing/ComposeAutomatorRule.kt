@@ -31,16 +31,16 @@ import org.junit.rules.ExternalResource
  * Prefer [ComposeAutomatorExtension] when using JUnit 5 — JUnit 5's parameter-injection model is a
  * better fit for parallel test execution.
  */
-class ComposeAutomatorRule(private val factory: AutomatorFactory) : ExternalResource() {
+public class ComposeAutomatorRule(private val factory: AutomatorFactory) : ExternalResource() {
 
     // Explicit no-arg secondary constructor so JUnit 4 callers can write
     // `@get:Rule val r = ComposeAutomatorRule()` without relying on Kotlin's
     // default-parameter constructor synthesis (consistent with ComposeAutomatorExtension).
-    constructor() : this({ ComposeAutomator.inProcess() })
+    public constructor() : this({ ComposeAutomator.inProcess() })
 
     private var instance: ComposeAutomator? = null
 
-    val automator: ComposeAutomator
+    public val automator: ComposeAutomator
         get() =
             checkNotNull(instance) {
                 "ComposeAutomatorRule.automator accessed outside of a running test"

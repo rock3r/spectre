@@ -1,4 +1,4 @@
-@file:OptIn(InternalSpectreApi::class)
+@file:OptIn(InternalSpectreApi::class, ExperimentalSpectreHttpApi::class)
 
 package dev.sebastiano.spectre.server
 
@@ -70,7 +70,11 @@ import javax.imageio.ImageIO
  *   converters into an already-installed plugin, and re-installing would throw a duplicate-plugin
  *   exception. Without JSON support the routes will fail at request time with a 415/500.
  */
-fun Application.installSpectreRoutes(automator: ComposeAutomator, basePath: String = "/spectre") {
+@ExperimentalSpectreHttpApi
+public fun Application.installSpectreRoutes(
+    automator: ComposeAutomator,
+    basePath: String = "/spectre",
+) {
     if (pluginOrNull(ContentNegotiation) == null) {
         install(ContentNegotiation) { json() }
     }
