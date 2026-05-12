@@ -1,6 +1,6 @@
 name: Windows
 
-# Runs the JVM checks on a real Windows host so Spectre's v3 Windows code paths
+# Runs the JVM checks on a real Windows host so Spectre's Windows-specific code paths
 # (recording/FfmpegBackend gdigrab argv, core/HiDpiMapper validation tests, sample-desktop
 # Robot+popup smokes) get exercised end-to-end. The Linux `ci.yml` workflow already runs the
 # same `:check` task, but it can't catch:

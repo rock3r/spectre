@@ -230,9 +230,11 @@ private constructor(
         return robotDriver.screenshot(trackedWindow.composeSurfaceBoundsOnScreen)
     }
 
-    // V1 contract: queries and actions do not auto-wait. Callers must invoke waitForIdle() /
+    // Queries and actions do not auto-wait. Callers must invoke waitForIdle() /
     // waitForVisualIdle() / waitForNode() explicitly when synchronisation matters. Auto-wait
-    // wrapping every read/action is intentionally deferred — see the v1 issue tracker.
+    // wrapping every read/action remains intentionally out of scope — the explicit-wait shape
+    // keeps the public surface predictable and lets callers choose the synchronisation strategy
+    // that fits their test.
     private val idlingResources = CopyOnWriteArrayList<AutomatorIdlingResource>()
 
     public fun registerIdlingResource(resource: AutomatorIdlingResource) {

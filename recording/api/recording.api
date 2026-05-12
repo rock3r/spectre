@@ -131,17 +131,6 @@ public final class dev/sebastiano/spectre/recording/screencapturekit/HelperNotBu
 }
 
 public final class dev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureKitRecorder : dev/sebastiano/spectre/recording/screencapturekit/WindowRecorder {
-	public static final field DEFAULT_DISCOVERY_TIMEOUT_MS I
-	public static final field EXIT_HELPER_NOT_REAPED I
-	public static final field FORCE_KILL_DURING_START_SECONDS J
-	public static final field HELPER_EXIT_BAD_ARGS I
-	public static final field HELPER_EXIT_PIPELINE I
-	public static final field HELPER_EXIT_TCC_DENIED I
-	public static final field HELPER_EXIT_WINDOW_NOT_FOUND I
-	public static final field POLL_INTERVAL_MILLIS J
-	public static final field READER_DRAIN_MILLIS J
-	public static final field READY_MARKER Ljava/lang/String;
-	public static final field READY_WAIT_MILLIS J
 	public fun <init> ()V
 	public fun start (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;JLjava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;)Ldev/sebastiano/spectre/recording/RecordingHandle;
 }

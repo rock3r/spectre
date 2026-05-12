@@ -40,8 +40,8 @@ internal object FfmpegCli {
         // the wrong region without any error signal. Reject negative coordinates outright so
         // misalignment surfaces here. Multi-monitor setups can produce negative AWT screen
         // coordinates for a secondary display; callers in that situation should translate
-        // into the primary screen's coordinate space (or use ScreenCaptureKit window capture
-        // when that lands in v2).
+        // into the primary screen's coordinate space (or use `ScreenCaptureKitRecorder`
+        // window capture on macOS, which addresses windows by id rather than screen region).
         require(region.x >= 0 && region.y >= 0) {
             "region origin must be non-negative for ffmpeg crop, was (${region.x}, ${region.y})"
         }
