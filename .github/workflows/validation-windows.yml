@@ -6,28 +6,32 @@ name: Validation tests (Windows)
 # tasks aren't in `:check`'s default scope, so without this workflow a Windows-side regression
 # in popup discovery or HiDPI mapping would only surface in manual testing.
 #
-# ## The "Could not write 127.0.0.1:NNNN" race (now fixed at source)
+# ## The "Could not write 127.0.0.1:NNNN" workaround (Windows-only)
 #
-# Historically the Windows-shape Gradle test-executor protocol race produced
-# `Could not write '/127.0.0.1:NNNN'` followed by `BUILD FAILED`, even though the per-class
-# JUnit XML on disk reported `failures="0" errors="0"`. The Linux counterpart manifested as
-# `No tests found for given includes` on filtered Test tasks (first observed 2026-05-11 in
-# rock3r/spectre actions run 25697771548). Both were the same family: Configuration Cache
-# "Runs tasks in parallel within the same project"
-# (https://docs.gradle.org/current/userguide/configuration_cache.html#config_cache:intro), so
-# the validation Test tasks — sibling Test tasks with `forkEvery = 1` and class-name filters
-# — got picked up on separate `Execution worker` threads concurrently and their worker JVMs
-# raced the Gradle daemon's test-event channel.
+# Compose Desktop's `application{}` shutdown via `exitApplication()` races Gradle's test-
+# executor protocol on Windows. The test JVM exits cleanly *after* writing its JUnit XML
+# results, but Gradle's daemon-side reader sometimes loses the TCP socket carrying those
+# results back, and reports a "Could not write '/127.0.0.1:NNNN'" error followed by
+# `BUILD FAILED` — even though the test class itself passed and its `<testsuite ...
+# failures="0" errors="0">` XML is on disk.
 #
-# Fixed by serialising the validation Test tasks via a `ValidationTestSerialiser`
-# `BuildService` with `maxParallelUsages = 1` in `sample-desktop/build.gradle.kts`. CC stays
-# on for the rest of the build. The previous belt-and-braces (`continue-on-error: true` on
-# the Gradle step + `::warning::` envelope-detection branch in the verifier) is gone so a
-# recurrence fails the workflow loudly. The XML verifier downstream stays as plain test
-# hygiene (required-set existence + discovered-set inspection).
+# The `ValidationTestSerialiser` BuildService landed on `sample-desktop/build.gradle.kts` in
+# commit 4faa14e — it serialises the validation Test tasks (`maxParallelUsages = 1`) to suppress
+# the race at source. **That fix holds on Linux** (validation-linux.yml's stricter mode has
+# stayed green) **but does NOT hold on Windows**: ba56627 removed this workflow's safety net
+# under the assumption the BuildService was sufficient on both platforms; the next two main
+# runs (and PR #131) immediately flaked with the original "Could not write '/127.0.0.1:NNNN'"
+# shape. So the Windows-only safety net is back: this workflow tolerates Gradle's non-zero
+# exit (`continue-on-error: true`) and treats the per-class JUnit XMLs as the source of truth
+# in the verify step below. A future commit can drop this layer again once a Windows-specific
+# fix lands and a fresh probe of hosted-Windows runs comes back clean.
+#
+# Compile / dependency-resolution failures still trip the verification step (no XMLs written →
+# exit 1), so we don't lose the signal that genuinely matters.
 #
 # Local invocation:
 #   ./gradlew :sample-desktop:validationTest :sample-desktop:validationTestPopupLayers
+# (Same caveat applies — Gradle may exit non-zero with the protocol noise even when tests pass.)
 
 on:
   workflow_dispatch:
@@ -79,15 +83,26 @@ jobs:
         uses: gradle/actions/setup-gradle@v5
 
       - name: Run validation tests
-        # The Gradle test-executor protocol race (see workflow header) is suppressed at its
-        # source by serialising the validation Test tasks via a `ValidationTestSerialiser`
-        # `BuildService` in `sample-desktop/build.gradle.kts`. If a Gradle-side problem ever
-        # surfaces from these invocations again, we want it to fail the workflow loudly so
-        # we know to investigate, not be absorbed silently.
+        # The Gradle test-executor protocol race (originally #72) is suppressed at its source
+        # on Linux by serialising the validation Test tasks via a `ValidationTestSerialiser`
+        # `BuildService` in `sample-desktop/build.gradle.kts` (see the comment block there for
+        # the full mechanism — CC's "tasks in parallel within the same project" intent collides
+        # with `forkEvery = 1` racing the daemon's test-event channel; the Windows shape is
+        # `Could not write '/127.0.0.1:NNNN'`).
         #
-        # `--continue` so a failure in one task doesn't skip subsequent tasks — every
-        # requested task gets a fair chance to produce its JUnit XML, and the verification
-        # step below sees the full picture instead of cascade-skips.
+        # The serialisation does **not** fully suppress the race on Windows: ba56627 removed
+        # this step's tolerance + the XML-source-of-truth verifier under the assumption that
+        # the BuildService was sufficient on both platforms; the very next main run, plus the
+        # follow-on PR #131, immediately flaked. Tolerance is back here as Windows-only
+        # belt + braces and the verifier downstream is the authority on real test outcomes.
+        #
+        # `--continue` is essential: without it Gradle aborts after the first task to
+        # exit non-zero, and the protocol-flake "failure" reliably trips on the first task.
+        # That means downstream tasks would never run, the verification step would see
+        # their XMLs missing, and the job would fail for a reason unrelated to the actual
+        # tests. `--continue` makes Gradle run every requested task regardless of earlier
+        # failures, so each task gets a fair chance to produce its XML.
+        continue-on-error: true
         id: gradle
         run: |
           ./gradlew \
@@ -97,8 +112,15 @@ jobs:
         shell: bash
 
       - name: Verify validation tests passed via JUnit XML
-        # Plain two-pass test-hygiene verifier (no longer compensating for the
-        # protocol-flake — see workflow header):
+        # Envelope-detection safety net (issue #72): the `ValidationTestSerialiser` BuildService
+        # in `sample-desktop/build.gradle.kts` suppresses the race on Linux but not on Windows
+        # (verified by ba56627's failed main run and PR #131). The envelope-detection branch
+        # below is therefore live for Windows: a class that's missing its per-class XML but
+        # shows up in Gradle's synthetic envelope is treated as flaked (warning, not fatal);
+        # a class missing both is a hard error.
+        #
+        # Source-of-truth check that ignores Gradle's exit code but does NOT rubber-stamp every
+        # failure. Two passes over the JUnit XMLs:
         #
         # 1. **Required-set existence pass**: an explicit list of expected (task, class) pairs
         #    must each have a corresponding TEST-<fqn>.xml. A mid-class JVM crash that skips
@@ -121,7 +143,6 @@ jobs:
         # ADDING tests; the discovered-set pass means REMOVING a test only fails the
         # verification (you'd see a "missing required class" error) which is the right
         # signal to update the list.
-        if: always()
         run: |
           set -euo pipefail
           shopt -s globstar nullglob
@@ -139,19 +160,41 @@ jobs:
           # list.
           task_dirs=("${!required_classes_by_task[@]}")
 
-          # Pass 1: required-set existence.
+          # Pass 1: required-set existence + protocol-flake distinction.
+          #
+          # When the Gradle test-executor protocol race fires (see workflow header), the
+          # affected worker JVM finishes the test cleanly but its per-class XML never lands
+          # on disk; instead Gradle writes a synthetic envelope at
+          # `TEST-Gradle-Test-Run--sample-desktop-<task>.xml` with `<testcase name="<class>"
+          # ...><skipped/></testcase>`. Use that envelope to tell apart:
+          #   - a genuinely-missing class (test never ran, no envelope mention) → hard fail
+          #   - a class chewed by the flake (envelope mentions it) → warning, not fatal
+          #
+          # The warning still surfaces in the GitHub Actions UI and the artefact upload
+          # captures everything for post-mortem; we just don't block the workflow on the
+          # documented Windows-specific race tracked at #72.
           missing=()
+          flaked=()
           for task_dir in "${!required_classes_by_task[@]}"; do
+            envelope="sample-desktop/build/test-results/$task_dir/TEST-Gradle-Test-Run--sample-desktop-${task_dir}.xml"
             for class_name in ${required_classes_by_task[$task_dir]}; do
               xml="sample-desktop/build/test-results/$task_dir/TEST-dev.sebastiano.spectre.sample.validation.${class_name}.xml"
-              if [ ! -f "$xml" ]; then
+              if [ -f "$xml" ]; then
+                continue
+              fi
+              if [ -f "$envelope" ] && grep -qE "<testcase name=\"${class_name}\"" "$envelope"; then
+                flaked+=("$task_dir/${class_name}")
+              else
                 missing+=("$task_dir/${class_name}")
               fi
             done
           done
           if [ "${#missing[@]}" -gt 0 ]; then
-            echo "::error::Missing JUnit XML reports for: ${missing[*]}. Gradle step outcome: ${{ steps.gradle.outcome }}"
+            echo "::error::Missing JUnit XML reports (no Gradle envelope mention either) for: ${missing[*]}. Gradle step outcome: ${{ steps.gradle.outcome }}"
             exit 1
+          fi
+          if [ "${#flaked[@]}" -gt 0 ]; then
+            echo "::warning::Protocol-flake skipped per-class XMLs (Gradle envelope confirms the class was enrolled): ${flaked[*]}. Tracked at https://github.com/rock3r/spectre/issues/72."
           fi
 
           # Pass 2: discovered-set inspection.
@@ -196,12 +239,13 @@ jobs:
             echo "::error::Validation tests reported $fail_total failure(s) and $err_total error(s) across ${#all_xml[@]} XML report(s)."
             exit 1
           fi
-          echo "All required classes present; ${#all_xml[@]} discovered XML report(s) clean."
+          echo "All required classes present; ${#all_xml[@]} discovered XML report(s) clean (Gradle exit ignored due to known executor-protocol flake)."
         shell: bash
 
       - name: Upload validation artefacts
-        # Always upload — useful both for diagnosing failures and for confirming what ran on
-        # green builds.
+        # Always upload — useful both for diagnosing flakes and for confirming what ran on
+        # green builds. The fail-tolerant Gradle step + XML-based verification means an absent
+        # upload would otherwise be confusing post-mortem.
         if: always()
         uses: actions/upload-artifact@v4
         with:
