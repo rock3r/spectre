@@ -1,34 +1,51 @@
 # Recording
 
-Screen recording for Spectre scenarios. v1 region capture (ffmpeg) and v2 window-targeted
-capture (ScreenCaptureKit) live side by side — pick by what you need.
+Screen recording for Spectre scenarios. Region capture (ffmpeg) and window-targeted capture
+(ScreenCaptureKit on macOS, `gdigrab` on Windows, xdg-desktop-portal on Linux Wayland) live
+side by side — pick by what you need.
+
+The user-facing recorder capability matrix lives in
+[`docs/guide/recording.md`](../docs/guide/recording.md). This README is the in-tree
+implementer's view of the same module.
 
 ## Public surface
 
-### Region capture (v1)
+### Region capture
 - `Recorder` — interface; produces a `RecordingHandle` for an in-progress capture.
-- `FfmpegRecorder` — v1 default. Shells out to a system `ffmpeg` and captures the requested
-  region via the macOS avfoundation device. Resolves the binary via PATH (`resolveFfmpegPath()`)
-  by default; pass `ffmpegPath` to override (testing, non-PATH installs).
+- `FfmpegRecorder` — the region-capture default. Shells out to a system `ffmpeg` and captures
+  the requested region via `avfoundation` on macOS, `gdigrab` on Windows, and `x11grab` on
+  Linux Xorg. Throws on Linux Wayland — use `WaylandPortalRecorder` instead. Resolves the
+  binary via `PATH` (`resolveFfmpegPath()`) by default; pass `ffmpegPath` to override (testing,
+  non-`PATH` installs).
 
-### Window-targeted capture (v2, #18)
+### Window-targeted capture
 - `screencapturekit.ScreenCaptureKitRecorder` — forks a bundled Swift helper that drives
   `SCStream` + `AVAssetWriter` against a single window identified by `(pid, title-substring)`.
   Captures only that window's pixels even when partially occluded, and survives the host
   window moving across the screen. macOS only. Implements `WindowRecorder`.
-- `screencapturekit.WindowRecorder` — interface for window-targeted backends. SCK is the only
-  implementation today; future Windows / Linux backends would slot in here.
+- `screencapturekit.WindowRecorder` — interface for window-targeted backends. SCK is the
+  macOS implementation; `FfmpegWindowRecorder` covers Windows, and `WaylandPortalWindowRecorder`
+  covers Linux Wayland.
+- `FfmpegWindowRecorder` — `gdigrab title=` capture on Windows. Follows the window across
+  moves and resizes; requires a non-blank exact title.
+- `portal.WaylandPortalWindowRecorder` — Linux Wayland window-targeted capture via
+  `xdg-desktop-portal`'s `SourceType.WINDOW`. Captures only the picked window's pixels (no
+  leakage from occluding apps), but Spectre's crop is fixed at `start()` time — if the user
+  moves or resizes the window during the recording, the crop no longer aligns with the
+  window's pixels and the output is misaligned. Requires `xprop` and a compositor publishing
+  `_GTK_FRAME_EXTENTS` (validated on GNOME/Mutter).
 
   Decision rationale + alternatives considered are written up in the bridge strategy doc kept
   in `.plans/`.
 
-### Auto-routing (v2)
-- `AutoRecorder` — high-level wrapper that takes both a `WindowRecorder` and a `Recorder`
-  plus a `(window?, region, output, options)` per-call signature. Picks SCK when a window
-  is supplied on macOS, falls back to ffmpeg region capture otherwise. If the SCK helper
-  isn't bundled in the jar (e.g. built on Linux running on macOS) it degrades to ffmpeg
-  with a stderr warning. Operational SCK failures (TCC denied, window not found) propagate
-  unmodified — only `HelperNotBundledException` triggers the fallback.
+### Auto-routing
+- `AutoRecorder` — high-level wrapper that takes a `WindowRecorder`, a `Recorder`, and the
+  Linux portal recorders (when wired). Routing is Wayland-first (window-targeted portal,
+  region portal, or loud failure if no portal recorder is wired), then no-window region
+  capture, then macOS SCK with `HelperNotBundledException` → ffmpeg region fallback, then
+  Windows `gdigrab` title capture, then ffmpeg region as the final fallback. Operational
+  SCK failures (TCC denied, window not found) propagate unmodified — only
+  `HelperNotBundledException` triggers the fallback.
 
 ### Shared
 - `RecordingHandle` — `AutoCloseable`. Stop sends `q` on stdin (the documented clean-shutdown
@@ -37,18 +54,21 @@ capture (ScreenCaptureKit) live side by side — pick by what you need.
 - `RecordingOptions` — frame rate, cursor capture, codec.
 - `MacOsRecordingPermissions.diagnose()` — best-effort startup diagnostic for Screen Recording
   and Accessibility permissions. Full native detection (`CGPreflightScreenCaptureAccess`,
-  `AXIsProcessTrusted`) is still deferred — the v2 helper detects TCC denial by exit code,
-  which is the practical signal callers need.
+  `AXIsProcessTrusted`) is a future improvement — the SCK helper detects TCC denial by exit
+  code, which is the practical signal callers need.
 
 ## Capability matrix
 
 | Capability | Status |
 |---|---|
-| macOS region capture (avfoundation) | ✅ `FfmpegRecorder` |
+| macOS region capture (`avfoundation`) | ✅ `FfmpegRecorder` |
+| macOS window-targeted capture (ScreenCaptureKit) | ✅ `ScreenCaptureKitRecorder` |
 | Embedded `ComposePanel` (`windowHandle == 0L`) | ✅ region capture (window-targeted not applicable) |
-| ScreenCaptureKit window-targeted capture | ✅ `ScreenCaptureKitRecorder` |
-| Windows `gdigrab` recording | ⏸ v3 (#22) |
-| Linux `x11grab` / pipewire recording | ⏸ v4 (#27) |
+| Windows region capture (`gdigrab`) | ✅ `FfmpegRecorder` |
+| Windows window-targeted capture (`gdigrab title=`) | ✅ `FfmpegWindowRecorder` |
+| Linux Xorg region capture (`x11grab`) | ✅ `FfmpegRecorder` |
+| Linux Wayland region capture (xdg-desktop-portal) | ✅ `WaylandPortalRecorder` |
+| Linux Wayland window-targeted capture (xdg-desktop-portal `SourceType.WINDOW`) | ✅ `WaylandPortalWindowRecorder` (fixed crop at `start()` — moves and resizes during recording break alignment) |
 | Audio | ⏸ deferred — add when asked |
 | Notarization of the SCK helper | ✅ release workflow signs and notarizes the universal helper |
 

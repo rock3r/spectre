@@ -14,10 +14,13 @@ import java.util.concurrent.TimeUnit
  *
  * Detecting these without JNI is awkward — the canonical native APIs
  * (`CGPreflightScreenCaptureAccess`, `AXIsProcessTrusted`) live in CoreGraphics /
- * ApplicationServices and aren't reachable from pure JVM. v1 ships the diagnostic surface as
- * documentation plus a probe-style heuristic via the `tccutil`/`osascript` CLIs where available;
- * full native detection is deferred to v2 once the ScreenCaptureKit work brings in JNI/Panama
- * bindings anyway.
+ * ApplicationServices and aren't reachable from pure JVM. Spectre currently ships the diagnostic
+ * surface as documentation plus a probe-style heuristic via the `tccutil` / `osascript` CLIs where
+ * available. Full native detection (calling into CoreGraphics / ApplicationServices via JNI or
+ * Panama) is a future improvement; in the meantime callers see the actual permission outcome at
+ * recording start because
+ * [ScreenCaptureKitRecorder][dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitRecorder]
+ * detects TCC denial via the helper's exit code.
  */
 object MacOsRecordingPermissions {
 
@@ -45,9 +48,9 @@ object MacOsRecordingPermissions {
 
     private fun probeScreenRecordingPermission(): PermissionStatus {
         // CGPreflightScreenCaptureAccess lives in CoreGraphics and isn't reachable from pure
-        // JVM. There's no AppleScript proxy for the Screen Recording TCC entry either, so for
-        // v1 we honestly report Unknown rather than pretending we know — full native detection
-        // is deferred to v2 alongside the ScreenCaptureKit JNI/Panama work.
+        // JVM. There's no AppleScript proxy for the Screen Recording TCC entry either, so we
+        // honestly report Unknown rather than pretending we know — callers see the actual
+        // outcome at recording start when the SCK helper exits with a TCC-denied code.
         return PermissionStatus.Unknown
     }
 

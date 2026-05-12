@@ -42,7 +42,8 @@ for the mental model.
 ## Modules
 
 - `core` — semantics tree, selectors, coordinate mapping, Robot-backed input.
-- `server` — embedded HTTP transport (Ktor) for cross-JVM access.
+- `server` — embedded HTTP transport (Ktor) for cross-JVM access. **Experimental**; see
+  [`docs/SECURITY.md`](docs/SECURITY.md) for the trust model.
 - `recording` — region capture via `ffmpeg`, plus window-targeted capture (ScreenCaptureKit on
   macOS, `gdigrab` on Windows). `AutoRecorder` picks per call. See
   [`docs/RECORDING-LIMITATIONS.md`](docs/RECORDING-LIMITATIONS.md).

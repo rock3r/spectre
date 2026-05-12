@@ -57,7 +57,7 @@ familiar — Spectre brings the same "find a node, do a thing, assert" loop to C
 - :material-video: **[Recording](guide/recording.md)** — Region and window-targeted capture
   across macOS, Windows, and Linux.
 - :material-server: **[Cross-JVM](guide/cross-jvm.md)** — Drive a UI hosted in another JVM
-  process via the embedded HTTP transport.
+  process via the embedded HTTP transport (experimental; see [Security notes](SECURITY.md)).
 
 </div>
 

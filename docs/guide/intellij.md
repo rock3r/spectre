@@ -283,6 +283,6 @@ A few things to know about IDE-hosted Compose surfaces:
   — the in-tree IntelliJ plugin Spectre drives in CI, with the
   pooled-thread / EDT-marshalling pattern fully worked out.
 - [`ide-uitest.yml`](https://github.com/rock3r/spectre/blob/main/.github/workflows/ide-uitest.yml)
-  — the workflow that boots IntelliJ and runs the UI test on macOS and Windows.
+  — the workflow that boots IntelliJ and runs the UI test on macOS, Windows, and Linux.
 - [Spike gist](https://gist.github.com/rock3r/8e520bb3fe8fe5886367d5e22cefbab8) — the
   original design notes covering IDE-hosting more broadly.

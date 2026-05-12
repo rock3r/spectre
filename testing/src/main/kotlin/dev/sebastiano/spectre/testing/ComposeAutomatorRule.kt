@@ -16,8 +16,20 @@ import org.junit.rules.ExternalResource
  * }
  * ```
  *
- * The [factory] defaults to `ComposeAutomator.inProcess()`. Tests that need a stub for headless CI
- * or focused unit testing can supply their own factory.
+ * ## Lifecycle
+ *
+ * The [factory] is invoked in `before` (before each `@Test` method); the resulting automator is
+ * available via [automator] for the duration of the test and goes out of scope in `after`.
+ * Accessing [automator] outside a running test throws [IllegalStateException]. The default factory
+ * is `ComposeAutomator.inProcess()`; tests that need a stub for headless CI or focused unit testing
+ * can supply their own factory.
+ *
+ * Both [factory] invocation and automator interaction can touch the EDT; standard Spectre EDT rules
+ * apply (no EDT callers of suspend wait helpers; see
+ * [`waitForIdle` / `waitForNode` / `waitForVisualIdle`][ComposeAutomator]).
+ *
+ * Prefer [ComposeAutomatorExtension] when using JUnit 5 — JUnit 5's parameter-injection model is a
+ * better fit for parallel test execution.
  */
 class ComposeAutomatorRule(private val factory: AutomatorFactory) : ExternalResource() {
 

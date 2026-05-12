@@ -33,6 +33,13 @@ internal constructor(
 
     constructor(robot: Robot) : this(AwtRobotAdapter(robot))
 
+    /**
+     * Dispatches a single left-button click at the given screen coordinates: move, press, release.
+     *
+     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it
+     * (real `java.awt.Robot`), and dispatches inline otherwise (synthetic adapter). Throws
+     * [IllegalStateException] on macOS if Accessibility TCC permission is denied.
+     */
     suspend fun click(screenX: Int, screenY: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
@@ -42,6 +49,14 @@ internal constructor(
         }
     }
 
+    /**
+     * Dispatches a double left-button click at the given screen coordinates: move, press, release,
+     * press, release. The second press inherits the OS double-click window from the first release,
+     * so Compose's `combinedClickable` and Swing's `MouseEvent.clickCount == 2` fire as expected.
+     *
+     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
+     */
     suspend fun doubleClick(screenX: Int, screenY: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
@@ -53,6 +68,17 @@ internal constructor(
         }
     }
 
+    /**
+     * Dispatches a press-and-hold at the given screen coordinates: move, press, sleep for
+     * [holdFor], release. Useful for Compose's `Modifier.combinedClickable` long-press handler and
+     * for context-menu triggers.
+     *
+     * The release is wrapped in a `finally` so a cancellation during the hold still lifts the mouse
+     * button — otherwise subsequent clicks would be interpreted as drags.
+     *
+     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
+     */
     suspend fun longClick(
         screenX: Int,
         screenY: Int,
@@ -70,6 +96,20 @@ internal constructor(
         }
     }
 
+    /**
+     * Dispatches a press-drag-release from `(startX, startY)` to `(endX, endY)`, interpolating
+     * through [steps] intermediate points spread over [duration]. The pause between intermediate
+     * moves is computed so that the overall walltime tracks [duration]; [steps] controls
+     * smoothness, not speed.
+     *
+     * The button is released in a `finally`, so a cancellation mid-swipe still lifts the mouse
+     * button. No `MOUSE_CLICKED` event fires when start and end points differ — AWT treats
+     * press/move/release across distinct points as a drag, which is the contract Compose's
+     * `Modifier.draggable` and lazy-list scroll expect.
+     *
+     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
+     */
     suspend fun swipe(
         startX: Int,
         startY: Int,
@@ -98,6 +138,21 @@ internal constructor(
         }
     }
 
+    /**
+     * Pastes [text] into the focused field via the OS clipboard and a synthetic Ctrl/Cmd+V
+     * shortcut. This is the fast path — `Robot.keyPress`-per-character is significantly slower and
+     * stumbles on capitalisation / locale-specific layouts.
+     *
+     * The clipboard is **saved before** and **restored after** the paste, so caller-held clipboard
+     * content survives. On platforms where the clipboard supports read-back the call polls until
+     * the OS pasteboard surfaces the new value before dispatching the shortcut, and pumps the EDT a
+     * few times after the release so the focused field's paste handler reads the right value before
+     * the restore happens. Adapters that don't support clipboard read-back (synthetic test fakes)
+     * skip both settle waits.
+     *
+     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
+     */
     suspend fun typeText(text: String) {
         tccGuard.requireAccessibility()
         runOffEdt {
@@ -169,6 +224,18 @@ internal constructor(
         }
     }
 
+    /**
+     * Selects all content in the focused field, deletes it, then pastes [text]. Uses the same
+     * clipboard-backed paste as [typeText] for the second half; the first half is a Ctrl/Cmd+A
+     * followed by Backspace.
+     *
+     * Useful for overwriting a `TextField`'s current value without the caller having to compute
+     * cursor / selection state. Same caveats as [typeText] for clipboard preservation and EDT
+     * settle.
+     *
+     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
+     */
     suspend fun clearAndTypeText(text: String) {
         tccGuard.requireAccessibility()
         val selectAllModifier = shortcutModifierKeyCode(detectMacOs())
@@ -197,6 +264,15 @@ internal constructor(
         }
     }
 
+    /**
+     * Presses [keyCode] (a `java.awt.event.KeyEvent.VK_*` constant) with any AWT modifier-mask bits
+     * set in [modifiers] (`InputEvent.SHIFT_DOWN_MASK`, `CTRL_DOWN_MASK`, etc.). Modifier keys are
+     * pressed before the key, released after — the modifier mask appears on the `keyCode`
+     * KEY_PRESSED event and does not leak into subsequent calls.
+     *
+     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
+     */
     suspend fun pressKey(keyCode: Int, modifiers: Int = 0) {
         tccGuard.requireAccessibility()
         runOffEdt {
@@ -241,14 +317,16 @@ internal constructor(
      * The returned [BufferedImage] is owned by the caller and safe to read, mutate, or pass to
      * downstream pipelines.
      *
-     * ## Capture scope
+     * ## Trust boundary
      *
      * `region` is passed through to `java.awt.Robot.createScreenCapture` unchanged. It is **not**
      * constrained to the app under test: any rectangle the JVM can see — including other
      * applications, sensitive on-screen content, and unrelated windows — is fair game. With `region
      * = null` the capture covers the **entire virtual desktop**. Treat the returned pixels as
      * OS-visible content rather than as a slice of the test surface. A narrower per-window /
-     * per-node screenshot API is tracked under #96.
+     * per-node screenshot API is tracked under #96. See
+     * [the published security notes](https://spectre.sebastiano.dev/SECURITY/) for the full
+     * exposure model.
      */
     fun screenshot(region: Rectangle? = null): BufferedImage {
         tccGuard.requireScreenRecording()

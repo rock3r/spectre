@@ -81,7 +81,7 @@ pick whichever they're already using.
 | `core`      | `ComposeAutomator`, semantics tree reader, selectors, `RobotDriver` for input.    |
 | `testing`   | `ComposeAutomatorExtension` (JUnit 5), `ComposeAutomatorRule` (JUnit 4).         |
 | `recording` | Region and window-targeted screen capture (`AutoRecorder`, `FfmpegRecorder`, …). |
-| `server`    | Embedded HTTP transport (Ktor) and `HttpComposeAutomator` for cross-JVM access.   |
+| `server`    | Embedded HTTP transport (Ktor) and `HttpComposeAutomator` for cross-JVM access. **Experimental**; see [Security notes](../SECURITY.md). |
 
 Most projects only need `core` + `testing`. Add `recording` if you want video output for
 test runs, and `server` if your test process needs to reach a UI in a different JVM.

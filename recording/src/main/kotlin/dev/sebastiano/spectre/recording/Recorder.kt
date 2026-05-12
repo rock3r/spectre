@@ -6,9 +6,12 @@ import java.nio.file.Path
 /**
  * Captures a region of the screen to a video file.
  *
- * The v1 default is [FfmpegRecorder] which shells out to a system `ffmpeg` binary. Tests and
- * advanced consumers can swap in their own [Recorder] implementation (e.g. an in-memory frame
- * accumulator, or the future ScreenCaptureKit-backed window-targeted recorder tracked in v2).
+ * The default region-capture implementation is [FfmpegRecorder], which shells out to a system
+ * `ffmpeg` binary. Window-targeted capture lives behind separate
+ * [WindowRecorder][dev.sebastiano.spectre.recording.screencapturekit.WindowRecorder]
+ * implementations: `ScreenCaptureKitRecorder` on macOS, `FfmpegWindowRecorder` on Windows, and
+ * `WaylandPortalWindowRecorder` on Linux Wayland. Tests and advanced consumers can swap in their
+ * own [Recorder] implementation (e.g. an in-memory frame accumulator).
  */
 interface Recorder {
 
