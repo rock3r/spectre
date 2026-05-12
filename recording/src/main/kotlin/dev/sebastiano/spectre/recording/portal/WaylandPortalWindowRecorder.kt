@@ -19,8 +19,8 @@ import java.util.concurrent.TimeUnit
  * itself via OS APIs and don't take a region). The production implementation is
  * [WaylandPortalWindowRecorder].
  */
-interface WaylandWindowSourceRecorder {
-    fun start(
+public interface WaylandWindowSourceRecorder {
+    public fun start(
         window: TitledWindow,
         region: Rectangle,
         output: Path,

@@ -43,7 +43,7 @@ import java.util.concurrent.atomic.AtomicReference
  * The [processFactory] seam exists so the lifecycle can be unit-tested without spawning a real
  * `ffmpeg` (a fake factory can return a `Process`-like stand-in driven by an in-memory pipe).
  */
-class FfmpegRecorder
+public class FfmpegRecorder
 internal constructor(
     private val ffmpegPath: Path,
     private val processFactory: ProcessFactory,
@@ -56,7 +56,7 @@ internal constructor(
     private val backendProvider: () -> FfmpegBackend,
 ) : Recorder {
 
-    constructor(
+    public constructor(
         ffmpegPath: Path = resolveFfmpegPath(),
         processFactory: ProcessFactory = SystemProcessFactory,
     ) : this(ffmpegPath, processFactory, FfmpegBackend::detect)
@@ -77,8 +77,8 @@ internal constructor(
     }
 
     /** Indirection over `ProcessBuilder.start()` so tests can drive the subprocess lifecycle. */
-    interface ProcessFactory {
-        fun start(argv: List<String>): Process
+    public interface ProcessFactory {
+        public fun start(argv: List<String>): Process
     }
 
     internal object SystemProcessFactory : ProcessFactory {
@@ -96,7 +96,7 @@ internal constructor(
                 .start()
     }
 
-    companion object {
+    public companion object {
 
         // Sentinel returned by resolveFfmpegPath() when no binary is found. Constructing an
         // FfmpegRecorder against this path lets the caller see the explicit failure message
@@ -121,7 +121,7 @@ internal constructor(
          * [FfmpegRecorder] with [PROBE_PATH] will get a clear error explaining the missing binary
          * at use time.
          */
-        fun resolveFfmpegPath(): Path = which("ffmpeg") ?: PROBE_PATH
+        public fun resolveFfmpegPath(): Path = which("ffmpeg") ?: PROBE_PATH
 
         private fun which(executable: String): Path? {
             val pathEnv = System.getenv("PATH") ?: return null

@@ -59,7 +59,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * missing window), instantiate [ScreenCaptureKitRecorder], [FfmpegWindowRecorder], or
  * [FfmpegRecorder] directly.
  */
-class AutoRecorder
+public class AutoRecorder
 internal constructor(
     private val sckRecorder: WindowRecorder,
     private val ffmpegRecorder: Recorder,
@@ -73,7 +73,7 @@ internal constructor(
     private val isWayland: () -> Boolean,
 ) {
 
-    constructor(
+    public constructor(
         sckRecorder: WindowRecorder = ScreenCaptureKitRecorder(),
         ffmpegRecorder: Recorder = FfmpegRecorder(),
         windowsWindowRecorder: WindowRecorder? = defaultWindowsWindowRecorder(),
@@ -102,7 +102,7 @@ internal constructor(
      */
     private val waylandFallbackWarned = AtomicBoolean(false)
 
-    fun start(
+    public fun start(
         window: TitledWindow?,
         region: Rectangle,
         output: Path,

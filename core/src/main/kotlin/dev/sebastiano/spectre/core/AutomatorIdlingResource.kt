@@ -11,9 +11,9 @@ package dev.sebastiano.spectre.core
  * `diagnosticMessage()` is included in [IdleTimeoutException] when a wait times out, so it should
  * describe the in-flight work in a way that helps a developer narrow down the cause.
  */
-interface AutomatorIdlingResource {
+public interface AutomatorIdlingResource {
 
-    val isIdleNow: Boolean
+    public val isIdleNow: Boolean
 
-    fun diagnosticMessage(): String? = null
+    public fun diagnosticMessage(): String? = null
 }

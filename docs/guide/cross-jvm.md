@@ -38,6 +38,9 @@ top of an in-process `ComposeAutomator`; the test JVM talks to it through
     See [Security notes](../SECURITY.md) for the full risk register and the
     accepted-risk list.
 
+    All entry points in this guide require `@OptIn(ExperimentalSpectreHttpApi::class)`
+    — see [Stability policy](../STABILITY.md) for the API tier definitions.
+
 ## Server side: mount the routes
 
 In the hosting JVM, build an in-process automator and install Spectre's routes on a
@@ -52,7 +55,10 @@ dependencies {
 ```
 
 ```kotlin
+@file:OptIn(ExperimentalSpectreHttpApi::class)
+
 import dev.sebastiano.spectre.core.ComposeAutomator
+import dev.sebastiano.spectre.server.ExperimentalSpectreHttpApi
 import dev.sebastiano.spectre.server.installSpectreRoutes
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
@@ -96,7 +102,10 @@ In the test JVM, the canonical entry point is the `ComposeAutomator.http(...)`
 companion extension:
 
 ```kotlin
+@file:OptIn(ExperimentalSpectreHttpApi::class)
+
 import dev.sebastiano.spectre.core.ComposeAutomator
+import dev.sebastiano.spectre.server.ExperimentalSpectreHttpApi
 import dev.sebastiano.spectre.server.http
 import kotlinx.coroutines.runBlocking
 

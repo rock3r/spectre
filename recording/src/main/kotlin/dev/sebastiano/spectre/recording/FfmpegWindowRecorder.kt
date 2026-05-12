@@ -34,13 +34,13 @@ import java.nio.file.Path
  * Construction mirrors [FfmpegRecorder]'s shape: an [ffmpegPath] resolved by default from `PATH`
  * via [FfmpegRecorder.resolveFfmpegPath], and a [processFactory] seam for tests.
  */
-class FfmpegWindowRecorder
+public class FfmpegWindowRecorder
 internal constructor(
     private val ffmpegPath: Path,
     private val processFactory: FfmpegRecorder.ProcessFactory,
 ) : WindowRecorder {
 
-    constructor(
+    public constructor(
         ffmpegPath: Path = FfmpegRecorder.resolveFfmpegPath()
     ) : this(ffmpegPath, FfmpegRecorder.SystemProcessFactory)
 

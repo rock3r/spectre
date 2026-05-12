@@ -10,8 +10,8 @@ import java.util.concurrent.atomic.AtomicReference
  * `androidx.compose.ui.awt.ComposeWindow` (which extends `java.awt.Frame` and inherits `getTitle` /
  * `setTitle`) is the [asTitledWindow] adapter below.
  */
-interface TitledWindow {
-    var title: String?
+public interface TitledWindow {
+    public var title: String?
 }
 
 /**
@@ -25,7 +25,7 @@ interface TitledWindow {
  * Null titles set through this adapter are written as the empty string, mirroring AWT's own
  * behaviour for `Frame.setTitle(null)`.
  */
-fun Frame.asTitledWindow(): TitledWindow =
+public fun Frame.asTitledWindow(): TitledWindow =
     object : TitledWindow {
         override var title: String?
             get() = onEdt { this@asTitledWindow.title }

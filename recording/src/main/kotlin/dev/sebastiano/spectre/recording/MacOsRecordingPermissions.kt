@@ -22,14 +22,14 @@ import java.util.concurrent.TimeUnit
  * [ScreenCaptureKitRecorder][dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitRecorder]
  * detects TCC denial via the helper's exit code.
  */
-object MacOsRecordingPermissions {
+public object MacOsRecordingPermissions {
 
     /**
      * Returns a human-readable diagnostic that downstream tooling can dump at startup. On non-macOS
      * platforms returns [PermissionStatus.NotApplicable]. On macOS, runs a best-effort probe via
      * `osascript` if available, otherwise returns [PermissionStatus.Unknown] with guidance text.
      */
-    fun diagnose(): PermissionDiagnostic {
+    public fun diagnose(): PermissionDiagnostic {
         if (!isMacOs()) return PermissionDiagnostic(NOT_MAC_MESSAGE, PermissionStatus.NotApplicable)
         val screen = probeScreenRecordingPermission()
         val accessibility = probeAccessibilityPermission()
@@ -135,7 +135,7 @@ object MacOsRecordingPermissions {
 }
 
 /** Coarse permission status we can detect without JNI. */
-enum class PermissionStatus(val label: String) {
+public enum class PermissionStatus(public val label: String) {
     Granted("granted"),
     Denied("denied"),
     Unknown("unknown (could not detect — see guidance)"),
@@ -143,4 +143,4 @@ enum class PermissionStatus(val label: String) {
 }
 
 /** Result of [MacOsRecordingPermissions.diagnose]. */
-data class PermissionDiagnostic(val message: String, val status: PermissionStatus)
+public data class PermissionDiagnostic(val message: String, val status: PermissionStatus)

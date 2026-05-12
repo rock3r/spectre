@@ -1,0 +1,261 @@
+public abstract interface class dev/sebastiano/spectre/core/AutomatorIdlingResource {
+	public fun diagnosticMessage ()Ljava/lang/String;
+	public abstract fun isIdleNow ()Z
+}
+
+public final class dev/sebastiano/spectre/core/AutomatorIdlingResource$DefaultImpls {
+	public static fun diagnosticMessage (Ldev/sebastiano/spectre/core/AutomatorIdlingResource;)Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/core/AutomatorNode {
+	public final fun bothBounds ()Ldev/sebastiano/spectre/core/BothBounds;
+	public final fun getBoundsInWindow ()Landroidx/compose/ui/geometry/Rect;
+	public final fun getBoundsOnScreen ()Ljava/awt/Rectangle;
+	public final fun getCenterOnScreen ()Ljava/awt/Point;
+	public final fun getChildren ()Ljava/util/List;
+	public final fun getContentDescription ()Ljava/lang/String;
+	public final fun getContentDescriptions ()Ljava/util/List;
+	public final fun getEditableText ()Ljava/lang/String;
+	public final fun getKey ()Ldev/sebastiano/spectre/core/NodeKey;
+	public final fun getParent ()Ldev/sebastiano/spectre/core/AutomatorNode;
+	public final fun getRole-RLKlGQI ()Landroidx/compose/ui/semantics/Role;
+	public final fun getSurfaceId ()Ljava/lang/String;
+	public final fun getTestTag ()Ljava/lang/String;
+	public final fun getText ()Ljava/lang/String;
+	public final fun getTexts ()Ljava/util/List;
+	public final fun isDisabled ()Z
+	public final fun isFocused ()Z
+	public final fun isSelected ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/core/AutomatorTree {
+	public final fun allNodes ()Ljava/util/List;
+	public final fun roots ()Ljava/util/List;
+	public final fun window (I)Ldev/sebastiano/spectre/core/AutomatorWindow;
+	public final fun windows ()Ljava/util/List;
+}
+
+public final class dev/sebastiano/spectre/core/AutomatorWindow {
+	public final fun allNodes ()Ljava/util/List;
+	public final fun findByContentDescription (Ljava/lang/String;)Ljava/util/List;
+	public final fun findByRole-V4PA4sw (I)Ljava/util/List;
+	public final fun findByTestTag (Ljava/lang/String;)Ljava/util/List;
+	public final fun findByText (Ldev/sebastiano/spectre/core/TextQuery;)Ljava/util/List;
+	public final fun findByText (Ljava/lang/String;Z)Ljava/util/List;
+	public static synthetic fun findByText$default (Ldev/sebastiano/spectre/core/AutomatorWindow;Ljava/lang/String;ZILjava/lang/Object;)Ljava/util/List;
+	public final fun findOneByTestTag (Ljava/lang/String;)Ldev/sebastiano/spectre/core/AutomatorNode;
+	public final fun findOneByText (Ldev/sebastiano/spectre/core/TextQuery;)Ldev/sebastiano/spectre/core/AutomatorNode;
+	public final fun findOneByText (Ljava/lang/String;Z)Ldev/sebastiano/spectre/core/AutomatorNode;
+	public static synthetic fun findOneByText$default (Ldev/sebastiano/spectre/core/AutomatorWindow;Ljava/lang/String;ZILjava/lang/Object;)Ldev/sebastiano/spectre/core/AutomatorNode;
+	public final fun getSurfaceId ()Ljava/lang/String;
+	public final fun getWindowIndex ()I
+	public final fun isPopup ()Z
+	public final fun roots ()Ljava/util/List;
+}
+
+public final class dev/sebastiano/spectre/core/BothBounds {
+	public fun <init> (Landroidx/compose/ui/geometry/Rect;Ljava/awt/Rectangle;)V
+	public final fun component1 ()Landroidx/compose/ui/geometry/Rect;
+	public final fun component2 ()Ljava/awt/Rectangle;
+	public final fun copy (Landroidx/compose/ui/geometry/Rect;Ljava/awt/Rectangle;)Ldev/sebastiano/spectre/core/BothBounds;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/BothBounds;Landroidx/compose/ui/geometry/Rect;Ljava/awt/Rectangle;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/BothBounds;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getInWindow ()Landroidx/compose/ui/geometry/Rect;
+	public final fun getOnScreen ()Ljava/awt/Rectangle;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/core/ComposeAutomator {
+	public static final field Companion Ldev/sebastiano/spectre/core/ComposeAutomator$Companion;
+	public synthetic fun <init> (Ldev/sebastiano/spectre/core/WindowTracker;Ldev/sebastiano/spectre/core/SemanticsReader;Ldev/sebastiano/spectre/core/RobotDriver;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun allNodes ()Ljava/util/List;
+	public final fun clearAndTypeText (Ldev/sebastiano/spectre/core/AutomatorNode;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun click (Ldev/sebastiano/spectre/core/AutomatorNode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun doubleClick (Ldev/sebastiano/spectre/core/AutomatorNode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun findByContentDescription (Ljava/lang/String;)Ljava/util/List;
+	public final fun findByRole-V4PA4sw (I)Ljava/util/List;
+	public final fun findByTestTag (Ljava/lang/String;)Ljava/util/List;
+	public final fun findByText (Ldev/sebastiano/spectre/core/TextQuery;)Ljava/util/List;
+	public final fun findByText (Ljava/lang/String;Z)Ljava/util/List;
+	public static synthetic fun findByText$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/lang/String;ZILjava/lang/Object;)Ljava/util/List;
+	public final fun findOneByTestTag (Ljava/lang/String;)Ldev/sebastiano/spectre/core/AutomatorNode;
+	public final fun findOneByText (Ldev/sebastiano/spectre/core/TextQuery;)Ldev/sebastiano/spectre/core/AutomatorNode;
+	public final fun findOneByText (Ljava/lang/String;Z)Ldev/sebastiano/spectre/core/AutomatorNode;
+	public static synthetic fun findOneByText$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/lang/String;ZILjava/lang/Object;)Ldev/sebastiano/spectre/core/AutomatorNode;
+	public final fun focusWindow (Ldev/sebastiano/spectre/core/AutomatorNode;)V
+	public final fun getWindows ()Ljava/util/List;
+	public final fun longClick-8Mi8wO0 (Ldev/sebastiano/spectre/core/AutomatorNode;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun longClick-8Mi8wO0$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ldev/sebastiano/spectre/core/AutomatorNode;JLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun performSemanticsClick (Ldev/sebastiano/spectre/core/AutomatorNode;)V
+	public final fun pressEnter (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun pressKey (IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun pressKey$default (Ldev/sebastiano/spectre/core/ComposeAutomator;IILkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun printTree ()Ljava/lang/String;
+	public final fun refreshWindows ()V
+	public final fun registerIdlingResource (Ldev/sebastiano/spectre/core/AutomatorIdlingResource;)V
+	public final fun screenshot (I)Ljava/awt/image/BufferedImage;
+	public final fun screenshot (Ldev/sebastiano/spectre/core/AutomatorNode;)Ljava/awt/image/BufferedImage;
+	public final fun screenshot (Ljava/awt/Rectangle;)Ljava/awt/image/BufferedImage;
+	public static synthetic fun screenshot$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/awt/Rectangle;ILjava/lang/Object;)Ljava/awt/image/BufferedImage;
+	public final fun scrollWheel (Ldev/sebastiano/spectre/core/AutomatorNode;ILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun surfaceIds ()Ljava/util/List;
+	public final fun swipe-x2RqbK4 (IIIIIJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun swipe-x2RqbK4$default (Ldev/sebastiano/spectre/core/ComposeAutomator;IIIIIJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun swipe-zkXUZaI (Ldev/sebastiano/spectre/core/AutomatorNode;Ldev/sebastiano/spectre/core/AutomatorNode;IJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun swipe-zkXUZaI$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ldev/sebastiano/spectre/core/AutomatorNode;Ldev/sebastiano/spectre/core/AutomatorNode;IJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun tree ()Ldev/sebastiano/spectre/core/AutomatorTree;
+	public final fun tree (I)Ldev/sebastiano/spectre/core/AutomatorWindow;
+	public final fun typeText (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun unregisterIdlingResource (Ldev/sebastiano/spectre/core/AutomatorIdlingResource;)V
+	public final fun waitForIdle-2d-g_3Q (JJJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun waitForIdle-2d-g_3Q$default (Ldev/sebastiano/spectre/core/ComposeAutomator;JJJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun waitForNode-ck1zr5g (Ljava/lang/String;Ljava/lang/String;JJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun waitForNode-ck1zr5g$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/lang/String;Ljava/lang/String;JJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun waitForVisualIdle-t_idYME (JIJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun waitForVisualIdle-t_idYME$default (Ldev/sebastiano/spectre/core/ComposeAutomator;JIJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun withTracing (Ljava/nio/file/Path;Ldev/sebastiano/spectre/core/Tracer;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun withTracing$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/nio/file/Path;Ldev/sebastiano/spectre/core/Tracer;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public final class dev/sebastiano/spectre/core/ComposeAutomator$Companion {
+	public final fun inProcess (Ldev/sebastiano/spectre/core/RobotDriver;)Ldev/sebastiano/spectre/core/ComposeAutomator;
+	public static synthetic fun inProcess$default (Ldev/sebastiano/spectre/core/ComposeAutomator$Companion;Ldev/sebastiano/spectre/core/RobotDriver;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/ComposeAutomator;
+}
+
+public final class dev/sebastiano/spectre/core/HiDpiMapperKt {
+	public static final fun composeBoundsToAwtCenter (FFFFFFII)Ljava/awt/Point;
+	public static final fun composeBoundsToAwtRectangle (FFFFFFII)Ljava/awt/Rectangle;
+}
+
+public final class dev/sebastiano/spectre/core/IdleTimeoutException : java/lang/RuntimeException {
+	public fun <init> (Ljava/lang/String;)V
+}
+
+public abstract interface annotation class dev/sebastiano/spectre/core/InternalSpectreApi : java/lang/annotation/Annotation {
+}
+
+public final class dev/sebastiano/spectre/core/NodeKey {
+	public static final field Companion Ldev/sebastiano/spectre/core/NodeKey$Companion;
+	public fun <init> (Ljava/lang/String;II)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()I
+	public final fun component3 ()I
+	public final fun copy (Ljava/lang/String;II)Ldev/sebastiano/spectre/core/NodeKey;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/NodeKey;Ljava/lang/String;IIILjava/lang/Object;)Ldev/sebastiano/spectre/core/NodeKey;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getNodeId ()I
+	public final fun getOwnerIndex ()I
+	public final fun getSurfaceId ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/core/NodeKey$Companion {
+	public final fun parse (Ljava/lang/String;)Ldev/sebastiano/spectre/core/NodeKey;
+}
+
+public final class dev/sebastiano/spectre/core/PerfettoTracer : dev/sebastiano/spectre/core/Tracer {
+	public static final field Companion Ldev/sebastiano/spectre/core/PerfettoTracer$Companion;
+	public static final field DEFAULT_SEQUENCE_ID I
+	public fun <init> ()V
+	public fun <init> (I)V
+	public synthetic fun <init> (IILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun start (Ljava/nio/file/Path;)V
+	public fun stop ()V
+}
+
+public final class dev/sebastiano/spectre/core/PerfettoTracer$Companion {
+}
+
+public final class dev/sebastiano/spectre/core/RobotDriver {
+	public static final field Companion Ldev/sebastiano/spectre/core/RobotDriver$Companion;
+	public fun <init> ()V
+	public fun <init> (Ljava/awt/Robot;)V
+	public final fun clearAndTypeText (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun click (IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun doubleClick (IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun longClick-exY8QGI (IIJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun longClick-exY8QGI$default (Ldev/sebastiano/spectre/core/RobotDriver;IIJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun pressKey (IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun pressKey$default (Ldev/sebastiano/spectre/core/RobotDriver;IILkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun screenshot (Ljava/awt/Rectangle;)Ljava/awt/image/BufferedImage;
+	public static synthetic fun screenshot$default (Ldev/sebastiano/spectre/core/RobotDriver;Ljava/awt/Rectangle;ILjava/lang/Object;)Ljava/awt/image/BufferedImage;
+	public final fun scrollWheel (IIILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun swipe-x2RqbK4 (IIIIIJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun swipe-x2RqbK4$default (Ldev/sebastiano/spectre/core/RobotDriver;IIIIIJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun typeText (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class dev/sebastiano/spectre/core/RobotDriver$Companion {
+	public final fun headless ()Ldev/sebastiano/spectre/core/RobotDriver;
+}
+
+public final class dev/sebastiano/spectre/core/SyntheticInputKt {
+	public static final fun synthetic (Ldev/sebastiano/spectre/core/RobotDriver$Companion;Ljava/awt/Window;)Ldev/sebastiano/spectre/core/RobotDriver;
+}
+
+public final class dev/sebastiano/spectre/core/TextMatchType : java/lang/Enum {
+	public static final field Exact Ldev/sebastiano/spectre/core/TextMatchType;
+	public static final field Substring Ldev/sebastiano/spectre/core/TextMatchType;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/sebastiano/spectre/core/TextMatchType;
+	public static fun values ()[Ldev/sebastiano/spectre/core/TextMatchType;
+}
+
+public final class dev/sebastiano/spectre/core/TextQuery {
+	public static final field Companion Ldev/sebastiano/spectre/core/TextQuery$Companion;
+	public fun <init> (Ljava/lang/String;Ldev/sebastiano/spectre/core/TextMatchType;Z)V
+	public synthetic fun <init> (Ljava/lang/String;Ldev/sebastiano/spectre/core/TextMatchType;ZILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ldev/sebastiano/spectre/core/TextMatchType;
+	public final fun component3 ()Z
+	public final fun copy (Ljava/lang/String;Ldev/sebastiano/spectre/core/TextMatchType;Z)Ldev/sebastiano/spectre/core/TextQuery;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/TextQuery;Ljava/lang/String;Ldev/sebastiano/spectre/core/TextMatchType;ZILjava/lang/Object;)Ldev/sebastiano/spectre/core/TextQuery;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getIgnoreCase ()Z
+	public final fun getMatchType ()Ldev/sebastiano/spectre/core/TextMatchType;
+	public final fun getValue ()Ljava/lang/String;
+	public fun hashCode ()I
+	public final fun matches (Ljava/lang/String;)Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/core/TextQuery$Companion {
+	public final fun exact (Ljava/lang/String;Z)Ldev/sebastiano/spectre/core/TextQuery;
+	public static synthetic fun exact$default (Ldev/sebastiano/spectre/core/TextQuery$Companion;Ljava/lang/String;ZILjava/lang/Object;)Ldev/sebastiano/spectre/core/TextQuery;
+	public final fun substring (Ljava/lang/String;Z)Ldev/sebastiano/spectre/core/TextQuery;
+	public static synthetic fun substring$default (Ldev/sebastiano/spectre/core/TextQuery$Companion;Ljava/lang/String;ZILjava/lang/Object;)Ldev/sebastiano/spectre/core/TextQuery;
+}
+
+public abstract interface class dev/sebastiano/spectre/core/Tracer {
+	public abstract fun start (Ljava/nio/file/Path;)V
+	public abstract fun stop ()V
+}
+
+public final class dev/sebastiano/spectre/core/TrackedWindow {
+	public fun <init> (Ljava/lang/String;Ljava/awt/Window;Landroidx/compose/ui/awt/ComposePanel;Z)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/awt/Window;
+	public final fun component3 ()Landroidx/compose/ui/awt/ComposePanel;
+	public final fun component4 ()Z
+	public final fun copy (Ljava/lang/String;Ljava/awt/Window;Landroidx/compose/ui/awt/ComposePanel;ZLkotlin/jvm/functions/Function0;)Ldev/sebastiano/spectre/core/TrackedWindow;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/TrackedWindow;Ljava/lang/String;Ljava/awt/Window;Landroidx/compose/ui/awt/ComposePanel;ZLkotlin/jvm/functions/Function0;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/TrackedWindow;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getComposeContentOrigin ()Ljava/awt/Point;
+	public final fun getComposePanel ()Landroidx/compose/ui/awt/ComposePanel;
+	public final fun getComposeSurfaceBoundsOnScreen ()Ljava/awt/Rectangle;
+	public final fun getSurfaceId ()Ljava/lang/String;
+	public final fun getWindow ()Ljava/awt/Window;
+	public fun hashCode ()I
+	public final fun isPopup ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/core/WindowTracker {
+	public fun <init> ()V
+	public final fun getTrackedWindows ()Ljava/util/List;
+	public final fun refresh ()V
+}
+

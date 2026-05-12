@@ -1,0 +1,18 @@
+public final class dev/sebastiano/spectre/testing/ComposeAutomatorExtension : org/junit/jupiter/api/extension/AfterEachCallback, org/junit/jupiter/api/extension/BeforeEachCallback, org/junit/jupiter/api/extension/ParameterResolver {
+	public fun <init> ()V
+	public fun <init> (Lkotlin/jvm/functions/Function0;)V
+	public fun afterEach (Lorg/junit/jupiter/api/extension/ExtensionContext;)V
+	public fun beforeEach (Lorg/junit/jupiter/api/extension/ExtensionContext;)V
+	public final fun getAutomator ()Ldev/sebastiano/spectre/core/ComposeAutomator;
+	public fun resolveParameter (Lorg/junit/jupiter/api/extension/ParameterContext;Lorg/junit/jupiter/api/extension/ExtensionContext;)Ljava/lang/Object;
+	public fun supportsParameter (Lorg/junit/jupiter/api/extension/ParameterContext;Lorg/junit/jupiter/api/extension/ExtensionContext;)Z
+}
+
+public final class dev/sebastiano/spectre/testing/ComposeAutomatorRule : org/junit/rules/ExternalResource {
+	public fun <init> ()V
+	public fun <init> (Lkotlin/jvm/functions/Function0;)V
+	public fun after ()V
+	public fun before ()V
+	public final fun getAutomator ()Ldev/sebastiano/spectre/core/ComposeAutomator;
+}
+

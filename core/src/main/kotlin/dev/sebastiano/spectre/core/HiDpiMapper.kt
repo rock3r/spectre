@@ -28,7 +28,7 @@ internal fun composeToAwtY(composeY: Float, scaleY: Float, panelScreenY: Int): I
     (composeY / scaleY).toInt() + panelScreenY
 
 @InternalSpectreApi
-fun composeBoundsToAwtCenter(
+public fun composeBoundsToAwtCenter(
     left: Float,
     top: Float,
     right: Float,
@@ -46,7 +46,7 @@ fun composeBoundsToAwtCenter(
 }
 
 @InternalSpectreApi
-fun composeBoundsToAwtRectangle(
+public fun composeBoundsToAwtRectangle(
     left: Float,
     top: Float,
     right: Float,

@@ -34,13 +34,13 @@ import java.util.concurrent.atomic.AtomicReference
  * macOS-only. On non-macOS hosts the helper isn't bundled; [start] fails early with a clear "helper
  * not found" error from [HelperBinaryExtractor].
  */
-class ScreenCaptureKitRecorder
+public class ScreenCaptureKitRecorder
 internal constructor(
     private val helperExtractor: HelperBinaryExtractor,
     private val processFactory: ProcessFactory,
 ) : WindowRecorder {
 
-    constructor() : this(HelperBinaryExtractor(), SystemProcessFactory)
+    public constructor() : this(HelperBinaryExtractor(), SystemProcessFactory)
 
     override fun start(
         window: TitledWindow,
@@ -186,8 +186,8 @@ internal constructor(
     }
 
     /** Indirection over `ProcessBuilder.start()` so tests can drive the subprocess lifecycle. */
-    interface ProcessFactory {
-        fun start(argv: List<String>): Process
+    public interface ProcessFactory {
+        public fun start(argv: List<String>): Process
     }
 
     internal object SystemProcessFactory : ProcessFactory {

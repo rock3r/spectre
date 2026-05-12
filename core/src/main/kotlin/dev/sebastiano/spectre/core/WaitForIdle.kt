@@ -4,7 +4,7 @@ import kotlin.time.Duration
 import kotlinx.coroutines.delay
 
 /** Thrown when [ComposeAutomator.waitForIdle] cannot reach an idle state before the timeout. */
-class IdleTimeoutException(message: String) : RuntimeException(message)
+public class IdleTimeoutException(message: String) : RuntimeException(message)
 
 internal interface MonotonicClock {
     fun now(): Long

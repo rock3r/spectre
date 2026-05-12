@@ -39,17 +39,17 @@ import org.junit.jupiter.api.extension.ParameterResolver
  * typical sequential `@RegisterExtension` flow; callers running tests in parallel should rely on
  * parameter injection instead.
  */
-class ComposeAutomatorExtension(private val factory: AutomatorFactory) :
+public class ComposeAutomatorExtension(private val factory: AutomatorFactory) :
     BeforeEachCallback, AfterEachCallback, ParameterResolver {
 
     // Explicit no-arg secondary constructor so JUnit 5's @ExtendWith — which reflectively
     // calls the no-arg constructor — can instantiate the extension. Kotlin's default-parameter
     // primary constructor does not emit a true JVM no-arg overload without @JvmOverloads.
-    constructor() : this({ ComposeAutomator.inProcess() })
+    public constructor() : this({ ComposeAutomator.inProcess() })
 
     @Volatile private var lastInstance: ComposeAutomator? = null
 
-    val automator: ComposeAutomator
+    public val automator: ComposeAutomator
         get() =
             checkNotNull(lastInstance) {
                 "ComposeAutomatorExtension.automator accessed outside of a running test"
@@ -96,6 +96,12 @@ class ComposeAutomatorExtension(private val factory: AutomatorFactory) :
         // test invocations from clobbering each other.
         val NAMESPACE: ExtensionContext.Namespace =
             ExtensionContext.Namespace.create(ComposeAutomatorExtension::class.java)
-        const val STORE_KEY: String = "automator"
     }
 }
+
+// File-level private constant rather than `const val` inside the `private companion object`.
+// The Kotlin compiler emits `const val` members of any companion as JVM-level
+// `public static final` fields, which makes them visible in the ABI dump even though
+// the companion itself is `private`. A file-level `private const val` compiles to a private
+// static field on the file's facade class and stays out of the public ABI surface.
+private const val STORE_KEY: String = "automator"

@@ -28,7 +28,7 @@ import kotlin.time.Duration.Companion.seconds
  * friction without a corresponding win for discoverability.
  */
 @Suppress("TooManyFunctions")
-class ComposeAutomator
+public class ComposeAutomator
 private constructor(
     private val windowTracker: WindowTracker,
     private val semanticsReader: SemanticsReader,
@@ -42,17 +42,17 @@ private constructor(
      * the rich type.
      */
     @InternalSpectreApi
-    val windows: List<TrackedWindow>
+    public val windows: List<TrackedWindow>
         get() = windowTracker.trackedWindows
 
     /** Stable surface IDs of every tracked window, in tracking order. */
-    fun surfaceIds(): List<String> = windowTracker.trackedWindows.map { it.surfaceId }
+    public fun surfaceIds(): List<String> = windowTracker.trackedWindows.map { it.surfaceId }
 
-    fun refreshWindows() {
+    public fun refreshWindows() {
         windowTracker.refresh()
     }
 
-    fun tree(): AutomatorTree {
+    public fun tree(): AutomatorTree {
         refreshWindows()
         val windowScopes = windows.mapIndexed { index, trackedWindow ->
             AutomatorWindow(
@@ -64,47 +64,48 @@ private constructor(
         return AutomatorTree(windowScopes)
     }
 
-    fun tree(windowIndex: Int): AutomatorWindow = tree().window(windowIndex)
+    public fun tree(windowIndex: Int): AutomatorWindow = tree().window(windowIndex)
 
-    fun allNodes(): List<AutomatorNode> = semanticsReader.readAllNodes(windows)
+    public fun allNodes(): List<AutomatorNode> = semanticsReader.readAllNodes(windows)
 
-    fun findByTestTag(tag: String): List<AutomatorNode> =
+    public fun findByTestTag(tag: String): List<AutomatorNode> =
         semanticsReader.findByTestTag(tag, windows)
 
-    fun findOneByTestTag(tag: String): AutomatorNode? = findByTestTag(tag).firstOrNull()
+    public fun findOneByTestTag(tag: String): AutomatorNode? = findByTestTag(tag).firstOrNull()
 
-    fun findByText(query: TextQuery): List<AutomatorNode> =
+    public fun findByText(query: TextQuery): List<AutomatorNode> =
         semanticsReader.findByText(query, windows)
 
-    fun findByText(text: String, exact: Boolean = true): List<AutomatorNode> =
+    public fun findByText(text: String, exact: Boolean = true): List<AutomatorNode> =
         semanticsReader.findByText(text, windows, exact)
 
-    fun findOneByText(query: TextQuery): AutomatorNode? = findByText(query).firstOrNull()
+    public fun findOneByText(query: TextQuery): AutomatorNode? = findByText(query).firstOrNull()
 
-    fun findOneByText(text: String, exact: Boolean = true): AutomatorNode? =
+    public fun findOneByText(text: String, exact: Boolean = true): AutomatorNode? =
         findByText(text, exact).firstOrNull()
 
-    fun findByContentDescription(description: String): List<AutomatorNode> =
+    public fun findByContentDescription(description: String): List<AutomatorNode> =
         semanticsReader.findByContentDescription(description, windows)
 
-    fun findByRole(role: Role): List<AutomatorNode> = semanticsReader.findByRole(role, windows)
+    public fun findByRole(role: Role): List<AutomatorNode> =
+        semanticsReader.findByRole(role, windows)
 
-    suspend fun click(node: AutomatorNode) {
+    public suspend fun click(node: AutomatorNode) {
         val center = node.centerOnScreen
         robotDriver.click(center.x, center.y)
     }
 
-    suspend fun doubleClick(node: AutomatorNode) {
+    public suspend fun doubleClick(node: AutomatorNode) {
         val center = node.centerOnScreen
         robotDriver.doubleClick(center.x, center.y)
     }
 
-    suspend fun longClick(node: AutomatorNode, holdFor: Duration = 500.milliseconds) {
+    public suspend fun longClick(node: AutomatorNode, holdFor: Duration = 500.milliseconds) {
         val center = node.centerOnScreen
         robotDriver.longClick(center.x, center.y, holdFor)
     }
 
-    suspend fun swipe(
+    public suspend fun swipe(
         startX: Int,
         startY: Int,
         endX: Int,
@@ -115,7 +116,7 @@ private constructor(
         robotDriver.swipe(startX, startY, endX, endY, steps, duration)
     }
 
-    suspend fun swipe(
+    public suspend fun swipe(
         from: AutomatorNode,
         to: AutomatorNode,
         steps: Int = 12,
@@ -131,25 +132,25 @@ private constructor(
      * lower in the list); negative scrolls up. Drives Compose's `Modifier.scrollable` /
      * `LazyColumn` on desktop, which respond to wheel events rather than touch-style drags.
      */
-    suspend fun scrollWheel(node: AutomatorNode, wheelClicks: Int) {
+    public suspend fun scrollWheel(node: AutomatorNode, wheelClicks: Int) {
         val center = node.centerOnScreen
         robotDriver.scrollWheel(center.x, center.y, wheelClicks)
     }
 
-    suspend fun typeText(text: String) {
+    public suspend fun typeText(text: String) {
         robotDriver.typeText(text)
     }
 
-    suspend fun clearAndTypeText(node: AutomatorNode, text: String) {
+    public suspend fun clearAndTypeText(node: AutomatorNode, text: String) {
         click(node)
         robotDriver.clearAndTypeText(text)
     }
 
-    suspend fun pressKey(keyCode: Int, modifiers: Int = 0) {
+    public suspend fun pressKey(keyCode: Int, modifiers: Int = 0) {
         robotDriver.pressKey(keyCode, modifiers)
     }
 
-    suspend fun pressEnter() {
+    public suspend fun pressEnter() {
         robotDriver.pressKey(KeyEvent.VK_ENTER)
     }
 
@@ -158,7 +159,7 @@ private constructor(
      * Robot-driven inputs on a non-focused window. The actual focus change is dispatched on the
      * EDT.
      */
-    fun focusWindow(node: AutomatorNode) {
+    public fun focusWindow(node: AutomatorNode) {
         val window = node.trackedWindow.window
         if (SwingUtilities.isEventDispatchThread()) {
             window.toFront()
@@ -181,7 +182,7 @@ private constructor(
      * Throws [IllegalStateException] if [node] has no `OnClick` semantics action attached, or if
      * the action's invocable body is null (a semantics property without a wired-up handler).
      */
-    fun performSemanticsClick(node: AutomatorNode) {
+    public fun performSemanticsClick(node: AutomatorNode) {
         val accessibilityAction =
             node.semanticsNode.config.getOrNull(SemanticsActions.OnClick)
                 ?: error(
@@ -206,21 +207,22 @@ private constructor(
      * KDoc for colour-space, focus-overlay, and per-platform TCC / Wayland gotchas before using the
      * result for pixel-level assertions.
      */
-    fun screenshot(region: Rectangle? = null): BufferedImage = robotDriver.screenshot(region)
+    public fun screenshot(region: Rectangle? = null): BufferedImage = robotDriver.screenshot(region)
 
     /**
      * Captures the on-screen bounds of [node] as an sRGB [BufferedImage]. Delegates to
      * [RobotDriver.screenshot] — see that method's KDoc before using the result for pixel-level
      * assertions.
      */
-    fun screenshot(node: AutomatorNode): BufferedImage = robotDriver.screenshot(node.boundsOnScreen)
+    public fun screenshot(node: AutomatorNode): BufferedImage =
+        robotDriver.screenshot(node.boundsOnScreen)
 
     /**
      * Captures the Compose surface bounds of the tracked window at [windowIndex] as an sRGB
      * [BufferedImage]. Refreshes the window list first. Delegates to [RobotDriver.screenshot] — see
      * that method's KDoc before using the result for pixel-level assertions.
      */
-    fun screenshot(windowIndex: Int): BufferedImage {
+    public fun screenshot(windowIndex: Int): BufferedImage {
         refreshWindows()
         val trackedWindow =
             windows.getOrNull(windowIndex)
@@ -233,11 +235,11 @@ private constructor(
     // wrapping every read/action is intentionally deferred — see the v1 issue tracker.
     private val idlingResources = CopyOnWriteArrayList<AutomatorIdlingResource>()
 
-    fun registerIdlingResource(resource: AutomatorIdlingResource) {
+    public fun registerIdlingResource(resource: AutomatorIdlingResource) {
         idlingResources.addIfAbsent(resource)
     }
 
-    fun unregisterIdlingResource(resource: AutomatorIdlingResource) {
+    public fun unregisterIdlingResource(resource: AutomatorIdlingResource) {
         idlingResources.remove(resource)
     }
 
@@ -253,13 +255,13 @@ private constructor(
      * still runs so the partial trace is flushed to disk; any exception thrown by `stop` is
      * attached as a suppressed exception so the original failure stays visible.
      */
-    suspend fun <T> withTracing(
+    public suspend fun <T> withTracing(
         output: Path,
         tracer: Tracer = PerfettoTracer(),
         block: suspend () -> T,
     ): T = withTracingInternal(output, tracer, block)
 
-    suspend fun waitForIdle(
+    public suspend fun waitForIdle(
         timeout: Duration = DEFAULT_WAIT_TIMEOUT,
         quietPeriod: Duration = DEFAULT_QUIET_PERIOD,
         pollInterval: Duration = DEFAULT_POLL_INTERVAL,
@@ -275,7 +277,7 @@ private constructor(
         )
     }
 
-    suspend fun waitForVisualIdle(
+    public suspend fun waitForVisualIdle(
         timeout: Duration = DEFAULT_WAIT_TIMEOUT,
         stableFrames: Int = DEFAULT_STABLE_FRAMES,
         pollInterval: Duration = DEFAULT_POLL_INTERVAL,
@@ -471,7 +473,7 @@ private constructor(
         }
     }
 
-    suspend fun waitForNode(
+    public suspend fun waitForNode(
         tag: String? = null,
         text: String? = null,
         timeout: Duration = 5.seconds,
@@ -493,7 +495,7 @@ private constructor(
         }
     }
 
-    fun printTree(): String {
+    public fun printTree(): String {
         return readOnEdt {
             buildString {
                 // tree() already refreshes windows before reading semantics nodes.
@@ -508,9 +510,9 @@ private constructor(
         }
     }
 
-    companion object {
+    public companion object {
 
-        fun inProcess(robotDriver: RobotDriver = RobotDriver()): ComposeAutomator =
+        public fun inProcess(robotDriver: RobotDriver = RobotDriver()): ComposeAutomator =
             ComposeAutomator(WindowTracker(), SemanticsReader(), robotDriver)
     }
 }

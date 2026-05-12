@@ -10,5 +10,5 @@ package dev.sebastiano.spectre.recording.screencapturekit
  * denied, window not found, helper crashed during init) stay as `IllegalStateException` and
  * propagate — those are caller-actionable and shouldn't be silently masked.
  */
-class HelperNotBundledException internal constructor(message: String) :
+public class HelperNotBundledException internal constructor(message: String) :
     IllegalStateException(message)

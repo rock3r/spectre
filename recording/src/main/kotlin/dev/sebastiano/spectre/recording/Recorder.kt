@@ -13,7 +13,7 @@ import java.nio.file.Path
  * `WaylandPortalWindowRecorder` on Linux Wayland. Tests and advanced consumers can swap in their
  * own [Recorder] implementation (e.g. an in-memory frame accumulator).
  */
-interface Recorder {
+public interface Recorder {
 
     /**
      * Begin recording [region] to [output]. Returns a [RecordingHandle] that the caller stops to
@@ -21,7 +21,7 @@ interface Recorder {
      * drive the UI immediately afterwards — by the time `start` returns, frames should be landing
      * in the output file.
      */
-    fun start(
+    public fun start(
         region: Rectangle,
         output: Path,
         options: RecordingOptions = RecordingOptions(),
