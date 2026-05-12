@@ -108,5 +108,6 @@ nav:
       - Static analysis: STATIC-ANALYSIS.md
       - Recording limitations: RECORDING-LIMITATIONS.md
       - Notarization: NOTARIZATION.md
+      - Publishing: PUBLISHING.md
       - Security notes: SECURITY.md
       - Stability policy: STABILITY.md
