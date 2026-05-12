@@ -16,7 +16,6 @@ import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
@@ -60,9 +59,10 @@ class HttpComposeAutomator internal constructor(private val baseUrl: String) : A
                 contentType(ContentType.Application.Json)
                 setBody(ClickRequest(nodeKey = nodeKey))
             }
-        check(response.status.isSuccess()) {
-            "click failed: ${response.status} ${response.bodyAsText()}"
-        }
+        // R5/F5d: keep the status code in the message, but do NOT interpolate
+        // `response.bodyAsText()` — a malicious or unexpected peer can reflect arbitrary
+        // body content into logs/test output through this exception message.
+        check(response.status.isSuccess()) { "click failed: ${response.status}" }
     }
 
     suspend fun typeText(text: String) {
@@ -71,9 +71,8 @@ class HttpComposeAutomator internal constructor(private val baseUrl: String) : A
                 contentType(ContentType.Application.Json)
                 setBody(TypeTextRequest(text = text))
             }
-        check(response.status.isSuccess()) {
-            "typeText failed: ${response.status} ${response.bodyAsText()}"
-        }
+        // R5/F5d: see `click` above — peer body deliberately not echoed.
+        check(response.status.isSuccess()) { "typeText failed: ${response.status}" }
     }
 
     suspend fun screenshot(): BufferedImage {
@@ -111,6 +110,15 @@ class HttpComposeAutomator internal constructor(private val baseUrl: String) : A
  * Companion extension matching the gist's intended public surface `ComposeAutomator.http(host,
  * port)`. Returns an [HttpComposeAutomator] connected to the remote process; the caller is
  * responsible for closing it.
+ *
+ * ## Trust boundary
+ *
+ * This client speaks **plaintext HTTP** to an **unauthenticated peer**. The caller is responsible
+ * for ensuring `host` points at a trusted endpoint — typically `127.0.0.1` for a server bound on
+ * the same machine. Authentication, authorization, and TLS are tracked for a separately reviewed
+ * future design (#96). See [installSpectreRoutes] and
+ * [the published security notes](https://spectre.sebastiano.dev/SECURITY/) for the full exposure
+ * model.
  */
 fun ComposeAutomator.Companion.http(
     host: String = "localhost",

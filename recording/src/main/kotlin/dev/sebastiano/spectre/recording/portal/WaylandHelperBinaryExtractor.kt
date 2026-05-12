@@ -39,6 +39,13 @@ internal class WaylandHelperBinaryExtractor(
         // Dev-override path. The env var lets a developer point the recorder at their
         // `cargo build`'s output directly without re-bundling. Verifies the path is
         // executable before returning so a stale path surfaces a clear error.
+        //
+        // Trust boundary (R5): `SPECTRE_WAYLAND_HELPER` is a **developer-only escape hatch**.
+        // It routes the entire portal-recording pipeline through whatever binary the env var
+        // names, with no signature, hash, or path check. Never set it in an environment that
+        // ingests untrusted input (CI runners taking input from arbitrary forks, production
+        // recording pipelines, etc.). The bundled helper is the only supported configuration
+        // for non-dev use.
         envLookup(OVERRIDE_ENV)
             ?.takeIf { it.isNotBlank() }
             ?.let { override ->

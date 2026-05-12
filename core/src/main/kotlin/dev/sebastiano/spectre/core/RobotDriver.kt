@@ -240,6 +240,15 @@ internal constructor(
      *
      * The returned [BufferedImage] is owned by the caller and safe to read, mutate, or pass to
      * downstream pipelines.
+     *
+     * ## Capture scope
+     *
+     * `region` is passed through to `java.awt.Robot.createScreenCapture` unchanged. It is **not**
+     * constrained to the app under test: any rectangle the JVM can see — including other
+     * applications, sensitive on-screen content, and unrelated windows — is fair game. With `region
+     * = null` the capture covers the **entire virtual desktop**. Treat the returned pixels as
+     * OS-visible content rather than as a slice of the test surface. A narrower per-window /
+     * per-node screenshot API is tracked under #96.
      */
     fun screenshot(region: Rectangle? = null): BufferedImage {
         tccGuard.requireScreenRecording()

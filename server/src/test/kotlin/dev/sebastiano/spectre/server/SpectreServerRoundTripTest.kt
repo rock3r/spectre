@@ -81,7 +81,10 @@ class SpectreServerRoundTripTest {
             }
 
         assertEquals(HttpStatusCode.NotFound, response.status)
-        assertTrue(response.bodyAsText().contains("nonexistent:0:1"))
+        // R5/F5c: the 404 body deliberately does NOT echo the caller-supplied node key. The
+        // no-echo contract is pinned in `HttpNegativeContractTest`; here we just confirm the
+        // status code and the absence of the key in the round-trip path.
+        assertTrue(!response.bodyAsText().contains("nonexistent:0:1"))
     }
 
     @Test
