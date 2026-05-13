@@ -34,7 +34,8 @@
       "assertions": [
         "Recommends switching to RobotDriver.synthetic(...) as the primary fix",
         "Identifies that RobotDriver.synthetic takes a rootWindow (the top-level java.awt.Window)",
-        "Shows how to wire it via ComposeAutomatorExtension/Rule constructor OR ComposeAutomator.inProcess(robotDriver = ...)",
+        "Wires the driver via the factory-form trailing lambda on ComposeAutomatorExtension/Rule (e.g. ComposeAutomatorExtension { ComposeAutomator.inProcess(robotDriver = ...) }) — NOT via a non-existent robotDriver = named arg on the extension/rule itself",
+        "Imports dev.sebastiano.spectre.core.synthetic (since synthetic is an extension on RobotDriver.Companion)",
         "Does NOT recommend disabling parallelism / lowering maxParallelForks as the fix",
         "Does NOT recommend performSemanticsClick as the primary fix"
       ]

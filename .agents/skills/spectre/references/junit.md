@@ -69,14 +69,36 @@ generated getter, which is what JUnit 4 looks for.
 
 ## Custom `RobotDriver` per test
 
-Both wrappers accept a constructor parameter (or builder) to override the
-default driver. Use this for parallel JVMs or headless reads:
+Both wrappers take a single positional argument: an
+`AutomatorFactory = () -> ComposeAutomator`. There is **no** `robotDriver =`
+named parameter on the extension or rule constructor. Use the trailing
+lambda to build the automator with whichever driver you want:
 
 ```kotlin
 @JvmField
 @RegisterExtension
-val automatorExt = ComposeAutomatorExtension(robotDriver = RobotDriver.headless())
+val automatorExt = ComposeAutomatorExtension {
+    ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())
+}
 ```
+
+Same shape for parallel-safe synthetic input (note the
+`import dev.sebastiano.spectre.core.synthetic` — `synthetic` is an extension
+on `RobotDriver.Companion`, not a member):
+
+```kotlin
+import dev.sebastiano.spectre.core.synthetic
+
+@JvmField
+@RegisterExtension
+val automatorExt = ComposeAutomatorExtension {
+    ComposeAutomator.inProcess(
+        robotDriver = RobotDriver.synthetic(rootWindow = TestHarness.window),
+    )
+}
+```
+
+The JUnit 4 rule is identical: `ComposeAutomatorRule { ComposeAutomator.inProcess(...) }`.
 
 ## Lifecycle notes
 

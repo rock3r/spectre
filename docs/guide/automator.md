@@ -102,19 +102,19 @@ See [Synchronization](synchronization.md) for the full toolkit.
 
 ## The EDT rule
 
-`waitForIdle` and `waitForVisualIdle` refuse to run on the AWT event dispatch thread (EDT):
+All three wait helpers — `waitForNode`, `waitForIdle`, and `waitForVisualIdle` — refuse
+to run on the AWT event dispatch thread (EDT):
 
 ```
-waitForIdle must not be called from the AWT event dispatch thread;
+waitForNode must not be called from the AWT event dispatch thread;
 wrap the call with withContext(Dispatchers.Default) or similar.
 ```
 
-This is enforced at runtime because their wait loops drain the EDT and snapshot
-semantics via `invokeAndWait`. If they ran on the EDT they would either deadlock or
-quietly skip the bounded worker that enforces their timeout.
-
-`waitForNode` is the exception: it polls through `readOnEdt`, so it's safe to call from
-anywhere a coroutine can suspend.
+This is enforced at runtime because their loops snapshot semantics via
+`invokeAndWait`/`readOnEdt`. If they ran on the EDT they would either deadlock or
+quietly skip the bounded worker that enforces their timeout, so they raise
+`IllegalStateException` up front. The wait name in the message tells you which call
+to wrap.
 
 JUnit test methods don't run on the EDT, so a plain `runBlocking { … }` body is all you
 need — no extra `withContext` required. Only add `withContext(Dispatchers.Default)` if

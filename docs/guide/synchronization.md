@@ -6,19 +6,20 @@ where to put them. This page covers all three.
 
 ## The EDT rule
 
-`waitForIdle` and `waitForVisualIdle` refuse to run on the AWT event dispatch thread:
+All three wait helpers — `waitForNode`, `waitForIdle`, and `waitForVisualIdle` — refuse
+to run on the AWT event dispatch thread:
 
 ```
-waitForIdle must not be called from the AWT event dispatch thread;
+waitForNode must not be called from the AWT event dispatch thread;
 wrap the call with withContext(Dispatchers.Default) or similar.
 ```
 
-This is enforced because their wait loops drain the EDT and snapshot semantics via
-`invokeAndWait` — running on the EDT would either deadlock or skip the bounded worker
-that enforces the timeout. `waitForNode` is exempt: it polls via `readOnEdt`, so it's
-safe to call from anywhere a coroutine can suspend.
+This is enforced because their loops snapshot semantics via `invokeAndWait`/`readOnEdt`
+— running on the EDT would either deadlock or skip the bounded worker that enforces the
+timeout. None of the three are exempt.
 
-The standard pattern in tests — JUnit runs off the EDT, so no `withContext` is needed:
+The standard pattern in tests — JUnit runs tests off the EDT, so no `withContext` is
+needed:
 
 ```kotlin
 @Test
@@ -29,9 +30,9 @@ fun mySpec() = runBlocking {
 }
 ```
 
-If you call `waitForIdle`/`waitForVisualIdle` from the EDT you'll get a clear
-`IllegalStateException` rather than a deadlock. The fix in that case is
-`withContext(Dispatchers.Default)` around the offending call — see
+If you call any wait helper from the EDT you'll get a clear `IllegalStateException`
+rather than a deadlock. The fix in that case is `withContext(Dispatchers.Default)`
+around the offending call — see
 [Troubleshooting](troubleshooting.md#i-called-a-wait-helper-from-the-edt).
 
 ## `waitForNode`

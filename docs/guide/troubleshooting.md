@@ -9,10 +9,12 @@ java.lang.IllegalStateException: waitForIdle must not be called from the AWT eve
 dispatch thread; wrap the call with withContext(Dispatchers.Default) or similar.
 ```
 
-`waitForIdle` and `waitForVisualIdle` drain the EDT and snapshot semantics via
-`invokeAndWait`. Running them on the EDT would either deadlock or skip the bounded
-worker that enforces their timeout. (`waitForNode` polls through `readOnEdt` and is
-exempt.)
+All three wait helpers — `waitForNode`, `waitForIdle`, and `waitForVisualIdle` — refuse
+to run on the AWT event dispatch thread. They snapshot semantics via
+`invokeAndWait`/`readOnEdt`. Running them on the EDT would either deadlock or skip the
+bounded worker that enforces the timeout, so the helpers raise
+`IllegalStateException` instead. The exact wait name in the message tells you which
+call to wrap.
 
 JUnit test methods don't run on the EDT, so a plain `runBlocking { … }` body is fine
 there — no `withContext` needed. The error appears when the call originates from a

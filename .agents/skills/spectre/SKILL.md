@@ -1,6 +1,6 @@
 ---
 name: spectre
-description: Use when writing, debugging, or reviewing tests that drive a live Compose Desktop UI with Spectre — the JVM/Kotlin library for automating real Compose Desktop windows (and IntelliJ/Jewel-hosted Compose) via the semantics tree plus java.awt.Robot or synthetic AWT input. Trigger on mentions of `ComposeAutomator`, `RobotDriver`, `AutomatorNode`, `findByTestTag`, `waitForNode`, `waitForIdle`, "Compose Desktop UI test", "automate a Compose window", screenshotting or recording a Compose Desktop window, or any task involving `dev.sebastiano.spectre.*` imports. Also use when the user is writing JUnit 4/5 tests against Compose Desktop, even if they don't say "Spectre" explicitly — if the test drives a real Compose window (not `runComposeUiTest`), this is the right tool.
+description: Use when writing, debugging, or reviewing tests that drive a real, on-screen Compose Desktop window with Spectre — the JVM/Kotlin library for automating live Compose Desktop UIs (and IntelliJ/Jewel-hosted Compose) via the semantics tree plus java.awt.Robot or synthetic AWT input. Trigger on mentions of `ComposeAutomator`, `RobotDriver`, `AutomatorNode`, `findByTestTag`, `waitForNode`, `waitForIdle`, "automate a Compose window", "live/real-window Compose Desktop UI test", screenshotting or recording a Compose Desktop window, or any task involving `dev.sebastiano.spectre.*` imports. Also use when the user is writing JUnit 4/5 tests against Compose Desktop **and** the test opens a real top-level window — but NOT when the user wants the off-screen `runComposeUiTest` / `createComposeRule` / `onNodeWithTag` framework, which is a different tool.
 ---
 
 # Spectre
@@ -81,16 +81,39 @@ on the host OS. Three variants:
   AWT events directly into the given `java.awt.Window` hierarchy. No global
   focus contention, so safe for **parallel test JVMs** and for IDE-hosted
   Compose where stealing the IDE focus would be hostile. Does **not** see OS
-  shortcuts (Cmd+Tab, system menus).
+  shortcuts (Cmd+Tab, system menus). It is an extension on
+  `RobotDriver.Companion` defined in `SyntheticInput.kt`, so you must add
+  `import dev.sebastiano.spectre.core.synthetic` for the call to resolve.
 - **`RobotDriver.headless()`** — refuses to send any input. For tests that
   only read the semantics tree (e.g. asserting a screen layout) without
   driving it.
 
 ```kotlin
+import dev.sebastiano.spectre.core.ComposeAutomator
+import dev.sebastiano.spectre.core.RobotDriver
+import dev.sebastiano.spectre.core.synthetic // required for the call below
+
 val automator = ComposeAutomator.inProcess(
     robotDriver = RobotDriver.synthetic(rootWindow = ideFrame),
 )
 ```
+
+### Wiring a custom driver through the JUnit extension/rule
+
+`ComposeAutomatorExtension` and `ComposeAutomatorRule` do **not** take a
+`robotDriver = …` named argument. Their primary constructor takes a single
+`AutomatorFactory = () -> ComposeAutomator`. Use the trailing-lambda form to
+build the automator with the driver you want:
+
+```kotlin
+@JvmField
+@RegisterExtension
+val automatorExt = ComposeAutomatorExtension {
+    ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())
+}
+```
+
+Same shape for the JUnit 4 rule — `ComposeAutomatorRule { ComposeAutomator.inProcess(...) }`.
 
 ## Finding nodes
 
@@ -119,7 +142,7 @@ post-HiDPI), `centerOnScreen`. Tree navigation via `children`/`parent`.
 
 All `suspend` on `ComposeAutomator`:
 
-- `click(node)`, `doubleClick(node)`, `longClick(node, holdFor = 500.ms)`
+- `click(node)`, `doubleClick(node)`, `longClick(node, holdFor = 500.milliseconds)`
 - `swipe(from, to, steps, duration)` or `swipe(startX, startY, endX, endY, …)`
 - `scrollWheel(node, wheelClicks)`
 - `typeText("hello")` — pastes via the system clipboard (faster, handles
@@ -128,8 +151,11 @@ All `suspend` on `ComposeAutomator`:
 - `clearAndTypeText(node, "new")` — Ctrl/Cmd+A, Backspace, then `typeText`.
 - `pressKey(KeyEvent.VK_ENTER, modifiers = 0)`, `pressEnter()`.
 - `performSemanticsClick(node)` — bypasses the OS entirely and invokes
-  the Compose `OnClick` semantics action. Use this if focus contention is
-  causing flakes and you don't need to exercise the OS input path.
+  the Compose `OnClick` semantics action. **Last resort** for click-only flows
+  or strictly headless contexts: it only clicks (no typing, no key events,
+  no scrolling), so it can't fully replace OS input for most tests. For
+  parallel-JVM focus contention, prefer `RobotDriver.synthetic(rootWindow)`
+  — especially as soon as the test also types text.
 - `focusWindow(node)` — raises and focuses the window hosting `node`.
 
 ## Synchronization — the part everyone gets wrong
@@ -159,13 +185,16 @@ A typical pattern after an interaction is `waitForVisualIdle()`. After
 triggering a screen *change* (e.g. opening a dialog), `waitForNode(tag = …)`
 is more precise.
 
-### Rule 3: never call `waitForIdle`/`waitForVisualIdle` on the EDT
+### Rule 3: never call any wait on the EDT
 
-They drain the AWT event dispatch thread and snapshot it via
-`invokeAndWait`. Calling from the EDT deadlocks. `waitForNode` is exempt.
-If your dispatcher is Swing-backed, wrap the wait in
-`withContext(Dispatchers.Default) { … }`. `waitForNode` does not have this
-restriction.
+All three of `waitForNode`, `waitForIdle`, and `waitForVisualIdle` actively
+reject being called from the AWT event dispatch thread — they need to
+`invokeAndWait` onto the EDT to read state, so running them *on* the EDT would
+deadlock. If your dispatcher is Swing-backed (the IntelliJ EDT dispatcher, a
+custom `Swing` dispatcher, etc.), wrap the wait in
+`withContext(Dispatchers.Default) { … }` (or any non-EDT dispatcher) so the
+wait suspends off-thread. The user docs you may have read elsewhere have an
+older carve-out for `waitForNode` — that exception is gone in current code.
 
 ### Rule 4: use `runBlocking`, not `runTest`
 
@@ -226,13 +255,13 @@ touches that area*; they are not needed for the common case.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `findOneBy…` returns `null` right after an interaction | Selectors don't wait | Add `waitForNode(...)` or `waitForVisualIdle()` first |
-| Test deadlocks inside `waitForIdle()` | Called from the EDT | Wrap in `withContext(Dispatchers.Default)` |
+| Test deadlocks or throws inside any `waitFor…` | Called from the AWT EDT | Wrap in `withContext(Dispatchers.Default) { … }` — applies to all three waits, including `waitForNode` |
 | `longClick`/`swipe`/`typeText` complete instantly and miss | Test body uses `runTest` | Switch to `runBlocking` |
 | Two parallel test JVMs steal focus from each other | Both use real `RobotDriver()` | Use `RobotDriver.synthetic(rootWindow)` |
 | Cmd+Tab or OS shortcuts don't work under synthetic driver | Synthetic events bypass HID | Use real `RobotDriver()` for those tests |
 | Screenshot is blurry / mid-animation | Captured before frame stabilised | `waitForVisualIdle()` first |
 | `typeText` times out on macOS in CI | Clipboard manager rewriting `NSPasteboard` | Disable clipboard utilities in CI |
-| Region-based recording crops out popups | Popups escape the region | Use window-targeted recording |
+| Recording misses popups that escape the host window | Popups live in their own AWT window outside both the region rectangle *and* a window-targeted capture | Choose an explicit region (or full-desktop crop) wide enough to include where the popup opens, or document the limitation — neither region nor window targeting follows cross-window popups |
 | Window-targeted Wayland recording throws `IllegalStateException` | `xprop` missing or non-GNOME compositor | Fall back to region capture (`window = null`) |
 | Coordinates derived from `boundsInWindow` land off-target on HiDPI | `boundsInWindow` is dp; screen is pixels | Use `boundsOnScreen`/`centerOnScreen`, or apply density |
 
