@@ -39,6 +39,12 @@ Start at [Getting started](https://spectre.sebastiano.dev/guide/getting-started/
 shape of a Spectre test, or [The automator](https://spectre.sebastiano.dev/guide/automator/)
 for the mental model.
 
+Agent skill:
+
+```shell
+npx skills add rock3r/spectre --skill spectre
+```
+
 ## Modules
 
 - `core` — semantics tree, selectors, coordinate mapping, Robot-backed input.

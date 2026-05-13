@@ -1,6 +1,8 @@
 ---
 name: using-git-worktree
 description: Use when starting nontrivial feature work that should stay isolated from the main checkout. Creates or reuses a safe git worktree with sensible defaults.
+metadata:
+  internal: true
 ---
 
 # Using Git Worktrees
@@ -51,4 +53,3 @@ git worktree add .worktrees/<branch-name> -b <branch-name> <base-branch>
 - Keep `.plans/` in the root checkout rather than inside the worktree.
 - Use absolute paths when switching between Spectre and prior-art repos under `~/src`.
 - Prefer a worktree for implementation-heavy tasks, not for tiny doc-only edits.
-
