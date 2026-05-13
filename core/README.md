@@ -1,12 +1,8 @@
 # Core
 
-Planned home for the in-process automation surface:
+In-process automation surface for live Compose Desktop UIs.
 
-- window tracking
-- semantics tree reading
-- coordinate mapping
-- Robot-backed interactions
-- shared data model
-
-This module is intentionally scaffold-only right now.
-
+This module contains the public `ComposeAutomator` API, semantics tree snapshots,
+window tracking, HiDPI-aware coordinate mapping, Robot-backed and synthetic input, wait
+helpers, screenshots, tracing hooks, and the shared node/window data model used by the
+other modules.

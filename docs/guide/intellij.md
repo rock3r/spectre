@@ -100,7 +100,7 @@ production plugin distribution's Tools menu. Hide it on two axes:
     Set the registry key via **Help → Find Action → Registry…** in any IDE, or pass
     `-Dmy.plugin.spectre.enabled=true` on the JVM command line for headless / CI
     runs (which is also the natural shape if you're combining this with
-    [`-DspectreAutorun=true`](#auto-trigger-on-startup) for non-interactive smokes).
+    [`-Dspectre.autorun=true`](#auto-trigger-on-startup) for non-interactive smokes).
 
 The combination keeps the action discoverable to the right audience (developers,
 QA, CI) and invisible to the rest of the world.

@@ -48,7 +48,7 @@ dependencies {
 
 Versions are intentionally omitted: `includeBuild` substitutes the project dependency
 into the consumer's classpath using whatever version the included build declares, so
-the `0.1.0-SNAPSHOT` you see in `gradle.properties` is implicit.
+the `0.1.0-SNAPSHOT` declared by Spectre's root Gradle build is implicit.
 
 If you depend on `server`, you also need to add a Ktor server engine yourself — Spectre
 intentionally doesn't bundle one. See [Cross-JVM access](cross-jvm.md) for the choice.
