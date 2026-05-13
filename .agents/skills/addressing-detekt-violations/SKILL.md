@@ -1,6 +1,8 @@
 ---
 name: addressing-detekt-violations
 description: Use when Detekt reports a violation and you need to fix the underlying problem without papering over it with suppressions or configuration changes.
+metadata:
+  internal: true
 ---
 
 # Addressing Detekt Violations

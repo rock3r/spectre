@@ -1,6 +1,8 @@
 ---
 name: jewel-swing-interop
 description: Use when working on IntelliJ/Jewel popup hosting, ComposePanel embedding, SwingBridgeTheme, popup rendering modes, or AWT/Compose coordinate conversion.
+metadata:
+  internal: true
 ---
 
 # Jewel Swing Interop
@@ -52,4 +54,3 @@ Read these checked-out sources when implementing:
 4. `/Users/rock3r/src/intellij-community/platform/jewel/ui/src/main/kotlin/org/jetbrains/jewel/ui/component/Popup.kt`
 5. `/Users/rock3r/src/intellij-community/platform/jewel/foundation/src/main/kotlin/org/jetbrains/jewel/foundation/JewelFlags.kt`
 6. `/Users/rock3r/src/intellij-community/plugins/performanceTesting/remote-driver.compose/src/com/intellij/performanceTesting/remoteDriver/compose/ComposeXpathDataModelExtension.kt`
-

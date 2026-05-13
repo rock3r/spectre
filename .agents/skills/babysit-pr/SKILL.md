@@ -9,6 +9,8 @@ description: >
   feedback). Use when the user asks to monitor a PR, watch CI, handle review comments, or
   keep an eye on failures and feedback on an open PR.
 allowed-tools: Bash(python3 */skills/babysit-pr/scripts/*), Bash(gh pr *), Bash(gh run *), Bash(gh api *), Bash(git fetch *), Bash(git rebase *), Bash(git merge *), Bash(git checkout *), Bash(git switch *), Bash(git push *), Bash(git commit *), Bash(git diff *), Bash(git log *), Bash(git status), Bash(git branch *), Bash(git worktree *), Bash(./gradlew check *), Read, Edit
+metadata:
+  internal: true
 ---
 
 # PR Babysitter
