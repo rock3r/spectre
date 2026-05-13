@@ -3,9 +3,9 @@ import PackageDescription
 
 // Out-of-process helper that Spectre forks per recording. The JVM side
 // (`ScreenCaptureKitRecorder`) extracts the built executable from
-// `recording/src/main/resources/native/macos/`, hands it window-discovery
-// arguments + an output path on stdin/argv, and stops it by writing `q\n`
-// to stdin (mirrors the existing `FfmpegRecorder` shutdown contract).
+// the recording JAR's `native/macos/` resources, hands it window-discovery
+// arguments + an output path on stdin/argv, and stops it by writing `q\n` to
+// stdin (mirrors the existing `FfmpegRecorder` shutdown contract).
 //
 // macOS 13 is the floor: ScreenCaptureKit shipped in 12.3, but the
 // `SCStreamConfiguration.queueDepth` / `SCStreamOutput` async surface we

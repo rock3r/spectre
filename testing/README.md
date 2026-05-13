@@ -28,4 +28,6 @@ Contract tests pin the wire-level guarantees that cross module boundaries:
   string form the HTTP transport's `ClickRequest.nodeKey` and the recording module's
   `TitleDiscriminator` both depend on.
 
-More contract tests will land here as cross-module surfaces grow.
+Server DTO and HTTP transport contracts live with the `server` module, while recording
+backend contracts live with `recording`. Add new cross-module contract tests to the module
+that owns the public boundary they pin.

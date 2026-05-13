@@ -93,8 +93,8 @@ Current backends:
   Window movement is followed automatically; occlusion doesn't matter.
 - `screencapturekit.ScreenCaptureKitRecorder` — macOS-only window-targeted capture via a
   bundled Swift helper (`recording/native/macos/`). The helper is built by Gradle on
-  macOS and staged into the module's `src/main/resources/native/macos/` so the JAR
-  carries it.
+  macOS, staged under `recording/build/generated/screenCaptureHelper/...`, and wired
+  into the module's generated resources so the JAR carries it.
 - `portal.WaylandPortalRecorder` — Linux Wayland capture via `xdg-desktop-portal`'s
   ScreenCast interface, driven by a bundled Rust helper
   (`recording/native/linux/spectre-wayland-helper`) that hands the PipeWire FD to
@@ -151,4 +151,3 @@ These should remain true as the codebase grows:
 4. Platform-specific integrations should be isolated behind small interfaces at module boundaries.
 5. Research-only shortcuts are acceptable in the sample app, but reusable behaviour must be moved
    into the proper module before it is treated as part of the product surface.
-

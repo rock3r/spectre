@@ -129,8 +129,8 @@ description, or role — see [Finding nodes](selectors.md).
 - `findOneByTestTag(...)` does a single semantics-tree read — no waiting. If the result
   isn't what you expect, your UI probably wasn't idle yet.
 - `automator.click(node)` is `suspend` — it resolves the node's centre on screen,
-  marshals the blocking AWT work onto `Dispatchers.IO` internally, and dispatches a
-  real mouse click via `java.awt.Robot`.
+  dispatches a real mouse click via `java.awt.Robot`, and only hops to `Dispatchers.IO`
+  when the call originates on the AWT event dispatch thread.
 
 All interaction methods (`click`, `doubleClick`, `swipe`, `typeText`, …) and all wait
 helpers (`waitForNode`, `waitForIdle`, `waitForVisualIdle`) are `suspend`, so the test

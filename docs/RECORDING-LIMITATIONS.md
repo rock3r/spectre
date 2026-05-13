@@ -11,9 +11,9 @@ a video file, and each has its own limitations:
   equivalent — `avfoundation` on macOS, `gdigrab` on Windows, `x11grab` on Linux Xorg,
   or the Wayland compositor's PipeWire stream on Linux Wayland). Whatever is showing
   on screen inside that rectangle goes into the file, regardless of which window is
-  there. Region capture is the only path available for embedded surfaces (a
-  `ComposePanel` inside an IntelliJ tool window, a `JFrame`, etc.) because there's no
-  top-level OS window to target.
+  there. Region capture is the only path available when the Compose surface has no
+  adaptable top-level OS window, such as a `ComposePanel` inside an IntelliJ tool
+  window.
 - **Window-targeted capture** — captures a specific OS window's pixels directly, not
   the screen rectangle the window happens to occupy. The source is the window's own
   backing store (`ScreenCaptureKit` on macOS) or the OS-level `gdigrab title=` capture
@@ -118,13 +118,15 @@ failure modes, and the section below
   not follow a window. Use `ScreenCaptureKitRecorder` (macOS) or `FfmpegWindowRecorder`
   (Windows) when you have a top-level window to target — the next section covers what
   the window-targeted backends do differently.
-- **Embedded `ComposePanel` surfaces always fall through to region capture.**
+- **Embedded `ComposePanel` surfaces without an adaptable top-level `Frame` fall
+  through to region capture.**
   `AutoRecorder.start(window: TitledWindow?, region: Rectangle, …)` picks window-targeted
   capture only when `window` is non-null and (on Windows) has a non-blank title. The
-  `Frame.asTitledWindow()` adapter exposes that title for top-level `ComposeWindow`s, but
-  a panel embedded inside an IntelliJ tool window, a `JFrame`, a `JDialog`, or a
-  `SwingPanel` host inside Compose has no top-level `Frame` to adapt — callers pass
-  `window = null` and get the region path. Practical consequences:
+  `Frame.asTitledWindow()` adapter exposes that title for any top-level `Frame`,
+  including `ComposeWindow` and `JFrame` hosts. A panel embedded inside an IntelliJ
+  tool window or a `SwingPanel` host inside Compose has no separate titled `Frame` to
+  adapt — callers pass `window = null` and get the region path. Practical
+  consequences:
   - Anything that visually overlaps the panel — other windows, the menu bar, OS notifications, a
     floating popup that escapes the panel's bounds — appears in the recording.
   - The captured region is the panel's screen-space bounds at start. If the host window moves or

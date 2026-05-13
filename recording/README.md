@@ -76,9 +76,10 @@ implementer's view of the same module.
 
 `recording/native/macos/` is a SwiftPM project that produces the `spectre-screencapture`
 helper binary. The `assembleScreenCaptureKitHelper` Gradle task runs `swift build -c release`
-and stages the binary into `src/main/resources/native/macos/`, so the JAR carries it
-transparently. The Swift `swift build` step only runs on macOS hosts — non-macOS hosts
-produce a structurally-correct jar that just doesn't contain the helper file (consumers see
+and stages the binary under `build/generated/screenCaptureHelper/native/macos/`, then
+wires that generated directory into the JAR resources transparently. The Swift `swift
+build` step only runs on macOS hosts — non-macOS hosts produce a structurally-correct jar
+that just doesn't contain the helper file (consumers see
 `HelperBinaryExtractor`'s "binary not found" message at runtime if they try to use SCK).
 
 **Distribution must be built on macOS.** A jar published from a Linux CI runner won't carry
@@ -108,7 +109,8 @@ which binary ends up bundled. The universal task pipeline:
    `recording/build/generated/screenCaptureHelperUniversal/SpectreScreenCapture`.
 3. Verifies the result via `lipo -verify_arch arm64 x86_64` — exits non-zero (fails the
    build) if any expected arch isn't present, so a thin binary can never sneak through.
-4. Stages the universal binary into `src/main/resources/native/macos/spectre-screencapture`.
+4. Stages the universal binary into generated resources at
+   `native/macos/spectre-screencapture`.
 
 **Both paths only need the macOS Command Line Tools.** The `--triple` + `lipo` recipe
 deliberately avoids `swift build --arch arm64 --arch x86_64` (which delegates to `xcbuild`
@@ -296,16 +298,12 @@ helpers. CI invokes it as
 
 to lock in both-arch coverage explicitly.
 
-### Publishing intent (not yet implemented — gated on #84)
+### Release packaging
 
-The eventual publish flow merges artifacts from two release runners:
+The tag-driven release workflow builds the recording JAR on macOS with
+`-PuniversalHelper -PnotarizeScreenCaptureKitHelper`, so
+`native/macos/spectre-screencapture` carries a signed and notarized universal binary. It
+then uploads that JAR to the GitHub release for the pushed tag.
 
-- A macOS runner builds the SCK helper with `-PuniversalHelper -PnotarizeScreenCaptureKitHelper`
-  so `native/macos/spectre-screencapture` carries a notarized universal binary.
-- A Linux runner builds the Wayland helpers with `-PallLinuxArches` so
-  `native/linux/<arch>/spectre-wayland-helper` carries both supported architectures.
-
-The merged jar then has the full helper set regardless of which platform a downstream
-consumer runs Spectre on. Until #84's publish pipeline lands, building locally produces
-a host-shaped subset of helpers — useful for development, not yet a distribution
-artifact.
+Local builds still produce a host-shaped subset of helpers unless you opt into the
+distribution-oriented flags above.

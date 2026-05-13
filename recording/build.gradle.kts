@@ -67,8 +67,9 @@ tasks.withType<Test>().configureEach { useJUnitPlatform() }
 //   1. `swift build -c release` produces a host-arch binary at
 //      `recording/native/macos/.build/release/SpectreScreenCapture`.
 //   2. `assembleScreenCaptureKitHelper` copies it into
-//      `src/main/resources/native/macos/spectre-screencapture` so the resource path is stable
-//      regardless of where SwiftPM lays out its output across versions.
+//      `build/generated/screenCaptureHelper/native/macos/spectre-screencapture` and wires that
+//      directory as generated resources, so the resource path is stable regardless of where
+//      SwiftPM lays out its output across versions.
 //   3. `processResources` depends on the assemble task (only on macOS), so the JAR carries
 //      the helper transparently and `ScreenCaptureKitRecorder.extractHelper()` finds it via
 //      the classloader.

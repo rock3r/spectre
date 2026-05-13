@@ -27,7 +27,8 @@ Notes:
 - `ktfmtCheck` verifies formatting.
 - `ktfmtFormat` rewrites Kotlin and Gradle Kotlin DSL files to the chosen style.
 - `detekt` checks Kotlin source for structural/style issues.
-- Compose modules also run the upstream Compose Rules checks through Detekt.
+- Modules load the upstream Compose Rules checks through Detekt so Compose-bearing
+  sources are covered wherever they live.
 - `build` is the broader all-up build path and should also stay green before pushing.
 
 ## Style Choices

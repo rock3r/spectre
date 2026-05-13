@@ -22,8 +22,9 @@ interface Recorder {
 ```
 
 You start a recording, you get a `RecordingHandle`, you stop the handle when you're
-done. Implementations must spawn the underlying process eagerly so frames are landing
-in `output` by the time `start()` returns.
+done. Implementations spawn the underlying process eagerly and fail fast when startup
+is clearly broken, but ffmpeg-backed recorders do not prove that the first frame has
+already landed in `output` before `start()` returns.
 
 ## Recorder capability matrix
 

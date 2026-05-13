@@ -5,11 +5,11 @@ mouse, keyboard, and clipboard input to whatever surface the target node lives i
 
 All interaction methods (`click`, `doubleClick`, `longClick`, `swipe`, `scrollWheel`,
 `typeText`, `clearAndTypeText`, `pressKey`, `pressEnter`) are `suspend` — call them
-from a coroutine. They marshal blocking AWT/Robot work onto `Dispatchers.IO`
-internally, so a caller on `Dispatchers.Main` (the AWT EDT) yields cleanly while real
-input is dispatched. Internal sleeps use `delay` rather than `Thread.sleep`, so a
-cancelled coroutine cancels mid-`longClick` / mid-`swipe` rather than parking the
-worker thread until the hold completes.
+from a coroutine. Real `java.awt.Robot` work runs inline when the caller is already
+off the AWT event dispatch thread, and hops to `Dispatchers.IO` only when needed to
+keep EDT callers from blocking the UI. Internal sleeps use `delay` rather than
+`Thread.sleep`, so a cancelled coroutine cancels mid-`longClick` / mid-`swipe` rather
+than parking the worker thread until the hold completes.
 
 `screenshot` stays sync — it's a single framebuffer read, no blocking I/O to bury
 behind a coroutine boundary.

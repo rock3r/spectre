@@ -28,6 +28,7 @@ These rules apply to new and modified code:
 | Native/OS capture integration | `recording/` |
 | Test-only helpers and fixtures | `testing/` |
 | Manual validation harness UI | `sample-desktop/` |
+| IntelliJ/Jewel validation plugin | `sample-intellij-plugin/` |
 | Long-lived implementation guidance | `docs/` |
 | Local agent workflow help | `.agents/skills/` |
 
