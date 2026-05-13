@@ -43,3 +43,4 @@ out/
 recording/native/macos/.build/
 recording/native/macos/.swiftpm/
 recording/native/macos/Package.resolved
+/.agents/skills/spectre-workspace/

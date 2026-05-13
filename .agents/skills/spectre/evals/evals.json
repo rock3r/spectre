@@ -1,0 +1,69 @@
+{
+  "skill_name": "spectre",
+  "evals": [
+    {
+      "id": 0,
+      "name": "write-counter-test-from-scratch",
+      "prompt": "I have a Compose Desktop app with a counter screen. There's a button tagged `Increment` and a text node tagged `CounterValue` whose text reads `Count: 0`. I want to write a JUnit 5 test that launches my app via `launchCounterApp()`, clicks the button once, and asserts the counter reads `Count: 1`. We use Spectre. Write the full test class.",
+      "assertions": [
+        "Uses ComposeAutomatorExtension (the JUnit 5 wrapper) — not ComposeAutomatorRule",
+        "Registers the extension with @RegisterExtension",
+        "Uses @JvmField on the extension field",
+        "Wraps the test body in runBlocking { ... } and NOT in runTest",
+        "Calls a wait (waitForNode or waitForVisualIdle or waitForIdle) before reading post-click state",
+        "Uses click() — not performSemanticsClick — on the Increment node",
+        "Locates nodes via findOneByTestTag",
+        "Asserts the counter text equals \"Count: 1\" after the click"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "diagnose-flaky-find-after-click",
+      "prompt": "My Spectre test is flaky — sometimes after I click the `OpenSettings` button, `automator.findOneByTestTag(\"SettingsDialogTitle\")` returns null and the test fails, but if I add a `Thread.sleep(500)` it passes. What's the actual fix? Don't just say 'sleep is bad', tell me the proper Spectre API.",
+      "assertions": [
+        "Explicitly recommends waitForNode (with tag = \"SettingsDialogTitle\") as the fix",
+        "Explains that findBy... selectors are single non-waiting reads",
+        "Does NOT recommend Thread.sleep or any fixed-duration sleep as the answer",
+        "Does NOT incorrectly suggest Compose's runComposeUiTest / onNodeWithTag / waitUntil APIs"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "parallel-junit5-tests-focus-fight",
+      "prompt": "We run our Spectre tests in parallel (Gradle maxParallelForks = 4). On CI they keep failing because the JVMs steal focus from each other when clicking. We don't actually need real OS-level input — we just click buttons and type text into a Compose window. What should I change?",
+      "assertions": [
+        "Recommends switching to RobotDriver.synthetic(...) as the primary fix",
+        "Identifies that RobotDriver.synthetic takes a rootWindow (the top-level java.awt.Window)",
+        "Wires the driver via the factory-form trailing lambda on ComposeAutomatorExtension/Rule (e.g. ComposeAutomatorExtension { ComposeAutomator.inProcess(robotDriver = ...) }) — NOT via a non-existent robotDriver = named arg on the extension/rule itself",
+        "Imports dev.sebastiano.spectre.core.synthetic (since synthetic is an extension on RobotDriver.Companion)",
+        "Does NOT recommend disabling parallelism / lowering maxParallelForks as the fix",
+        "Does NOT recommend performSemanticsClick as the primary fix"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "junit4-rule-form",
+      "prompt": "Our project is stuck on JUnit 4 — we can't migrate to 5 yet. Show me the minimal Spectre setup for a JUnit 4 test that opens a login screen via launchLoginScreen(), types alice@example.com into the field tagged EmailField, clicks LoginButton, then waits for a node tagged Dashboard to appear.",
+      "assertions": [
+        "Uses ComposeAutomatorRule (the JUnit 4 wrapper) — not ComposeAutomatorExtension",
+        "Annotates the rule with @get:Rule (Kotlin-correct form)",
+        "Wraps test body in runBlocking { ... } and NOT in runTest",
+        "Types the email into EmailField via typeText or clearAndTypeText",
+        "Calls click on the LoginButton node",
+        "Uses waitForNode(tag = \"Dashboard\") (or equivalent) to wait for the dashboard"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "screenshot-after-animation",
+      "prompt": "I want to screenshot a Compose Desktop window after a fade-in animation completes, and save it as build/reports/welcome.png. Currently the screenshot captures a half-faded frame. How do I do this properly with Spectre?",
+      "assertions": [
+        "Recommends waitForVisualIdle (NOT waitForIdle, NOT waitForNode) immediately before the screenshot",
+        "Calls automator.screenshot(...) to obtain a BufferedImage",
+        "Saves the BufferedImage via ImageIO.write to the target PNG path",
+        "Does NOT recommend Thread.sleep before the screenshot",
+        "Does NOT suggest using AutoRecorder / recording APIs"
+      ]
+    }
+  ]
+}

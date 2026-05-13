@@ -95,9 +95,11 @@ corresponding doc page is touched:
 
 - **No auto-wait.** Queries (`findByTestTag`, `findByText`, etc.) do a single read.
   They never retry. Document them as such.
-- **EDT rule, but not for `waitForNode`.** `waitForIdle` and `waitForVisualIdle`
-  reject EDT callers via `rejectEdtCaller`. `waitForNode` polls through `readOnEdt`
-  and is exempt. Don't say "all wait helpers reject the EDT".
+- **EDT rule applies to all three waits.** `waitForNode`, `waitForIdle`, and
+  `waitForVisualIdle` all reject EDT callers via `rejectEdtCaller` (see
+  `WaitForNodeTest.waitForNode rejects EDT callers with valid arguments`). Earlier
+  drafts of the docs carved out `waitForNode` as exempt — that exemption is gone in
+  current code. Do say "all wait helpers reject the EDT".
 - **`refreshWindows` is only auto-called by `tree()`.** `findBy*` and `allNodes`
   read against the last refresh. If a popup may have appeared since the last call,
   the user has to refresh.
