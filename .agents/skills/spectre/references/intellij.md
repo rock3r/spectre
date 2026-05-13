@@ -37,11 +37,13 @@ class RunSpectreAction : AnAction() {
 
 ## Don't run the automator on the EDT
 
-`executeOnPooledThread` (or any background dispatcher) is required. The
+`executeOnPooledThread` (or any non-EDT dispatcher) is required. The
 automator's outer loop — polling, retries, waits — runs on the calling
-thread. If that thread is the EDT, `waitForIdle`/`waitForVisualIdle` will
-deadlock when they try to `invokeAndWait` onto a thread they're already
-running on. Per-tick semantics reads internally marshal back to the EDT.
+thread. All three wait helpers (`waitForNode`, `waitForIdle`,
+`waitForVisualIdle`) reject EDT callers with `IllegalStateException`, so
+calling them from the EDT fails fast rather than silently deadlocking on
+the `invokeAndWait` round-trip. Per-tick semantics reads internally marshal
+back to the EDT.
 
 ## Popups and `ComposePanel`
 
