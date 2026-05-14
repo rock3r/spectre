@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.core
 
 import java.awt.Component
 import java.awt.Container
+import java.awt.KeyboardFocusManager
 import java.awt.Point
 import java.awt.Rectangle
 import java.awt.Window
@@ -275,18 +276,32 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
     }
 
     private fun dispatchKey(type: Int, keyCode: Int, keyCharOverride: Char? = null) {
-        // Key events go to the focus owner of whichever window owns the keyboard. When macOS runs
-        // the JVM as an `apple.awt.UIElement`, AWT may never grant OS keyboard focus to any window
-        // even though the app's own focus model has a focused field. In that case, dispatch to
-        // the last pointer target first (matching click-then-type flows) and then to an embedded
-        // Compose host so Compose can route the event internally.
+        // Pick the AWT component that should receive the synthetic KeyEvent. The chain below is
+        // ordered from "AWT thinks it knows where focus is" down to "best-effort by structure".
+        //
+        // Why this is more involved than "dispatch to the focus owner": when macOS runs the JVM as
+        // an `apple.awt.UIElement`, AWT never grants OS keyboard focus to any window — every
+        // `Window.focusOwner` stays null even though Compose's own focus model has a focused
+        // composable. Without a fallback, real text input never reaches Compose at all.
+        //
+        // Compose Desktop registers its AWT `KeyListener` on
+        // `ComposeSceneMediator.contentComponent`
+        // — the inner Skiko canvas (an `org.jetbrains.skiko.SkiaLayer` or
+        // `androidx.compose.ui.scene.skia.SkiaSwingLayer`) inside `ComposeWindowPanel`, NOT on the
+        // panel itself. So dispatching to the panel produces visible focus side-effects but no
+        // text. We pick the deepest descendant of a Compose host that actually has a registered
+        // `KeyListener`, which lands on the Skiko canvas in real Compose hierarchies and works
+        // for any plain-Swing fixture (test or otherwise) that registers its own key listener.
         val windows = allWindows()
         val pointerTarget = hitTestComponent()
+        val composeFallbackTarget = findComposeKeyEventTarget(windows)
         val target =
             windows.asSequence().mapNotNull { it.focusOwner }.firstOrNull()
-                ?: pointerTarget?.composeHostAncestorOrSelf()
+                ?: pointerTarget?.findKeyListenerSelfOrDescendant()
+                ?: pointerTarget?.composeHostAncestorOrSelf()?.findKeyListenerDescendant()
                 ?: pointerTarget
-                ?: findComposeKeyEventTarget(windows)
+                ?: composeFallbackTarget?.findKeyListenerSelfOrDescendant()
+                ?: composeFallbackTarget
                 ?: rootWindow
         val event =
             KeyEvent(
@@ -311,7 +326,15 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
                         )
                     else KeyEvent.CHAR_UNDEFINED,
             )
-        runOnEdt { target.dispatchEvent(event) }
+        // Bypass `KeyboardFocusManager` via `redispatchEvent`. `Component.dispatchEvent(KeyEvent)`
+        // would otherwise hand the event to KFM first, which redirects to the global focus owner —
+        // null under `apple.awt.UIElement=true`, causing the event to be silently dropped. The
+        // `redispatchEvent` entry point exists precisely for callers "using key events generated
+        // from non-keyboard sources": it sets `KeyEvent.focusManagerIsDispatching=true` so AWT
+        // skips the KFM redirect and delivers straight to the target's `processKeyEvent`.
+        runOnEdt {
+            KeyboardFocusManager.getCurrentKeyboardFocusManager().redispatchEvent(target, event)
+        }
     }
 
     private fun findWindowAt(screenX: Int, screenY: Int): Window? =
@@ -411,6 +434,30 @@ private fun Component.composeHostAncestorOrSelf(): Component? {
 
 private fun Component.isComposeHostComponent(): Boolean =
     javaClass.name == COMPOSE_PANEL_CLASS_NAME || javaClass.name == COMPOSE_WINDOW_PANEL_CLASS_NAME
+
+/**
+ * Returns this component if it has any registered AWT [java.awt.event.KeyListener]s, otherwise the
+ * first such descendant in a depth-first walk, or `null` if none is found.
+ *
+ * Used to find the Skiko canvas under a `ComposeWindowPanel` (`ComposeSceneMediator` registers its
+ * key listener on `contentComponent`, not on the outer panel). Walking by structural class name is
+ * fragile across Compose versions; checking for a registered key listener is the behavioural
+ * property we actually care about and keeps plain-Swing fixtures working too.
+ */
+private fun Component.findKeyListenerSelfOrDescendant(): Component? {
+    if (keyListeners.isNotEmpty()) return this
+    return findKeyListenerDescendant()
+}
+
+private fun Component.findKeyListenerDescendant(): Component? {
+    if (this !is Container) return null
+    for (child in components) {
+        if (child.keyListeners.isNotEmpty()) return child
+        val nested = child.findKeyListenerDescendant()
+        if (nested != null) return nested
+    }
+    return null
+}
 
 private fun findDeepestComponentAt(root: Component, screenX: Int, screenY: Int): Component? {
     val origin = runCatching { root.locationOnScreen }.getOrNull() ?: return null

@@ -240,6 +240,67 @@ class SyntheticInputParityTest {
 
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+    fun `key events descend from pointer target into a key-listening descendant`() {
+        // Models the real Compose Desktop topology where the pointer target is a wrapper that
+        // doesn't own the AWT KeyListener (e.g. `ComposeWindowPanel`) but a descendant does
+        // (the inner Skiko canvas, where `ComposeSceneMediator` registers its key listener).
+        //
+        // To force the pointer hit-test to return the wrapper rather than `inner`, the inner
+        // component is placed in a corner so the center of the wrapper is NOT covered by it.
+        // The adapter must walk down from the wrapper to find the key-listening descendant for
+        // text input to land where Compose actually consumes it.
+        assumeLiveAwtAvailable()
+        val innerEvents: MutableList<KeyEvent> = CopyOnWriteArrayList()
+        val inner =
+            JPanel().apply {
+                isOpaque = true
+                background = Color.BLUE
+                // Sit in the top-left corner, leaving the wrapper's center uncovered so the
+                // synthetic pointer hit-test resolves to the wrapper, not `inner`.
+                setBounds(0, 0, FRAME_SIZE_PX / 4, FRAME_SIZE_PX / 4)
+                addKeyListener(KeyEventRecorder(innerEvents))
+            }
+        val wrapper =
+            JPanel(null).apply {
+                preferredSize = Dimension(FRAME_SIZE_PX, FRAME_SIZE_PX)
+                add(inner)
+            }
+        val frame = showNonFocusableFrameOnEdt(wrapper)
+        try {
+            assertTrue(
+                frame.frame.focusOwner == null,
+                "test fixture must model UIElement-style AWT with no focus owner",
+            )
+            // Click the center of the wrapper, which is NOT inside `inner`'s bounds: this is the
+            // scenario where the pointer target is the wrapper and the adapter has to descend.
+            val (cx, cy) = frame.targetCenterOnScreen(wrapper)
+            val driver = RobotDriver.synthetic(frame.frame)
+            runBlocking {
+                driver.click(cx, cy)
+                driver.pressKey(KeyEvent.VK_B)
+            }
+            drainEdt()
+
+            val pressed = innerEvents.firstOrNull {
+                it.id == KeyEvent.KEY_PRESSED && it.keyCode == KeyEvent.VK_B
+            }
+            assertNotNull(
+                pressed,
+                "expected KEY_PRESSED to descend from the wrapper pointer target into the " +
+                    "key-listening inner component; innerEvents=$innerEvents",
+            )
+            assertEquals(
+                inner,
+                pressed.source,
+                "expected the KeyEvent source to be the inner component, not the wrapper",
+            )
+        } finally {
+            disposeFrame(frame.frame)
+        }
+    }
+
+    @Test
+    @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     fun `pasteText through the synthetic driver isolates and restores the fake clipboard`() {
         assumeLiveAwtAvailable()
         val target = JPanel().apply { preferredSize = Dimension(FRAME_SIZE_PX, FRAME_SIZE_PX) }
