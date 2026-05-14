@@ -45,7 +45,7 @@ out of scope.
 | Capability | Surface | Default exposure |
 | --- | --- | --- |
 | Move mouse / press keys | `RobotDriver.click`, `swipe`, `pressKey`, `scrollWheel` | In-process; trusted-local HTTP via `/spectre/click` |
-| Modify clipboard | `RobotDriver.typeText` (save / set / paste / restore) | In-process; trusted-local HTTP via `/spectre/typeText` |
+| Modify clipboard | `RobotDriver.pasteText` (save / set / paste / restore) | In-process |
 | Capture pixels | `RobotDriver.screenshot(region)` — **captures any rectangle of the virtual desktop**, not just the app under test | In-process; trusted-local HTTP via `/spectre/screenshot` |
 | Record video | `AutoRecorder`, `FfmpegRecorder`, `ScreenCaptureKitRecorder`, `WaylandPortalRecorder` | In-process only |
 | Execute a helper binary | `HelperBinaryExtractor` (SCK), `WaylandHelperBinaryExtractor` | Local file system, JVM process |
@@ -100,7 +100,7 @@ expansion); items that are hygiene fixes get their own issues.
 - **Recording output-path validation.** Spectre passes the caller-supplied output path
   through to ffmpeg / the helpers without rejecting `/dev/`, `/proc/`, symlinks, or
   not-yet-existing parents. Standalone follow-up issue, separate from #96.
-- **`typeText` clipboard-restore robustness.** A failure during the post-paste restore is
+- **`pasteText` clipboard-restore robustness.** A failure during the post-paste restore is
   swallowed via `runCatching` (clipboard may be left holding the typed text). Standalone
   follow-up issue.
 - **Helper-extraction cleanup.** Extracted helper binaries are not `deleteOnExit`-registered.

@@ -22,7 +22,7 @@ import kotlinx.coroutines.runBlocking
  * Issue #20 checklist coverage:
  * - mouseMove + mousePress against the spawned window (counter button)
  * - pressKey single character — focus baseline so a typeText failure isolates from focus issues
- * - clipboard-driven typeText into a Compose `BasicTextField`
+ * - key-event `typeText` into a Compose `BasicTextField`
  * - clearAndTypeText (Ctrl+A on Windows, Cmd+A on macOS — uses the platform-aware
  *   `shortcutModifierKeyCode`)
  * - pressKey with Ctrl+S — verifies the modifier-mask → keyCode path Spectre uses for shortcuts

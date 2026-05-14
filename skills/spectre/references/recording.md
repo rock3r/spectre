@@ -6,20 +6,19 @@ is not supported.**
 
 ## Entry point — `AutoRecorder`
 
-`AutoRecorder` picks an appropriate platform backend:
+`AutoRecorder` exposes explicit window and region capture entry points:
 
-| Platform | Window target | Region target |
+| Platform | `startWindow` | `startRegion` |
 |---|---|---|
-| macOS | ScreenCaptureKit (native) | ScreenCaptureKit cropped |
+| macOS | ScreenCaptureKit (native) | ffmpeg region capture |
 | Windows | ffmpeg `gdigrab title=` | ffmpeg `gdigrab` |
-| Linux X11 / XWayland | (n/a — fall back to region) | ffmpeg `x11grab` |
-| Linux Wayland (GNOME/Mutter) | xdg-desktop-portal | xdg-desktop-portal |
+| Linux X11 / XWayland | unsupported | ffmpeg `x11grab` |
+| Linux Wayland (GNOME/Mutter) | xdg-desktop-portal window source | xdg-desktop-portal monitor source |
 
 ```kotlin
 val recorder = AutoRecorder()
-val handle = recorder.start(
-    window = composeWindow.asTitledWindow(),   // or null for region only
-    region = Rectangle(100, 100, 800, 600),
+val handle = recorder.startWindow(
+    window = composeWindow.asTitledWindow(),
     output = Path.of("build/recordings/my-test.mp4"),
     options = RecordingOptions(),
 )
@@ -37,7 +36,7 @@ the file is finalised even on failure.
 
 Two trade-offs, pick deliberately:
 
-- **Region (`window = null`)**: fixed screen `Rectangle`. Does **not** follow
+- **Region (`startRegion`)**: fixed screen `Rectangle`. Does **not** follow
   the window if it moves or resizes; pixels outside the rectangle (popups,
   dialogs that escape the bounds) are lost. Use when you control window
   placement and want a fixed crop.
@@ -45,8 +44,9 @@ Two trade-offs, pick deliberately:
   live in their own AWT window outside the target. Use for tests where the
   window may move but stays the focus.
 
-Embedded `ComposePanel` instances have no top-level window title, so window
-targeting silently falls back to region capture — pass an explicit region.
+Embedded `ComposePanel` instances have no top-level window title, so use
+`startRegion(...)` with an explicit rectangle. `startWindow(...)` fails loudly when a
+true window-targeted backend is unavailable.
 
 ## Linux Wayland caveats
 
@@ -57,8 +57,8 @@ Window-targeted Wayland recording throws `IllegalStateException` if:
 - The compositor doesn't publish `_GTK_FRAME_EXTENTS` (verified only on
   GNOME/Mutter; KDE, sway, wlroots are best-effort).
 
-If a test must run on those compositors, fall back to region capture with
-`window = null` and a fixed `Rectangle`.
+If a test must run on those compositors, use `startRegion(...)` with a fixed
+`Rectangle`.
 
 ## HiDPI and coordinates
 

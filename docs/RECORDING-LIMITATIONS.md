@@ -78,9 +78,9 @@ failure modes, and the section below
   `_GTK_FRAME_EXTENTS` (older Mutter, non-GTK CSD, server-side decorations like KDE
   Plasma's default), or the call to `WaylandPortalWindowRecorder.start` is given a
   `TitledWindow` with a null/blank title, the recorder throws `IllegalStateException`
-  rather than producing a silently-misaligned recording. The fallback is to use
-  `WaylandPortalRecorder` (region capture) — pass `window = null` to
-  `AutoRecorder.start` and the router selects it automatically.
+  rather than producing a silently-misaligned recording. The fallback is explicit
+  region capture: call `AutoRecorder.startRegion(...)`, or instantiate
+  `WaylandPortalRecorder` directly.
 
   Validated end-to-end on Ubuntu 22.04/GNOME 42/mutter, Ubuntu 24.04/GNOME 46/mutter, and
   Ubuntu 26.04/GNOME 50/mutter (real-pixel mp4 with the smoke runner, 2026-05-02 and
@@ -118,14 +118,14 @@ failure modes, and the section below
   not follow a window. Use `ScreenCaptureKitRecorder` (macOS) or `FfmpegWindowRecorder`
   (Windows) when you have a top-level window to target — the next section covers what
   the window-targeted backends do differently.
-- **Embedded `ComposePanel` surfaces without an adaptable top-level `Frame` fall
-  through to region capture.**
-  `AutoRecorder.start(window: TitledWindow?, region: Rectangle, …)` picks window-targeted
-  capture only when `window` is non-null and (on Windows) has a non-blank title. The
-  `Frame.asTitledWindow()` adapter exposes that title for any top-level `Frame`,
-  including `ComposeWindow` and `JFrame` hosts. A panel embedded inside an IntelliJ
-  tool window or a `SwingPanel` host inside Compose has no separate titled `Frame` to
-  adapt — callers pass `window = null` and get the region path. Practical
+- **Embedded `ComposePanel` surfaces without an adaptable top-level `Frame` need explicit
+  region capture.**
+  `AutoRecorder.startWindow(...)` uses window-targeted capture only and fails loudly when
+  no true window target is available. The `Frame.asTitledWindow()` adapter exposes the
+  title and bounds for any top-level `Frame`, including `ComposeWindow` and `JFrame`
+  hosts. A panel embedded inside an IntelliJ tool window or a `SwingPanel` host inside
+  Compose has no separate titled `Frame` to adapt — callers use
+  `AutoRecorder.startRegion(...)`. Practical
   consequences:
   - Anything that visually overlaps the panel — other windows, the menu bar, OS notifications, a
     floating popup that escapes the panel's bounds — appears in the recording.
@@ -139,7 +139,7 @@ failure modes, and the section below
 These limitations are specific to the region path; the window-targeted backends below
 solve them.
 
-- **Window movement isn't followed.** Move the host window after `start(...)` and the
+- **Window movement isn't followed.** Move the host window after `startRegion(...)` and the
   recording keeps capturing the original screen rectangle. Stop and restart to follow
   the new position.
 - **Popups that escape the captured region are clipped.** Compose Desktop's `OnWindow`

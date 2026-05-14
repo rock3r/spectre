@@ -82,13 +82,9 @@ val automatorExt = ComposeAutomatorExtension {
 }
 ```
 
-Same shape for parallel-safe synthetic input (note the
-`import dev.sebastiano.spectre.core.synthetic` — `synthetic` is an extension
-on `RobotDriver.Companion`, not a member):
+Same shape for parallel-safe synthetic input:
 
 ```kotlin
-import dev.sebastiano.spectre.core.synthetic
-
 @JvmField
 @RegisterExtension
 val automatorExt = ComposeAutomatorExtension {

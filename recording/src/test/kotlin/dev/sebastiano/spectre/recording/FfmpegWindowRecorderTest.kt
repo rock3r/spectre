@@ -166,6 +166,7 @@ class FfmpegWindowRecorderTest {
 
 private class WindowFakeTitledWindow(title: String?) : TitledWindow {
     override var title: String? = title
+    override val bounds: java.awt.Rectangle = java.awt.Rectangle(0, 0, 100, 100)
 }
 
 private class WindowRecordingProcessFactory : FfmpegRecorder.ProcessFactory {

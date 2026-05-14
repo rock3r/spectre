@@ -9,7 +9,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import org.junit.jupiter.api.condition.EnabledIf
 
-@EnabledIf("isNotHeadless")
+@EnabledIf("liveAwtAvailable")
 class TrackedWindowTest {
 
     @Test
@@ -71,6 +71,9 @@ class TrackedWindowTest {
 
     companion object {
 
-        @JvmStatic fun isNotHeadless(): Boolean = !GraphicsEnvironment.isHeadless()
+        @JvmStatic
+        fun liveAwtAvailable(): Boolean =
+            !GraphicsEnvironment.isHeadless() &&
+                (!detectMacOs() || System.getProperty("spectre.test.liveAwt").toBoolean())
     }
 }

@@ -5,6 +5,7 @@ import java.awt.Point
 import java.awt.Rectangle
 import java.awt.Robot
 import java.awt.Toolkit
+import java.awt.Window
 import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.StringSelection
 import java.awt.datatransfer.Transferable
@@ -139,9 +140,32 @@ internal constructor(
     }
 
     /**
+     * Types [text] into the focused field by dispatching key press/release pairs. This path avoids
+     * the system clipboard entirely, so it keeps working in environments where clipboard-backed
+     * paste is unavailable or stale. It is intentionally conservative: supported characters are
+     * ASCII letters, digits, space, newline, and common US-keyboard punctuation. Use [pasteText]
+     * when you need arbitrary Unicode text.
+     *
+     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
+     */
+    public suspend fun typeText(text: String) {
+        tccGuard.requireAccessibility()
+        runOffEdt {
+            for (char in text) {
+                val stroke = keyStrokeForChar(char)
+                for (modifier in stroke.modifiers) robot.keyPress(modifier)
+                robot.keyPress(stroke.keyCode)
+                robot.keyRelease(stroke.keyCode)
+                for (modifier in stroke.modifiers.asReversed()) robot.keyRelease(modifier)
+            }
+        }
+    }
+
+    /**
      * Pastes [text] into the focused field via the OS clipboard and a synthetic Ctrl/Cmd+V
-     * shortcut. This is the fast path — `Robot.keyPress`-per-character is significantly slower and
-     * stumbles on capitalisation / locale-specific layouts.
+     * shortcut. This is the fast path for large or Unicode strings, but it depends on the platform
+     * clipboard being visible to the UI toolkit.
      *
      * The clipboard is **saved before** and **restored after** the paste, so caller-held clipboard
      * content survives. On platforms where the clipboard supports read-back the call polls until
@@ -153,7 +177,7 @@ internal constructor(
      * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
-    public suspend fun typeText(text: String) {
+    public suspend fun pasteText(text: String) {
         tccGuard.requireAccessibility()
         runOffEdt {
             val previousContents = runCatching { clipboard.getContents() }.getOrNull()
@@ -180,7 +204,7 @@ internal constructor(
                 robot.keyPress(KeyEvent.VK_V)
                 robot.keyRelease(KeyEvent.VK_V)
                 robot.keyRelease(modifier)
-                if (clipboard.supportsRead && !SwingUtilities.isEventDispatchThread()) {
+                if (clipboard.supportsRead && robot.shouldDrainAfterClipboardPaste) {
                     // Drain queued AWT events (KEY_PRESSED/RELEASED + Compose's input
                     // pipeline) so the paste handler has a chance to read the clipboard before
                     // we restore it. Without this, the finally block can clobber the clipboard
@@ -189,12 +213,9 @@ internal constructor(
                     // Compose's paste action runs on its own coroutine dispatcher which posts
                     // back to the EDT, so we pump a few times and also wait a short interval
                     // to let the OS-side paste read complete before we clobber the clipboard
-                    // contents. Skip the whole block when called on the EDT (the synthetic
-                    // adapter's runOffEdt short-circuit lets it stay on EDT), where
-                    // waitForIdle is a no-op and the post-paste settle would just add wall-
-                    // clock latency for nothing — same skip the pre-suspend code applied. Skip
-                    // for adapters that don't support clipboard read-back too — there's no real
-                    // paste handler to drain.
+                    // contents. The adapter owns the drain decision so pure unit-test fakes do
+                    // not accidentally initialise the macOS AWT toolkit just to answer
+                    // SwingUtilities.isEventDispatchThread().
                     repeat(POST_PASTE_EDT_PUMPS) { robot.waitForIdle() }
                     delay(POST_PASTE_SETTLE_MS.milliseconds)
                     repeat(POST_PASTE_EDT_PUMPS) { robot.waitForIdle() }
@@ -225,13 +246,11 @@ internal constructor(
     }
 
     /**
-     * Selects all content in the focused field, deletes it, then pastes [text]. Uses the same
-     * clipboard-backed paste as [typeText] for the second half; the first half is a Ctrl/Cmd+A
-     * followed by Backspace.
+     * Selects all content in the focused field, deletes it, then types [text]. The first half is a
+     * Ctrl/Cmd+A followed by Backspace; the second half uses [typeText].
      *
      * Useful for overwriting a `TextField`'s current value without the caller having to compute
-     * cursor / selection state. Same caveats as [typeText] for clipboard preservation and EDT
-     * settle.
+     * cursor / selection state. Same caveats as [typeText] for supported characters apply.
      *
      * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
@@ -330,13 +349,20 @@ internal constructor(
      */
     public fun screenshot(region: Rectangle? = null): BufferedImage {
         tccGuard.requireScreenRecording()
-        val captureRegion = region ?: virtualDesktopBounds()
+        val captureRegion = region ?: robot.defaultScreenshotRegion()
         return robot.createScreenCapture(captureRegion)
     }
 
     private suspend fun runOffEdt(block: suspend () -> Unit) = runOffEdt(robot, block)
 
     public companion object {
+
+        /**
+         * Returns a [RobotDriver] that delivers synthetic AWT events directly to [rootWindow]'s AWT
+         * hierarchy instead of routing through `java.awt.Robot`'s OS-level input.
+         */
+        public fun synthetic(rootWindow: Window): RobotDriver =
+            RobotDriver(SyntheticRobotAdapter(rootWindow), SystemClipboardAdapter())
 
         /**
          * Returns a [RobotDriver] that throws [UnsupportedOperationException] on every input,
@@ -417,7 +443,16 @@ internal interface RobotAdapter {
 
     fun createScreenCapture(region: Rectangle): BufferedImage
 
+    fun defaultScreenshotRegion(): Rectangle = virtualDesktopBounds()
+
     fun waitForIdle()
+
+    /**
+     * `true` when [RobotDriver.pasteText] should pump event queues before restoring the clipboard.
+     * Keep the default `false` so pure fakes/headless adapters do not initialise the AWT toolkit.
+     */
+    val shouldDrainAfterClipboardPaste: Boolean
+        get() = false
 }
 
 internal interface ClipboardAdapter {
@@ -465,6 +500,9 @@ private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) : Rob
         robot.createScreenCapture(region)
 
     override fun waitForIdle() = robot.waitForIdle()
+
+    override val shouldDrainAfterClipboardPaste: Boolean
+        get() = !SwingUtilities.isEventDispatchThread()
 }
 
 private object HeadlessThrowingRobotAdapter : RobotAdapter {
@@ -490,8 +528,10 @@ private object HeadlessThrowingRobotAdapter : RobotAdapter {
     override fun createScreenCapture(region: Rectangle): BufferedImage =
         throwHeadless("createScreenCapture")
 
+    override fun defaultScreenshotRegion(): Rectangle = throwHeadless("screenshot")
+
     // waitForIdle is purely a synchronisation barrier — it produces no observable side effect, so
-    // making it a no-op keeps internal pump loops (e.g. the post-paste drain in typeText) callable
+    // making it a no-op keeps internal pump loops (e.g. the post-paste drain in pasteText) callable
     // without triggering throws on a path where they'd be unreachable anyway.
     override fun waitForIdle() = Unit
 }
@@ -560,6 +600,71 @@ internal fun modifierMaskToKeyCodes(mask: Int): List<Int> = buildList {
     if (mask and InputEvent.META_DOWN_MASK != 0) add(KeyEvent.VK_META)
 }
 
+internal data class KeyStrokeSpec(val keyCode: Int, val modifiers: List<Int> = emptyList())
+
+internal fun keyStrokeForChar(char: Char): KeyStrokeSpec {
+    unmodifiedCharKeyCodes[char]?.let {
+        return KeyStrokeSpec(it)
+    }
+    shiftedCharKeyCodes[char]?.let {
+        return KeyStrokeSpec(it, listOf(KeyEvent.VK_SHIFT))
+    }
+    return when (char) {
+        in 'a'..'z' -> KeyStrokeSpec(KeyEvent.VK_A + (char - 'a'))
+        in 'A'..'Z' -> KeyStrokeSpec(KeyEvent.VK_A + (char - 'A'), listOf(KeyEvent.VK_SHIFT))
+        in '0'..'9' -> KeyStrokeSpec(KeyEvent.VK_0 + (char - '0'))
+        else -> unsupportedTypeTextChar(char)
+    }
+}
+
+private fun unsupportedTypeTextChar(char: Char): Nothing =
+    throw IllegalArgumentException(
+        "typeText supports ASCII key-event input only; use pasteText for unsupported " +
+            "character U+${char.code.toString(HEX_RADIX).uppercase().padStart(UNICODE_CODE_WIDTH, '0')}"
+    )
+
+private val unmodifiedCharKeyCodes: Map<Char, Int> =
+    mapOf(
+        ' ' to KeyEvent.VK_SPACE,
+        '\n' to KeyEvent.VK_ENTER,
+        '-' to KeyEvent.VK_MINUS,
+        '=' to KeyEvent.VK_EQUALS,
+        '[' to KeyEvent.VK_OPEN_BRACKET,
+        ']' to KeyEvent.VK_CLOSE_BRACKET,
+        '\\' to KeyEvent.VK_BACK_SLASH,
+        ';' to KeyEvent.VK_SEMICOLON,
+        '\'' to KeyEvent.VK_QUOTE,
+        ',' to KeyEvent.VK_COMMA,
+        '.' to KeyEvent.VK_PERIOD,
+        '/' to KeyEvent.VK_SLASH,
+        '`' to KeyEvent.VK_BACK_QUOTE,
+    )
+
+private val shiftedCharKeyCodes: Map<Char, Int> =
+    mapOf(
+        '!' to KeyEvent.VK_1,
+        '@' to KeyEvent.VK_2,
+        '#' to KeyEvent.VK_3,
+        '$' to KeyEvent.VK_4,
+        '%' to KeyEvent.VK_5,
+        '^' to KeyEvent.VK_6,
+        '&' to KeyEvent.VK_7,
+        '*' to KeyEvent.VK_8,
+        '(' to KeyEvent.VK_9,
+        ')' to KeyEvent.VK_0,
+        '_' to KeyEvent.VK_MINUS,
+        '+' to KeyEvent.VK_EQUALS,
+        '{' to KeyEvent.VK_OPEN_BRACKET,
+        '}' to KeyEvent.VK_CLOSE_BRACKET,
+        '|' to KeyEvent.VK_BACK_SLASH,
+        ':' to KeyEvent.VK_SEMICOLON,
+        '"' to KeyEvent.VK_QUOTE,
+        '<' to KeyEvent.VK_COMMA,
+        '>' to KeyEvent.VK_PERIOD,
+        '?' to KeyEvent.VK_SLASH,
+        '~' to KeyEvent.VK_BACK_QUOTE,
+    )
+
 internal fun swipePauseMillis(duration: Duration, steps: Int, autoDelayMs: Int): Long {
     require(steps > 0) { "steps must be positive" }
     val perStepBudgetMs = duration.inWholeMilliseconds / steps
@@ -615,6 +720,8 @@ private val DEFAULT_LONG_CLICK_DURATION: Duration = 500.milliseconds
 private const val CLIPBOARD_SETTLE_TIMEOUT_MS: Long = 1_000L
 private const val CLIPBOARD_SETTLE_POLL_MS: Long = 5L
 private const val NANOS_PER_MILLI: Long = 1_000_000L
+private const val HEX_RADIX: Int = 16
+private const val UNICODE_CODE_WIDTH: Int = 4
 
 // After dispatching Cmd+V we drain the EDT a few times to let Compose's paste-action coroutine
 // post back, then sleep briefly so the OS clipboard read completes, then drain again. The total

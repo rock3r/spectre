@@ -31,12 +31,9 @@ import javax.swing.SwingUtilities
  * ([Window.getOwnedWindows]) on every dispatch, so popups and secondary windows added after
  * construction work without re-creating the driver.
  *
- * Clipboard access is left as the system clipboard — paste-based [RobotDriver.typeText] still works
- * with synthetic Cmd/Ctrl+V keystrokes.
+ * Clipboard access is left as the system clipboard — paste-based [RobotDriver.pasteText] still
+ * works with synthetic Cmd/Ctrl+V keystrokes.
  */
-public fun RobotDriver.Companion.synthetic(rootWindow: Window): RobotDriver =
-    RobotDriver(SyntheticRobotAdapter(rootWindow), SystemClipboardAdapter())
-
 internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdapter {
 
     // Synthetic events have no OS-level inter-event delay; we always dispatch immediately.
@@ -49,6 +46,9 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
     // worker thread blocked on `SwingUtilities.invokeAndWait`, deadlocking the whole pipeline
     // (Codex P1 on PR #35).
     override val requiresOffEdt: Boolean = false
+
+    override val shouldDrainAfterClipboardPaste: Boolean
+        get() = !SwingUtilities.isEventDispatchThread()
 
     @Volatile private var lastX: Int = 0
     @Volatile private var lastY: Int = 0
@@ -411,7 +411,7 @@ private val SHORTCUT_MODIFIER_MASK: Int =
         java.awt.event.InputEvent.CTRL_DOWN_MASK or
         java.awt.event.InputEvent.ALT_DOWN_MASK
 
-private fun keyCharFor(keyCode: Int, shift: Boolean = false): Char =
+internal fun keyCharFor(keyCode: Int, shift: Boolean = false): Char =
     when (keyCode) {
         KeyEvent.VK_ENTER -> '\n'
         KeyEvent.VK_SPACE -> ' '
@@ -424,17 +424,50 @@ private fun keyCharFor(keyCode: Int, shift: Boolean = false): Char =
             // listeners that consume KEY_TYPED character validators see the right input.
             if (shift) SHIFTED_DIGIT_CHARS[keyCode - KeyEvent.VK_0]
             else ('0' + (keyCode - KeyEvent.VK_0))
-        else -> KeyEvent.CHAR_UNDEFINED
+        else ->
+            if (shift) SHIFTED_PUNCTUATION_CHARS[keyCode] ?: KeyEvent.CHAR_UNDEFINED
+            else PUNCTUATION_CHARS[keyCode] ?: KeyEvent.CHAR_UNDEFINED
     }
 
 private val SHIFTED_DIGIT_CHARS: CharArray =
     charArrayOf(')', '!', '@', '#', '$', '%', '^', '&', '*', '(')
 
+private val PUNCTUATION_CHARS: Map<Int, Char> =
+    mapOf(
+        KeyEvent.VK_MINUS to '-',
+        KeyEvent.VK_EQUALS to '=',
+        KeyEvent.VK_OPEN_BRACKET to '[',
+        KeyEvent.VK_CLOSE_BRACKET to ']',
+        KeyEvent.VK_BACK_SLASH to '\\',
+        KeyEvent.VK_SEMICOLON to ';',
+        KeyEvent.VK_QUOTE to '\'',
+        KeyEvent.VK_COMMA to ',',
+        KeyEvent.VK_PERIOD to '.',
+        KeyEvent.VK_SLASH to '/',
+        KeyEvent.VK_BACK_QUOTE to '`',
+    )
+
+private val SHIFTED_PUNCTUATION_CHARS: Map<Int, Char> =
+    mapOf(
+        KeyEvent.VK_MINUS to '_',
+        KeyEvent.VK_EQUALS to '+',
+        KeyEvent.VK_OPEN_BRACKET to '{',
+        KeyEvent.VK_CLOSE_BRACKET to '}',
+        KeyEvent.VK_BACK_SLASH to '|',
+        KeyEvent.VK_SEMICOLON to ':',
+        KeyEvent.VK_QUOTE to '"',
+        KeyEvent.VK_COMMA to '<',
+        KeyEvent.VK_PERIOD to '>',
+        KeyEvent.VK_SLASH to '?',
+        KeyEvent.VK_BACK_QUOTE to '~',
+    )
+
 // Conservative subset of printable VK_ codes for KeyEvent's keyChar; matches what RobotDriver
-// typically dispatches via direct keyPress.
+// dispatches via direct keyPress for key-event text entry.
 private val PRINTABLE_KEY_CODES: Set<Int> = buildSet {
     addAll((KeyEvent.VK_A..KeyEvent.VK_Z))
     addAll((KeyEvent.VK_0..KeyEvent.VK_9))
+    addAll(PUNCTUATION_CHARS.keys)
     add(KeyEvent.VK_SPACE)
     add(KeyEvent.VK_ENTER)
 }

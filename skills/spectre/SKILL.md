@@ -45,7 +45,7 @@ class CounterTest {
     val automatorExt = ComposeAutomatorExtension()
 
     @Test
-    fun `clicking increment bumps the counter`() = runBlocking {
+    fun `clicking increment bumps the counter`(): Unit = runBlocking {
         launchCounterApp() // your harness — opens the Compose window
 
         val automator = automatorExt.automator
@@ -81,9 +81,7 @@ on the host OS. Three variants:
   AWT events directly into the given `java.awt.Window` hierarchy. No global
   focus contention, so safe for **parallel test JVMs** and for IDE-hosted
   Compose where stealing the IDE focus would be hostile. Does **not** see OS
-  shortcuts (Cmd+Tab, system menus). It is an extension on
-  `RobotDriver.Companion` defined in `SyntheticInput.kt`, so you must add
-  `import dev.sebastiano.spectre.core.synthetic` for the call to resolve.
+  shortcuts (Cmd+Tab, system menus).
 - **`RobotDriver.headless()`** — refuses to send any input. For tests that
   only read the semantics tree (e.g. asserting a screen layout) without
   driving it.
@@ -91,8 +89,6 @@ on the host OS. Three variants:
 ```kotlin
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.RobotDriver
-import dev.sebastiano.spectre.core.synthetic // required for the call below
-
 val automator = ComposeAutomator.inProcess(
     robotDriver = RobotDriver.synthetic(rootWindow = ideFrame),
 )
@@ -145,9 +141,12 @@ All `suspend` on `ComposeAutomator`:
 - `click(node)`, `doubleClick(node)`, `longClick(node, holdFor = 500.milliseconds)`
 - `swipe(from, to, steps, duration)` or `swipe(startX, startY, endX, endY, …)`
 - `scrollWheel(node, wheelClicks)`
-- `typeText("hello")` — pastes via the system clipboard (faster, handles
-  unicode). On macOS the clipboard write is async; Spectre polls until the
-  clipboard reads back the requested text. Disable clipboard managers in CI.
+- `typeText("hello")` — types supported ASCII text via key events without using
+  the clipboard. Use `pasteText` for large or Unicode strings.
+- `pasteText("hello")` — pastes via the system clipboard. On macOS the clipboard
+  write is async; Spectre polls until the clipboard reads back the requested text.
+  Disable clipboard managers in CI, and do not use `apple.awt.UIElement=true` for
+  JVMs that need clipboard-backed paste.
 - `clearAndTypeText(node, "new")` — Ctrl/Cmd+A, Backspace, then `typeText`.
 - `pressKey(KeyEvent.VK_ENTER, modifiers = 0)`, `pressEnter()`.
 - `performSemanticsClick(node)` — bypasses the OS entirely and invokes
@@ -200,8 +199,15 @@ older carve-out for `waitForNode` — that exception is gone in current code.
 
 `kotlinx-coroutines-test`'s `runTest` skips `delay()`. That collapses
 `longClick` hold durations, `swipe` pacing, and the macOS clipboard-settle
-poll inside `typeText` to zero, breaking them all. Use `runBlocking { ... }`
+poll inside `pasteText` to zero, breaking them all. Use `runBlocking { ... }`
 in the test body.
+
+### Rule 4b: force expression-body tests to return `Unit`
+
+Write `@Test fun mySpec(): Unit = runBlocking { ... }`. JUnit 5.14+ rejects
+non-void test methods during discovery, and Kotlin infers an expression-body
+function's return type from the last expression in the `runBlocking` body. Some
+assertions return the asserted value, not `Unit`.
 
 ### Custom idling resources
 
@@ -260,9 +266,10 @@ touches that area*; they are not needed for the common case.
 | Two parallel test JVMs steal focus from each other | Both use real `RobotDriver()` | Use `RobotDriver.synthetic(rootWindow)` |
 | Cmd+Tab or OS shortcuts don't work under synthetic driver | Synthetic events bypass HID | Use real `RobotDriver()` for those tests |
 | Screenshot is blurry / mid-animation | Captured before frame stabilised | `waitForVisualIdle()` first |
-| `typeText` times out on macOS in CI | Clipboard manager rewriting `NSPasteboard` | Disable clipboard utilities in CI |
+| `pasteText` silently does not land on macOS with `apple.awt.UIElement=true` | UI-element/helper mode breaks clipboard-backed paste, even with synthetic input | Disable `apple.awt.UIElement=true` for the JVM hosting the test window, or use `typeText` for supported ASCII |
+| `pasteText` times out on macOS in CI | Clipboard manager rewriting `NSPasteboard` | Disable clipboard utilities in CI |
 | Recording misses popups that escape the host window | Popups live in their own AWT window outside both the region rectangle *and* a window-targeted capture | Choose an explicit region (or full-desktop crop) wide enough to include where the popup opens, or document the limitation — neither region nor window targeting follows cross-window popups |
-| Window-targeted Wayland recording throws `IllegalStateException` | `xprop` missing or non-GNOME compositor | Fall back to region capture (`window = null`) |
+| Window-targeted Wayland recording throws `IllegalStateException` | `xprop` missing or non-GNOME compositor | Use `AutoRecorder.startRegion(...)` with an explicit rectangle |
 | Coordinates derived from `boundsInWindow` land off-target on HiDPI | `boundsInWindow` is dp; screen is pixels | Use `boundsOnScreen`/`centerOnScreen`, or apply density |
 
 ## What Spectre is NOT (don't pretend it is)
@@ -288,4 +295,5 @@ println(automator.printTree())
 
 Run it right before a failing selector. The output names every node Spectre
 can see, with tags/texts/bounds. 90% of "selector returned null" mysteries
-resolve here.
+resolve here. If it returns an empty string, the composition probably crashed
+before any node registered; check test stderr for EDT/composition exceptions.

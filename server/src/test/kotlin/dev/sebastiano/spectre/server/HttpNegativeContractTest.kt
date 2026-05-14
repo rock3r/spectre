@@ -49,7 +49,7 @@ import kotlinx.coroutines.runBlocking
 class HttpNegativeContractTest {
 
     private fun headlessAutomator(): ComposeAutomator =
-        ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())
+        ComposeAutomator.inProcess(robotDriver = RobotDriver.headless(), discoverWindows = false)
 
     // --- Server-side decode failures -----------------------------------------------------
 

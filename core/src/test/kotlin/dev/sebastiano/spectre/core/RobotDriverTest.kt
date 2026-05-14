@@ -86,6 +86,50 @@ class RobotDriverTest {
     }
 
     @Test
+    fun `keyStrokeForChar maps shifted and unshifted ASCII`() {
+        assertEquals(KeyStrokeSpec(KeyEvent.VK_A), keyStrokeForChar('a'))
+        assertEquals(KeyStrokeSpec(KeyEvent.VK_A, listOf(KeyEvent.VK_SHIFT)), keyStrokeForChar('A'))
+        assertEquals(KeyStrokeSpec(KeyEvent.VK_1), keyStrokeForChar('1'))
+        assertEquals(KeyStrokeSpec(KeyEvent.VK_1, listOf(KeyEvent.VK_SHIFT)), keyStrokeForChar('!'))
+        assertEquals(KeyStrokeSpec(KeyEvent.VK_SPACE), keyStrokeForChar(' '))
+    }
+
+    @Test
+    fun `typeText dispatches key events without touching the clipboard`() = runTest {
+        val robot = RecordingRobotAdapter()
+        val clipboard = RecordingClipboardAdapter()
+        val driver = RobotDriver(robot, clipboard)
+
+        driver.typeText("aA1!")
+
+        assertEquals(0, clipboard.setCalls)
+        assertEquals(
+            listOf(
+                "keyPress(${KeyEvent.VK_A})",
+                "keyRelease(${KeyEvent.VK_A})",
+                "keyPress(${KeyEvent.VK_SHIFT})",
+                "keyPress(${KeyEvent.VK_A})",
+                "keyRelease(${KeyEvent.VK_A})",
+                "keyRelease(${KeyEvent.VK_SHIFT})",
+                "keyPress(${KeyEvent.VK_1})",
+                "keyRelease(${KeyEvent.VK_1})",
+                "keyPress(${KeyEvent.VK_SHIFT})",
+                "keyPress(${KeyEvent.VK_1})",
+                "keyRelease(${KeyEvent.VK_1})",
+                "keyRelease(${KeyEvent.VK_SHIFT})",
+            ),
+            robot.events,
+        )
+    }
+
+    @Test
+    fun `typeText rejects unsupported non-ASCII characters`() = runTest {
+        val driver = RobotDriver(RecordingRobotAdapter(), RecordingClipboardAdapter())
+        val error = assertFailsWith<IllegalArgumentException> { driver.typeText("é") }
+        assertTrue(error.message?.contains("pasteText") == true)
+    }
+
+    @Test
     fun `interpolateSwipePoints includes both endpoints`() {
         val result =
             interpolateSwipePoints(startX = 10, startY = 20, endX = 40, endY = 50, steps = 3)
@@ -121,16 +165,16 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `typeText waits for the clipboard to reflect the new text before dispatching paste`() =
+    fun `pasteText waits for the clipboard to reflect the new text before dispatching paste`() =
         runTest {
             // Simulate a slow OS pasteboard: the first N reads after setContents still return the
-            // previous value. typeText must not press Cmd+V until the clipboard has settled,
+            // previous value. pasteText must not press Cmd+V until the clipboard has settled,
             // otherwise the paste handler reads stale contents.
             val clipboard = LatentClipboardAdapter(latencyReads = 3)
             clipboard.setContentsImmediate(StringSelection("previous"))
             val driver = RobotDriver(clipboard.robotAdapter, clipboard)
 
-            driver.typeText("spectre")
+            driver.pasteText("spectre")
 
             // The first key event must come AFTER the clipboard has the new value. Reconstruct by
             // looking at the recorded order: each call to clipboard.getContents() interleaves with
@@ -144,22 +188,22 @@ class RobotDriverTest {
                 }
             assertTrue(
                 readsBeforePaste >= 1,
-                "typeText must observe the new clipboard contents at least once before pressing " +
+                "pasteText must observe the new clipboard contents at least once before pressing " +
                     "Cmd+V (event log: ${clipboard.eventLog})",
             )
         }
 
     @Test
-    fun `typeText pumps the EDT after key release before restoring the clipboard`() = runTest {
+    fun `pasteText pumps the EDT after key release before restoring the clipboard`() = runTest {
         // The OS paste handler reads the clipboard asynchronously after Cmd+V is released, so
         // restoring the previous contents synchronously can clobber the value before the paste
         // lands. typeText must give the AWT event queue (and any post-press settle) a chance to
         // drain before restoring.
-        val clipboard = LatentClipboardAdapter()
+        val clipboard = LatentClipboardAdapter(drainAfterPaste = true)
         clipboard.setContentsImmediate(StringSelection("previous"))
         val driver = RobotDriver(clipboard.robotAdapter, clipboard)
 
-        driver.typeText("spectre")
+        driver.pasteText("spectre")
 
         // The order must be: setContents("spectre") → keyPress/keyRelease → waitForIdle
         // → setContents("previous"). If waitForIdle does not appear between the last keyRelease
@@ -178,7 +222,7 @@ class RobotDriverTest {
         check(restoreIdx > lastReleaseIdx) { "Expected restore after last keyRelease in $log" }
         assertTrue(
             waitIdx in (lastReleaseIdx + 1) until restoreIdx,
-            "typeText must call waitForIdle() between the final keyRelease and the clipboard " +
+            "pasteText must call waitForIdle() between the final keyRelease and the clipboard " +
                 "restore (log: $log)",
         )
     }
@@ -250,8 +294,8 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `typeText consults the accessibility guard before mutating the clipboard`() = runTest {
-        // typeText writes to and restores the clipboard, so a failed accessibility check
+    fun `pasteText consults the accessibility guard before mutating the clipboard`() = runTest {
+        // pasteText writes to and restores the clipboard, so a failed accessibility check
         // must short-circuit BEFORE the clipboard is touched. Otherwise a failing macOS run
         // would still pollute the user's clipboard.
         val guard = RecordingTccGuard(accessibilityThrows = true)
@@ -259,7 +303,7 @@ class RobotDriverTest {
         val robot = RecordingRobotAdapter()
         val driver = RobotDriver(robot, clipboard, guard)
 
-        assertFailsWith<IllegalStateException> { driver.typeText("hello") }
+        assertFailsWith<IllegalStateException> { driver.pasteText("hello") }
 
         assertEquals(0, clipboard.setCalls, "clipboard must not be mutated when guard blocks")
         assertEquals(emptyList(), robot.events)
@@ -287,6 +331,12 @@ class RobotDriverTest {
     fun `headless typeText throws UnsupportedOperationException`() = runTest {
         val driver = RobotDriver.headless()
         assertFailsWith<UnsupportedOperationException> { driver.typeText("hello") }
+    }
+
+    @Test
+    fun `headless pasteText throws UnsupportedOperationException`() = runTest {
+        val driver = RobotDriver.headless()
+        assertFailsWith<UnsupportedOperationException> { driver.pasteText("hello") }
     }
 
     @Test
@@ -348,6 +398,7 @@ private class RecordingTccGuard(
 private class RecordingRobotAdapter(
     override val autoDelayMs: Int = 0,
     private val sharedLog: MutableList<String>? = null,
+    private val drainAfterPaste: Boolean = false,
 ) : RobotAdapter {
     override val requiresOffEdt: Boolean = false
     val events = mutableListOf<String>()
@@ -381,6 +432,9 @@ private class RecordingRobotAdapter(
     }
 
     override fun waitForIdle() = log("waitForIdle()")
+
+    override val shouldDrainAfterClipboardPaste: Boolean
+        get() = drainAfterPaste
 }
 
 private class RecordingClipboardAdapter : ClipboardAdapter {
@@ -403,9 +457,13 @@ private class RecordingClipboardAdapter : ClipboardAdapter {
  * one. Records every read and write into a shared event log alongside robot events so tests can
  * assert ordering between input dispatch and clipboard mutation.
  */
-private class LatentClipboardAdapter(private val latencyReads: Int = 0) : ClipboardAdapter {
+private class LatentClipboardAdapter(
+    private val latencyReads: Int = 0,
+    drainAfterPaste: Boolean = false,
+) : ClipboardAdapter {
     val eventLog: MutableList<String> = mutableListOf()
-    val robotAdapter: RecordingRobotAdapter = RecordingRobotAdapter(sharedLog = eventLog)
+    val robotAdapter: RecordingRobotAdapter =
+        RecordingRobotAdapter(sharedLog = eventLog, drainAfterPaste = drainAfterPaste)
 
     private var current: Transferable? = null
     private var pending: Transferable? = null

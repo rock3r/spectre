@@ -279,8 +279,8 @@ internal suspend fun scenarioPressKeySingleChar(
     state: SmokeState,
 ): ScenarioResult {
     // Baseline for the typeText scenario: if the BasicTextField is focused after a click and
-    // accepts direct keystrokes (no clipboard involved), the focus path works and any
-    // typeText failure isolates to the clipboard-paste path.
+    // accepts direct keystrokes, the focus path works and any typeText failure isolates to key
+    // dispatch rather than focus.
     val target = awtCenter(state, state.textFieldBounds)
     if (target == null) {
         return ScenarioResult("pressKey 'h' into BasicTextField", false, "no target rect available")
@@ -315,7 +315,7 @@ internal suspend fun scenarioTypeText(
     val actual = state.textValue.text
     // Exact equality: the field starts empty (typeText runs first in the scenario order
     // before any keystroke leaves state behind), so the only correct outcome is the typed
-    // string — substring match would mask paste-doubling or stray-keypress bugs.
+    // string — substring match would mask duplicate or stray-keypress bugs.
     val passed = actual == expected
     val detail = "text=\"$actual\" expected=\"$expected\" focusOwner=$focusOwnerBefore"
     return ScenarioResult("typeText into BasicTextField", passed = passed, detail = detail)

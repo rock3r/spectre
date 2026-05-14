@@ -32,6 +32,7 @@ class WaitForNodeTest {
         // Argument validation must run BEFORE the EDT check. An EDT caller passing
         // (null, null) is doing two things wrong; surfacing the input error first keeps
         // the diagnostic actionable instead of redirecting users to the EDT story.
+        assumeLiveAwtAvailable()
         val automator = headlessAutomator()
         val errorRef = AtomicReference<Throwable?>()
         SwingUtilities.invokeAndWait {
@@ -47,6 +48,7 @@ class WaitForNodeTest {
 
     @Test
     fun `waitForNode rejects EDT callers with valid arguments`() {
+        assumeLiveAwtAvailable()
         val automator = headlessAutomator()
         val errorRef = AtomicReference<Throwable?>()
         SwingUtilities.invokeAndWait {

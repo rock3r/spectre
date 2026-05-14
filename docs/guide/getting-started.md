@@ -57,7 +57,7 @@ description, or role — see [Finding nodes](selectors.md).
         val automatorExt = ComposeAutomatorExtension()
 
         @Test
-        fun `clicking increment bumps the counter`() = runBlocking {
+        fun `clicking increment bumps the counter`(): Unit = runBlocking {
             launchCounterApp() // your harness — opens the Compose window
 
             val automator = automatorExt.automator
@@ -94,7 +94,7 @@ description, or role — see [Finding nodes](selectors.md).
         val automatorRule = ComposeAutomatorRule()
 
         @Test
-        fun clickingIncrementBumpsTheCounter() = runBlocking {
+        fun clickingIncrementBumpsTheCounter(): Unit = runBlocking {
             launchCounterApp()
 
             val automator = automatorRule.automator
@@ -132,7 +132,7 @@ description, or role — see [Finding nodes](selectors.md).
   dispatches a real mouse click via `java.awt.Robot`, and only hops to `Dispatchers.IO`
   when the call originates on the AWT event dispatch thread.
 
-All interaction methods (`click`, `doubleClick`, `swipe`, `typeText`, …) and all wait
+All interaction methods (`click`, `doubleClick`, `swipe`, `typeText`, `pasteText`, …) and all wait
 helpers (`waitForNode`, `waitForIdle`, `waitForVisualIdle`) are `suspend`, so the test
 body runs inside `runBlocking { … }`. JUnit test methods don't run on the AWT event
 dispatch thread, so no extra `withContext` is needed here. If you ever call wait helpers
@@ -140,11 +140,18 @@ from a coroutine on `Dispatchers.Main` (Swing EDT), wrap them in
 `withContext(Dispatchers.Default)` — they reject EDT callers at runtime. See
 [Synchronization](synchronization.md).
 
+!!! warning "Force JUnit expression-body tests to return `Unit`"
+    In JUnit 5.14 and newer, `@Test` methods whose JVM return type is not `void` are
+    rejected during discovery. Kotlin expression-body tests infer their return type from
+    the last expression inside `runBlocking { ... }`; assertions such as `assertNotNull`
+    return the asserted value, not `Unit`. Write `fun mySpec(): Unit = runBlocking { ... }`
+    so the JVM signature stays `void` regardless of the last assertion.
+
 !!! warning "Use `runBlocking`, not `runTest`"
     `runTest` from `kotlinx-coroutines-test` controls time via a virtual scheduler and
     skips `delay()` calls, advancing the clock instantly. Spectre uses `delay` internally
     for timing-sensitive operations — `longClick` hold durations, `swipe` step pacing, and
-    clipboard-settle polling in `typeText` — so running under `runTest` silently collapses
+    clipboard-settle polling in `pasteText` — so running under `runTest` silently collapses
     those pauses to zero. The result is that `longClick` doesn't actually hold, `swipe`
     jumps to the end position instantly, and clipboard operations may race.
 

@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.recording.screencapturekit
 
 import java.awt.EventQueue
 import java.awt.Frame
+import java.awt.Rectangle
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -12,6 +13,8 @@ import java.util.concurrent.atomic.AtomicReference
  */
 public interface TitledWindow {
     public var title: String?
+
+    public val bounds: Rectangle
 }
 
 /**
@@ -32,6 +35,9 @@ public fun Frame.asTitledWindow(): TitledWindow =
             set(value) {
                 onEdt { this@asTitledWindow.title = value ?: "" }
             }
+
+        override val bounds: Rectangle
+            get() = onEdt { this@asTitledWindow.bounds }
     }
 
 /**

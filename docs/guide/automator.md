@@ -71,7 +71,7 @@ The API is split into two layers:
   yourself if you want one.) These do a single read against the current semantics state
   and return what they see.
 - **Interactions** — `click`, `doubleClick`, `longClick`, `swipe`, `scrollWheel`,
-  `typeText`, `clearAndTypeText`, `pressKey`, `pressEnter`, `screenshot`. These dispatch
+  `typeText`, `pasteText`, `clearAndTypeText`, `pressKey`, `pressEnter`, `screenshot`. These dispatch
   input via `RobotDriver` (or capture pixels).
 
 The split matters because **queries do not auto-wait**. If you call `findOneByTestTag(...)`
@@ -128,8 +128,7 @@ real OS-level input. That's what end users actually do, so it's the most realist
 
 The trade-off is that real OS input fights for global focus. Two parallel test JVMs
 clicking at the same time will collide. For that case `RobotDriver.synthetic(rootWindow)`
-(a companion extension function in the `dev.sebastiano.spectre.core` package) dispatches
-AWT events directly into the target window's event queue:
+dispatches AWT events directly into the target window's event queue:
 
 - No real cursor moves, no keyboard focus stolen.
 - Tests in parallel processes can run without coordinating focus.

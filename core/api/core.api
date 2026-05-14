@@ -88,6 +88,7 @@ public final class dev/sebastiano/spectre/core/ComposeAutomator {
 	public final fun getWindows ()Ljava/util/List;
 	public final fun longClick-8Mi8wO0 (Ldev/sebastiano/spectre/core/AutomatorNode;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun longClick-8Mi8wO0$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ldev/sebastiano/spectre/core/AutomatorNode;JLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun pasteText (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun performSemanticsClick (Ldev/sebastiano/spectre/core/AutomatorNode;)V
 	public final fun pressEnter (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun pressKey (IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -120,8 +121,8 @@ public final class dev/sebastiano/spectre/core/ComposeAutomator {
 }
 
 public final class dev/sebastiano/spectre/core/ComposeAutomator$Companion {
-	public final fun inProcess (Ldev/sebastiano/spectre/core/RobotDriver;)Ldev/sebastiano/spectre/core/ComposeAutomator;
-	public static synthetic fun inProcess$default (Ldev/sebastiano/spectre/core/ComposeAutomator$Companion;Ldev/sebastiano/spectre/core/RobotDriver;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/ComposeAutomator;
+	public final fun inProcess (Ldev/sebastiano/spectre/core/RobotDriver;Z)Ldev/sebastiano/spectre/core/ComposeAutomator;
+	public static synthetic fun inProcess$default (Ldev/sebastiano/spectre/core/ComposeAutomator$Companion;Ldev/sebastiano/spectre/core/RobotDriver;ZILjava/lang/Object;)Ldev/sebastiano/spectre/core/ComposeAutomator;
 }
 
 public final class dev/sebastiano/spectre/core/HiDpiMapperKt {
@@ -178,6 +179,7 @@ public final class dev/sebastiano/spectre/core/RobotDriver {
 	public final fun doubleClick (IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun longClick-exY8QGI (IIJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun longClick-exY8QGI$default (Ldev/sebastiano/spectre/core/RobotDriver;IIJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun pasteText (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun pressKey (IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun pressKey$default (Ldev/sebastiano/spectre/core/RobotDriver;IILkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun screenshot (Ljava/awt/Rectangle;)Ljava/awt/image/BufferedImage;
@@ -190,10 +192,7 @@ public final class dev/sebastiano/spectre/core/RobotDriver {
 
 public final class dev/sebastiano/spectre/core/RobotDriver$Companion {
 	public final fun headless ()Ldev/sebastiano/spectre/core/RobotDriver;
-}
-
-public final class dev/sebastiano/spectre/core/SyntheticInputKt {
-	public static final fun synthetic (Ldev/sebastiano/spectre/core/RobotDriver$Companion;Ljava/awt/Window;)Ldev/sebastiano/spectre/core/RobotDriver;
+	public final fun synthetic (Ljava/awt/Window;)Ldev/sebastiano/spectre/core/RobotDriver;
 }
 
 public final class dev/sebastiano/spectre/core/TextMatchType : java/lang/Enum {

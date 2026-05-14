@@ -182,6 +182,10 @@ class ScreenCaptureKitHelperContractTest {
 
     @Test
     fun `helper exits 3 when no window matches the discriminator`() {
+        assumeTrue(
+            System.getProperty("spectre.test.screenCaptureKitHelperDiscovery").toBoolean(),
+            "ScreenCaptureKit discovery can initialise AppKit/SCK and is opt-in on local workers",
+        )
         // pid 1 on macOS is launchd, which has no windows by definition. Even if it did, the
         // discriminator "spectre-contract-test-no-such-window-xyz" guarantees no match.
         val exit =
@@ -214,12 +218,14 @@ class ScreenCaptureKitHelperContractTest {
                 .redirectError(ProcessBuilder.Redirect.DISCARD)
                 .start()
         try {
-            check(process.waitFor(HELPER_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            if (!process.waitFor(HELPER_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 process.destroyForcibly()
-                "Helper did not exit within ${HELPER_TIMEOUT_SECONDS}s for argv=$argv"
+                process.waitFor(HELPER_KILL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                error("Helper did not exit within ${HELPER_TIMEOUT_SECONDS}s for argv=$argv")
             }
         } catch (e: IOException) {
             process.destroyForcibly()
+            process.waitFor(HELPER_KILL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             throw e
         }
         return process.exitValue()
@@ -227,5 +233,6 @@ class ScreenCaptureKitHelperContractTest {
 
     private companion object {
         const val HELPER_TIMEOUT_SECONDS: Long = 5
+        const val HELPER_KILL_TIMEOUT_SECONDS: Long = 2
     }
 }

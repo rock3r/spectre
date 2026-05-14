@@ -5,485 +5,246 @@ import dev.sebastiano.spectre.recording.screencapturekit.HelperNotBundledExcepti
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import dev.sebastiano.spectre.recording.screencapturekit.WindowRecorder
 import java.awt.Rectangle
-import java.io.ByteArrayOutputStream
-import java.io.PrintStream
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.deleteIfExists
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class AutoRecorderTest {
 
     @Test
-    fun `null window always routes to ffmpeg regardless of OS or helper availability`() {
-        val sck = StubWindowRecorder(name = "sck")
-        val ffmpeg = StubFfmpegRecorder()
-        val recorder = autoRecorder(sckRecorder = sck, ffmpegRecorder = ffmpeg, isMacOs = { true })
+    fun `startRegion routes to ffmpeg on non-Wayland hosts`() {
+        val ffmpeg = StubRegionRecorder()
+        val recorder = autoRecorder(ffmpegRecorder = ffmpeg, isMacOs = { true })
         val output = tempMov()
         try {
-            recorder.start(window = null, region = Rectangle(0, 0, 100, 100), output = output)
+            val region = Rectangle(0, 0, 100, 100)
 
-            assertTrue(ffmpeg.startCalled, "Should fall back to ffmpeg when no window provided")
-            assertEquals(0, sck.startCallCount)
+            recorder.startRegion(region = region, output = output)
+
+            assertEquals(region, ffmpeg.lastRegion)
         } finally {
             output.deleteIfExists()
         }
     }
 
     @Test
-    fun `non-mac non-Windows host with a window routes to ffmpeg region capture`() {
-        // Linux today; v4 follow-up may add a window-targeted X11/Wayland recorder. Until then
-        // any non-mac/non-Windows host must fall through to region capture even when a window
-        // is supplied.
-        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.ShouldNeverBeCalled)
-        val ffmpeg = StubFfmpegRecorder()
-        val window = StubTitledWindow(title = "MyApp")
+    fun `startRegion routes to Wayland region portal on Wayland hosts`() {
+        val ffmpeg = StubRegionRecorder()
+        val portal = StubRegionRecorder()
         val recorder =
             autoRecorder(
-                sckRecorder = sck,
                 ffmpegRecorder = ffmpeg,
-                windowsWindowRecorder = null,
+                waylandPortalRecorder = portal,
                 isMacOs = { false },
-                isWindows = { false },
+                isWayland = { true },
             )
         val output = tempMov()
         try {
-            recorder.start(window = window, region = Rectangle(0, 0, 100, 100), output = output)
+            val region = Rectangle(0, 0, 100, 100)
 
-            assertTrue(ffmpeg.startCalled)
-            assertEquals(0, sck.startCallCount)
+            recorder.startRegion(region = region, output = output)
+
+            assertEquals(region, portal.lastRegion)
+            assertFalse(
+                ffmpeg.startCalled,
+                "Wayland region capture must not fall through to ffmpeg",
+            )
         } finally {
             output.deleteIfExists()
         }
     }
 
     @Test
-    fun `mac host with a window routes to SCK`() {
-        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.Succeeds)
-        val ffmpeg = StubFfmpegRecorder()
-        val window = StubTitledWindow(title = "MyApp")
-        val recorder = autoRecorder(sckRecorder = sck, ffmpegRecorder = ffmpeg, isMacOs = { true })
-        val output = tempMov()
-        try {
-            recorder.start(window = window, region = Rectangle(0, 0, 100, 100), output = output)
-
-            assertEquals(1, sck.startCallCount)
-            assertEquals(false, ffmpeg.startCalled, "Should not fall back when SCK succeeds")
-        } finally {
-            output.deleteIfExists()
-        }
-    }
-
-    @Test
-    fun `helper-not-bundled triggers fallback to ffmpeg`() {
-        // The cross-platform-jar case: built on Linux, run on macOS — helper isn't in the
-        // jar, but the user has ffmpeg available. AutoRecorder should silently degrade to
-        // region capture rather than throwing.
-        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.HelperNotBundled)
-        val ffmpeg = StubFfmpegRecorder()
-        val window = StubTitledWindow(title = "MyApp")
-        val recorder = autoRecorder(sckRecorder = sck, ffmpegRecorder = ffmpeg, isMacOs = { true })
-        val output = tempMov()
-        try {
-            recorder.start(window = window, region = Rectangle(0, 0, 100, 100), output = output)
-
-            assertEquals(1, sck.startCallCount, "SCK is attempted first")
-            assertTrue(ffmpeg.startCalled, "Falls back to ffmpeg when helper isn't bundled")
-        } finally {
-            output.deleteIfExists()
-        }
-    }
-
-    @Test
-    fun `non-fallback SCK failures (TCC, window-not-found) propagate without falling back`() {
-        // If SCK is bundled but fails for a caller-actionable reason (no Screen Recording
-        // permission, window doesn't exist), the user should see that error — falling back
-        // would mask a real configuration mistake.
-        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.RuntimeFailure)
-        val ffmpeg = StubFfmpegRecorder()
-        val window = StubTitledWindow(title = "MyApp")
-        val recorder = autoRecorder(sckRecorder = sck, ffmpegRecorder = ffmpeg, isMacOs = { true })
-        val output = tempMov()
-        try {
-            assertFailsWith<IllegalStateException> {
-                recorder.start(window = window, region = Rectangle(0, 0, 100, 100), output = output)
-            }
-            assertEquals(1, sck.startCallCount)
-            assertEquals(false, ffmpeg.startCalled, "Real SCK failures must not silently fall back")
-        } finally {
-            output.deleteIfExists()
-        }
-    }
-
-    @Test
-    fun `Wayland portal construction failure logs warning on the fallback path`() {
-        // Wayland session detected, both portal recorder slots null because their construction
-        // failed at AutoRecorder init time. The router falls through to ffmpeg (which will
-        // itself fail loudly on a real Wayland session), but before that we want one stderr
-        // line naming the underlying portal failure so the user knows what to fix.
-        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.ShouldNeverBeCalled)
-        val ffmpeg = StubFfmpegRecorder()
-        val failure = IllegalStateException("dbus-launch not found on PATH")
+    fun `startRegion fails loudly when Wayland region portal is unavailable`() {
+        val failure = IllegalStateException("gst-launch not found")
         val recorder =
             autoRecorder(
-                sckRecorder = sck,
-                ffmpegRecorder = ffmpeg,
                 waylandPortalRecorder = null,
-                waylandPortalWindowRecorder = null,
                 waylandPortalRecorderFailure = failure,
+                isMacOs = { false },
+                isWayland = { true },
+            )
+        val output = tempMov()
+        try {
+            val error =
+                assertFailsWith<IllegalStateException> {
+                    recorder.startRegion(Rectangle(0, 0, 100, 100), output)
+                }
+
+            assertTrue(error.message.orEmpty().contains("Wayland region capture"))
+            assertSame(failure, error.cause)
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `startWindow routes to SCK on macOS`() {
+        val sck = StubWindowRecorder(name = "sck")
+        val ffmpeg = StubRegionRecorder()
+        val recorder = autoRecorder(sckRecorder = sck, ffmpegRecorder = ffmpeg, isMacOs = { true })
+        val output = tempMov()
+        try {
+            val window = StubTitledWindow(title = "MyApp")
+
+            recorder.startWindow(window = window, output = output)
+
+            assertEquals(1, sck.startCallCount)
+            assertFalse(ffmpeg.startCalled, "Window capture must not silently fall back to region")
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `startWindow propagates missing SCK helper as loud window-capture failure`() {
+        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.HelperNotBundled)
+        val ffmpeg = StubRegionRecorder()
+        val recorder = autoRecorder(sckRecorder = sck, ffmpegRecorder = ffmpeg, isMacOs = { true })
+        val output = tempMov()
+        try {
+            val error =
+                assertFailsWith<IllegalStateException> {
+                    recorder.startWindow(
+                        window = StubTitledWindow(title = "MyApp"),
+                        output = output,
+                    )
+                }
+
+            assertTrue(error.message.orEmpty().contains("macOS window capture"))
+            assertFalse(ffmpeg.startCalled, "Helper failure must not degrade to region capture")
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `startWindow routes to Windows title recorder on Windows`() {
+        val ffmpeg = StubRegionRecorder()
+        val windowRecorder = StubWindowRecorder(name = "ffmpegWindow")
+        val recorder =
+            autoRecorder(
+                ffmpegRecorder = ffmpeg,
+                windowsWindowRecorder = windowRecorder,
+                isMacOs = { false },
+                isWindows = { true },
+            )
+        val output = tempMov()
+        try {
+            recorder.startWindow(window = StubTitledWindow(title = "MyApp"), output = output)
+
+            assertEquals(1, windowRecorder.startCallCount)
+            assertFalse(ffmpeg.startCalled, "Window capture must not silently fall back to region")
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `startWindow rejects blank Windows titles instead of falling back to region`() {
+        val ffmpeg = StubRegionRecorder()
+        val windowRecorder = StubWindowRecorder(name = "ffmpegWindow")
+        val recorder =
+            autoRecorder(
+                ffmpegRecorder = ffmpeg,
+                windowsWindowRecorder = windowRecorder,
+                isMacOs = { false },
+                isWindows = { true },
+            )
+        val output = tempMov()
+        try {
+            val error =
+                assertFailsWith<IllegalArgumentException> {
+                    recorder.startWindow(window = StubTitledWindow(title = ""), output = output)
+                }
+
+            assertTrue(error.message.orEmpty().contains("non-blank window title"))
+            assertEquals(0, windowRecorder.startCallCount)
+            assertFalse(ffmpeg.startCalled)
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `startWindow routes to Wayland window portal with window bounds`() {
+        val ffmpeg = StubRegionRecorder()
+        val portalRegion = StubRegionRecorder()
+        val portalWindow = StubWaylandWindowSourceRecorder()
+        val recorder =
+            autoRecorder(
+                ffmpegRecorder = ffmpeg,
+                waylandPortalRecorder = portalRegion,
+                waylandPortalWindowRecorder = portalWindow,
+                isMacOs = { false },
+                isWayland = { true },
+            )
+        val output = tempMov()
+        try {
+            val bounds = Rectangle(5, 6, 100, 120)
+            val window = StubTitledWindow(title = "MyApp", bounds = bounds)
+
+            recorder.startWindow(window = window, output = output)
+
+            assertEquals(1, portalWindow.startCallCount)
+            assertSame(window, portalWindow.lastWindow)
+            assertEquals(bounds, portalWindow.lastRegion)
+            assertFalse(portalRegion.startCalled, "Window mode must not use region portal")
+            assertFalse(ffmpeg.startCalled)
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `startWindow fails loudly when Wayland window portal is unavailable`() {
+        val failure = IllegalStateException("xprop not found")
+        val recorder =
+            autoRecorder(
+                waylandPortalWindowRecorder = null,
                 waylandPortalWindowRecorderFailure = failure,
                 isMacOs = { false },
                 isWayland = { true },
             )
         val output = tempMov()
-        val originalErr = System.err
-        val captured = ByteArrayOutputStream()
-        System.setErr(PrintStream(captured))
         try {
-            recorder.start(window = null, region = Rectangle(0, 0, 100, 100), output = output)
-        } finally {
-            System.setErr(originalErr)
-            output.deleteIfExists()
-        }
-        val warning = captured.toString(Charsets.UTF_8)
-        assertTrue(
-            warning.contains("AutoRecorder", ignoreCase = true) &&
-                warning.contains("Wayland portal recorder unavailable", ignoreCase = true) &&
-                warning.contains("dbus-launch not found"),
-            "Expected Wayland fallback warning naming the underlying cause, got: $warning",
-        )
-    }
+            val error =
+                assertFailsWith<IllegalStateException> {
+                    recorder.startWindow(
+                        window = StubTitledWindow(title = "MyApp"),
+                        output = output,
+                    )
+                }
 
-    @Test
-    fun `Wayland portal fallback warning fires at most once per AutoRecorder instance`() {
-        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.ShouldNeverBeCalled)
-        val ffmpeg = StubFfmpegRecorder()
-        val recorder =
-            autoRecorder(
-                sckRecorder = sck,
-                ffmpegRecorder = ffmpeg,
-                waylandPortalRecorder = null,
-                waylandPortalWindowRecorder = null,
-                waylandPortalRecorderFailure = IllegalStateException("dbus-launch missing"),
-                waylandPortalWindowRecorderFailure = IllegalStateException("dbus-launch missing"),
-                isMacOs = { false },
-                isWayland = { true },
-            )
-        val outputs = listOf(tempMov(), tempMov())
-        val originalErr = System.err
-        val captured = ByteArrayOutputStream()
-        System.setErr(PrintStream(captured))
-        try {
-            outputs.forEach {
-                recorder.start(window = null, region = Rectangle(0, 0, 100, 100), output = it)
-            }
-        } finally {
-            System.setErr(originalErr)
-            outputs.forEach { it.deleteIfExists() }
-        }
-        val warning = captured.toString(Charsets.UTF_8)
-        val occurrences = warning.split("Wayland portal recorder unavailable").size - 1
-        assertEquals(
-            1,
-            occurrences,
-            "Expected the Wayland fallback warning to fire exactly once across repeated " +
-                "start() calls; saw $occurrences. Full stderr: $warning",
-        )
-    }
-
-    @Test
-    fun `helper-not-bundled fallback writes a warning to stderr so the degradation is visible`() {
-        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.HelperNotBundled)
-        val ffmpeg = StubFfmpegRecorder()
-        val window = StubTitledWindow(title = "MyApp")
-        val recorder = autoRecorder(sckRecorder = sck, ffmpegRecorder = ffmpeg, isMacOs = { true })
-        val output = tempMov()
-        val originalErr = System.err
-        val captured = ByteArrayOutputStream()
-        System.setErr(PrintStream(captured))
-        try {
-            recorder.start(window = window, region = Rectangle(0, 0, 100, 100), output = output)
-        } finally {
-            System.setErr(originalErr)
-            output.deleteIfExists()
-        }
-        val warning = captured.toString(Charsets.UTF_8)
-        assertTrue(
-            warning.contains("AutoRecorder", ignoreCase = true) ||
-                warning.contains("falling back", ignoreCase = true),
-            "Expected stderr fallback warning, got: $warning",
-        )
-    }
-
-    @Test
-    fun `Windows host with non-blank window title routes to FfmpegWindowRecorder`() {
-        // Issue #55: when the host is Windows and the caller supplies a TitledWindow whose
-        // title is usable for gdigrab `-i title=...`, AutoRecorder hands the window-targeted
-        // recorder rather than dropping back to region capture — same shape as SCK on macOS.
-        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.ShouldNeverBeCalled)
-        val ffmpeg = StubFfmpegRecorder()
-        val winWindowRecorder =
-            StubWindowRecorder(name = "ffmpegWindow", behavior = StubBehavior.Succeeds)
-        val window = StubTitledWindow(title = "MyApp")
-        val recorder =
-            autoRecorder(
-                sckRecorder = sck,
-                ffmpegRecorder = ffmpeg,
-                windowsWindowRecorder = winWindowRecorder,
-                isMacOs = { false },
-                isWindows = { true },
-            )
-        val output = tempMov()
-        try {
-            recorder.start(window = window, region = Rectangle(0, 0, 100, 100), output = output)
-
-            assertEquals(1, winWindowRecorder.startCallCount, "Windows window recorder should fire")
-            assertEquals(
-                false,
-                ffmpeg.startCalled,
-                "Region path must not fire when title is usable",
-            )
+            assertTrue(error.message.orEmpty().contains("Wayland window capture"))
+            assertSame(failure, error.cause)
         } finally {
             output.deleteIfExists()
         }
     }
 
     @Test
-    fun `Windows host with blank window title falls back to ffmpeg region capture`() {
-        // gdigrab's `title=` form rejects blank titles (Jewel-in-IDE tool windows etc.). The
-        // documented fallback is region capture; AutoRecorder must apply it before reaching
-        // FfmpegWindowRecorder so the require() in there never fires for routed callers.
-        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.ShouldNeverBeCalled)
-        val ffmpeg = StubFfmpegRecorder()
-        val winWindowRecorder =
-            StubWindowRecorder(name = "ffmpegWindow", behavior = StubBehavior.ShouldNeverBeCalled)
-        val window = StubTitledWindow(title = "")
-        val recorder =
-            autoRecorder(
-                sckRecorder = sck,
-                ffmpegRecorder = ffmpeg,
-                windowsWindowRecorder = winWindowRecorder,
-                isMacOs = { false },
-                isWindows = { true },
-            )
+    fun `startWindow fails loudly on unsupported window-capture platforms`() {
+        val ffmpeg = StubRegionRecorder()
+        val recorder = autoRecorder(ffmpegRecorder = ffmpeg, isMacOs = { false })
         val output = tempMov()
         try {
-            recorder.start(window = window, region = Rectangle(0, 0, 100, 100), output = output)
+            val error =
+                assertFailsWith<IllegalStateException> {
+                    recorder.startWindow(
+                        window = StubTitledWindow(title = "MyApp"),
+                        output = output,
+                    )
+                }
 
-            assertTrue(
-                ffmpeg.startCalled,
-                "Region path should be the documented blank-title fallback",
-            )
-            assertEquals(0, winWindowRecorder.startCallCount)
-        } finally {
-            output.deleteIfExists()
-        }
-    }
-
-    @Test
-    fun `Windows host with null window title falls back to ffmpeg region capture`() {
-        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.ShouldNeverBeCalled)
-        val ffmpeg = StubFfmpegRecorder()
-        val winWindowRecorder =
-            StubWindowRecorder(name = "ffmpegWindow", behavior = StubBehavior.ShouldNeverBeCalled)
-        val window = StubTitledWindow(title = null)
-        val recorder =
-            autoRecorder(
-                sckRecorder = sck,
-                ffmpegRecorder = ffmpeg,
-                windowsWindowRecorder = winWindowRecorder,
-                isMacOs = { false },
-                isWindows = { true },
-            )
-        val output = tempMov()
-        try {
-            recorder.start(window = window, region = Rectangle(0, 0, 100, 100), output = output)
-
-            assertTrue(ffmpeg.startCalled)
-            assertEquals(0, winWindowRecorder.startCallCount)
-        } finally {
-            output.deleteIfExists()
-        }
-    }
-
-    @Test
-    fun `Windows host without a configured windowsWindowRecorder falls back to ffmpeg region`() {
-        // Defensive case: even if the AutoRecorder construction couldn't resolve a Windows
-        // window recorder (e.g. ffmpeg not on PATH at AutoRecorder() time), the router stays
-        // usable for the region path that doesn't depend on the absent recorder.
-        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.ShouldNeverBeCalled)
-        val ffmpeg = StubFfmpegRecorder()
-        val window = StubTitledWindow(title = "MyApp")
-        val recorder =
-            autoRecorder(
-                sckRecorder = sck,
-                ffmpegRecorder = ffmpeg,
-                windowsWindowRecorder = null,
-                isMacOs = { false },
-                isWindows = { true },
-            )
-        val output = tempMov()
-        try {
-            recorder.start(window = window, region = Rectangle(0, 0, 100, 100), output = output)
-
-            assertTrue(ffmpeg.startCalled)
-        } finally {
-            output.deleteIfExists()
-        }
-    }
-
-    @Test
-    fun `Linux Wayland host with a configured waylandPortalRecorder routes there even with null window`() {
-        // The Wayland branch is unconditional on `window` because LinuxX11Grab can't be a
-        // fallback (it throws on Wayland). Both window=null and window=non-null land on the
-        // portal recorder; the SCK / Windows branches must NOT be reached.
-        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.ShouldNeverBeCalled)
-        val ffmpeg = StubFfmpegRecorder()
-        val portal = StubFfmpegRecorder()
-        val recorder =
-            autoRecorder(
-                sckRecorder = sck,
-                ffmpegRecorder = ffmpeg,
-                waylandPortalRecorder = portal,
-                isMacOs = { false },
-                isWindows = { false },
-                isWayland = { true },
-            )
-        val output = tempMov()
-        try {
-            // Null window — would have gone to ffmpeg without Wayland routing.
-            recorder.start(window = null, region = Rectangle(0, 0, 100, 100), output = output)
-
-            assertTrue(portal.startCalled, "Should route to Wayland portal recorder")
-            assertEquals(false, ffmpeg.startCalled)
-        } finally {
-            output.deleteIfExists()
-        }
-    }
-
-    @Test
-    fun `Linux Wayland windowed call routes to window-targeted portal recorder when wired`() {
-        // #85: window-targeted Wayland with a window-targeted portal recorder wired up. Routes
-        // there with the same `region` (the window's bounds), giving us SourceType.WINDOW
-        // semantics — only the window's pixels in the stream — and a window-sized mp4 from
-        // the helper's existing crop. Region portal must NOT be hit; SCK / Windows must NOT be hit.
-        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.ShouldNeverBeCalled)
-        val ffmpeg = StubFfmpegRecorder()
-        val portalRegion = StubFfmpegRecorder()
-        val portalWindow = StubWaylandWindowSourceRecorder()
-        val window = StubTitledWindow(title = "MyApp")
-        val recorder =
-            autoRecorder(
-                sckRecorder = sck,
-                ffmpegRecorder = ffmpeg,
-                waylandPortalRecorder = portalRegion,
-                waylandPortalWindowRecorder = portalWindow,
-                isMacOs = { false },
-                isWindows = { false },
-                isWayland = { true },
-            )
-        val output = tempMov()
-        try {
-            recorder.start(window = window, region = Rectangle(0, 0, 100, 100), output = output)
-
-            assertEquals(
-                1,
-                portalWindow.startCallCount,
-                "Should route to Wayland window-targeted recorder",
-            )
-            assertEquals(window, portalWindow.lastWindow)
-            assertEquals(false, portalRegion.startCalled, "Region portal must not be hit")
-            assertEquals(0, sck.startCallCount)
-        } finally {
-            output.deleteIfExists()
-        }
-    }
-
-    @Test
-    fun `Linux Wayland windowed call falls back to region portal when window recorder is not wired`() {
-        // Pre-#85 behaviour preserved: callers that constructed AutoRecorder before the
-        // window-targeted Wayland recorder existed (or whose helper failed to wire it) still
-        // get region capture rather than a hard failure. Region portal handles both null and
-        // non-null window because the dialog asks the user to pick the source.
-        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.ShouldNeverBeCalled)
-        val ffmpeg = StubFfmpegRecorder()
-        val portalRegion = StubFfmpegRecorder()
-        val window = StubTitledWindow(title = "MyApp")
-        val recorder =
-            autoRecorder(
-                sckRecorder = sck,
-                ffmpegRecorder = ffmpeg,
-                waylandPortalRecorder = portalRegion,
-                waylandPortalWindowRecorder = null,
-                isMacOs = { false },
-                isWindows = { false },
-                isWayland = { true },
-            )
-        val output = tempMov()
-        try {
-            recorder.start(window = window, region = Rectangle(0, 0, 100, 100), output = output)
-
-            assertTrue(portalRegion.startCalled, "Should fall back to region portal")
-            assertEquals(0, sck.startCallCount)
-        } finally {
-            output.deleteIfExists()
-        }
-    }
-
-    @Test
-    fun `Linux Wayland null window stays on the region portal recorder`() {
-        // Null window means embedded ComposePanel / arbitrary region — the region path is
-        // the right one, even when a window-targeted recorder is wired.
-        val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.ShouldNeverBeCalled)
-        val ffmpeg = StubFfmpegRecorder()
-        val portalRegion = StubFfmpegRecorder()
-        val portalWindow = StubWaylandWindowSourceRecorder()
-        val recorder =
-            autoRecorder(
-                sckRecorder = sck,
-                ffmpegRecorder = ffmpeg,
-                waylandPortalRecorder = portalRegion,
-                waylandPortalWindowRecorder = portalWindow,
-                isMacOs = { false },
-                isWindows = { false },
-                isWayland = { true },
-            )
-        val output = tempMov()
-        try {
-            recorder.start(window = null, region = Rectangle(0, 0, 100, 100), output = output)
-
-            assertTrue(portalRegion.startCalled, "Null window should land on region portal")
-            assertEquals(0, portalWindow.startCallCount)
-        } finally {
-            output.deleteIfExists()
-        }
-    }
-
-    @Test
-    fun `Linux Wayland host without a configured waylandPortalRecorder falls through to ffmpeg`() {
-        // Defensive case: AutoRecorder construction couldn't resolve a Wayland portal recorder
-        // (e.g. gst-launch-1.0 not installed), but the user still got an AutoRecorder back. The
-        // ffmpeg path will throw via LinuxX11Grab.checkNotWayland, but that's the right error
-        // to surface — better than the router silently degrading to a broken recording.
-        val sck = StubWindowRecorder(name = "sck")
-        val ffmpeg = StubFfmpegRecorder()
-        val recorder =
-            autoRecorder(
-                sckRecorder = sck,
-                ffmpegRecorder = ffmpeg,
-                waylandPortalRecorder = null,
-                isMacOs = { false },
-                isWindows = { false },
-                isWayland = { true },
-            )
-        val output = tempMov()
-        try {
-            recorder.start(window = null, region = Rectangle(0, 0, 100, 100), output = output)
-
-            assertTrue(ffmpeg.startCalled, "No portal recorder → ffmpeg fallback fires")
+            assertTrue(error.message.orEmpty().contains("unsupported"))
+            assertFalse(ffmpeg.startCalled, "Unsupported window mode must not fall back to region")
         } finally {
             output.deleteIfExists()
         }
@@ -492,14 +253,9 @@ class AutoRecorderTest {
     private fun tempMov(): Path = Files.createTempFile("spectre-auto-recorder-test-", ".mov")
 }
 
-// AutoRecorder's internal constructor takes the dispatch lambdas + the optional Windows / Wayland
-// recorders. Tests use this helper so the public default constructor (which detects the host OS
-// at runtime) doesn't leak through and make the suite host-dependent. The Wayland slot defaults
-// to null + isWayland=false so existing tests behave as before; tests that exercise the Wayland
-// routing pass them explicitly.
 private fun autoRecorder(
-    sckRecorder: WindowRecorder,
-    ffmpegRecorder: Recorder,
+    sckRecorder: WindowRecorder = StubWindowRecorder(name = "sck"),
+    ffmpegRecorder: Recorder = StubRegionRecorder(),
     windowsWindowRecorder: WindowRecorder? = null,
     waylandPortalRecorder: Recorder? = null,
     waylandPortalWindowRecorder: WaylandWindowSourceRecorder? = null,
@@ -555,8 +311,11 @@ private class StubWindowRecorder(
     }
 }
 
-private class StubFfmpegRecorder : Recorder {
+private class StubRegionRecorder : Recorder {
     var startCalled: Boolean = false
+        private set
+
+    var lastRegion: Rectangle? = null
         private set
 
     override fun start(
@@ -565,6 +324,7 @@ private class StubFfmpegRecorder : Recorder {
         options: RecordingOptions,
     ): RecordingHandle {
         startCalled = true
+        lastRegion = region
         return NoopHandle(output)
     }
 }
@@ -576,6 +336,9 @@ private class StubWaylandWindowSourceRecorder : WaylandWindowSourceRecorder {
     var lastWindow: TitledWindow? = null
         private set
 
+    var lastRegion: Rectangle? = null
+        private set
+
     override fun start(
         window: TitledWindow,
         region: Rectangle,
@@ -584,13 +347,15 @@ private class StubWaylandWindowSourceRecorder : WaylandWindowSourceRecorder {
     ): RecordingHandle {
         startCallCount += 1
         lastWindow = window
+        lastRegion = region
         return NoopHandle(output)
     }
 }
 
-private class StubTitledWindow(title: String? = "MyApp") : TitledWindow {
-    override var title: String? = title
-}
+private class StubTitledWindow(
+    override var title: String? = "MyApp",
+    override val bounds: Rectangle = Rectangle(0, 0, 100, 100),
+) : TitledWindow
 
 private class NoopHandle(override val output: Path) : RecordingHandle {
     override val isStopped: Boolean = false

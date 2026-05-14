@@ -2,7 +2,7 @@ package dev.sebastiano.spectre.core
 
 import java.awt.BorderLayout
 import java.awt.Dimension
-import java.awt.GraphicsEnvironment
+import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.util.concurrent.CountDownLatch
@@ -10,13 +10,27 @@ import java.util.concurrent.TimeUnit
 import javax.swing.JFrame
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
-import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 
 class SyntheticInputTest {
+
+    @Test
+    fun `synthetic key char mapping covers RobotDriver typeText punctuation`() {
+        assertEquals('-', keyCharFor(KeyEvent.VK_MINUS))
+        assertEquals('_', keyCharFor(KeyEvent.VK_MINUS, shift = true))
+        assertEquals('=', keyCharFor(KeyEvent.VK_EQUALS))
+        assertEquals('+', keyCharFor(KeyEvent.VK_EQUALS, shift = true))
+        assertEquals('[', keyCharFor(KeyEvent.VK_OPEN_BRACKET))
+        assertEquals('{', keyCharFor(KeyEvent.VK_OPEN_BRACKET, shift = true))
+        assertEquals(';', keyCharFor(KeyEvent.VK_SEMICOLON))
+        assertEquals(':', keyCharFor(KeyEvent.VK_SEMICOLON, shift = true))
+        assertEquals('.', keyCharFor(KeyEvent.VK_PERIOD))
+        assertEquals('?', keyCharFor(KeyEvent.VK_SLASH, shift = true))
+    }
 
     /**
      * Regression test for the EDT deadlock between [RobotDriver]'s `runOffEdt` and the synthetic
@@ -45,7 +59,7 @@ class SyntheticInputTest {
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     fun `click from EDT does not deadlock with synthetic adapter`() {
-        assumeFalse(GraphicsEnvironment.isHeadless())
+        assumeLiveAwtAvailable()
 
         val frame = createTestFrame()
         try {

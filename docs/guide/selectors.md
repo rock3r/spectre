@@ -127,3 +127,7 @@ println(automator.printTree())
 You'll see every window, every node, and the test tags, text, and roles attached to them.
 This is usually the fastest way to find out whether the node simply isn't where you
 think it is, or hasn't been composed yet.
+
+If `printTree()` returns an empty string, the composition probably crashed before any
+node registered. Check the test JVM's stderr for exceptions from the EDT or composition
+thread; those exceptions do not always propagate to the test method.

@@ -17,7 +17,6 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.wm.WindowManager
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.RobotDriver
-import dev.sebastiano.spectre.core.synthetic
 
 class RunSpectreAction : AnAction() {
     override fun actionPerformed(e: AnActionEvent) {
