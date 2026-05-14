@@ -1,15 +1,65 @@
 name: Release
 
+# Tag-driven publishing pipeline (#84).
+#
+# Trigger: pushing a tag matching `v*` (e.g. `v0.2.0`). The leading `v` is stripped
+# from `${GITHUB_REF_NAME}` and the result becomes the version everywhere — the
+# Gradle invocation is parameterised via `-PVERSION_NAME=...`, and `vanniktech-
+# maven-publish`'s POMs pick up the override automatically.
+#
+# Three-stage fan-out:
+#
+#   1. `mac-helper`       — macOS runner. Builds the universal arm64+x86_64
+#                            `SpectreScreenCapture` Swift helper, codesigns it with
+#                            our Developer ID, and runs `notarytool submit --wait`.
+#                            Uploads the notarised binary as a GitHub Actions
+#                            artifact.
+#
+#   2. `linux-helpers`    — Linux runner. Cross-builds the Wayland Rust helper for
+#                            both x86_64 and aarch64 using the same toolchain dance
+#                            `ci.yml` documents (dpkg multi-arch + per-arch libdbus
+#                            sysroot + cross-linker). Uploads the per-arch binaries
+#                            as a GitHub Actions artifact.
+#
+#   3. `publish`          — Linux runner. Depends on both helper jobs. Downloads
+#                            the artefacts, stages them into recording's resource
+#                            tree via `-PprebuiltMacHelperPath=...` and
+#                            `-PprebuiltLinuxHelpersDir=...`, runs the publication-
+#                            shape verification, then `publish` against the Sonatype
+#                            Central Portal staging endpoint. Finally creates the
+#                            GitHub release (draft, with the cross-platform
+#                            recording jar attached) so the maintainer can sanity-
+#                            check Central + GitHub side-by-side before promoting.
+#
+# Secrets used (all from repo settings):
+#   APPLE_DEVELOPER_ID_P12 / _PASSWORD                  → keychain import (mac-helper)
+#   APPLE_SIGNING_KEYCHAIN_PASSWORD                     → keychain password (mac-helper)
+#   APPLE_DEVELOPER_IDENTITY                            → codesign identity (mac-helper)
+#   APPLE_NOTARY_API_KEY / _ID / _ISSUER                → App Store Connect API auth
+#   ORG_GRADLE_PROJECT_mavenCentralUsername / _Password → Central Portal token
+#   ORG_GRADLE_PROJECT_signingInMemoryKey               → ASCII-armored PGP private key
+#   ORG_GRADLE_PROJECT_signingInMemoryKeyPassword       → PGP key passphrase
+#
+# Central Portal deployments stay in `automaticRelease=false` mode (see
+# build.gradle.kts) — the maintainer manually promotes from the Central staging
+# UI after verifying the artefacts. The GitHub draft release stays draft for the
+# same reason. Both are intentional: the first few tagged releases want a manual
+# checkpoint before they go public.
+
 on:
   push:
     tags:
       - "v*"
 
+# Top-level permissions stay read-only. The `publish` job opts up to `contents: write` for
+# the `gh release create / upload` calls; the helper-build jobs only need read access (their
+# checkouts and artefact uploads don't touch the GitHub release surface).
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  recording-release:
+  mac-helper:
+    name: Build + notarise macOS helper
     runs-on: macos-latest
 
     steps:
@@ -25,12 +75,8 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
 
-      - name: Validate public API against committed baselines
-        # R7 defensive depth: PR-time `check` already runs `checkKotlinAbi` via the Kotlin
-        # Gradle Plugin's built-in abiValidation extension, but a tag pushed from a
-        # feature branch that wasn't merged through PR review would otherwise skip the
-        # ABI check. Running it here catches that path.
-        run: ./gradlew checkKotlinAbi
+      - name: Verify Swift toolchain
+        run: swift --version
 
       - name: Import Developer ID certificate
         env:
@@ -63,7 +109,7 @@ jobs:
             "$KEYCHAIN_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-      - name: Build, sign, notarize, and package recording jar
+      - name: Build, sign, and notarise the universal SCK helper
         env:
           APPLE_DEVELOPER_IDENTITY: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}
           APPLE_NOTARY_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY }}
@@ -78,16 +124,218 @@ jobs:
           API_KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_API_KEY_ID}.p8"
           echo "$APPLE_NOTARY_API_KEY" | base64 --decode > "$API_KEY_PATH"
 
+          # `:recording:assembleScreenCaptureKitHelperUniversal` produces the binary at
+          # `recording/build/generated/screenCaptureHelper/native/macos/spectre-screencapture`.
+          # `-PnotarizeScreenCaptureKitHelper` wires the codesign + notarytool + verify
+          # steps into the dependency chain. The publish job downloads the artefact and
+          # stages it via `-PprebuiltMacHelperPath` so the resulting recording jar is
+          # consumable on any macOS host without needing to redo the notarisation dance.
           APPLE_NOTARY_API_KEY_PATH="$API_KEY_PATH" \
-            ./gradlew :recording:jar \
+            ./gradlew :recording:assembleScreenCaptureKitHelperUniversal \
               -PuniversalHelper \
               -PnotarizeScreenCaptureKitHelper
 
-      - name: Upload recording jar to GitHub release
+      - name: Upload notarised mac helper artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-helper
+          # Single binary file — the upload-artifact action zips it under the hood for
+          # transit; the download step in `publish` un-zips automatically. Net result is a
+          # single `SpectreScreenCapture` Mach-O fat binary on disk in the publish job.
+          path: recording/build/generated/screenCaptureHelper/native/macos/spectre-screencapture
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Clean up Apple credentials + signing keychain
+        # macOS runners are ephemeral, but tearing down the keychain + key files is cheap
+        # defence in depth against any future runner-reuse misconfiguration. `if: always()`
+        # ensures cleanup even if the notary submission failed.
+        if: always()
+        env:
+          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/spectre-signing.keychain-db"
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+          if [ -n "${APPLE_NOTARY_API_KEY_ID:-}" ]; then
+            rm -f "$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_API_KEY_ID}.p8"
+          fi
+
+  linux-helpers:
+    name: Build cross-arch Linux helpers
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Install libdbus + pkg-config (for spectre-wayland-helper Rust build)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+
+      - name: Enable arm64 dpkg multi-arch + install aarch64 cross-toolchain
+        # Same dance as `ci.yml`: amd64-only default sources, ports.ubuntu.com source for
+        # arm64, libdbus-1-dev:arm64 sysroot, gcc-aarch64-linux-gnu cross-linker.
+        run: |
+          set -euo pipefail
+          sudo dpkg --add-architecture arm64
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+            sudo sed -i '/^Architectures:/!{ /^Signed-By:/i\
+          Architectures: amd64
+          }' /etc/apt/sources.list.d/ubuntu.sources
+          fi
+          if [ -f /etc/apt/sources.list ]; then
+            sudo sed -i 's|^deb \([^[]\)|deb [arch=amd64] \1|' /etc/apt/sources.list
+          fi
+          codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
+          sudo tee /etc/apt/sources.list.d/ubuntu-arm64.sources >/dev/null <<EOF
+          Types: deb
+          URIs: http://ports.ubuntu.com/ubuntu-ports/
+          Suites: $codename $codename-updates $codename-backports $codename-security
+          Components: main universe restricted multiverse
+          Architectures: arm64
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu libdbus-1-dev:arm64
+
+      - name: Set up Rust stable + aarch64 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Build cross-arch Wayland helpers
+        # `:recording:assembleWaylandHelperAllArches` writes the per-arch binaries into
+        # `recording/build/generated/waylandHelper/native/linux/{x86_64,aarch64}/`.
+        run: ./gradlew :recording:assembleWaylandHelperAllArches -PallLinuxArches
+
+      - name: Upload cross-arch Linux helpers artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-helpers
+          # Use a single directory `path:` so the artefact's root contains `x86_64/...`
+          # and `aarch64/...` directly. With a multi-file `path:` list, upload-artifact@v4
+          # would preserve the common-parent path (`recording/build/generated/...`) and the
+          # download in the publish job would land under that long prefix instead of at
+          # `$RUNNER_TEMP/linux-helpers/{x86_64,aarch64}/...`, breaking the
+          # `-PprebuiltLinuxHelpersDir` Copy task's `include(...)` filter.
+          path: recording/build/generated/waylandHelper/native/linux/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish to Maven Central + GitHub release
+    runs-on: ubuntu-latest
+    needs:
+      - mac-helper
+      - linux-helpers
+    # `contents: write` needed for `gh release create / upload`; nothing else opted up.
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Validate public API against committed baselines
+        # R7 defensive depth: PR-time `check` already runs `checkKotlinAbi` via the Kotlin
+        # Gradle Plugin's built-in abiValidation extension, but a tag pushed from a feature
+        # branch that wasn't merged through PR review would otherwise skip the ABI check.
+        # Running it here catches that path before we upload signed artefacts.
+        run: ./gradlew checkKotlinAbi
+
+      - name: Download notarised mac helper artefact
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-helper
+          path: ${{ runner.temp }}/mac-helper
+
+      - name: Download cross-arch Linux helpers artefact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-helpers
+          path: ${{ runner.temp }}/linux-helpers
+
+      - name: Derive release version from tag
+        # `v0.2.0` -> `0.2.0`. Stripping the leading `v` keeps tag conventions (which use
+        # the prefix) separate from Maven coordinates (which don't).
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          test -n "$version"
+          test "$version" != "$tag"  # Refuse to publish if the tag doesn't start with `v`.
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Verify publication shape against mavenLocal
+        # Belt-and-braces: publishes everything to mavenLocal first with the prebuilt
+        # helpers staged, then asserts the artefact set (per-module jar + sources jar +
+        # javadoc jar + POM + module file, recording jar bundles all three helpers)
+        # before we sign and upload to Central. A failure here means the Central upload
+        # would have published something incomplete — better to catch it before the
+        # remote staging repo gets a partial deployment.
+        run: |
+          ./gradlew verifyMavenLocalPublication \
+            -PVERSION_NAME="$RELEASE_VERSION" \
+            -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/spectre-screencapture" \
+            -PprebuiltLinuxHelpersDir="$RUNNER_TEMP/linux-helpers"
+
+      - name: Publish signed artefacts to Sonatype Central Portal
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_IN_MEMORY_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_IN_MEMORY_KEY_PASSWORD }}
+        run: |
+          test -n "$ORG_GRADLE_PROJECT_mavenCentralUsername"
+          test -n "$ORG_GRADLE_PROJECT_mavenCentralPassword"
+          test -n "$ORG_GRADLE_PROJECT_signingInMemoryKey"
+          test -n "$ORG_GRADLE_PROJECT_signingInMemoryKeyPassword"
+          ./gradlew \
+            :core:publishToMavenCentral \
+            :server:publishToMavenCentral \
+            :recording:publishToMavenCentral \
+            :testing:publishToMavenCentral \
+            -PVERSION_NAME="$RELEASE_VERSION" \
+            -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/spectre-screencapture" \
+            -PprebuiltLinuxHelpersDir="$RUNNER_TEMP/linux-helpers"
+
+      - name: Stage published recording jar for GitHub release attachment
+        # mavenLocal already has the artefact from the earlier verify step. Pulling from
+        # there avoids the publish step needing a second jar build (the Central upload
+        # consumed the same jar).
+        run: |
+          set -euo pipefail
+          JAR_PATH="$HOME/.m2/repository/dev/sebastiano/spectre/spectre-recording/$RELEASE_VERSION/spectre-recording-$RELEASE_VERSION.jar"
+          test -f "$JAR_PATH"
+          cp "$JAR_PATH" "$RUNNER_TEMP/spectre-recording-$RELEASE_VERSION.jar"
+          echo "GH_RELEASE_JAR=$RUNNER_TEMP/spectre-recording-$RELEASE_VERSION.jar" >> "$GITHUB_ENV"
+
+      - name: Create / update draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          JAR_PATH="$(find recording/build/libs -maxdepth 1 -type f -name 'recording-*.jar' ! -name '*sources*' | sort | tail -n 1)"
-          test -n "$JAR_PATH"
-          gh release view "$GITHUB_REF_NAME" || gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME"
-          gh release upload "$GITHUB_REF_NAME" "$JAR_PATH" --clobber
+          gh release view "$GITHUB_REF_NAME" \
+            || gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME"
+          gh release upload "$GITHUB_REF_NAME" "$GH_RELEASE_JAR" --clobber

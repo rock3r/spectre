@@ -14,6 +14,10 @@ jewel = "0.35.0-261.23567.138"
 jewelBridge = "261.23567.138"
 ktfmt = "0.26.0"
 kotlin = "2.3.20"
+# vanniktech-maven-publish — Sonatype Central Portal-aware Maven publish plugin. Wires up
+# POM defaults, sources + javadoc jars, signing, and the Central upload in one place. See
+# `docs/PUBLISHING.md` for the release flow.
+mavenPublish = "0.36.0"
 junit4 = "4.13.2"
 junit5 = "5.11.4"
 kotlinx-coroutines = "1.10.2"
@@ -75,3 +79,4 @@ detekt = { id = "dev.detekt", version.ref = "detekt" }
 ktfmt = { id = "com.ncorti.ktfmt.gradle", version.ref = "ktfmt" }
 kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+mavenPublish = { id = "com.vanniktech.maven.publish", version.ref = "mavenPublish" }

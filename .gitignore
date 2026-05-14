@@ -44,3 +44,9 @@ recording/native/macos/.build/
 recording/native/macos/.swiftpm/
 recording/native/macos/Package.resolved
 /.agents/skills/spectre-workspace/
+
+# Cargo (recording/native/linux). Cargo.lock is left untracked deliberately — the helper is
+# bundled into the recording jar at build time and the build is reproducible enough from
+# Cargo.toml alone given the `rust-version = "1.75"` floor.
+recording/native/linux/target/
+recording/native/linux/Cargo.lock

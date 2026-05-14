@@ -2,6 +2,11 @@ plugins {
     alias(libs.plugins.detekt)
     alias(libs.plugins.ktfmt)
     alias(libs.plugins.kotlinJvm)
+    // Publication coordinates + POM scalars come from `gradle.properties` — root file owns
+    // the shared values, this module's own `gradle.properties` adds `POM_NAME` /
+    // `POM_DESCRIPTION` / `POM_ARTIFACT_ID`. Root `subprojects { }` convention wires
+    // signing, sources / javadoc jars, and the Central Portal upload target.
+    alias(libs.plugins.mavenPublish)
 }
 
 kotlin {

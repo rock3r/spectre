@@ -3,6 +3,9 @@ plugins {
     alias(libs.plugins.kotlinJvm)
     alias(libs.plugins.kotlinSerialization)
     alias(libs.plugins.ktfmt)
+    // See `:core`'s build script for the rationale on the shared publish convention. Per-module
+    // POM scalars live in this module's own `gradle.properties`.
+    alias(libs.plugins.mavenPublish)
 }
 
 kotlin {

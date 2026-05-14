@@ -31,6 +31,7 @@ Keep this file focused on operating rules. Use the docs below for implementation
 | [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | File placement, coding style, and git/build workflow |
 | [docs/STATIC-ANALYSIS.md](docs/STATIC-ANALYSIS.md) | Detekt, ktfmt, and CI-backed quality expectations |
 | [docs/RECORDING-LIMITATIONS.md](docs/RECORDING-LIMITATIONS.md) | Per-platform recording trade-offs, frame drop behaviour, audio caveats |
+| [docs/PUBLISHING.md](docs/PUBLISHING.md) | Tag-driven release pipeline, Sonatype Central wiring, required secrets, local `:verifyMavenLocalPublication` smoke |
 | [docs/DOCS-STYLE.md](docs/DOCS-STYLE.md) | Style guide and verification checklist for the user-facing docs site (excluded from the published site itself) |
 | [Compose Desktop automator spike gist](https://gist.github.com/rock3r/8e520bb3fe8fe5886367d5e22cefbab8) | External design notes and open spike questions |
 
