@@ -433,7 +433,8 @@ private class RecordingRobotAdapter(
 
     override fun waitForIdle() = log("waitForIdle()")
 
-    override fun shouldDrainAfterClipboardPaste(): Boolean = drainAfterPaste
+    override val shouldDrainAfterClipboardPaste: Boolean
+        get() = drainAfterPaste
 }
 
 private class RecordingClipboardAdapter : ClipboardAdapter {

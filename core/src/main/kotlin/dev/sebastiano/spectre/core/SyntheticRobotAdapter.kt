@@ -47,6 +47,9 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
     // (Codex P1 on PR #35).
     override val requiresOffEdt: Boolean = false
 
+    override val shouldDrainAfterClipboardPaste: Boolean
+        get() = !SwingUtilities.isEventDispatchThread()
+
     @Volatile private var lastX: Int = 0
     @Volatile private var lastY: Int = 0
     @Volatile private var pressedButtons: Int = 0

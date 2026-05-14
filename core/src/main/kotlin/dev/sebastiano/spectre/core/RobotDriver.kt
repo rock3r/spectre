@@ -204,7 +204,7 @@ internal constructor(
                 robot.keyPress(KeyEvent.VK_V)
                 robot.keyRelease(KeyEvent.VK_V)
                 robot.keyRelease(modifier)
-                if (clipboard.supportsRead && robot.shouldDrainAfterClipboardPaste()) {
+                if (clipboard.supportsRead && robot.shouldDrainAfterClipboardPaste) {
                     // Drain queued AWT events (KEY_PRESSED/RELEASED + Compose's input
                     // pipeline) so the paste handler has a chance to read the clipboard before
                     // we restore it. Without this, the finally block can clobber the clipboard
@@ -451,7 +451,8 @@ internal interface RobotAdapter {
      * `true` when [RobotDriver.pasteText] should pump event queues before restoring the clipboard.
      * Keep the default `false` so pure fakes/headless adapters do not initialise the AWT toolkit.
      */
-    fun shouldDrainAfterClipboardPaste(): Boolean = false
+    val shouldDrainAfterClipboardPaste: Boolean
+        get() = false
 }
 
 internal interface ClipboardAdapter {
@@ -500,7 +501,8 @@ private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) : Rob
 
     override fun waitForIdle() = robot.waitForIdle()
 
-    override fun shouldDrainAfterClipboardPaste(): Boolean = !SwingUtilities.isEventDispatchThread()
+    override val shouldDrainAfterClipboardPaste: Boolean
+        get() = !SwingUtilities.isEventDispatchThread()
 }
 
 private object HeadlessThrowingRobotAdapter : RobotAdapter {
