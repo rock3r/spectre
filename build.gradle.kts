@@ -193,15 +193,16 @@ val expectedRecordingHelperEntries: List<String> = buildList {
     if (macOsExpected) {
         add("native/macos/spectre-screencapture")
     }
+    val currentOs = org.gradle.internal.os.OperatingSystem.current()
     val crossArchLinux =
         providers.gradleProperty("prebuiltLinuxHelpersDir").isPresent ||
-            providers.gradleProperty("allLinuxArches").isPresent
+            (currentOs.isLinux && providers.gradleProperty("allLinuxArches").isPresent)
     when {
         crossArchLinux -> {
             add("native/linux/x86_64/spectre-wayland-helper")
             add("native/linux/aarch64/spectre-wayland-helper")
         }
-        org.gradle.internal.os.OperatingSystem.current().isLinux -> {
+        currentOs.isLinux -> {
             val hostArch =
                 when (System.getProperty("os.arch").orEmpty().lowercase()) {
                     "amd64",
