@@ -11,6 +11,7 @@ import java.awt.datatransfer.StringSelection
 import java.awt.datatransfer.Transferable
 import java.awt.event.AWTEventListener
 import java.awt.event.KeyEvent
+import java.awt.event.KeyListener
 import java.awt.event.MouseEvent
 import java.awt.event.MouseListener
 import java.awt.event.MouseMotionListener
@@ -203,6 +204,42 @@ class SyntheticInputParityTest {
 
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+    fun `key events fall back to the last pointer target when AWT has no focus owner`() {
+        assumeLiveAwtAvailable()
+        val events: MutableList<KeyEvent> = CopyOnWriteArrayList()
+        val target =
+            JPanel().apply {
+                preferredSize = Dimension(FRAME_SIZE_PX, FRAME_SIZE_PX)
+                addKeyListener(KeyEventRecorder(events))
+            }
+        val frame = showNonFocusableFrameOnEdt(target)
+        try {
+            assertTrue(
+                frame.frame.focusOwner == null,
+                "test fixture must model UIElement-style AWT with no focus owner",
+            )
+            val (cx, cy) = frame.targetCenterOnScreen(target)
+            val driver = RobotDriver.synthetic(frame.frame)
+            runBlocking {
+                driver.click(cx, cy)
+                driver.pressKey(KeyEvent.VK_A)
+            }
+            drainEdt()
+
+            val pressed = events.firstOrNull {
+                it.id == KeyEvent.KEY_PRESSED && it.keyCode == KeyEvent.VK_A
+            }
+            assertNotNull(
+                pressed,
+                "expected KEY_PRESSED to route to the last pointer target when no AWT focus owner exists",
+            )
+        } finally {
+            disposeFrame(frame.frame)
+        }
+    }
+
+    @Test
+    @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     fun `pasteText through the synthetic driver isolates and restores the fake clipboard`() {
         assumeLiveAwtAvailable()
         val target = JPanel().apply { preferredSize = Dimension(FRAME_SIZE_PX, FRAME_SIZE_PX) }
@@ -296,13 +333,17 @@ class SyntheticInputParityTest {
 
     // --- Fixtures ---------------------------------------------------------------------------
 
-    private fun showFrameOnEdt(target: JPanel): TestFrame {
+    private fun showNonFocusableFrameOnEdt(target: JPanel): TestFrame =
+        showFrameOnEdt(target) { focusableWindowState = false }
+
+    private fun showFrameOnEdt(target: JPanel, configure: JFrame.() -> Unit = {}): TestFrame {
         var frame: JFrame? = null
         SwingUtilities.invokeAndWait {
             frame =
                 JFrame("SyntheticInputParityTest").apply {
                     defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
                     isUndecorated = true
+                    configure()
                     contentPane.layout = BorderLayout()
                     contentPane.add(target, BorderLayout.CENTER)
                     size = Dimension(FRAME_SIZE_PX, FRAME_SIZE_PX)
@@ -395,6 +436,20 @@ class SyntheticInputParityTest {
         }
 
         override fun mouseMoved(e: MouseEvent) = Unit
+    }
+
+    private class KeyEventRecorder(private val events: MutableList<KeyEvent>) : KeyListener {
+        override fun keyTyped(e: KeyEvent) {
+            events.add(e)
+        }
+
+        override fun keyPressed(e: KeyEvent) {
+            events.add(e)
+        }
+
+        override fun keyReleased(e: KeyEvent) {
+            events.add(e)
+        }
     }
 
     private class GlobalKeyEventRecorder {
