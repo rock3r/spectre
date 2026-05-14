@@ -680,7 +680,19 @@ val stagePrebuiltMacHelper by
                 "by the release CI's publish job — its host doesn't rebuild the helper."
         group = "build"
         enabled = prebuiltMacHelperPath.isPresent
-        from(prebuiltMacHelperPath.map { File(rootProjectDir, it) }) {
+        // Resolve absolute paths (like `$RUNNER_TEMP/...` on a GitHub Actions runner) as
+        // they are, and treat relative paths as rooted at `rootProjectDir` so a contributor
+        // can pass `./local-helpers/...` from their checkout. Inlined rather than going
+        // through `File(rootProjectDir, path)` because Java's `File(File, String)` does NOT
+        // treat an absolute child as overriding the parent — it concatenates them
+        // (`/parent/home/runner/work/_temp/...`), which would silently break the Copy task's
+        // `from(...)` resolution against real CI paths.
+        from(
+            prebuiltMacHelperPath.map { path ->
+                val asIs = File(path)
+                if (asIs.isAbsolute) asIs else File(rootProjectDir, path)
+            }
+        ) {
             rename { "spectre-screencapture" }
         }
         into(macHelperDestDir)
@@ -721,7 +733,16 @@ val stagePrebuiltLinuxHelpers by
                 "`x86_64/spectre-wayland-helper` and `aarch64/spectre-wayland-helper`."
         group = "build"
         enabled = prebuiltLinuxHelpersDir.isPresent
-        from(prebuiltLinuxHelpersDir.map { File(rootProjectDir, it) })
+        // Same absolute-path-safe resolution as in `stagePrebuiltMacHelper` above —
+        // `$RUNNER_TEMP/linux-helpers` from CI must stay absolute, contributors can pass a
+        // relative path rooted at `rootProjectDir`. See the comment block on
+        // `stagePrebuiltMacHelper` for the `File(File, String)` gotcha this avoids.
+        from(
+            prebuiltLinuxHelpersDir.map { path ->
+                val asIs = File(path)
+                if (asIs.isAbsolute) asIs else File(rootProjectDir, path)
+            }
+        )
         into(linuxHelpersDestDir)
         // The source directory's expected layout already matches the resource layout, so a
         // plain copy preserves arch subdirectories.
