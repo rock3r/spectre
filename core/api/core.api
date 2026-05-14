@@ -121,8 +121,8 @@ public final class dev/sebastiano/spectre/core/ComposeAutomator {
 }
 
 public final class dev/sebastiano/spectre/core/ComposeAutomator$Companion {
-	public final fun inProcess (Ldev/sebastiano/spectre/core/RobotDriver;)Ldev/sebastiano/spectre/core/ComposeAutomator;
-	public static synthetic fun inProcess$default (Ldev/sebastiano/spectre/core/ComposeAutomator$Companion;Ldev/sebastiano/spectre/core/RobotDriver;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/ComposeAutomator;
+	public final fun inProcess (Ldev/sebastiano/spectre/core/RobotDriver;Z)Ldev/sebastiano/spectre/core/ComposeAutomator;
+	public static synthetic fun inProcess$default (Ldev/sebastiano/spectre/core/ComposeAutomator$Companion;Ldev/sebastiano/spectre/core/RobotDriver;ZILjava/lang/Object;)Ldev/sebastiano/spectre/core/ComposeAutomator;
 }
 
 public final class dev/sebastiano/spectre/core/HiDpiMapperKt {

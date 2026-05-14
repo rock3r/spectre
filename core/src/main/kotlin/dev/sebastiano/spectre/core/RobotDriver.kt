@@ -27,9 +27,6 @@ internal constructor(
     private val tccGuard: MacOsTccGuard = defaultTccGuardFor(robot),
 ) {
 
-    internal val isHeadless: Boolean
-        get() = robot === HeadlessThrowingRobotAdapter
-
     // Public surface: callers may instantiate without arguments (defaults to a fresh
     // AWT Robot + system clipboard) or hand in an existing Robot. The internal
     // adapter-injecting constructor is reserved for tests within this module.

@@ -38,7 +38,11 @@ class HttpComposeAutomatorE2ETest {
 
     @BeforeTest
     fun startServer() {
-        val automator = ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())
+        val automator =
+            ComposeAutomator.inProcess(
+                robotDriver = RobotDriver.headless(),
+                discoverWindows = false,
+            )
         server =
             embeddedServer(CIO, port = 0) { installSpectreRoutes(automator) }.start(wait = false)
         port = runBlocking { server.engine.resolvedConnectors().first().port }

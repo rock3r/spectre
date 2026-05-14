@@ -39,7 +39,7 @@ import kotlin.test.assertTrue
 class SpectreServerRoundTripTest {
 
     private fun headlessAutomator(): ComposeAutomator =
-        ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())
+        ComposeAutomator.inProcess(robotDriver = RobotDriver.headless(), discoverWindows = false)
 
     @Test
     fun `windows endpoint returns an empty list for an empty automator`() = testApplication {

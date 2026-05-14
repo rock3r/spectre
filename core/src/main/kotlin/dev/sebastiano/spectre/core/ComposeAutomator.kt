@@ -518,10 +518,12 @@ private constructor(
 
     public companion object {
 
-        public fun inProcess(robotDriver: RobotDriver = RobotDriver()): ComposeAutomator =
+        public fun inProcess(
+            robotDriver: RobotDriver = RobotDriver(),
+            discoverWindows: Boolean = true,
+        ): ComposeAutomator =
             ComposeAutomator(
-                windowTracker =
-                    if (robotDriver.isHeadless) WindowTracker.empty() else WindowTracker(),
+                windowTracker = if (discoverWindows) WindowTracker() else WindowTracker.empty(),
                 semanticsReader = SemanticsReader(),
                 robotDriver = robotDriver,
             )
