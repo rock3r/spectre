@@ -294,13 +294,14 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
         // for any plain-Swing fixture (test or otherwise) that registers its own key listener.
         val windows = allWindows()
         val pointerTarget = hitTestComponent()
+        val composeFallbackTarget = findComposeKeyEventTarget(windows)
         val target =
             windows.asSequence().mapNotNull { it.focusOwner }.firstOrNull()
                 ?: pointerTarget?.findKeyListenerSelfOrDescendant()
                 ?: pointerTarget?.composeHostAncestorOrSelf()?.findKeyListenerDescendant()
                 ?: pointerTarget
-                ?: findComposeKeyEventTarget(windows)?.findKeyListenerSelfOrDescendant()
-                ?: findComposeKeyEventTarget(windows)
+                ?: composeFallbackTarget?.findKeyListenerSelfOrDescendant()
+                ?: composeFallbackTarget
                 ?: rootWindow
         val event =
             KeyEvent(
