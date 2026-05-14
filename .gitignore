@@ -32,6 +32,7 @@ out/
 .plans/
 /.agents/tasks/
 .agents/skills/*/tmp/
+/.compose-pi-workspace.lock
 
 # Temp
 .tmp/
