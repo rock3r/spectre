@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.core
 
 import java.awt.Component
+import java.awt.Container
 import java.awt.Point
 import java.awt.Rectangle
 import java.awt.Window
@@ -274,13 +275,22 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
     }
 
     private fun dispatchKey(type: Int, keyCode: Int, keyCharOverride: Char? = null) {
-        // Key events go to the focus owner of whichever window owns the keyboard. Fall back to
-        // the root window if no focus owner is present (no field focused yet).
-        val focusOwner =
-            allWindows().asSequence().mapNotNull { it.focusOwner }.firstOrNull() ?: rootWindow
+        // Key events go to the focus owner of whichever window owns the keyboard. When macOS runs
+        // the JVM as an `apple.awt.UIElement`, AWT may never grant OS keyboard focus to any window
+        // even though the app's own focus model has a focused field. In that case, dispatch to
+        // the last pointer target first (matching click-then-type flows) and then to an embedded
+        // Compose host so Compose can route the event internally.
+        val windows = allWindows()
+        val pointerTarget = hitTestComponent()
+        val target =
+            windows.asSequence().mapNotNull { it.focusOwner }.firstOrNull()
+                ?: pointerTarget?.composeHostAncestorOrSelf()
+                ?: pointerTarget
+                ?: findComposeKeyEventTarget(windows)
+                ?: rootWindow
         val event =
             KeyEvent(
-                focusOwner,
+                target,
                 type,
                 System.currentTimeMillis(),
                 heldKeyModifiers,
@@ -301,7 +311,7 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
                         )
                     else KeyEvent.CHAR_UNDEFINED,
             )
-        runOnEdt { focusOwner.dispatchEvent(event) }
+        runOnEdt { target.dispatchEvent(event) }
     }
 
     private fun findWindowAt(screenX: Int, screenY: Int): Window? =
@@ -381,6 +391,27 @@ private fun collectWindowTree(window: Window, into: MutableCollection<Window>) {
     }
 }
 
+private fun findComposeKeyEventTarget(windows: List<Window>): Component? =
+    windows.asReversed().firstNotNullOfOrNull { window -> findComposeHostIn(window) }
+
+private fun findComposeHostIn(component: Component): Component? {
+    if (component.isComposeHostComponent()) return component
+    if (component !is Container) return null
+    return component.components.firstNotNullOfOrNull(::findComposeHostIn)
+}
+
+private fun Component.composeHostAncestorOrSelf(): Component? {
+    var current: Component? = this
+    while (current != null) {
+        if (current.isComposeHostComponent()) return current
+        current = current.parent
+    }
+    return null
+}
+
+private fun Component.isComposeHostComponent(): Boolean =
+    javaClass.name == COMPOSE_PANEL_CLASS_NAME || javaClass.name == COMPOSE_WINDOW_PANEL_CLASS_NAME
+
 private fun findDeepestComponentAt(root: Component, screenX: Int, screenY: Int): Component? {
     val origin = runCatching { root.locationOnScreen }.getOrNull() ?: return null
     val localPoint = Point(screenX - origin.x, screenY - origin.y)
@@ -397,6 +428,9 @@ private fun buttonNumber(buttonMask: Int): Int =
     }
 
 private const val NO_BUTTON: Int = MouseEvent.NOBUTTON
+private const val COMPOSE_PANEL_CLASS_NAME: String = "androidx.compose.ui.awt.ComposePanel"
+private const val COMPOSE_WINDOW_PANEL_CLASS_NAME: String =
+    "androidx.compose.ui.awt.ComposeWindowPanel"
 
 // Conservative double-click window — matches the typical OS default. Two press/release pairs
 // at the same coordinates within this window count as a double-click, so doubleClick() emits
