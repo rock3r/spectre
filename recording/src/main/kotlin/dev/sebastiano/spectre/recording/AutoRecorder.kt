@@ -11,53 +11,18 @@ import dev.sebastiano.spectre.recording.screencapturekit.WindowRecorder
 import java.awt.Rectangle
 import java.lang.ProcessHandle
 import java.nio.file.Path
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * High-level recorder that picks between window-targeted capture and region-based ffmpeg capture
- * per call, so callers don't have to know which backend is appropriate.
+ * High-level recorder with explicit capture modes.
  *
- * Routing logic (in order):
- * 1. Linux Wayland session (detected via env / runtime-dir signals; see
- *    [FfmpegBackend.detectWaylandSession]) — handled BEFORE the window-null check below because
- *    `LinuxX11Grab` throws on Wayland and can't be a fallback. Sub-routing:
- *     - `window != null` AND [waylandPortalWindowRecorder] wired (#85) → window-targeted portal
- *       recorder. Uses `SourceType.WINDOW`: the dialog asks the user to pick a specific window and
- *       the granted PipeWire stream contains only that window's pixels (no leakage from occluding
- *       apps). The helper still crops to the JVM-supplied `region` (the window's bounds at start),
- *       so the mp4 dimensions match the window's pixel size.
- *     - Otherwise (`window == null`, OR no window-targeted recorder wired) AND
- *       [waylandPortalRecorder] wired → region-targeted portal recorder. Uses `SourceType.MONITOR`:
- *       the dialog asks the user to pick a monitor, and the helper crops the monitor stream to
- *       [region]. This is the embedded `ComposePanel` path and the backwards-compatible fallback
- *       for callers from before #85.
- *     - Neither portal recorder wired → falls through to ffmpeg, which fails fast on Wayland. Both
- *       portal paths pop a compositor permission dialog on first call within a session and reuse
- *       the grant via the portal's `restore_token` afterwards. See [WaylandPortalRecorder].
- * 2. `window == null` → ffmpeg region capture. Caller doesn't have a window in mind, or is
- *    capturing an embedded `ComposePanel` where there's no top-level window to target.
- * 3. macOS host with a window → SCK ([WindowRecorder]). If SCK fails because the helper isn't
- *    bundled (e.g. a jar built on Linux running on macOS), falls back to ffmpeg region capture with
- *    a stderr warning so the degradation is visible. **Only** [HelperNotBundledException] triggers
- *    fallback — operational SCK failures (Screen Recording permission denied, target window not
- *    found, helper crashed during init) propagate as `IllegalStateException` so the caller sees the
- *    real error rather than getting a silently-different recording.
- * 4. Non-macOS host with a window whose [TitledWindow.title] is non-blank, AND a non-null
- *    [windowsWindowRecorder] — uses [FfmpegWindowRecorder] (gdigrab `title=` capture). This is the
- *    Windows window-targeted path: window movement is followed automatically and occlusion doesn't
- *    matter. Jewel-in-IDE tool windows have no top-level title so they fall through to the region
- *    path (see step 5).
- * 5. Non-macOS host without an applicable [windowsWindowRecorder] OR with a blank/null title, on a
- *    non-Wayland host → ffmpeg region capture. The region path is the documented fallback when the
- *    target window title is missing, ambiguous, or points at a tool window with no top-level title.
- *    The underlying [FfmpegRecorder]'s [FfmpegBackend.detect] picks the platform device: gdigrab on
- *    Windows, x11grab on Linux Xorg. (Linux Wayland is handled by step 1 before falling through
- *    here, and `LinuxX11Grab` itself throws on Wayland — see `FfmpegBackend.checkNotWayland`.)
+ * [startWindow] uses true window-targeted backends only: ScreenCaptureKit on macOS, `gdigrab
+ * title=` on Windows, and the Wayland portal window-source path on Linux Wayland. If the requested
+ * window mode is unavailable, it throws with an actionable error instead of silently falling back
+ * to region capture.
  *
- * The router always needs both a window AND a region: the region is used as the fallback when the
- * window-targeted path isn't applicable. If you don't have a region (e.g. no clear bounds for a
- * missing window), instantiate [ScreenCaptureKitRecorder], [FfmpegWindowRecorder], or
- * [FfmpegRecorder] directly.
+ * [startRegion] uses region capture only: ffmpeg region capture on macOS, Windows, and Linux Xorg,
+ * and the Wayland portal monitor-source path on Linux Wayland. If the requested region mode is
+ * unavailable, it throws instead of switching capture semantics.
  */
 public class AutoRecorder
 internal constructor(
@@ -96,46 +61,20 @@ internal constructor(
         isWayland = ::defaultIsWayland,
     )
 
-    /**
-     * Latched to true the first time we emit the Wayland portal fallback warning, so repeated
-     * `start()` calls on the same AutoRecorder instance don't spam stderr.
-     */
-    private val waylandFallbackWarned = AtomicBoolean(false)
-
-    public fun start(
-        window: TitledWindow?,
-        region: Rectangle,
+    public fun startWindow(
+        window: TitledWindow,
         output: Path,
         options: RecordingOptions = RecordingOptions(),
         windowOwnerPid: Long = ProcessHandle.current().pid(),
     ): RecordingHandle {
-        // Linux Wayland routing has to happen BEFORE the window-null check below: a Wayland
-        // session can't fall through to FfmpegRecorder for either window-targeted OR region
-        // capture, because LinuxX11Grab throws on Wayland.
-        //
-        // Window-targeted (#85) takes precedence when both wired and the caller has a window
-        // in mind: SourceType.WINDOW makes the portal scope the granted stream to the picked
-        // window's pixels (no leakage from occluding apps the way MONITOR + region capture
-        // suffers from). Falls back to the region recorder when no window is supplied OR the
-        // window-targeted recorder isn't wired (e.g. older callers, helper construction
-        // failed). Both pass the same `region` to the helper; the difference is the
-        // SourceType the portal hands to the compositor.
-        if (isWayland() && window != null && waylandPortalWindowRecorder != null) {
-            return waylandPortalWindowRecorder.start(window, region, output, options)
-        }
-        if (isWayland() && waylandPortalRecorder != null) {
-            return waylandPortalRecorder.start(region, output, options)
-        }
         if (isWayland()) {
-            // Wayland session detected but no portal recorder could be constructed. The
-            // ffmpeg fallback below will fail loudly ("Wayland detected, x11grab unavailable")
-            // — but the underlying construction failure for the portal recorder is the more
-            // useful diagnostic, so surface it once via stderr before we let ffmpeg complete
-            // the routing.
-            maybeWarnWaylandFallback(window)
-        }
-        if (window == null) {
-            return ffmpegRecorder.start(region, output, options)
+            val recorder =
+                waylandPortalWindowRecorder
+                    ?: throw unavailable(
+                        "Wayland window capture",
+                        waylandPortalWindowRecorderFailure,
+                    )
+            return recorder.start(window, window.bounds, output, options)
         }
         if (isMacOs()) {
             return try {
@@ -146,56 +85,49 @@ internal constructor(
                     options = options,
                 )
             } catch (e: HelperNotBundledException) {
-                // The helper isn't in the jar. This is the cross-platform-jar case (built on
-                // Linux, run on macOS) — degrade to region capture rather than throwing, but
-                // surface a stderr warning so the silent downgrade is at least visible.
-                System.err.println(
-                    "AutoRecorder: SCK helper not bundled (${e.message}); falling back to " +
-                        "ffmpeg region capture."
-                )
-                ffmpegRecorder.start(region, output, options)
+                throw unavailable("macOS window capture", e)
             }
         }
-        // Non-mac path. Try title-based window capture if we have a Windows window recorder
-        // wired up AND a non-blank title to feed it; otherwise fall through to region.
-        val titledRecorder = windowsWindowRecorder
         val title = window.title
-        if (titledRecorder != null && isWindows() && !title.isNullOrBlank()) {
-            return titledRecorder.start(
-                window = window,
-                windowOwnerPid = windowOwnerPid,
-                output = output,
-                options = options,
-            )
+        val recorder = windowsWindowRecorder
+        if (isWindows()) {
+            require(!title.isNullOrBlank()) {
+                "AutoRecorder.startWindow requires a non-blank window title on Windows. " +
+                    "Use startRegion(...) explicitly if region capture is what you want."
+            }
+            return recorder?.start(window, windowOwnerPid, output, options)
+                ?: throw unavailable("Windows window capture", null)
+        }
+        throw unsupportedWindowCapture()
+    }
+
+    public fun startRegion(
+        region: Rectangle,
+        output: Path,
+        options: RecordingOptions = RecordingOptions(),
+    ): RecordingHandle {
+        if (isWayland()) {
+            val recorder =
+                waylandPortalRecorder
+                    ?: throw unavailable("Wayland region capture", waylandPortalRecorderFailure)
+            return recorder.start(region, output, options)
         }
         return ffmpegRecorder.start(region, output, options)
     }
 
-    /**
-     * Emit the Wayland portal fallback warning at most once per AutoRecorder instance. Picks the
-     * window-recorder failure when a [window] is supplied (that's the slot the router checked
-     * first), otherwise the region-recorder failure. Both being null means the caller explicitly
-     * passed `null` recorders without going through our defaults — we still emit the warning so the
-     * silent downgrade is visible, just with a less specific cause.
-     */
-    private fun maybeWarnWaylandFallback(window: TitledWindow?) {
-        if (!waylandFallbackWarned.compareAndSet(false, true)) return
-        val failure =
-            if (window != null) {
-                waylandPortalWindowRecorderFailure ?: waylandPortalRecorderFailure
-            } else {
-                waylandPortalRecorderFailure ?: waylandPortalWindowRecorderFailure
-            }
-        val cause =
-            failure?.message?.takeIf { it.isNotBlank() }
-                ?: failure?.javaClass?.simpleName
-                ?: "no construction failure recorded — recorder slot was passed as null"
-        System.err.println(
-            "AutoRecorder: Wayland portal recorder unavailable ($cause); falling back to " +
-                "ffmpeg region capture (which will fail on Wayland — install the portal helper " +
-                "prerequisites or supply a custom recorder)."
-        )
+    private fun unavailable(mode: String, cause: Throwable?): IllegalStateException {
+        val detail = cause?.message?.takeIf { it.isNotBlank() } ?: cause?.javaClass?.simpleName
+        val message =
+            if (detail == null) "$mode is unavailable." else "$mode is unavailable: $detail"
+        return IllegalStateException(message, cause)
     }
+
+    private fun unsupportedWindowCapture(): IllegalStateException =
+        IllegalStateException(
+            "AutoRecorder.startWindow is unsupported on this platform because no true " +
+                "window-targeted recorder is available. Use startRegion(...) explicitly for " +
+                "region capture."
+        )
 
     private companion object {
         @JvmStatic

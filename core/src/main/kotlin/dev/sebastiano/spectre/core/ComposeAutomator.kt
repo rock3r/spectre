@@ -141,6 +141,10 @@ private constructor(
         robotDriver.typeText(text)
     }
 
+    public suspend fun pasteText(text: String) {
+        robotDriver.pasteText(text)
+    }
+
     public suspend fun clearAndTypeText(node: AutomatorNode, text: String) {
         click(node)
         robotDriver.clearAndTypeText(text)
@@ -515,7 +519,12 @@ private constructor(
     public companion object {
 
         public fun inProcess(robotDriver: RobotDriver = RobotDriver()): ComposeAutomator =
-            ComposeAutomator(WindowTracker(), SemanticsReader(), robotDriver)
+            ComposeAutomator(
+                windowTracker =
+                    if (robotDriver.isHeadless) WindowTracker.empty() else WindowTracker(),
+                semanticsReader = SemanticsReader(),
+                robotDriver = robotDriver,
+            )
     }
 }
 

@@ -44,6 +44,9 @@ In order of likelihood:
    `waitForIdle()`/`waitForVisualIdle()` after the click or type.
 4. **The selector doesn't match.** Run `println(automator.printTree())` and check the
    actual test tags/text/role. Localised text is the usual culprit.
+5. **The tree is empty.** If `printTree()` returns `""`, the composition probably
+   crashed before any node registered. Check the test JVM's stderr for exceptions from
+   the EDT or composition thread; they do not always propagate to the test method.
 
 ## "Tests fight over OS focus when run in parallel"
 
@@ -55,7 +58,6 @@ Use synthetic input:
 ```kotlin
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.RobotDriver
-import dev.sebastiano.spectre.core.synthetic
 
 val automator = ComposeAutomator.inProcess(
     robotDriver = RobotDriver.synthetic(rootWindow = composeWindow),
@@ -67,12 +69,14 @@ global focus, no cursor motion. The trade-off is that some interactions (system-
 shortcuts, real OS drag-and-drop) won't behave the same way. See
 [Driving input](interactions.md#real-vs-synthetic-input).
 
-## "`typeText` didn't reach my field"
+## "`typeText` or `pasteText` didn't reach my field"
 
-`typeText` writes to the system clipboard, dispatches the platform paste shortcut
-(<kbd>Cmd</kbd>+<kbd>V</kbd> on macOS, <kbd>Ctrl</kbd>+<kbd>V</kbd> elsewhere), waits
-for the paste to land, and restores the previous clipboard contents. A few failure
-modes follow from that:
+`typeText` dispatches key press/release pairs and avoids the clipboard. It supports
+ASCII letters, digits, space, newline, and common US-keyboard punctuation. Use
+`pasteText` for arbitrary Unicode or large text: it writes to the system clipboard,
+dispatches the platform paste shortcut (<kbd>Cmd</kbd>+<kbd>V</kbd> on macOS,
+<kbd>Ctrl</kbd>+<kbd>V</kbd> elsewhere), waits for the paste to land, and restores the
+previous clipboard contents. A few failure modes follow from those contracts:
 
 - **Nothing has focus.** `typeText` types into whatever the focused component is. If
   your test never clicked into the field — or the click landed on something else,
@@ -82,15 +86,20 @@ modes follow from that:
 - **The field doesn't accept paste.** Some Compose components (and any read-only
   text field) ignore the system paste shortcut. Verify the field accepts pasted
   input outside the test before assuming Spectre is at fault.
+- **macOS `apple.awt.UIElement=true`.** UI-element/helper mode can break clipboard
+  paste even when you use `RobotDriver.synthetic(rootWindow = ...)`: the field may be
+  focused and the paste shortcut may be delivered, but Compose reads stale or empty
+  clipboard contents. Disable `apple.awt.UIElement=true` for the JVM hosting the test
+  window when you need `pasteText`, or use `typeText` for supported ASCII input.
 - **macOS pasteboard race.** macOS's `NSPasteboard` writes are asynchronous, so
   Spectre polls the clipboard until it reads back the requested text before
   dispatching <kbd>Cmd</kbd>+<kbd>V</kbd>. If your environment has a clipboard
   manager or another process actively rewriting the clipboard, the poll can time
   out and the paste lands stale. Disable clipboard managers in the test
   environment.
-- **`RobotDriver.headless()` throws on `typeText`.** It throws on every input,
-  clipboard, and screenshot call by design (see [Driving input](interactions.md#real-vs-synthetic-input)),
-  so `typeText` against a headless driver surfaces an `UnsupportedOperationException`
+- **`RobotDriver.headless()` throws on `typeText` and `pasteText`.** It throws on every
+  input, clipboard, and screenshot call by design (see [Driving input](interactions.md#real-vs-synthetic-input)),
+  so text entry against a headless driver surfaces an `UnsupportedOperationException`
   at the call site rather than silently dropping. Use `RobotDriver.synthetic(rootWindow)`
   or the default `RobotDriver()` for any real-input scenario.
 - **Compose's paste action runs on its own dispatcher.** After the keystroke,
@@ -101,7 +110,23 @@ modes follow from that:
 
 Use `pressKey(...)` for individual key events (modifier shortcuts, navigation keys,
 `<kbd>Tab</kbd>`, `<kbd>Esc</kbd>`) — those go through the AWT key map, not the
-clipboard, so none of the above applies.
+clipboard, so none of the paste-specific caveats apply.
+
+## "The JVM is headless"
+
+Spectre input and screenshots need AWT. If the JVM is launched with
+`-Djava.awt.headless=true`, real `RobotDriver()` cannot drive the window, and synthetic
+input still needs a real AWT window hierarchy to dispatch into. Move live Spectre tests
+to a non-headless test task (`systemProperty("java.awt.headless", "false")`). Use
+`RobotDriver.headless()` only for read-only semantics-tree checks.
+
+## "The test hangs behind a Swing Error dialog"
+
+A modal Swing dialog with text such as `Error: No Component provided` usually means the
+UI library threw an uncaught composition exception and JBR surfaced it as a blocking
+`JOptionPane`. Check stderr for the real exception and make sure required
+`CompositionLocal`s are provided. For Jewel standalone windows, use Jewel's window
+wrapper when your UI reads Jewel locals such as `LocalComponent`.
 
 ## "Captured screenshot pixels look slightly off"
 
@@ -175,10 +200,11 @@ See [Recording limitations](../RECORDING-LIMITATIONS.md) for the full Wayland st
   parent app — not just the JVM child. macOS only picks up the new entitlement on
   process start.
 - **The SCK helper isn't bundled.** If you built `recording` on a non-macOS host and
-  shipped the jar to macOS, the bundled Swift helper isn't present and `AutoRecorder`
-  will fall back to `ffmpeg` region capture with a warning on stderr. To fix, build on
-  macOS, or run `:recording:assembleScreenCaptureKitHelper` (optionally with
-  `-PuniversalHelper`).
+  shipped the jar to macOS, the bundled Swift helper isn't present and
+  `AutoRecorder.startWindow(...)` throws instead of silently switching capture modes. To
+  fix, build on macOS, or run `:recording:assembleScreenCaptureKitHelper` (optionally
+  with `-PuniversalHelper`). Use `startRegion(...)` explicitly if region capture is an
+  acceptable fallback for your test.
 - **Operational SCK errors propagate.** Permission denied, target window not found,
   helper crashed during init — these all throw `IllegalStateException` rather than
   silently falling back, so you see the real cause.

@@ -10,8 +10,9 @@ import androidx.compose.ui.semantics.SemanticsOwner
 
 internal class SemanticsReader {
 
-    fun readAllNodes(trackedWindows: List<TrackedWindow>): List<AutomatorNode> = readOnEdt {
-        collectAllNodes(trackedWindows)
+    fun readAllNodes(trackedWindows: List<TrackedWindow>): List<AutomatorNode> {
+        if (trackedWindows.isEmpty()) return emptyList()
+        return readOnEdt { collectAllNodes(trackedWindows) }
     }
 
     fun findByTestTag(tag: String, trackedWindows: List<TrackedWindow>): List<AutomatorNode> =
@@ -52,10 +53,13 @@ internal class SemanticsReader {
     private fun findMatching(
         trackedWindows: List<TrackedWindow>,
         matcher: LiveNodeMatcher,
-    ): List<AutomatorNode> = readOnEdt {
-        val entries = collectEntries(trackedWindows)
-        val nodes = projectEntriesToNodes(entries)
-        entries.filter { matcher.matches(it.node) }.mapNotNull { nodes[it.key] }
+    ): List<AutomatorNode> {
+        if (trackedWindows.isEmpty()) return emptyList()
+        return readOnEdt {
+            val entries = collectEntries(trackedWindows)
+            val nodes = projectEntriesToNodes(entries)
+            entries.filter { matcher.matches(it.node) }.mapNotNull { nodes[it.key] }
+        }
     }
 
     private fun collectAllNodes(trackedWindows: List<TrackedWindow>): List<AutomatorNode> {

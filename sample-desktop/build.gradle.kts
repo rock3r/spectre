@@ -84,7 +84,7 @@ tasks
 // directly so it doesn't need the window in the foreground.
 //
 // Trade-off: macOS restricts NSPasteboard access for UI-element processes, so the
-// clipboard-driven `typeText` validation can't run under this flag. That single test is gated
+// clipboard-driven paste validation can't run under this flag. That single test is gated
 // on `spectre.sample.fixture.uiElement` (which mirrors `apple.awt.UIElement` so JVM-level
 // invocations not going through this build script — IDE / CI — still gate correctly) and skips
 // itself when the flag is on; everything else runs as normal.
@@ -202,7 +202,7 @@ tasks.register<JavaExec>("runWindowsHiDpiDiagnostic") {
 }
 
 // Manual smoke for `RobotDriver` on Windows (#20). Drives a Compose window through real
-// java.awt.Robot input — counter clicks, clipboard typeText, clearAndTypeText, Ctrl+S
+// java.awt.Robot input — counter clicks, pasteText, clearAndTypeText, Ctrl+S
 // shortcut — and reports PASS/FAIL per scenario. Mirrors the diagnostic shape so future
 // platform smokes can land alongside.
 tasks.register<JavaExec>("runWindowsRobotSmoke") {

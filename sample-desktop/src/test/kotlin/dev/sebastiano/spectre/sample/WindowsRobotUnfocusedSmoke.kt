@@ -47,10 +47,9 @@ import kotlinx.coroutines.runBlocking
  *    first click is "free" — it counts as both a real interaction *and* a focus handoff. Spectre
  *    automation does NOT need to dispatch a separate activation click before driving an inactive
  *    Compose window.
- * 4. **`typeText` works after the focus-handoff click** — the existing clipboard-paste path
- *    (`clearAndTypeText("post-focus paste")`) lands the exact expected string in the text field.
- *    Once focus has moved, this is the same path as the focused smoke; no Windows- specific quirk
- *    in the unfocused-then-focused transition.
+ * 4. **`typeText` works after the focus-handoff click** — `clearAndTypeText("post-focus paste")`
+ *    lands the exact expected string in the text field. Once focus has moved, this is the same path
+ *    as the focused smoke; no Windows-specific quirk in the unfocused-then-focused transition.
  *
  * Net effect: Spectre callers can safely drive a Compose window that's not currently foreground.
  * Document for users running automation alongside other apps that the FIRST Robot mouse event acts

@@ -310,6 +310,7 @@ class ComposeAutomatorPublicSurfaceTest {
                 "swipe",
                 "scrollWheel",
                 "typeText",
+                "pasteText",
                 "clearAndTypeText",
                 "pressKey",
                 "pressEnter",

@@ -47,10 +47,8 @@ import kotlinx.coroutines.runBlocking
  *    not observed across multiple CI runs). The rig keeps the warmup unconditionally because
  *    removing it asymmetrically across platforms would obscure the Windows justification, and the
  *    cost is one extra click per smoke (~250ms).
- * 3. **Clipboard-paste path works through XWayland.** The `typeText` clipboard-poll budget
- *    (`CLIPBOARD_SETTLE_TIMEOUT_MS = 1_000L`) tuned for macOS NSPasteboard latency was never
- *    approached on X11 — observed settle is essentially synchronous. The path validates with
- *    XWayland transparently bridging clipboard ownership.
+ * 3. **Key-event text entry works through XWayland.** `typeText` sends key events rather than
+ *    touching the clipboard, and XWayland/Xvfb deliver the expected text to the focused field.
  *
  * What this *doesn't* exercise:
  * - Native Wayland input — gated above; not testable without a synthetic compositor that grants the

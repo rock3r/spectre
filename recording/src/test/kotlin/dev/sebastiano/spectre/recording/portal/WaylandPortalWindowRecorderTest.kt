@@ -140,7 +140,9 @@ private class StubRecorderCapture : Recorder {
     fun asWaylandPortalRecorder(): Recorder = this
 }
 
-private class StubTitledWindow(override var title: String?) : TitledWindow
+private class StubTitledWindow(override var title: String?) : TitledWindow {
+    override val bounds: Rectangle = Rectangle(0, 0, 100, 100)
+}
 
 private class NoopHandle(override val output: Path) : RecordingHandle {
     override val isStopped: Boolean = false

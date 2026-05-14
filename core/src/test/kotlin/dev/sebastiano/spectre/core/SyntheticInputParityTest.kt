@@ -4,7 +4,6 @@ import java.awt.AWTEvent
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Dimension
-import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
 import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
@@ -27,7 +26,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
-import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Timeout
 
 /**
@@ -37,8 +35,8 @@ import org.junit.jupiter.api.Timeout
  * from what AWT actually emits, real-world behaviour drifts with it.
  *
  * Test scaffolding rules (per R4 plan guardrails):
- * - `assumeFalse(GraphicsEnvironment.isHeadless())` on every test — synthetic dispatch needs a real
- *   AWT display.
+ * - `assumeLiveAwtAvailable()` on every test — synthetic dispatch needs a real AWT display, and
+ *   macOS AppKit initialisation is opt-in for default unit-test stability.
  * - Frames are constructed and disposed on the EDT.
  * - Event-queue drains use `SwingUtilities.invokeAndWait { }` rather than time-based sleeps.
  * - `@Timeout` backstops every test so a regression doesn't pin the JVM via a non-daemon EDT.
@@ -48,7 +46,7 @@ class SyntheticInputParityTest {
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     fun `mouseWheel emits one MouseWheelEvent per call with scrollAmount 1 and signed wheelRotation`() {
-        assumeFalse(GraphicsEnvironment.isHeadless())
+        assumeLiveAwtAvailable()
         val target = WheelTargetPanel()
         val frame = showFrameOnEdt(target)
         try {
@@ -91,7 +89,7 @@ class SyntheticInputParityTest {
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     fun `double-click sequence reports clickCount=2 on the second pair`() {
-        assumeFalse(GraphicsEnvironment.isHeadless())
+        assumeLiveAwtAvailable()
         val target = MouseTargetPanel()
         val frame = showFrameOnEdt(target)
         try {
@@ -130,7 +128,7 @@ class SyntheticInputParityTest {
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     fun `swipe between distinct points emits no MOUSE_CLICKED`() {
-        assumeFalse(GraphicsEnvironment.isHeadless())
+        assumeLiveAwtAvailable()
         val target = MouseTargetPanel()
         val frame = showFrameOnEdt(target)
         try {
@@ -160,7 +158,7 @@ class SyntheticInputParityTest {
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     fun `modifier mask appears on the held key and does not leak to the next key`() {
-        assumeFalse(GraphicsEnvironment.isHeadless())
+        assumeLiveAwtAvailable()
         val target = JPanel().apply { preferredSize = Dimension(FRAME_SIZE_PX, FRAME_SIZE_PX) }
         val frame = showFrameOnEdt(target)
         // Use a global AWT event listener instead of relying on focus transfer to the JPanel:
@@ -205,8 +203,8 @@ class SyntheticInputParityTest {
 
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
-    fun `typeText through the synthetic driver isolates and restores the fake clipboard`() {
-        assumeFalse(GraphicsEnvironment.isHeadless())
+    fun `pasteText through the synthetic driver isolates and restores the fake clipboard`() {
+        assumeLiveAwtAvailable()
         val target = JPanel().apply { preferredSize = Dimension(FRAME_SIZE_PX, FRAME_SIZE_PX) }
         val frame = showFrameOnEdt(target)
         // See modifier test: a global AWT key listener avoids brittle focus-transfer assumptions
@@ -223,10 +221,10 @@ class SyntheticInputParityTest {
                     clipboard = fakeClipboard,
                     tccGuard = MacOsTccGuard.noop(),
                 )
-            runBlocking { driver.typeText("hello") }
+            runBlocking { driver.pasteText("hello") }
             drainEdt()
 
-            // Clipboard contents restored to the pre-typeText state.
+            // Clipboard contents restored to the pre-pasteText state.
             val restored =
                 fakeClipboard.getContents()?.getTransferData(DataFlavor.stringFlavor) as? String
             assertEquals("existing", restored, "expected clipboard contents to be restored")
@@ -269,7 +267,7 @@ class SyntheticInputParityTest {
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     fun `synthetic screenshot returns the requested dimensions and samples the rendered colour`() {
-        assumeFalse(GraphicsEnvironment.isHeadless())
+        assumeLiveAwtAvailable()
         val target = ColoredPanel(Color.RED)
         val frame = showFrameOnEdt(target)
         try {

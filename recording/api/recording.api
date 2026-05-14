@@ -6,8 +6,10 @@ public final class dev/sebastiano/spectre/recording/AutoRecorder {
 	public static final fun defaultIsWayland ()Z
 	public static final fun defaultIsWindows ()Z
 	public static final fun defaultWindowsWindowRecorder ()Ldev/sebastiano/spectre/recording/screencapturekit/WindowRecorder;
-	public final fun start (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;Ljava/awt/Rectangle;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;J)Ldev/sebastiano/spectre/recording/RecordingHandle;
-	public static synthetic fun start$default (Ldev/sebastiano/spectre/recording/AutoRecorder;Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;Ljava/awt/Rectangle;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;JILjava/lang/Object;)Ldev/sebastiano/spectre/recording/RecordingHandle;
+	public final fun startRegion (Ljava/awt/Rectangle;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;)Ldev/sebastiano/spectre/recording/RecordingHandle;
+	public static synthetic fun startRegion$default (Ldev/sebastiano/spectre/recording/AutoRecorder;Ljava/awt/Rectangle;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;ILjava/lang/Object;)Ldev/sebastiano/spectre/recording/RecordingHandle;
+	public final fun startWindow (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;J)Ldev/sebastiano/spectre/recording/RecordingHandle;
+	public static synthetic fun startWindow$default (Ldev/sebastiano/spectre/recording/AutoRecorder;Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;JILjava/lang/Object;)Ldev/sebastiano/spectre/recording/RecordingHandle;
 }
 
 public final class dev/sebastiano/spectre/recording/FfmpegRecorder : dev/sebastiano/spectre/recording/Recorder {
@@ -140,6 +142,7 @@ public abstract interface class dev/sebastiano/spectre/recording/screencaptureki
 }
 
 public abstract interface class dev/sebastiano/spectre/recording/screencapturekit/TitledWindow {
+	public abstract fun getBounds ()Ljava/awt/Rectangle;
 	public abstract fun getTitle ()Ljava/lang/String;
 	public abstract fun setTitle (Ljava/lang/String;)V
 }

@@ -76,10 +76,10 @@ When in doubt, grep the source. `findOneByContentDescription` doesn't exist;
 
 ### Imports in samples
 
-Show the imports the sample actually needs, including extension-function imports. The
-`RobotDriver.synthetic(...)` and `Frame.asTitledWindow()` paths require explicit
-imports because they're companion/member extensions — leave those imports out and
-the sample doesn't compile.
+Show the imports the sample actually needs, including extension-function imports.
+`Frame.asTitledWindow()` is an extension and requires an explicit import.
+`RobotDriver.synthetic(...)` is a real companion function and needs only the
+`RobotDriver` import.
 
 ### Default arguments and named parameters
 
@@ -109,11 +109,12 @@ corresponding doc page is touched:
   node.
 - **`AutomatorIdlingResource.isIdleNow` and `diagnosticMessage()`.** Not `isIdle()`,
   not `name`. Identity-based register/unregister.
-- **`AutoRecorder` routes Wayland first.** Then `window == null`, then macOS SCK,
-  then Windows title-based, then ffmpeg region as fallback. Wayland never falls
-  through to `x11grab`.
+- **`AutoRecorder` has explicit capture modes.** `startWindow(...)` uses true
+  window-targeted backends and fails loudly if unavailable. `startRegion(...)` uses
+  region capture backends and fails loudly if unavailable. Do not document silent
+  fallback between the two modes.
 - **`TitledWindow` is an interface.** Production adapter is `Frame.asTitledWindow()`.
-  Tests provide minimal `TitledWindow` implementations.
+  Tests provide minimal `TitledWindow` implementations with title and bounds.
 - **`installSpectreRoutes` is engine-agnostic.** The `server` module deliberately
   doesn't bundle Netty/CIO/Jetty — consumers add the engine themselves.
 - **`HttpComposeAutomator.DEFAULT_PORT` is `9274`.** That's the *client* default;
@@ -125,9 +126,10 @@ corresponding doc page is touched:
   clipboard, and screenshot call raises `UnsupportedOperationException` so accidental
   real-I/O calls fail at the call site. `WindowTracker`/`SemanticsReader` are
   untouched, so semantics-tree reads still work.
-- **`typeText` is always clipboard-paste.** It writes the text, dispatches the
-  platform paste shortcut, drains, then restores the previous clipboard contents.
-  No per-key fallback.
+- **`typeText` is key-event typing; `pasteText` is clipboard-paste.** `typeText`
+  supports conservative ASCII key-event input without touching the clipboard. `pasteText`
+  writes the text, dispatches the platform paste shortcut, drains, then restores the
+  previous clipboard contents.
 - **Linux Wayland + `LinuxX11Grab` throws.** It does not silently produce black
   frames. The thrown message points users at `AutoRecorder`/`WaylandPortalRecorder`.
 

@@ -23,7 +23,7 @@ needed:
 
 ```kotlin
 @Test
-fun mySpec() = runBlocking {
+fun mySpec(): Unit = runBlocking {
     launchApp()
     automator.waitForNode(tag = "Root")
     // ...your test body
@@ -34,6 +34,14 @@ If you call any wait helper from the EDT you'll get a clear `IllegalStateExcepti
 rather than a deadlock. The fix in that case is `withContext(Dispatchers.Default)`
 around the offending call — see
 [Troubleshooting](troubleshooting.md#i-called-a-wait-helper-from-the-edt).
+
+## JUnit expression-body return types
+
+When you write Spectre tests as `fun mySpec(): Unit = runBlocking { ... }`, the explicit
+`: Unit` matters. JUnit 5.14 and newer reject `@Test` methods whose JVM return type is
+not `void`, and Kotlin expression-body functions infer their return type from the last
+expression in the body. Some assertion helpers return the asserted value, not `Unit`, so
+omitting `: Unit` can make a test compile but disappear at discovery time.
 
 ## `waitForNode`
 

@@ -8,7 +8,6 @@ import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.InternalSpectreApi
 import dev.sebastiano.spectre.core.RobotDriver
 import dev.sebastiano.spectre.core.WindowTracker
-import dev.sebastiano.spectre.core.synthetic
 import java.awt.GraphicsEnvironment
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -123,9 +122,9 @@ class SampleAppFixture(
 /**
  * `true` when this JVM was booted as a macOS UI element (`apple.awt.UIElement=true`), in which case
  * AppKit suppresses the spawned window's focus-grab / Dock icon but also restricts NSPasteboard
- * access. Tests that rely on the clipboard (currently only `Issue8FidelityValidationTest.typeText`)
- * gate themselves on this so the focus-quiet workflow stays the default while the paste fidelity
- * test still runs when the property is explicitly off.
+ * access. Tests that rely on the clipboard (currently only the paste-text fidelity validation) gate
+ * themselves on this so the focus-quiet workflow stays the default while the paste fidelity test
+ * still runs when the property is explicitly off.
  *
  * We check `apple.awt.UIElement` directly (the actual AWT switch) in addition to the
  * `spectre.sample.fixture.uiElement` mirror flag the validation Gradle tasks set. Either being

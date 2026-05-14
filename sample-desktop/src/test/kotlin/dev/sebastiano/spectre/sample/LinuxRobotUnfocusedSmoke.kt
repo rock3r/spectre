@@ -42,10 +42,9 @@ import kotlinx.coroutines.runBlocking
  *    the same scenario step, on both XWayland and Xvfb. (Reflects the X11 click-to-focus
  *    convention; differs from macOS, where the first click on an inactive app traditionally
  *    activates without delivering — to be verified separately when MacOsRobotUnfocusedSmoke runs.)
- * 4. **typeText-after-focus-click works through XSelection on XWayland.** No clipboard-settle
- *    pressure observed; the existing `CLIPBOARD_SETTLE_TIMEOUT_MS = 1_000L` budget tuned for macOS
- *    NSPasteboard latency is never approached on X11. Both XWayland and Xvfb produce the expected
- *    text after the focus-handoff click.
+ * 4. **typeText-after-focus-click works through XWayland.** `typeText` sends key events rather than
+ *    touching the clipboard. Both XWayland and Xvfb produce the expected text after the
+ *    focus-handoff click.
  *
  * Three Linux session modes validated (mirrors [LinuxRobotSmoke]'s focused-smoke findings):
  * - **XWayland** (Wayland session with `DISPLAY=:0` set): 4/4 PASS through XWayland's X11 bridge.

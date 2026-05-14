@@ -5,22 +5,22 @@ import java.awt.GraphicsEnvironment
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import org.junit.jupiter.api.Assumptions.assumeFalse
+import org.junit.jupiter.api.Assumptions.assumeTrue
 
 /**
  * Light tests for the public [Frame.asTitledWindow] adapter — the surface external callers use to
  * pass a `ComposeWindow` / `JFrame` / any `Frame` subclass into [ScreenCaptureKitRecorder.start].
  *
- * Constructing an AWT [Frame] hits `Window.<init>` which throws [java.awt.HeadlessException] on
- * machines without a display (headless CI). Each test gates on [GraphicsEnvironment.isHeadless] via
- * JUnit 5's [assumeFalse] — locally (where the recorder actually runs) the assertions execute; in
- * headless CI the tests are skipped rather than failing. The recorder itself is gated on macOS at
- * runtime, so headless CI never exercises it either way.
+ * Constructing an AWT [Frame] hits `Window.<init>`, which can throw on headless hosts and can hang
+ * while initialising AppKit on non-interactive macOS workers. Each test gates through
+ * [assumeLiveAwtAvailable] so the default unit suite skips instead of wedging; run with
+ * `-Dspectre.test.liveAwt=true` on macOS to exercise the adapter locally.
  */
 class TitledWindowAdapterTest {
 
     @Test
     fun `adapter reads through to the wrapped frame's title`() {
-        assumeFalse(GraphicsEnvironment.isHeadless(), "AWT Frame requires a graphical environment")
+        assumeLiveAwtAvailable()
 
         val frame = TestFrame(initialTitle = "MyApp")
         val adapter = frame.asTitledWindow()
@@ -30,7 +30,7 @@ class TitledWindowAdapterTest {
 
     @Test
     fun `adapter writes through to the wrapped frame's title`() {
-        assumeFalse(GraphicsEnvironment.isHeadless(), "AWT Frame requires a graphical environment")
+        assumeLiveAwtAvailable()
 
         val frame = TestFrame(initialTitle = "MyApp")
         val adapter = frame.asTitledWindow()
@@ -41,8 +41,18 @@ class TitledWindowAdapterTest {
     }
 
     @Test
+    fun `adapter reads through to the wrapped frame's bounds`() {
+        assumeLiveAwtAvailable()
+
+        val frame = TestFrame(initialTitle = "MyApp").apply { setBounds(10, 20, 300, 200) }
+        val adapter = frame.asTitledWindow()
+
+        assertEquals(frame.bounds, adapter.bounds)
+    }
+
+    @Test
     fun `adapter writes null as empty string mirroring AWT behaviour`() {
-        assumeFalse(GraphicsEnvironment.isHeadless(), "AWT Frame requires a graphical environment")
+        assumeLiveAwtAvailable()
 
         // AWT's Frame.setTitle(null) silently coerces to "" and treats getTitle() as "" thereafter.
         // The adapter preserves that behaviour rather than throwing or no-op'ing, so callers can
@@ -54,6 +64,17 @@ class TitledWindowAdapterTest {
 
         assertEquals("", frame.title)
     }
+}
+
+private fun assumeLiveAwtAvailable() {
+    if (System.getProperty("os.name").orEmpty().lowercase().contains("mac")) {
+        assumeTrue(
+            System.getProperty("spectre.test.liveAwt").toBoolean(),
+            "AWT Frame tests are opt-in on macOS because AppKit initialisation can hang in " +
+                "non-interactive workers",
+        )
+    }
+    assumeFalse(GraphicsEnvironment.isHeadless(), "AWT Frame requires a graphical environment")
 }
 
 /** A subclass of [Frame] that doesn't try to allocate a peer — safe for headless unit tests. */

@@ -67,8 +67,11 @@ val input = automator.findOneByTestTag("MessageInput") ?: error("input missing")
 automator.click(input)
 automator.typeText("Hello, Spectre!")
 
-// click-clear-type in one go (uses clipboard paste under the hood for speed)
+// click-clear-type in one go (uses key events, not the clipboard)
 automator.clearAndTypeText(input, "replacement text")
+
+// clipboard paste for large or Unicode text
+automator.pasteText("こんにちは, Spectre!")
 
 // raw key events
 automator.pressKey(KeyEvent.VK_TAB)
@@ -82,13 +85,14 @@ automator.pressEnter()
 `InputEvent.SHIFT_DOWN_MASK`, …) — not a `KeyEvent` constant. The driver translates the
 mask into the right modifier-key presses around the main `keyCode`.
 
-`typeText` always works through the system clipboard: it stashes the previous clipboard
-contents, writes the requested text, dispatches the platform paste shortcut
-(<kbd>Cmd</kbd>+<kbd>V</kbd> on macOS, <kbd>Ctrl</kbd>+<kbd>V</kbd> elsewhere), waits for
-the paste handler to drain, then restores the previous clipboard contents. It does not
-fall back to per-key dispatch, so `typeText` works for any text the system clipboard can
-carry — non-ASCII included. See [Troubleshooting](troubleshooting.md) for the
-platform-specific quirks.
+`typeText` dispatches key press/release pairs and does not touch the clipboard. It is
+intentionally conservative: ASCII letters, digits, space, newline, and common
+US-keyboard punctuation. Use `pasteText` for large strings or arbitrary Unicode; it
+stashes the previous clipboard contents, writes the requested text, dispatches the
+platform paste shortcut (<kbd>Cmd</kbd>+<kbd>V</kbd> on macOS,
+<kbd>Ctrl</kbd>+<kbd>V</kbd> elsewhere), waits for the paste handler to drain, then
+restores the previous clipboard contents. See [Troubleshooting](troubleshooting.md) for
+macOS clipboard and `apple.awt.UIElement=true` caveats.
 
 ## Screenshots
 
@@ -165,8 +169,7 @@ public surface:
   `GraphicsDevice`).
 - **`RobotDriver.synthetic(rootWindow)`** — synthetic AWT events posted straight into the
   target window's event queue. No real cursor motion, no global focus, doesn't fight with
-  other processes. `synthetic` is a companion extension function in the
-  `dev.sebastiano.spectre.core` package, so it needs an explicit import.
+  other processes.
   `screenshot()` under a synthetic driver also bypasses the OS framebuffer — it renders
   the target window via `Component.paint(Graphics)` into a `BufferedImage` instead of
   calling `Robot.createScreenCapture`. Results are consistent for regression tests, but
@@ -185,8 +188,6 @@ Pass a non-default driver via the `inProcess` factory:
 ```kotlin
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.RobotDriver
-import dev.sebastiano.spectre.core.synthetic
-
 val automator = ComposeAutomator.inProcess(
     robotDriver = RobotDriver.synthetic(rootWindow = composeWindow),
 )

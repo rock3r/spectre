@@ -31,12 +31,9 @@ import javax.swing.SwingUtilities
  * ([Window.getOwnedWindows]) on every dispatch, so popups and secondary windows added after
  * construction work without re-creating the driver.
  *
- * Clipboard access is left as the system clipboard — paste-based [RobotDriver.typeText] still works
- * with synthetic Cmd/Ctrl+V keystrokes.
+ * Clipboard access is left as the system clipboard — paste-based [RobotDriver.pasteText] still
+ * works with synthetic Cmd/Ctrl+V keystrokes.
  */
-public fun RobotDriver.Companion.synthetic(rootWindow: Window): RobotDriver =
-    RobotDriver(SyntheticRobotAdapter(rootWindow), SystemClipboardAdapter())
-
 internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdapter {
 
     // Synthetic events have no OS-level inter-event delay; we always dispatch immediately.

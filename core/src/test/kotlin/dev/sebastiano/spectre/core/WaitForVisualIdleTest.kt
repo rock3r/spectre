@@ -141,6 +141,7 @@ class WaitForVisualIdleTest {
 
     @Test
     fun `waitForVisualIdle rejects EDT callers with a curated error`() {
+        assumeLiveAwtAvailable()
         val automator = ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())
         val errorRef = java.util.concurrent.atomic.AtomicReference<Throwable?>()
         javax.swing.SwingUtilities.invokeAndWait {

@@ -9,21 +9,35 @@ import java.awt.Container
 import java.awt.Window
 
 @InternalSpectreApi
-public class WindowTracker {
+public class WindowTracker
+internal constructor(
+    private val allWindows: () -> Array<Window>,
+    private val requiresEdt: Boolean,
+) {
+
+    public constructor() : this(Window::getWindows, requiresEdt = true)
 
     @Volatile private var _trackedWindows: List<TrackedWindow> = emptyList()
 
     public val trackedWindows: List<TrackedWindow>
         get() = _trackedWindows
 
-    public fun refresh(): Unit = readOnEdt {
+    public fun refresh() {
+        if (requiresEdt) {
+            readOnEdt { refreshOnCurrentThread() }
+        } else {
+            refreshOnCurrentThread()
+        }
+    }
+
+    private fun refreshOnCurrentThread() {
         val pending = mutableListOf<TrackedWindow>()
         // Iterate every top-level window (`owner == null`) regardless of visibility — Swing's
         // `SharedOwnerFrame` is a hidden parent for `JDialog(null as Frame?, ...)`, so filtering
         // by `isShowing` here would drop the dialog along with it. Visibility is enforced per
         // candidate further down (a hidden parent only contributes through its visible
         // descendants).
-        val topLevelWindows = Window.getWindows().filter { it.owner == null }
+        val topLevelWindows = allWindows().filter { it.owner == null }
         for (window in topLevelWindows) {
             when {
                 window is ComposeWindow && window.isShowing -> trackComposeWindow(pending, window)
@@ -126,6 +140,10 @@ public class WindowTracker {
                 isPopup = true,
                 overlaySemanticsOwners = layer.semanticsOwnersAccessor,
             )
+    }
+
+    internal companion object {
+        fun empty(): WindowTracker = WindowTracker({ emptyArray() }, requiresEdt = false)
     }
 }
 

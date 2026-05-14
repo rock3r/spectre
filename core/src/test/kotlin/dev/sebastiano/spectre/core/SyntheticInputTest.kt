@@ -2,7 +2,6 @@ package dev.sebastiano.spectre.core
 
 import java.awt.BorderLayout
 import java.awt.Dimension
-import java.awt.GraphicsEnvironment
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.util.concurrent.CountDownLatch
@@ -12,7 +11,6 @@ import javax.swing.JPanel
 import javax.swing.SwingUtilities
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
-import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 
@@ -45,7 +43,7 @@ class SyntheticInputTest {
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     fun `click from EDT does not deadlock with synthetic adapter`() {
-        assumeFalse(GraphicsEnvironment.isHeadless())
+        assumeLiveAwtAvailable()
 
         val frame = createTestFrame()
         try {

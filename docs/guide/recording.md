@@ -66,9 +66,8 @@ import java.awt.Rectangle
 import java.nio.file.Path
 
 val recorder = AutoRecorder()
-val handle = recorder.start(
+val handle = recorder.startWindow(
     window = composeWindow.asTitledWindow(), // any java.awt.Frame works
-    region = Rectangle(100, 100, 800, 600),
     output = Path.of("build/recordings/my-test.mp4"),
     options = RecordingOptions(),
 )
@@ -82,6 +81,21 @@ try {
 
 `TitledWindow` is an interface. The production adapter is the `Frame.asTitledWindow()`
 extension shown above; tests typically wire a small in-memory implementation.
+
+Use `startRegion(...)` when you want an explicit screen rectangle instead of a
+window-targeted source:
+
+```kotlin
+val handle = recorder.startRegion(
+    region = Rectangle(100, 100, 800, 600),
+    output = Path.of("build/recordings/my-test.mp4"),
+    options = RecordingOptions(),
+)
+```
+
+The two paths do not silently fall back to each other. If `startWindow(...)` cannot use
+a true window-targeted backend on the current platform, it throws with remediation
+guidance; call `startRegion(...)` explicitly if region capture semantics are acceptable.
 
 The routing is platform-keyed. Read the row that matches your OS:
 
@@ -127,8 +141,7 @@ A few details worth knowing:
   package on minimal images. If `xprop` isn't available or the window's WM doesn't
   publish `_GTK_FRAME_EXTENTS` (older Mutter, non-GTK CSD, KDE / sway with server-side
   decorations), the recorder throws `IllegalStateException` rather than producing a
-  misaligned mp4. Fall back to `WaylandPortalRecorder` (region capture) — pass
-  `window = null` and the router selects it automatically. See
+  misaligned mp4. Use explicit region capture instead by calling `startRegion(...)`. See
   [Recording limitations](../RECORDING-LIMITATIONS.md#platform) for more.
 
 ## Lower-level backends
@@ -192,7 +205,7 @@ pitfalls, audio support) see [Recording limitations](../RECORDING-LIMITATIONS.md
 test fails before reaching the stop call, wrap the recording in `try`/`finally`:
 
 ```kotlin
-val handle = recorder.start(/* ... */)
+val handle = recorder.startWindow(/* ... */)
 try {
     // test body
 } finally {
