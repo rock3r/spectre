@@ -1,9 +1,8 @@
-// VerifyBundledRecordingHelpers.
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
-import java.nio.ByteOrder // Used by the Mach-O fat-header JVM-side parser in
+import java.nio.ByteOrder
 import javax.inject.Inject
 import org.gradle.api.GradleException
 import org.gradle.internal.os.OperatingSystem
