@@ -78,16 +78,22 @@ dispatches the platform paste shortcut (<kbd>Cmd</kbd>+<kbd>V</kbd> on macOS,
 <kbd>Ctrl</kbd>+<kbd>V</kbd> elsewhere), waits for the paste to land, and restores the
 previous clipboard contents. A few failure modes follow from those contracts:
 
-- **Nothing has focus.** `typeText` types into whatever the focused component is. If
-  your test never clicked into the field — or the click landed on something else,
-  e.g. a parent that absorbed it — the paste either no-ops or lands in the wrong
-  place. Use `clearAndTypeText(node, …)` (which clicks first) or precede the call
-  with an explicit `automator.click(field)`.
+- **Nothing has focus.** `typeText` types into whatever the focused component is. With
+  the real `RobotDriver()` that means the OS/AWT focus owner. With
+  `RobotDriver.synthetic(rootWindow)`, Spectre can also route key events through the
+  key-listening Compose Desktop host when AWT has no focus owner (for example,
+  `apple.awt.UIElement=true` helper JVMs), but Compose still needs an internally
+  focused text field. If your test never clicked into the field — or the click landed
+  on something else, e.g., a parent that absorbed it — the input either no-ops or lands
+  in the wrong place. Use `clearAndTypeText(node, …)` (which clicks first) or precede
+  the call with an explicit `automator.click(field)`.
 - **The field doesn't accept paste.** Some Compose components (and any read-only
   text field) ignore the system paste shortcut. Verify the field accepts pasted
   input outside the test before assuming Spectre is at fault.
-- **macOS `apple.awt.UIElement=true`.** UI-element/helper mode can break clipboard
-  paste even when you use `RobotDriver.synthetic(rootWindow = ...)`: the field may be
+- **macOS `apple.awt.UIElement=true`.** UI-element/helper mode is supported for
+  `RobotDriver.synthetic(rootWindow = ...)` per-character `typeText`: Spectre bypasses
+  the missing AWT focus owner and targets the key-listening Compose host under the
+  root window. It can still break clipboard-backed `pasteText`: the field may be
   focused and the paste shortcut may be delivered, but Compose reads stale or empty
   clipboard contents. Disable `apple.awt.UIElement=true` for the JVM hosting the test
   window when you need `pasteText`, or use `typeText` for supported ASCII input.

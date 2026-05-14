@@ -80,8 +80,13 @@ on the host OS. Three variants:
 - **`RobotDriver.synthetic(rootWindow = someTopLevelWindow)`** — dispatches
   AWT events directly into the given `java.awt.Window` hierarchy. No global
   focus contention, so safe for **parallel test JVMs** and for IDE-hosted
-  Compose where stealing the IDE focus would be hostile. Does **not** see OS
-  shortcuts (Cmd+Tab, system menus).
+  Compose where stealing the IDE focus would be hostile. For key events,
+  Spectre uses the current AWT focus owner when available and otherwise falls
+  back to the key-listening AWT descendant under the last pointer target or
+  Compose host; this is what makes Compose Desktop `TextField` typing work in
+  macOS helper JVMs launched with `apple.awt.UIElement=true`, where AWT never
+  grants a `Window.focusOwner`. Does **not** see OS shortcuts (Cmd+Tab, system
+  menus).
 - **`RobotDriver.headless()`** — refuses to send any input. For tests that
   only read the semantics tree (e.g. asserting a screen layout) without
   driving it.
@@ -146,7 +151,9 @@ All `suspend` on `ComposeAutomator`:
 - `pasteText("hello")` — pastes via the system clipboard. On macOS the clipboard
   write is async; Spectre polls until the clipboard reads back the requested text.
   Disable clipboard managers in CI, and do not use `apple.awt.UIElement=true` for
-  JVMs that need clipboard-backed paste.
+  JVMs that need clipboard-backed paste. `typeText` is the preferred UIElement-safe
+  path for supported ASCII because it uses per-character key events and does not
+  touch the clipboard.
 - `clearAndTypeText(node, "new")` — Ctrl/Cmd+A, Backspace, then `typeText`.
 - `pressKey(KeyEvent.VK_ENTER, modifiers = 0)`, `pressEnter()`.
 - `performSemanticsClick(node)` — bypasses the OS entirely and invokes
@@ -266,6 +273,7 @@ touches that area*; they are not needed for the common case.
 | Two parallel test JVMs steal focus from each other | Both use real `RobotDriver()` | Use `RobotDriver.synthetic(rootWindow)` |
 | Cmd+Tab or OS shortcuts don't work under synthetic driver | Synthetic events bypass HID | Use real `RobotDriver()` for those tests |
 | Screenshot is blurry / mid-animation | Captured before frame stabilised | `waitForVisualIdle()` first |
+| `typeText` silently does not land on macOS with `apple.awt.UIElement=true` | Usually stale Spectre or wrong `rootWindow`; current synthetic input should target the Compose key-listening host even without AWT focus | Verify the test uses a Spectre build with the UIElement synthetic-key fallback, click/focus the field first, and pass the top-level host window to `RobotDriver.synthetic(rootWindow)` |
 | `pasteText` silently does not land on macOS with `apple.awt.UIElement=true` | UI-element/helper mode breaks clipboard-backed paste, even with synthetic input | Disable `apple.awt.UIElement=true` for the JVM hosting the test window, or use `typeText` for supported ASCII |
 | `pasteText` times out on macOS in CI | Clipboard manager rewriting `NSPasteboard` | Disable clipboard utilities in CI |
 | Recording misses popups that escape the host window | Popups live in their own AWT window outside both the region rectangle *and* a window-targeted capture | Choose an explicit region (or full-desktop crop) wide enough to include where the popup opens, or document the limitation — neither region nor window targeting follows cross-window popups |
