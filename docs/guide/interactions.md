@@ -168,8 +168,14 @@ public surface:
   `java.awt.Robot` you've already constructed (e.g., one targeted at a non-default
   `GraphicsDevice`).
 - **`RobotDriver.synthetic(rootWindow)`** — synthetic AWT events posted straight into the
-  target window's event queue. No real cursor motion, no global focus, doesn't fight with
-  other processes.
+  target window's AWT hierarchy. No real cursor motion, no global focus, doesn't fight
+  with other processes. Mouse and wheel events hit-test against `rootWindow`, its owned
+  windows, and other visible top-level windows. Key events go to the current AWT focus
+  owner when one exists; when AWT has no focus owner (for example, a macOS helper JVM
+  launched with `apple.awt.UIElement=true`), Spectre falls back to the key-listening AWT
+  descendant under the last pointer target or Compose host. That lets Compose Desktop's
+  internal focus model route `typeText` into focused `TextField`s even when the host
+  window is not the OS-foreground app.
   `screenshot()` under a synthetic driver also bypasses the OS framebuffer — it renders
   the target window via `Component.paint(Graphics)` into a `BufferedImage` instead of
   calling `Robot.createScreenCapture`. Results are consistent for regression tests, but
@@ -193,7 +199,10 @@ val automator = ComposeAutomator.inProcess(
 )
 ```
 
-Synthetic input is the right choice when you're running tests in parallel JVMs, or when
-the test machine also runs unrelated UI work. Stick to real input for end-to-end smokes
+Synthetic input is the right choice when you're running tests in parallel JVMs, when the
+test machine also runs unrelated UI work, or when a macOS test helper runs with
+`apple.awt.UIElement=true` to avoid a Dock icon. Stick to real input for end-to-end smokes
 where the realism of the input matters (e.g., validating that a system shortcut reaches
-the app).
+the app). `apple.awt.UIElement=true` is **not** a blanket substitute for a foreground app:
+clipboard-backed `pasteText` and OS capture/recording still depend on macOS services
+outside Spectre's synthetic key path.

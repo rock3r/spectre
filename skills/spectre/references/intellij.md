@@ -10,7 +10,10 @@ ways.
 The real `RobotDriver()` would steal focus from the IDE and could
 mis-target windows when the developer alt-tabs away. Use
 `RobotDriver.synthetic(rootWindow = ideFrame)` so AWT events are dispatched
-directly into the IDE's window hierarchy:
+directly into the IDE's window hierarchy. On macOS this also works when the
+helper/test JVM is launched with `apple.awt.UIElement=true`: AWT may never
+report a `Window.focusOwner`, but Spectre targets the key-listening Compose
+host under `ideFrame` so focused `TextField`s still receive `typeText`.
 
 ```kotlin
 import com.intellij.openapi.application.ApplicationManager

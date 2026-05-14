@@ -37,6 +37,18 @@ Always consider all of these when investigating popup semantics, hit-testing, or
 2. Swing-hosted `ComposePanel` layers
 3. real owned windows such as `JDialog` / `JBPopup`
 
+## Synthetic Key Dispatch Guidance
+
+- Compose Desktop key listeners usually live on the inner Skiko canvas (`SkiaLayer` /
+  `SkiaSwingLayer`), not on the outer `ComposePanel` / `ComposeWindowPanel` wrapper.
+- When debugging synthetic typing in Jewel or Swing-hosted Compose, do not assume
+  `Window.focusOwner` is available. macOS `apple.awt.UIElement=true` helper JVMs can
+  keep every AWT window unfocused while Compose's internal focus model still has a
+  focused `TextField`.
+- Spectre's synthetic driver should therefore target the key-listening descendant under
+  the pointer target or Compose host and use `KeyboardFocusManager.redispatchEvent`, not
+  plain `Component.dispatchEvent`, for key events generated outside the OS keyboard path.
+
 ## Coordinate And Interop Guidance
 
 - Be careful when moving between Compose coordinates and AWT screen coordinates.

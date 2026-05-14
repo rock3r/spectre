@@ -187,6 +187,11 @@ run again". See
 [Troubleshooting](troubleshooting.md#macos-recording-errors-out-or-produces-no-file)
 for failure modes when permission is missing or attached to the wrong binary.
 
+`apple.awt.UIElement=true` helper/test JVMs are useful with `RobotDriver.synthetic(...)`
+for focus-safe typing, but recording still goes through macOS capture services and
+spawned helper processes. Prefer a normal foreground-capable parent process for
+recording tests, especially while establishing Screen Recording TCC grants.
+
 ### Other platforms
 
 - **Windows** — `ffmpeg` on `PATH`. `gdigrab` ships with `ffmpeg`.

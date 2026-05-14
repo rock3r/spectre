@@ -130,6 +130,11 @@ corresponding doc page is touched:
   supports conservative ASCII key-event input without touching the clipboard. `pasteText`
   writes the text, dispatches the platform paste shortcut, drains, then restores the
   previous clipboard contents.
+- **Synthetic typing and macOS UIElement mode.** Current `RobotDriver.synthetic(rootWindow)`
+  routes key events to Compose Desktop's key-listening AWT host when AWT has no
+  `Window.focusOwner`, so `typeText` works in `apple.awt.UIElement=true` helper JVMs.
+  Keep documenting `pasteText` and OS recording as separate macOS-service paths that
+  UIElement mode can still break.
 - **Linux Wayland + `LinuxX11Grab` throws.** It does not silently produce black
   frames. The thrown message points users at `AutoRecorder`/`WaylandPortalRecorder`.
 
