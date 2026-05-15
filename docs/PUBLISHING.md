@@ -10,25 +10,31 @@ the plugin — they're deliverables, not libraries.
 ## Tag-driven release flow
 
 The pipeline is owned by [`.github/workflows/release.yml`][release-yml] and
-triggers on tags matching `v*` (e.g. `v0.2.0`). The leading `v` is stripped to
-form the published version, so `v0.2.0` publishes coordinates
+triggers on tags matching `v*`, but the first job rejects anything that is not a
+SemVer-shaped release tag: `v<major>.<minor>.<patch>` with optional SemVer
+pre-release/build metadata (for example `v0.2.0` or `v0.2.0-rc.1`). The leading
+`v` is stripped to form the published version, so `v0.2.0` publishes coordinates
 `dev.sebastiano.spectre:spectre-core:0.2.0` (and equivalent for the other three
 modules).
 
 [release-yml]: https://github.com/rock3r/spectre/blob/main/.github/workflows/release.yml
 
-Three jobs run on tag push:
+Four jobs run on tag push:
 
-1. **`mac-helper`** (macOS runner) — builds the arm64+x86_64 universal
+1. **`release-gate`** (Linux runner) — validates the tag shape, runs
+   `./gradlew check`, installs the docs dependencies, and runs
+   `mkdocs build --strict`. Nothing else starts until this gate passes.
+2. **`mac-helper`** (macOS runner, depends on `release-gate`) — builds the
+   arm64+x86_64 universal
    `SpectreScreenCapture` Swift helper, codesigns it with the Developer ID, runs
    `notarytool submit --wait`, and uploads the notarised binary as a GitHub
    Actions artefact.
-2. **`linux-helpers`** (Linux runner) — cross-builds the
+3. **`linux-helpers`** (Linux runner, depends on `release-gate`) — cross-builds the
    `spectre-wayland-helper` Rust binary for `x86_64` and `aarch64` (same
    toolchain dance documented in [`ci.yml`][ci-yml]: dpkg multi-arch +
    per-arch libdbus sysroot + cross-linker). Uploads the per-arch binaries as a
    GitHub Actions artefact.
-3. **`publish`** (Linux runner, depends on both) — downloads the helper
+4. **`publish`** (Linux runner, depends on the gate and both helper jobs) — downloads the helper
    artefacts, runs `:verifyMavenLocalPublication` to assert the publication
    shape, then runs `publishToMavenCentral` against the
    [Sonatype Central Portal][central-portal]. Finally creates a draft GitHub
@@ -39,9 +45,21 @@ Three jobs run on tag push:
 
 Both the Central Portal deployment and the GitHub release stay in **manual-
 promotion** mode (`automaticRelease=false` in `build.gradle.kts`, `--draft` on
-`gh release create`) until the first few tagged releases prove the pipeline.
-Promote from the Central Portal UI and via `gh release edit --draft=false` once
-you've sanity-checked the artefacts side-by-side.
+`gh release create`) until the first few tagged releases prove the pipeline. Do
+not promote either surface until the release workflow is green and you've
+sanity-checked the artefacts side-by-side.
+
+Manual promotion checklist:
+
+- Confirm the tag points at the intended, already-reviewed `main` SHA.
+- Inspect the Central Portal staging deployment for all four modules, including
+  POM metadata, sources jars, javadoc jars, and Gradle module metadata.
+- Download the draft GitHub release's `spectre-recording-<version>.jar` and
+  confirm it contains `native/macos/spectre-screencapture`,
+  `native/linux/x86_64/spectre-wayland-helper`, and
+  `native/linux/aarch64/spectre-wayland-helper`.
+- Promote the Central staging deployment from the Central Portal UI.
+- Undraft the GitHub release with `gh release edit <tag> --draft=false`.
 
 ## Required secrets
 
