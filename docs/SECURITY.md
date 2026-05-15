@@ -114,8 +114,8 @@ expansion); items that are hygiene fixes get their own issues.
 The `SPECTRE_WAYLAND_HELPER` environment variable lets a developer point the recorder at a
 locally-built helper binary without rebundling. It is **honored unconditionally** — there is
 no signature check, hash check, or path constraint. Never set it in an environment that
-ingests untrusted input. The bundled helper is the only supported configuration for non-dev
-use.
+ingests untrusted input. The published platform helper artifacts are the only supported
+configuration for non-dev use.
 
 ## Out of scope for this review
 

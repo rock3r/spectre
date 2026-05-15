@@ -23,7 +23,8 @@ Gradle then:
 3. Submits the archive with `xcrun notarytool submit`.
 4. Waits for Apple to finish processing, bounded by a 30 minute timeout.
 5. Verifies the resulting Developer ID signature with `codesign --verify --strict --verbose=4`
-   before staging it into `native/macos/spectre-screencapture` in the jar resources.
+   before staging it into `native/macos/spectre-screencapture` in the
+   `spectre-recording-macos` jar resources.
 
 Apple's notary service can issue a ticket for a standalone binary inside the submitted archive,
 but `xcrun stapler` cannot currently staple tickets directly to bare command-line executables,
@@ -94,8 +95,8 @@ xcrun notarytool info <submission-id> --keychain-profile <notary-profile>
 The tag workflow at
 [`.github/workflows/release.yml`](https://github.com/rock3r/spectre/blob/main/.github/workflows/release.yml)
 builds the universal helper on `macos-latest`, imports the Developer ID certificate into a
-temporary keychain, signs and notarizes the helper, and uploads the recording jar to the GitHub
-release.
+temporary keychain, signs and notarizes the helper, and uploads the recording jars to the
+GitHub release.
 
 Set these repository secrets:
 

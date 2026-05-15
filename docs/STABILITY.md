@@ -125,7 +125,7 @@ Spectre is JVM-first and targets desktop OSes.
 
 | Platform | Tier | Notes |
 | --- | --- | --- |
-| **macOS** | Primary | Full support. AWT Robot input, ScreenCaptureKit recording (with bundled Swift helper), TCC permission diagnostics. |
+| **macOS** | Primary | Full support. AWT Robot input, ScreenCaptureKit recording (with `spectre-recording-macos` helper), TCC permission diagnostics. |
 | **Windows** | Full | AWT Robot input + `gdigrab` region and window-targeted recording. |
 | **Linux Xorg** | Full | AWT Robot input + `x11grab` region recording. Validated against Xvfb in CI. |
 | **Linux Wayland** | Best-effort | Portal-mediated capture via `WaylandPortalRecorder` / `WaylandPortalWindowRecorder`. **Validated on GNOME/Mutter only**; KDE / sway / wlroots compositors may behave differently and are not exercised in CI. Real Robot input is unavailable on Wayland — use the synthetic adapter for tests. |

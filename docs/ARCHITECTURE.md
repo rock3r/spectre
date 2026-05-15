@@ -6,7 +6,9 @@
 spectre
 ├── core/                    — shared automation model and desktop automation primitives
 ├── server/                  — optional transport layer for cross-JVM access
-├── recording/               — screenshot / recording integrations and native capture boundaries
+├── recording/               — screenshot / recording API and common JVM implementation
+├── recording-macos/         — runtime-only macOS ScreenCaptureKit helper artifact
+├── recording-linux/         — runtime-only Linux Wayland helper artifact
 ├── testing/                 — test fixtures and JUnit-facing helpers built on top of public APIs
 ├── sample-desktop/          — small manual-test harness app for spike validation
 └── sample-intellij-plugin/  — sample IntelliJ plugin embedding Spectre in a Jewel tool window
@@ -20,7 +22,9 @@ sample-intellij-plugin   ├──> core
 server                   │
 testing                 ─┘
 
-recording                (isolated desktop/native integration module)
+recording                (isolated desktop/native integration API)
+recording-macos    ─┐
+recording-linux     ┴──> recording (runtime helper artifacts)
 ```
 
 Guidelines:
@@ -31,7 +35,7 @@ Guidelines:
 - `testing` should exercise public seams and reusable fixtures, not reach through private internals
   without a strong reason.
 - `recording` should isolate OS- and native-library-specific behaviour from the core query/input
-  APIs.
+  APIs. Runtime helper binaries live in platform helper artifacts, not the API jar.
 
 ## Spike Constraints
 
@@ -78,10 +82,22 @@ Keep server concerns out of the core data model unless they are genuinely transp
 Expected long-term responsibilities:
 
 - screen/region capture orchestration
-- macOS-specific window capture helpers
+- platform recorder selection and helper extraction
 - recorder lifecycle and output plumbing
 
 Keep native capture boundaries narrow and test the pure pieces separately from OS integration.
+The published `spectre-recording` jar is API/common-only; it must not contain generated
+`native/...` helper resources.
+
+### `recording-macos` and `recording-linux`
+
+Expected long-term responsibilities:
+
+- publish runtime-only helper resources for the recording API
+- keep native binary payloads out of `spectre-recording` and its sources jar
+- mirror the runtime resource paths the extractors probe:
+  `native/macos/spectre-screencapture` and
+  `native/linux/<arch>/spectre-wayland-helper`
 
 Current backends:
 
@@ -92,13 +108,13 @@ Current backends:
 - `FfmpegWindowRecorder` — Windows-only window-targeted capture via `gdigrab title=`.
   Window movement is followed automatically; occlusion doesn't matter.
 - `screencapturekit.ScreenCaptureKitRecorder` — macOS-only window-targeted capture via a
-  bundled Swift helper (`recording/native/macos/`). The helper is built by Gradle on
-  macOS, staged under `recording/build/generated/screenCaptureHelper/...`, and wired
-  into the module's generated resources so the JAR carries it.
+  Swift helper (`recording/native/macos/`). The helper is built by Gradle on macOS,
+  staged under `recording/build/generated/screenCaptureHelper/...`, and packaged by
+  `:recording-macos`.
 - `portal.WaylandPortalRecorder` — Linux Wayland capture via `xdg-desktop-portal`'s
-  ScreenCast interface, driven by a bundled Rust helper
-  (`recording/native/linux/spectre-wayland-helper`) that hands the PipeWire FD to
-  `gst-launch-1.0`.
+  ScreenCast interface, driven by a Rust helper
+  (`recording/native/linux/spectre-wayland-helper`) packaged by `:recording-linux`.
+  The helper hands the PipeWire FD to `gst-launch-1.0`.
 - `AutoRecorder` — high-level router that picks per call from `TitledWindow?` + region +
   OS detection: Wayland portal first, then `window == null` → ffmpeg region, then macOS
   SCK, then Windows title-based capture, then ffmpeg region as fallback.

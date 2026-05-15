@@ -284,26 +284,30 @@ needs is missing.
 
 ### Verifying bundled helpers
 
-`./gradlew :recording:check` runs `verifyBundledRecordingHelpers`, which inspects the
-recording jar's staged resources and asserts the helpers that *should* be there given
-the current host + project-property combination actually are, and that each one matches
-its expected arch (lipo for the macOS helper, JVM-side ELF header parse for the Linux
-helper). The task is verification-only — it never triggers a universal or cross-arch
-build that wasn't already requested.
+`./gradlew :recording-macos:check` and `./gradlew :recording-linux:check` verify the
+platform helper jars, not the API-only `:recording` jar. Each helper module packages the
+generated resources staged by `:recording`'s native build tasks:
+
+- `:recording-macos` expects `native/macos/spectre-screencapture` when a mac helper can
+  be produced or provided.
+- `:recording-linux` expects `native/linux/<arch>/spectre-wayland-helper` on Linux.
 
 When `-PallLinuxArches` is set the task expects both `x86_64` and `aarch64` Wayland
 helpers. CI invokes it as
 
-    ./gradlew :recording:assembleWaylandHelperAllArches :recording:verifyBundledRecordingHelpers -PallLinuxArches
+    ./gradlew :recording-linux:verifyRecordingLinuxHelpers -PallLinuxArches
 
 to lock in both-arch coverage explicitly.
 
 ### Release packaging
 
-The tag-driven release workflow builds the recording JAR on macOS with
-`-PuniversalHelper -PnotarizeScreenCaptureKitHelper`, so
-`native/macos/spectre-screencapture` carries a signed and notarized universal binary. It
-then uploads that JAR to the GitHub release for the pushed tag.
+The tag-driven release workflow builds and notarizes the macOS helper on a macOS runner,
+builds both Linux helper architectures on a Linux runner, then publishes three recording
+artifacts:
+
+- `spectre-recording` — API/common JVM implementation only.
+- `spectre-recording-macos` — signed and notarized universal ScreenCaptureKit helper.
+- `spectre-recording-linux` — x86_64 and aarch64 Wayland helpers.
 
 Local builds still produce a host-shaped subset of helpers unless you opt into the
 distribution-oriented flags above.
