@@ -99,6 +99,14 @@ jobs:
           version="$(bash .github/scripts/derive-release-version.sh "$GITHUB_REF_NAME")"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Install libdbus + pkg-config (for spectre-wayland-helper Rust build)
+        # `./gradlew check` builds the Linux Wayland helper on Linux runners. Keep the
+        # release gate aligned with CI so it can exercise the same graph before any
+        # helper build or publish job starts.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+
       - name: Run CI gate
         run: ./gradlew check
 
