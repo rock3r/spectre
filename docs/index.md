@@ -19,11 +19,11 @@ hierarchy, and records what happens on screen — against IDE-hosted Compose sur
 If you've used UI Automator on Android or Espresso for that matter, the shape will feel
 familiar — Spectre brings the same "find a node, do a thing, assert" loop to Compose Desktop.
 
-!!! warning "Pre-release"
-    Spectre is in bootstrap. There are no published Maven artifacts yet, the public API is
-    still settling, and parts of the codebase are explicitly flagged as not yet hand-audited
-    in the [README](https://github.com/rock3r/spectre#readme). Treat anything here as a
-    moving target until a tagged release lands.
+!!! warning "Pre-1.0"
+    Spectre is pre-1.0. Stable APIs are covered by the project's compatibility policy;
+    experimental APIs, especially the HTTP transport, may change between releases. See
+    [Stability policy](STABILITY.md) and [Security notes](SECURITY.md) before depending on
+    cross-JVM control or recording in environments that handle untrusted input.
 
 ## Why Spectre
 

@@ -11,11 +11,10 @@ useful when tests run in parallel and can't fight over OS focus) — and records
 against IDE-hosted Compose surfaces (IntelliJ, Jewel) and standalone desktop apps alike.
 
 > [!IMPORTANT]
-> **Heads up: this repo is currently a lot of vibe slop.** Large parts were written with
-> heavy AI pair-programming and haven't yet had a proper human review pass end-to-end.
-> I'll be going through it manually to read, audit, and tighten things up. Until then,
-> treat design and implementation choices as "looks plausible, not yet hand-audited" and
-> expect follow-up commits to rework bits once I've actually read them.
+> Spectre is pre-1.0. Stable APIs are covered by the compatibility policy in
+> [`docs/STABILITY.md`](docs/STABILITY.md); experimental APIs, especially the HTTP transport,
+> may change between releases. Read [`docs/SECURITY.md`](docs/SECURITY.md) before enabling
+> cross-JVM control or recording in environments that handle untrusted input.
 
 macOS, Windows, Linux Xorg, and Linux Wayland. The Wayland path goes through a small
 out-of-process Rust helper (`recording/native/linux/`) that owns the xdg-desktop-portal
@@ -34,6 +33,10 @@ architecture as the macOS Swift helper.
 ## Documentation
 
 User guide and API documentation: **<https://spectre.sebastiano.dev>**.
+
+Install released versions from Maven Central, or consume the current checkout as a
+Gradle composite build while working ahead of a release:
+[Installation](https://spectre.sebastiano.dev/guide/installation/).
 
 Start at [Getting started](https://spectre.sebastiano.dev/guide/getting-started/) for the
 shape of a Spectre test, or [The automator](https://spectre.sebastiano.dev/guide/automator/)
