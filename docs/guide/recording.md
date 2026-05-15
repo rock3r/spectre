@@ -6,8 +6,10 @@ right one per call.
 
 !!! note "External dependencies"
     The recording backends shell out to platform tools — `ffmpeg` everywhere, plus a
-    bundled Swift helper on macOS and a small Rust helper on Linux Wayland. See
-    [Recording limitations](../RECORDING-LIMITATIONS.md) for the per-platform notes.
+    Swift helper on macOS and a small Rust helper on Linux Wayland. Add
+    `spectre-recording-macos` and/or `spectre-recording-linux` as runtime-only
+    dependencies for those helpers. See [Recording limitations](../RECORDING-LIMITATIONS.md)
+    for the per-platform notes.
 
 ## The `Recorder` interface
 
@@ -36,9 +38,9 @@ view for when you want to know what each backend can and cannot do.
 | --- | --- | --- | --- | --- | --- |
 | `FfmpegRecorder` | Screen region (fixed `Rectangle`) | No — region fixed at `start()` | Yes — anything visible inside the region lands in the frame, including occluding apps and overlapping Compose `OnWindow` popups | `ffmpeg` on `PATH`; macOS Screen Recording TCC for the launching app | macOS · Windows · Linux Xorg |
 | `FfmpegWindowRecorder` | Named window (`gdigrab title=`) | Yes — `gdigrab` retracks the window across moves and resizes | No — only the window's pixels are captured. Compose `OnWindow` popups land in a separate OS window with a different title, so they are **not** captured. `OnSameCanvas` / `OnComponent` popups are part of the window surface and are captured | `ffmpeg` on `PATH`; visible window with a non-blank exact title | Windows |
-| `ScreenCaptureKitRecorder` | Named window (pid + title substring) | Yes — reads the window backing store directly, follows moves and resizes | No — same window-source semantics as `FfmpegWindowRecorder`. `OnWindow` popups not captured; `OnSameCanvas` / `OnComponent` captured | Bundled Swift helper (`spectre-screencapture`); macOS Screen Recording TCC for the launching app | macOS |
-| `WaylandPortalRecorder` | Monitor region (portal `SourceType.MONITOR`, cropped) | No — monitor-level source | Depends on the compositor. Validated on GNOME/Mutter to include the user's overlays but exclude apps occluding the recorded region | Bundled Rust helper (`spectre-wayland-helper`); `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`. First call pops the compositor's "share screen" dialog | Linux Wayland |
-| `WaylandPortalWindowRecorder` | Named window (portal `SourceType.WINDOW` + fixed crop) | **No.** The crop is computed once from `_GTK_FRAME_EXTENTS` at `start()` and stays at those pixel coordinates for the rest of the recording. If the user moves or resizes the window during the recording, the crop no longer aligns with the window's pixels (typically the recording shows blank / black for the unrendered area of the original rectangle) — see `WaylandPortalWindowRecorder`'s KDoc for the detailed rationale | No — only the picked window's pixels are in the stream. `OnWindow` popups not captured | Bundled Rust helper; `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`; `xprop` on `PATH`; compositor must publish `_GTK_FRAME_EXTENTS` (GNOME/Mutter verified; older Mutter / KDE / sway may not — the recorder throws rather than producing misaligned video) | Linux Wayland |
+| `ScreenCaptureKitRecorder` | Named window (pid + title substring) | Yes — reads the window backing store directly, follows moves and resizes | No — same window-source semantics as `FfmpegWindowRecorder`. `OnWindow` popups not captured; `OnSameCanvas` / `OnComponent` captured | `spectre-recording-macos` runtime helper (`spectre-screencapture`); macOS Screen Recording TCC for the launching app | macOS |
+| `WaylandPortalRecorder` | Monitor region (portal `SourceType.MONITOR`, cropped) | No — monitor-level source | Depends on the compositor. Validated on GNOME/Mutter to include the user's overlays but exclude apps occluding the recorded region | `spectre-recording-linux` runtime helper (`spectre-wayland-helper`); `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`. First call pops the compositor's "share screen" dialog | Linux Wayland |
+| `WaylandPortalWindowRecorder` | Named window (portal `SourceType.WINDOW` + fixed crop) | **No.** The crop is computed once from `_GTK_FRAME_EXTENTS` at `start()` and stays at those pixel coordinates for the rest of the recording. If the user moves or resizes the window during the recording, the crop no longer aligns with the window's pixels (typically the recording shows blank / black for the unrendered area of the original rectangle) — see `WaylandPortalWindowRecorder`'s KDoc for the detailed rationale | No — only the picked window's pixels are in the stream. `OnWindow` popups not captured | `spectre-recording-linux` runtime helper; `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`; `xprop` on `PATH`; compositor must publish `_GTK_FRAME_EXTENTS` (GNOME/Mutter verified; older Mutter / KDE / sway may not — the recorder throws rather than producing misaligned video) | Linux Wayland |
 
 A note on the Wayland window row: window-source isolation (no leakage from other apps) is
 what makes window-targeted Wayland capture different from ffmpeg-on-X11 region capture. The
@@ -101,7 +103,7 @@ The routing is platform-keyed. Read the row that matches your OS:
 
 | Platform                | `window`                          | Backend chosen                                                       |
 | ----------------------- | --------------------------------- | -------------------------------------------------------------------- |
-| **macOS**               | non-null                          | `ScreenCaptureKitRecorder` (bundled Swift helper).                   |
+| **macOS**               | non-null                          | `ScreenCaptureKitRecorder` (`spectre-recording-macos` helper).       |
 | **macOS**               | `null`                            | `FfmpegRecorder` region capture (`avfoundation`).                    |
 | **Windows**             | non-null with a non-blank title   | `FfmpegWindowRecorder` (`gdigrab title=`).                           |
 | **Windows**             | `null`, or non-null with no title | `FfmpegRecorder` region capture (`gdigrab`).                         |
@@ -111,8 +113,8 @@ The routing is platform-keyed. Read the row that matches your OS:
 
 A few details worth knowing:
 
-- **macOS SCK helper fallback.** If the Swift helper isn't bundled in the running
-  JAR (e.g., you built on Linux but ran on macOS), the macOS + window path falls
+- **macOS SCK helper fallback.** If the Swift helper isn't present on the runtime
+  classpath, the macOS + window path falls
   back to `FfmpegRecorder` region capture with a warning on stderr. Operational
   SCK failures — permission denied, target window not found, helper crashed during
   init — propagate as exceptions rather than falling back silently, so you see
@@ -129,7 +131,7 @@ A few details worth knowing:
   monitor stream to the requested rectangle. The first call pops the compositor's
   "share your screen" dialog; subsequent calls in the same JVM run reuse the grant.
 - **Linux Wayland helper.** Both portal recorders run the same small Rust binary
-  (`spectre-wayland-helper`) bundled in the `recording` artifact. It drives
+  (`spectre-wayland-helper`) from the `spectre-recording-linux` runtime artifact. It drives
   `xdg-desktop-portal`'s ScreenCast interface and hands a PipeWire FD to
   `gst-launch-1.0`.
 - **Window-targeted Wayland needs `xprop`.** `WaylandPortalWindowRecorder` queries the
@@ -152,8 +154,8 @@ If you know exactly which backend you want, instantiate it directly and skip the
 | ----------------------------- | ------------------------------------------------------------------------- |
 | `FfmpegRecorder`              | Region capture on macOS, Windows, and Linux Xorg. (Throws on Wayland — use `WaylandPortalRecorder` there.) Default for "no window in mind". |
 | `FfmpegWindowRecorder`        | Windows-only window-targeted capture via `gdigrab title=`.                |
-| `ScreenCaptureKitRecorder`    | macOS-only window-targeted capture via the bundled Swift helper.          |
-| `WaylandPortalRecorder`       | Linux Wayland region capture via `xdg-desktop-portal` (`SourceType.MONITOR`) and a bundled Rust helper. |
+| `ScreenCaptureKitRecorder`    | macOS-only window-targeted capture via the `spectre-recording-macos` Swift helper. |
+| `WaylandPortalRecorder`       | Linux Wayland region capture via `xdg-desktop-portal` (`SourceType.MONITOR`) and the `spectre-recording-linux` Rust helper. |
 | `WaylandPortalWindowRecorder` | Linux Wayland window-targeted capture via `xdg-desktop-portal` (`SourceType.WINDOW`). Window-sized output containing only the picked window's pixels. |
 
 ## Per-OS prerequisites
@@ -163,9 +165,9 @@ macOS has the most involved setup; the others are short. macOS first:
 ### macOS
 
 - `ffmpeg` on `PATH`.
-- The Swift ScreenCaptureKit helper is bundled inside `recording`'s artifact.
-  Universal-binary opt-in is available via
-  `./gradlew :recording:assembleScreenCaptureKitHelper -PuniversalHelper`.
+- Add `dev.sebastiano.spectre:spectre-recording-macos:<version>` as a runtime-only
+  dependency. Its jar carries the notarized universal ScreenCaptureKit helper at
+  `native/macos/spectre-screencapture`.
 - **Screen Recording TCC permission**, granted under System Settings → Privacy &
   Security → Screen Recording.
 
@@ -197,7 +199,9 @@ recording tests, especially while establishing Screen Recording TCC grants.
 - **Windows** — `ffmpeg` on `PATH`. `gdigrab` ships with `ffmpeg`.
 - **Linux Xorg** — `ffmpeg` with the `x11grab` input enabled (default in distro builds).
 - **Linux Wayland** — `gst-launch-1.0` plus the GStreamer plugins for H.264/Matroska.
-  The Rust helper is bundled inside `recording`'s artifact. Recording requires a
+  Add `dev.sebastiano.spectre:spectre-recording-linux:<version>` as a runtime-only
+  dependency. Its jar carries the Rust helper under `native/linux/<arch>/`.
+  Recording requires a
   Wayland compositor that exposes `org.freedesktop.portal.ScreenCast`; tested against
   GNOME/mutter on Ubuntu 22.04 and 24.04.
 

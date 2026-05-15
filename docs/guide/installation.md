@@ -1,12 +1,14 @@
 # Installation
 
-Spectre publishes four library modules to Maven Central:
+Spectre publishes these library modules to Maven Central:
 
 | Module | Maven coordinate |
 | ------ | ---------------- |
 | `core` | `dev.sebastiano.spectre:spectre-core:<version>` |
 | `testing` | `dev.sebastiano.spectre:spectre-testing:<version>` |
 | `recording` | `dev.sebastiano.spectre:spectre-recording:<version>` |
+| `recording-macos` | `dev.sebastiano.spectre:spectre-recording-macos:<version>` |
+| `recording-linux` | `dev.sebastiano.spectre:spectre-recording-linux:<version>` |
 | `server` | `dev.sebastiano.spectre:spectre-server:<version>` |
 
 !!! note "Before a release tag is published"
@@ -34,9 +36,16 @@ dependencies {
 
     // Optional, depending on what you need:
     testImplementation("dev.sebastiano.spectre:spectre-recording:<version>")
+    testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-macos:<version>") // macOS SCK helper
+    testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-linux:<version>") // Linux Wayland helper
     testImplementation("dev.sebastiano.spectre:spectre-server:<version>")
 }
 ```
+
+`spectre-recording` contains the public recording API and common JVM implementation.
+The macOS and Linux helper artifacts are runtime-only resources: add the one(s) your
+tests can run on with `testRuntimeOnly(...)`, or with `runtimeOnly(...)` for production
+application code.
 
 If you depend on `server`, you also need to add a Ktor server engine yourself — Spectre
 intentionally doesn't bundle one. See [Cross-JVM access](cross-jvm.md) for the choice.
@@ -82,6 +91,10 @@ includeBuild("../spectre") {
             .using(project(":testing"))
         substitute(module("dev.sebastiano.spectre:spectre-recording"))
             .using(project(":recording"))
+        substitute(module("dev.sebastiano.spectre:spectre-recording-macos"))
+            .using(project(":recording-macos"))
+        substitute(module("dev.sebastiano.spectre:spectre-recording-linux"))
+            .using(project(":recording-linux"))
         substitute(module("dev.sebastiano.spectre:spectre-server"))
             .using(project(":server"))
     }
@@ -98,6 +111,8 @@ dependencies {
 
     // Optional, depending on what you need:
     testImplementation("dev.sebastiano.spectre:spectre-recording")
+    testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-macos")
+    testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-linux")
     testImplementation("dev.sebastiano.spectre:spectre-server")
 }
 ```
@@ -119,11 +134,14 @@ Maven Local:
 | ----------- | -------------------------------------------------------------------------------- |
 | `core`      | `ComposeAutomator`, semantics tree reader, selectors, `RobotDriver` for input.    |
 | `testing`   | `ComposeAutomatorExtension` (JUnit 5), `ComposeAutomatorRule` (JUnit 4).         |
-| `recording` | Region and window-targeted screen capture (`AutoRecorder`, `FfmpegRecorder`, …). |
+| `recording` | Region and window-targeted screen capture API (`AutoRecorder`, `FfmpegRecorder`, …). |
+| `recording-macos` | Runtime-only macOS ScreenCaptureKit helper resources for `recording`. |
+| `recording-linux` | Runtime-only Linux Wayland helper resources for `recording`. |
 | `server`    | Embedded HTTP transport (Ktor) and `HttpComposeAutomator` for cross-JVM access. **Experimental**; see [Security notes](../SECURITY.md). |
 
 Most projects only need `core` + `testing`. Add `recording` if you want video output for
-test runs, and `server` if your test process needs to reach a UI in a different JVM.
+test runs, add the platform helper artifact(s) for the OSes you run recording tests on, and
+add `server` if your test process needs to reach a UI in a different JVM.
 
 ## Next
 

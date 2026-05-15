@@ -148,10 +148,9 @@ subprojects {
 //   3. Asserts each module has main jar + sources jar + javadoc jar + POM + module file.
 //   4. Asserts each POM has <name>, <description>, <url>, <licenses>, <scm>, <developers>
 //      populated — Central rejects POMs missing any of these.
-//   5. For `:recording`, asserts the main jar's `native/...` entries match the expected
-//      helper layout per the same -PprebuiltMacHelperPath / -PstubMacHelperForTesting /
-//      -PprebuiltLinuxHelpersDir / host-platform switches `verifyBundledRecordingHelpers`
-//      uses.
+//   5. Asserts no sources jar contains generated `native/...` helper binaries.
+//   6. Asserts `:recording` stays API/common-only while `:recording-macos` and
+//      `:recording-linux` carry the expected platform helper resources.
 //
 // Local invocation:
 //   ./gradlew verifyMavenLocalPublication \
@@ -164,7 +163,8 @@ subprojects {
 //       -PprebuiltLinuxHelpersDir=<dir>
 //
 // Verification only — it does not republish or mutate state. Safe to run repeatedly.
-val publishedLibraryProjects = listOf(":core", ":server", ":recording", ":testing")
+val publishedLibraryProjects =
+    listOf(":core", ":server", ":recording", ":recording-macos", ":recording-linux", ":testing")
 
 // Configure-time inputs captured into vals so the action body is configuration-cache safe
 // (no closure capture of Project references). The closure-based task is preferred over a
@@ -185,46 +185,51 @@ val mavenLocalRepoRoot: String = "${System.getProperty("user.home")}/.m2/reposit
 // Recording jar entries we expect to find — keep in sync with
 // `VerifyBundledRecordingHelpers`'s expectations so a contradiction between the two surfaces
 // as a duplicate failure rather than one silently passing.
-val expectedRecordingHelperEntries: List<String> = buildList {
-    val macOsExpected =
-        providers.gradleProperty("prebuiltMacHelperPath").isPresent ||
-            providers.gradleProperty("stubMacHelperForTesting").isPresent ||
-            org.gradle.internal.os.OperatingSystem.current().isMacOsX
-    if (macOsExpected) {
-        add("native/macos/spectre-screencapture")
-    }
-    val currentOs = org.gradle.internal.os.OperatingSystem.current()
-    val crossArchLinux =
-        providers.gradleProperty("prebuiltLinuxHelpersDir").isPresent ||
-            (currentOs.isLinux && providers.gradleProperty("allLinuxArches").isPresent)
-    when {
-        crossArchLinux -> {
-            add("native/linux/x86_64/spectre-wayland-helper")
-            add("native/linux/aarch64/spectre-wayland-helper")
+val expectedRecordingHelperEntriesByProject: Map<String, List<String>> =
+    mutableMapOf<String, List<String>>().apply {
+        val macOsExpected =
+            providers.gradleProperty("prebuiltMacHelperPath").isPresent ||
+                providers.gradleProperty("stubMacHelperForTesting").isPresent ||
+                org.gradle.internal.os.OperatingSystem.current().isMacOsX
+        if (macOsExpected) {
+            put(":recording-macos", listOf("native/macos/spectre-screencapture"))
         }
-        currentOs.isLinux -> {
-            val hostArch =
-                when (System.getProperty("os.arch").orEmpty().lowercase()) {
-                    "amd64",
-                    "x86_64",
-                    "x64" -> "x86_64"
-                    "aarch64",
-                    "arm64" -> "aarch64"
-                    else -> ""
+        val currentOs = org.gradle.internal.os.OperatingSystem.current()
+        val crossArchLinux =
+            providers.gradleProperty("prebuiltLinuxHelpersDir").isPresent ||
+                (currentOs.isLinux && providers.gradleProperty("allLinuxArches").isPresent)
+        when {
+            crossArchLinux -> {
+                put(
+                    ":recording-linux",
+                    listOf(
+                        "native/linux/x86_64/spectre-wayland-helper",
+                        "native/linux/aarch64/spectre-wayland-helper",
+                    ),
+                )
+            }
+            currentOs.isLinux -> {
+                val hostArch =
+                    when (System.getProperty("os.arch").orEmpty().lowercase()) {
+                        "amd64",
+                        "x86_64",
+                        "x64" -> "x86_64"
+                        "aarch64",
+                        "arm64" -> "aarch64"
+                        else -> ""
+                    }
+                if (hostArch.isNotEmpty()) {
+                    put(":recording-linux", listOf("native/linux/$hostArch/spectre-wayland-helper"))
                 }
-            if (hostArch.isNotEmpty()) {
-                add("native/linux/$hostArch/spectre-wayland-helper")
             }
         }
     }
-}
 
 val verifyMavenLocalPublication by tasks.registering {
     description =
-        "Publishes :core, :server, :recording, :testing to mavenLocal and asserts each " +
+        "Publishes Spectre library modules to mavenLocal and asserts each " +
             "module's artefact set (jar + sources + javadoc + POM + module) satisfies " +
-            "Sonatype Central's gating, plus the recording jar bundles the expected " +
-            "native helpers."
+            "Sonatype Central's gating, with platform helpers isolated in their runtime jars."
     group = "verification"
 
     dependsOn(publishedLibraryProjects.map { "$it:publishToMavenLocal" })
@@ -238,7 +243,7 @@ val verifyMavenLocalPublication by tasks.registering {
     val version = publishVersion
     val artifactIds = publishArtifactIds
     val repoRoot = file(mavenLocalRepoRoot)
-    val expectedHelpers = expectedRecordingHelperEntries
+    val expectedHelpersByProject = expectedRecordingHelperEntriesByProject
 
     doLast {
         val errors = mutableListOf<String>()
@@ -324,20 +329,37 @@ val verifyMavenLocalPublication by tasks.registering {
                         "$moduleName: POM has no <developers><developer><id> in " + pomFile.name
                 }
             }
-            if (moduleName == ":recording" && expectedHelpers.isNotEmpty()) {
-                val jar = moduleDir.resolve("$baseName.jar")
-                if (jar.isFile) {
-                    val entriesInJar = mutableSetOf<String>()
-                    ZipFile(jar).use { zip ->
-                        val entries = zip.entries()
-                        while (entries.hasMoreElements()) {
-                            entriesInJar += entries.nextElement().name
-                        }
+            for (jarSuffix in listOf(".jar", "-sources.jar")) {
+                val jar = moduleDir.resolve("$baseName$jarSuffix")
+                if (!jar.isFile) continue
+                val entriesInJar = mutableSetOf<String>()
+                ZipFile(jar).use { zip ->
+                    val entries = zip.entries()
+                    while (entries.hasMoreElements()) {
+                        entriesInJar += entries.nextElement().name
                     }
-                    for (path in expectedHelpers) {
+                }
+                if (jarSuffix == "-sources.jar") {
+                    val nativeSources = entriesInJar.filter { it.startsWith("native/") }
+                    if (nativeSources.isNotEmpty()) {
+                        errors +=
+                            "$moduleName: sources jar (${jar.name}) must not contain native " +
+                                "helper resources: ${nativeSources.sorted().joinToString()}"
+                    }
+                }
+                if (jarSuffix == ".jar" && moduleName == ":recording") {
+                    val nativeEntries = entriesInJar.filter { it.startsWith("native/") }
+                    if (nativeEntries.isNotEmpty()) {
+                        errors +=
+                            ":recording: API jar (${jar.name}) must not contain native helper " +
+                                "resources: ${nativeEntries.sorted().joinToString()}"
+                    }
+                }
+                if (jarSuffix == ".jar") {
+                    for (path in expectedHelpersByProject[moduleName].orEmpty()) {
                         if (path !in entriesInJar) {
                             errors +=
-                                ":recording: published jar (${jar.name}) is missing " +
+                                "$moduleName: published jar (${jar.name}) is missing " +
                                     "expected helper entry `$path`"
                         }
                     }

@@ -84,6 +84,10 @@ include(":server")
 
 include(":recording")
 
+include(":recording-macos")
+
+include(":recording-linux")
+
 include(":testing")
 
 include(":sample-desktop")

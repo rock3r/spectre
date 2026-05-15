@@ -1,12 +1,7 @@
-import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.RandomAccessFile
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import javax.inject.Inject
 import org.gradle.api.GradleException
 import org.gradle.internal.os.OperatingSystem
-import org.gradle.process.ExecOperations
+import org.gradle.language.jvm.tasks.ProcessResources
 
 /**
  * Maps the host's `os.arch` system property to the Rust target-triple architecture name we ship the
@@ -32,11 +27,9 @@ plugins {
     // kotlinx.serialization for the Wayland helper's JSON wire protocol (#77 stage 3).
     alias(libs.plugins.kotlinSerialization)
     // See `:core`'s build script for the rationale on the shared publish convention. Per-module
-    // POM scalars live in this module's own `gradle.properties`. The recording jar published
-    // from the release pipeline bundles the macOS universal SCK helper (built+notarised on a
-    // mac runner) + the Linux x86_64 / aarch64 Wayland helpers (built on a Linux runner) —
-    // see `.github/workflows/release.yml` and the helper-staging tasks below for how the
-    // helpers flow into a single cross-platform recording jar.
+    // POM scalars live in this module's own `gradle.properties`. This module publishes the
+    // JVM recording API and common implementation only; `:recording-macos` and
+    // `:recording-linux` publish the runtime helper resources as separate artifacts.
     alias(libs.plugins.mavenPublish)
 }
 
@@ -381,19 +374,6 @@ val assembleScreenCaptureKitHelperUniversal by
         into(helperResourceDest.get().asFile.parentFile)
     }
 
-// The generated helper directory is wired into resources unconditionally — even on non-macOS
-// hosts. If we gated the srcDir registration on macOS too, a Linux CI build would produce a jar
-// with no `native/macos/` entries at all, so a downstream macOS consumer would later hit
-// `HelperBinaryExtractor`'s "binary not found" error. Wiring the srcDir always means the jar
-// structure is host-agnostic — the helper file just isn't there if the host can't build it.
-//
-// The actual `assembleScreenCaptureKitHelper` task only runs on macOS (its `onlyIf`), so it's
-// only attached to `processResources` when we're on a host that can produce the binary.
-//
-// For shipping a distribution jar, build on macOS — the README documents this. A future macOS
-// CI workflow (#18 follow-up) will guard against accidentally publishing a Linux-built jar.
-sourceSets["main"].resources.srcDir(layout.buildDirectory.dir("generated/screenCaptureHelper"))
-
 // Whether `processResources` (and therefore `jar` / distribution) bundles the host-arch helper
 // or the universal one is controlled by a project property. Two reasons for this design over
 // `mustRunAfter`-based ordering:
@@ -423,23 +403,28 @@ val prebuiltMacHelperPath = providers.gradleProperty("prebuiltMacHelperPath")
 val prebuiltLinuxHelpersDir = providers.gradleProperty("prebuiltLinuxHelpersDir")
 val useStubMacHelperForTesting = providers.gradleProperty("stubMacHelperForTesting").isPresent
 
-// `-PprebuiltMacHelperPath` / `-PstubMacHelperForTesting` are mutually exclusive with the
-// host-platform mac build path: when a pre-built (or stub) helper is staged, the host build
-// would only overwrite the same destination and produce a jar inconsistent with the artefact
-// promised by the release CI. The host build is silenced when either prebuilt path is set.
-if (
-    OperatingSystem.current().isMacOsX &&
-        !prebuiltMacHelperPath.isPresent &&
-        !useStubMacHelperForTesting
-) {
-    tasks.named("processResources") {
+tasks.named<ProcessResources>("processTestResources") {
+    from(layout.buildDirectory.dir("generated/screenCaptureHelper"))
+    from(layout.buildDirectory.dir("generated/waylandHelper"))
+    if (prebuiltMacHelperPath.isPresent || useStubMacHelperForTesting) {
+        dependsOn(if (useStubMacHelperForTesting) stageStubMacHelper else stagePrebuiltMacHelper)
+    } else if (OperatingSystem.current().isMacOsX) {
         dependsOn(
             if (useUniversalHelper) assembleScreenCaptureKitHelperUniversal
             else assembleScreenCaptureKitHelper
         )
     }
+    if (prebuiltLinuxHelpersDir.isPresent) {
+        dependsOn(stagePrebuiltLinuxHelpers)
+    } else if (OperatingSystem.current().isLinux) {
+        dependsOn(if (useAllLinuxArches) assembleWaylandHelperAllArches else assembleWaylandHelper)
+    }
 }
 
+// `-PprebuiltMacHelperPath` / `-PstubMacHelperForTesting` are mutually exclusive with the
+// host-platform mac build path: when a pre-built (or stub) helper is staged, the host build
+// would only overwrite the same destination and produce a jar inconsistent with the artefact
+// promised by the release CI. The host build is silenced when either prebuilt path is set.
 // --- Wayland Rust helper binary (issue #80) -------------------------------------------------
 //
 // `WaylandPortalRecorder` ships a small Rust CLI (`recording/native/linux/`) that drives the
@@ -609,12 +594,6 @@ val assembleWaylandHelperAllArches by tasks.registering {
     dependsOn(perArchStageTasks)
 }
 
-// Same pattern as the SCK helper: register the generated resource srcDir unconditionally so
-// jar layouts are host-agnostic, but only attach the build task to processResources on
-// Linux. macOS/Windows builds will have an empty `native/linux/` directory in the jar — fine,
-// the recorder gates on the resource being present and falls back per HelperNotBundledException.
-sourceSets["main"].resources.srcDir(layout.buildDirectory.dir("generated/waylandHelper"))
-
 // Switch `processResources` to either the host-arch staging (default, fast) or the
 // cross-arch staging (release). Single-staging-task wiring follows the macOS universal
 // helper precedent — see the comment block above the `useUniversalHelper` declaration for
@@ -625,12 +604,6 @@ val useAllLinuxArches = providers.gradleProperty("allLinuxArches").isPresent
 // per-arch wayland binaries, the host-arch cargo build must not also wire itself in — both
 // would target `build/generated/waylandHelper/native/linux/<arch>/...` and the host build's
 // freshly compiled x86_64 binary would overwrite the prebuilt one shipped by the release CI.
-if (OperatingSystem.current().isLinux && !prebuiltLinuxHelpersDir.isPresent) {
-    tasks.named("processResources") {
-        dependsOn(if (useAllLinuxArches) assembleWaylandHelperAllArches else assembleWaylandHelper)
-    }
-}
-
 // --- Pre-built native helpers for the release pipeline (#84) --------------------------------
 //
 // The release CI fans out: a macOS runner builds + signs + notarises the universal SCK
@@ -748,41 +721,6 @@ val stagePrebuiltLinuxHelpers by
         include("x86_64/spectre-wayland-helper", "aarch64/spectre-wayland-helper")
     }
 
-// Pre-built staging tasks become processResources dependencies wherever they're requested,
-// independent of host OS. The combinations the release CI uses:
-//   - publish job on Linux: -PprebuiltMacHelperPath -PprebuiltLinuxHelpersDir
-//     → stagePrebuiltMacHelper + stagePrebuiltLinuxHelpers (both)
-//   - smoke on Linux (this branch's verification): -PstubMacHelperForTesting -PallLinuxArches
-//     → stageStubMacHelper + assembleWaylandHelperAllArches
-// On the regular per-host paths configured above, neither task fires and the existing
-// per-host wiring runs as before.
-if (prebuiltMacHelperPath.isPresent || useStubMacHelperForTesting) {
-    tasks.named("processResources") {
-        if (useStubMacHelperForTesting) {
-            dependsOn(stageStubMacHelper)
-        } else {
-            dependsOn(stagePrebuiltMacHelper)
-        }
-    }
-}
-
-if (prebuiltLinuxHelpersDir.isPresent) {
-    tasks.named("processResources") { dependsOn(stagePrebuiltLinuxHelpers) }
-}
-
-// The sourcesJar registered by `com.vanniktech.maven.publish` bundles
-// `sourceSets["main"].allSource`, which transitively reads the generated resource srcDirs
-// (`build/generated/screenCaptureHelper`, `build/generated/waylandHelper`) the helper-
-// staging tasks write into. Gradle 9 surfaces an implicit-dependency check on that read.
-// Hooking sourcesJar onto `processResources` (which already depends on whichever staging
-// task is currently active per the host / property selection) keeps the dependency graph
-// honest without manually enumerating every variant.
-pluginManager.withPlugin("com.vanniktech.maven.publish") {
-    tasks
-        .matching { it.name == "sourcesJar" }
-        .configureEach { dependsOn(tasks.named("processResources")) }
-}
-
 // Manual smoke entry point — opens a JFrame, records it for ~3s via ScreenCaptureKitRecorder,
 // prints the resulting file path + size. Lives in the test source set because the helper class
 // it drives is `internal` and we don't want to publish it.
@@ -870,303 +808,3 @@ tasks.register<JavaExec>("runWaylandPortalWindowSmoke") {
     standardOutput = System.out
     errorOutput = System.err
 }
-
-// --- Bundled helper artifact verification (R3) -----------------------------------------------
-//
-// `verifyBundledRecordingHelpers` is the single entry point that asserts the recording jar
-// being built actually contains the helpers it claims to. The task's expectations are computed
-// from the host OS + project properties at configuration time:
-//
-//   - macOS host, default                : expect host-arch SCK helper, `lipo -verify_arch
-// <host-arch>`.
-//   - macOS host + `-PuniversalHelper`   : expect universal SCK helper, `lipo -verify_arch arm64
-// x86_64`.
-//   - Linux host, default                : expect host-arch Wayland helper, JVM-side ELF parse.
-//   - Linux host + `-PallLinuxArches`    : expect both x86_64 + aarch64 Wayland helpers, JVM-side
-// ELF
-//                                          parse for each.
-//   - Other hosts (Windows etc.)         : no expectations, task is a no-op success.
-//
-// Verification only — the task depends on `processResources` and inspects whatever was already
-// staged. It deliberately does NOT depend on `lipoScreenCaptureKitHelper` /
-// `assembleScreenCaptureKitHelperUniversal` / `assembleWaylandHelperAllArches` directly, so
-// running `./gradlew check` on macOS without `-PuniversalHelper` does not trigger a universal
-// build. The same project-property switches that drive `processResources` (above) drive the
-// task's expectations in parallel.
-//
-// The Linux ELF parse is JVM-side (no `readelf` dependency, works on every dev host where this
-// task might run for sanity-checking). The macOS check shells out to `lipo` because lipo only
-// runs on macOS anyway, and the existing `verifyUniversalScreenCaptureKitHelper` pattern
-// proves it. ELF magic + `e_machine` is the entirety of the parse — see the constants in
-// `VerifyBundledRecordingHelpers` for the per-arch machine fields.
-
-/**
- * Reports which helper artifacts should be in the recording jar and verifies each. Expectations are
- * configured at task-registration time from the host OS + project properties; the action itself
- * just walks the list and fails fast on the first missing or wrong-arch helper.
- */
-abstract class VerifyBundledRecordingHelpers
-@Inject
-constructor(private val execOperations: ExecOperations) : DefaultTask() {
-
-    /**
-     * Directory `processResources` writes into. Helper paths are resolved relative to this.
-     * `@Internal` rather than `@InputDirectory`: on hosts that produce no helpers (Windows;
-     * macOS/Linux with no other resources triggering processResources to create the dir),
-     * `build/resources/main` may not exist at all, and Gradle's `@InputDirectory` validation fails
-     * at task-graph time before the action runs (even with `@Optional`, because the value *is* set
-     * — we only fail to set it on hosts where no expectations exist). The task is pure verification
-     * with no incremental-build benefit anyway, so dropping input tracking is fine — the action
-     * below handles "expectations but no directory" as a real failure mode.
-     */
-    @get:Internal abstract val resourcesDir: DirectoryProperty
-
-    /**
-     * macOS architectures expected in `native/macos/spectre-screencapture`. Empty list means "no
-     * macOS expectation" (e.g. running on Linux/Windows). One arch = host-arch build; two arches =
-     * universal build (the order matters only for the error message — `lipo -verify_arch` requires
-     * all listed arches to be present).
-     */
-    @get:Input abstract val expectedMacOsArchs: ListProperty<String>
-
-    /**
-     * Linux architectures expected in `native/linux/<arch>/spectre-wayland-helper`. Empty means "no
-     * Linux expectation". `["x86_64"]` or `["aarch64"]` = host-arch; `["x86_64", "aarch64"]` =
-     * `-PallLinuxArches`.
-     */
-    @get:Input abstract val expectedLinuxArches: ListProperty<String>
-
-    @TaskAction
-    fun verify() {
-        val macOsArchs = expectedMacOsArchs.get()
-        val linuxArches = expectedLinuxArches.get()
-        if (macOsArchs.isEmpty() && linuxArches.isEmpty()) {
-            logger.lifecycle(
-                "verifyBundledRecordingHelpers: no helpers expected on this host — nothing to verify."
-            )
-            return
-        }
-        val resources = resourcesDir.orNull?.asFile
-        if (resources == null || !resources.isDirectory) {
-            throw GradleException(
-                "Recording helper verification failed: expected resources directory does not " +
-                    "exist (${resourcesDir.orNull?.asFile}). processResources must have run with " +
-                    "the helper staging tasks for this host wired in."
-            )
-        }
-        val errors = mutableListOf<String>()
-        if (macOsArchs.isNotEmpty()) {
-            verifyMacOsHelper(macOsArchs)?.let(errors::add)
-        }
-        for (arch in linuxArches) {
-            verifyLinuxHelper(arch)?.let(errors::add)
-        }
-        if (errors.isNotEmpty()) {
-            throw GradleException(
-                "Recording helper verification failed:\n" + errors.joinToString("\n") { "  - $it" }
-            )
-        }
-    }
-
-    private fun verifyMacOsHelper(expectedArchs: List<String>): String? {
-        val helperPath = "native/macos/spectre-screencapture"
-        val file = resourcesDir.file(helperPath).get().asFile
-        if (!file.isFile) {
-            return "Expected macOS helper missing at $helperPath (resolved to ${file.absolutePath})"
-        }
-        // On macOS, prefer `lipo -verify_arch` — same logic as the existing universal-helper
-        // verification, and it's the most authoritative answer because lipo parses the full
-        // Mach-O structure rather than just the fat header. On other hosts the JVM-side
-        // Mach-O fat-header parse handles the "is it a fat binary covering these archs"
-        // question without needing the macOS toolchain. The fallback is what makes the
-        // publish job's verification work on a Linux runner using a pre-built notarised
-        // mac helper artefact.
-        return if (OperatingSystem.current().isMacOsX) {
-            verifyMacOsHelperWithLipo(file, expectedArchs)
-        } else {
-            verifyMacOsHelperWithJvmParse(file, expectedArchs)
-        }
-    }
-
-    private fun verifyMacOsHelperWithLipo(file: File, expectedArchs: List<String>): String? {
-        val stdout = ByteArrayOutputStream()
-        val stderr = ByteArrayOutputStream()
-        val result = execOperations.exec {
-            commandLine(
-                buildList {
-                    add("lipo")
-                    add(file.absolutePath)
-                    add("-verify_arch")
-                    addAll(expectedArchs)
-                }
-            )
-            standardOutput = stdout
-            errorOutput = stderr
-            isIgnoreExitValue = true
-        }
-        if (result.exitValue != 0) {
-            return "lipo -verify_arch ${expectedArchs.joinToString(" ")} failed for " +
-                "${file.absolutePath}: exit=${result.exitValue} stdout=${stdout.toString().trim()} " +
-                "stderr=${stderr.toString().trim()}"
-        }
-        return null
-    }
-
-    private fun verifyMacOsHelperWithJvmParse(file: File, expectedArchs: List<String>): String? {
-        val headerBytes = ByteArray(FAT_HEADER_MAX_BYTES)
-        val readBytes =
-            RandomAccessFile(file, "r").use { raf ->
-                val toRead = minOf(raf.length().toInt(), headerBytes.size)
-                if (toRead < FAT_HEADER_MIN_BYTES) {
-                    return "File too short to be a Mach-O fat binary (${file.absolutePath})"
-                }
-                raf.readFully(headerBytes, 0, toRead)
-                toRead
-            }
-        val buffer = ByteBuffer.wrap(headerBytes, 0, readBytes).order(ByteOrder.BIG_ENDIAN)
-        val magic = buffer.int
-        if (magic != FAT_MAGIC.toInt()) {
-            return "Expected Mach-O fat magic 0xCAFEBABE but got 0x${magic.toString(16)} at " +
-                file.absolutePath
-        }
-        val nFatArch = buffer.int
-        if (nFatArch < 0 || nFatArch > FAT_ARCH_MAX) {
-            return "Implausible nfat_arch=$nFatArch in ${file.absolutePath}"
-        }
-        if (readBytes < FAT_HEADER_FIXED_BYTES + nFatArch * FAT_ARCH_ENTRY_BYTES) {
-            return "Truncated fat header in ${file.absolutePath}"
-        }
-        val presentArchs = mutableSetOf<String>()
-        repeat(nFatArch) {
-            val cpuType = buffer.int
-            buffer.int // cpuSubType — we don't filter on it
-            buffer.int // offset
-            buffer.int // size
-            buffer.int // align
-            MACHO_ARCH_BY_CPU_TYPE[cpuType]?.let(presentArchs::add)
-        }
-        val missing = expectedArchs.toSet() - presentArchs
-        if (missing.isNotEmpty()) {
-            return "Mach-O fat binary at ${file.absolutePath} missing arch(s): " +
-                "${missing.joinToString(", ")} (saw ${presentArchs.joinToString(", ")})"
-        }
-        return null
-    }
-
-    private fun verifyLinuxHelper(expectedArch: String): String? {
-        val relative = "native/linux/$expectedArch/spectre-wayland-helper"
-        val file = resourcesDir.file(relative).get().asFile
-        if (!file.isFile) {
-            return "Expected Linux helper missing at $relative (resolved to ${file.absolutePath})"
-        }
-        val expectedMachine =
-            ELF_MACHINE_BY_ARCH[expectedArch]
-                ?: return "Unknown expected Linux arch '$expectedArch' for $relative"
-        val header = ByteArray(ELF_HEADER_PREFIX_BYTES)
-        RandomAccessFile(file, "r").use { raf ->
-            if (raf.length() < ELF_HEADER_PREFIX_BYTES) {
-                return "File too short to be ELF ($file)"
-            }
-            raf.readFully(header)
-        }
-        if (
-            header[0].toInt() and 0xff != 0x7F ||
-                header[1] != 'E'.code.toByte() ||
-                header[2] != 'L'.code.toByte() ||
-                header[3] != 'F'.code.toByte()
-        ) {
-            return "Not an ELF file (bad magic) at ${file.absolutePath}"
-        }
-        // ELF spec: e_machine is a 2-byte little-endian field at offset 18.
-        val machine =
-            (header[ELF_E_MACHINE_OFFSET].toInt() and 0xff) or
-                ((header[ELF_E_MACHINE_OFFSET + 1].toInt() and 0xff) shl 8)
-        if (machine != expectedMachine) {
-            return "Expected e_machine=0x${expectedMachine.toString(16)} ($expectedArch) " +
-                "but ELF reports 0x${machine.toString(16)} at ${file.absolutePath}"
-        }
-        return null
-    }
-
-    companion object {
-        private const val ELF_HEADER_PREFIX_BYTES: Int = 20
-        private const val ELF_E_MACHINE_OFFSET: Int = 18
-        // e_machine constants from the ELF spec. Stable for the lifetime of the ABI.
-        private const val EM_X86_64: Int = 0x3E
-        private const val EM_AARCH64: Int = 0xB7
-        private val ELF_MACHINE_BY_ARCH: Map<String, Int> =
-            mapOf("x86_64" to EM_X86_64, "aarch64" to EM_AARCH64)
-
-        // Mach-O fat-binary header parse. Used by the non-macOS verification path so a Linux
-        // publish runner can sanity-check a pre-built notarised mac helper artefact. The fat
-        // header is BE regardless of host endianness — see <mach-o/fat.h> in Apple's SDK.
-        // Fields per fat_arch: cputype (4) + cpusubtype (4) + offset (4) + size (4) + align
-        // (4) = 20 bytes.
-        private const val FAT_MAGIC: Long = 0xCAFEBABE
-        private const val FAT_HEADER_FIXED_BYTES: Int = 8 // magic + nfat_arch
-        private const val FAT_ARCH_ENTRY_BYTES: Int = 20
-        private const val FAT_ARCH_MAX: Int = 32 // generous; real binaries have 2..3
-        private const val FAT_HEADER_MIN_BYTES: Int = FAT_HEADER_FIXED_BYTES + FAT_ARCH_ENTRY_BYTES
-        private const val FAT_HEADER_MAX_BYTES: Int =
-            FAT_HEADER_FIXED_BYTES + FAT_ARCH_MAX * FAT_ARCH_ENTRY_BYTES
-        // Mach-O cpu_type constants. The `0x01000000` bit is `CPU_ARCH_ABI64`; the lower
-        // byte distinguishes architectures within ABI64.
-        //   arm64 / arm64e: cpu_type = CPU_ARCH_ABI64 | CPU_TYPE_ARM (12)  = 0x0100000C
-        //   x86_64        : cpu_type = CPU_ARCH_ABI64 | CPU_TYPE_X86 (7)   = 0x01000007
-        private const val CPU_TYPE_ARM64: Int = 0x0100000C
-        private const val CPU_TYPE_X86_64: Int = 0x01000007
-        private val MACHO_ARCH_BY_CPU_TYPE: Map<Int, String> =
-            mapOf(CPU_TYPE_ARM64 to "arm64", CPU_TYPE_X86_64 to "x86_64")
-    }
-}
-
-val verifyBundledRecordingHelpers by
-    tasks.registering(VerifyBundledRecordingHelpers::class) {
-        description =
-            "Verifies the recording jar contains the native helpers it should, per host OS and " +
-                "project-property selection (-PuniversalHelper, -PallLinuxArches, " +
-                "-PprebuiltMacHelperPath, -PprebuiltLinuxHelpersDir, -PstubMacHelperForTesting). " +
-                "Inspection only — does not trigger universal SCK or all-arches Wayland builds."
-        group = "verification"
-        // Read whatever processResources staged. Depending on the project flags, that's either
-        // host-arch or the wider distribution build — the expectations below stay in sync.
-        dependsOn(tasks.named("processResources"))
-        resourcesDir.set(layout.buildDirectory.dir("resources/main"))
-
-        val os = OperatingSystem.current()
-        // macOS expectations. Three sources can stage a mac helper:
-        //   1. Host build on macOS (`assembleScreenCaptureKitHelper[Universal]`).
-        //   2. Pre-built notarised helper from the release pipeline
-        //      (`-PprebuiltMacHelperPath`) — assumed universal (arm64 + x86_64).
-        //   3. Stub Mach-O fat binary for publication-shape smoke
-        //      (`-PstubMacHelperForTesting`) — always covers arm64 + x86_64.
-        // The host-arch path uses `lipo -verify_arch <host-arch>`; lipo handles thin binaries
-        // fine.
-        val macOsArchs: List<String> =
-            when {
-                prebuiltMacHelperPath.isPresent || useStubMacHelperForTesting ->
-                    universalArchitectures
-                !os.isMacOsX -> emptyList()
-                useUniversalHelper -> universalArchitectures
-                else ->
-                    listOf(
-                        if (System.getProperty("os.arch").lowercase() == "aarch64") "arm64"
-                        else "x86_64"
-                    )
-            }
-        expectedMacOsArchs.set(macOsArchs)
-
-        // Linux expectations. `useAllLinuxArches` is true when `-PallLinuxArches` is set, and
-        // a pre-built Linux helpers directory always carries both arches (the release CI
-        // builds both before uploading).
-        val linuxArches: List<String> =
-            when {
-                prebuiltLinuxHelpersDir.isPresent -> linuxHelperArchitectures
-                !os.isLinux -> emptyList()
-                useAllLinuxArches -> linuxHelperArchitectures
-                else -> listOf(linuxRustHostArch())
-            }
-        expectedLinuxArches.set(linuxArches)
-    }
-
-tasks.named("check") { dependsOn(verifyBundledRecordingHelpers) }

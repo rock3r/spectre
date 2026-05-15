@@ -28,14 +28,14 @@ name: Release
 #                            as a GitHub Actions artifact.
 #
 #   4. `publish`          — Linux runner. Depends on the gate and both helper jobs. Downloads
-#                            the artefacts, stages them into recording's resource
-#                            tree via `-PprebuiltMacHelperPath=...` and
+#                            the artefacts, stages them into the platform helper
+#                            resource jars via `-PprebuiltMacHelperPath=...` and
 #                            `-PprebuiltLinuxHelpersDir=...`, runs the publication-
 #                            shape verification, then `publish` against the Sonatype
 #                            Central Portal staging endpoint. Finally creates the
-#                            GitHub release (draft, with the cross-platform
-#                            recording jar attached) so the maintainer can sanity-
-#                            check Central + GitHub side-by-side before promoting.
+#                            GitHub release (draft, with the recording API jar plus
+#                            platform helper jars attached) so the maintainer can
+#                            sanity-check Central + GitHub side-by-side before promoting.
 #
 # Secrets used (all from repo settings):
 #   APPLE_DEVELOPER_ID_P12 / _PASSWORD                  → keychain import (mac-helper)
@@ -185,8 +185,8 @@ jobs:
           # `recording/build/generated/screenCaptureHelper/native/macos/spectre-screencapture`.
           # `-PnotarizeScreenCaptureKitHelper` wires the codesign + notarytool + verify
           # steps into the dependency chain. The publish job downloads the artefact and
-          # stages it via `-PprebuiltMacHelperPath` so the resulting recording jar is
-          # consumable on any macOS host without needing to redo the notarisation dance.
+          # stages it via `-PprebuiltMacHelperPath` so the resulting
+          # spectre-recording-macos jar is consumable without redoing notarisation.
           APPLE_NOTARY_API_KEY_PATH="$API_KEY_PATH" \
             ./gradlew :recording:assembleScreenCaptureKitHelperUniversal \
               -PuniversalHelper \
@@ -342,7 +342,7 @@ jobs:
       - name: Verify publication shape against mavenLocal
         # Belt-and-braces: publishes everything to mavenLocal first with the prebuilt
         # helpers staged, then asserts the artefact set (per-module jar + sources jar +
-        # javadoc jar + POM + module file, recording jar bundles all three helpers)
+        # javadoc jar + POM + module file; platform helper jars carry the native helpers)
         # before we sign and upload to Central. A failure here means the Central upload
         # would have published something incomplete — better to catch it before the
         # remote staging repo gets a partial deployment.
@@ -367,21 +367,26 @@ jobs:
             :core:publishToMavenCentral \
             :server:publishToMavenCentral \
             :recording:publishToMavenCentral \
+            :recording-macos:publishToMavenCentral \
+            :recording-linux:publishToMavenCentral \
             :testing:publishToMavenCentral \
             -PVERSION_NAME="$RELEASE_VERSION" \
             -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/spectre-screencapture" \
             -PprebuiltLinuxHelpersDir="$RUNNER_TEMP/linux-helpers"
 
-      - name: Stage published recording jar for GitHub release attachment
+      - name: Stage published recording jars for GitHub release attachment
         # mavenLocal already has the artefact from the earlier verify step. Pulling from
-        # there avoids the publish step needing a second jar build (the Central upload
-        # consumed the same jar).
+        # there avoids the publish step needing a second jar build.
         run: |
           set -euo pipefail
-          JAR_PATH="$HOME/.m2/repository/dev/sebastiano/spectre/spectre-recording/$RELEASE_VERSION/spectre-recording-$RELEASE_VERSION.jar"
-          test -f "$JAR_PATH"
-          cp "$JAR_PATH" "$RUNNER_TEMP/spectre-recording-$RELEASE_VERSION.jar"
-          echo "GH_RELEASE_JAR=$RUNNER_TEMP/spectre-recording-$RELEASE_VERSION.jar" >> "$GITHUB_ENV"
+          RELEASE_ASSETS="$RUNNER_TEMP/release-assets"
+          mkdir -p "$RELEASE_ASSETS"
+          for artifact in spectre-recording spectre-recording-macos spectre-recording-linux; do
+            jar="$HOME/.m2/repository/dev/sebastiano/spectre/$artifact/$RELEASE_VERSION/$artifact-$RELEASE_VERSION.jar"
+            test -f "$jar"
+            cp "$jar" "$RELEASE_ASSETS/"
+          done
+          echo "GH_RELEASE_ASSETS=$RELEASE_ASSETS/*.jar" >> "$GITHUB_ENV"
 
       - name: Create / update draft GitHub release
         env:
@@ -389,4 +394,4 @@ jobs:
         run: |
           gh release view "$GITHUB_REF_NAME" \
             || gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME"
-          gh release upload "$GITHUB_REF_NAME" "$GH_RELEASE_JAR" --clobber
+          gh release upload "$GITHUB_REF_NAME" $GH_RELEASE_ASSETS --clobber

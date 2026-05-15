@@ -1,7 +1,8 @@
 # Publishing
 
-Spectre's library modules (`:core`, `:server`, `:recording`, `:testing`) publish
-to Sonatype Central via the [`com.vanniktech.maven.publish`][vanniktech] plugin.
+Spectre's library modules (`:core`, `:server`, `:recording`, `:recording-macos`,
+`:recording-linux`, `:testing`) publish to Sonatype Central via the
+[`com.vanniktech.maven.publish`][vanniktech] plugin.
 The sample modules (`:sample-desktop`, `:sample-intellij-plugin`) never apply
 the plugin — they're deliverables, not libraries.
 
@@ -14,8 +15,8 @@ triggers on tags matching `v*`, but the first job rejects anything that is not a
 SemVer-shaped release tag: `v<major>.<minor>.<patch>` with optional SemVer
 pre-release/build metadata (for example `v0.2.0` or `v0.2.0-rc.1`). The leading
 `v` is stripped to form the published version, so `v0.2.0` publishes coordinates
-`dev.sebastiano.spectre:spectre-core:0.2.0` (and equivalent for the other three
-modules).
+`dev.sebastiano.spectre:spectre-core:0.2.0` and the matching version for every
+published library module.
 
 [release-yml]: https://github.com/rock3r/spectre/blob/main/.github/workflows/release.yml
 
@@ -38,7 +39,7 @@ Four jobs run on tag push:
    artefacts, runs `:verifyMavenLocalPublication` to assert the publication
    shape, then runs `publishToMavenCentral` against the
    [Sonatype Central Portal][central-portal]. Finally creates a draft GitHub
-   release with the cross-platform recording jar attached.
+   release with the recording API jar and platform helper jars attached.
 
 [ci-yml]: https://github.com/rock3r/spectre/blob/main/.github/workflows/ci.yml
 [central-portal]: https://central.sonatype.com/
@@ -52,11 +53,13 @@ sanity-checked the artefacts side-by-side.
 Manual promotion checklist:
 
 - Confirm the tag points at the intended, already-reviewed `main` SHA.
-- Inspect the Central Portal staging deployment for all four modules, including
+- Inspect the Central Portal staging deployment for all six modules, including
   POM metadata, sources jars, javadoc jars, and Gradle module metadata.
-- Download the draft GitHub release's `spectre-recording-<version>.jar` and
-  confirm it contains `native/macos/spectre-screencapture`,
-  `native/linux/x86_64/spectre-wayland-helper`, and
+- Confirm `spectre-recording-<version>.jar` contains no `native/...` entries.
+- Confirm `spectre-recording-macos-<version>.jar` contains
+  `native/macos/spectre-screencapture`.
+- Confirm `spectre-recording-linux-<version>.jar` contains
+  `native/linux/x86_64/spectre-wayland-helper` and
   `native/linux/aarch64/spectre-wayland-helper`.
 - Promote the Central staging deployment from the Central Portal UI.
 - Undraft the GitHub release with `gh release edit <tag> --draft=false`.
@@ -94,7 +97,7 @@ signing convention only fires when `ORG_GRADLE_PROJECT_signingInMemoryKey` is
 set. The `:verifyMavenLocalPublication` task drives the full shape check:
 
 ```shell
-# Publish all four modules + verify shape. Stub mac helper because Linux can't
+# Publish all library modules + verify shape. Stub mac helper because Linux can't
 # build the real one; cross-arch Linux helpers come from the real Rust build.
 ./gradlew verifyMavenLocalPublication \
     -PstubMacHelperForTesting \
@@ -110,12 +113,13 @@ It asserts that each module ends up with:
   (`<name>`, `<description>`, `<url>`, `<licenses>`, `<scm>`, `<developers>`)
 - `<artifactId>-<version>.module` (Gradle Module Metadata)
 
-For `:recording` it additionally asserts the main jar contains the expected
-native helpers at:
+It additionally asserts:
 
-- `native/macos/spectre-screencapture` (universal SCK helper)
-- `native/linux/x86_64/spectre-wayland-helper`
-- `native/linux/aarch64/spectre-wayland-helper`
+- every sources jar is free of generated `native/...` helper resources
+- `:recording` is API/common-only and contains no `native/...` resources
+- `:recording-macos` contains `native/macos/spectre-screencapture`
+- `:recording-linux` contains `native/linux/x86_64/spectre-wayland-helper` and
+  `native/linux/aarch64/spectre-wayland-helper` when built with release helper inputs
 
 If you have a real notarised mac helper on disk (e.g. downloaded from a
 previous release-CI run), point at it instead of the stub:
@@ -136,6 +140,8 @@ The `prebuiltLinuxHelpersDir` directory must contain
 | `:core` | `dev.sebastiano.spectre:spectre-core:<version>` |
 | `:server` | `dev.sebastiano.spectre:spectre-server:<version>` |
 | `:recording` | `dev.sebastiano.spectre:spectre-recording:<version>` |
+| `:recording-macos` | `dev.sebastiano.spectre:spectre-recording-macos:<version>` |
+| `:recording-linux` | `dev.sebastiano.spectre:spectre-recording-linux:<version>` |
 | `:testing` | `dev.sebastiano.spectre:spectre-testing:<version>` |
 
 The shared metadata (group, license, SCM, developer) lives in

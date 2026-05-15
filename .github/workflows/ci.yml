@@ -101,12 +101,10 @@ jobs:
         # the default `check` graph (which uses the host-arch `assembleWaylandHelper`) so
         # contributor builds without the cross toolchain still pass `check` cleanly. When
         # #84's publish pipeline lands, the release job will pass `-PallLinuxArches` so
-        # `processResources` bundles both arches into the published jar.
+        # `:recording-linux:processResources` bundles both arches into the published
+        # platform-helper jar.
         #
-        # `-PallLinuxArches` makes `processResources` depend on the cross-arch staging task
-        # and `verifyBundledRecordingHelpers` expect both arches in `build/resources/main`.
-        # The verify task parses each ELF header in-JVM (no `readelf` dependency) and
-        # asserts the e_machine field matches the expected arch — same assertion strength
-        # as the previous shell loop, now reusable from any host that wants to sanity-check
-        # a build.
-        run: ./gradlew :recording:assembleWaylandHelperAllArches :recording:verifyBundledRecordingHelpers -PallLinuxArches
+        # `-PallLinuxArches` makes `:recording-linux:processResources` depend on the
+        # cross-arch staging task and `verifyRecordingLinuxHelpers` expect both resource
+        # entries in the platform-helper jar.
+        run: ./gradlew :recording-linux:verifyRecordingLinuxHelpers -PallLinuxArches

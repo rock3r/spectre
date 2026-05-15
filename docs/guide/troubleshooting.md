@@ -178,8 +178,9 @@ uniform black). The error message points you at the fix:
 > `WaylandPortalRecorder` directly.
 
 If you're driving `FfmpegRecorder` directly on Linux, switch to `AutoRecorder` — it
-detects the session type and routes through the portal-based recorder when the bundled
-helper is wired up. If you'd rather force an Xorg session, verify with:
+detects the session type and routes through the portal-based recorder when the
+`spectre-recording-linux` helper artifact is on the runtime classpath. If you'd rather
+force an Xorg session, verify with:
 
 ```shell
 echo "$XDG_SESSION_TYPE"               # should be "x11"
@@ -205,12 +206,11 @@ See [Recording limitations](../RECORDING-LIMITATIONS.md) for the full Wayland st
 - **TCC doesn't refresh live.** After granting, fully quit and relaunch the
   parent app — not just the JVM child. macOS only picks up the new entitlement on
   process start.
-- **The SCK helper isn't bundled.** If you built `recording` on a non-macOS host and
-  shipped the jar to macOS, the bundled Swift helper isn't present and
-  `AutoRecorder.startWindow(...)` throws instead of silently switching capture modes. To
-  fix, build on macOS, or run `:recording:assembleScreenCaptureKitHelper` (optionally
-  with `-PuniversalHelper`). Use `startRegion(...)` explicitly if region capture is an
-  acceptable fallback for your test.
+- **The SCK helper artifact is missing.** If `spectre-recording-macos` is not on the
+  runtime classpath, the Swift helper is not present and `AutoRecorder.startWindow(...)`
+  throws instead of silently switching capture modes. Add the helper artifact as
+  `runtimeOnly(...)` or `testRuntimeOnly(...)`. Use `startRegion(...)` explicitly if region
+  capture is an acceptable fallback for your test.
 - **Operational SCK errors propagate.** Permission denied, target window not found,
   helper crashed during init — these all throw `IllegalStateException` rather than
   silently falling back, so you see the real cause.

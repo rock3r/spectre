@@ -49,7 +49,7 @@ failure modes, and the section below
   the README.
 - **Linux Wayland sessions** — `gst-launch-1.0` driven through the
   `xdg-desktop-portal` ScreenCast interface, with the PipeWire FD passed to the encoder by a
-  small Rust helper binary (`spectre-wayland-helper`, sources at
+  small Rust helper binary from `spectre-recording-linux` (`spectre-wayland-helper`, sources at
   `recording/native/linux/`). Two JVM-side recorders share the helper:
   `WaylandPortalRecorder` (region-targeted, portal `SourceType.MONITOR` — user picks a
   monitor, helper crops to the requested rectangle) and `WaylandPortalWindowRecorder`
@@ -62,9 +62,8 @@ failure modes, and the section below
   Why the helper: a pure-JVM attempt hit a dbus-java UnixFD-unmarshalling bug that wasn't
   fixable trivially, and Rust's `std::process` makes FD inheritance into `gst-launch` a
   one-liner where the JVM's `ProcessBuilder` doesn't expose the necessary
-  `fcntl(F_SETFD, ...)` knob. The helper-as-subprocess shape also matches the macOS SCK
-  helper (`recording/native/macos/`) — same pattern, same bundling, same recorder-skeleton
-  on the JVM side.
+  `fcntl(F_SETFD, ...)` knob. The helper-as-subprocess shape also matches the
+  `spectre-recording-macos` SCK helper (`recording/native/macos/`) on the JVM side.
 
   **Window-targeted Wayland needs `xprop` on `PATH`.** Mutter renders window-source-type
   streams with the WM-imposed invisible-shadow extents around the visible window —
