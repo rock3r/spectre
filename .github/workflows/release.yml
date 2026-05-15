@@ -2,26 +2,32 @@ name: Release
 
 # Tag-driven publishing pipeline (#84).
 #
-# Trigger: pushing a tag matching `v*` (e.g. `v0.2.0`). The leading `v` is stripped
-# from `${GITHUB_REF_NAME}` and the result becomes the version everywhere — the
-# Gradle invocation is parameterised via `-PVERSION_NAME=...`, and `vanniktech-
-# maven-publish`'s POMs pick up the override automatically.
+# Trigger: pushing a tag matching `v*` (e.g. `v0.2.0`). The `release-gate`
+# job rejects anything that is not `v<semver>` before helper builds or publishing
+# can start. The leading `v` is stripped from `${GITHUB_REF_NAME}` and the result
+# becomes the version everywhere — the Gradle invocation is parameterised via
+# `-PVERSION_NAME=...`, and `vanniktech-maven-publish`'s POMs pick up the override
+# automatically.
 #
-# Three-stage fan-out:
+# Four-stage fan-out:
 #
-#   1. `mac-helper`       — macOS runner. Builds the universal arm64+x86_64
+#   1. `release-gate`     — Linux runner. Rejects non-SemVer `v*` tags, runs the
+#                            full Gradle `check`, and runs `mkdocs build --strict`
+#                            before any helper build or publish job starts.
+#
+#   2. `mac-helper`       — macOS runner. Builds the universal arm64+x86_64
 #                            `SpectreScreenCapture` Swift helper, codesigns it with
 #                            our Developer ID, and runs `notarytool submit --wait`.
 #                            Uploads the notarised binary as a GitHub Actions
 #                            artifact.
 #
-#   2. `linux-helpers`    — Linux runner. Cross-builds the Wayland Rust helper for
+#   3. `linux-helpers`    — Linux runner. Cross-builds the Wayland Rust helper for
 #                            both x86_64 and aarch64 using the same toolchain dance
 #                            `ci.yml` documents (dpkg multi-arch + per-arch libdbus
 #                            sysroot + cross-linker). Uploads the per-arch binaries
 #                            as a GitHub Actions artifact.
 #
-#   3. `publish`          — Linux runner. Depends on both helper jobs. Downloads
+#   4. `publish`          — Linux runner. Depends on the gate and both helper jobs. Downloads
 #                            the artefacts, stages them into recording's resource
 #                            tree via `-PprebuiltMacHelperPath=...` and
 #                            `-PprebuiltLinuxHelpersDir=...`, runs the publication-
@@ -58,9 +64,52 @@ permissions:
   contents: read
 
 jobs:
+  release-gate:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Set up Python for docs
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+          cache: pip
+          cache-dependency-path: requirements-docs.txt
+
+      - name: Install docs dependencies
+        run: pip install -r requirements-docs.txt
+
+      - name: Derive release version from SemVer tag
+        id: version
+        run: |
+          version="$(bash .github/scripts/derive-release-version.sh "$GITHUB_REF_NAME")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Run CI gate
+        run: ./gradlew check
+
+      - name: Build docs strictly
+        run: mkdocs build --strict
+
   mac-helper:
     name: Build + notarise macOS helper
     runs-on: macos-latest
+    needs:
+      - release-gate
 
     steps:
       - name: Check out repository
@@ -166,6 +215,8 @@ jobs:
   linux-helpers:
     name: Build cross-arch Linux helpers
     runs-on: ubuntu-latest
+    needs:
+      - release-gate
 
     steps:
       - name: Check out repository
@@ -239,11 +290,14 @@ jobs:
     name: Publish to Maven Central + GitHub release
     runs-on: ubuntu-latest
     needs:
+      - release-gate
       - mac-helper
       - linux-helpers
     # `contents: write` needed for `gh release create / upload`; nothing else opted up.
     permissions:
       contents: write
+    env:
+      RELEASE_VERSION: ${{ needs.release-gate.outputs.version }}
 
     steps:
       - name: Check out repository
@@ -276,17 +330,6 @@ jobs:
         with:
           name: linux-helpers
           path: ${{ runner.temp }}/linux-helpers
-
-      - name: Derive release version from tag
-        # `v0.2.0` -> `0.2.0`. Stripping the leading `v` keeps tag conventions (which use
-        # the prefix) separate from Maven coordinates (which don't).
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          version="${tag#v}"
-          test -n "$version"
-          test "$version" != "$tag"  # Refuse to publish if the tag doesn't start with `v`.
-          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Verify publication shape against mavenLocal
         # Belt-and-braces: publishes everything to mavenLocal first with the prebuilt
