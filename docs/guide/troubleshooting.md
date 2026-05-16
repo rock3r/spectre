@@ -123,8 +123,11 @@ clipboard, so none of the paste-specific caveats apply.
 Spectre input and screenshots need AWT. If the JVM is launched with
 `-Djava.awt.headless=true`, real `RobotDriver()` cannot drive the window, and synthetic
 input still needs a real AWT window hierarchy to dispatch into. Move live Spectre tests
-to a non-headless test task (`systemProperty("java.awt.headless", "false")`). Use
-`RobotDriver.headless()` only for read-only semantics-tree checks.
+to a non-headless test task (`systemProperty("java.awt.headless", "false")`). On Linux CI
+under `xvfb`, also set `systemProperty("skiko.renderApi", "SOFTWARE_COMPAT")` on the
+same `Test` task so Skiko does not try to create a GPU-backed OpenGL context. Use
+`RobotDriver.headless()` only for read-only semantics-tree checks. See
+[Running on CI](ci.md) for a complete workflow example.
 
 ## "The test hangs behind a Swing Error dialog"
 

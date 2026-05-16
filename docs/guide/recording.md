@@ -167,7 +167,8 @@ macOS has the most involved setup; the others are short. macOS first:
 - `ffmpeg` on `PATH`.
 - Add `dev.sebastiano.spectre:spectre-recording-macos:<version>` as a runtime-only
   dependency. Its jar carries the notarized universal ScreenCaptureKit helper at
-  `native/macos/spectre-screencapture`.
+  `native/macos/spectre-screencapture`; the base `spectre-recording` artifact does not
+  bundle this helper.
 - **Screen Recording TCC permission**, granted under System Settings → Privacy &
   Security → Screen Recording.
 
@@ -190,9 +191,11 @@ run again". See
 for failure modes when permission is missing or attached to the wrong binary.
 
 `apple.awt.UIElement=true` helper/test JVMs are useful with `RobotDriver.synthetic(...)`
-for focus-safe typing, but recording still goes through macOS capture services and
-spawned helper processes. Prefer a normal foreground-capable parent process for
-recording tests, especially while establishing Screen Recording TCC grants.
+for focus-safe per-character `typeText`, but clipboard-backed `pasteText` and recording
+still go through macOS services outside Spectre's synthetic key path. Prefer a normal
+foreground-capable parent process for recording tests, especially while establishing Screen
+Recording TCC grants. See [Running on CI](ci.md#macos-helper-jvms) for the CI-side
+trade-offs.
 
 ### Other platforms
 

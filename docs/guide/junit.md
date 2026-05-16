@@ -140,7 +140,8 @@ Use the returned `ComposeWindow` when constructing
 
 Spectre tests that drive a real Compose window need a non-headless JVM. If your default
 `Test` task sets `java.awt.headless=true`, move Spectre tests to a separate task and
-force that task to run with `java.awt.headless=false`:
+force that task to run with `java.awt.headless=false`. On GPU-less Linux CI, also force
+Skiko software rendering:
 
 ```kotlin
 val spectreTest by tasks.registering(Test::class) {
@@ -148,19 +149,24 @@ val spectreTest by tasks.registering(Test::class) {
     group = "verification"
     useJUnitPlatform()
     systemProperty("java.awt.headless", "false")
+    if (System.getProperty("os.name").lowercase().contains("linux")) {
+        systemProperty("skiko.renderApi", "SOFTWARE_COMPAT")
+    }
 }
 ```
 
 Use `RobotDriver.headless()` only for read-only semantics-tree tests. It throws on
-input, clipboard, and screenshot calls by design.
+input, clipboard, and screenshot calls by design. See [Running on CI](ci.md) for the
+full Linux `xvfb` and test-JVM flag recipe.
 
 On macOS, a dedicated Spectre test task may also set
 `systemProperty("apple.awt.UIElement", "true")` to keep helper JVMs out of the Dock and
 avoid foreground-app fights. Pair that with `RobotDriver.synthetic(rootWindow = window)`
 for typing-driven Compose Desktop tests: Spectre can deliver key events through
 Compose's AWT key listener even when macOS never grants the window an AWT focus owner.
-Do not rely on UI-element mode for clipboard-backed `pasteText` or OS screen recording;
-those still go through macOS services outside the synthetic key-event path.
+Do not rely on UI-element mode for clipboard-backed `pasteText`; that path still goes
+through macOS clipboard services outside the synthetic key-event path. Run recording tests
+as a separate, foreground-capable task while establishing Screen Recording TCC grants.
 
 ## Custom `AutomatorFactory`
 

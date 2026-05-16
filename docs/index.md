@@ -54,6 +54,8 @@ familiar — Spectre brings the same "find a node, do a thing, assert" loop to C
   `findByContentDescription`, `findByRole`, and the `printTree()` debugger.
 - :material-clock-fast: **[Synchronization](guide/synchronization.md)**
   — `waitForIdle`, `waitForVisualIdle`, `waitForNode`, and the EDT rule.
+- :material-monitor-dashboard: **[Running on CI](guide/ci.md)** — `xvfb`, required test-JVM
+  flags, macOS helper mode, and recording test tags.
 - :material-video: **[Recording](guide/recording.md)** — Region and window-targeted capture
   across macOS, Windows, and Linux.
 - :material-server: **[Cross-JVM](guide/cross-jvm.md)** — Drive a UI hosted in another JVM
