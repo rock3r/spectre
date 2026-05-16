@@ -201,8 +201,9 @@ val automator = ComposeAutomator.inProcess(
 
 Synthetic input is the right choice when you're running tests in parallel JVMs, when the
 test machine also runs unrelated UI work, or when a macOS test helper runs with
-`apple.awt.UIElement=true` to avoid a Dock icon. Stick to real input for end-to-end smokes
-where the realism of the input matters (e.g., validating that a system shortcut reaches
-the app). `apple.awt.UIElement=true` is **not** a blanket substitute for a foreground app:
-clipboard-backed `pasteText` and OS capture/recording still depend on macOS services
-outside Spectre's synthetic key path.
+`apple.awt.UIElement=true` to avoid a Dock icon. That macOS mode is safe for
+per-character `typeText` with `RobotDriver.synthetic(rootWindow = ...)`, but
+clipboard-backed `pasteText` still requires a foreground-capable app
+(`apple.awt.UIElement=false`). Stick to real input for end-to-end smokes where the realism
+of the input matters (e.g., validating that a system shortcut reaches the app). See
+[Running on CI](ci.md#macos-helper-jvms) for the macOS CI trade-off.

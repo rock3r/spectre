@@ -97,6 +97,7 @@ nav:
       - Driving input: guide/interactions.md
       - Synchronization: guide/synchronization.md
       - JUnit integration: guide/junit.md
+      - Running on CI: guide/ci.md
       - Recording: guide/recording.md
       - Cross-JVM access: guide/cross-jvm.md
       - IntelliJ-hosted Compose: guide/intellij.md

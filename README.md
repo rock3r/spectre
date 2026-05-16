@@ -112,6 +112,10 @@ with IntelliJ 2026.1). Any JDK 21+ works for the non-IDE modules. CI runs on Tem
   on Linux under `xvfb-run` (real Xorg, no compositor in the loop), gated on the same
   `sample-desktop/**` filter shape.
 
+For consumer projects, see [Running on CI](docs/guide/ci.md) for the required test-JVM flags:
+`java.awt.headless=false` for AWT, `skiko.renderApi=SOFTWARE_COMPAT` on GPU-less Linux runners,
+and the macOS `apple.awt.UIElement=true` trade-offs for synthetic typing vs. clipboard paste.
+
 ## Reference docs
 
 The user guide and these reference pages are also published as a single browseable site
