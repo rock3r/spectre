@@ -43,10 +43,12 @@ class HelperArgumentsTest {
 
         val argv = args.toArgv(helper)
 
-        // The helper's CLI documents `--pid`, `--title-contains`, `--fps`, `--cursor`,
-        // `--discovery-timeout-ms`, `--output`. Every emitted flag must be one of those.
+        // The helper's CLI documents `--mode`, `--pid`, `--title-contains`, `--fps`,
+        // `--cursor`, `--discovery-timeout-ms`, `--output`. Every emitted flag must be one
+        // of those.
         val expectedFlags =
             setOf(
+                "--mode",
                 "--pid",
                 "--title-contains",
                 "--fps",
@@ -78,6 +80,26 @@ class HelperArgumentsTest {
         // else (e.g. "1"/"0") would crash with an arg-validation error at run time.
         assertEquals("true", on[on.indexOf("--cursor") + 1])
         assertEquals("false", off[off.indexOf("--cursor") + 1])
+    }
+
+    @Test
+    fun `toArgv encodes mode with recording default and screenshot override`() {
+        val helper = Path.of("/tmp/spectre-screencapture")
+        val baseline =
+            HelperArguments(
+                pid = 1,
+                titleContains = "x",
+                output = Path.of("/tmp/o.mov"),
+                fps = 30,
+                captureCursor = true,
+                discoveryTimeoutMs = 0,
+            )
+
+        val recording = baseline.toArgv(helper)
+        val screenshot = baseline.copy(mode = "screenshot").toArgv(helper)
+
+        assertEquals("recording", recording[recording.indexOf("--mode") + 1])
+        assertEquals("screenshot", screenshot[screenshot.indexOf("--mode") + 1])
     }
 
     @Test
