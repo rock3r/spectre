@@ -410,6 +410,11 @@ final class Recorder {
         }
 
         if args.mode == .screenshot {
+            guard framesAppended == 0 else { return }
+            guard isAcceptableFrameStatus(sampleBuffer) else {
+                framesDropped += 1
+                return
+            }
             guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
                 framesDropped += 1
                 return
@@ -434,24 +439,9 @@ final class Recorder {
             return
         }
 
-        // SCK tags each frame with an SCFrameStatus. We accept `complete` (content changed) and
-        // `idle` (same pixels as last frame but a fresh timestamp at the configured cadence).
-        // Filtering out `idle` produces a video that only contains transition frames — fine
-        // for change-detection, useless for recording. The remaining states (`blank`,
-        // `suspended`, `started`, `stopped`) carry no pixels worth writing.
-        if let attachments =
-            CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
-            as? [[SCStreamFrameInfo: Any]],
-            let status = attachments.first?[.status] as? Int
-        {
-            let acceptable: Set<Int> = [
-                SCFrameStatus.complete.rawValue,
-                SCFrameStatus.idle.rawValue,
-            ]
-            guard acceptable.contains(status) else {
-                framesDropped += 1
-                return
-            }
+        guard isAcceptableFrameStatus(sampleBuffer) else {
+            framesDropped += 1
+            return
         }
 
         guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
@@ -474,6 +464,27 @@ final class Recorder {
             framesDropped += 1
             if pipelineError == nil { pipelineError = writer.error }
         }
+    }
+
+    // SCK tags each frame with an SCFrameStatus. We accept `complete` (content changed) and
+    // `idle` (same pixels as last frame but a fresh timestamp at the configured cadence).
+    // Filtering out `idle` produces a video that only contains transition frames — fine
+    // for change-detection, useless for recording. The remaining states (`blank`,
+    // `suspended`, `started`, `stopped`) carry no pixels worth writing.
+    private func isAcceptableFrameStatus(_ sampleBuffer: CMSampleBuffer) -> Bool {
+        guard
+            let attachments =
+                CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
+                as? [[SCStreamFrameInfo: Any]],
+            let status = attachments.first?[.status] as? Int
+        else {
+            return true
+        }
+        let acceptable: Set<Int> = [
+            SCFrameStatus.complete.rawValue,
+            SCFrameStatus.idle.rawValue,
+        ]
+        return acceptable.contains(status)
     }
 
     private func writePng(_ imageBuffer: CVImageBuffer) throws {
