@@ -70,6 +70,39 @@ Expected results by platform:
 
   Pick the smoke window in the compositor portal dialog and inspect the resulting video.
 
+### Manual Verification TODOs
+
+The macOS smoke has been run locally with the ScreenCaptureKit capture badge visible.
+Before calling the cross-platform screenshot path fully proven, run these remaining
+manual checks on real Windows and Linux desktop sessions:
+
+- [ ] **Windows still screenshot smoke.** On a Windows machine with `ffmpeg` on `PATH`,
+  run `./gradlew :recording:runWindowScreenshotSmoke`. Confirm the task prints a PNG
+  path, open that PNG, and verify it contains only the "Spectre screenshot smoke"
+  window. Move another window over the smoke window before rerunning; the PNG should
+  still contain the target window rather than the occluding app because `gdigrab title=`
+  is window-targeted.
+- [ ] **Windows normal verification.** Run `./gradlew check` on the same Windows
+  machine after the smoke. If validation tests hit the known Windows Gradle
+  executor-protocol flake, rerun the failed job/task and record whether the rerun
+  passes without code changes.
+- [ ] **Linux X11 still screenshot smoke.** In an Xorg session with `DISPLAY` set and
+  `ffmpeg` on `PATH`, run `./gradlew :recording:runWindowScreenshotSmoke`. Keep the
+  smoke window visible and frontmost. Confirm the task prints a PNG path and that the
+  PNG contains the smoke window. Then intentionally cover the smoke window and rerun;
+  record that this path is region-based and therefore captures occlusion.
+- [ ] **Linux Wayland still screenshot guard.** In a Wayland session, run
+  `./gradlew :recording:runWindowScreenshotSmoke`. The task should pass by verifying
+  that still window screenshots are unsupported on Wayland, and the error text should
+  point users at the portal-backed video path instead of silently producing a black
+  PNG.
+- [ ] **Linux Wayland window video smoke.** In the same Wayland session with
+  `gst-launch-1.0`, portal services, and `xprop` available, run
+  `./gradlew :recording:runWaylandPortalWindowSmoke`. Pick the smoke window in the
+  portal dialog, inspect the resulting video, and confirm it contains only the selected
+  window. Do not move or resize the window during the recording; the current portal
+  window recorder computes the crop once at start.
+
 ## The `Recorder` interface
 
 ```kotlin
