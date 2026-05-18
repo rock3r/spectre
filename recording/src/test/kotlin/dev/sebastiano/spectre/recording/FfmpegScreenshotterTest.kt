@@ -34,6 +34,7 @@ class FfmpegScreenshotterTest {
         val argv = factory.lastArgv
         assertContains(argv, "gdigrab")
         assertContainsSequence(argv, listOf("-i", "title=Spectre Sample"))
+        assertContainsSequence(argv, listOf("-draw_mouse", "0"))
         assertContainsSequence(argv, listOf("-frames:v", "1"))
         assertContainsSequence(argv, listOf("-f", "image2"))
     }
@@ -70,6 +71,7 @@ class FfmpegScreenshotterTest {
         assertContains(argv, "x11grab")
         assertContainsSequence(argv, listOf("-video_size", "30x40"))
         assertContainsSequence(argv, listOf("-i", ":99+10,20"))
+        assertContainsSequence(argv, listOf("-draw_mouse", "0"))
         assertContainsSequence(argv, listOf("-frames:v", "1"))
     }
 
