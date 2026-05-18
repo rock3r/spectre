@@ -587,6 +587,16 @@ final class Recorder {
         if !completed {
             throw CLIError(code: 5, message: "timed out waiting for first screenshot frame")
         }
+        if !didAppendFrame() {
+            throw CLIError(code: 5, message: "screenshot capture stopped before writing a PNG")
+        }
+    }
+
+    private func didAppendFrame() -> Bool {
+        lock.lock()
+        let didAppendFrame = framesAppended > 0
+        lock.unlock()
+        return didAppendFrame
     }
 
     private func finalize() async throws {
