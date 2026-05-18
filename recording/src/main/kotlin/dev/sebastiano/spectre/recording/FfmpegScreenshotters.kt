@@ -67,7 +67,7 @@ internal constructor(
                 ffmpegPath = ffmpegPath,
                 region = region,
                 output = output,
-                displayName = displayNameProvider().orEmpty(),
+                displayName = displayNameProvider()?.takeIf { it.isNotBlank() } ?: ":0.0",
             )
         }
 }

@@ -74,18 +74,19 @@ class FfmpegScreenshotterTest {
     }
 
     @Test
-    fun `region screenshotter requires a display name`() {
+    fun `region screenshotter falls back to default display when display name is unset`() {
+        val factory = ScreenshotProcessFactory()
         val screenshotter =
             FfmpegRegionScreenshotter(
                 ffmpegPath = FfmpegRecorder.PROBE_PATH,
-                processFactory = ScreenshotProcessFactory(),
+                processFactory = factory,
                 displayNameProvider = { null },
                 getenv = { null },
             )
 
-        assertFailsWith<IllegalArgumentException> {
-            screenshotter.captureRegion(Rectangle(0, 0, 10, 10))
-        }
+        screenshotter.captureRegion(Rectangle(0, 0, 10, 10))
+
+        assertContainsSequence(factory.lastArgv, listOf("-i", ":0.0+0,0"))
     }
 
     @Test
