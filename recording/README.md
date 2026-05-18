@@ -1,8 +1,9 @@
 # Recording
 
-Screen recording for Spectre scenarios. Region capture (ffmpeg) and window-targeted capture
-(ScreenCaptureKit on macOS, `gdigrab` on Windows, xdg-desktop-portal on Linux Wayland) live
-side by side — pick by what you need.
+Screen recording and native still-window screenshots for Spectre scenarios. Region capture
+(ffmpeg), window-targeted video capture (ScreenCaptureKit on macOS, `gdigrab` on Windows,
+xdg-desktop-portal on Linux Wayland), and still screenshot routing live side by side — pick
+by what you need.
 
 The user-facing recorder capability matrix lives in
 [`docs/guide/recording.md`](../docs/guide/recording.md). This README is the in-tree
@@ -46,6 +47,15 @@ implementer's view of the same module.
   Windows `gdigrab` title capture, then ffmpeg region as the final fallback. Operational
   SCK failures (TCC denied, window not found) propagate unmodified — only
   `HelperNotBundledException` triggers the fallback.
+- `AutoScreenshotter` — high-level still-image router. Uses ScreenCaptureKit window capture
+  on macOS, `gdigrab title=` one-frame PNG capture on Windows, and explicit `x11grab`
+  region fallback on Linux X11. Wayland still screenshots fail loudly for now; use
+  `WaylandPortalWindowRecorder` for window-scoped video until the helper can return image
+  buffers.
+- `./gradlew :recording:runWindowScreenshotSmoke` — manual cross-platform smoke for
+  `AutoScreenshotter`. It writes a PNG on macOS, Windows, and Linux X11, and verifies the
+  expected unsupported message on Linux Wayland. For Wayland window-source video, run
+  `./gradlew :recording:runWaylandPortalWindowSmoke`.
 
 ### Shared
 - `RecordingHandle` — `AutoCloseable`. Stop sends `q` on stdin (the documented clean-shutdown

@@ -53,8 +53,9 @@ npx skills add rock3r/spectre --skill spectre
 - `core` — semantics tree, selectors, coordinate mapping, Robot-backed input.
 - `server` — embedded HTTP transport (Ktor) for cross-JVM access. **Experimental**; see
   [`docs/SECURITY.md`](docs/SECURITY.md) for the trust model.
-- `recording` — region capture via `ffmpeg`, plus window-targeted capture (ScreenCaptureKit on
-  macOS, `gdigrab` on Windows). `AutoRecorder` picks per call. See
+- `recording` — region capture via `ffmpeg`, window-targeted video capture, and native still
+  window screenshots where available (ScreenCaptureKit on macOS, `gdigrab` on Windows, X11
+  region fallback on Linux). `AutoRecorder` / `AutoScreenshotter` pick per call. See
   [`docs/RECORDING-LIMITATIONS.md`](docs/RECORDING-LIMITATIONS.md).
 - `testing` — JUnit 5 extension and JUnit 4 rule.
 - `sample-desktop` — Compose Desktop app for manual smokes.

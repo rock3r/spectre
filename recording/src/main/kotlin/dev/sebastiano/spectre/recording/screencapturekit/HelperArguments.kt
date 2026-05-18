@@ -15,6 +15,7 @@ import java.nio.file.Path
  * failures instead of opaque `exit=2` from the subprocess.
  */
 internal data class HelperArguments(
+    val mode: String = "recording",
     val pid: Long,
     val titleContains: String,
     val output: Path,
@@ -24,6 +25,9 @@ internal data class HelperArguments(
 ) {
 
     init {
+        require(mode == "recording" || mode == "screenshot") {
+            "mode must be recording or screenshot (got $mode)"
+        }
         require(titleContains.isNotBlank()) {
             "titleContains must be a non-blank substring; the helper rejects empty discriminators"
         }
@@ -40,6 +44,8 @@ internal data class HelperArguments(
      */
     fun toArgv(helperPath: Path): List<String> = buildList {
         add(helperPath.toString())
+        add("--mode")
+        add(mode)
         add("--pid")
         add(pid.toString())
         add("--title-contains")

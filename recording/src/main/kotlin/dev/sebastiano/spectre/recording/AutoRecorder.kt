@@ -1,6 +1,5 @@
 package dev.sebastiano.spectre.recording
 
-import dev.sebastiano.spectre.recording.FfmpegBackend.Companion.detectWaylandSession
 import dev.sebastiano.spectre.recording.portal.WaylandPortalRecorder
 import dev.sebastiano.spectre.recording.portal.WaylandPortalWindowRecorder
 import dev.sebastiano.spectre.recording.portal.WaylandWindowSourceRecorder
@@ -130,21 +129,14 @@ internal constructor(
         )
 
     private companion object {
-        @JvmStatic
-        fun defaultIsMacOs(): Boolean =
-            System.getProperty("os.name").orEmpty().lowercase().contains("mac")
+        @JvmStatic fun defaultIsMacOs(): Boolean = HostPlatform.isMacOs()
 
-        @JvmStatic
-        fun defaultIsWindows(): Boolean =
-            System.getProperty("os.name").orEmpty().lowercase().contains("windows")
+        @JvmStatic fun defaultIsWindows(): Boolean = HostPlatform.isWindows()
 
-        @JvmStatic
-        fun defaultIsLinux(): Boolean =
-            System.getProperty("os.name").orEmpty().lowercase().contains("linux")
+        @JvmStatic fun defaultIsLinux(): Boolean = HostPlatform.isLinux()
 
         /** Wayland session detection — three-tier env+filesystem check, see #77 stage 1. */
-        @JvmStatic
-        fun defaultIsWayland(): Boolean = defaultIsLinux() && detectWaylandSession(System::getenv)
+        @JvmStatic fun defaultIsWayland(): Boolean = HostPlatform.isWayland()
 
         /**
          * Constructs a [FfmpegWindowRecorder] only when the host is Windows (the only OS where
