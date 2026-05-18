@@ -51,13 +51,16 @@ internal constructor(
         } catch (e: IOException) {
             throw IllegalStateException("spectre-screencapture screenshot failed", e)
         } finally {
-            val wasInterrupted = Thread.interrupted()
             try {
-                discriminator.restore()
+                val wasInterrupted = Thread.interrupted()
+                try {
+                    discriminator.restore()
+                } finally {
+                    if (wasInterrupted) Thread.currentThread().interrupt()
+                }
             } finally {
-                if (wasInterrupted) Thread.currentThread().interrupt()
+                Files.deleteIfExists(output)
             }
-            Files.deleteIfExists(output)
         }
     }
 }
