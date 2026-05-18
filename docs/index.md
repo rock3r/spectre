@@ -36,9 +36,11 @@ familiar — Spectre brings the same "find a node, do a thing, assert" loop to C
   defaults to OS-level `java.awt.Robot` events. Swap in `RobotDriver.synthetic(...)` and
   AWT events go directly into the window hierarchy — useful when tests run in parallel
   and can't fight over OS focus.
-- **Recording built in.** Region capture via `ffmpeg`, plus window-targeted capture
-  (ScreenCaptureKit on macOS, `gdigrab` on Windows, x11grab/portal on Linux). The
-  [`AutoRecorder`](guide/recording.md) picks the right backend per call.
+- **Recording and screenshots built in.** Region capture via `ffmpeg`, plus
+  window-targeted recording and still screenshots where the platform exposes them
+  (ScreenCaptureKit on macOS, `gdigrab` on Windows, x11grab fallback on Linux X11,
+  portal video capture on Wayland). The
+  [`AutoRecorder` and `AutoScreenshotter`](guide/recording.md) pick the right backend.
 - **JUnit-friendly.** Drop-in extension and rule for JUnit 5 and JUnit 4 manage a per-test
   automator instance for you.
 
@@ -56,8 +58,9 @@ familiar — Spectre brings the same "find a node, do a thing, assert" loop to C
   — `waitForIdle`, `waitForVisualIdle`, `waitForNode`, and the EDT rule.
 - :material-monitor-dashboard: **[Running on CI](guide/ci.md)** — `xvfb`, required test-JVM
   flags, macOS helper mode, and recording test tags.
-- :material-video: **[Recording](guide/recording.md)** — Region and window-targeted capture
-  across macOS, Windows, and Linux.
+- :material-video: **[Recording and screenshots](guide/recording.md)** — Region,
+  window-targeted video, and native still-window screenshots across macOS, Windows,
+  and Linux.
 - :material-server: **[Cross-JVM](guide/cross-jvm.md)** — Drive a UI hosted in another JVM
   process via the embedded HTTP transport (experimental; see [Security notes](SECURITY.md)).
 

@@ -1,0 +1,122 @@
+package dev.sebastiano.spectre.recording
+
+import dev.sebastiano.spectre.recording.screencapturekit.HelperNotBundledException
+import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitScreenshotter
+import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
+import java.awt.Rectangle
+import java.awt.image.BufferedImage
+import java.lang.ProcessHandle
+
+/**
+ * Captures still screenshots from desktop surfaces.
+ *
+ * [captureWindow] uses true window-targeted capture where Spectre has one available: macOS
+ * ScreenCaptureKit and Windows `gdigrab title=`. On Linux X11 it falls back to region capture for
+ * the supplied [TitledWindow.bounds]; callers must make the window visible and frontmost for that
+ * fallback. Linux Wayland still screenshots are deliberately unsupported for now because the
+ * current portal helper streams video, not one-shot image buffers.
+ */
+public class AutoScreenshotter
+internal constructor(
+    private val sckScreenshotter: WindowScreenshotter,
+    private val windowsWindowScreenshotter: WindowScreenshotter?,
+    private val x11RegionScreenshotter: RegionScreenshotter,
+    private val isMacOs: () -> Boolean,
+    private val isWindows: () -> Boolean,
+    private val isLinux: () -> Boolean,
+    private val isWayland: () -> Boolean,
+) {
+
+    public constructor(
+        sckScreenshotter: WindowScreenshotter = ScreenCaptureKitScreenshotter(),
+        windowsWindowScreenshotter: WindowScreenshotter? = defaultWindowsWindowScreenshotter(),
+        x11RegionScreenshotter: RegionScreenshotter = FfmpegRegionScreenshotter(),
+    ) : this(
+        sckScreenshotter = sckScreenshotter,
+        windowsWindowScreenshotter = windowsWindowScreenshotter,
+        x11RegionScreenshotter = x11RegionScreenshotter,
+        isMacOs = ::defaultIsMacOs,
+        isWindows = ::defaultIsWindows,
+        isLinux = ::defaultIsLinux,
+        isWayland = ::defaultIsWayland,
+    )
+
+    public fun captureWindow(
+        window: TitledWindow,
+        windowOwnerPid: Long = ProcessHandle.current().pid(),
+    ): BufferedImage {
+        if (isWayland()) {
+            throw UnsupportedOperationException(
+                "Wayland still window screenshots are not supported yet. Spectre's Wayland " +
+                    "portal backend currently supports window-targeted recording via " +
+                    "WaylandPortalWindowRecorder; one-shot still capture needs a helper " +
+                    "extension that returns image buffers instead of video files."
+            )
+        }
+        if (isMacOs()) {
+            return try {
+                sckScreenshotter.captureWindow(window, windowOwnerPid)
+            } catch (e: HelperNotBundledException) {
+                throw unavailable("macOS window screenshot", e)
+            }
+        }
+        if (isWindows()) {
+            val title = window.title
+            require(!title.isNullOrBlank()) {
+                "AutoScreenshotter.captureWindow requires a non-blank window title on Windows. " +
+                    "Use a region screenshot explicitly if region capture is what you want."
+            }
+            return windowsWindowScreenshotter?.captureWindow(window, windowOwnerPid)
+                ?: throw unavailable("Windows window screenshot", null)
+        }
+        if (isLinux()) {
+            return x11RegionScreenshotter.captureRegion(window.bounds)
+        }
+        throw UnsupportedOperationException(
+            "AutoScreenshotter.captureWindow is unsupported on this platform because no native " +
+                "window screenshot backend is available."
+        )
+    }
+
+    private fun unavailable(mode: String, cause: Throwable?): IllegalStateException {
+        val detail = cause?.message?.takeIf { it.isNotBlank() } ?: cause?.javaClass?.simpleName
+        val message =
+            if (detail == null) "$mode is unavailable." else "$mode is unavailable: $detail"
+        return IllegalStateException(message, cause)
+    }
+
+    private companion object {
+        fun defaultIsMacOs(): Boolean =
+            System.getProperty("os.name").orEmpty().lowercase().contains("mac")
+
+        fun defaultIsWindows(): Boolean =
+            System.getProperty("os.name").orEmpty().lowercase().contains("windows")
+
+        fun defaultIsLinux(): Boolean =
+            System.getProperty("os.name").orEmpty().lowercase().contains("linux")
+
+        fun defaultIsWayland(): Boolean =
+            defaultIsLinux() && FfmpegBackend.detectWaylandSession(System::getenv)
+
+        @Suppress("TooGenericExceptionCaught")
+        fun defaultWindowsWindowScreenshotter(): WindowScreenshotter? {
+            if (!defaultIsWindows()) return null
+            return try {
+                FfmpegWindowScreenshotter()
+            } catch (_: Throwable) {
+                null
+            }
+        }
+    }
+}
+
+public interface WindowScreenshotter {
+    public fun captureWindow(
+        window: TitledWindow,
+        windowOwnerPid: Long = ProcessHandle.current().pid(),
+    ): BufferedImage
+}
+
+public interface RegionScreenshotter {
+    public fun captureRegion(region: Rectangle): BufferedImage
+}

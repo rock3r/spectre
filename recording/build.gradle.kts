@@ -733,6 +733,17 @@ tasks.register<JavaExec>("runScreenCaptureKitSmoke") {
     mainClass.set("dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitRecorderSmoke")
 }
 
+// Manual still-screenshot smoke for AutoScreenshotter. Opens a JFrame and writes a PNG on
+// macOS/Windows/Linux X11; on Linux Wayland it verifies the current unsupported still-image
+// contract and points users at the window-targeted portal video smoke.
+tasks.register<JavaExec>("runWindowScreenshotSmoke") {
+    group = "verification"
+    description =
+        "Boots a JFrame, captures a native/window screenshot PNG where supported, prints output stats."
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.WindowScreenshotSmoke")
+}
+
 // Manual smoke entry point — opens a JFrame, records it for ~3s via FfmpegRecorder bound to
 // the Windows gdigrab backend, prints the resulting file path + size. Mirrors the SCK smoke
 // for the Windows recording path (#22). Lives in the test source set so it can use the

@@ -107,10 +107,17 @@ Current backends:
   `LinuxX11Grab.checkNotWayland`.)
 - `FfmpegWindowRecorder` — Windows-only window-targeted capture via `gdigrab title=`.
   Window movement is followed automatically; occlusion doesn't matter.
+- `FfmpegWindowScreenshotter` — Windows-only still window screenshots via one-frame
+  `gdigrab title=` PNG capture.
+- `FfmpegRegionScreenshotter` — Linux X11 still screenshot fallback via one-frame `x11grab`
+  region capture; the target must be visible and frontmost because this is not true window
+  capture.
 - `screencapturekit.ScreenCaptureKitRecorder` — macOS-only window-targeted capture via a
   Swift helper (`recording/native/macos/`). The helper is built by Gradle on macOS,
   staged under `recording/build/generated/screenCaptureHelper/...`, and packaged by
   `:recording-macos`.
+- `screencapturekit.ScreenCaptureKitScreenshotter` — macOS-only still window screenshots
+  through the same Swift helper in `--mode screenshot`.
 - `portal.WaylandPortalRecorder` — Linux Wayland capture via `xdg-desktop-portal`'s
   ScreenCast interface, driven by a Rust helper
   (`recording/native/linux/spectre-wayland-helper`) packaged by `:recording-linux`.
@@ -118,6 +125,9 @@ Current backends:
 - `AutoRecorder` — high-level router that picks per call from `TitledWindow?` + region +
   OS detection: Wayland portal first, then `window == null` → ffmpeg region, then macOS
   SCK, then Windows title-based capture, then ffmpeg region as fallback.
+- `AutoScreenshotter` — high-level still screenshot router: macOS SCK window source,
+  Windows `gdigrab title=`, Linux X11 region fallback, and loud unsupported failure for
+  Linux Wayland still screenshots until the portal helper can return image buffers.
 
 ### `testing`
 

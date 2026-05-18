@@ -46,7 +46,7 @@ out of scope.
 | --- | --- | --- |
 | Move mouse / press keys | `RobotDriver.click`, `swipe`, `pressKey`, `scrollWheel` | In-process; trusted-local HTTP via `/spectre/click` |
 | Modify clipboard | `RobotDriver.pasteText` (save / set / paste / restore) | In-process |
-| Capture pixels | `RobotDriver.screenshot(region)` — **captures any rectangle of the virtual desktop**, not just the app under test | In-process; trusted-local HTTP via `/spectre/screenshot` |
+| Capture pixels | `RobotDriver.screenshot(region)` — **captures any rectangle of the virtual desktop**, not just the app under test; `AutoScreenshotter` for native/window-targeted still screenshots where available | In-process; trusted-local HTTP via `/spectre/screenshot` for `RobotDriver`; `AutoScreenshotter` is in-process only |
 | Record video | `AutoRecorder`, `FfmpegRecorder`, `ScreenCaptureKitRecorder`, `WaylandPortalRecorder` | In-process only |
 | Execute a helper binary | `HelperBinaryExtractor` (SCK), `WaylandHelperBinaryExtractor` | Local file system, JVM process |
 | Expose any of the above over HTTP | `installSpectreRoutes` mounts the windows / nodes / click / typeText / screenshot routes | **Unauthenticated, plaintext** — host application chooses bind address |

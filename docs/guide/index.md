@@ -13,7 +13,8 @@ The guide walks through using Spectre end-to-end:
 7. **[JUnit integration](junit.md)** — `ComposeAutomatorExtension` (JUnit 5) and
    `ComposeAutomatorRule` (JUnit 4).
 8. **[Running on CI](ci.md)** — JVM flags, `xvfb`, macOS helper JVMs, and recording tags.
-9. **[Recording](recording.md)** — region and window-targeted screen capture.
+9. **[Recording and screenshots](recording.md)** — region capture, window-targeted video,
+   and native still-window screenshots.
 10. **[Cross-JVM access](cross-jvm.md)** — driving a UI hosted in another JVM.
 11. **[IntelliJ-hosted Compose](intellij.md)** — Jewel-on-IntelliJ tool windows.
 12. **[Troubleshooting](troubleshooting.md)** — platform-specific gotchas.

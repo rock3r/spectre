@@ -1,8 +1,8 @@
-# Recording
+# Recording And Screenshots
 
-The `recording` module adds video output to your tests. It exposes a small surface
-backed by a handful of platform-specific implementations and a router that picks the
-right one per call.
+The `recording` module adds video output and native still-window screenshots to your
+tests. It exposes small surfaces backed by platform-specific implementations and
+routers that pick the right one per call.
 
 !!! note "External dependencies"
     The recording backends shell out to platform tools — `ffmpeg` everywhere, plus a
@@ -10,6 +10,65 @@ right one per call.
     `spectre-recording-macos` and/or `spectre-recording-linux` as runtime-only
     dependencies for those helpers. See [Recording limitations](../RECORDING-LIMITATIONS.md)
     for the per-platform notes.
+
+## Still Window Screenshots
+
+`ComposeAutomator.screenshot(...)` lives in `spectre-core` and captures a rectangle
+from the current screen framebuffer. When you have a top-level AWT window and want a
+window-scoped still image, use `AutoScreenshotter` from `spectre-recording`:
+
+```kotlin
+import dev.sebastiano.spectre.recording.AutoScreenshotter
+import dev.sebastiano.spectre.recording.screencapturekit.asTitledWindow
+import javax.imageio.ImageIO
+import java.io.File
+
+val image = AutoScreenshotter().captureWindow(composeWindow.asTitledWindow())
+ImageIO.write(image, "png", File("build/reports/window.png"))
+```
+
+`AutoScreenshotter.captureWindow(...)` returns a `BufferedImage`.
+
+| Platform | Backend | Occlusion behavior | Notes |
+| --- | --- | --- | --- |
+| macOS | ScreenCaptureKit helper (`spectre-screencapture --mode screenshot`) | Captures the window source, not overlapping apps | Requires `spectre-recording-macos` at runtime and Screen Recording permission |
+| Windows | ffmpeg `gdigrab title=` one-frame PNG capture | Captures the named window source | Requires `ffmpeg` on `PATH` and a non-blank exact window title |
+| Linux X11 | ffmpeg `x11grab` region fallback | Captures visible screen pixels | The target window must be visible/frontmost, same limitation as `ComposeAutomator.screenshot(...)` |
+| Linux Wayland | Unsupported for still images today | N/A | Use `WaylandPortalWindowRecorder` for video. One-shot still capture needs a helper extension that returns image buffers instead of video files |
+
+Embedded `ComposePanel` surfaces without a top-level OS window still need region
+screenshots, because native window APIs need a real top-level window to bind to.
+
+### Still Screenshot Smoke Tests
+
+Run the cross-platform smoke first:
+
+```bash
+./gradlew :recording:runWindowScreenshotSmoke
+```
+
+Expected results by platform:
+
+- **macOS** — a Swing window opens, `ScreenCaptureKitScreenshotter` captures it through
+  `spectre-screencapture --mode screenshot`, and the task prints a PNG path such as
+  `$TMPDIR/spectre-window-screenshot-smoke.png`. Open the PNG and confirm the white window
+  with `screenshot smoke` text is visible. If macOS denies Screen Recording, grant the
+  host JVM permission in System Settings, restart the JVM/terminal, and rerun.
+- **Windows** — the same task uses `FfmpegWindowScreenshotter` and `gdigrab title=`. Make
+  sure `ffmpeg` is on `PATH`; the smoke should print a non-empty PNG path. Open it and
+  confirm it contains only the smoke window.
+- **Linux X11** — run from an Xorg/XWayland session with `DISPLAY` set and `ffmpeg` on
+  `PATH`. The task uses the explicit `x11grab` region fallback, so keep the smoke window
+  visible/frontmost. Open the printed PNG and confirm it contains the smoke window.
+- **Linux Wayland** — still screenshots intentionally report unsupported today. The smoke
+  exits successfully only after verifying the `UnsupportedOperationException` message.
+  To test the window-targeted Wayland path that exists today, run:
+
+  ```bash
+  ./gradlew :recording:runWaylandPortalWindowSmoke
+  ```
+
+  Pick the smoke window in the compositor portal dialog and inspect the resulting video.
 
 ## The `Recorder` interface
 

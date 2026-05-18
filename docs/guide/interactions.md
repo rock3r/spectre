@@ -119,15 +119,15 @@ val region = automator.screenshot(Rectangle(0, 0, 800, 600))
 
 Returns a `BufferedImage` you can save, hash, or compare against a baseline.
 
-!!! warning "Screenshots are screen-region captures"
-    Spectre screenshots currently capture OS framebuffer pixels for a rectangle and
-    crop to the requested window, node, or region. Before capturing a window or node,
+!!! warning "`ComposeAutomator.screenshot` is a screen-region capture"
+    `ComposeAutomator.screenshot(...)` captures OS framebuffer pixels for a rectangle and
+    crops to the requested window, node, or region. Before capturing a window or node,
     make sure the target window is visible and brought to the front. If another app
     overlaps the rectangle, those overlapping pixels can appear in the image; if the
     target is partially off-screen, Spectre can only capture the visible screen area.
-    Native window-capture backends that avoid this screen-and-crop limitation are
-    tracked in
-    [issue #147](https://github.com/rock3r/spectre/issues/147).
+    For top-level windows, `spectre-recording` also exposes `AutoScreenshotter`,
+    which uses native/window-targeted backends on macOS and Windows, and an explicit
+    X11 region fallback on Linux X11.
 
 !!! note "Captures are normalised to sRGB"
     The returned `BufferedImage` is always sRGB (`TYPE_INT_ARGB` with an sRGB

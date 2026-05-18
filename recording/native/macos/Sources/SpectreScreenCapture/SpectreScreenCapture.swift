@@ -1,13 +1,17 @@
 import AVFoundation
 import AppKit
 import CoreGraphics
+import CoreImage
 import CoreMedia
 import Foundation
+import ImageIO
 import ScreenCaptureKit
+import UniformTypeIdentifiers
 
 // MARK: - CLI contract
 //
 // spectre-screencapture
+//   --mode <recording|screenshot>  Optional. Default recording.
 //   --pid <jvm pid>            Required. Filters CGWindowList by owner PID so we never
 //                              capture another process's window matching the discriminator.
 //   --title-contains <suffix>  Required. Substring match on the target window's kCGWindowName.
@@ -59,6 +63,7 @@ struct CLIError: Error {
 }
 
 struct Arguments {
+    let mode: CaptureMode
     let pid: pid_t
     let titleContains: String
     let output: URL
@@ -67,6 +72,7 @@ struct Arguments {
     let discoveryTimeoutMs: Int
 
     static func parse(_ argv: [String]) throws -> Arguments {
+        var mode = CaptureMode.recording
         var pid: pid_t?
         var titleContains: String?
         var output: String?
@@ -82,6 +88,11 @@ struct Arguments {
             }
             let value = argv[i + 1]
             switch key {
+            case "--mode":
+                guard let parsed = CaptureMode(rawValue: value) else {
+                    throw CLIError(code: 2, message: "--mode must be recording or screenshot")
+                }
+                mode = parsed
             case "--pid":
                 guard let parsed = pid_t(value) else {
                     throw CLIError(code: 2, message: "--pid must be an integer")
@@ -121,6 +132,7 @@ struct Arguments {
         }
 
         return Arguments(
+            mode: mode,
             pid: pid,
             titleContains: titleContains,
             output: URL(fileURLWithPath: output),
@@ -129,6 +141,11 @@ struct Arguments {
             discoveryTimeoutMs: discoveryTimeoutMs
         )
     }
+}
+
+enum CaptureMode: String {
+    case recording
+    case screenshot
 }
 
 // Frame handling lives in a final class with a NSLock rather than an actor. Two reasons:
@@ -156,6 +173,7 @@ final class Recorder {
     private var framesDropped: Int = 0
     private var streamDelegate: StreamLogger?
     private var frameOutput: FrameOutput?
+    private let ciContext = CIContext()
     // Retained for the lifetime of `run()` so the SIGTERM dispatch source isn't deallocated
     // when `waitForStop`'s continuation-setup closure returns. Without this, the source goes
     // away — and `signal(SIGTERM, SIG_IGN)` is still in effect, which means SIGTERM gets
@@ -190,7 +208,11 @@ final class Recorder {
 
         let target = try await discoverTargetWindow()
         try await startCapture(targetWindow: target)
-        await waitForStop()
+        if args.mode == .recording {
+            await waitForStop()
+        } else {
+            try await waitForScreenshot()
+        }
         try await finalize()
         // Diagnostic counters always printed to stderr so the JVM-side smoke can see whether
         // the helper actually saw frames or was just sat there idle.
@@ -307,42 +329,44 @@ final class Recorder {
         try validateOutputPath(args.output)
         try? FileManager.default.removeItem(at: args.output)
 
-        let writer = try AVAssetWriter(outputURL: args.output, fileType: .mov)
-        let videoSettings: [String: Any] = [
-            AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: width,
-            AVVideoHeightKey: height,
-        ]
-        let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
-        videoInput.expectsMediaDataInRealTime = true
-
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
-            assetWriterInput: videoInput,
-            sourcePixelBufferAttributes: [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                kCVPixelBufferWidthKey as String: width,
-                kCVPixelBufferHeightKey as String: height,
+        if args.mode == .recording {
+            let writer = try AVAssetWriter(outputURL: args.output, fileType: .mov)
+            let videoSettings: [String: Any] = [
+                AVVideoCodecKey: AVVideoCodecType.h264,
+                AVVideoWidthKey: width,
+                AVVideoHeightKey: height,
             ]
-        )
+            let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
+            videoInput.expectsMediaDataInRealTime = true
 
-        guard writer.canAdd(videoInput) else {
-            throw CLIError(
-                code: 5, message: "AVAssetWriter cannot accept the configured video input")
-        }
-        writer.add(videoInput)
-
-        // Start writing BEFORE the stream so we never see a frame before the writer is ready.
-        guard writer.startWriting() else {
-            throw CLIError(
-                code: 5,
-                message:
-                    "AVAssetWriter.startWriting returned false: \(writer.error?.localizedDescription ?? "unknown")"
+            let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+                assetWriterInput: videoInput,
+                sourcePixelBufferAttributes: [
+                    kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                    kCVPixelBufferWidthKey as String: width,
+                    kCVPixelBufferHeightKey as String: height,
+                ]
             )
-        }
 
-        self.writer = writer
-        self.videoInput = videoInput
-        self.pixelBufferAdaptor = adaptor
+            guard writer.canAdd(videoInput) else {
+                throw CLIError(
+                    code: 5, message: "AVAssetWriter cannot accept the configured video input")
+            }
+            writer.add(videoInput)
+
+            // Start writing BEFORE the stream so we never see a frame before the writer is ready.
+            guard writer.startWriting() else {
+                throw CLIError(
+                    code: 5,
+                    message:
+                        "AVAssetWriter.startWriting returned false: \(writer.error?.localizedDescription ?? "unknown")"
+                )
+            }
+
+            self.writer = writer
+            self.videoInput = videoInput
+            self.pixelBufferAdaptor = adaptor
+        }
 
         let delegate = StreamLogger()
         delegate.recorder = self
@@ -380,7 +404,28 @@ final class Recorder {
         defer { lock.unlock() }
 
         framesSeen += 1
-        guard sampleBuffer.isValid,
+        guard sampleBuffer.isValid else {
+            framesDropped += 1
+            return
+        }
+
+        if args.mode == .screenshot {
+            guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+                framesDropped += 1
+                return
+            }
+            do {
+                try writePng(imageBuffer)
+                framesAppended += 1
+            } catch {
+                framesDropped += 1
+                if pipelineError == nil { pipelineError = error }
+            }
+            stopRequested.signal()
+            return
+        }
+
+        guard
             let writer = self.writer,
             let videoInput = self.videoInput,
             let adaptor = self.pixelBufferAdaptor
@@ -428,6 +473,23 @@ final class Recorder {
         } else {
             framesDropped += 1
             if pipelineError == nil { pipelineError = writer.error }
+        }
+    }
+
+    private func writePng(_ imageBuffer: CVImageBuffer) throws {
+        let ciImage = CIImage(cvImageBuffer: imageBuffer)
+        guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else {
+            throw CLIError(code: 5, message: "could not create CGImage from ScreenCaptureKit frame")
+        }
+        guard
+            let destination = CGImageDestinationCreateWithURL(
+                args.output as CFURL, UTType.png.identifier as CFString, 1, nil)
+        else {
+            throw CLIError(code: 5, message: "could not create PNG destination at \(args.output.path)")
+        }
+        CGImageDestinationAddImage(destination, cgImage, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw CLIError(code: 5, message: "could not write PNG screenshot to \(args.output.path)")
         }
     }
 
@@ -491,6 +553,19 @@ final class Recorder {
                 stopRequested.wait()
                 if resumed.set() { continuation.resume() }
             }
+        }
+    }
+
+    private func waitForScreenshot() async throws {
+        let completed = await withCheckedContinuation {
+            (continuation: CheckedContinuation<Bool, Never>) in
+            DispatchQueue.global(qos: .utility).async { [stopRequested = self.stopRequested] in
+                let result = stopRequested.wait(timeout: .now() + 10)
+                continuation.resume(returning: result == .success)
+            }
+        }
+        if !completed {
+            throw CLIError(code: 5, message: "timed out waiting for first screenshot frame")
         }
     }
 

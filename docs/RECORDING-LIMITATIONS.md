@@ -26,11 +26,15 @@ Backend → mode mapping:
 | Backend                       | Mode                                                |
 | ----------------------------- | --------------------------------------------------- |
 | `FfmpegRecorder`              | Region capture (`avfoundation`/`gdigrab`/`x11grab`).|
+| `FfmpegRegionScreenshotter`   | Linux X11 still-image region fallback (`x11grab`).  |
 | `WaylandPortalRecorder`       | Region capture, sourced from the Wayland portal (`SourceType.MONITOR`). |
 | `WaylandPortalWindowRecorder` | Window-targeted (Linux Wayland, portal `SourceType.WINDOW` — only the picked window's pixels are captured). |
 | `ScreenCaptureKitRecorder`    | Window-targeted (macOS).                            |
+| `ScreenCaptureKitScreenshotter` | Window-targeted still screenshots (macOS).         |
 | `FfmpegWindowRecorder`        | Window-targeted (Windows, `gdigrab title=`).        |
+| `FfmpegWindowScreenshotter`   | Window-targeted still screenshots (Windows, `gdigrab title=`). |
 | `AutoRecorder`                | Routes to the right one based on `TitledWindow?`.   |
+| `AutoScreenshotter`           | Routes still screenshots by platform and window.    |
 
 The rest of this document is mostly about region capture's constraints, because that's
 where the failure modes are. The window-targeted backends exist to sidestep those

@@ -15,6 +15,7 @@ import java.nio.file.Path
  * - [gdigrabRegionCapture] — Windows region capture via the gdigrab device, with the region
  *   selected on the input side via offsets and `-video_size` (no crop filter).
  * - [gdigrabWindowCapture] — Windows title-based window capture via the gdigrab device.
+ * - [gdigrabWindowStillCapture] — Windows title-based one-frame PNG capture via gdigrab.
  * - [x11grabRegionCapture] — Linux X11 region capture via the x11grab device, with the region
  *   selected on the input side via the `<display>+x,y` URL form and `-video_size`.
  *
@@ -168,6 +169,32 @@ internal object FfmpegCli {
         }
     }
 
+    fun gdigrabWindowStillCapture(
+        ffmpegPath: Path,
+        windowTitle: String,
+        output: Path,
+    ): List<String> {
+        require(windowTitle.isNotBlank()) {
+            "windowTitle must not be blank — gdigrab's `title=` form treats an empty title as " +
+                "the desktop and would capture the wrong surface"
+        }
+        return buildList {
+            add(ffmpegPath.toString())
+            add("-loglevel")
+            add("warning")
+            add("-y")
+            add("-f")
+            add("gdigrab")
+            add("-i")
+            add("title=$windowTitle")
+            add("-frames:v")
+            add("1")
+            add("-f")
+            add("image2")
+            add(output.toString())
+        }
+    }
+
     /**
      * Builds the argv for a Linux X11 region capture via the x11grab device.
      *
@@ -223,6 +250,37 @@ internal object FfmpegCli {
             add("$displayName+${region.x},${region.y}")
             add("-c:v")
             add(options.codec)
+            add(output.toString())
+        }
+    }
+
+    fun x11grabRegionStillCapture(
+        ffmpegPath: Path,
+        region: Rectangle,
+        output: Path,
+        displayName: String,
+    ): List<String> {
+        require(region.width > 0 && region.height > 0) {
+            "region must have positive dimensions, was ${region.width}x${region.height}"
+        }
+        require(displayName.isNotBlank()) {
+            "displayName must not be blank — pass the X display selector (e.g. \":0\", \":0.0\")"
+        }
+        return buildList {
+            add(ffmpegPath.toString())
+            add("-loglevel")
+            add("warning")
+            add("-y")
+            add("-f")
+            add("x11grab")
+            add("-video_size")
+            add("${region.width}x${region.height}")
+            add("-i")
+            add("$displayName+${region.x},${region.y}")
+            add("-frames:v")
+            add("1")
+            add("-f")
+            add("image2")
             add(output.toString())
         }
     }
