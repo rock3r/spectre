@@ -4,13 +4,11 @@ import java.awt.Component
 import java.awt.Container
 import java.awt.KeyboardFocusManager
 import java.awt.Point
-import java.awt.Rectangle
 import java.awt.Window
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
 import java.awt.event.MouseWheelEvent
-import java.awt.image.BufferedImage
 import javax.swing.SwingUtilities
 
 /**
@@ -20,8 +18,7 @@ import javax.swing.SwingUtilities
  * Useful for **Spectre's own validation** and for any test environment where:
  * - the host machine's mouse and keyboard must remain free for the developer
  * - tests run in parallel without contending for OS focus
- * - the recorder doesn't need to capture real screen pixels (synthetic screenshots paint the target
- *   component into a [BufferedImage] via `Component.paint(Graphics)`)
+ * - real mouse/keyboard focus must stay out of the test process
  *
  * The trade-off is that synthetic events bypass the OS HID layer:
  * - Compose's input pipeline (Skiko's AWT listeners) reads them identically to real Robot events,
@@ -42,11 +39,10 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
     // The wait loop in ComposeAutomator handles synchronisation via waitForIdle / fingerprints.
     override val autoDelayMs: Int = 0
 
-    // The synthetic adapter's `dispatchMouse` / `dispatchKey` / `createScreenCapture` already
-    // marshal to the EDT via `runOnEdt` when needed. RobotDriver's worker-thread hop is therefore
-    // both unnecessary and harmful here: an EDT caller would block on `Thread.join()` while the
-    // worker thread blocked on `SwingUtilities.invokeAndWait`, deadlocking the whole pipeline
-    // (Codex P1 on PR #35).
+    // The synthetic adapter's `dispatchMouse` / `dispatchKey` already marshal to the EDT via
+    // `runOnEdt` when needed. RobotDriver's worker-thread hop is therefore both unnecessary and
+    // harmful here: an EDT caller would block on `Thread.join()` while the worker thread blocked on
+    // `SwingUtilities.invokeAndWait`, deadlocking the whole pipeline (Codex P1 on PR #35).
     override val requiresOffEdt: Boolean = false
 
     override val shouldDrainAfterClipboardPaste: Boolean
@@ -197,32 +193,6 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
         dispatchKey(type = KeyEvent.KEY_RELEASED, keyCode = keyCode)
         val modifierBit = modifierMaskFor(keyCode)
         if (modifierBit != 0) heldKeyModifiers = heldKeyModifiers and modifierBit.inv()
-    }
-
-    /**
-     * "Screen capture" without touching the OS — the target component paints itself into a
-     * BufferedImage via Swing's `paint(Graphics)`. ComposePanel renders correctly through this path
-     * because Skiko's AWT integration honours the standard paint contract.
-     */
-    override fun createScreenCapture(region: Rectangle): BufferedImage {
-        val image =
-            BufferedImage(
-                region.width.coerceAtLeast(1),
-                region.height.coerceAtLeast(1),
-                BufferedImage.TYPE_INT_ARGB,
-            )
-        val target = findWindowAt(region.x, region.y) ?: rootWindow
-        runOnEdt {
-            val g = image.createGraphics()
-            try {
-                val origin = target.locationOnScreen
-                g.translate(origin.x - region.x, origin.y - region.y)
-                target.paint(g)
-            } finally {
-                g.dispose()
-            }
-        }
-        return image
     }
 
     override fun waitForIdle() {

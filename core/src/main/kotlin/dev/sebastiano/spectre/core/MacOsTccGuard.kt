@@ -123,16 +123,18 @@ internal fun osascriptAccessibilityProbe(): TccStatus {
 
 /**
  * Probes Screen Recording TCC by capturing a small region near the screen origin (which on macOS
- * overlaps the menu bar, virtually never fully black) via the supplied [robot] adapter. If every
- * pixel has zero RGB the capture pipeline is silently returning a black image, which on macOS means
- * the wrapping process lacks Screen Recording TCC.
+ * overlaps the menu bar, virtually never fully black) via the supplied [screenCapture] adapter. If
+ * every pixel has zero RGB the capture pipeline is silently returning a black image, which on macOS
+ * means the wrapping process lacks Screen Recording TCC.
  *
  * False-positive risk: a user whose screen is genuinely all-black across the entire 32×32 origin
  * region. In practice the macOS menu bar always provides UI variation here.
  */
-internal fun robotScreenRecordingProbe(robot: RobotAdapter): TccStatus {
+internal fun robotScreenRecordingProbe(screenCapture: ScreenCaptureAdapter): TccStatus {
     val image =
-        runCatching { robot.createScreenCapture(Rectangle(0, 0, PROBE_SIZE_PX, PROBE_SIZE_PX)) }
+        runCatching {
+                screenCapture.createScreenCapture(Rectangle(0, 0, PROBE_SIZE_PX, PROBE_SIZE_PX))
+            }
             .getOrElse {
                 return TccStatus.Unknown
             }

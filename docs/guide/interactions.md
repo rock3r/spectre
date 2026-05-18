@@ -119,6 +119,16 @@ val region = automator.screenshot(Rectangle(0, 0, 800, 600))
 
 Returns a `BufferedImage` you can save, hash, or compare against a baseline.
 
+!!! warning "Screenshots are screen-region captures"
+    Spectre screenshots currently capture OS framebuffer pixels for a rectangle and
+    crop to the requested window, node, or region. Before capturing a window or node,
+    make sure the target window is visible and brought to the front. If another app
+    overlaps the rectangle, those overlapping pixels can appear in the image; if the
+    target is partially off-screen, Spectre can only capture the visible screen area.
+    Native window-capture backends that avoid this screen-and-crop limitation are
+    tracked in
+    [issue #147](https://github.com/rock3r/spectre/issues/147).
+
 !!! note "Captures are normalised to sRGB"
     The returned `BufferedImage` is always sRGB (`TYPE_INT_ARGB` with an sRGB
     `ColorModel`), regardless of the source display's colour profile. Capturing on a
@@ -176,10 +186,11 @@ public surface:
   descendant under the last pointer target or Compose host. That lets Compose Desktop's
   internal focus model route `typeText` into focused `TextField`s even when the host
   window is not the OS-foreground app.
-  `screenshot()` under a synthetic driver also bypasses the OS framebuffer — it renders
-  the target window via `Component.paint(Graphics)` into a `BufferedImage` instead of
-  calling `Robot.createScreenCapture`. Results are consistent for regression tests, but
-  will differ from what the user sees on wide-gamut displays, and skip TCC probing entirely.
+  `screenshot()` under a synthetic driver still uses the OS framebuffer via
+  `Robot.createScreenCapture`, so screenshots show the pixels the display compositor
+  currently exposes rather than a Swing repaint of the Compose host. On macOS this
+  still requires Screen Recording permission, but synthetic input itself does not need
+  Accessibility permission.
 - **`RobotDriver.headless()`** — for read-only flows in headless CI where real OS I/O is
   unavailable. Every input, clipboard, and screenshot call throws
   `UnsupportedOperationException` so an accidental `automator.click(...)` /

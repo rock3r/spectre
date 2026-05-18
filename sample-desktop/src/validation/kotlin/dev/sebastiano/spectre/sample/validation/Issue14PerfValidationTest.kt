@@ -113,7 +113,7 @@ class Issue14PerfValidationTest {
             navigateToScenario("scenario.counter")
             val button = waitForTestTag("incrementButton")
 
-            // Cold call — first screenshot pays Skiko init costs on the synthetic paint path.
+            // Cold call — first screenshot may pay Robot / framebuffer capture setup costs.
             val coldSource = TimeSource.Monotonic.markNow()
             screenshot(button)
             val coldMs = coldSource.elapsedNow().inWholeMilliseconds

@@ -274,23 +274,27 @@ class RobotDriverTest {
     fun `screenshot consults the screen-recording guard before capturing`() {
         val guard = RecordingTccGuard()
         val robot = RecordingRobotAdapter()
-        val driver = RobotDriver(robot, RecordingClipboardAdapter(), guard)
+        val capture = RecordingScreenCaptureAdapter()
+        val driver = RobotDriver(robot, RecordingClipboardAdapter(), guard, capture)
 
         driver.screenshot(Rectangle(0, 0, 4, 4))
 
         assertEquals(0, guard.accessibilityCalls)
         assertEquals(1, guard.screenRecordingCalls)
+        assertEquals(1, capture.captureCalls)
+        assertEquals(0, robot.captureCalls)
     }
 
     @Test
     fun `screenshot that fails the screen-recording check does not capture`() {
         val guard = RecordingTccGuard(screenRecordingThrows = true)
         val robot = RecordingRobotAdapter()
-        val driver = RobotDriver(robot, RecordingClipboardAdapter(), guard)
+        val capture = RecordingScreenCaptureAdapter()
+        val driver = RobotDriver(robot, RecordingClipboardAdapter(), guard, capture)
 
         assertFailsWith<IllegalStateException> { driver.screenshot(Rectangle(0, 0, 4, 4)) }
 
-        assertEquals(0, robot.captureCalls)
+        assertEquals(0, capture.captureCalls)
     }
 
     @Test
@@ -435,6 +439,20 @@ private class RecordingRobotAdapter(
 
     override val shouldDrainAfterClipboardPaste: Boolean
         get() = drainAfterPaste
+}
+
+private class RecordingScreenCaptureAdapter : ScreenCaptureAdapter {
+    var captureCalls: Int = 0
+        private set
+
+    override fun createScreenCapture(region: Rectangle): BufferedImage {
+        captureCalls++
+        return BufferedImage(
+            region.width.coerceAtLeast(1),
+            region.height.coerceAtLeast(1),
+            BufferedImage.TYPE_INT_ARGB,
+        )
+    }
 }
 
 private class RecordingClipboardAdapter : ClipboardAdapter {
