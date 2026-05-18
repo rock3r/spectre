@@ -70,14 +70,16 @@ private fun captureFfmpegPng(
     argvBuilder: (Path) -> List<String>,
 ): BufferedImage {
     val output = Files.createTempFile("spectre-window-screenshot-", ".png")
+    var process: Process? = null
     try {
         val argv = argvBuilder(output)
-        val process = processFactory.start(argv)
+        process = processFactory.start(argv)
         val exit = process.waitFor()
         check(exit == 0) { "ffmpeg screenshot capture exited with code $exit. Argv: $argv" }
         return ImageIO.read(output.toFile())
             ?: error("ffmpeg screenshot capture did not produce a readable PNG at $output")
     } catch (e: InterruptedException) {
+        process?.destroyForcibly()
         Thread.currentThread().interrupt()
         throw e
     } catch (e: IOException) {

@@ -12,6 +12,7 @@ import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class ScreenCaptureKitScreenshotterTest {
@@ -43,6 +44,30 @@ class ScreenCaptureKitScreenshotterTest {
             Path.of(argv[argv.indexOf("--output") + 1]).fileName.toString().substringAfterLast('.'),
         )
     }
+
+    @Test
+    fun `captureWindow destroys helper when wait is interrupted and restores title`() {
+        val process = InterruptingScreenshotHelperProcess()
+        val factory = ScreenshotHelperProcessFactory(process)
+        val extractor =
+            HelperBinaryExtractor(
+                resourceLocator = { ByteArrayInputStream(byteArrayOf(0x01)) },
+                targetDirProvider = { Path.of("/tmp") },
+            )
+        val screenshotter =
+            ScreenCaptureKitScreenshotter(helperExtractor = extractor, processFactory = factory)
+        val window = ScreenshotFakeTitledWindow(initialTitle = "MyApp")
+
+        try {
+            assertFailsWith<InterruptedException> {
+                screenshotter.captureWindow(window = window, windowOwnerPid = 4242L)
+            }
+            assertTrue(process.destroyedForcibly)
+            assertEquals("MyApp", window.title)
+        } finally {
+            Thread.interrupted()
+        }
+    }
 }
 
 private class ScreenshotFakeTitledWindow(initialTitle: String?) : TitledWindow {
@@ -50,7 +75,9 @@ private class ScreenshotFakeTitledWindow(initialTitle: String?) : TitledWindow {
     override val bounds: Rectangle = Rectangle(0, 0, 100, 100)
 }
 
-private class ScreenshotHelperProcessFactory : ScreenCaptureKitRecorder.ProcessFactory {
+private class ScreenshotHelperProcessFactory(
+    private val process: Process = SuccessfulScreenshotHelperProcess()
+) : ScreenCaptureKitRecorder.ProcessFactory {
     var lastArgv: List<String> = emptyList()
         private set
 
@@ -59,7 +86,7 @@ private class ScreenshotHelperProcessFactory : ScreenCaptureKitRecorder.ProcessF
         val output = Path.of(argv[argv.indexOf("--output") + 1])
         val image = BufferedImage(4, 3, BufferedImage.TYPE_INT_ARGB)
         assertTrue(ImageIO.write(image, "png", output.toFile()))
-        return SuccessfulScreenshotHelperProcess()
+        return process
     }
 }
 
@@ -79,6 +106,40 @@ private class SuccessfulScreenshotHelperProcess : Process() {
     override fun destroy() = Unit
 
     override fun isAlive(): Boolean = false
+
+    override fun pid(): Long = 0
+
+    override fun toHandle(): ProcessHandle = ProcessHandle.current()
+
+    override fun onExit(): CompletableFuture<Process> = CompletableFuture.completedFuture(this)
+}
+
+private class InterruptingScreenshotHelperProcess : Process() {
+    var destroyedForcibly: Boolean = false
+        private set
+
+    override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
+
+    override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun waitFor(): Int {
+        throw InterruptedException("interrupted")
+    }
+
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean = false
+
+    override fun exitValue(): Int = throw IllegalThreadStateException("still running")
+
+    override fun destroy() = Unit
+
+    override fun destroyForcibly(): Process {
+        destroyedForcibly = true
+        return this
+    }
+
+    override fun isAlive(): Boolean = !destroyedForcibly
 
     override fun pid(): Long = 0
 

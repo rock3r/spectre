@@ -20,6 +20,7 @@ internal constructor(
         val helperPath = helperExtractor.extract()
         val output = Files.createTempFile("spectre-sck-window-screenshot-", ".png")
         val discriminator = TitleDiscriminator(window)
+        var process: Process? = null
         discriminator.apply()
         try {
             val argv =
@@ -38,12 +39,13 @@ internal constructor(
                     "--discovery-timeout-ms",
                     SCREENSHOT_DISCOVERY_TIMEOUT_MS.toString(),
                 )
-            val process = processFactory.start(argv)
+            process = processFactory.start(argv)
             val exit = process.waitFor()
             check(exit == 0) { ScreenCaptureKitRecorder.messageForHelperExit(exit, output, argv) }
             return ImageIO.read(output.toFile())
                 ?: error("spectre-screencapture did not produce a readable PNG at $output")
         } catch (e: InterruptedException) {
+            process?.destroyForcibly()
             Thread.currentThread().interrupt()
             throw e
         } catch (e: IOException) {

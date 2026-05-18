@@ -85,6 +85,25 @@ class FfmpegScreenshotterTest {
             screenshotter.captureRegion(Rectangle(0, 0, 10, 10))
         }
     }
+
+    @Test
+    fun `ffmpeg screenshot process is destroyed when wait is interrupted`() {
+        val process = InterruptingScreenshotProcess()
+        val screenshotter =
+            FfmpegWindowScreenshotter(
+                ffmpegPath = FfmpegRecorder.PROBE_PATH,
+                processFactory = ScreenshotProcessFactory(process),
+            )
+
+        try {
+            assertFailsWith<InterruptedException> {
+                screenshotter.captureWindow(ScreenshotWindow(title = "Spectre Sample"))
+            }
+            assertTrue(process.destroyedForcibly)
+        } finally {
+            Thread.interrupted()
+        }
+    }
 }
 
 private class ScreenshotWindow(title: String?) : TitledWindow {
@@ -92,14 +111,16 @@ private class ScreenshotWindow(title: String?) : TitledWindow {
     override val bounds: Rectangle = Rectangle(0, 0, 100, 100)
 }
 
-private class ScreenshotProcessFactory : FfmpegRecorder.ProcessFactory {
+private class ScreenshotProcessFactory(
+    private val process: Process = SuccessfulScreenshotProcess()
+) : FfmpegRecorder.ProcessFactory {
     var lastArgv: List<String> = emptyList()
         private set
 
     override fun start(argv: List<String>): Process {
         lastArgv = argv
         writeTestPng(Path.of(argv.last()))
-        return SuccessfulScreenshotProcess()
+        return process
     }
 }
 
@@ -119,6 +140,40 @@ private class SuccessfulScreenshotProcess : Process() {
     override fun destroy() = Unit
 
     override fun isAlive(): Boolean = false
+
+    override fun pid(): Long = 0
+
+    override fun toHandle(): ProcessHandle = ProcessHandle.current()
+
+    override fun onExit(): CompletableFuture<Process> = CompletableFuture.completedFuture(this)
+}
+
+private class InterruptingScreenshotProcess : Process() {
+    var destroyedForcibly: Boolean = false
+        private set
+
+    override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
+
+    override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun waitFor(): Int {
+        throw InterruptedException("interrupted")
+    }
+
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean = false
+
+    override fun exitValue(): Int = throw IllegalThreadStateException("still running")
+
+    override fun destroy() = Unit
+
+    override fun destroyForcibly(): Process {
+        destroyedForcibly = true
+        return this
+    }
+
+    override fun isAlive(): Boolean = !destroyedForcibly
 
     override fun pid(): Long = 0
 
