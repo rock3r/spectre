@@ -208,10 +208,15 @@ final class Recorder {
 
         let target = try await discoverTargetWindow()
         try await startCapture(targetWindow: target)
+        var waitError: Error?
         if args.mode == .recording {
             await waitForStop()
         } else {
-            try await waitForScreenshot()
+            do {
+                try await waitForScreenshot()
+            } catch {
+                waitError = error
+            }
         }
         try await finalize()
         // Diagnostic counters always printed to stderr so the JVM-side smoke can see whether
@@ -224,6 +229,9 @@ final class Recorder {
         if let pipelineError {
             throw CLIError(
                 code: 5, message: "capture pipeline error: \(pipelineError.localizedDescription)")
+        }
+        if let waitError {
+            throw waitError
         }
     }
 
