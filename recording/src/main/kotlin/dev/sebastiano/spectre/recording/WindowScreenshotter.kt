@@ -86,17 +86,13 @@ internal constructor(
     }
 
     private companion object {
-        fun defaultIsMacOs(): Boolean =
-            System.getProperty("os.name").orEmpty().lowercase().contains("mac")
+        fun defaultIsMacOs(): Boolean = HostPlatform.isMacOs()
 
-        fun defaultIsWindows(): Boolean =
-            System.getProperty("os.name").orEmpty().lowercase().contains("windows")
+        fun defaultIsWindows(): Boolean = HostPlatform.isWindows()
 
-        fun defaultIsLinux(): Boolean =
-            System.getProperty("os.name").orEmpty().lowercase().contains("linux")
+        fun defaultIsLinux(): Boolean = HostPlatform.isLinux()
 
-        fun defaultIsWayland(): Boolean =
-            defaultIsLinux() && FfmpegBackend.detectWaylandSession(System::getenv)
+        fun defaultIsWayland(): Boolean = HostPlatform.isWayland()
 
         @Suppress("TooGenericExceptionCaught")
         fun defaultWindowsWindowScreenshotter(): WindowScreenshotter? {
