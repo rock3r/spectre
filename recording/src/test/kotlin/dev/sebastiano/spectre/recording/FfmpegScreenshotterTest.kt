@@ -59,6 +59,7 @@ class FfmpegScreenshotterTest {
                 ffmpegPath = FfmpegRecorder.PROBE_PATH,
                 processFactory = factory,
                 displayNameProvider = { ":99" },
+                getenv = { null },
             )
 
         val image = screenshotter.captureRegion(Rectangle(10, 20, 30, 40))
@@ -79,11 +80,32 @@ class FfmpegScreenshotterTest {
                 ffmpegPath = FfmpegRecorder.PROBE_PATH,
                 processFactory = ScreenshotProcessFactory(),
                 displayNameProvider = { null },
+                getenv = { null },
             )
 
         assertFailsWith<IllegalArgumentException> {
             screenshotter.captureRegion(Rectangle(0, 0, 10, 10))
         }
+    }
+
+    @Test
+    fun `region screenshotter fails loudly on Wayland before spawning ffmpeg`() {
+        val factory = ScreenshotProcessFactory()
+        val screenshotter =
+            FfmpegRegionScreenshotter(
+                ffmpegPath = FfmpegRecorder.PROBE_PATH,
+                processFactory = factory,
+                displayNameProvider = { ":99" },
+                getenv = fakeEnv("XDG_SESSION_TYPE" to "wayland"),
+            )
+
+        val error =
+            assertFailsWith<UnsupportedOperationException> {
+                screenshotter.captureRegion(Rectangle(0, 0, 10, 10))
+            }
+
+        assertContains(error.message.orEmpty(), "Wayland")
+        assertEquals(emptyList(), factory.lastArgv)
     }
 
     @Test
@@ -193,4 +215,9 @@ private fun assertContainsSequence(actual: List<String>, expected: List<String>)
             it == expected
         }
     assertTrue(window != null, "Expected argv to contain $expected, got $actual")
+}
+
+private fun fakeEnv(vararg pairs: Pair<String, String>): (String) -> String? {
+    val values = pairs.toMap()
+    return values::get
 }

@@ -42,11 +42,17 @@ internal constructor(
     private val ffmpegPath: Path,
     private val processFactory: FfmpegRecorder.ProcessFactory,
     private val displayNameProvider: () -> String?,
+    private val getenv: (String) -> String?,
 ) : RegionScreenshotter {
 
     public constructor(
         ffmpegPath: Path = FfmpegRecorder.resolveFfmpegPath()
-    ) : this(ffmpegPath, FfmpegRecorder.SystemProcessFactory, { System.getenv("DISPLAY") })
+    ) : this(
+        ffmpegPath,
+        FfmpegRecorder.SystemProcessFactory,
+        { System.getenv("DISPLAY") },
+        System::getenv,
+    )
 
     init {
         require(Files.isExecutable(ffmpegPath) || ffmpegPath == FfmpegRecorder.PROBE_PATH) {
@@ -56,6 +62,7 @@ internal constructor(
 
     override fun captureRegion(region: Rectangle): BufferedImage =
         captureFfmpegPng(processFactory) { output ->
+            FfmpegBackend.checkNotWayland(getenv)
             FfmpegCli.x11grabRegionStillCapture(
                 ffmpegPath = ffmpegPath,
                 region = region,

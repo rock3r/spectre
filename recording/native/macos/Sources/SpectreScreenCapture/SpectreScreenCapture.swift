@@ -422,11 +422,12 @@ final class Recorder {
             do {
                 try writePng(imageBuffer)
                 framesAppended += 1
+                pipelineError = nil
+                stopRequested.signal()
             } catch {
                 framesDropped += 1
                 if pipelineError == nil { pipelineError = error }
             }
-            stopRequested.signal()
             return
         }
 
