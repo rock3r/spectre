@@ -364,7 +364,7 @@ class SyntheticInputParityTest {
 
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
-    fun `synthetic screenshot returns the requested dimensions and samples the rendered colour`() {
+    fun `synthetic screenshot uses framebuffer capture for the requested dimensions`() {
         assumeLiveAwtAvailable()
         val target = ColoredPanel(Color.RED)
         val frame = showFrameOnEdt(target)
@@ -378,8 +378,8 @@ class SyntheticInputParityTest {
             val image = driver.screenshot(captureRegion)
             assertEquals(REGION_SIZE_PX, image.width, "image width must match requested width")
             assertEquals(REGION_SIZE_PX, image.height, "image height must match requested height")
-            // Sample a pixel inside the captured region. Synthetic capture paints the target via
-            // Component.paint(Graphics); we expect the painted red to come through.
+            // Sample a pixel inside the captured region. Synthetic input still uses real
+            // framebuffer capture for screenshots, so the visible red panel should come through.
             val sampledRgb = image.getRGB(REGION_SIZE_PX / 2, REGION_SIZE_PX / 2)
             val sampled = Color(sampledRgb)
             assertEquals(

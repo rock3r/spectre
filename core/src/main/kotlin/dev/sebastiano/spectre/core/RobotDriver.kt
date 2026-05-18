@@ -24,7 +24,8 @@ public class RobotDriver
 internal constructor(
     private val robot: RobotAdapter = AwtRobotAdapter(),
     private val clipboard: ClipboardAdapter = SystemClipboardAdapter(),
-    private val tccGuard: MacOsTccGuard = defaultTccGuardFor(robot),
+    private val tccGuard: MacOsTccGuard = defaultTccGuardFor(robot, robot),
+    private val screenCapture: ScreenCaptureAdapter = robot,
 ) {
 
     // Public surface: callers may instantiate without arguments (defaults to a fresh
@@ -336,6 +337,13 @@ internal constructor(
      * The returned [BufferedImage] is owned by the caller and safe to read, mutate, or pass to
      * downstream pipelines.
      *
+     * ## Visibility
+     *
+     * Screenshots are region-based OS framebuffer captures. Window and node helpers crop to their
+     * current screen bounds, so the target window should be visible and frontmost before capture.
+     * Occluding windows or off-screen portions affect the returned pixels until Spectre grows
+     * native window-capture backends.
+     *
      * ## Trust boundary
      *
      * `region` is passed through to `java.awt.Robot.createScreenCapture` unchanged. It is **not**
@@ -349,8 +357,8 @@ internal constructor(
      */
     public fun screenshot(region: Rectangle? = null): BufferedImage {
         tccGuard.requireScreenRecording()
-        val captureRegion = region ?: robot.defaultScreenshotRegion()
-        return robot.createScreenCapture(captureRegion)
+        val captureRegion = region ?: screenCapture.defaultScreenshotRegion()
+        return screenCapture.createScreenCapture(captureRegion)
     }
 
     private suspend fun runOffEdt(block: suspend () -> Unit) = runOffEdt(robot, block)
@@ -359,10 +367,20 @@ internal constructor(
 
         /**
          * Returns a [RobotDriver] that delivers synthetic AWT events directly to [rootWindow]'s AWT
-         * hierarchy instead of routing through `java.awt.Robot`'s OS-level input.
+         * hierarchy instead of routing through `java.awt.Robot`'s OS-level input. Screenshots still
+         * use `java.awt.Robot.createScreenCapture` so Compose/Skiko pixels come from the OS
+         * framebuffer rather than Swing repainting the host component.
          */
         public fun synthetic(rootWindow: Window): RobotDriver =
-            RobotDriver(SyntheticRobotAdapter(rootWindow), SystemClipboardAdapter())
+            SyntheticRobotAdapter(rootWindow).let { syntheticInput ->
+                val realCapture = AwtRobotAdapter()
+                RobotDriver(
+                    robot = syntheticInput,
+                    clipboard = SystemClipboardAdapter(),
+                    tccGuard = defaultTccGuardFor(syntheticInput, realCapture),
+                    screenCapture = realCapture,
+                )
+            }
 
         /**
          * Returns a [RobotDriver] that throws [UnsupportedOperationException] on every input,
@@ -381,30 +399,46 @@ internal constructor(
          */
         public fun headless(): RobotDriver =
             RobotDriver(
-                HeadlessThrowingRobotAdapter,
-                HeadlessThrowingClipboardAdapter,
+                robot = HeadlessThrowingRobotAdapter,
+                clipboard = HeadlessThrowingClipboardAdapter,
                 MacOsTccGuard.noop(),
+                screenCapture = HeadlessThrowingScreenCaptureAdapter,
             )
     }
 }
 
 /**
- * Builds the default [MacOsTccGuard] for a given adapter. Returns a real probe-backed guard only
- * when the adapter delegates to a real `java.awt.Robot` AND we're running on macOS — every other
- * combination (synthetic adapter, headless-throwing adapter, non-macOS host) gets the noop guard so
- * the probe never touches an OS that isn't being driven by Robot.
+ * Builds the default [MacOsTccGuard] for the input and capture adapters. On macOS, each probe is
+ * real only when the corresponding adapter reaches through `java.awt.Robot`; synthetic input can
+ * therefore skip Accessibility while still checking Screen Recording for real framebuffer capture.
  */
-internal fun defaultTccGuardFor(adapter: RobotAdapter): MacOsTccGuard =
-    if (adapter.gatesMacOsTcc && detectMacOs()) {
+internal fun defaultTccGuardFor(
+    input: RobotAdapter,
+    screenCapture: ScreenCaptureAdapter,
+): MacOsTccGuard =
+    if (
+        detectMacOs() &&
+            (input.gatesMacOsAccessibilityTcc || screenCapture.gatesMacOsScreenRecordingTcc)
+    ) {
         MacOsTccGuard(
-            accessibilityProbe = ::osascriptAccessibilityProbe,
-            screenRecordingProbe = { robotScreenRecordingProbe(adapter) },
+            accessibilityProbe =
+                if (input.gatesMacOsAccessibilityTcc) {
+                    ::osascriptAccessibilityProbe
+                } else {
+                    { TccStatus.Granted }
+                },
+            screenRecordingProbe =
+                if (screenCapture.gatesMacOsScreenRecordingTcc) {
+                    { robotScreenRecordingProbe(screenCapture) }
+                } else {
+                    { TccStatus.Granted }
+                },
         )
     } else {
         MacOsTccGuard.noop()
     }
 
-internal interface RobotAdapter {
+internal interface RobotAdapter : ScreenCaptureAdapter {
 
     val autoDelayMs: Int
 
@@ -420,13 +454,7 @@ internal interface RobotAdapter {
      */
     val requiresOffEdt: Boolean
 
-    /**
-     * `true` when this adapter delegates input/capture to the real OS `java.awt.Robot`, and
-     * therefore needs to be gated on macOS TCC entitlements (Accessibility for input, Screen
-     * Recording for capture). The synthetic and headless-throwing adapters bypass `Robot` entirely,
-     * so they declare `false` and skip the guard regardless of platform.
-     */
-    val gatesMacOsTcc: Boolean
+    val gatesMacOsAccessibilityTcc: Boolean
         get() = false
 
     fun mouseMove(x: Int, y: Int)
@@ -441,11 +469,10 @@ internal interface RobotAdapter {
 
     fun mouseWheel(wheelClicks: Int)
 
-    fun createScreenCapture(region: Rectangle): BufferedImage
-
-    fun defaultScreenshotRegion(): Rectangle = virtualDesktopBounds()
-
     fun waitForIdle()
+
+    override fun createScreenCapture(region: Rectangle): BufferedImage =
+        throw UnsupportedOperationException("This robot adapter does not support screen capture")
 
     /**
      * `true` when [RobotDriver.pasteText] should pump event queues before restoring the clipboard.
@@ -453,6 +480,16 @@ internal interface RobotAdapter {
      */
     val shouldDrainAfterClipboardPaste: Boolean
         get() = false
+}
+
+internal interface ScreenCaptureAdapter {
+
+    val gatesMacOsScreenRecordingTcc: Boolean
+        get() = false
+
+    fun createScreenCapture(region: Rectangle): BufferedImage
+
+    fun defaultScreenshotRegion(): Rectangle = virtualDesktopBounds()
 }
 
 internal interface ClipboardAdapter {
@@ -471,7 +508,8 @@ internal interface ClipboardAdapter {
     fun setContents(contents: Transferable)
 }
 
-private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) : RobotAdapter {
+private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) :
+    RobotAdapter, ScreenCaptureAdapter {
 
     override val autoDelayMs: Int
         get() = robot.autoDelay
@@ -482,7 +520,9 @@ private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) : Rob
 
     // The only adapter that actually drives the OS through Robot, so the only one that ever
     // hits macOS TCC. Synthetic and headless-throwing adapters inherit the default `false`.
-    override val gatesMacOsTcc: Boolean = true
+    override val gatesMacOsAccessibilityTcc: Boolean = true
+
+    override val gatesMacOsScreenRecordingTcc: Boolean = true
 
     override fun mouseMove(x: Int, y: Int) = robot.mouseMove(x, y)
 
@@ -525,15 +565,18 @@ private object HeadlessThrowingRobotAdapter : RobotAdapter {
 
     override fun mouseWheel(wheelClicks: Int): Unit = throwHeadless("mouseWheel")
 
-    override fun createScreenCapture(region: Rectangle): BufferedImage =
-        throwHeadless("createScreenCapture")
-
-    override fun defaultScreenshotRegion(): Rectangle = throwHeadless("screenshot")
-
     // waitForIdle is purely a synchronisation barrier — it produces no observable side effect, so
     // making it a no-op keeps internal pump loops (e.g. the post-paste drain in pasteText) callable
     // without triggering throws on a path where they'd be unreachable anyway.
     override fun waitForIdle() = Unit
+}
+
+private object HeadlessThrowingScreenCaptureAdapter : ScreenCaptureAdapter {
+
+    override fun createScreenCapture(region: Rectangle): BufferedImage =
+        throwHeadless("createScreenCapture")
+
+    override fun defaultScreenshotRegion(): Rectangle = throwHeadless("screenshot")
 }
 
 private object HeadlessThrowingClipboardAdapter : ClipboardAdapter {
