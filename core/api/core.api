@@ -272,7 +272,6 @@ public abstract interface annotation class dev/sebastiano/spectre/core/perf/Expe
 public final class dev/sebastiano/spectre/core/perf/RecomposerInspector {
 	public static final field INSTANCE Ldev/sebastiano/spectre/core/perf/RecomposerInspector;
 	public final fun findRecomposer (Ldev/sebastiano/spectre/core/TrackedWindow;)Landroidx/compose/runtime/Recomposer;
-	public final fun findRecomposerInHostChain (Ljava/lang/Object;)Landroidx/compose/runtime/Recomposer;
 }
 
 public final class dev/sebastiano/spectre/core/perf/RecompositionMonitor : java/lang/AutoCloseable {

@@ -16,8 +16,8 @@ import java.lang.ref.WeakReference
  *
  * Identity parts are held via [WeakReference] so a closed window or disposed panel is not retained
  * by this cache. On every [assign] call we prune entries whose any non-null part has been
- * garbage-collected — keeps the cache footprint bounded in long-running sessions that churn
- * through many transient popups.
+ * garbage-collected — keeps the cache footprint bounded in long-running sessions that churn through
+ * many transient popups.
  */
 @InternalSpectreApi
 public class SurfaceIdAssigner {
@@ -57,8 +57,6 @@ public class SurfaceIdAssigner {
         private val ref = WeakReference(referent)
         private val identityHashCode = System.identityHashCode(referent)
 
-        fun referent(): Any? = ref.get()
-
         fun isCollected(): Boolean = ref.get() == null
 
         override fun equals(other: Any?): Boolean {
@@ -72,7 +70,10 @@ public class SurfaceIdAssigner {
         override fun hashCode(): Int = identityHashCode
     }
 
-    private class CompositeIdentity(val prefix: String, private val parts: Array<out IdentityRef?>) {
+    private class CompositeIdentity(
+        val prefix: String,
+        private val parts: Array<out IdentityRef?>,
+    ) {
 
         fun anyCollected(): Boolean = parts.any { it != null && it.isCollected() }
 

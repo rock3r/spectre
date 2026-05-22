@@ -246,11 +246,11 @@ internal constructor(
     }
 
     /**
-     * Disposes the per-Recomposer registration for [surfaceId] and clears that surface's rate
-     * ring buffer so its `ratePerSecond` immediately reads as `0`. Lifetime `total` is preserved
-     * — detaching stops new events from counting toward the rate, not from being remembered.
-     * Without this clear, a closed popup would keep [awaitRateBelow] failing until the sliding
-     * window naturally expires.
+     * Disposes the per-Recomposer registration for [surfaceId] and clears that surface's rate ring
+     * buffer so its `ratePerSecond` immediately reads as `0`. Lifetime `total` is preserved —
+     * detaching stops new events from counting toward the rate, not from being remembered. Without
+     * this clear, a closed popup would keep [awaitRateBelow] failing until the sliding window
+     * naturally expires.
      */
     internal fun detach(surfaceId: String) {
         attachments.remove(surfaceId)?.dispose()
