@@ -9,35 +9,28 @@ import java.awt.Window
 import javax.swing.JFrame
 
 @InternalSpectreApi
-public data class TrackedWindow
-@OptIn(ExperimentalComposeUiApi::class)
-internal constructor(
+public data class TrackedWindow(
     val surfaceId: String,
     val window: Window,
     val composePanel: ComposePanel?,
     val isPopup: Boolean,
-    /**
-     * Reflective override that lets `WindowTracker` plug in a non-`ComposePanel` semantics source
-     * for Compose Desktop's `OnWindow` popup layers (`compose.layers.type=WINDOW`). Compose hosts
-     * those popups inside an internal `WindowComposeSceneLayer` whose mediator isn't reachable
-     * through any public API; `OverlayLayerInspector` resolves them by reflection and
-     * `SemanticsReader` dispatches to this accessor. `null` for every other tracked window — the
-     * existing `composePanel` / `ComposeWindow` paths handle those.
-     */
-    internal val overlaySemanticsOwners: (() -> Collection<SemanticsOwner>)? = null,
 ) {
 
     /**
-     * Stable public constructor preserved for source compatibility with anything that builds a
-     * `TrackedWindow` directly (notably `core`'s own unit tests).
+     * Reflective overlay accessor used for Compose Desktop's `OnWindow` popup layers
+     * (`compose.layers.type=WINDOW`). Compose hosts those popups inside an internal
+     * `WindowComposeSceneLayer` whose mediator isn't reachable through any public API;
+     * `OverlayLayerInspector` resolves them by reflection and `SemanticsReader` dispatches to this
+     * accessor when present. `null` for every other tracked window — the existing `composePanel` /
+     * `ComposeWindow` paths handle those.
+     *
+     * Held outside the primary constructor so [equals]/[hashCode] (generated from primary-ctor
+     * parameters only) ignore the lambda; otherwise lambda reference equality would make every
+     * rediscovery look like a fresh window and break `StateFlow.distinctUntilChanged` semantics on
+     * `WindowTracker.trackedWindows`.
      */
     @OptIn(ExperimentalComposeUiApi::class)
-    public constructor(
-        surfaceId: String,
-        window: Window,
-        composePanel: ComposePanel?,
-        isPopup: Boolean,
-    ) : this(surfaceId, window, composePanel, isPopup, overlaySemanticsOwners = null)
+    internal var overlaySemanticsOwners: (() -> Collection<SemanticsOwner>)? = null
 
     /**
      * The screen location of the Compose content origin.

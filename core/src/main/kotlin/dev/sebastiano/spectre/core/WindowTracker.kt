@@ -7,6 +7,9 @@ import androidx.compose.ui.awt.ComposePanel
 import androidx.compose.ui.awt.ComposeWindow
 import java.awt.Container
 import java.awt.Window
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 @InternalSpectreApi
 public class WindowTracker
@@ -17,10 +20,17 @@ internal constructor(
 
     public constructor() : this(Window::getWindows, requiresEdt = true)
 
-    @Volatile private var _trackedWindows: List<TrackedWindow> = emptyList()
+    private val surfaceIdAssigner = SurfaceIdAssigner()
 
-    public val trackedWindows: List<TrackedWindow>
-        get() = _trackedWindows
+    private val _trackedWindows = MutableStateFlow<List<TrackedWindow>>(emptyList())
+
+    /**
+     * Live view of the currently tracked surfaces. Backed by a [StateFlow] so that subscribers
+     * (e.g. `RecompositionMonitor`) can reconcile against window-set changes without polling.
+     * Synchronous callers read [StateFlow.value]; the flow follows the standard
+     * distinctUntilChanged contract, so two refreshes that produce equal lists emit only once.
+     */
+    public val trackedWindows: StateFlow<List<TrackedWindow>> = _trackedWindows.asStateFlow()
 
     public fun refresh() {
         if (requiresEdt) {
@@ -47,7 +57,7 @@ internal constructor(
                 else -> trackOwnedPopups(pending, window)
             }
         }
-        _trackedWindows = pending.toList()
+        _trackedWindows.value = pending.toList()
     }
 
     @OptIn(ExperimentalComposeUiApi::class)
@@ -118,9 +128,11 @@ internal constructor(
         prefix: String,
         isPopup: Boolean,
     ) {
+        // Identity for a "normal" surface is (Window, ComposePanel?). Two refreshes that find the
+        // same JFrame and the same embedded ComposePanel resolve to the same surfaceId.
         pending +=
             TrackedWindow(
-                surfaceId = "$prefix:${pending.size}",
+                surfaceId = surfaceIdAssigner.assign(prefix, window, panel),
                 window = window,
                 composePanel = panel,
                 isPopup = isPopup,
@@ -132,14 +144,18 @@ internal constructor(
         pending: MutableList<TrackedWindow>,
         layer: OverlayLayerEntry,
     ) {
-        pending +=
+        // Overlay-layer identity is the internal JDialog (`layer.window`) — that's the stable
+        // handle that survives across rediscovery passes, even though the lambda that reads its
+        // semantics is freshly built each call.
+        val tracked =
             TrackedWindow(
-                surfaceId = "overlay:${pending.size}",
+                surfaceId = surfaceIdAssigner.assign("overlay", layer.window),
                 window = layer.window,
                 composePanel = null,
                 isPopup = true,
-                overlaySemanticsOwners = layer.semanticsOwnersAccessor,
             )
+        tracked.overlaySemanticsOwners = layer.semanticsOwnersAccessor
+        pending += tracked
     }
 
     internal companion object {

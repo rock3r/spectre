@@ -88,6 +88,8 @@ public final class dev/sebastiano/spectre/core/ComposeAutomator {
 	public final fun getWindows ()Ljava/util/List;
 	public final fun longClick-8Mi8wO0 (Ldev/sebastiano/spectre/core/AutomatorNode;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun longClick-8Mi8wO0$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ldev/sebastiano/spectre/core/AutomatorNode;JLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun monitorRecompositions-LRDsOJo (J)Ldev/sebastiano/spectre/core/perf/RecompositionMonitor;
+	public static synthetic fun monitorRecompositions-LRDsOJo$default (Ldev/sebastiano/spectre/core/ComposeAutomator;JILjava/lang/Object;)Ldev/sebastiano/spectre/core/perf/RecompositionMonitor;
 	public final fun pasteText (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun performSemanticsClick (Ldev/sebastiano/spectre/core/AutomatorNode;)V
 	public final fun pressEnter (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -195,6 +197,12 @@ public final class dev/sebastiano/spectre/core/RobotDriver$Companion {
 	public final fun synthetic (Ljava/awt/Window;)Ldev/sebastiano/spectre/core/RobotDriver;
 }
 
+public final class dev/sebastiano/spectre/core/SurfaceIdAssigner {
+	public static final field HASH_MULTIPLIER I
+	public fun <init> ()V
+	public final fun assign (Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/String;
+}
+
 public final class dev/sebastiano/spectre/core/TextMatchType : java/lang/Enum {
 	public static final field Exact Ldev/sebastiano/spectre/core/TextMatchType;
 	public static final field Substring Ldev/sebastiano/spectre/core/TextMatchType;
@@ -239,8 +247,8 @@ public final class dev/sebastiano/spectre/core/TrackedWindow {
 	public final fun component2 ()Ljava/awt/Window;
 	public final fun component3 ()Landroidx/compose/ui/awt/ComposePanel;
 	public final fun component4 ()Z
-	public final fun copy (Ljava/lang/String;Ljava/awt/Window;Landroidx/compose/ui/awt/ComposePanel;ZLkotlin/jvm/functions/Function0;)Ldev/sebastiano/spectre/core/TrackedWindow;
-	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/TrackedWindow;Ljava/lang/String;Ljava/awt/Window;Landroidx/compose/ui/awt/ComposePanel;ZLkotlin/jvm/functions/Function0;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/TrackedWindow;
+	public final fun copy (Ljava/lang/String;Ljava/awt/Window;Landroidx/compose/ui/awt/ComposePanel;Z)Ldev/sebastiano/spectre/core/TrackedWindow;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/TrackedWindow;Ljava/lang/String;Ljava/awt/Window;Landroidx/compose/ui/awt/ComposePanel;ZILjava/lang/Object;)Ldev/sebastiano/spectre/core/TrackedWindow;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getComposeContentOrigin ()Ljava/awt/Point;
 	public final fun getComposePanel ()Landroidx/compose/ui/awt/ComposePanel;
@@ -254,7 +262,72 @@ public final class dev/sebastiano/spectre/core/TrackedWindow {
 
 public final class dev/sebastiano/spectre/core/WindowTracker {
 	public fun <init> ()V
-	public final fun getTrackedWindows ()Ljava/util/List;
+	public final fun getTrackedWindows ()Lkotlinx/coroutines/flow/StateFlow;
 	public final fun refresh ()V
+}
+
+public abstract interface annotation class dev/sebastiano/spectre/core/perf/ExperimentalSpectreApi : java/lang/annotation/Annotation {
+}
+
+public final class dev/sebastiano/spectre/core/perf/RecomposerInspector {
+	public static final field INSTANCE Ldev/sebastiano/spectre/core/perf/RecomposerInspector;
+	public final fun findRecomposer (Ldev/sebastiano/spectre/core/TrackedWindow;)Landroidx/compose/runtime/Recomposer;
+}
+
+public final class dev/sebastiano/spectre/core/perf/RecompositionMonitor : java/lang/AutoCloseable {
+	public static final field Companion Ldev/sebastiano/spectre/core/perf/RecompositionMonitor$Companion;
+	public synthetic fun <init> (JILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (JLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (JLkotlin/time/TimeSource$WithComparableMarks;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun awaitCompositionIdle-2d-g_3Q (JJJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun awaitCompositionIdle-2d-g_3Q$default (Ldev/sebastiano/spectre/core/perf/RecompositionMonitor;JJJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun awaitRateBelow-vLdBGDU (DJJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun awaitRateBelow-vLdBGDU$default (Ldev/sebastiano/spectre/core/perf/RecompositionMonitor;DJJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public fun close ()V
+	public final fun getActiveSurfaces ()I
+	public final fun getRatePerSecond ()D
+	public final fun getTotal ()J
+	public final fun perSurface ()Ljava/util/List;
+	public final fun reset ()V
+	public final fun snapshot ()Ldev/sebastiano/spectre/core/perf/RecompositionSnapshot;
+}
+
+public final class dev/sebastiano/spectre/core/perf/RecompositionMonitor$Companion {
+	public final fun getDEFAULT_AWAIT_TIMEOUT-UwyO8pc ()J
+	public final fun getDEFAULT_POLL_INTERVAL-UwyO8pc ()J
+	public final fun getDEFAULT_QUIET_PERIOD-UwyO8pc ()J
+	public final fun getDEFAULT_WINDOW-UwyO8pc ()J
+}
+
+public final class dev/sebastiano/spectre/core/perf/RecompositionSnapshot {
+	public synthetic fun <init> (JDIJLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()J
+	public final fun component2 ()D
+	public final fun component3 ()I
+	public final fun component4-UwyO8pc ()J
+	public final fun copy-Wn2Vu4Y (JDIJ)Ldev/sebastiano/spectre/core/perf/RecompositionSnapshot;
+	public static synthetic fun copy-Wn2Vu4Y$default (Ldev/sebastiano/spectre/core/perf/RecompositionSnapshot;JDIJILjava/lang/Object;)Ldev/sebastiano/spectre/core/perf/RecompositionSnapshot;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getActiveSurfaces ()I
+	public final fun getRatePerSecond ()D
+	public final fun getTotal ()J
+	public final fun getWindowDuration-UwyO8pc ()J
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/core/perf/SurfaceRecompositions {
+	public fun <init> (Ljava/lang/String;JD)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()J
+	public final fun component3 ()D
+	public final fun copy (Ljava/lang/String;JD)Ldev/sebastiano/spectre/core/perf/SurfaceRecompositions;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/perf/SurfaceRecompositions;Ljava/lang/String;JDILjava/lang/Object;)Ldev/sebastiano/spectre/core/perf/SurfaceRecompositions;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getRatePerSecond ()D
+	public final fun getSurfaceId ()Ljava/lang/String;
+	public final fun getTotal ()J
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 

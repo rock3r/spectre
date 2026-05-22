@@ -5,6 +5,8 @@ package dev.sebastiano.spectre.core
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
+import dev.sebastiano.spectre.core.perf.ExperimentalSpectreApi
+import dev.sebastiano.spectre.core.perf.RecompositionMonitor
 import java.awt.Rectangle
 import java.awt.event.KeyEvent
 import java.awt.image.BufferedImage
@@ -43,10 +45,10 @@ private constructor(
      */
     @InternalSpectreApi
     public val windows: List<TrackedWindow>
-        get() = windowTracker.trackedWindows
+        get() = windowTracker.trackedWindows.value
 
     /** Stable surface IDs of every tracked window, in tracking order. */
-    public fun surfaceIds(): List<String> = windowTracker.trackedWindows.map { it.surfaceId }
+    public fun surfaceIds(): List<String> = windowTracker.trackedWindows.value.map { it.surfaceId }
 
     public fun refreshWindows() {
         windowTracker.refresh()
@@ -266,6 +268,31 @@ private constructor(
         tracer: Tracer = PerfettoTracer(),
         block: suspend () -> T,
     ): T = withTracingInternal(output, tracer, block)
+
+    /**
+     * Starts a [dev.sebastiano.spectre.core.perf.RecompositionMonitor] that observes recomposition
+     * counts across every Compose surface this automator currently tracks, plus any surfaces that
+     * appear later. The monitor piggybacks on the existing `WindowTracker` flow — every
+     * [refreshWindows] call (and `tree()`, which refreshes internally) emits the new surface set,
+     * and the monitor reconciles its CompositionObserver attachments automatically.
+     *
+     * Note: query helpers like [findByTestTag] / [findByText] read the *current* tracked-windows
+     * snapshot without driving a refresh, so they do not by themselves discover newly opened
+     * windows. Call [refreshWindows] (or [tree], or [waitForIdle], all of which refresh) after
+     * opening a new window if you need the monitor to attach to it before continuing.
+     *
+     * The caller owns the returned monitor's lifecycle: [RecompositionMonitor.close] cancels its
+     * internal scope and disposes every CompositionObserver handle. Failing to close it leaks the
+     * subscription against the tracker.
+     */
+    @ExperimentalSpectreApi
+    public fun monitorRecompositions(
+        windowDuration: Duration = RecompositionMonitor.DEFAULT_WINDOW
+    ): RecompositionMonitor {
+        val monitor = RecompositionMonitor(windowDuration)
+        monitor.subscribeTo(windowTracker)
+        return monitor
+    }
 
     public suspend fun waitForIdle(
         timeout: Duration = DEFAULT_WAIT_TIMEOUT,
