@@ -5,6 +5,8 @@ package dev.sebastiano.spectre.core
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
+import dev.sebastiano.spectre.core.perf.ExperimentalSpectreApi
+import dev.sebastiano.spectre.core.perf.RecompositionMonitor
 import java.awt.Rectangle
 import java.awt.event.KeyEvent
 import java.awt.image.BufferedImage
@@ -266,6 +268,26 @@ private constructor(
         tracer: Tracer = PerfettoTracer(),
         block: suspend () -> T,
     ): T = withTracingInternal(output, tracer, block)
+
+    /**
+     * Starts a [dev.sebastiano.spectre.core.perf.RecompositionMonitor] that observes recomposition
+     * counts across every Compose surface this automator currently tracks, plus any surfaces that
+     * appear later. The monitor piggybacks on the existing `WindowTracker` flow — call
+     * `refreshWindows()` or any query helper to drive discovery, and the monitor reconciles its
+     * Compose tooling observers automatically.
+     *
+     * The caller owns the returned monitor's lifecycle: [RecompositionMonitor.close] cancels its
+     * internal scope and disposes every CompositionObserver handle. Failing to close it leaks the
+     * subscription against the tracker.
+     */
+    @ExperimentalSpectreApi
+    public fun monitorRecompositions(
+        windowDuration: Duration = RecompositionMonitor.DEFAULT_WINDOW
+    ): RecompositionMonitor {
+        val monitor = RecompositionMonitor(windowDuration)
+        monitor.subscribeTo(windowTracker)
+        return monitor
+    }
 
     public suspend fun waitForIdle(
         timeout: Duration = DEFAULT_WAIT_TIMEOUT,

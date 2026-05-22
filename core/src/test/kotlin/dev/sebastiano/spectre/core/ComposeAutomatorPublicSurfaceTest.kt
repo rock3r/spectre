@@ -324,6 +324,7 @@ class ComposeAutomatorPublicSurfaceTest {
                 "waitForVisualIdle",
                 "waitForNode",
                 "printTree",
+                "monitorRecompositions",
             )
 
         // Members on ComposeAutomator that ship under @InternalSpectreApi — currently just the
