@@ -195,6 +195,12 @@ public final class dev/sebastiano/spectre/core/RobotDriver$Companion {
 	public final fun synthetic (Ljava/awt/Window;)Ldev/sebastiano/spectre/core/RobotDriver;
 }
 
+public final class dev/sebastiano/spectre/core/SurfaceIdAssigner {
+	public static final field HASH_MULTIPLIER I
+	public fun <init> ()V
+	public final fun assign (Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/String;
+}
+
 public final class dev/sebastiano/spectre/core/TextMatchType : java/lang/Enum {
 	public static final field Exact Ldev/sebastiano/spectre/core/TextMatchType;
 	public static final field Substring Ldev/sebastiano/spectre/core/TextMatchType;
@@ -239,8 +245,8 @@ public final class dev/sebastiano/spectre/core/TrackedWindow {
 	public final fun component2 ()Ljava/awt/Window;
 	public final fun component3 ()Landroidx/compose/ui/awt/ComposePanel;
 	public final fun component4 ()Z
-	public final fun copy (Ljava/lang/String;Ljava/awt/Window;Landroidx/compose/ui/awt/ComposePanel;ZLkotlin/jvm/functions/Function0;)Ldev/sebastiano/spectre/core/TrackedWindow;
-	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/TrackedWindow;Ljava/lang/String;Ljava/awt/Window;Landroidx/compose/ui/awt/ComposePanel;ZLkotlin/jvm/functions/Function0;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/TrackedWindow;
+	public final fun copy (Ljava/lang/String;Ljava/awt/Window;Landroidx/compose/ui/awt/ComposePanel;Z)Ldev/sebastiano/spectre/core/TrackedWindow;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/TrackedWindow;Ljava/lang/String;Ljava/awt/Window;Landroidx/compose/ui/awt/ComposePanel;ZILjava/lang/Object;)Ldev/sebastiano/spectre/core/TrackedWindow;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getComposeContentOrigin ()Ljava/awt/Point;
 	public final fun getComposePanel ()Landroidx/compose/ui/awt/ComposePanel;

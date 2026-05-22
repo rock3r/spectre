@@ -17,6 +17,8 @@ internal constructor(
 
     public constructor() : this(Window::getWindows, requiresEdt = true)
 
+    private val surfaceIdAssigner = SurfaceIdAssigner()
+
     @Volatile private var _trackedWindows: List<TrackedWindow> = emptyList()
 
     public val trackedWindows: List<TrackedWindow>
@@ -118,9 +120,11 @@ internal constructor(
         prefix: String,
         isPopup: Boolean,
     ) {
+        // Identity for a "normal" surface is (Window, ComposePanel?). Two refreshes that find the
+        // same JFrame and the same embedded ComposePanel resolve to the same surfaceId.
         pending +=
             TrackedWindow(
-                surfaceId = "$prefix:${pending.size}",
+                surfaceId = surfaceIdAssigner.assign(prefix, window, panel),
                 window = window,
                 composePanel = panel,
                 isPopup = isPopup,
@@ -132,14 +136,18 @@ internal constructor(
         pending: MutableList<TrackedWindow>,
         layer: OverlayLayerEntry,
     ) {
-        pending +=
+        // Overlay-layer identity is the internal JDialog (`layer.window`) — that's the stable
+        // handle that survives across rediscovery passes, even though the lambda that reads its
+        // semantics is freshly built each call.
+        val tracked =
             TrackedWindow(
-                surfaceId = "overlay:${pending.size}",
+                surfaceId = surfaceIdAssigner.assign("overlay", layer.window),
                 window = layer.window,
                 composePanel = null,
                 isPopup = true,
-                overlaySemanticsOwners = layer.semanticsOwnersAccessor,
             )
+        tracked.overlaySemanticsOwners = layer.semanticsOwnersAccessor
+        pending += tracked
     }
 
     internal companion object {
