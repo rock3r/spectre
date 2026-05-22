@@ -13,6 +13,7 @@ import androidx.compose.runtime.tooling.observe
 import dev.sebastiano.spectre.core.InternalSpectreApi
 import dev.sebastiano.spectre.core.TrackedWindow
 import dev.sebastiano.spectre.core.WindowTracker
+import dev.sebastiano.spectre.core.readOnEdt
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.ComparableTimeMark
 import kotlin.time.Duration
@@ -127,19 +128,25 @@ internal constructor(
         detach(surfaceId)
         val tracker =
             surfaces.computeIfAbsent(surfaceId) { SurfaceTracker(windowDuration, timeSource) }
-        val perCompositionHandles = ConcurrentHashMap.newKeySet<CompositionObserverHandle>()
+        // Key per-Composition handles by Composition reference so onCompositionUnregistered can
+        // dispose precisely the matching handle instead of waiting for full detach to drain them
+        // — long-lived sessions that churn through compositions would otherwise leak handles.
+        val perCompositionHandles =
+            ConcurrentHashMap<ObservableComposition, CompositionObserverHandle>()
         val compositionObserver = SurfaceCompositionObserver(tracker)
         val registrationHandle =
             recomposer.observe(
                 object : CompositionRegistrationObserver {
                     override fun onCompositionRegistered(composition: ObservableComposition) {
                         val handle = composition.setObserver(compositionObserver)
-                        perCompositionHandles += handle
+                        val previous = perCompositionHandles.put(composition, handle)
+                        // Defensive: Compose's contract says register fires once per composition,
+                        // but if a host re-registers the same instance we don't want to leak.
+                        previous?.dispose()
                     }
 
                     override fun onCompositionUnregistered(composition: ObservableComposition) {
-                        // Composition-side handles are disposed implicitly by Compose when the
-                        // composition is unregistered; no explicit dispose call needed here.
+                        perCompositionHandles.remove(composition)?.dispose()
                     }
                 }
             )
@@ -167,8 +174,12 @@ internal constructor(
                 val departed = prev - curr
                 val arrived = curr - prev
                 departed.forEach { detach(it.surfaceId) }
+                // Recomposer discovery reflects through Compose Desktop internals and may invoke
+                // `getScene()` (a `by lazy` accessor that touches scene state). The collector
+                // runs on Dispatchers.Default but live UI access in Spectre is EDT-marshalled —
+                // hop onto the EDT for the resolve+attach so reflection sees consistent state.
                 arrived.forEach { tracked ->
-                    val recomposer = RecomposerInspector.findRecomposer(tracked)
+                    val recomposer = readOnEdt { RecomposerInspector.findRecomposer(tracked) }
                     if (recomposer != null) attach(tracked.surfaceId, recomposer)
                 }
             }
@@ -235,12 +246,15 @@ internal constructor(
     }
 
     /**
-     * Disposes the per-Recomposer registration for [surfaceId]. The accumulated counters remain
-     * accessible via [perSurface] and [total] — detaching is about stopping new events, not
-     * forgetting old ones. Use [reset] to zero counters explicitly.
+     * Disposes the per-Recomposer registration for [surfaceId] and clears that surface's rate
+     * ring buffer so its `ratePerSecond` immediately reads as `0`. Lifetime `total` is preserved
+     * — detaching stops new events from counting toward the rate, not from being remembered.
+     * Without this clear, a closed popup would keep [awaitRateBelow] failing until the sliding
+     * window naturally expires.
      */
     internal fun detach(surfaceId: String) {
         attachments.remove(surfaceId)?.dispose()
+        surfaces[surfaceId]?.clearRateWindow()
     }
 
     /**
@@ -265,13 +279,15 @@ internal constructor(
     private class Attachment(
         val recomposer: Recomposer,
         private val registrationHandle: CompositionObserverHandle,
-        private val perCompositionHandles: MutableSet<CompositionObserverHandle>,
+        private val perCompositionHandles:
+            ConcurrentHashMap<ObservableComposition, CompositionObserverHandle>,
     ) {
         fun dispose() {
             // Dispose the Recomposer-level registration first so no new compositions arrive while
-            // we tear down per-composition handles.
+            // we tear down per-composition handles. Any handles still in the map at this point
+            // belong to compositions that hadn't yet unregistered themselves.
             registrationHandle.dispose()
-            perCompositionHandles.forEach { it.dispose() }
+            perCompositionHandles.values.forEach { it.dispose() }
             perCompositionHandles.clear()
         }
     }
@@ -362,6 +378,11 @@ private class SurfaceTracker(
             totalCount = 0L
             recentMarks.clear()
         }
+    }
+
+    /** Clears the rate ring buffer without touching [total]. Called on detach. */
+    fun clearRateWindow() {
+        synchronized(lock) { recentMarks.clear() }
     }
 
     private fun pruneOld(now: ComparableTimeMark) {

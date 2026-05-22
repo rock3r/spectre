@@ -272,9 +272,14 @@ private constructor(
     /**
      * Starts a [dev.sebastiano.spectre.core.perf.RecompositionMonitor] that observes recomposition
      * counts across every Compose surface this automator currently tracks, plus any surfaces that
-     * appear later. The monitor piggybacks on the existing `WindowTracker` flow — call
-     * `refreshWindows()` or any query helper to drive discovery, and the monitor reconciles its
-     * Compose tooling observers automatically.
+     * appear later. The monitor piggybacks on the existing `WindowTracker` flow — every
+     * [refreshWindows] call (and `tree()`, which refreshes internally) emits the new surface set,
+     * and the monitor reconciles its CompositionObserver attachments automatically.
+     *
+     * Note: query helpers like [findByTestTag] / [findByText] read the *current* tracked-windows
+     * snapshot without driving a refresh, so they do not by themselves discover newly opened
+     * windows. Call [refreshWindows] (or [tree], or [waitForIdle], all of which refresh) after
+     * opening a new window if you need the monitor to attach to it before continuing.
      *
      * The caller owns the returned monitor's lifecycle: [RecompositionMonitor.close] cancels its
      * internal scope and disposes every CompositionObserver handle. Failing to close it leaks the

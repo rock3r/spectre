@@ -17,8 +17,10 @@ import kotlin.test.assertSame
  * ```
  *
  * The intermediate types are irrelevant to the reflection — only field names matter — so the fakes
- * are plain objects with the expected `val` shape. Live CMP wiring is exercised in sample-desktop
- * integration tests.
+ * are plain objects with the expected `val` shape. **Live CMP wiring against a real
+ * `ComposeWindow` is not yet covered by automated tests** (planned follow-up under `sample-desktop`);
+ * the reflective chain here is verified structurally and any field-rename regression in real CMP
+ * will surface as `findRecomposer` returning `null` rather than crashing.
  */
 class RecomposerInspectorTest {
 

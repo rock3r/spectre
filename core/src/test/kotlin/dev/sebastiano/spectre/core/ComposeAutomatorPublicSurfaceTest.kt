@@ -258,14 +258,22 @@ class ComposeAutomatorPublicSurfaceTest {
                 "dev.sebastiano.spectre.core.NodeKey",
                 "dev.sebastiano.spectre.core.PerfettoTracer",
                 "dev.sebastiano.spectre.core.RobotDriver",
+                "dev.sebastiano.spectre.core.SurfaceIdAssigner",
                 "dev.sebastiano.spectre.core.TextMatchType",
                 "dev.sebastiano.spectre.core.TextQuery",
                 "dev.sebastiano.spectre.core.TrackedWindow",
                 "dev.sebastiano.spectre.core.Tracer",
                 "dev.sebastiano.spectre.core.WindowTracker",
+                "dev.sebastiano.spectre.core.perf.ExperimentalSpectreApi",
+                "dev.sebastiano.spectre.core.perf.RecomposerInspector",
+                "dev.sebastiano.spectre.core.perf.RecompositionMonitor",
+                "dev.sebastiano.spectre.core.perf.RecompositionSnapshot",
+                "dev.sebastiano.spectre.core.perf.SurfaceRecompositions",
             )
 
-        // The intended user-facing types. Update only on a deliberate API addition.
+        // The intended user-facing types. Update only on a deliberate API addition. Types
+        // annotated `@ExperimentalSpectreApi` (e.g. the recomposition-monitor surface) live here
+        // because they are intentionally callable by users — opt-in is a warning, not an error.
         val PUBLISHED_TYPES: Set<String> =
             setOf(
                 "dev.sebastiano.spectre.core.AutomatorIdlingResource",
@@ -282,13 +290,19 @@ class ComposeAutomatorPublicSurfaceTest {
                 "dev.sebastiano.spectre.core.TextMatchType",
                 "dev.sebastiano.spectre.core.TextQuery",
                 "dev.sebastiano.spectre.core.Tracer",
+                "dev.sebastiano.spectre.core.perf.ExperimentalSpectreApi",
+                "dev.sebastiano.spectre.core.perf.RecompositionMonitor",
+                "dev.sebastiano.spectre.core.perf.RecompositionSnapshot",
+                "dev.sebastiano.spectre.core.perf.SurfaceRecompositions",
             )
 
         // Reachable from Kotlin/JVM, but not part of the stability policy.
         val ESCAPE_HATCH_TYPES: Set<String> =
             setOf(
+                "dev.sebastiano.spectre.core.SurfaceIdAssigner",
                 "dev.sebastiano.spectre.core.TrackedWindow",
                 "dev.sebastiano.spectre.core.WindowTracker",
+                "dev.sebastiano.spectre.core.perf.RecomposerInspector",
             )
 
         // The intended user-callable methods on ComposeAutomator (by name; overloads collapse).

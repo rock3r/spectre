@@ -14,7 +14,9 @@ import kotlinx.coroutines.runBlocking
 
 /**
  * Unit tests for [RecompositionMonitor]'s counter math via the internal `recordRecomposition` seam.
- * Live `Recomposer` wire-up is exercised by sample-desktop integration tests.
+ * **Live `Recomposer` wire-up is not yet covered by automated tests** — a `sample-desktop`
+ * integration that drives an actual ComposeWindow recomposing and asserts the monitor counts is
+ * planned as a follow-up.
  */
 class RecompositionMonitorTest {
 
@@ -97,6 +99,22 @@ class RecompositionMonitorTest {
         assertEquals(3.0, snapshot.ratePerSecond)
         assertEquals(1, snapshot.activeSurfaces)
         assertEquals(1.seconds, snapshot.windowDuration)
+        monitor.close()
+    }
+
+    @Test
+    fun `detach clears the rate window for that surface without resetting total`() {
+        val monitor = RecompositionMonitor(windowDuration = 1.seconds)
+        monitor.recordRecomposition("window:0")
+        monitor.recordRecomposition("window:0")
+        monitor.recordRecomposition("window:0")
+        assertEquals(3.0, monitor.ratePerSecond)
+        // detach is the internal hook the StateFlow reconciler uses when a surface disappears.
+        // It must immediately zero the rate so awaitRateBelow doesn't keep failing against the
+        // ghost of a closed popup, while leaving the lifetime total intact for perSurface().
+        monitor.detach("window:0")
+        assertEquals(0.0, monitor.ratePerSecond)
+        assertEquals(3L, monitor.total)
         monitor.close()
     }
 

@@ -66,10 +66,11 @@ public object RecomposerInspector {
 
     /**
      * Walks the full chain starting from a host that owns a `composePanel` field (i.e. a
-     * `ComposeWindow`). Public for unit-testing against a fake hierarchy that mirrors the field
-     * names used by Compose Multiplatform Desktop.
+     * `ComposeWindow`). Internal so unit tests in the same module can drive it against a fake
+     * hierarchy without widening the JVM-public surface — production callers go through
+     * [findRecomposer], which encodes which host to start the walk from.
      */
-    public fun findRecomposerInHostChain(host: Any?): Recomposer? {
+    internal fun findRecomposerInHostChain(host: Any?): Recomposer? {
         if (host == null) return null
         val composePanel = readField(host, COMPOSE_PANEL_FIELD) ?: return null
         return findRecomposerInHostChainBelowComposeContainer(composePanel)
