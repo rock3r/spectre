@@ -260,7 +260,7 @@ public final class dev/sebastiano/spectre/core/TrackedWindow {
 
 public final class dev/sebastiano/spectre/core/WindowTracker {
 	public fun <init> ()V
-	public final fun getTrackedWindows ()Ljava/util/List;
+	public final fun getTrackedWindows ()Lkotlinx/coroutines/flow/StateFlow;
 	public final fun refresh ()V
 }
 

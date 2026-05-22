@@ -7,6 +7,9 @@ import androidx.compose.ui.awt.ComposePanel
 import androidx.compose.ui.awt.ComposeWindow
 import java.awt.Container
 import java.awt.Window
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 @InternalSpectreApi
 public class WindowTracker
@@ -19,10 +22,15 @@ internal constructor(
 
     private val surfaceIdAssigner = SurfaceIdAssigner()
 
-    @Volatile private var _trackedWindows: List<TrackedWindow> = emptyList()
+    private val _trackedWindows = MutableStateFlow<List<TrackedWindow>>(emptyList())
 
-    public val trackedWindows: List<TrackedWindow>
-        get() = _trackedWindows
+    /**
+     * Live view of the currently tracked surfaces. Backed by a [StateFlow] so that subscribers
+     * (e.g. `RecompositionMonitor`) can reconcile against window-set changes without polling.
+     * Synchronous callers read [StateFlow.value]; the flow follows the standard
+     * distinctUntilChanged contract, so two refreshes that produce equal lists emit only once.
+     */
+    public val trackedWindows: StateFlow<List<TrackedWindow>> = _trackedWindows.asStateFlow()
 
     public fun refresh() {
         if (requiresEdt) {
@@ -49,7 +57,7 @@ internal constructor(
                 else -> trackOwnedPopups(pending, window)
             }
         }
-        _trackedWindows = pending.toList()
+        _trackedWindows.value = pending.toList()
     }
 
     @OptIn(ExperimentalComposeUiApi::class)

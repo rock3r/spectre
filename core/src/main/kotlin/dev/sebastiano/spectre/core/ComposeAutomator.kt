@@ -43,10 +43,10 @@ private constructor(
      */
     @InternalSpectreApi
     public val windows: List<TrackedWindow>
-        get() = windowTracker.trackedWindows
+        get() = windowTracker.trackedWindows.value
 
     /** Stable surface IDs of every tracked window, in tracking order. */
-    public fun surfaceIds(): List<String> = windowTracker.trackedWindows.map { it.surfaceId }
+    public fun surfaceIds(): List<String> = windowTracker.trackedWindows.value.map { it.surfaceId }
 
     public fun refreshWindows() {
         windowTracker.refresh()
