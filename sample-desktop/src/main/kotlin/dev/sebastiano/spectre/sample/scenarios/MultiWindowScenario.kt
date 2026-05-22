@@ -10,6 +10,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -30,7 +31,14 @@ import androidx.compose.ui.window.rememberWindowState
  *   CMP exposes it as a popup-class window when launched from inside a parent composition)
  *
  * Tags: `multiwindow.toggleButton`, `multiwindow.secondary.text`,
- * `multiwindow.secondary.dismissButton`.
+ * `multiwindow.secondary.counterButton`, `multiwindow.secondary.dismissButton`.
+ *
+ * The secondary's counter button mutates state declared inside the secondary `Window {}` block,
+ * which keeps `RecompositionMonitor`'s per-surface attribution honest: a click there should
+ * recompose only the secondary's scene, never the main window's. Without this button, the only
+ * mutating control inside the secondary is the dismiss button, which closes the parent's `open`
+ * flag — that recomposes the *parent* composition, not the secondary's, and so wouldn't prove the
+ * monitor separates per-surface buckets correctly.
  */
 val MultiWindowScenario: Scenario =
     Scenario(
@@ -65,6 +73,10 @@ private fun MultiWindowContent() {
             state = state,
             title = "Spectre — secondary window",
         ) {
+            // State declared inside this `Window {}` block lives in the secondary window's
+            // composition, so mutating it recomposes the secondary's scene — exactly the signal
+            // RecompositionMonitorValidationTest needs to assert independent per-surface counters.
+            var secondaryCounter by remember { mutableIntStateOf(0) }
             Column(
                 modifier = Modifier.fillMaxSize().padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -73,6 +85,12 @@ private fun MultiWindowContent() {
                     text = "I am a secondary window",
                     modifier = Modifier.testTag("multiwindow.secondary.text"),
                 )
+                Button(
+                    onClick = { secondaryCounter++ },
+                    modifier = Modifier.testTag("multiwindow.secondary.counterButton"),
+                ) {
+                    Text("Secondary clicks: $secondaryCounter")
+                }
                 Button(
                     onClick = { open = false },
                     modifier = Modifier.testTag("multiwindow.secondary.dismissButton"),

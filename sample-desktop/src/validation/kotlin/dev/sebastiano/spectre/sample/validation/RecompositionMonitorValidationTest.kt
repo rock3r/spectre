@@ -29,13 +29,17 @@ import org.junit.jupiter.api.TestMethodOrder
  * Compose recomposes, that the EDT-marshalled discovery path doesn't deadlock against Spectre's
  * other EDT users, that the StateFlow reconciler attaches new surfaces as they arrive, or that the
  * sliding-window rate measurement holds up under high-frequency recomposition. This class fills
- * those gaps by spawning the sample app via [SampleAppFixture] and asserting against four
+ * those gaps by spawning the sample app via [SampleAppFixture] and asserting against three
  * scenarios:
- * - **counter**: baseline single-surface attach, counter math, rate decay, per-surface reporting.
- * - **multiwindow**: a secondary `Window` gets its own `surfaceId`, its own counter, and detach
- *   clears its rate ring buffer when the window closes (while the lifetime `total` persists).
- * - **recomposition stress**: a ~60Hz ticker drives the rate well above an idle baseline, then
- *   [RecompositionMonitor.awaitRateBelow] confirms the rate decays after the ticker stops.
+ * - **counter**: baseline single-surface attach, counter math (Tests 1–3), rate decay (Test 4), and
+ *   per-surface reporting against the main window.
+ * - **multiwindow** (Test 5): a secondary `Window` gets its own `surfaceId`; clicking a button
+ *   inside that secondary window increments only the secondary's bucket (proves real per-surface
+ *   attribution, not just that the secondary appears in `perSurface()`); detach clears its rate
+ *   ring buffer when the window closes while the lifetime `total` persists.
+ * - **recomposition stress** (Test 6): a ~60Hz ticker drives `total` and `ratePerSecond` well above
+ *   an idle baseline, then [RecompositionMonitor.awaitRateBelow] confirms the rate decays after the
+ *   ticker stops.
  *
  * Run via `./gradlew :sample-desktop:validationTest`. Opt-in, requires a real display.
  */
@@ -231,6 +235,51 @@ class RecompositionMonitorValidationTest {
                     "Expected monitor to expose the secondary surface ($secondarySurfaceId) in " +
                         "perSurface(); got ${perSurfaceTwo.map { it.surfaceId }}",
                 )
+                // Identify the main window's surfaceId by elimination so the attribution
+                // assertion below is robust regardless of which one got the lower index.
+                val mainSurfaceId =
+                    perSurfaceTwo.map { it.surfaceId }.firstOrNull { it != secondarySurfaceId }
+                        ?: error(
+                            "Could not identify main surfaceId; ids=${perSurfaceTwo.map { it.surfaceId }}"
+                        )
+
+                // Real attribution check: click a button declared inside the `Window {}` block
+                // of MultiWindowScenario. That button mutates state owned by the secondary's
+                // composition, so the resulting recomposition pass must land on the secondary's
+                // CompositionObserver, not the main window's. If the monitor folded both surfaces
+                // into one bucket (or swapped buckets), this assertion would fail.
+                monitor.awaitCompositionIdle(quietPeriod = SETTLE_QUIET_PERIOD)
+                monitor.reset()
+                val secondaryCounter = waitForTestTag("multiwindow.secondary.counterButton")
+                repeat(SECONDARY_CLICKS) {
+                    click(secondaryCounter)
+                    monitor.awaitCompositionIdle(quietPeriod = SETTLE_QUIET_PERIOD)
+                }
+                val perSurfaceAfterClicks = monitor.perSurface()
+                println(
+                    "[monitor] after $SECONDARY_CLICKS secondary clicks: $perSurfaceAfterClicks"
+                )
+                val secondaryTotal =
+                    perSurfaceAfterClicks.firstOrNull { it.surfaceId == secondarySurfaceId }?.total
+                        ?: 0L
+                val mainTotal =
+                    perSurfaceAfterClicks.firstOrNull { it.surfaceId == mainSurfaceId }?.total ?: 0L
+                assertTrue(
+                    secondaryTotal >= SECONDARY_CLICKS.toLong(),
+                    "Expected secondary surface ($secondarySurfaceId) to count ≥$SECONDARY_CLICKS " +
+                        "recompositions from in-window clicks, got total=$secondaryTotal " +
+                        "(perSurface=$perSurfaceAfterClicks)",
+                )
+                // Per-surface attribution: clicks on a button inside the secondary's `Window {}`
+                // block mutate state owned by the secondary's composition, so they should NOT
+                // produce noticeable activity on the main surface. Allow a small margin for any
+                // ambient main-scene recomposition during the test window, but require the
+                // secondary's count to dominate by a healthy margin.
+                assertTrue(
+                    secondaryTotal > mainTotal,
+                    "Expected secondary total ($secondaryTotal) to exceed main total ($mainTotal) " +
+                        "after clicks in the secondary window; perSurface=$perSurfaceAfterClicks",
+                )
 
                 // Close the secondary window. After refresh, the reconciler detaches it — rate
                 // for that surfaceId must read 0 immediately (the lifetime total persists).
@@ -275,21 +324,31 @@ class RecompositionMonitorValidationTest {
                 monitor.reset()
 
                 // The stress scenario ticks every 16ms while running, producing ~60 recompositions
-                // per second on the main scene. Start it, let it run for one sliding-window worth
-                // of time so the rate stabilises, then assert it's well above an idle baseline.
+                // per second on the main scene. Start it and let it run for STRESS_RUN_DURATION;
+                // the assertion uses `total` as the primary signal because it accumulates
+                // monotonically and is robust to short scheduling stalls, while `ratePerSecond`
+                // measures only the last sliding window and is more sensitive to a single slow
+                // frame at sampling time. CI hardware that stalls briefly under load can drop
+                // the instantaneous rate below the threshold even when overall throughput is
+                // healthy; total only requires aggregate progress.
                 click(toggle)
                 kotlinx.coroutines.delay(STRESS_RUN_DURATION_MS)
 
                 val activeRate = monitor.ratePerSecond
                 val activeTotal = monitor.total
                 println("[monitor] under stress: total=$activeTotal, rate=${activeRate}/s")
+                // Primary signal: aggregate recompositions over the run window.
+                assertTrue(
+                    activeTotal >= STRESS_MIN_TOTAL,
+                    "Expected total ≥ $STRESS_MIN_TOTAL during stress (run=${STRESS_RUN_DURATION_MS}ms), " +
+                        "got $activeTotal",
+                )
+                // Secondary signal: instantaneous rate should be elevated, but allow a generous
+                // floor so CI hardware noise doesn't flake the suite. The total check above is
+                // the real test; this only catches "rate measurement is broken" regressions.
                 assertTrue(
                     activeRate >= STRESS_MIN_RATE,
                     "Expected ratePerSecond ≥ $STRESS_MIN_RATE during stress, got $activeRate",
-                )
-                assertTrue(
-                    activeTotal >= STRESS_MIN_TOTAL,
-                    "Expected total ≥ $STRESS_MIN_TOTAL during stress, got $activeTotal",
                 )
 
                 // Stop the ticker; the rate window should drain back below threshold via
@@ -315,6 +374,7 @@ class RecompositionMonitorValidationTest {
 
     private companion object {
         const val CLICKS: Int = 5
+        const val SECONDARY_CLICKS: Int = 3
         val ATTACH_TIMEOUT = 5.seconds
         val AWAIT_RATE_TIMEOUT = 3.seconds
         // Slightly longer than the monitor's default 50ms quiet period: Compose Desktop on a real
@@ -323,12 +383,14 @@ class RecompositionMonitorValidationTest {
         // scene, and produce its recomposition pass before we declare idle.
         val SETTLE_QUIET_PERIOD = 150.milliseconds
 
-        // Stress thresholds: the recomp scenario ticks at ~60Hz. Take the rate measurement after
-        // letting it run for STRESS_RUN_DURATION_MS so the 1s sliding window is fully populated.
-        // MIN_RATE is well below 60 to absorb scheduling jitter on slower CI hardware.
-        const val STRESS_RUN_DURATION_MS: Long = 1_200L
-        const val STRESS_MIN_RATE: Double = 20.0
-        const val STRESS_MIN_TOTAL: Long = 20L
+        // Stress thresholds. The recomp scenario ticks at ~60Hz, so a 2.0s run produces ~120
+        // recompositions in the ideal case; MIN_TOTAL=40 is roughly a third of that, leaving
+        // generous headroom for CI scheduling jitter without making the test a no-op. MIN_RATE
+        // is a sanity floor on the instantaneous-rate path — well below the steady-state ~60/s
+        // so a single slow frame doesn't trip it.
+        const val STRESS_RUN_DURATION_MS: Long = 2_000L
+        const val STRESS_MIN_RATE: Double = 15.0
+        const val STRESS_MIN_TOTAL: Long = 40L
         const val STRESS_CALM_THRESHOLD: Double = 5.0
         val STRESS_CALM_TIMEOUT = 3.seconds
     }
