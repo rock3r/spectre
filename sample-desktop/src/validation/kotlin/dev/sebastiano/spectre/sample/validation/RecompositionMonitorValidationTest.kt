@@ -27,8 +27,15 @@ import org.junit.jupiter.api.TestMethodOrder
  * chain through a fake hierarchy keyed by field name. They cannot verify that the chain still lines
  * up with the real CMP internal field names, that the `CompositionObserver` actually fires when
  * Compose recomposes, that the EDT-marshalled discovery path doesn't deadlock against Spectre's
- * other EDT users, or that disposal teardown is clean. This class fills all four gaps by spawning
- * the sample app via [SampleAppFixture] and asserting against the counter scenario.
+ * other EDT users, that the StateFlow reconciler attaches new surfaces as they arrive, or that the
+ * sliding-window rate measurement holds up under high-frequency recomposition. This class fills
+ * those gaps by spawning the sample app via [SampleAppFixture] and asserting against four
+ * scenarios:
+ * - **counter**: baseline single-surface attach, counter math, rate decay, per-surface reporting.
+ * - **multiwindow**: a secondary `Window` gets its own `surfaceId`, its own counter, and detach
+ *   clears its rate ring buffer when the window closes (while the lifetime `total` persists).
+ * - **recomposition stress**: a ~60Hz ticker drives the rate well above an idle baseline, then
+ *   [RecompositionMonitor.awaitRateBelow] confirms the rate decays after the ticker stops.
  *
  * Run via `./gradlew :sample-desktop:validationTest`. Opt-in, requires a real display.
  */
@@ -172,6 +179,140 @@ class RecompositionMonitorValidationTest {
         }
     }
 
+    @Test
+    @Order(5)
+    fun `secondary Window gets its own surfaceId and independent counter`() = runBlocking {
+        with(fixture.automator) {
+            navigateToScenario("scenario.multiwindow")
+            val toggleButton = waitForTestTag("multiwindow.toggleButton")
+
+            monitorRecompositions().use { monitor ->
+                refreshWindows()
+                eventually("monitor to attach main surface", timeout = ATTACH_TIMEOUT) {
+                    if (monitor.activeSurfaces >= 1) Unit else null
+                }
+                val initialSurfaces = monitor.activeSurfaces
+                monitor.awaitCompositionIdle(quietPeriod = SETTLE_QUIET_PERIOD)
+                monitor.reset()
+
+                // Open the secondary window. WindowTracker won't pick it up until refreshWindows
+                // fires the next StateFlow emission, after which the monitor's reconciler should
+                // hop to the EDT, resolve the secondary's Recomposer, and attach a fresh surface.
+                click(toggleButton)
+                val secondaryText =
+                    eventually("secondary window's text to appear", timeout = ATTACH_TIMEOUT) {
+                        findOneByTestTag("multiwindow.secondary.text")
+                    }
+                eventually("monitor to attach the secondary surface", timeout = ATTACH_TIMEOUT) {
+                    if (monitor.activeSurfaces > initialSurfaces) Unit else null
+                }
+                val twoSurfaces = monitor.activeSurfaces
+                val perSurfaceTwo = monitor.perSurface()
+                println(
+                    "[monitor] after opening secondary window: surfaces=$twoSurfaces, " +
+                        "perSurface=$perSurfaceTwo"
+                )
+                assertTrue(
+                    twoSurfaces > initialSurfaces,
+                    "Expected activeSurfaces to grow when secondary window opens; " +
+                        "was $initialSurfaces, now $twoSurfaces",
+                )
+                val ids = perSurfaceTwo.map { it.surfaceId }
+                assertTrue(
+                    ids.distinct().size == ids.size,
+                    "Surface ids should be distinct across surfaces; got $ids",
+                )
+                // The text node lives in the secondary's semantics tree, so its TrackedWindow
+                // surfaceId is the right key for asserting per-surface attribution.
+                val secondarySurfaceId = secondaryText.surfaceId
+                println("[monitor] secondary surfaceId: $secondarySurfaceId")
+                assertTrue(
+                    perSurfaceTwo.any { it.surfaceId == secondarySurfaceId },
+                    "Expected monitor to expose the secondary surface ($secondarySurfaceId) in " +
+                        "perSurface(); got ${perSurfaceTwo.map { it.surfaceId }}",
+                )
+
+                // Close the secondary window. After refresh, the reconciler detaches it — rate
+                // for that surfaceId must read 0 immediately (the lifetime total persists).
+                val dismissButton = waitForTestTag("multiwindow.secondary.dismissButton")
+                click(dismissButton)
+                waitUntilGone("multiwindow.secondary.text", timeout = ATTACH_TIMEOUT)
+                refreshWindows()
+                eventually("secondary surface's rate to drop to zero", timeout = ATTACH_TIMEOUT) {
+                    val secondaryRate =
+                        monitor
+                            .perSurface()
+                            .firstOrNull { it.surfaceId == secondarySurfaceId }
+                            ?.ratePerSecond
+                    if (secondaryRate != null && secondaryRate == 0.0) Unit else null
+                }
+                val perSurfaceAfter = monitor.perSurface()
+                println("[monitor] after closing secondary: perSurface=$perSurfaceAfter")
+                val secondaryAfter = perSurfaceAfter.firstOrNull {
+                    it.surfaceId == secondarySurfaceId
+                }
+                assertTrue(
+                    secondaryAfter != null && secondaryAfter.ratePerSecond == 0.0,
+                    "Closed surface should report rate=0; got $secondaryAfter",
+                )
+            }
+        }
+    }
+
+    @Test
+    @Order(6)
+    fun `recomposition stress drives rate above threshold then settles`() = runBlocking {
+        with(fixture.automator) {
+            navigateToScenario("scenario.recomposition")
+            val toggle = waitForTestTag("recomp.toggleButton")
+
+            monitorRecompositions().use { monitor ->
+                refreshWindows()
+                eventually("monitor to attach", timeout = ATTACH_TIMEOUT) {
+                    if (monitor.activeSurfaces > 0) Unit else null
+                }
+                monitor.awaitCompositionIdle(quietPeriod = SETTLE_QUIET_PERIOD)
+                monitor.reset()
+
+                // The stress scenario ticks every 16ms while running, producing ~60 recompositions
+                // per second on the main scene. Start it, let it run for one sliding-window worth
+                // of time so the rate stabilises, then assert it's well above an idle baseline.
+                click(toggle)
+                kotlinx.coroutines.delay(STRESS_RUN_DURATION_MS)
+
+                val activeRate = monitor.ratePerSecond
+                val activeTotal = monitor.total
+                println("[monitor] under stress: total=$activeTotal, rate=${activeRate}/s")
+                assertTrue(
+                    activeRate >= STRESS_MIN_RATE,
+                    "Expected ratePerSecond ≥ $STRESS_MIN_RATE during stress, got $activeRate",
+                )
+                assertTrue(
+                    activeTotal >= STRESS_MIN_TOTAL,
+                    "Expected total ≥ $STRESS_MIN_TOTAL during stress, got $activeTotal",
+                )
+
+                // Stop the ticker; the rate window should drain back below threshold via
+                // awaitRateBelow. Validates both the rate decay and the await helper under
+                // realistic post-thrashing conditions.
+                click(toggle)
+                val calmed =
+                    monitor.awaitRateBelow(
+                        threshold = STRESS_CALM_THRESHOLD,
+                        timeout = STRESS_CALM_TIMEOUT,
+                    )
+                println(
+                    "[monitor] after stop: rate=${monitor.ratePerSecond}/s, calmed=$calmed " +
+                        "(threshold=$STRESS_CALM_THRESHOLD)"
+                )
+                assertTrue(
+                    calmed,
+                    "Expected rate to drop below $STRESS_CALM_THRESHOLD/s within $STRESS_CALM_TIMEOUT",
+                )
+            }
+        }
+    }
+
     private companion object {
         const val CLICKS: Int = 5
         val ATTACH_TIMEOUT = 5.seconds
@@ -181,5 +322,14 @@ class RecompositionMonitorValidationTest {
         // 150ms quiet window gives the click event time to land on the EDT, be dispatched to the
         // scene, and produce its recomposition pass before we declare idle.
         val SETTLE_QUIET_PERIOD = 150.milliseconds
+
+        // Stress thresholds: the recomp scenario ticks at ~60Hz. Take the rate measurement after
+        // letting it run for STRESS_RUN_DURATION_MS so the 1s sliding window is fully populated.
+        // MIN_RATE is well below 60 to absorb scheduling jitter on slower CI hardware.
+        const val STRESS_RUN_DURATION_MS: Long = 1_200L
+        const val STRESS_MIN_RATE: Double = 20.0
+        const val STRESS_MIN_TOTAL: Long = 20L
+        const val STRESS_CALM_THRESHOLD: Double = 5.0
+        val STRESS_CALM_TIMEOUT = 3.seconds
     }
 }
