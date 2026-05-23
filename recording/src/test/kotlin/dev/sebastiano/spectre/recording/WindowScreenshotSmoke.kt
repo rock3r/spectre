@@ -26,7 +26,7 @@ import kotlin.system.exitProcess
  *
  * Expected behavior:
  * - macOS: captures a PNG through ScreenCaptureKit (`spectre-screencapture --mode screenshot`).
- * - Windows: captures a PNG through ffmpeg `gdigrab title=`.
+ * - Windows: captures a PNG through the Windows Graphics Capture helper.
  * - Linux X11: captures a PNG through ffmpeg `x11grab` region fallback.
  * - Linux Wayland: verifies the current still-screenshot unsupported error and exits successfully.
  *   Use `runWaylandPortalWindowSmoke` for the Wayland window-targeted video path.

@@ -246,14 +246,29 @@ automator.screenshot(windowIndex = 0)   // a tracked window
 Always `waitForVisualIdle()` immediately before screenshotting — otherwise
 you may capture a mid-animation frame.
 
+For a **top-level window-scoped still screenshot**, use `AutoScreenshotter`
+from `:recording` instead of `ComposeAutomator.screenshot(...)`. This is
+separate from video recording:
+
+- macOS: `ScreenCaptureKitScreenshotter` via `spectre-recording-macos`.
+- Windows: `WindowsWindowScreenshotter` for stills and `WindowsGraphicsCaptureRecorder`
+  for window/region video via the framework-dependent Windows Graphics Capture helper packaged in
+  `spectre-recording-windows` for x64 and arm64; requires Windows 10 version 1903 or
+  newer, .NET 8 Desktop Runtime, and Windows App Runtime 1.8 at runtime, plus .NET 8 SDK
+  when building from source / CI.
+- Linux X11: explicit `x11grab` region fallback.
+- Linux Wayland: still screenshots are unsupported; window-targeted video uses
+  the portal helper.
+
 ## Recording, JUnit, IntelliJ-hosted Compose
 
 These each have their own reference. Read the file *only when the task
 touches that area*; they are not needed for the common case.
 
-- **Video recording** → `references/recording.md` — `AutoRecorder`, platform
-  capture backends (ScreenCaptureKit / gdigrab / ffmpeg / Wayland portal),
-  region vs window targeting, frame-drop and HiDPI traps.
+- **Still window screenshots and video recording** → `references/recording.md` —
+  `AutoScreenshotter`, `AutoRecorder`, platform helper artifacts
+  (`spectre-recording-macos` / `-linux` / `-windows`), region vs window targeting,
+  frame-drop and HiDPI traps.
 - **JUnit 4 vs JUnit 5 integration** → `references/junit.md` —
   `ComposeAutomatorExtension`, `ComposeAutomatorRule`, parameter resolution,
   lifecycle.
@@ -273,6 +288,7 @@ touches that area*; they are not needed for the common case.
 | Two parallel test JVMs steal focus from each other | Both use real `RobotDriver()` | Use `RobotDriver.synthetic(rootWindow)` |
 | Cmd+Tab or OS shortcuts don't work under synthetic driver | Synthetic events bypass HID | Use real `RobotDriver()` for those tests |
 | Screenshot is blurry / mid-animation | Captured before frame stabilised | `waitForVisualIdle()` first |
+| Windows WGC helper missing or fails to start | `spectre-recording-windows` is not on the runtime classpath, the helper was not built/staged locally, or .NET / Windows App Runtime is missing | Add `testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-windows")`; install .NET 8 Desktop Runtime + Windows App Runtime 1.8 for runtime; for source builds install .NET 8 SDK and run `:recording-windows:verifyRecordingWindowsHelper` |
 | `typeText` silently does not land on macOS with `apple.awt.UIElement=true` | Usually stale Spectre or wrong `rootWindow`; current synthetic input should target the Compose key-listening host even without AWT focus | Verify the test uses a Spectre build with the UIElement synthetic-key fallback, click/focus the field first, and pass the top-level host window to `RobotDriver.synthetic(rootWindow)` |
 | `pasteText` silently does not land on macOS with `apple.awt.UIElement=true` | UI-element/helper mode breaks clipboard-backed paste, even with synthetic input | Disable `apple.awt.UIElement=true` for the JVM hosting the test window, or use `typeText` for supported ASCII |
 | `pasteText` times out on macOS in CI | Clipboard manager rewriting `NSPasteboard` | Disable clipboard utilities in CI |

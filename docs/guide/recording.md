@@ -5,11 +5,13 @@ tests. It exposes small surfaces backed by platform-specific implementations and
 routers that pick the right one per call.
 
 !!! note "External dependencies"
-    The recording backends shell out to platform tools — `ffmpeg` everywhere, plus a
-    Swift helper on macOS and a small Rust helper on Linux Wayland. Add
-    `spectre-recording-macos` and/or `spectre-recording-linux` as runtime-only
-    dependencies for those helpers. See [Recording limitations](../RECORDING-LIMITATIONS.md)
-    for the per-platform notes.
+    The recording backends shell out to platform tools — `ffmpeg` for macOS / Linux X11
+    region capture, plus small native helpers for macOS, Linux Wayland, and Windows
+    Graphics Capture. Windows window, region, and fullscreen recording use the Windows
+    Graphics Capture helper when `spectre-recording-windows` is present.
+    Add `spectre-recording-macos`, `spectre-recording-linux`, and/or
+    `spectre-recording-windows` as runtime-only dependencies for those helpers. See
+    [Recording limitations](../RECORDING-LIMITATIONS.md) for the per-platform notes.
 
 ## Still Window Screenshots
 
@@ -32,7 +34,7 @@ ImageIO.write(image, "png", File("build/reports/window.png"))
 | Platform | Backend | Occlusion behavior | Notes |
 | --- | --- | --- | --- |
 | macOS | ScreenCaptureKit helper (`spectre-screencapture --mode screenshot`) | Captures the window source, not overlapping apps | Requires `spectre-recording-macos` at runtime and Screen Recording permission |
-| Windows | ffmpeg `gdigrab title=` one-frame PNG capture | Captures the named window source | Requires `ffmpeg` on `PATH` and a non-blank exact window title |
+| Windows | Windows Graphics Capture helper (`spectre-window-capture.exe`) | Captures the named top-level window | Requires `spectre-recording-windows`, Windows 10 version 1903 or newer, .NET 8 Desktop Runtime, Windows App Runtime 1.8, and a non-blank exact window title |
 | Linux X11 | ffmpeg `x11grab` region fallback | Captures visible screen pixels | The target window must be visible/frontmost, same limitation as `ComposeAutomator.screenshot(...)` |
 | Linux Wayland | Unsupported for still images today | N/A | Use `WaylandPortalWindowRecorder` for video. One-shot still capture needs a helper extension that returns image buffers instead of video files |
 
@@ -54,9 +56,10 @@ Expected results by platform:
   `$TMPDIR/spectre-window-screenshot-smoke.png`. Open the PNG and confirm the white window
   with `screenshot smoke` text is visible. If macOS denies Screen Recording, grant the
   host JVM permission in System Settings, restart the JVM/terminal, and rerun.
-- **Windows** — the same task uses `FfmpegWindowScreenshotter` and `gdigrab title=`. Make
-  sure `ffmpeg` is on `PATH`; the smoke should print a non-empty PNG path. Open it and
-  confirm it contains only the smoke window.
+- **Windows** — the same task uses the `spectre-window-capture.exe` helper from
+  `spectre-recording-windows`. The smoke should print a non-empty PNG path. Open it and
+  confirm it contains only the smoke window; ffmpeg is not required for still screenshots,
+  but runtime users need .NET 8 Desktop Runtime and Windows App Runtime 1.8 installed.
 - **Linux X11** — run from an Xorg/XWayland session with `DISPLAY` set and `ffmpeg` on
   `PATH`. The task uses the explicit `x11grab` region fallback, so keep the smoke window
   visible/frontmost. Open the printed PNG and confirm it contains the smoke window.
@@ -69,6 +72,18 @@ Expected results by platform:
   ```
 
   Pick the smoke window in the compositor portal dialog and inspect the resulting video.
+
+For the Windows WGC video path, run:
+
+```bash
+./gradlew :recording:runWindowsGraphicsCaptureRecordingSmoke
+```
+
+The smoke opens a Swing window, starts `AutoRecorder.startWindow(...)`, moves the window,
+drives a real Robot click into it, stops the recording, and verifies that the MP4 is non-empty.
+For explicit Windows region recording, run `:recording:runWindowsGraphicsCaptureRegionSmoke`.
+`runWindowsGraphicsCaptureFullscreenSmoke` records the primary monitor and is intentionally
+manual/intrusive.
 
 ## The `Recorder` interface
 
@@ -89,15 +104,16 @@ already landed in `output` before `start()` returns.
 
 ## Recorder capability matrix
 
-Five concrete recorders ship today. `AutoRecorder` (next section) picks one of them per
+Six concrete recorders ship today. `AutoRecorder` (next section) picks one of them per
 call based on platform and whether you pass a window; the matrix below is the per-recorder
 view for when you want to know what each backend can and cannot do.
 
 | Recorder | Capture shape | Follows window resize? | Captures occluding windows / popups? | Prerequisites | Platforms |
 | --- | --- | --- | --- | --- | --- |
-| `FfmpegRecorder` | Screen region (fixed `Rectangle`) | No — region fixed at `start()` | Yes — anything visible inside the region lands in the frame, including occluding apps and overlapping Compose `OnWindow` popups | `ffmpeg` on `PATH`; macOS Screen Recording TCC for the launching app | macOS · Windows · Linux Xorg |
-| `FfmpegWindowRecorder` | Named window (`gdigrab title=`) | Yes — `gdigrab` retracks the window across moves and resizes | No — only the window's pixels are captured. Compose `OnWindow` popups land in a separate OS window with a different title, so they are **not** captured. `OnSameCanvas` / `OnComponent` popups are part of the window surface and are captured | `ffmpeg` on `PATH`; visible window with a non-blank exact title | Windows |
-| `ScreenCaptureKitRecorder` | Named window (pid + title substring) | Yes — reads the window backing store directly, follows moves and resizes | No — same window-source semantics as `FfmpegWindowRecorder`. `OnWindow` popups not captured; `OnSameCanvas` / `OnComponent` captured | `spectre-recording-macos` runtime helper (`spectre-screencapture`); macOS Screen Recording TCC for the launching app | macOS |
+| `FfmpegRecorder` | Screen region (fixed `Rectangle`) | No — region fixed at `start()` | Yes — anything visible inside the region lands in the frame, including occluding apps and overlapping Compose `OnWindow` popups | `ffmpeg` on `PATH`; macOS Screen Recording TCC for the launching app | macOS · Windows legacy/explicit · Linux Xorg |
+| `WindowsGraphicsCaptureRecorder` | Named window (exact title + owner pid) or screen region | Window mode follows the target window across moves; region mode is fixed at `start()` | Window mode captures only the target window's pixels, so occluders are excluded and separate `OnWindow` popups are not captured. Region/fullscreen mode captures the visible monitor pixels inside the requested rectangle, including overlapping windows and popups | `spectre-recording-windows` runtime helper (`spectre-window-capture.exe`); Windows 10 version 1903 or newer; .NET 8 Desktop Runtime; Windows App Runtime 1.8 | Windows |
+| `FfmpegWindowRecorder` | Legacy named window (`gdigrab title=`) | Yes — `gdigrab` retracks the window across moves and resizes | No — only the window's pixels are captured. Compose `OnWindow` popups land in a separate OS window with a different title, so they are **not** captured. `OnSameCanvas` / `OnComponent` popups are part of the window surface and are captured | `ffmpeg` on `PATH`; visible window with a non-blank exact title | Windows |
+| `ScreenCaptureKitRecorder` | Named window (pid + title substring) | Yes — reads the window backing store directly, follows moves and resizes | No — same window-source semantics as WGC. `OnWindow` popups not captured; `OnSameCanvas` / `OnComponent` captured | `spectre-recording-macos` runtime helper (`spectre-screencapture`); macOS Screen Recording TCC for the launching app | macOS |
 | `WaylandPortalRecorder` | Monitor region (portal `SourceType.MONITOR`, cropped) | No — monitor-level source | Depends on the compositor. Validated on GNOME/Mutter to include the user's overlays but exclude apps occluding the recorded region | `spectre-recording-linux` runtime helper (`spectre-wayland-helper`); `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`. First call pops the compositor's "share screen" dialog | Linux Wayland |
 | `WaylandPortalWindowRecorder` | Named window (portal `SourceType.WINDOW` + fixed crop) | **No.** The crop is computed once from `_GTK_FRAME_EXTENTS` at `start()` and stays at those pixel coordinates for the rest of the recording. If the user moves or resizes the window during the recording, the crop no longer aligns with the window's pixels (typically the recording shows blank / black for the unrendered area of the original rectangle) — see `WaylandPortalWindowRecorder`'s KDoc for the detailed rationale | No — only the picked window's pixels are in the stream. `OnWindow` popups not captured | `spectre-recording-linux` runtime helper; `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`; `xprop` on `PATH`; compositor must publish `_GTK_FRAME_EXTENTS` (GNOME/Mutter verified; older Mutter / KDE / sway may not — the recorder throws rather than producing misaligned video) | Linux Wayland |
 
@@ -108,9 +124,10 @@ user moving or resizing the window mid-recording.
 
 Embedded-host implications: `ComposePanel`s without a top-level OS window — including
 Jewel-hosted Compose inside an IntelliJ plugin tool window — have no exact window title for
-`FfmpegWindowRecorder` to bind to and no top-level window for the SCK helper to discover.
-`AutoRecorder` falls through to region capture (`FfmpegRecorder` on macOS / Windows / Linux
-Xorg; `WaylandPortalRecorder` on Linux Wayland) for those surfaces. Linux support is
+the native Windows helper to bind to and no top-level window for the SCK helper to discover.
+`AutoRecorder` falls through to region capture (`FfmpegRecorder` on macOS / Linux Xorg,
+`WindowsGraphicsCaptureRecorder` on Windows, and `WaylandPortalRecorder` on Linux Wayland)
+for those surfaces. Linux support is
 best-effort: portal capture is exercised against GNOME/Mutter on Ubuntu 22.04 and 24.04;
 KDE / sway / wlroots may behave differently and are not validated.
 
@@ -164,8 +181,8 @@ The routing is platform-keyed. Read the row that matches your OS:
 | ----------------------- | --------------------------------- | -------------------------------------------------------------------- |
 | **macOS**               | non-null                          | `ScreenCaptureKitRecorder` (`spectre-recording-macos` helper).       |
 | **macOS**               | `null`                            | `FfmpegRecorder` region capture (`avfoundation`).                    |
-| **Windows**             | non-null with a non-blank title   | `FfmpegWindowRecorder` (`gdigrab title=`).                           |
-| **Windows**             | `null`, or non-null with no title | `FfmpegRecorder` region capture (`gdigrab`).                         |
+| **Windows**             | non-null with a non-blank title   | `WindowsGraphicsCaptureRecorder` (`spectre-recording-windows` helper). |
+| **Windows**             | `null`, or non-null with no title | `WindowsGraphicsCaptureRecorder` region capture.                     |
 | **Linux Xorg**          | any                               | `FfmpegRecorder` region capture (`x11grab`).                         |
 | **Linux Wayland**       | non-null                          | `WaylandPortalWindowRecorder` (portal `Window` source type — only the picked window's pixels, window-sized output). |
 | **Linux Wayland**       | `null`                            | `WaylandPortalRecorder` (portal `Monitor` source type — region capture). |
@@ -178,6 +195,14 @@ A few details worth knowing:
   SCK failures — permission denied, target window not found, helper crashed during
   init — propagate as exceptions rather than falling back silently, so you see
   the real cause.
+- **Windows WGC helper fallback.** If `spectre-recording-windows` is absent at
+  runtime, `AutoRecorder.startRegion(...)` falls back to the legacy
+  `FfmpegRecorder`/`gdigrab` region path for compatibility with older
+  `spectre-recording`-only setups. `startRegion(...)` also uses the legacy ffmpeg
+  path when you set Windows options that WGC cannot honour, such as a custom
+  `RecordingOptions.codec` or `screenIndex`. Window-targeted recording, fullscreen
+  recording through `WindowsGraphicsCaptureRecorder`, and still window screenshots
+  require the helper artifact; operational WGC failures still propagate.
 - **Linux Wayland always uses the portal** (when a portal recorder is wired up),
   regardless of whether `window` is null, because `LinuxX11Grab` refuses to run on
   Wayland sessions. With `window != null` the router picks the window-targeted portal
@@ -212,7 +237,9 @@ If you know exactly which backend you want, instantiate it directly and skip the
 | Backend                       | Use it for                                                                |
 | ----------------------------- | ------------------------------------------------------------------------- |
 | `FfmpegRecorder`              | Region capture on macOS, Windows, and Linux Xorg. (Throws on Wayland — use `WaylandPortalRecorder` there.) Default for "no window in mind". |
-| `FfmpegWindowRecorder`        | Windows-only window-targeted capture via `gdigrab title=`.                |
+| `WindowsGraphicsCaptureRecorder` | Windows-only window-targeted and region/fullscreen capture via the `spectre-recording-windows` Windows Graphics Capture helper. |
+| `FfmpegWindowRecorder`        | Legacy explicit Windows-only window-targeted capture via `gdigrab title=`. |
+| `WindowsWindowScreenshotter`  | Windows-only still window screenshots via the `spectre-recording-windows` Windows Graphics Capture helper. |
 | `ScreenCaptureKitRecorder`    | macOS-only window-targeted capture via the `spectre-recording-macos` Swift helper. |
 | `WaylandPortalRecorder`       | Linux Wayland region capture via `xdg-desktop-portal` (`SourceType.MONITOR`) and the `spectre-recording-linux` Rust helper. |
 | `WaylandPortalWindowRecorder` | Linux Wayland window-targeted capture via `xdg-desktop-portal` (`SourceType.WINDOW`). Window-sized output containing only the picked window's pixels. |
@@ -258,7 +285,14 @@ trade-offs.
 
 ### Other platforms
 
-- **Windows** — `ffmpeg` on `PATH`. `gdigrab` ships with `ffmpeg`.
+- **Windows** — add `dev.sebastiano.spectre:spectre-recording-windows:<version>` as a
+  runtime-only dependency for native window recording, region/fullscreen recording, and
+  still window screenshots. Runtime machines need Windows Graphics Capture support
+  (Windows 10 version 1903 or newer), .NET 8 Desktop Runtime, and Windows App Runtime
+  1.8; contributors and CI building that helper from source need the .NET 8 SDK.
+  `AutoRecorder.startRegion(...)` can fall back to `ffmpeg`/`gdigrab` when the helper
+  artifact is absent; otherwise `ffmpeg` is only needed if you instantiate the explicit
+  legacy ffmpeg backends.
 - **Linux Xorg** — `ffmpeg` with the `x11grab` input enabled (default in distro builds).
 - **Linux Wayland** — `gst-launch-1.0` plus the GStreamer plugins for H.264/Matroska.
   Add `dev.sebastiano.spectre:spectre-recording-linux:<version>` as a runtime-only

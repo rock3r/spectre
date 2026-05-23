@@ -9,6 +9,7 @@ spectre
 ├── recording/               — screenshot / recording API and common JVM implementation
 ├── recording-macos/         — runtime-only macOS ScreenCaptureKit helper artifact
 ├── recording-linux/         — runtime-only Linux Wayland helper artifact
+├── recording-windows/       — runtime-only Windows Graphics Capture helper artifact
 ├── testing/                 — test fixtures and JUnit-facing helpers built on top of public APIs
 ├── sample-desktop/          — small manual-test harness app for spike validation
 └── sample-intellij-plugin/  — sample IntelliJ plugin embedding Spectre in a Jewel tool window
@@ -24,7 +25,8 @@ testing                 ─┘
 
 recording                (isolated desktop/native integration API)
 recording-macos    ─┐
-recording-linux     ┴──> recording (runtime helper artifacts)
+recording-linux     ├──> recording (runtime helper artifacts)
+recording-windows  ─┘
 ```
 
 Guidelines:
@@ -89,15 +91,16 @@ Keep native capture boundaries narrow and test the pure pieces separately from O
 The published `spectre-recording` jar is API/common-only; it must not contain generated
 `native/...` helper resources.
 
-### `recording-macos` and `recording-linux`
+### `recording-macos`, `recording-linux`, and `recording-windows`
 
 Expected long-term responsibilities:
 
 - publish runtime-only helper resources for the recording API
 - keep native binary payloads out of `spectre-recording` and its sources jar
 - mirror the runtime resource paths the extractors probe:
-  `native/macos/spectre-screencapture` and
-  `native/linux/<arch>/spectre-wayland-helper`
+  `native/macos/spectre-screencapture`,
+  `native/linux/<arch>/spectre-wayland-helper`, and
+  `native/windows/<arch>/spectre-window-capture.exe`
 
 Current backends:
 
@@ -105,10 +108,15 @@ Current backends:
   picked per OS by `FfmpegBackend.detect()`: `avfoundation` on macOS, `gdigrab` on
   Windows, and `x11grab` on Linux Xorg. (Linux Wayland is rejected here; see
   `LinuxX11Grab.checkNotWayland`.)
-- `FfmpegWindowRecorder` — Windows-only window-targeted capture via `gdigrab title=`.
-  Window movement is followed automatically; occlusion doesn't matter.
-- `FfmpegWindowScreenshotter` — Windows-only still window screenshots via one-frame
-  `gdigrab title=` PNG capture.
+- `windows.WindowsGraphicsCaptureRecorder` — Windows-only MP4 capture via the shared
+  .NET Windows Graphics Capture helper packaged by `:recording-windows` for x64 and
+  arm64. Window mode follows movement automatically and ignores occluders; region mode
+  records a fixed monitor rectangle and is also used for fullscreen recording.
+- `FfmpegWindowRecorder` — legacy explicit Windows-only window-targeted capture via
+  `gdigrab title=`. Window movement is followed automatically; occlusion doesn't matter.
+- `windows.WindowsWindowScreenshotter` — Windows-only still window screenshots via a
+  shared framework-dependent .NET Windows Graphics Capture helper packaged by
+  `:recording-windows` for x64 and arm64.
 - `FfmpegRegionScreenshotter` — Linux X11 still screenshot fallback via one-frame `x11grab`
   region capture; the target must be visible and frontmost because this is not true window
   capture.
@@ -122,11 +130,12 @@ Current backends:
   ScreenCast interface, driven by a Rust helper
   (`recording/native/linux/spectre-wayland-helper`) packaged by `:recording-linux`.
   The helper hands the PipeWire FD to `gst-launch-1.0`.
-- `AutoRecorder` — high-level router that picks per call from `TitledWindow?` + region +
-  OS detection: Wayland portal first, then `window == null` → ffmpeg region, then macOS
-  SCK, then Windows title-based capture, then ffmpeg region as fallback.
+- `AutoRecorder` — high-level router that picks per call from `startWindow(...)` /
+  `startRegion(...)` + OS detection: Wayland portal first, then macOS SCK for window
+  capture, Windows Graphics Capture for window and region capture, and ffmpeg region
+  capture for macOS / Linux Xorg explicit regions.
 - `AutoScreenshotter` — high-level still screenshot router: macOS SCK window source,
-  Windows `gdigrab title=`, Linux X11 region fallback, and loud unsupported failure for
+  Windows Graphics Capture, Linux X11 region fallback, and loud unsupported failure for
   Linux Wayland still screenshots until the portal helper can return image buffers.
 
 ### `testing`

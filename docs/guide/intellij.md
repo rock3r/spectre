@@ -248,8 +248,9 @@ A few things to know about IDE-hosted Compose surfaces:
 
     1. **Region-capture the tool window's screen bounds.** Compute the tool window
        component's `boundsOnScreen` and pass it to `AutoRecorder.startRegion(...)`.
-       `AutoRecorder` routes that through `ffmpeg` region capture (or the Wayland
-       portal on Linux Wayland). Works everywhere; the trade-off is
+       `AutoRecorder` routes that through platform region capture (Windows Graphics
+       Capture on Windows, `ffmpeg` on macOS / Linux Xorg, or the Wayland portal on
+       Linux Wayland). Works everywhere; the trade-off is
        that anything overlapping the captured rectangle — the IDE's chrome,
        notifications, popups that escape the tool window's bounds — appears in the
        recording.
@@ -257,7 +258,7 @@ A few things to know about IDE-hosted Compose surfaces:
        `WindowManager.getInstance().getFrame(project)?.asTitledWindow()` as
        `window` and the IDE frame's screen bounds as `region`. The IDE main frame
        *does* have a top-level OS title (e.g. "IntelliJ IDEA – ProjectName"), so
-       this hits the macOS SCK helper, Windows `gdigrab title=` capture, or the
+       this hits the macOS SCK helper, Windows Graphics Capture, or the
        Linux Wayland portal — window-targeted across all three. Useful when the
        interesting state is in the tool window plus its surrounding IDE chrome
        (run output, status bar, etc.).

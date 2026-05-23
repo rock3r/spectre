@@ -401,11 +401,116 @@ val useUniversalHelper =
 // a jar inconsistent with what the release CI promised.
 val prebuiltMacHelperPath = providers.gradleProperty("prebuiltMacHelperPath")
 val prebuiltLinuxHelpersDir = providers.gradleProperty("prebuiltLinuxHelpersDir")
+val prebuiltWindowsHelperPath = providers.gradleProperty("prebuiltWindowsHelperPath")
+val prebuiltWindowsHelpersDir = providers.gradleProperty("prebuiltWindowsHelpersDir")
 val useStubMacHelperForTesting = providers.gradleProperty("stubMacHelperForTesting").isPresent
+
+// --- Windows .NET Graphics Capture helper --------------------------------------------------
+//
+// Windows still screenshots and window recording share a small .NET 8 executable
+// (`recording/native/windows/`) that owns Windows Graphics Capture and writes either a PNG or
+// H.264 MP4 depending on the `--mode` argument.
+val windowsScreenshotHelperSource = layout.projectDirectory.dir("native/windows")
+val windowsScreenshotHelperResourceDest =
+    layout.buildDirectory.dir("generated/windowsScreenshotHelper/native/windows")
+val windowsScreenshotHelperArches = listOf("x64" to "win-x64", "arm64" to "win-arm64")
+
+val buildWindowsScreenshotHelperTasks =
+    windowsScreenshotHelperArches.associate { (resourceArch, runtimeId) ->
+        val publishDir =
+            layout.buildDirectory.dir("generated/windowsScreenshotHelperPublish/$resourceArch")
+        val binary = publishDir.map { it.file("SpectreWindowCapture.exe") }
+        val task =
+            tasks.register<Exec>(
+                "buildWindows${resourceArch.replaceFirstChar { it.uppercase() }}ScreenshotHelper"
+            ) {
+                description = "Builds the Windows .NET Graphics Capture helper for $runtimeId."
+                group = "build"
+                onlyIf { OperatingSystem.current().isWindows }
+                workingDir = rootProject.projectDir
+                commandLine(
+                    "dotnet",
+                    "publish",
+                    windowsScreenshotHelperSource
+                        .file("SpectreWindowCapture.csproj")
+                        .asFile
+                        .absolutePath,
+                    "--configfile",
+                    windowsScreenshotHelperSource.file("NuGet.config").asFile.absolutePath,
+                    "-c",
+                    "Release",
+                    "-r",
+                    runtimeId,
+                    "--self-contained",
+                    "false",
+                    "-p:PublishSingleFile=false",
+                    "-p:BaseIntermediateOutputPath=${layout.buildDirectory.dir("dotnet-obj/$resourceArch").get().asFile.absolutePath}${File.separator}",
+                    "-o",
+                    publishDir.get().asFile.absolutePath,
+                )
+                inputs.dir(windowsScreenshotHelperSource)
+                outputs.dir(publishDir)
+            }
+        resourceArch to (task to binary)
+    }
+
+val buildWindowsScreenshotHelper by tasks.registering {
+    description = "Builds the Windows .NET Graphics Capture helpers for all supported arches."
+    group = "build"
+    onlyIf { OperatingSystem.current().isWindows }
+    dependsOn(buildWindowsScreenshotHelperTasks.values.map { it.first })
+}
+
+val assembleWindowsScreenshotHelper by
+    tasks.registering(Sync::class) {
+        description = "Stages the Windows .NET Graphics Capture helpers into the resources tree."
+        group = "build"
+        onlyIf { OperatingSystem.current().isWindows }
+        dependsOn(buildWindowsScreenshotHelper)
+        buildWindowsScreenshotHelperTasks.forEach { (resourceArch, taskAndBinary) ->
+            from(taskAndBinary.second.map { it.asFile.parentFile }) {
+                rename {
+                    if (it == "SpectreWindowCapture.exe") "spectre-window-capture.exe" else it
+                }
+                into(resourceArch)
+            }
+        }
+        into(windowsScreenshotHelperResourceDest)
+    }
+
+val stagePrebuiltWindowsScreenshotHelper by
+    tasks.registering(Sync::class) {
+        description =
+            "Stages pre-built Windows .NET Graphics Capture helpers into the resources tree. " +
+                "Sourced from -PprebuiltWindowsHelpersDir, or -PprebuiltWindowsHelperPath " +
+                "for x64-only compatibility."
+        group = "build"
+        enabled = prebuiltWindowsHelpersDir.isPresent || prebuiltWindowsHelperPath.isPresent
+        val rootProjectDir: File = rootProject.projectDir
+        if (prebuiltWindowsHelpersDir.isPresent) {
+            from(
+                prebuiltWindowsHelpersDir.map { path ->
+                    val asIs = File(path)
+                    if (asIs.isAbsolute) asIs else File(rootProjectDir, path)
+                }
+            )
+        } else {
+            from(
+                prebuiltWindowsHelperPath.map { path ->
+                    val asIs = File(path)
+                    if (asIs.isAbsolute) asIs else File(rootProjectDir, path)
+                }
+            ) {
+                into("x64")
+            }
+        }
+        into(windowsScreenshotHelperResourceDest)
+    }
 
 tasks.named<ProcessResources>("processTestResources") {
     from(layout.buildDirectory.dir("generated/screenCaptureHelper"))
     from(layout.buildDirectory.dir("generated/waylandHelper"))
+    from(layout.buildDirectory.dir("generated/windowsScreenshotHelper"))
     if (prebuiltMacHelperPath.isPresent || useStubMacHelperForTesting) {
         dependsOn(if (useStubMacHelperForTesting) stageStubMacHelper else stagePrebuiltMacHelper)
     } else if (OperatingSystem.current().isMacOsX) {
@@ -418,6 +523,11 @@ tasks.named<ProcessResources>("processTestResources") {
         dependsOn(stagePrebuiltLinuxHelpers)
     } else if (OperatingSystem.current().isLinux) {
         dependsOn(if (useAllLinuxArches) assembleWaylandHelperAllArches else assembleWaylandHelper)
+    }
+    if (prebuiltWindowsHelperPath.isPresent || prebuiltWindowsHelpersDir.isPresent) {
+        dependsOn(stagePrebuiltWindowsScreenshotHelper)
+    } else if (OperatingSystem.current().isWindows) {
+        dependsOn(assembleWindowsScreenshotHelper)
     }
 }
 
@@ -742,6 +852,45 @@ tasks.register<JavaExec>("runWindowScreenshotSmoke") {
         "Boots a JFrame, captures a native/window screenshot PNG where supported, prints output stats."
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("dev.sebastiano.spectre.recording.WindowScreenshotSmoke")
+}
+
+tasks.register<JavaExec>("runWindowsGraphicsCaptureMoveInputSmoke") {
+    group = "verification"
+    description =
+        "Moves a JFrame, drives Robot input into it, captures it via Windows Graphics Capture, " +
+            "and verifies the PNG."
+    onlyIf { OperatingSystem.current().isWindows }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.WindowsGraphicsCaptureMoveInputSmoke")
+}
+
+tasks.register<JavaExec>("runWindowsGraphicsCaptureRecordingSmoke") {
+    group = "verification"
+    description =
+        "Moves a JFrame, drives Robot input into it, records it via Windows Graphics Capture, " +
+            "and verifies the MP4."
+    onlyIf { OperatingSystem.current().isWindows }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.WindowsGraphicsCaptureRecordingSmoke")
+}
+
+tasks.register<JavaExec>("runWindowsGraphicsCaptureRegionSmoke") {
+    group = "verification"
+    description =
+        "Records a small JFrame-backed screen region via Windows Graphics Capture and verifies the MP4."
+    onlyIf { OperatingSystem.current().isWindows }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.WindowsGraphicsCaptureRegionSmoke")
+}
+
+tasks.register<JavaExec>("runWindowsGraphicsCaptureFullscreenSmoke") {
+    group = "verification"
+    description =
+        "Intrusive manual smoke: records the primary monitor via Windows Graphics Capture and " +
+            "verifies the MP4."
+    onlyIf { OperatingSystem.current().isWindows }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.WindowsGraphicsCaptureFullscreenSmoke")
 }
 
 // Manual smoke entry point — opens a JFrame, records it for ~3s via FfmpegRecorder bound to
