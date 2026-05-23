@@ -1,10 +1,11 @@
 public final class dev/sebastiano/spectre/recording/AutoRecorder {
-	public fun <init> (Ldev/sebastiano/spectre/recording/screencapturekit/WindowRecorder;Ldev/sebastiano/spectre/recording/Recorder;Ldev/sebastiano/spectre/recording/screencapturekit/WindowRecorder;Ldev/sebastiano/spectre/recording/Recorder;Ldev/sebastiano/spectre/recording/portal/WaylandWindowSourceRecorder;)V
-	public synthetic fun <init> (Ldev/sebastiano/spectre/recording/screencapturekit/WindowRecorder;Ldev/sebastiano/spectre/recording/Recorder;Ldev/sebastiano/spectre/recording/screencapturekit/WindowRecorder;Ldev/sebastiano/spectre/recording/Recorder;Ldev/sebastiano/spectre/recording/portal/WaylandWindowSourceRecorder;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ldev/sebastiano/spectre/recording/screencapturekit/WindowRecorder;Ldev/sebastiano/spectre/recording/Recorder;Ldev/sebastiano/spectre/recording/screencapturekit/WindowRecorder;Ldev/sebastiano/spectre/recording/Recorder;Ldev/sebastiano/spectre/recording/Recorder;Ldev/sebastiano/spectre/recording/portal/WaylandWindowSourceRecorder;)V
+	public synthetic fun <init> (Ldev/sebastiano/spectre/recording/screencapturekit/WindowRecorder;Ldev/sebastiano/spectre/recording/Recorder;Ldev/sebastiano/spectre/recording/screencapturekit/WindowRecorder;Ldev/sebastiano/spectre/recording/Recorder;Ldev/sebastiano/spectre/recording/Recorder;Ldev/sebastiano/spectre/recording/portal/WaylandWindowSourceRecorder;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public static final fun defaultIsLinux ()Z
 	public static final fun defaultIsMacOs ()Z
 	public static final fun defaultIsWayland ()Z
 	public static final fun defaultIsWindows ()Z
+	public static final fun defaultWindowsRegionRecorder ()Ldev/sebastiano/spectre/recording/Recorder;
 	public static final fun defaultWindowsWindowRecorder ()Ldev/sebastiano/spectre/recording/screencapturekit/WindowRecorder;
 	public final fun startRegion (Ljava/awt/Rectangle;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;)Ldev/sebastiano/spectre/recording/RecordingHandle;
 	public static synthetic fun startRegion$default (Ldev/sebastiano/spectre/recording/AutoRecorder;Ljava/awt/Rectangle;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;ILjava/lang/Object;)Ldev/sebastiano/spectre/recording/RecordingHandle;
@@ -195,5 +196,16 @@ public abstract interface class dev/sebastiano/spectre/recording/screencaptureki
 
 public final class dev/sebastiano/spectre/recording/screencapturekit/WindowRecorder$DefaultImpls {
 	public static synthetic fun start$default (Ldev/sebastiano/spectre/recording/screencapturekit/WindowRecorder;Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;JLjava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;ILjava/lang/Object;)Ldev/sebastiano/spectre/recording/RecordingHandle;
+}
+
+public final class dev/sebastiano/spectre/recording/windows/WindowsGraphicsCaptureRecorder : dev/sebastiano/spectre/recording/Recorder, dev/sebastiano/spectre/recording/screencapturekit/WindowRecorder {
+	public fun <init> ()V
+	public fun start (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;JLjava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;)Ldev/sebastiano/spectre/recording/RecordingHandle;
+	public fun start (Ljava/awt/Rectangle;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;)Ldev/sebastiano/spectre/recording/RecordingHandle;
+}
+
+public final class dev/sebastiano/spectre/recording/windows/WindowsWindowScreenshotter : dev/sebastiano/spectre/recording/WindowScreenshotter {
+	public fun <init> ()V
+	public fun captureWindow (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;J)Ljava/awt/image/BufferedImage;
 }
 

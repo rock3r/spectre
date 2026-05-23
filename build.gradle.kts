@@ -149,8 +149,8 @@ subprojects {
 //   4. Asserts each POM has <name>, <description>, <url>, <licenses>, <scm>, <developers>
 //      populated — Central rejects POMs missing any of these.
 //   5. Asserts no sources jar contains generated `native/...` helper binaries.
-//   6. Asserts `:recording` stays API/common-only while `:recording-macos` and
-//      `:recording-linux` carry the expected platform helper resources.
+//   6. Asserts `:recording` stays API/common-only while `:recording-macos`,
+//      `:recording-linux`, and `:recording-windows` carry the expected platform helper resources.
 //
 // Local invocation:
 //   ./gradlew verifyMavenLocalPublication \
@@ -160,11 +160,20 @@ subprojects {
 // CI invocation (publish job, after downloading the artefacts):
 //   ./gradlew verifyMavenLocalPublication \
 //       -PprebuiltMacHelperPath=<path> \
-//       -PprebuiltLinuxHelpersDir=<dir>
+//       -PprebuiltLinuxHelpersDir=<dir> \
+//       -PprebuiltWindowsHelpersDir=<dir>
 //
 // Verification only — it does not republish or mutate state. Safe to run repeatedly.
 val publishedLibraryProjects =
-    listOf(":core", ":server", ":recording", ":recording-macos", ":recording-linux", ":testing")
+    listOf(
+        ":core",
+        ":server",
+        ":recording",
+        ":recording-macos",
+        ":recording-linux",
+        ":recording-windows",
+        ":testing",
+    )
 
 // Configure-time inputs captured into vals so the action body is configuration-cache safe
 // (no closure capture of Project references). The closure-based task is preferred over a
@@ -195,6 +204,19 @@ val expectedRecordingHelperEntriesByProject: Map<String, List<String>> =
             put(":recording-macos", listOf("native/macos/spectre-screencapture"))
         }
         val currentOs = org.gradle.internal.os.OperatingSystem.current()
+        val windowsExpected =
+            providers.gradleProperty("prebuiltWindowsHelperPath").isPresent ||
+                providers.gradleProperty("prebuiltWindowsHelpersDir").isPresent ||
+                currentOs.isWindows
+        if (windowsExpected) {
+            put(
+                ":recording-windows",
+                listOf(
+                    "native/windows/x64/spectre-window-capture.exe",
+                    "native/windows/arm64/spectre-window-capture.exe",
+                ),
+            )
+        }
         val crossArchLinux =
             providers.gradleProperty("prebuiltLinuxHelpersDir").isPresent ||
                 (currentOs.isLinux && providers.gradleProperty("allLinuxArches").isPresent)
@@ -333,10 +355,13 @@ val verifyMavenLocalPublication by tasks.registering {
                 val jar = moduleDir.resolve("$baseName$jarSuffix")
                 if (!jar.isFile) continue
                 val entriesInJar = mutableSetOf<String>()
+                val entrySizesInJar = mutableMapOf<String, Long>()
                 ZipFile(jar).use { zip ->
                     val entries = zip.entries()
                     while (entries.hasMoreElements()) {
-                        entriesInJar += entries.nextElement().name
+                        val entry = entries.nextElement()
+                        entriesInJar += entry.name
+                        entrySizesInJar[entry.name] = entry.size
                     }
                 }
                 if (jarSuffix == "-sources.jar") {
@@ -361,6 +386,10 @@ val verifyMavenLocalPublication by tasks.registering {
                             errors +=
                                 "$moduleName: published jar (${jar.name}) is missing " +
                                     "expected helper entry `$path`"
+                        } else if ((entrySizesInJar[path] ?: 0L) <= 0L) {
+                            errors +=
+                                "$moduleName: published jar (${jar.name}) has empty " +
+                                    "helper entry `$path`"
                         }
                     }
                 }

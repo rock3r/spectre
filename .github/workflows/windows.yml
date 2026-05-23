@@ -67,6 +67,14 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - name: Set up .NET 8
+        # `:recording:check` builds the Windows Graphics Capture helper from
+        # recording/native/windows/ on Windows hosts so the helper packaged by
+        # :recording-windows stays source-verified in CI.
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.0.x"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
 

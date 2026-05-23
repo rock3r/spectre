@@ -7,6 +7,8 @@ import dev.sebastiano.spectre.recording.screencapturekit.HelperNotBundledExcepti
 import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitRecorder
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import dev.sebastiano.spectre.recording.screencapturekit.WindowRecorder
+import dev.sebastiano.spectre.recording.windows.WindowsGraphicsCaptureHelperNotBundledException
+import dev.sebastiano.spectre.recording.windows.WindowsGraphicsCaptureRecorder
 import java.awt.Rectangle
 import java.lang.ProcessHandle
 import java.nio.file.Path
@@ -14,20 +16,21 @@ import java.nio.file.Path
 /**
  * High-level recorder with explicit capture modes.
  *
- * [startWindow] uses true window-targeted backends only: ScreenCaptureKit on macOS, `gdigrab
- * title=` on Windows, and the Wayland portal window-source path on Linux Wayland. If the requested
- * window mode is unavailable, it throws with an actionable error instead of silently falling back
- * to region capture.
+ * [startWindow] uses true window-targeted backends only: ScreenCaptureKit on macOS, Windows
+ * Graphics Capture on Windows, and the Wayland portal window-source path on Linux Wayland. If the
+ * requested window mode is unavailable, it throws with an actionable error instead of silently
+ * falling back to region capture.
  *
- * [startRegion] uses region capture only: ffmpeg region capture on macOS, Windows, and Linux Xorg,
- * and the Wayland portal monitor-source path on Linux Wayland. If the requested region mode is
- * unavailable, it throws instead of switching capture semantics.
+ * [startRegion] uses region capture only: Windows Graphics Capture on Windows, ffmpeg region
+ * capture on macOS and Linux Xorg, and the Wayland portal monitor-source path on Linux Wayland. If
+ * the requested region mode is unavailable, it throws instead of switching capture semantics.
  */
 public class AutoRecorder
 internal constructor(
     private val sckRecorder: WindowRecorder,
     private val ffmpegRecorder: Recorder,
     private val windowsWindowRecorder: WindowRecorder?,
+    private val windowsRegionRecorder: Recorder?,
     private val waylandPortalRecorder: Recorder?,
     private val waylandPortalWindowRecorder: WaylandWindowSourceRecorder?,
     private val waylandPortalRecorderFailure: Throwable?,
@@ -41,12 +44,14 @@ internal constructor(
         sckRecorder: WindowRecorder = ScreenCaptureKitRecorder(),
         ffmpegRecorder: Recorder = FfmpegRecorder(),
         windowsWindowRecorder: WindowRecorder? = defaultWindowsWindowRecorder(),
+        windowsRegionRecorder: Recorder? = defaultWindowsRegionRecorder(),
         waylandPortalRecorder: Recorder? = defaultPortals.region,
         waylandPortalWindowRecorder: WaylandWindowSourceRecorder? = defaultPortals.window,
     ) : this(
         sckRecorder = sckRecorder,
         ffmpegRecorder = ffmpegRecorder,
         windowsWindowRecorder = windowsWindowRecorder,
+        windowsRegionRecorder = windowsRegionRecorder,
         waylandPortalRecorder = waylandPortalRecorder,
         waylandPortalWindowRecorder = waylandPortalWindowRecorder,
         // A user who passed a non-null recorder owns its construction; we only surface our own
@@ -111,6 +116,19 @@ internal constructor(
                     ?: throw unavailable("Wayland region capture", waylandPortalRecorderFailure)
             return recorder.start(region, output, options)
         }
+        if (isWindows()) {
+            if (options.usesLegacyFfmpegOnlyWindowsOptions()) {
+                return ffmpegRecorder.start(region, output, options)
+            }
+
+            val recorder =
+                windowsRegionRecorder ?: throw unavailable("Windows region capture", null)
+            return try {
+                recorder.start(region, output, options)
+            } catch (_: WindowsGraphicsCaptureHelperNotBundledException) {
+                ffmpegRecorder.start(region, output, options)
+            }
+        }
         return ffmpegRecorder.start(region, output, options)
     }
 
@@ -128,6 +146,10 @@ internal constructor(
                 "region capture."
         )
 
+    private fun RecordingOptions.usesLegacyFfmpegOnlyWindowsOptions(): Boolean =
+        codec != RecordingOptions.DEFAULT_CODEC ||
+            screenIndex != RecordingOptions.DEFAULT_SCREEN_INDEX
+
     private companion object {
         @JvmStatic fun defaultIsMacOs(): Boolean = HostPlatform.isMacOs()
 
@@ -139,26 +161,39 @@ internal constructor(
         @JvmStatic fun defaultIsWayland(): Boolean = HostPlatform.isWayland()
 
         /**
-         * Constructs a [FfmpegWindowRecorder] only when the host is Windows (the only OS where
-         * gdigrab is available). On other hosts the public [AutoRecorder] constructor still works —
-         * the windowsWindowRecorder slot stays null and the router falls through to ffmpeg region
-         * capture.
+         * Constructs a [WindowsGraphicsCaptureRecorder] only when the host is Windows. On other
+         * hosts the public [AutoRecorder] constructor still works — the Windows recorder slots stay
+         * null and the router falls through to the host's non-Windows routes.
          *
-         * Failures resolving the ffmpeg path or constructing the recorder are deliberately
-         * swallowed: callers on a Windows host without ffmpeg on `PATH` should still be able to
-         * instantiate [AutoRecorder] (e.g. for region capture against an alternate backend, or just
-         * to read the API surface in a unit test). The recorder construction would throw with a
-         * clear message at first `start()` call instead.
+         * Construction is deliberately lightweight: helper extraction happens at first `start()`,
+         * so callers on a Windows host can still instantiate [AutoRecorder] for region capture or
+         * API discovery even when the optional `spectre-recording-windows` runtime artifact is not
+         * on the classpath.
          */
         @JvmStatic
         @Suppress("TooGenericExceptionCaught")
         fun defaultWindowsWindowRecorder(): WindowRecorder? {
             if (!defaultIsWindows()) return null
             return try {
-                FfmpegWindowRecorder()
+                defaultWindowsRecorder
             } catch (_: Throwable) {
                 null
             }
+        }
+
+        @JvmStatic
+        @Suppress("TooGenericExceptionCaught")
+        fun defaultWindowsRegionRecorder(): Recorder? {
+            if (!defaultIsWindows()) return null
+            return try {
+                defaultWindowsRecorder
+            } catch (_: Throwable) {
+                null
+            }
+        }
+
+        val defaultWindowsRecorder: WindowsGraphicsCaptureRecorder by lazy {
+            WindowsGraphicsCaptureRecorder()
         }
 
         /**

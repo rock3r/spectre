@@ -8,16 +8,17 @@ a video file, and each has its own limitations:
 
 - **Region capture** — records a fixed `Rectangle` of the virtual desktop, frame by
   frame. The source of pixels is the OS framebuffer (or the platform's nearest
-  equivalent — `avfoundation` on macOS, `gdigrab` on Windows, `x11grab` on Linux Xorg,
-  or the Wayland compositor's PipeWire stream on Linux Wayland). Whatever is showing
+  equivalent — `avfoundation` on macOS, Windows Graphics Capture on Windows,
+  `x11grab` on Linux Xorg, or the Wayland compositor's PipeWire stream on Linux
+  Wayland). Whatever is showing
   on screen inside that rectangle goes into the file, regardless of which window is
   there. Region capture is the only path available when the Compose surface has no
   adaptable top-level OS window, such as a `ComposePanel` inside an IntelliJ tool
   window.
 - **Window-targeted capture** — captures a specific OS window's pixels directly, not
   the screen rectangle the window happens to occupy. The source is the window's own
-  backing store (`ScreenCaptureKit` on macOS) or the OS-level `gdigrab title=` capture
-  on Windows. Because the source is the window itself, movement, occlusion, and
+  backing store (`ScreenCaptureKit` on macOS, Windows Graphics Capture on Windows) or a
+  compositor-provided window stream on Wayland. Because the source is the window itself, movement, occlusion, and
   off-screen position don't break the recording. This path is the right choice when
   you have a top-level `ComposeWindow`.
 
@@ -25,14 +26,15 @@ Backend → mode mapping:
 
 | Backend                       | Mode                                                |
 | ----------------------------- | --------------------------------------------------- |
-| `FfmpegRecorder`              | Region capture (`avfoundation`/`gdigrab`/`x11grab`).|
+| `FfmpegRecorder`              | Region capture (`avfoundation`/legacy explicit `gdigrab`/`x11grab`).|
 | `FfmpegRegionScreenshotter`   | Linux X11 still-image region fallback (`x11grab`).  |
 | `WaylandPortalRecorder`       | Region capture, sourced from the Wayland portal (`SourceType.MONITOR`). |
 | `WaylandPortalWindowRecorder` | Window-targeted (Linux Wayland, portal `SourceType.WINDOW` — only the picked window's pixels are captured). |
 | `ScreenCaptureKitRecorder`    | Window-targeted (macOS).                            |
 | `ScreenCaptureKitScreenshotter` | Window-targeted still screenshots (macOS).         |
-| `FfmpegWindowRecorder`        | Window-targeted (Windows, `gdigrab title=`).        |
-| `FfmpegWindowScreenshotter`   | Window-targeted still screenshots (Windows, `gdigrab title=`). |
+| `WindowsGraphicsCaptureRecorder` | Window-targeted and region capture (Windows Graphics Capture). |
+| `FfmpegWindowRecorder`        | Legacy window-targeted (Windows, `gdigrab title=`). |
+| `WindowsWindowScreenshotter`  | Window-targeted still screenshots (Windows Graphics Capture helper). |
 | `AutoRecorder`                | Routes to the right one based on `TitledWindow?`.   |
 | `AutoScreenshotter`           | Routes still screenshots by platform and window.    |
 
@@ -44,8 +46,14 @@ failure modes, and the section below
 ## Platform
 
 - **macOS** — `avfoundation` region capture. Requires the Screen Recording permission.
-- **Windows** — `gdigrab` region capture, plus title-based window capture via
-  `FfmpegWindowRecorder`.
+- **Windows** — native window recording, region/fullscreen recording, and still window
+  screenshots use the shared .NET helper from `spectre-recording-windows`. The helper
+  uses Windows Graphics Capture, is published for x64 and arm64, and does not require
+  ffmpeg. It is framework-dependent, so Windows users need .NET 8 Desktop Runtime and
+  Windows App Runtime 1.8 installed. `AutoRecorder.startRegion(...)` falls back to
+  `FfmpegRecorder`/`gdigrab` when that helper artifact is absent, or when the caller
+  sets Windows region options that WGC cannot honour (`RecordingOptions.codec` or
+  `screenIndex`). `FfmpegRecorder` also remains available as an explicit legacy backend.
 - **Linux Xorg sessions** — `x11grab` region capture. Reads `DISPLAY`. Routine
   validation has only been on Ubuntu 22.04's Xorg session (one machine, one X server build)
   and on CI under `xvfb-run` (Xorg protocol over a virtual framebuffer, no GPU). Other
@@ -118,8 +126,8 @@ failure modes, and the section below
 - **Region capture, not window capture**. Region capture records a fixed `Rectangle` of
   the virtual desktop — whatever pixels the screen happens to be showing inside that
   region land in the file. The region is bound at `Recorder.start(...)` time and does
-  not follow a window. Use `ScreenCaptureKitRecorder` (macOS) or `FfmpegWindowRecorder`
-  (Windows) when you have a top-level window to target — the next section covers what
+  not follow a window. Use `ScreenCaptureKitRecorder` (macOS) or
+  `WindowsGraphicsCaptureRecorder` (Windows) when you have a top-level window to target — the next section covers what
   the window-targeted backends do differently.
 - **Embedded `ComposePanel` surfaces without an adaptable top-level `Frame` need explicit
   region capture.**
@@ -153,8 +161,8 @@ solve them.
 
 ## Window-targeted capture
 
-`ScreenCaptureKitRecorder` (macOS) and `FfmpegWindowRecorder` (Windows, `gdigrab title=`)
-target a specific OS window rather than a screen rectangle, which removes the
+`ScreenCaptureKitRecorder` (macOS) and `WindowsGraphicsCaptureRecorder` (Windows Graphics
+Capture) target a specific OS window rather than a screen rectangle, which removes the
 region-capture failure modes described above:
 
 - **Window movement is followed automatically.** Drag the window across the screen
@@ -174,7 +182,7 @@ region-capture failure modes described above:
 `WaylandPortalRecorder` is structurally a third path: the portal hands the capture a
 PipeWire stream from the compositor, scoped to a user-picked monitor, which then gets
 cropped to the requested region. The monitor-level source means it doesn't follow a
-specific window the way SCK and `FfmpegWindowRecorder` do — moving the target window
+specific window the way SCK and WGC do — moving the target window
 within the same monitor stays within the captured stream, but moving it off-monitor
 or to another display does not. Treat its movement-and-popup behaviour as closer to
 region capture than to window-targeted, with the bonus that the source is the
@@ -193,9 +201,10 @@ compositor and not raw framebuffer reads.
 - The JVM process needs **macOS Screen Recording permission** (`MacOsRecordingPermissions`
   documents the path). Without it, `ffmpeg` exits during the startup probe and `Recorder.start`
   surfaces an error rather than handing back a handle.
-- The `ffmpeg` subprocess is spawned eagerly: by the time `start(...)` returns, frames are
-  landing in the output file. A failure to spawn (binary not on PATH, codec unavailable, AVFoundation
-  device busy) surfaces as an exception from `start(...)`, not as a silent "successful" handle.
+- The underlying encoder process/helper is spawned eagerly: by the time `start(...)`
+  returns, frames are landing in the output file. A failure to spawn (binary/helper not
+  available, codec unavailable, permission/device busy) surfaces as an exception from
+  `start(...)`, not as a silent "successful" handle.
 - The handle MUST be stopped (`RecordingHandle.stop(...)`) for the file to be flushed cleanly. A
   JVM exit without stop leaves a partial/non-finalised file and an orphaned subprocess.
 
@@ -211,6 +220,6 @@ compositor and not raw framebuffer reads.
 - Window-targeted capture via `ScreenCaptureKitRecorder` is the recommended path for
   top-level `ComposeWindow` surfaces on macOS. It removes the "anything overlapping the
   region appears in the video" class of problems and follows the window across the
-  screen. Windows has the equivalent path via `FfmpegWindowRecorder` (`gdigrab title=`).
+  screen. Windows has the equivalent path via `WindowsGraphicsCaptureRecorder`.
 - The embedded-panel path is still region capture only — there's no host window for SCK
-  or `gdigrab title=` to target.
+  or WGC to target.

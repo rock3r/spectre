@@ -9,6 +9,7 @@ Spectre publishes these library modules to Maven Central:
 | `recording` | `dev.sebastiano.spectre:spectre-recording:<version>` |
 | `recording-macos` | `dev.sebastiano.spectre:spectre-recording-macos:<version>` |
 | `recording-linux` | `dev.sebastiano.spectre:spectre-recording-linux:<version>` |
+| `recording-windows` | `dev.sebastiano.spectre:spectre-recording-windows:<version>` |
 | `server` | `dev.sebastiano.spectre:spectre-server:<version>` |
 
 !!! note "Before a release tag is published"
@@ -20,6 +21,10 @@ Spectre publishes these library modules to Maven Central:
 
 - **JDK 21 or newer.** JBR 21 is the project's dev-loop default; JBR 25 is exercised via
   the IDE-hosted UI test. Any JDK 21+ works for the non-IDE modules.
+- **Windows 10 version 1903 or newer**, **.NET 8 Desktop Runtime**, and
+  **Windows App Runtime 1.8** for native window/region recording and still-window screenshots
+  through Windows Graphics Capture. Contributors and CI that build the helper from source
+  need the .NET 8 SDK.
 - **A Compose Desktop or Compose Multiplatform (desktop target) application.** Spectre
   reads Compose's semantics tree, so the UI under test must be a real Compose surface.
 - **Platform-specific recording dependencies** if you plan to use the recording module
@@ -38,14 +43,15 @@ dependencies {
     testImplementation("dev.sebastiano.spectre:spectre-recording:<version>")
     testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-macos:<version>") // macOS SCK helper
     testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-linux:<version>") // Linux Wayland helper
+    testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-windows:<version>") // Windows WGC helper
     testImplementation("dev.sebastiano.spectre:spectre-server:<version>")
 }
 ```
 
 `spectre-recording` contains the public recording API and common JVM implementation.
-The macOS and Linux helper artifacts are runtime-only resources: add the one(s) your
-tests can run on with `testRuntimeOnly(...)`, or with `runtimeOnly(...)` for production
-application code.
+The macOS, Linux, and Windows helper artifacts are runtime-only resources: add the one(s)
+your tests can run on with `testRuntimeOnly(...)`, or with `runtimeOnly(...)` for
+production application code.
 
 If you depend on `server`, you also need to add a Ktor server engine yourself — Spectre
 intentionally doesn't bundle one. See [Cross-JVM access](cross-jvm.md) for the choice.
@@ -95,6 +101,8 @@ includeBuild("../spectre") {
             .using(project(":recording-macos"))
         substitute(module("dev.sebastiano.spectre:spectre-recording-linux"))
             .using(project(":recording-linux"))
+        substitute(module("dev.sebastiano.spectre:spectre-recording-windows"))
+            .using(project(":recording-windows"))
         substitute(module("dev.sebastiano.spectre:spectre-server"))
             .using(project(":server"))
     }
@@ -113,6 +121,7 @@ dependencies {
     testImplementation("dev.sebastiano.spectre:spectre-recording")
     testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-macos")
     testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-linux")
+    testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-windows")
     testImplementation("dev.sebastiano.spectre:spectre-server")
 }
 ```
@@ -137,6 +146,7 @@ Maven Local:
 | `recording` | Region and window-targeted screen capture API (`AutoRecorder`, `FfmpegRecorder`, …). |
 | `recording-macos` | Runtime-only macOS ScreenCaptureKit helper resources for `recording`. |
 | `recording-linux` | Runtime-only Linux Wayland helper resources for `recording`. |
+| `recording-windows` | Runtime-only Windows Graphics Capture helper resources for `recording`. |
 | `server`    | Embedded HTTP transport (Ktor) and `HttpComposeAutomator` for cross-JVM access. **Experimental**; see [Security notes](../SECURITY.md). |
 
 Most projects only need `core` + `testing`. Add `recording` if you want video output for

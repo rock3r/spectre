@@ -53,10 +53,14 @@ npx skills add rock3r/spectre --skill spectre
 - `core` — semantics tree, selectors, coordinate mapping, Robot-backed input.
 - `server` — embedded HTTP transport (Ktor) for cross-JVM access. **Experimental**; see
   [`docs/SECURITY.md`](docs/SECURITY.md) for the trust model.
-- `recording` — region capture via `ffmpeg`, window-targeted video capture, and native still
-  window screenshots where available (ScreenCaptureKit on macOS, `gdigrab` on Windows, X11
-  region fallback on Linux). `AutoRecorder` / `AutoScreenshotter` pick per call. See
+- `recording` — region capture, window-targeted video capture, and native still
+  window screenshots where available (ScreenCaptureKit on macOS, Windows Graphics Capture
+  on Windows, X11 region fallback on Linux). `AutoRecorder` / `AutoScreenshotter` pick per call. See
   [`docs/RECORDING-LIMITATIONS.md`](docs/RECORDING-LIMITATIONS.md).
+- `recording-windows` — runtime-only Windows Graphics Capture helper resources for native
+  window/region recording and still screenshots. Runtime machines need Windows 10 version
+  1903+, .NET 8 Desktop Runtime, and Windows App Runtime 1.8; contributors building the
+  helper need the .NET 8 SDK.
 - `testing` — JUnit 5 extension and JUnit 4 rule.
 - `sample-desktop` — Compose Desktop app for manual smokes.
 - `sample-intellij-plugin` — in-tree IntelliJ plugin hosting a Jewel tool window. Unpublished;

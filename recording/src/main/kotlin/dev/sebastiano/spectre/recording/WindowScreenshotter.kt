@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.recording
 import dev.sebastiano.spectre.recording.screencapturekit.HelperNotBundledException
 import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitScreenshotter
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
+import dev.sebastiano.spectre.recording.windows.WindowsWindowScreenshotter
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
 import java.lang.ProcessHandle
@@ -11,10 +12,10 @@ import java.lang.ProcessHandle
  * Captures still screenshots from desktop surfaces.
  *
  * [captureWindow] uses true window-targeted capture where Spectre has one available: macOS
- * ScreenCaptureKit and Windows `gdigrab title=`. On Linux X11 it falls back to region capture for
- * the supplied [TitledWindow.bounds]; callers must make the window visible and frontmost for that
- * fallback. Linux Wayland still screenshots are deliberately unsupported for now because the
- * current portal helper streams video, not one-shot image buffers.
+ * ScreenCaptureKit and the native Windows helper on Windows. On Linux X11 it falls back to region
+ * capture for the supplied [TitledWindow.bounds]; callers must make the window visible and
+ * frontmost for that fallback. Linux Wayland still screenshots are deliberately unsupported for now
+ * because the current portal helper streams video, not one-shot image buffers.
  */
 public class AutoScreenshotter
 internal constructor(
@@ -98,7 +99,7 @@ internal constructor(
         fun defaultWindowsWindowScreenshotter(): WindowScreenshotter? {
             if (!defaultIsWindows()) return null
             return try {
-                FfmpegWindowScreenshotter()
+                WindowsWindowScreenshotter()
             } catch (_: Throwable) {
                 null
             }

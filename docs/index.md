@@ -36,10 +36,10 @@ familiar — Spectre brings the same "find a node, do a thing, assert" loop to C
   defaults to OS-level `java.awt.Robot` events. Swap in `RobotDriver.synthetic(...)` and
   AWT events go directly into the window hierarchy — useful when tests run in parallel
   and can't fight over OS focus.
-- **Recording and screenshots built in.** Region capture via `ffmpeg`, plus
-  window-targeted recording and still screenshots where the platform exposes them
-  (ScreenCaptureKit on macOS, `gdigrab` on Windows, x11grab fallback on Linux X11,
-  portal video capture on Wayland). The
+- **Recording and screenshots built in.** Region capture, plus window-targeted recording
+  and still screenshots where the platform exposes them (ScreenCaptureKit on macOS,
+  Windows Graphics Capture on Windows, x11grab fallback on Linux X11, portal video
+  capture on Wayland). The
   [`AutoRecorder` and `AutoScreenshotter`](guide/recording.md) pick the right backend.
 - **JUnit-friendly.** Drop-in extension and rule for JUnit 5 and JUnit 4 manage a per-test
   automator instance for you.

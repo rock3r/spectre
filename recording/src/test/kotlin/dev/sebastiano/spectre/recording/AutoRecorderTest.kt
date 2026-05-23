@@ -4,6 +4,7 @@ import dev.sebastiano.spectre.recording.portal.WaylandWindowSourceRecorder
 import dev.sebastiano.spectre.recording.screencapturekit.HelperNotBundledException
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import dev.sebastiano.spectre.recording.screencapturekit.WindowRecorder
+import dev.sebastiano.spectre.recording.windows.WindowsGraphicsCaptureHelperNotBundledException
 import java.awt.Rectangle
 import java.nio.file.Files
 import java.nio.file.Path
@@ -28,6 +29,105 @@ class AutoRecorderTest {
             recorder.startRegion(region = region, output = output)
 
             assertEquals(region, ffmpeg.lastRegion)
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `startRegion routes to Windows Graphics Capture on Windows`() {
+        val ffmpeg = StubRegionRecorder()
+        val windowsRegion = StubRegionRecorder()
+        val recorder =
+            autoRecorder(
+                ffmpegRecorder = ffmpeg,
+                windowsRegionRecorder = windowsRegion,
+                isMacOs = { false },
+                isWindows = { true },
+            )
+        val output = tempMov()
+        try {
+            val region = Rectangle(10, 20, 300, 200)
+
+            recorder.startRegion(region = region, output = output)
+
+            assertEquals(region, windowsRegion.lastRegion)
+            assertFalse(
+                ffmpeg.startCalled,
+                "Windows region capture must not fall through to ffmpeg",
+            )
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `startRegion routes Windows custom ffmpeg options to ffmpeg`() {
+        val ffmpeg = StubRegionRecorder()
+        val windowsRegion = StubRegionRecorder()
+        val recorder =
+            autoRecorder(
+                ffmpegRecorder = ffmpeg,
+                windowsRegionRecorder = windowsRegion,
+                isMacOs = { false },
+                isWindows = { true },
+            )
+        val output = tempMov()
+        try {
+            val region = Rectangle(10, 20, 300, 200)
+            val options = RecordingOptions(codec = "libx264rgb")
+
+            recorder.startRegion(region = region, output = output, options = options)
+
+            assertEquals(region, ffmpeg.lastRegion)
+            assertEquals(options, ffmpeg.lastOptions)
+            assertFalse(windowsRegion.startCalled)
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `startRegion falls back to ffmpeg on Windows when WGC helper is not bundled`() {
+        val ffmpeg = StubRegionRecorder()
+        val recorder =
+            autoRecorder(
+                ffmpegRecorder = ffmpeg,
+                windowsRegionRecorder = MissingWindowsHelperRecorder(),
+                isMacOs = { false },
+                isWindows = { true },
+            )
+        val output = tempMov()
+        try {
+            val region = Rectangle(10, 20, 300, 200)
+
+            recorder.startRegion(region = region, output = output)
+
+            assertEquals(region, ffmpeg.lastRegion)
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `startRegion fails loudly when Windows region recorder is unavailable`() {
+        val ffmpeg = StubRegionRecorder()
+        val recorder =
+            autoRecorder(
+                ffmpegRecorder = ffmpeg,
+                windowsRegionRecorder = null,
+                isMacOs = { false },
+                isWindows = { true },
+            )
+        val output = tempMov()
+        try {
+            val error =
+                assertFailsWith<IllegalStateException> {
+                    recorder.startRegion(Rectangle(0, 0, 100, 100), output)
+                }
+
+            assertTrue(error.message.orEmpty().contains("Windows region capture"))
+            assertFalse(ffmpeg.startCalled)
         } finally {
             output.deleteIfExists()
         }
@@ -257,6 +357,7 @@ private fun autoRecorder(
     sckRecorder: WindowRecorder = StubWindowRecorder(name = "sck"),
     ffmpegRecorder: Recorder = StubRegionRecorder(),
     windowsWindowRecorder: WindowRecorder? = null,
+    windowsRegionRecorder: Recorder? = null,
     waylandPortalRecorder: Recorder? = null,
     waylandPortalWindowRecorder: WaylandWindowSourceRecorder? = null,
     waylandPortalRecorderFailure: Throwable? = null,
@@ -269,6 +370,7 @@ private fun autoRecorder(
         sckRecorder,
         ffmpegRecorder,
         windowsWindowRecorder,
+        windowsRegionRecorder,
         waylandPortalRecorder,
         waylandPortalWindowRecorder,
         waylandPortalRecorderFailure,
@@ -318,6 +420,9 @@ private class StubRegionRecorder : Recorder {
     var lastRegion: Rectangle? = null
         private set
 
+    var lastOptions: RecordingOptions? = null
+        private set
+
     override fun start(
         region: Rectangle,
         output: Path,
@@ -325,7 +430,18 @@ private class StubRegionRecorder : Recorder {
     ): RecordingHandle {
         startCalled = true
         lastRegion = region
+        lastOptions = options
         return NoopHandle(output)
+    }
+}
+
+private class MissingWindowsHelperRecorder : Recorder {
+    override fun start(
+        region: Rectangle,
+        output: Path,
+        options: RecordingOptions,
+    ): RecordingHandle {
+        throw WindowsGraphicsCaptureHelperNotBundledException("missing helper")
     }
 }
 

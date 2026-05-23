@@ -88,6 +88,8 @@ include(":recording-macos")
 
 include(":recording-linux")
 
+include(":recording-windows")
+
 include(":testing")
 
 include(":sample-desktop")

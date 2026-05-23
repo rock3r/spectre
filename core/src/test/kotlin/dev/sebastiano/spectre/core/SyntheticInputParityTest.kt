@@ -17,6 +17,7 @@ import java.awt.event.MouseListener
 import java.awt.event.MouseMotionListener
 import java.awt.event.MouseWheelEvent
 import java.awt.event.MouseWheelListener
+import java.awt.image.BufferedImage
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import javax.swing.JFrame
@@ -375,7 +376,7 @@ class SyntheticInputParityTest {
             // padding / WM decorations that could pollute pixels near the edges.
             val captureRegion =
                 Rectangle(origin.x + 20, origin.y + 20, REGION_SIZE_PX, REGION_SIZE_PX)
-            val image = driver.screenshot(captureRegion)
+            val image = waitForScreenshotColor(driver, captureRegion, Color.RED)
             assertEquals(REGION_SIZE_PX, image.width, "image width must match requested width")
             assertEquals(REGION_SIZE_PX, image.height, "image height must match requested height")
             // Sample a pixel inside the captured region. Synthetic input still uses real
@@ -419,6 +420,24 @@ class SyntheticInputParityTest {
         check(target.isShowing) { "Test JFrame did not become visible" }
         return TestFrame(frame!!)
     }
+
+    private fun waitForScreenshotColor(
+        driver: RobotDriver,
+        region: Rectangle,
+        expected: Color,
+    ): BufferedImage {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(SHOW_TIMEOUT_SECONDS)
+        var latest = driver.screenshot(region)
+        val expectedRgb = expected.rgb and 0x00FFFFFF
+        while (System.nanoTime() < deadline && latest.centerRgb() != expectedRgb) {
+            Thread.sleep(POLL_INTERVAL_MS)
+            latest = driver.screenshot(region)
+        }
+        return latest
+    }
+
+    private fun BufferedImage.centerRgb(): Int =
+        getRGB(REGION_SIZE_PX / 2, REGION_SIZE_PX / 2) and 0x00FFFFFF
 
     private fun drainEdt() {
         // Drain twice: the first invokeAndWait flushes events already on the queue, the second

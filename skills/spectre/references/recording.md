@@ -1,8 +1,31 @@
-# Recording
+# Recording And Screenshots
 
-The `:recording` module captures video of a running Compose Desktop UI. It
-is optional — depend on it only if a test or sample needs an MP4. **Audio
-is not supported.**
+The `:recording` module captures videos and native still window screenshots
+of a running Compose Desktop UI. It is optional — depend on it only if a test
+or sample needs an MP4 or a window-scoped still image. **Audio is not
+supported.**
+
+## Still window screenshots — `AutoScreenshotter`
+
+Use `ComposeAutomator.screenshot(...)` for framebuffer rectangles / nodes.
+Use `AutoScreenshotter.captureWindow(frame.asTitledWindow())` when you need
+the pixels for one top-level OS window:
+
+| Platform | Backend | Runtime helper |
+|---|---|---|
+| macOS | ScreenCaptureKit still-image mode | `spectre-recording-macos` |
+| Windows | Windows Graphics Capture helper (`spectre-window-capture.exe`) | `spectre-recording-windows` |
+| Linux X11 / XWayland | `x11grab` region fallback | none beyond ffmpeg |
+| Linux Wayland | unsupported for still images | use video portal path instead |
+
+Windows still screenshots and native window/region recording share the same Windows Graphics
+Capture helper. Runtime users need Windows 10 version 1903 or newer, .NET 8 Desktop
+Runtime, and Windows App Runtime 1.8; contributors and CI building the helper from
+source need the .NET 8 SDK. The local verification task is:
+
+```bash
+./gradlew :recording-windows:verifyRecordingWindowsHelper
+```
 
 ## Entry point — `AutoRecorder`
 
@@ -11,7 +34,7 @@ is not supported.**
 | Platform | `startWindow` | `startRegion` |
 |---|---|---|
 | macOS | ScreenCaptureKit (native) | ffmpeg region capture |
-| Windows | ffmpeg `gdigrab title=` | ffmpeg `gdigrab` |
+| Windows | Windows Graphics Capture helper | Windows Graphics Capture helper, with ffmpeg `gdigrab` fallback if the helper artifact is absent or the call uses ffmpeg-only options (`codec`, `screenIndex`) |
 | Linux X11 / XWayland | unsupported | ffmpeg `x11grab` |
 | Linux Wayland (GNOME/Mutter) | xdg-desktop-portal window source | xdg-desktop-portal monitor source |
 
