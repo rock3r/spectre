@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Text;
 using Microsoft.Graphics.Canvas;
 using Windows.Graphics;
 using Windows.Graphics.Capture;
@@ -55,17 +56,11 @@ internal static class Program
         var title = options.Title ?? throw new ArgumentException("--title is required for window capture.");
         var ownerPid =
             options.OwnerPid ?? throw new ArgumentException("--owner-pid is required for window capture.");
-        var hwnd = FindWindow(lpClassName: null, lpWindowName: title);
+        var hwnd = FindWindowByTitleAndOwnerPid(title, ownerPid);
         if (hwnd == IntPtr.Zero)
         {
-            Console.Error.WriteLine($"Could not find a top-level window titled \"{title}\".");
-            return ExitWindowNotFound;
-        }
-
-        if (!TryGetWindowThreadProcessId(hwnd, out var actualPid) || actualPid != ownerPid)
-        {
             Console.Error.WriteLine(
-                $"Window titled \"{title}\" is not owned by pid {ownerPid}.");
+                $"Could not find a top-level window titled \"{title}\" owned by pid {ownerPid}.");
             return ExitWindowNotFound;
         }
 
@@ -260,6 +255,48 @@ internal static class Program
 
     private static int Even(int value) => value % 2 == 0 ? value : value + 1;
 
+    private static IntPtr FindWindowByTitleAndOwnerPid(string title, long ownerPid)
+    {
+        var matchedWindow = IntPtr.Zero;
+        bool Callback(IntPtr hwnd, IntPtr data)
+        {
+            if (TryGetWindowThreadProcessId(hwnd, out var actualPid) &&
+                actualPid == ownerPid &&
+                GetWindowTitle(hwnd) == title)
+            {
+                matchedWindow = hwnd;
+                return false;
+            }
+
+            return true;
+        }
+
+        if (!EnumWindows(Callback, IntPtr.Zero))
+        {
+            if (matchedWindow != IntPtr.Zero)
+            {
+                return matchedWindow;
+            }
+
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "EnumWindows failed.");
+        }
+
+        return matchedWindow;
+    }
+
+    private static string GetWindowTitle(IntPtr hwnd)
+    {
+        var titleLength = GetWindowTextLength(hwnd);
+        if (titleLength <= 0)
+        {
+            return string.Empty;
+        }
+
+        var title = new StringBuilder(titleLength + 1);
+        var copied = GetWindowText(hwnd, title, title.Capacity);
+        return copied <= 0 ? string.Empty : title.ToString();
+    }
+
     private static bool TryGetWindowThreadProcessId(IntPtr hwnd, out long pid)
     {
         _ = GetWindowThreadProcessId(hwnd, out var processId);
@@ -268,7 +305,15 @@ internal static class Program
     }
 
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern IntPtr FindWindow(string? lpClassName, string lpWindowName);
+    private static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int maxCount);
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern int GetWindowTextLength(IntPtr hwnd);
+
+    private delegate bool WindowEnumProc(IntPtr hwnd, IntPtr data);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool EnumWindows(WindowEnumProc callback, IntPtr data);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
