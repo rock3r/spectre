@@ -42,7 +42,7 @@ dependencies {
     // Optional, depending on what you need:
     testImplementation("dev.sebastiano.spectre:spectre-recording:<version>")
     testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-macos:<version>") // macOS SCK helper
-    testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-linux:<version>") // Linux Wayland helper
+    testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-linux:<version>") // Linux capture helper
     testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-windows:<version>") // Windows WGC helper
     testImplementation("dev.sebastiano.spectre:spectre-server:<version>")
 }
@@ -143,9 +143,9 @@ Maven Local:
 | ----------- | -------------------------------------------------------------------------------- |
 | `core`      | `ComposeAutomator`, semantics tree reader, selectors, `RobotDriver` for input.    |
 | `testing`   | `ComposeAutomatorExtension` (JUnit 5), `ComposeAutomatorRule` (JUnit 4).         |
-| `recording` | Region and window-targeted screen capture API (`AutoRecorder`, `FfmpegRecorder`, …). |
+| `recording` | Region and window-targeted screen capture API (`AutoRecorder`, native helpers, deprecated ffmpeg escape hatches, …). |
 | `recording-macos` | Runtime-only macOS ScreenCaptureKit helper resources for `recording`. |
-| `recording-linux` | Runtime-only Linux Wayland helper resources for `recording`. |
+| `recording-linux` | Runtime-only Linux capture helper resources for `recording`. |
 | `recording-windows` | Runtime-only Windows Graphics Capture helper resources for `recording`. |
 | `server`    | Embedded HTTP transport (Ktor) and `HttpComposeAutomator` for cross-JVM access. **Experimental**; see [Security notes](../SECURITY.md). |
 

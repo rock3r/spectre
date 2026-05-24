@@ -19,6 +19,7 @@ mod gst;
 mod portal;
 mod protocol;
 mod recorder;
+mod screenshot;
 
 use anyhow::Result;
 use protocol::{Command, Event};
@@ -38,8 +39,16 @@ fn main() -> Result<()> {
 
     // Read the Start command. If parsing fails (EOF, malformed JSON, Stop-without-Start),
     // emit a Protocol error event and exit cleanly via the writer thread.
-    let outcome: Result<()> = match read_start_command() {
-        Ok(start) => recorder::run(start, event_tx.clone()),
+    let outcome: Result<()> = match read_first_command() {
+        Ok(Command::Start(start)) => recorder::run(start, event_tx.clone()),
+        Ok(Command::Screenshot(screenshot)) => screenshot::run(screenshot, event_tx.clone()),
+        Ok(Command::Stop) => {
+            let _ = event_tx.send(Event::Error {
+                kind: "Protocol".into(),
+                message: "received Stop on stdin before any capture command".into(),
+            });
+            Ok(())
+        }
         Err(e) => {
             let _ = event_tx.send(Event::Error {
                 kind: "Protocol".into(),
@@ -92,20 +101,14 @@ fn writer_loop(rx: mpsc::Receiver<Event>) {
     }
 }
 
-/// Block on stdin until we receive the first JSON line; parse it as a [`Command::Start`].
-/// Anything else is a protocol error (the JVM is supposed to send Start first; Stop on a
-/// closed session is meaningless).
-fn read_start_command() -> Result<protocol::StartCommand> {
+/// Block on stdin until we receive the first JSON line and parse it as a helper command.
+/// Stop on a closed session is meaningless and is handled by `main` as a protocol error.
+fn read_first_command() -> Result<Command> {
     let stdin = std::io::stdin();
     let mut line = String::new();
     stdin.lock().read_line(&mut line)?;
     if line.is_empty() {
-        anyhow::bail!("EOF on stdin before receiving Start command");
+        anyhow::bail!("EOF on stdin before receiving a capture command");
     }
-    match serde_json::from_str::<Command>(line.trim())? {
-        Command::Start(start) => Ok(start),
-        Command::Stop => anyhow::bail!(
-            "received Stop on stdin before any Start; helper protocol expects Start first"
-        ),
-    }
+    Ok(serde_json::from_str::<Command>(line.trim())?)
 }

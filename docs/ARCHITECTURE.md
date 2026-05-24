@@ -8,7 +8,7 @@ spectre
 ├── server/                  — optional transport layer for cross-JVM access
 ├── recording/               — screenshot / recording API and common JVM implementation
 ├── recording-macos/         — runtime-only macOS ScreenCaptureKit helper artifact
-├── recording-linux/         — runtime-only Linux Wayland helper artifact
+├── recording-linux/         — runtime-only Linux capture helper artifact
 ├── recording-windows/       — runtime-only Windows Graphics Capture helper artifact
 ├── testing/                 — test fixtures and JUnit-facing helpers built on top of public APIs
 ├── sample-desktop/          — small manual-test harness app for spike validation
@@ -104,22 +104,26 @@ Expected long-term responsibilities:
 
 Current backends:
 
-- `FfmpegRecorder` — region capture via a system `ffmpeg` binary, with the input device
-  picked per OS by `FfmpegBackend.detect()`: `avfoundation` on macOS, `gdigrab` on
-  Windows, and `x11grab` on Linux Xorg. (Linux Wayland is rejected here; see
-  `LinuxX11Grab.checkNotWayland`.)
+- `FfmpegRecorder` — deprecated legacy explicit region capture via a system `ffmpeg`
+  binary, with the input device picked per OS by `FfmpegBackend.detect()`: `avfoundation`
+  on macOS, `gdigrab` on Windows, and legacy explicit `x11grab` on Linux Xorg. (Linux
+  Wayland is rejected here; use the portal-backed Linux helper path instead.)
 - `windows.WindowsGraphicsCaptureRecorder` — Windows-only MP4 capture via the shared
   .NET Windows Graphics Capture helper packaged by `:recording-windows` for x64 and
   arm64. Window mode follows movement automatically and ignores occluders; region mode
   records a fixed monitor rectangle and is also used for fullscreen recording.
-- `FfmpegWindowRecorder` — legacy explicit Windows-only window-targeted capture via
+- `FfmpegWindowRecorder` — deprecated legacy explicit Windows-only window-targeted capture via
   `gdigrab title=`. Window movement is followed automatically; occlusion doesn't matter.
 - `windows.WindowsWindowScreenshotter` — Windows-only still window screenshots via a
   shared framework-dependent .NET Windows Graphics Capture helper packaged by
   `:recording-windows` for x64 and arm64.
-- `FfmpegRegionScreenshotter` — Linux X11 still screenshot fallback via one-frame `x11grab`
-  region capture; the target must be visible and frontmost because this is not true window
-  capture.
+- `LinuxX11Recorder` — Linux Xorg/Xvfb region and named-window capture via the
+  `spectre-recording-linux` helper and GStreamer `ximagesrc`.
+- `LinuxNativeScreenshotter` — Linux still screenshots via the same helper: GStreamer
+  `ximagesrc` on Xorg/Xvfb, and one-frame portal/PipeWire capture on Wayland.
+- `FfmpegRegionScreenshotter` — deprecated legacy explicit Linux X11 still screenshot
+  fallback via one-frame `x11grab` region capture; the target must be visible and frontmost
+  because this is not true window capture.
 - `screencapturekit.ScreenCaptureKitRecorder` — macOS-only window-targeted capture via a
   Swift helper (`recording/native/macos/`). The helper is built by Gradle on macOS,
   staged under `recording/build/generated/screenCaptureHelper/...`, and packaged by
@@ -132,11 +136,10 @@ Current backends:
   The helper hands the PipeWire FD to `gst-launch-1.0`.
 - `AutoRecorder` — high-level router that picks per call from `startWindow(...)` /
   `startRegion(...)` + OS detection: Wayland portal first, then macOS SCK for window
-  capture, Windows Graphics Capture for window and region capture, and ffmpeg region
-  capture for macOS / Linux Xorg explicit regions.
+  capture, Windows Graphics Capture for window and region capture, Linux helper capture
+  for Linux Xorg/Xvfb window and region capture, and ffmpeg region capture for macOS.
 - `AutoScreenshotter` — high-level still screenshot router: macOS SCK window source,
-  Windows Graphics Capture, Linux X11 region fallback, and loud unsupported failure for
-  Linux Wayland still screenshots until the portal helper can return image buffers.
+  Windows Graphics Capture, and Linux helper still capture on Xorg/Xvfb and Wayland.
 
 ### `testing`
 

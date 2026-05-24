@@ -40,6 +40,18 @@ use crate::protocol::Region;
 use anyhow::{bail, Result};
 use std::path::Path;
 
+#[derive(Debug, Clone)]
+pub enum X11CaptureTarget {
+    Region {
+        display_name: Option<String>,
+        region: Region,
+    },
+    Window {
+        display_name: Option<String>,
+        title: String,
+    },
+}
+
 /// Build the argv list for `gst-launch-1.0` consuming the portal-granted PipeWire stream.
 /// Always emits `-e` (EOS-on-SIGTERM) — the recorder lifecycle relies on SIGTERM for clean
 /// shutdown.
@@ -139,29 +151,266 @@ pub fn build_pipewire_argv(
         "videoconvert".to_string(),
         "!".to_string(),
     ];
-    // x264 is the default codec. Other values are passed through unmodified — accepting any
-    // GStreamer encoder name here (e.g. `x265enc` for HEVC, `vaapih264enc` for hardware-
-    // accelerated H.264) without re-coding tuning flags.
-    if codec == "libx264" || codec == "x264enc" {
-        argv.extend([
-            "x264enc".to_string(),
-            "tune=zerolatency".to_string(),
-            "speed-preset=ultrafast".to_string(),
-            "!".to_string(),
-            "h264parse".to_string(),
-        ]);
-    } else {
-        argv.push(codec.to_string());
-    }
+    push_x264_encoder(&mut argv, codec)?;
     argv.extend([
         "!".to_string(),
         "mp4mux".to_string(),
         "faststart=true".to_string(),
         "!".to_string(),
         "filesink".to_string(),
-        format!("location={}", output.display()),
+        gst_string_property("location", &output.display().to_string()),
     ]);
     Ok(argv)
+}
+
+pub fn build_pipewire_png_argv(
+    pipewire_node_id: u32,
+    pipewire_fd: i32,
+    region: Region,
+    stream_size: (u32, u32),
+    output: &Path,
+) -> Result<Vec<String>> {
+    let (top, bottom, left, right) = pipewire_crop_insets(pipewire_fd, region, stream_size)?;
+    Ok(vec![
+        "gst-launch-1.0".to_string(),
+        "-q".to_string(),
+        "pipewiresrc".to_string(),
+        "num-buffers=1".to_string(),
+        format!("fd={pipewire_fd}"),
+        format!("path={pipewire_node_id}"),
+        "do-timestamp=true".to_string(),
+        "always-copy=true".to_string(),
+        "!".to_string(),
+        "videocrop".to_string(),
+        format!("top={top}"),
+        format!("bottom={bottom}"),
+        format!("left={left}"),
+        format!("right={right}"),
+        "!".to_string(),
+        "videoconvert".to_string(),
+        "!".to_string(),
+        "pngenc".to_string(),
+        "!".to_string(),
+        "filesink".to_string(),
+        gst_string_property("location", &output.display().to_string()),
+    ])
+}
+
+pub fn build_x11_recording_argv(
+    target: X11CaptureTarget,
+    frame_rate: u32,
+    capture_cursor: bool,
+    output: &Path,
+    codec: &str,
+) -> Result<Vec<String>> {
+    let mut argv = vec!["gst-launch-1.0".to_string(), "-e".to_string()];
+    append_x11_source(&mut argv, target, capture_cursor, false)?;
+    argv.extend([
+        "!".to_string(),
+        "videorate".to_string(),
+        "!".to_string(),
+        format!("video/x-raw,framerate={frame_rate}/1"),
+        "!".to_string(),
+        "videoconvert".to_string(),
+        "!".to_string(),
+    ]);
+    push_x264_encoder(&mut argv, codec)?;
+    argv.extend([
+        "!".to_string(),
+        "mp4mux".to_string(),
+        "faststart=true".to_string(),
+        "!".to_string(),
+        "filesink".to_string(),
+        gst_string_property("location", &output.display().to_string()),
+    ]);
+    Ok(argv)
+}
+
+pub fn build_x11_png_argv(
+    target: X11CaptureTarget,
+    capture_cursor: bool,
+    output: &Path,
+) -> Result<Vec<String>> {
+    let mut argv = vec!["gst-launch-1.0".to_string(), "-q".to_string()];
+    append_x11_source(&mut argv, target, capture_cursor, true)?;
+    argv.extend([
+        "!".to_string(),
+        "videoconvert".to_string(),
+        "!".to_string(),
+        "pngenc".to_string(),
+        "!".to_string(),
+        "filesink".to_string(),
+        gst_string_property("location", &output.display().to_string()),
+    ]);
+    Ok(argv)
+}
+
+fn append_x11_source(
+    argv: &mut Vec<String>,
+    target: X11CaptureTarget,
+    capture_cursor: bool,
+    one_frame: bool,
+) -> Result<()> {
+    argv.push("ximagesrc".to_string());
+    if one_frame {
+        argv.push("num-buffers=1".to_string());
+    }
+    match target {
+        X11CaptureTarget::Region {
+            display_name,
+            region,
+        } => {
+            let (end_x, end_y) = x11_inclusive_end(region)?;
+            if let Some(display) = non_blank(display_name) {
+                argv.push(gst_string_property("display-name", &display));
+            }
+            argv.extend([
+                format!("startx={}", region.x),
+                format!("starty={}", region.y),
+                format!("endx={end_x}"),
+                format!("endy={end_y}"),
+            ]);
+        }
+        X11CaptureTarget::Window {
+            display_name,
+            title,
+        } => {
+            let title = title.trim();
+            if title.is_empty() {
+                bail!("X11 window capture requires a non-blank window title");
+            }
+            if let Some(display) = non_blank(display_name) {
+                argv.push(gst_string_property("display-name", &display));
+            }
+            argv.push(gst_string_property("xname", title));
+        }
+    }
+    argv.extend([
+        format!("show-pointer={capture_cursor}"),
+        // XDamage can skip unchanged regions in a way that is efficient for live display but
+        // brittle for short smoke recordings and one-frame screenshots. Force full-frame reads.
+        "use-damage=false".to_string(),
+    ]);
+    Ok(())
+}
+
+fn push_x264_encoder(argv: &mut Vec<String>, codec: &str) -> Result<()> {
+    match codec.trim() {
+        "libx264" | "x264enc" => {
+            argv.extend([
+                "x264enc".to_string(),
+                "tune=zerolatency".to_string(),
+                "speed-preset=ultrafast".to_string(),
+                "!".to_string(),
+                "h264parse".to_string(),
+            ]);
+            Ok(())
+        }
+        other => bail!(
+            "Linux GStreamer recording currently supports RecordingOptions.codec values \
+             'libx264' and 'x264enc' only; got '{other}'. Arbitrary GStreamer encoder names \
+             need a structured pipeline builder so parser stages and encoder properties can be \
+             represented safely."
+        ),
+    }
+}
+
+fn gst_string_property(name: &str, value: &str) -> String {
+    format!("{name}={}", gst_quote(value))
+}
+
+fn gst_quote(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
+}
+
+fn x11_inclusive_end(region: Region) -> Result<(i64, i64)> {
+    validate_positive_region(region)?;
+    if region.x < 0 || region.y < 0 {
+        bail!(
+            "X11 ximagesrc requires non-negative region origins, was ({}, {})",
+            region.x,
+            region.y
+        );
+    }
+    Ok((
+        region.x as i64 + region.width as i64 - 1,
+        region.y as i64 + region.height as i64 - 1,
+    ))
+}
+
+fn pipewire_crop_insets(
+    pipewire_fd: i32,
+    region: Region,
+    stream_size: (u32, u32),
+) -> Result<(u32, u32, u32, u32)> {
+    validate_positive_region(region)?;
+    if region.x < 0 || region.y < 0 {
+        bail!(
+            "region origin must be non-negative for the videocrop filter, was ({}, {})",
+            region.x,
+            region.y
+        );
+    }
+    if pipewire_fd < 0 {
+        bail!(
+            "pipewire_fd must be a valid Unix FD (>= 0), was {}. Did OpenPipeWireRemote \
+             return a valid descriptor?",
+            pipewire_fd
+        );
+    }
+    let (stream_w, stream_h) = stream_size;
+    if stream_w == 0 || stream_h == 0 {
+        bail!(
+            "stream_size must have positive dimensions, was {}x{}",
+            stream_w,
+            stream_h
+        );
+    }
+    let region_right = region.x as i64 + region.width as i64;
+    let region_bottom = region.y as i64 + region.height as i64;
+    if region_right > stream_w as i64 {
+        bail!(
+            "region right edge {} exceeds stream width {}",
+            region_right,
+            stream_w
+        );
+    }
+    if region_bottom > stream_h as i64 {
+        bail!(
+            "region bottom edge {} exceeds stream height {}",
+            region_bottom,
+            stream_h
+        );
+    }
+    Ok((
+        region.y as u32,
+        stream_h - region_bottom as u32,
+        region.x as u32,
+        stream_w - region_right as u32,
+    ))
+}
+
+fn validate_positive_region(region: Region) -> Result<()> {
+    if region.width <= 0 || region.height <= 0 {
+        bail!(
+            "region must have positive dimensions, was {}x{}",
+            region.width,
+            region.height
+        );
+    }
+    Ok(())
+}
+
+fn non_blank(value: Option<String>) -> Option<String> {
+    value.and_then(|s| {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
 
 #[cfg(test)]
@@ -224,7 +473,13 @@ mod tests {
         let argv = argv_for_default();
         assert_contains_sequence(
             &argv,
-            &["videocrop", "top=200", "bottom=400", "left=100", "right=1180"],
+            &[
+                "videocrop",
+                "top=200",
+                "bottom=400",
+                "left=100",
+                "right=1180",
+            ],
         );
     }
 
@@ -263,7 +518,7 @@ mod tests {
                 "faststart=true",
                 "!",
                 "filesink",
-                "location=/tmp/spectre/out.mp4",
+                "location=\"/tmp/spectre/out.mp4\"",
             ],
         );
     }
@@ -271,13 +526,25 @@ mod tests {
     #[test]
     fn argv_rejects_zero_or_negative_region_dimensions() {
         let bad_w_zero = build_pipewire_argv(
-            42, 17, region(0, 0, 0, 100), (1920, 1080), 30, true,
-            &PathBuf::from("/tmp/x"), "libx264",
+            42,
+            17,
+            region(0, 0, 0, 100),
+            (1920, 1080),
+            30,
+            true,
+            &PathBuf::from("/tmp/x"),
+            "libx264",
         );
         assert!(bad_w_zero.is_err(), "zero width should be rejected");
         let bad_h_zero = build_pipewire_argv(
-            42, 17, region(0, 0, 100, 0), (1920, 1080), 30, true,
-            &PathBuf::from("/tmp/x"), "libx264",
+            42,
+            17,
+            region(0, 0, 100, 0),
+            (1920, 1080),
+            30,
+            true,
+            &PathBuf::from("/tmp/x"),
+            "libx264",
         );
         assert!(bad_h_zero.is_err(), "zero height should be rejected");
 
@@ -286,13 +553,25 @@ mod tests {
         // domain check rejects both at once with a clear error rather than letting them
         // wrap into giant unsigned values further down the videocrop math.
         let bad_w_neg = build_pipewire_argv(
-            42, 17, region(0, 0, -10, 100), (1920, 1080), 30, true,
-            &PathBuf::from("/tmp/x"), "libx264",
+            42,
+            17,
+            region(0, 0, -10, 100),
+            (1920, 1080),
+            30,
+            true,
+            &PathBuf::from("/tmp/x"),
+            "libx264",
         );
         assert!(bad_w_neg.is_err(), "negative width should be rejected");
         let bad_h_neg = build_pipewire_argv(
-            42, 17, region(0, 0, 100, -5), (1920, 1080), 30, true,
-            &PathBuf::from("/tmp/x"), "libx264",
+            42,
+            17,
+            region(0, 0, 100, -5),
+            (1920, 1080),
+            30,
+            true,
+            &PathBuf::from("/tmp/x"),
+            "libx264",
         );
         assert!(bad_h_neg.is_err(), "negative height should be rejected");
     }
@@ -303,13 +582,25 @@ mod tests {
         // crops. Reject up-front so a misconfigured caller doesn't silently produce a
         // black mp4 the way the JVM/JNR-POSIX bake-off attempt did.
         let bad_x = build_pipewire_argv(
-            42, 17, region(-1, 0, 100, 100), (1920, 1080), 30, true,
-            &PathBuf::from("/tmp/x"), "libx264",
+            42,
+            17,
+            region(-1, 0, 100, 100),
+            (1920, 1080),
+            30,
+            true,
+            &PathBuf::from("/tmp/x"),
+            "libx264",
         );
         assert!(bad_x.is_err(), "negative x should be rejected");
         let bad_y = build_pipewire_argv(
-            42, 17, region(0, -10, 100, 100), (1920, 1080), 30, true,
-            &PathBuf::from("/tmp/x"), "libx264",
+            42,
+            17,
+            region(0, -10, 100, 100),
+            (1920, 1080),
+            30,
+            true,
+            &PathBuf::from("/tmp/x"),
+            "libx264",
         );
         assert!(bad_y.is_err(), "negative y should be rejected");
     }
@@ -317,15 +608,33 @@ mod tests {
     #[test]
     fn argv_rejects_region_exceeding_stream_bounds() {
         let too_wide = build_pipewire_argv(
-            42, 17, region(0, 0, 2000, 100), (1920, 1080), 30, true,
-            &PathBuf::from("/tmp/x"), "libx264",
+            42,
+            17,
+            region(0, 0, 2000, 100),
+            (1920, 1080),
+            30,
+            true,
+            &PathBuf::from("/tmp/x"),
+            "libx264",
         );
-        assert!(too_wide.is_err(), "region wider than stream should be rejected");
+        assert!(
+            too_wide.is_err(),
+            "region wider than stream should be rejected"
+        );
         let too_tall = build_pipewire_argv(
-            42, 17, region(0, 0, 100, 2000), (1920, 1080), 30, true,
-            &PathBuf::from("/tmp/x"), "libx264",
+            42,
+            17,
+            region(0, 0, 100, 2000),
+            (1920, 1080),
+            30,
+            true,
+            &PathBuf::from("/tmp/x"),
+            "libx264",
         );
-        assert!(too_tall.is_err(), "region taller than stream should be rejected");
+        assert!(
+            too_tall.is_err(),
+            "region taller than stream should be rejected"
+        );
     }
 
     #[test]
@@ -335,9 +644,193 @@ mod tests {
         // nodes. Reject up-front so a misconfigured caller doesn't silently produce a
         // black mp4.
         let bad = build_pipewire_argv(
-            42, -1, region(0, 0, 100, 100), (1920, 1080), 30, true,
-            &PathBuf::from("/tmp/x"), "libx264",
+            42,
+            -1,
+            region(0, 0, 100, 100),
+            (1920, 1080),
+            30,
+            true,
+            &PathBuf::from("/tmp/x"),
+            "libx264",
         );
-        assert!(bad.is_err(), "fd=-1 should be rejected (would produce 0-byte mp4)");
+        assert!(
+            bad.is_err(),
+            "fd=-1 should be rejected (would produce 0-byte mp4)"
+        );
+    }
+
+    #[test]
+    fn x11_region_recording_argv_uses_ximagesrc_bounds_without_ffmpeg() {
+        let argv = build_x11_recording_argv(
+            X11CaptureTarget::Region {
+                display_name: Some(":0".to_string()),
+                region: region(10, 20, 30, 40),
+            },
+            30,
+            false,
+            &PathBuf::from("/tmp/spectre/out.mp4"),
+            "libx264",
+        )
+        .unwrap();
+
+        assert_eq!(argv[0], "gst-launch-1.0");
+        assert_contains_sequence(
+            &argv,
+            &[
+                "ximagesrc",
+                "display-name=\":0\"",
+                "startx=10",
+                "starty=20",
+                "endx=39",
+                "endy=59",
+                "show-pointer=false",
+            ],
+        );
+        assert!(
+            !argv.iter().any(|arg| arg.contains("ffmpeg")),
+            "argv must not use ffmpeg"
+        );
+    }
+
+    #[test]
+    fn x11_window_recording_argv_targets_named_window() {
+        let argv = build_x11_recording_argv(
+            X11CaptureTarget::Window {
+                display_name: None,
+                title: "Spectre smoke".to_string(),
+            },
+            15,
+            true,
+            &PathBuf::from("/tmp/spectre/window.mp4"),
+            "libx264",
+        )
+        .unwrap();
+
+        assert_contains_sequence(
+            &argv,
+            &[
+                "ximagesrc",
+                "xname=\"Spectre smoke\"",
+                "show-pointer=true",
+                "use-damage=false",
+            ],
+        );
+        assert_contains_sequence(&argv, &["videorate", "!", "video/x-raw,framerate=15/1"]);
+    }
+
+    #[test]
+    fn x11_window_recording_argv_quotes_window_titles_for_gst_parse_launch() {
+        let argv = build_x11_recording_argv(
+            X11CaptureTarget::Window {
+                display_name: Some(":0".to_string()),
+                title: "Spectre \"smoke\" window".to_string(),
+            },
+            15,
+            true,
+            &PathBuf::from("/tmp/spectre/window with spaces.mp4"),
+            "libx264",
+        )
+        .unwrap();
+
+        assert_contains_sequence(
+            &argv,
+            &[
+                "ximagesrc",
+                "display-name=\":0\"",
+                "xname=\"Spectre \\\"smoke\\\" window\"",
+            ],
+        );
+        assert_contains_sequence(
+            &argv,
+            &[
+                "filesink",
+                "location=\"/tmp/spectre/window with spaces.mp4\"",
+            ],
+        );
+    }
+
+    #[test]
+    fn gstreamer_recording_argv_rejects_unsupported_codecs() {
+        let pipewire = build_pipewire_argv(
+            42,
+            17,
+            region(0, 0, 100, 100),
+            (1920, 1080),
+            30,
+            true,
+            &PathBuf::from("/tmp/out.mp4"),
+            "x265enc",
+        );
+        assert!(pipewire.is_err(), "x265enc needs an explicit parser stage");
+
+        let x11 = build_x11_recording_argv(
+            X11CaptureTarget::Region {
+                display_name: None,
+                region: region(0, 0, 100, 100),
+            },
+            30,
+            true,
+            &PathBuf::from("/tmp/out.mp4"),
+            "vaapih264enc bitrate=8000",
+        );
+        assert!(
+            x11.is_err(),
+            "multi-token encoder strings must not be passed through"
+        );
+    }
+
+    #[test]
+    fn x11_region_png_argv_captures_one_frame() {
+        let argv = build_x11_png_argv(
+            X11CaptureTarget::Region {
+                display_name: Some(":1".to_string()),
+                region: region(0, 0, 20, 10),
+            },
+            false,
+            &PathBuf::from("/tmp/spectre/shot.png"),
+        )
+        .unwrap();
+
+        assert_contains_sequence(
+            &argv,
+            &[
+                "ximagesrc",
+                "num-buffers=1",
+                "display-name=\":1\"",
+                "startx=0",
+                "starty=0",
+                "endx=19",
+                "endy=9",
+            ],
+        );
+        assert_contains_sequence(&argv, &["videoconvert", "!", "pngenc", "!", "filesink"]);
+    }
+
+    #[test]
+    fn pipewire_png_argv_uses_one_portal_frame_with_region_crop() {
+        let argv = build_pipewire_png_argv(
+            42,
+            17,
+            region(10, 20, 30, 40),
+            (100, 90),
+            &PathBuf::from("/tmp/spectre/wayland.png"),
+        )
+        .unwrap();
+
+        assert_contains_sequence(
+            &argv,
+            &[
+                "pipewiresrc",
+                "num-buffers=1",
+                "fd=17",
+                "path=42",
+                "do-timestamp=true",
+            ],
+        );
+        assert_contains_sequence(
+            &argv,
+            &["videocrop", "top=20", "bottom=30", "left=10", "right=60"],
+        );
+        assert_contains_sequence(&argv, &["videoconvert", "!", "pngenc", "!", "filesink"]);
     }
 }

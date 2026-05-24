@@ -7,7 +7,6 @@ import java.awt.image.BufferedImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
@@ -17,12 +16,10 @@ class AutoScreenshotterTest {
     fun `captureWindow routes to SCK screenshotter on macOS`() {
         val sck = StubWindowScreenshotter()
         val windows = StubWindowScreenshotter()
-        val x11 = StubRegionScreenshotter()
         val screenshotter =
             autoScreenshotter(
                 sckScreenshotter = sck,
                 windowsWindowScreenshotter = windows,
-                x11RegionScreenshotter = x11,
                 isMacOs = { true },
             )
         val window = StubScreenshotWindow(title = "MyApp")
@@ -32,7 +29,6 @@ class AutoScreenshotterTest {
         assertEquals(1, sck.captureCallCount)
         assertSame(window, sck.lastWindow)
         assertEquals(0, windows.captureCallCount)
-        assertFalse(x11.captureCalled)
     }
 
     @Test
@@ -52,11 +48,9 @@ class AutoScreenshotterTest {
     @Test
     fun `captureWindow routes to Windows title screenshotter on Windows`() {
         val windows = StubWindowScreenshotter()
-        val x11 = StubRegionScreenshotter()
         val screenshotter =
             autoScreenshotter(
                 windowsWindowScreenshotter = windows,
-                x11RegionScreenshotter = x11,
                 isMacOs = { false },
                 isWindows = { true },
             )
@@ -66,7 +60,6 @@ class AutoScreenshotterTest {
 
         assertEquals(1, windows.captureCallCount)
         assertSame(window, windows.lastWindow)
-        assertFalse(x11.captureCalled)
     }
 
     @Test
@@ -89,13 +82,13 @@ class AutoScreenshotterTest {
     }
 
     @Test
-    fun `captureWindow uses explicit X11 region fallback on Linux X11`() {
-        val x11 = StubRegionScreenshotter()
+    fun `captureWindow routes to Linux helper on Linux X11`() {
+        val linux = StubWindowScreenshotter()
         val windows = StubWindowScreenshotter()
         val screenshotter =
             autoScreenshotter(
                 windowsWindowScreenshotter = windows,
-                x11RegionScreenshotter = x11,
+                linuxWindowScreenshotter = linux,
                 isMacOs = { false },
                 isWindows = { false },
                 isLinux = { true },
@@ -105,22 +98,26 @@ class AutoScreenshotterTest {
 
         screenshotter.captureWindow(StubScreenshotWindow(title = "MyApp", bounds = bounds))
 
-        assertEquals(bounds, x11.lastRegion)
+        assertEquals(1, linux.captureCallCount)
+        assertEquals("MyApp", linux.lastWindow?.title)
         assertEquals(0, windows.captureCallCount)
     }
 
     @Test
-    fun `captureWindow fails loudly on Wayland still screenshots`() {
+    fun `captureWindow routes to Linux helper on Wayland`() {
+        val linux = StubWindowScreenshotter()
         val screenshotter =
-            autoScreenshotter(isMacOs = { false }, isLinux = { true }, isWayland = { true })
+            autoScreenshotter(
+                linuxWindowScreenshotter = linux,
+                isMacOs = { false },
+                isLinux = { true },
+                isWayland = { true },
+            )
 
-        val error =
-            assertFailsWith<UnsupportedOperationException> {
-                screenshotter.captureWindow(StubScreenshotWindow(title = "MyApp"))
-            }
+        screenshotter.captureWindow(StubScreenshotWindow(title = "MyApp"))
 
-        assertTrue(error.message.orEmpty().contains("Wayland"))
-        assertTrue(error.message.orEmpty().contains("window-targeted recording"))
+        assertEquals(1, linux.captureCallCount)
+        assertEquals("MyApp", linux.lastWindow?.title)
     }
 
     @Test
@@ -139,7 +136,7 @@ class AutoScreenshotterTest {
 private fun autoScreenshotter(
     sckScreenshotter: WindowScreenshotter = StubWindowScreenshotter(),
     windowsWindowScreenshotter: WindowScreenshotter? = null,
-    x11RegionScreenshotter: RegionScreenshotter = StubRegionScreenshotter(),
+    linuxWindowScreenshotter: WindowScreenshotter? = null,
     isMacOs: () -> Boolean,
     isWindows: () -> Boolean = { false },
     isLinux: () -> Boolean = { false },
@@ -148,7 +145,7 @@ private fun autoScreenshotter(
     AutoScreenshotter(
         sckScreenshotter,
         windowsWindowScreenshotter,
-        x11RegionScreenshotter,
+        linuxWindowScreenshotter,
         isMacOs,
         isWindows,
         isLinux,
@@ -177,20 +174,6 @@ private class StubWindowScreenshotter(
             StubScreenshotBehavior.HelperNotBundled ->
                 throw HelperNotBundledException("test helper is missing")
         }
-    }
-}
-
-private class StubRegionScreenshotter : RegionScreenshotter {
-    var captureCalled: Boolean = false
-        private set
-
-    var lastRegion: Rectangle? = null
-        private set
-
-    override fun captureRegion(region: Rectangle): BufferedImage {
-        captureCalled = true
-        lastRegion = region
-        return BufferedImage(region.width, region.height, BufferedImage.TYPE_INT_ARGB)
     }
 }
 

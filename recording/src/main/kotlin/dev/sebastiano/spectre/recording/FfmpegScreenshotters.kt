@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package dev.sebastiano.spectre.recording
 
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
@@ -9,6 +11,10 @@ import java.nio.file.Path
 import javax.imageio.ImageIO
 
 /** Windows still screenshot backend using ffmpeg's `gdigrab title=` window source. */
+@Deprecated(
+    "Legacy explicit ffmpeg/gdigrab screenshot backend. Prefer AutoScreenshotter or " +
+        "WindowsWindowScreenshotter; this class remains only as a compatibility escape hatch."
+)
 public class FfmpegWindowScreenshotter
 internal constructor(
     private val ffmpegPath: Path,
@@ -37,6 +43,10 @@ internal constructor(
 }
 
 /** Linux X11 still screenshot backend using ffmpeg's `x11grab` region source. */
+@Deprecated(
+    "Legacy explicit ffmpeg/x11grab screenshot backend. Prefer AutoScreenshotter or " +
+        "LinuxNativeScreenshotter; this class remains only as a compatibility escape hatch."
+)
 public class FfmpegRegionScreenshotter
 internal constructor(
     private val ffmpegPath: Path,

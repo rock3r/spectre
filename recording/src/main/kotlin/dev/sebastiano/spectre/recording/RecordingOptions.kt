@@ -10,8 +10,10 @@ public data class RecordingOptions(
     val captureCursor: Boolean = true,
     /**
      * H.264 encoder name. Leaves room for swapping `h264_videotoolbox` (macOS hw accel) for
-     * `libx264` (cross-platform software fallback) without restructuring the API. Other ffmpeg
-     * encoders work too if the platform supports them.
+     * `libx264` (cross-platform software fallback) without restructuring the API. The ffmpeg
+     * backends accept other ffmpeg encoder names when the platform supports them. Linux helper /
+     * GStreamer recording currently accepts only `libx264` and `x264enc`; other encoder pipelines
+     * need structured parser and property support before they can be represented safely.
      */
     val codec: String = DEFAULT_CODEC,
     /**

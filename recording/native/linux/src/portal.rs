@@ -51,7 +51,10 @@ pub struct StreamMetadata {
     pub node_id: u32,
     pub position: (i32, i32),
     pub size: (u32, u32),
+    pub source_type: Option<u32>,
 }
+
+pub const SOURCE_TYPE_WINDOW: u32 = 2;
 
 /// Active screen-cast session. Owns the D-Bus connection (closing it tears the session down)
 /// and the PipeWire FD (a Unix FD authorising a client to read the granted node).
@@ -82,8 +85,13 @@ pub fn open_screen_cast_session(
     let conn = Connection::new_session().context("opening session bus")?;
     let sender = sender_token(&conn).context("computing sender token")?;
     let counter = AtomicUsize::new(0);
-    let next_token =
-        |kind: &str| format!("spectre_{}_{}", kind, counter.fetch_add(1, Ordering::SeqCst));
+    let next_token = |kind: &str| {
+        format!(
+            "spectre_{}_{}",
+            kind,
+            counter.fetch_add(1, Ordering::SeqCst)
+        )
+    };
 
     // 1. CreateSession
     let create_token = next_token("create");
@@ -219,10 +227,8 @@ fn call_with_response<A: dbus::arg::AppendAll>(
     // call returns the request path, and we'd miss the signal otherwise.
     let captured: Arc<Mutex<Option<ResponsePayload>>> = Arc::new(Mutex::new(None));
     let captured_clone = Arc::clone(&captured);
-    let mut match_rule = dbus::message::MatchRule::new_signal(
-        REQUEST_RESPONSE_INTERFACE,
-        "Response",
-    );
+    let mut match_rule =
+        dbus::message::MatchRule::new_signal(REQUEST_RESPONSE_INTERFACE, "Response");
     match_rule.path = Some(request_path.clone().into());
     let token = conn
         .add_match(match_rule, move |(): (), _conn, msg| {
@@ -311,9 +317,7 @@ fn sender_token(conn: &Connection) -> Result<String> {
 
 /// Build a `PropMap` (a{sv}) from a fixed list of (key, variant) pairs. Saves repeating the
 /// `Variant(Box::new(...))` boilerplate at every call site.
-fn make_options<const N: usize>(
-    entries: [(&str, Variant<Box<dyn RefArg>>); N],
-) -> PropMap {
+fn make_options<const N: usize>(entries: [(&str, Variant<Box<dyn RefArg>>); N]) -> PropMap {
     entries
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
@@ -393,15 +397,13 @@ fn parse_first_stream(results: &PropMap) -> Result<StreamMetadata> {
     let node_id_arg = struct_fields
         .next()
         .context("first stream struct has no fields (expected u32 node_id then a{sv})")?;
-    let node_id = node_id_arg
-        .as_u64()
-        .with_context(|| {
-            format!(
-                "stream node_id field is not a u32 — got signature '{}', value {:?}",
-                node_id_arg.signature(),
-                node_id_arg
-            )
-        })? as u32;
+    let node_id = node_id_arg.as_u64().with_context(|| {
+        format!(
+            "stream node_id field is not a u32 — got signature '{}', value {:?}",
+            node_id_arg.signature(),
+            node_id_arg
+        )
+    })? as u32;
 
     // Properties dict. `size` is required regardless of source type. `position` is required
     // for monitor source streams (used in AWT-region → stream-relative coordinate translation
@@ -479,7 +481,6 @@ fn parse_first_stream(results: &PropMap) -> Result<StreamMetadata> {
     // with no `position` for window streams (#85). Monitor streams still bail loudly on
     // missing position so the multi-monitor coordinate translation in [`crate::recorder::run`]
     // stays correct.
-    const SOURCE_TYPE_WINDOW: u32 = 2;
     let position = match position {
         Some(p) => p,
         None if matches!(source_type, Some(SOURCE_TYPE_WINDOW)) => (0, 0),
@@ -510,6 +511,7 @@ fn parse_first_stream(results: &PropMap) -> Result<StreamMetadata> {
         node_id,
         position,
         size,
+        source_type,
     })
 }
 

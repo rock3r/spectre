@@ -55,9 +55,8 @@ import kotlinx.serialization.json.Json
  * Instantiating `WaylandPortalRecorder` directly assumes the bundled helper binary is present and
  * the host's xdg-desktop-portal is reachable. Failures from either are surfaced as
  * [IllegalStateException] with precise context — there is **no** silent no-op or automatic fallback
- * to another recorder. If you want a "just record" experience that degrades to ffmpeg region
- * capture when the portal isn't available, use [dev.sebastiano.spectre.recording.AutoRecorder]
- * instead; it owns the fallback-with-warning policy.
+ * to another recorder. If you want the high-level platform router, use
+ * [dev.sebastiano.spectre.recording.AutoRecorder] instead; it owns the OS/backend selection policy.
  */
 public class WaylandPortalRecorder
 private constructor(
@@ -76,13 +75,17 @@ private constructor(
      */
     public constructor() :
         this(
-            helperExtractor = WaylandHelperBinaryExtractor(),
+            helperExtractor = DefaultWaylandHelperBinaryExtractor.instance,
             processFactory = SystemProcessFactory,
             sourceTypes = listOf(SourceType.MONITOR),
             startedTimeout = DEFAULT_STARTED_TIMEOUT_MS,
             shutdownGraceMillis = DEFAULT_SHUTDOWN_GRACE_MS,
             processExitTimeoutMillis = DEFAULT_PROCESS_EXIT_TIMEOUT_MS,
         )
+
+    @Volatile
+    private var startCommandFactory: (Rectangle, Path, RecordingOptions) -> Command.Start =
+        defaultStartCommandFactory(sourceTypes)
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -117,24 +120,7 @@ private constructor(
 
         @Suppress("TooGenericExceptionCaught")
         try {
-            writeCommand(
-                process.outputStream,
-                Command.Start(
-                    sourceTypes = sourceTypes,
-                    cursorMode =
-                        if (options.captureCursor) CursorMode.EMBEDDED else CursorMode.HIDDEN,
-                    frameRate = options.frameRate,
-                    region =
-                        Region(
-                            x = region.x,
-                            y = region.y,
-                            width = region.width,
-                            height = region.height,
-                        ),
-                    output = output.toAbsolutePath().toString(),
-                    codec = options.codec,
-                ),
-            )
+            writeCommand(process.outputStream, startCommandFactory(region, output, options))
         } catch (e: IOException) {
             val launchFailure =
                 IllegalStateException(
@@ -233,6 +219,18 @@ private constructor(
                     startedLatch.countDown()
                     stoppedLatch.countDown()
                 }
+                is Event.ScreenshotSaved -> {
+                    errorEvent.compareAndSet(
+                        null,
+                        Event.Error(
+                            kind = "ProtocolUnexpectedEvent",
+                            message = "helper emitted screenshot_saved during recording start",
+                        ),
+                    )
+                    startedLatch.countDown()
+                    stoppedLatch.countDown()
+                    return
+                }
                 is Event.FrameProgress -> {
                     // Reserved for a future progress-streaming UX.
                 }
@@ -290,21 +288,51 @@ private constructor(
          */
         @JvmSynthetic
         internal fun createForInternalUse(
-            helperExtractor: WaylandHelperBinaryExtractor = WaylandHelperBinaryExtractor(),
+            helperExtractor: WaylandHelperBinaryExtractor =
+                DefaultWaylandHelperBinaryExtractor.instance,
             processFactory: ProcessFactory = SystemProcessFactory,
             sourceTypes: List<SourceType> = listOf(SourceType.MONITOR),
             startedTimeout: Long = DEFAULT_STARTED_TIMEOUT_MS,
             shutdownGraceMillis: Long = DEFAULT_SHUTDOWN_GRACE_MS,
             processExitTimeoutMillis: Long = DEFAULT_PROCESS_EXIT_TIMEOUT_MS,
+            startCommandFactory: (Rectangle, Path, RecordingOptions) -> Command.Start =
+                defaultStartCommandFactory(sourceTypes),
         ): WaylandPortalRecorder =
             WaylandPortalRecorder(
-                helperExtractor,
-                processFactory,
-                sourceTypes,
-                startedTimeout,
-                shutdownGraceMillis,
-                processExitTimeoutMillis,
+                    helperExtractor,
+                    processFactory,
+                    sourceTypes,
+                    startedTimeout,
+                    shutdownGraceMillis,
+                    processExitTimeoutMillis,
+                )
+                .also { recorder -> recorder.startCommandFactory = startCommandFactory }
+
+        fun defaultStartCommandFactory(
+            sourceTypes: List<SourceType>
+        ): (Rectangle, Path, RecordingOptions) -> Command.Start = { region, output, options ->
+            Command.Start(
+                backend = CaptureBackend.WAYLAND_PORTAL,
+                target =
+                    if (sourceTypes == listOf(SourceType.WINDOW)) {
+                        CaptureTarget.WINDOW
+                    } else {
+                        CaptureTarget.REGION
+                    },
+                sourceTypes = sourceTypes,
+                cursorMode = if (options.captureCursor) CursorMode.EMBEDDED else CursorMode.HIDDEN,
+                frameRate = options.frameRate,
+                region =
+                    Region(
+                        x = region.x,
+                        y = region.y,
+                        width = region.width,
+                        height = region.height,
+                    ),
+                output = output.toAbsolutePath().toString(),
+                codec = options.codec,
             )
+        }
     }
 }
 

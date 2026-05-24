@@ -12,16 +12,16 @@ import java.lang.ProcessHandle
  * Captures still screenshots from desktop surfaces.
  *
  * [captureWindow] uses true window-targeted capture where Spectre has one available: macOS
- * ScreenCaptureKit and the native Windows helper on Windows. On Linux X11 it falls back to region
- * capture for the supplied [TitledWindow.bounds]; callers must make the window visible and
- * frontmost for that fallback. Linux Wayland still screenshots are deliberately unsupported for now
- * because the current portal helper streams video, not one-shot image buffers.
+ * ScreenCaptureKit and the native Windows helper on Windows. On Linux, Spectre uses the bundled
+ * helper: GStreamer `ximagesrc` on Xorg/Xvfb and portal/PipeWire one-frame capture on Wayland.
+ * Linux Xorg/Xvfb callers must keep the target visible/frontmost; Wayland callers must accept the
+ * compositor portal dialog.
  */
 public class AutoScreenshotter
 internal constructor(
     private val sckScreenshotter: WindowScreenshotter,
     private val windowsWindowScreenshotter: WindowScreenshotter?,
-    private val x11RegionScreenshotter: RegionScreenshotter,
+    private val linuxWindowScreenshotter: WindowScreenshotter?,
     private val isMacOs: () -> Boolean,
     private val isWindows: () -> Boolean,
     private val isLinux: () -> Boolean,
@@ -31,11 +31,12 @@ internal constructor(
     public constructor(
         sckScreenshotter: WindowScreenshotter = ScreenCaptureKitScreenshotter(),
         windowsWindowScreenshotter: WindowScreenshotter? = defaultWindowsWindowScreenshotter(),
-        x11RegionScreenshotter: RegionScreenshotter = FfmpegRegionScreenshotter(),
+        @Suppress("UNUSED_PARAMETER")
+        x11RegionScreenshotter: RegionScreenshotter = UnusedLegacyX11RegionScreenshotter,
     ) : this(
         sckScreenshotter = sckScreenshotter,
         windowsWindowScreenshotter = windowsWindowScreenshotter,
-        x11RegionScreenshotter = x11RegionScreenshotter,
+        linuxWindowScreenshotter = defaultLinuxWindowScreenshotter,
         isMacOs = ::defaultIsMacOs,
         isWindows = ::defaultIsWindows,
         isLinux = ::defaultIsLinux,
@@ -46,14 +47,6 @@ internal constructor(
         window: TitledWindow,
         windowOwnerPid: Long = ProcessHandle.current().pid(),
     ): BufferedImage {
-        if (isWayland()) {
-            throw UnsupportedOperationException(
-                "Wayland still window screenshots are not supported yet. Spectre's Wayland " +
-                    "portal backend currently supports window-targeted recording via " +
-                    "WaylandPortalWindowRecorder; one-shot still capture needs a helper " +
-                    "extension that returns image buffers instead of video files."
-            )
-        }
         if (isMacOs()) {
             return try {
                 sckScreenshotter.captureWindow(window, windowOwnerPid)
@@ -71,7 +64,15 @@ internal constructor(
                 ?: throw unavailable("Windows window screenshot", null)
         }
         if (isLinux()) {
-            return x11RegionScreenshotter.captureRegion(window.bounds)
+            return linuxWindowScreenshotter?.captureWindow(window, windowOwnerPid)
+                ?: throw unavailable(
+                    if (isWayland()) {
+                        "Linux Wayland window screenshot"
+                    } else {
+                        "Linux X11 window screenshot"
+                    },
+                    null,
+                )
         }
         throw UnsupportedOperationException(
             "AutoScreenshotter.captureWindow is unsupported on this platform because no native " +
@@ -104,6 +105,10 @@ internal constructor(
                 null
             }
         }
+
+        val defaultLinuxWindowScreenshotter: LinuxNativeScreenshotter? by lazy {
+            if (defaultIsLinux()) LinuxNativeScreenshotter() else null
+        }
     }
 }
 
@@ -116,4 +121,13 @@ public interface WindowScreenshotter {
 
 public interface RegionScreenshotter {
     public fun captureRegion(region: Rectangle): BufferedImage
+}
+
+private object UnusedLegacyX11RegionScreenshotter : RegionScreenshotter {
+    override fun captureRegion(region: Rectangle): BufferedImage =
+        error(
+            "AutoScreenshotter no longer uses the legacy x11RegionScreenshotter constructor " +
+                "parameter. Instantiate LinuxNativeScreenshotter directly for Linux region " +
+                "screenshots."
+        )
 }

@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package dev.sebastiano.spectre.recording
 
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
@@ -34,6 +36,10 @@ import java.nio.file.Path
  * Construction mirrors [FfmpegRecorder]'s shape: an [ffmpegPath] resolved by default from `PATH`
  * via [FfmpegRecorder.resolveFfmpegPath], and a [processFactory] seam for tests.
  */
+@Deprecated(
+    "Legacy explicit ffmpeg/gdigrab window backend. Prefer AutoRecorder or " +
+        "WindowsGraphicsCaptureRecorder; this class remains only as a compatibility escape hatch."
+)
 public class FfmpegWindowRecorder
 internal constructor(
     private val ffmpegPath: Path,

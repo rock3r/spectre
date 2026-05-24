@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Command {
     Start(StartCommand),
+    Screenshot(ScreenshotCommand),
     Stop,
 }
 
@@ -21,15 +22,53 @@ pub enum Command {
 /// stream-relative coordinates internally once the portal hands back a stream position.
 #[derive(Debug, Clone, Deserialize)]
 pub struct StartCommand {
+    #[serde(default = "default_capture_backend")]
+    pub backend: CaptureBackend,
+    #[serde(default = "default_capture_target")]
+    pub target: CaptureTarget,
     /// Subset of source types the user can pick at the portal dialog. `monitor` is the only
     /// one Spectre's region recording supports today; window-targeted capture would need
     /// `window` plus a different post-portal flow.
+    #[serde(default)]
     pub source_types: Vec<SourceType>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub window_title: Option<String>,
     pub cursor_mode: CursorMode,
     pub frame_rate: u32,
     pub region: Region,
     pub output: String,
     pub codec: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ScreenshotCommand {
+    pub backend: CaptureBackend,
+    pub target: CaptureTarget,
+    #[serde(default)]
+    pub source_types: Vec<SourceType>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub window_title: Option<String>,
+    pub cursor_mode: CursorMode,
+    pub region: Region,
+    pub output: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureBackend {
+    WaylandPortal,
+    X11,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureTarget {
+    Region,
+    Window,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -89,8 +128,18 @@ pub enum Event {
     FrameProgress { frames: u64 },
     /// Recording stopped cleanly: gst-launch exited 0, the mux finalised, the file is on disk.
     Stopped { output_size_bytes: u64 },
+    /// One-shot screenshot command completed and wrote a readable image file.
+    ScreenshotSaved { output_size_bytes: u64 },
     /// Anything that didn't reach a Stopped state. `kind` is a coarse category the JVM can
     /// pattern-match for surfacing the right exception type; `message` is the human-readable
     /// detail.
     Error { kind: String, message: String },
+}
+
+fn default_capture_backend() -> CaptureBackend {
+    CaptureBackend::WaylandPortal
+}
+
+fn default_capture_target() -> CaptureTarget {
+    CaptureTarget::Region
 }

@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package dev.sebastiano.spectre.recording
 
 import java.awt.Rectangle

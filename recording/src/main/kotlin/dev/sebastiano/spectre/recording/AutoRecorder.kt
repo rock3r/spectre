@@ -16,14 +16,15 @@ import java.nio.file.Path
 /**
  * High-level recorder with explicit capture modes.
  *
- * [startWindow] uses true window-targeted backends only: ScreenCaptureKit on macOS, Windows
- * Graphics Capture on Windows, and the Wayland portal window-source path on Linux Wayland. If the
- * requested window mode is unavailable, it throws with an actionable error instead of silently
- * falling back to region capture.
+ * [startWindow] uses window-scoped backends only: ScreenCaptureKit on macOS, Windows Graphics
+ * Capture on Windows, the Linux helper's Xorg/Xvfb named-window path, and the Wayland portal
+ * window-source path on Linux Wayland. If the requested window mode is unavailable, it throws with
+ * an actionable error instead of silently falling back to region capture.
  *
  * [startRegion] uses region capture only: Windows Graphics Capture on Windows, ffmpeg region
- * capture on macOS and Linux Xorg, and the Wayland portal monitor-source path on Linux Wayland. If
- * the requested region mode is unavailable, it throws instead of switching capture semantics.
+ * capture on macOS, the Linux helper's Xorg/Xvfb path, and the Wayland portal monitor-source path
+ * on Linux Wayland. If the requested region mode is unavailable, it throws instead of switching
+ * capture semantics.
  */
 public class AutoRecorder
 internal constructor(
@@ -31,18 +32,21 @@ internal constructor(
     private val ffmpegRecorder: Recorder,
     private val windowsWindowRecorder: WindowRecorder?,
     private val windowsRegionRecorder: Recorder?,
+    private val linuxRegionRecorder: Recorder?,
+    private val linuxWindowRecorder: WindowRecorder?,
     private val waylandPortalRecorder: Recorder?,
     private val waylandPortalWindowRecorder: WaylandWindowSourceRecorder?,
     private val waylandPortalRecorderFailure: Throwable?,
     private val waylandPortalWindowRecorderFailure: Throwable?,
     private val isMacOs: () -> Boolean,
     private val isWindows: () -> Boolean,
+    private val isLinux: () -> Boolean,
     private val isWayland: () -> Boolean,
 ) {
 
     public constructor(
         sckRecorder: WindowRecorder = ScreenCaptureKitRecorder(),
-        ffmpegRecorder: Recorder = FfmpegRecorder(),
+        ffmpegRecorder: Recorder = DefaultLegacyFfmpegRecorder,
         windowsWindowRecorder: WindowRecorder? = defaultWindowsWindowRecorder(),
         windowsRegionRecorder: Recorder? = defaultWindowsRegionRecorder(),
         waylandPortalRecorder: Recorder? = defaultPortals.region,
@@ -52,6 +56,8 @@ internal constructor(
         ffmpegRecorder = ffmpegRecorder,
         windowsWindowRecorder = windowsWindowRecorder,
         windowsRegionRecorder = windowsRegionRecorder,
+        linuxRegionRecorder = defaultLinuxRecorder,
+        linuxWindowRecorder = defaultLinuxRecorder,
         waylandPortalRecorder = waylandPortalRecorder,
         waylandPortalWindowRecorder = waylandPortalWindowRecorder,
         // A user who passed a non-null recorder owns its construction; we only surface our own
@@ -62,6 +68,7 @@ internal constructor(
             if (waylandPortalWindowRecorder == null) defaultPortals.windowFailure else null,
         isMacOs = ::defaultIsMacOs,
         isWindows = ::defaultIsWindows,
+        isLinux = ::defaultIsLinux,
         isWayland = ::defaultIsWayland,
     )
 
@@ -102,6 +109,14 @@ internal constructor(
             return recorder?.start(window, windowOwnerPid, output, options)
                 ?: throw unavailable("Windows window capture", null)
         }
+        if (isLinux()) {
+            require(!title.isNullOrBlank()) {
+                "AutoRecorder.startWindow requires a non-blank window title on Linux X11. " +
+                    "Use startRegion(...) explicitly if region capture is what you want."
+            }
+            return linuxWindowRecorder?.start(window, windowOwnerPid, output, options)
+                ?: throw unavailable("Linux X11 window capture", null)
+        }
         throw unsupportedWindowCapture()
     }
 
@@ -128,6 +143,10 @@ internal constructor(
             } catch (_: WindowsGraphicsCaptureHelperNotBundledException) {
                 ffmpegRecorder.start(region, output, options)
             }
+        }
+        if (isLinux()) {
+            return linuxRegionRecorder?.start(region, output, options)
+                ?: throw unavailable("Linux X11 region capture", null)
         }
         return ffmpegRecorder.start(region, output, options)
     }
@@ -196,6 +215,10 @@ internal constructor(
             WindowsGraphicsCaptureRecorder()
         }
 
+        val defaultLinuxRecorder: LinuxX11Recorder? by lazy {
+            if (defaultIsLinux()) LinuxX11Recorder() else null
+        }
+
         /**
          * Lazily resolves both portal recorders once per JVM (the first time the public no-arg
          * `AutoRecorder` constructor's defaults fire). Captures any construction failure so the
@@ -207,6 +230,16 @@ internal constructor(
             WaylandPortalRecorders.resolveDefaults(::defaultIsLinux)
         }
     }
+}
+
+private object DefaultLegacyFfmpegRecorder : Recorder {
+    @Suppress("DEPRECATION") private val delegate: FfmpegRecorder by lazy { FfmpegRecorder() }
+
+    override fun start(
+        region: Rectangle,
+        output: Path,
+        options: RecordingOptions,
+    ): RecordingHandle = delegate.start(region, output, options)
 }
 
 /**

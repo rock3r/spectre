@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package dev.sebastiano.spectre.recording
 
 import java.awt.Rectangle
@@ -43,6 +45,10 @@ import java.util.concurrent.atomic.AtomicReference
  * The [processFactory] seam exists so the lifecycle can be unit-tested without spawning a real
  * `ffmpeg` (a fake factory can return a `Process`-like stand-in driven by an in-memory pipe).
  */
+@Deprecated(
+    "Legacy explicit ffmpeg backend. Prefer AutoRecorder or the platform-native recorder " +
+        "selected by AutoRecorder; this class remains only as a compatibility escape hatch."
+)
 public class FfmpegRecorder
 internal constructor(
     private val ffmpegPath: Path,

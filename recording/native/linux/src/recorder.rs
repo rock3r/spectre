@@ -11,9 +11,9 @@
 //!  5. Wait for gst-launch to exit (either via the SIGTERM-EOS path or because it crashed).
 //!  6. Emit `Stopped` (with output file size) or `Error` (with cause), then return.
 
-use crate::gst::build_pipewire_argv;
-use crate::portal::{self, ScreenCastSession, DEFAULT_RESPONSE_TIMEOUT};
-use crate::protocol::{Event, StartCommand};
+use crate::gst::{build_pipewire_argv, build_x11_recording_argv, X11CaptureTarget};
+use crate::portal::{self, DEFAULT_RESPONSE_TIMEOUT, SOURCE_TYPE_WINDOW};
+use crate::protocol::{CaptureBackend, CaptureTarget, Event, StartCommand};
 use anyhow::{anyhow, Context, Result};
 use nix::fcntl::{fcntl, FcntlArg, FdFlag};
 use nix::sys::signal::{kill, Signal};
@@ -32,6 +32,13 @@ use std::time::{Duration, Instant};
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(30);
 
 pub fn run(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
+    match start.backend {
+        CaptureBackend::WaylandPortal => run_wayland(start, events),
+        CaptureBackend::X11 => run_x11(start, events),
+    }
+}
+
+fn run_wayland(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
     // 1. Portal handshake — first call within a session pops the user's "share your screen"
     // dialog. Subsequent calls reuse the grant (transient persist mode).
     let session = portal::open_screen_cast_session(
@@ -40,6 +47,7 @@ pub fn run(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
         DEFAULT_RESPONSE_TIMEOUT,
     )
     .context("portal handshake")?;
+    ensure_window_source_if_requested(start.target, session.stream.source_type, "recording")?;
 
     // 2. Clear O_CLOEXEC on the PipeWire FD. Default-CLOEXEC FDs (the kernel sets it on
     // SCM_RIGHTS-delivered FDs for safety) wouldn't survive ProcessBuilder's exec call,
@@ -77,11 +85,12 @@ pub fn run(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
 
     eprintln!(
         "[helper] portal handshake OK: node={} fd={} stream={:?} position={:?} \
-         region-relative={:?}",
+         source_type={:?} region-relative={:?}",
         session.stream.node_id,
         session.pipewire_fd,
         session.stream.size,
         session.stream.position,
+        session.stream.source_type,
         (
             stream_relative_region.x,
             stream_relative_region.y,
@@ -187,12 +196,10 @@ pub fn run(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
     // thread is fine: it's reading our own stdin, so when the helper process exits the
     // descriptor is closed and the thread either reads EOF and exits, or gets killed by
     // process teardown. Either way the thread doesn't outlive the helper.
-    let mut exit_status: Option<std::process::ExitStatus> = None;
-    loop {
+    let exit = loop {
         match child.try_wait().context("polling gst-launch exit")? {
             Some(status) => {
-                exit_status = Some(status);
-                break;
+                break status;
             }
             None => {
                 let sigint_at = *sigint_sent_at.lock().unwrap();
@@ -211,8 +218,7 @@ pub fn run(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
                 thread::sleep(Duration::from_millis(50));
             }
         }
-    }
-    let exit = exit_status.unwrap();
+    };
     let elapsed = started_at.elapsed();
 
     // 7. Surface the outcome. The expected happy-path is exit code 0: gst-launch caught our
@@ -237,10 +243,167 @@ pub fn run(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
         return Ok(()); // Don't double-report — the Error event is the canonical signal.
     }
 
-    let output_size_bytes = std::fs::metadata(&start.output).map(|m| m.len()).unwrap_or(0);
+    let output_size_bytes = std::fs::metadata(&start.output)
+        .map(|m| m.len())
+        .unwrap_or(0);
     let _ = events.send(Event::Stopped { output_size_bytes });
 
     // session is dropped here — drops the D-Bus connection, releases the portal grant.
     drop(session);
+    Ok(())
+}
+
+fn run_x11(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
+    let target = match start.target {
+        CaptureTarget::Region => X11CaptureTarget::Region {
+            display_name: start.display_name.clone(),
+            region: start.region,
+        },
+        CaptureTarget::Window => X11CaptureTarget::Window {
+            display_name: start.display_name.clone(),
+            title: start
+                .window_title
+                .clone()
+                .ok_or_else(|| anyhow!("X11 window recording requires window_title"))?,
+        },
+    };
+    let argv = build_x11_recording_argv(
+        target,
+        start.frame_rate,
+        matches!(start.cursor_mode, crate::protocol::CursorMode::Embedded),
+        &PathBuf::from(&start.output),
+        &start.codec,
+    )
+    .context("building X11 gst-launch argv")?;
+    eprintln!(
+        "[helper] X11 capture argv ready: target={:?} region=({}, {}, {}, {})",
+        start.target, start.region.x, start.region.y, start.region.width, start.region.height
+    );
+    eprintln!("[helper] spawning: {argv:?}");
+    let (stream_size, stream_position) = match start.target {
+        CaptureTarget::Region => (
+            [
+                start.region.width.max(0) as u32,
+                start.region.height.max(0) as u32,
+            ],
+            [start.region.x, start.region.y],
+        ),
+        CaptureTarget::Window => ([0, 0], [0, 0]),
+    };
+    run_gst_lifecycle(
+        argv,
+        start.output,
+        events,
+        Event::Started {
+            node_id: 0,
+            stream_size,
+            stream_position,
+            gst_pid: 0,
+        },
+    )
+}
+
+fn ensure_window_source_if_requested(
+    target: CaptureTarget,
+    source_type: Option<u32>,
+    mode: &str,
+) -> Result<()> {
+    if target == CaptureTarget::Window && source_type != Some(SOURCE_TYPE_WINDOW) {
+        return Err(anyhow!(
+            "Wayland portal {mode} requested a window source, but the compositor returned \
+             source_type={source_type:?}. Spectre cannot window-crop a monitor-source stream \
+             safely; use region capture or a compositor/version that supports portal window \
+             sources."
+        ));
+    }
+    Ok(())
+}
+
+fn run_gst_lifecycle(
+    argv: Vec<String>,
+    output: String,
+    events: mpsc::Sender<Event>,
+    started_template: Event,
+) -> Result<()> {
+    let gst_stdout_target: OwnedFd = unsafe {
+        let raw = nix::unistd::dup(std::io::stderr().as_raw_fd())
+            .context("dup(stderr) so gst-launch stdout can redirect to helper stderr")?;
+        OwnedFd::from_raw_fd(raw)
+    };
+    let mut child = Command::new(&argv[0])
+        .args(&argv[1..])
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(gst_stdout_target))
+        .stderr(Stdio::inherit())
+        .spawn()
+        .with_context(|| format!("spawning gst-launch from argv: {argv:?}"))?;
+    let gst_pid = child.id();
+    let started_at = Instant::now();
+
+    let _ = match started_template {
+        Event::Started {
+            node_id,
+            stream_size,
+            stream_position,
+            ..
+        } => events.send(Event::Started {
+            node_id,
+            stream_size,
+            stream_position,
+            gst_pid,
+        }),
+        _ => unreachable!("started_template must be Event::Started"),
+    };
+
+    let sigint_sent_at: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+    let sigint_sent_at_for_thread = Arc::clone(&sigint_sent_at);
+    let _stop_thread = thread::Builder::new()
+        .name("stop-watcher".into())
+        .spawn(move || {
+            let stdin = std::io::stdin();
+            let mut line = String::new();
+            let _ = stdin.lock().read_line(&mut line);
+            let _ = kill(Pid::from_raw(gst_pid as i32), Signal::SIGINT);
+            *sigint_sent_at_for_thread.lock().unwrap() = Some(Instant::now());
+        })
+        .context("spawning stop-watcher thread")?;
+
+    let exit = loop {
+        match child.try_wait().context("polling gst-launch exit")? {
+            Some(status) => break status,
+            None => {
+                let sigint_at = *sigint_sent_at.lock().unwrap();
+                if let Some(sent_at) = sigint_at {
+                    if sent_at.elapsed() > SHUTDOWN_GRACE {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(anyhow!(
+                            "gst-launch did not exit within {:?} of SIGINT — output at {} is in \
+                             an undefined state.",
+                            SHUTDOWN_GRACE,
+                            output,
+                        ));
+                    }
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+        }
+    };
+    let elapsed = started_at.elapsed();
+    if !exit.success() {
+        let _ = events.send(Event::Error {
+            kind: "EncoderCrashed".into(),
+            message: format!(
+                "gst-launch exited with status {exit:?} after {elapsed:?}. Common causes: \
+                 PipeWire/X11 source disconnect, encoder error (out of memory, codec missing), \
+                 disk full, output path on a read-only filesystem. Check the gst-launch log \
+                 for details."
+            ),
+        });
+        return Ok(());
+    }
+
+    let output_size_bytes = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
+    let _ = events.send(Event::Stopped { output_size_bytes });
     Ok(())
 }
