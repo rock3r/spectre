@@ -139,10 +139,12 @@ private constructor(
                 ?: error(
                     "Could not determine WM frame extents for window '$title' on this Wayland " +
                         "session. The window-targeted recording path needs `_GTK_FRAME_EXTENTS` " +
-                        "via the system `xprop` binary to compute the stream-relative crop; " +
-                        "without it, the recording would be misaligned (close button clipped, " +
-                        "shadow leaking in). Install xprop (`apt install x11-utils`) or fall " +
-                        "back to WaylandPortalRecorder for region capture."
+                        "to compute the stream-relative crop; without it, the recording would " +
+                        "be misaligned (close button clipped, shadow leaking in). Missing " +
+                        "`xprop`, a non-GTK toolkit, an unsupported compositor, or no matching " +
+                        "X11 window can all produce this result. Install xprop only if the " +
+                        "binary is missing; otherwise fall back to WaylandPortalRecorder for " +
+                        "region capture."
                 )
         val streamRelativeCrop = Rectangle(extents.left, extents.top, region.width, region.height)
         return delegate.start(streamRelativeCrop, output, options)
@@ -165,7 +167,7 @@ private constructor(
  * in from the stream origin, leaving the shadow margin around it. Cropping the stream at the
  * extents gives us the visible window without the shadow padding.
  */
-private fun queryGtkFrameExtentsViaXprop(title: String): Insets? {
+internal fun queryGtkFrameExtentsViaXprop(title: String): Insets? {
     val process =
         try {
             ProcessBuilder("xprop", "-name", title, "_GTK_FRAME_EXTENTS")

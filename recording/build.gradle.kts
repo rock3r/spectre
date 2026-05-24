@@ -5,7 +5,7 @@ import org.gradle.language.jvm.tasks.ProcessResources
 
 /**
  * Maps the host's `os.arch` system property to the Rust target-triple architecture name we ship the
- * Wayland helper under. JVM reports `amd64` for x86_64; Rust's targets call it `x86_64`. Same for
+ * Linux helper under. JVM reports `amd64` for x86_64; Rust's targets call it `x86_64`. Same for
  * `aarch64` (consistent with both JVM and Rust). Anything else falls through unchanged — the
  * recorder's [WaylandHelperBinaryExtractor] will surface a HelperNotBundledException naming the
  * unknown arch, which is more useful than a silent layout mismatch.
@@ -24,7 +24,7 @@ plugins {
     alias(libs.plugins.detekt)
     alias(libs.plugins.ktfmt)
     alias(libs.plugins.kotlinJvm)
-    // kotlinx.serialization for the Wayland helper's JSON wire protocol (#77 stage 3).
+    // kotlinx.serialization for the Linux helper's JSON wire protocol.
     alias(libs.plugins.kotlinSerialization)
     // See `:core`'s build script for the rationale on the shared publish convention. Per-module
     // POM scalars live in this module's own `gradle.properties`. This module publishes the
@@ -47,10 +47,9 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
 
     // kotlinx.serialization-json for the JVM ↔ spectre-wayland-helper protocol. The helper
-    // is a small Rust binary at `recording/native/linux/` that drives the xdg-desktop-portal
-    // handshake, holds the PipeWire FD, and spawns `gst-launch-1.0` with the FD inherited.
-    // The JVM talks to it over stdin/stdout via newline-delimited JSON. See
-    // [WaylandPortalRecorder] for the lifecycle.
+    // is a small Rust binary at `recording/native/linux/` that handles Linux capture:
+    // xdg-desktop-portal/PipeWire on Wayland and GStreamer `ximagesrc` on X11/XWayland.
+    // The JVM talks to it over stdin/stdout via newline-delimited JSON.
     implementation(libs.kotlinx.serialization.json)
 
     detektPlugins(libs.compose.rules.detekt)
@@ -535,14 +534,13 @@ tasks.named<ProcessResources>("processTestResources") {
 // host-platform mac build path: when a pre-built (or stub) helper is staged, the host build
 // would only overwrite the same destination and produce a jar inconsistent with the artefact
 // promised by the release CI. The host build is silenced when either prebuilt path is set.
-// --- Wayland Rust helper binary (issue #80) -------------------------------------------------
+// --- Linux Rust helper binary ---------------------------------------------------------------
 //
-// `WaylandPortalRecorder` ships a small Rust CLI (`recording/native/linux/`) that drives the
-// xdg-desktop-portal ScreenCast handshake, holds the PipeWire FD, and spawns gst-launch with
-// the FD inherited. The shape mirrors the macOS SCK helper above — out-of-process boundary,
-// stdin/stdout JSON protocol, jar-bundled per-arch — and the rationale for going native is
-// also the same: the JVM-side stage-2 attempt with dbus-java + JNR-POSIX hit a UnixFD-
-// unmarshalling bug that wasn't fixable trivially. See #80 comments for the bake-off log.
+// The Linux recorders ship a small Rust CLI (`recording/native/linux/`) that owns
+// GStreamer capture. On Wayland it drives the xdg-desktop-portal ScreenCast handshake,
+// holds the PipeWire FD, and spawns gst-launch with the FD inherited; on X11/XWayland it
+// spawns gst-launch with `ximagesrc`. The shape mirrors the macOS SCK helper above:
+// out-of-process boundary, stdin/stdout JSON protocol, jar-bundled per-arch.
 //
 // Build pipeline (Linux only — no-op on macOS/Windows):
 //   1. `cargo build --release` produces `target/release/spectre-wayland-helper`.
@@ -564,7 +562,7 @@ val waylandHelperResourceDest =
 
 val buildWaylandHelper by
     tasks.registering(Exec::class) {
-        description = "Builds the Linux Wayland Rust helper for the host architecture."
+        description = "Builds the Linux Rust helper for the host architecture."
         group = "build"
         onlyIf { OperatingSystem.current().isLinux }
         workingDir = waylandHelperSource.asFile
@@ -576,7 +574,7 @@ val buildWaylandHelper by
 
 val assembleWaylandHelper by
     tasks.registering(Copy::class) {
-        description = "Stages the Wayland helper binary into the resources tree."
+        description = "Stages the Linux helper binary into the resources tree."
         group = "build"
         onlyIf { OperatingSystem.current().isLinux }
         dependsOn(buildWaylandHelper)
@@ -647,7 +645,7 @@ val perArchCargoBuildTasks = linuxHelperTargets.map { target ->
     val perArchOutput =
         waylandHelperSource.dir("target/${target.triple}/release").file("spectre-wayland-helper")
     tasks.register<Exec>(taskName) {
-        description = "Cross-builds the Wayland helper for ${target.arch}."
+        description = "Cross-builds the Linux helper for ${target.arch}."
         group = "build"
         onlyIf { OperatingSystem.current().isLinux }
         workingDir = waylandHelperSource.asFile
@@ -685,7 +683,7 @@ val perArchStageTasks =
                 .dir("target/${target.triple}/release")
                 .file("spectre-wayland-helper")
         tasks.register<Copy>(taskName) {
-            description = "Stages the ${target.arch} Wayland helper into the resources tree."
+            description = "Stages the ${target.arch} Linux helper into the resources tree."
             group = "build"
             onlyIf { OperatingSystem.current().isLinux }
             dependsOn(buildTask)
@@ -696,7 +694,7 @@ val perArchStageTasks =
 
 val assembleWaylandHelperAllArches by tasks.registering {
     description =
-        "Stages the Wayland helper binary for both x86_64 and aarch64 Linux. Opt-in for " +
+        "Stages the Linux helper binary for both x86_64 and aarch64 Linux. Opt-in for " +
             "distribution builds (slower than host-arch). Wire into processResources by " +
             "passing -PallLinuxArches at invocation time."
     group = "build"
@@ -717,7 +715,7 @@ val useAllLinuxArches = providers.gradleProperty("allLinuxArches").isPresent
 // --- Pre-built native helpers for the release pipeline (#84) --------------------------------
 //
 // The release CI fans out: a macOS runner builds + signs + notarises the universal SCK
-// helper, a Linux runner cross-builds the x86_64 + aarch64 Wayland helpers, and a third
+// helper, a Linux runner cross-builds the x86_64 + aarch64 Linux helpers, and a third
 // "publish" job downloads both artefacts and runs the actual Maven Central upload from a
 // single host. The publish job's host OS can't rebuild every helper itself, so it stages
 // the pre-built ones via the project properties below and overrides the host-platform
@@ -810,7 +808,7 @@ val linuxHelpersDestDir: File =
 val stagePrebuiltLinuxHelpers by
     tasks.registering(Copy::class) {
         description =
-            "Stages pre-built Linux Wayland helpers from a directory tree. Sourced from " +
+            "Stages pre-built Linux helpers from a directory tree. Sourced from " +
                 "-PprebuiltLinuxHelpersDir=<dir> which must contain " +
                 "`x86_64/spectre-wayland-helper` and `aarch64/spectre-wayland-helper`."
         group = "build"
@@ -844,8 +842,8 @@ tasks.register<JavaExec>("runScreenCaptureKitSmoke") {
 }
 
 // Manual still-screenshot smoke for AutoScreenshotter. Opens a JFrame and writes a PNG on
-// macOS/Windows/Linux X11; on Linux Wayland it verifies the current unsupported still-image
-// contract and points users at the window-targeted portal video smoke.
+// macOS/Windows/Linux X11/XWayland/Linux Wayland. Wayland runs through the compositor's
+// portal dialog, so manual acceptance may be required.
 tasks.register<JavaExec>("runWindowScreenshotSmoke") {
     group = "verification"
     description =
@@ -905,7 +903,7 @@ tasks.register<JavaExec>("runFfmpegGdigrabSmoke") {
     mainClass.set("dev.sebastiano.spectre.recording.FfmpegGdigrabSmoke")
 }
 
-// Manual smoke for the Linux x11grab path (#75). Counterpart to the gdigrab/SCK smokes.
+// Manual smoke for the legacy explicit Linux x11grab path. Counterpart to the gdigrab/SCK smokes.
 // Requires a working X display (`DISPLAY` env var) — Wayland-only sessions without XWayland
 // will fail at ffmpeg-spawn time, which is the right failure mode for a manual smoke.
 tasks.register<JavaExec>("runFfmpegX11GrabSmoke") {
@@ -916,7 +914,17 @@ tasks.register<JavaExec>("runFfmpegX11GrabSmoke") {
     mainClass.set("dev.sebastiano.spectre.recording.FfmpegX11GrabSmoke")
 }
 
-// Manual smoke for the Wayland portal + PipeWire path (#77 stage 3). Pops the compositor's
+tasks.register<JavaExec>("runLinuxX11RecordingSmoke") {
+    group = "verification"
+    description =
+        "Boots a JFrame, records it for ~3s via the Linux helper's X11/XWayland path, " +
+            "prints output stats."
+    onlyIf { OperatingSystem.current().isLinux }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.LinuxX11RecordingSmoke")
+}
+
+// Manual smoke for the Wayland portal + PipeWire path. Pops the compositor's
 // screen-cast permission dialog on first run; subsequent runs reuse the grant. Linux-only
 // — the JVM-side recorder spawns the `spectre-wayland-helper` Rust binary that does the
 // portal D-Bus handshake + FD-passing into gst-launch.

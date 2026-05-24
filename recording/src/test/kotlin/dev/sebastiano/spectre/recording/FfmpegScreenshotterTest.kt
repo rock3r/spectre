@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package dev.sebastiano.spectre.recording
 
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow

@@ -1,4 +1,5 @@
 @file:JvmName("FfmpegX11GrabSmoke")
+@file:Suppress("DEPRECATION")
 
 package dev.sebastiano.spectre.recording
 

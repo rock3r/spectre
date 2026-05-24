@@ -1,9 +1,9 @@
 # Recording
 
 Screen recording and native still-window screenshots for Spectre scenarios. Region capture
-(Windows Graphics Capture on Windows, ffmpeg on macOS / Linux Xorg, xdg-desktop-portal on
-Linux Wayland), window-targeted video capture, and still screenshot routing live side by
-side — pick by what you need.
+(Windows Graphics Capture on Windows, ffmpeg on macOS, the Linux helper/GStreamer on
+Xorg/Xvfb, xdg-desktop-portal on Linux Wayland), window-targeted video capture, and still
+screenshot routing live side by side — pick by what you need.
 
 The user-facing recorder capability matrix lives in
 [`docs/guide/recording.md`](../docs/guide/recording.md). This README is the in-tree
@@ -13,12 +13,16 @@ implementer's view of the same module.
 
 ### Region capture
 - `Recorder` — interface; produces a `RecordingHandle` for an in-progress capture.
-- `FfmpegRecorder` — ffmpeg-backed region capture. Shells out to a system `ffmpeg` and
+- `FfmpegRecorder` — deprecated legacy explicit ffmpeg-backed region capture. Shells out to a system `ffmpeg` and
   captures the requested region via `avfoundation` on macOS, legacy explicit `gdigrab` on
-  Windows, and `x11grab` on Linux Xorg. Throws on Linux Wayland — use
+  Windows, and legacy explicit `x11grab` on Linux Xorg. Throws on Linux Wayland — use
   `WaylandPortalRecorder` instead. Resolves the
   binary via `PATH` (`resolveFfmpegPath()`) by default; pass `ffmpegPath` to override (testing,
   non-`PATH` installs).
+- `LinuxX11Recorder` — Linux Xorg/Xvfb region and named-window capture through the bundled
+  Linux helper and GStreamer `ximagesrc`. This is the default Linux Xorg/Xvfb route used by
+  `AutoRecorder`; `ffmpeg` is no longer required for that path. The helper currently accepts
+  only `RecordingOptions.codec = "libx264"` or `"x264enc"` for recording.
 
 ### Window-targeted capture
 - `screencapturekit.ScreenCaptureKitRecorder` — forks a bundled Swift helper that drives
@@ -27,19 +31,20 @@ implementer's view of the same module.
   window moving across the screen. macOS only. Implements `WindowRecorder`.
 - `screencapturekit.WindowRecorder` — interface for window-targeted backends. SCK is the
   macOS implementation; `windows.WindowsGraphicsCaptureRecorder` covers Windows, and
-  `WaylandPortalWindowRecorder` covers Linux Wayland.
+  `LinuxX11Recorder`/`WaylandPortalWindowRecorder` cover Linux Xorg/Xvfb and Wayland.
 - `windows.WindowsGraphicsCaptureRecorder` — WGC + `MediaTranscoder` MP4 capture on Windows.
   Window mode follows the window across moves and captures the target window surface
   instead of a screen rectangle. Region/fullscreen mode records a fixed monitor rectangle.
   Both modes use the `spectre-recording-windows` runtime helper.
-- `FfmpegWindowRecorder` — legacy explicit `gdigrab title=` capture on Windows. Follows the
+- `FfmpegWindowRecorder` — deprecated legacy explicit `gdigrab title=` capture on Windows. Follows the
   window across moves and resizes; requires a non-blank exact title and `ffmpeg` on `PATH`.
 - `portal.WaylandPortalWindowRecorder` — Linux Wayland window-targeted capture via
   `xdg-desktop-portal`'s `SourceType.WINDOW`. Captures only the picked window's pixels (no
   leakage from occluding apps), but Spectre's crop is fixed at `start()` time — if the user
   moves or resizes the window during the recording, the crop no longer aligns with the
   window's pixels and the output is misaligned. Requires `xprop` and a compositor publishing
-  `_GTK_FRAME_EXTENTS` (validated on GNOME/Mutter).
+  `_GTK_FRAME_EXTENTS` (validated on GNOME/Mutter for GTK/XWayland windows; non-GTK toolkits
+  and other compositors may not publish it).
 
   Decision rationale + alternatives considered are written up in the bridge strategy doc kept
   in `.plans/`.
@@ -48,8 +53,9 @@ implementer's view of the same module.
 - `AutoRecorder` — high-level wrapper that takes a `WindowRecorder`, a `Recorder`, and the
   Linux portal recorders (when wired). Routing is Wayland-first (window-targeted portal,
   region portal, or loud failure if no portal recorder is wired), then macOS SCK for
-  window capture, Windows Graphics Capture for Windows window/region capture, and ffmpeg
-  region capture for macOS / Linux Xorg explicit regions. If the Windows WGC helper
+  window capture, Windows Graphics Capture for Windows window/region capture, Linux helper
+  capture for Linux Xorg/Xvfb window/region capture, and ffmpeg region capture for macOS.
+  If the Windows WGC helper
   artifact is absent, `startRegion(...)` falls back to the legacy ffmpeg `gdigrab`
   region path for compatibility. It also uses ffmpeg for Windows region calls with custom
   `RecordingOptions.codec` or `screenIndex`, because the WGC backend cannot honour those
@@ -57,19 +63,21 @@ implementer's view of the same module.
   (permissions denied, window not found, helper crash) propagate with actionable messages
   instead of silently changing capture semantics.
 - `AutoScreenshotter` — high-level still-image router. Uses ScreenCaptureKit window capture
-  on macOS, Windows Graphics Capture on Windows, and explicit `x11grab` region fallback on
-  Linux X11. Wayland still screenshots fail loudly for now; use `WaylandPortalWindowRecorder`
-  for window-scoped video until the helper can return image buffers.
+  on macOS, Windows Graphics Capture on Windows, and the Linux helper on Xorg/Xvfb and
+  Wayland. Wayland still screenshots require the compositor portal dialog to be accepted.
+  The explicit `FfmpegRegionScreenshotter` and `FfmpegWindowScreenshotter` classes are
+  deprecated legacy escape hatches.
 - `./gradlew :recording:runWindowScreenshotSmoke` — manual cross-platform smoke for
-  `AutoScreenshotter`. It writes a PNG on macOS, Windows, and Linux X11, and verifies the
-  expected unsupported message on Linux Wayland. For Wayland window-source video, run
-  `./gradlew :recording:runWaylandPortalWindowSmoke`.
+  `AutoScreenshotter`. It writes a PNG on macOS, Windows, Linux Xorg/Xvfb, and Linux
+  Wayland. For Wayland window-source video, run `./gradlew :recording:runWaylandPortalWindowSmoke`.
 
 ### Shared
-- `RecordingHandle` — `AutoCloseable`. Stop sends `q` on stdin (the documented clean-shutdown
-  signal for both ffmpeg and the ScreenCaptureKit helper), waits up to 5 s for a graceful exit,
-  then SIGTERM / SIGKILL fallback.
+- `RecordingHandle` — `AutoCloseable`. Stop uses the backend's clean-shutdown path (`q` for
+  ffmpeg/SCK-style helpers, JSON `Stop` for the Linux helper), waits for a graceful exit, then
+  escalates to process termination when the backend supports that lifecycle.
 - `RecordingOptions` — frame rate, cursor capture, codec.
+  Custom codecs are ffmpeg-backend-specific today; the Linux helper/GStreamer path rejects
+  non-x264 codec strings until encoder pipelines are represented structurally.
 - `MacOsRecordingPermissions.diagnose()` — best-effort startup diagnostic for Screen Recording
   and Accessibility permissions. Full native detection (`CGPreflightScreenCaptureAccess`,
   `AXIsProcessTrusted`) is a future improvement — the SCK helper detects TCC denial by exit
@@ -79,14 +87,16 @@ implementer's view of the same module.
 
 | Capability | Status |
 |---|---|
-| macOS region capture (`avfoundation`) | ✅ `FfmpegRecorder` |
+| macOS region capture (`avfoundation`) | ✅ deprecated `FfmpegRecorder` |
 | macOS window-targeted capture (ScreenCaptureKit) | ✅ `ScreenCaptureKitRecorder` |
 | Embedded `ComposePanel` (`windowHandle == 0L`) | ✅ region capture (window-targeted not applicable) |
 | Windows region/fullscreen capture (Windows Graphics Capture) | ✅ `WindowsGraphicsCaptureRecorder` |
-| Windows legacy region capture (`gdigrab`) | ✅ `FfmpegRecorder` |
+| Windows legacy region capture (`gdigrab`) | ✅ deprecated `FfmpegRecorder` |
 | Windows window-targeted capture (Windows Graphics Capture) | ✅ `WindowsGraphicsCaptureRecorder` |
-| Windows legacy window-targeted capture (`gdigrab title=`) | ✅ `FfmpegWindowRecorder` |
-| Linux Xorg region capture (`x11grab`) | ✅ `FfmpegRecorder` |
+| Windows legacy window-targeted capture (`gdigrab title=`) | ✅ deprecated `FfmpegWindowRecorder` |
+| Linux Xorg/Xvfb region/window capture (`ximagesrc`) | ✅ `LinuxX11Recorder` |
+| Linux Xorg legacy explicit region capture (`x11grab`) | ✅ deprecated `FfmpegRecorder` |
+| Linux still screenshots (`ximagesrc` or portal/PipeWire) | ✅ `LinuxNativeScreenshotter` |
 | Linux Wayland region capture (xdg-desktop-portal) | ✅ `WaylandPortalRecorder` |
 | Linux Wayland window-targeted capture (xdg-desktop-portal `SourceType.WINDOW`) | ✅ `WaylandPortalWindowRecorder` (fixed crop at `start()` — moves and resizes during recording break alignment) |
 | Audio | ⏸ deferred — add when asked |
@@ -271,7 +281,7 @@ permission grant needed for it.
 ## Build matrix: which helpers each host can produce
 
 Spectre's recording module ships three native helpers — the macOS ScreenCaptureKit helper
-(Swift, requires `swiftc` + macOS frameworks), the Linux Wayland helper (Rust, requires
+(Swift, requires `swiftc` + macOS frameworks), the Linux capture helper (Rust, requires
 `cargo` + `libdbus-1-dev`), and the Windows Graphics Capture helper (.NET 8 SDK). The
 macOS and Linux toolchains do not work cross-host, while the Windows helper is built on
 Windows for both x64 and arm64. The recording jar's layout is host-agnostic — the
@@ -282,10 +292,10 @@ needs is missing.
 
 | Host                | Default `./gradlew :recording:build`                                 | `-PuniversalHelper`               | `-PallLinuxArches`                                      |
 | ------------------- | -------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------- |
-| macOS (arm64)       | host-arch SCK (`native/macos/spectre-screencapture` thin arm64)      | universal SCK (arm64 + x86_64)    | no-op (host can't build Wayland helper)                 |
+| macOS (arm64)       | host-arch SCK (`native/macos/spectre-screencapture` thin arm64)      | universal SCK (arm64 + x86_64)    | no-op (host can't build Linux helper)                   |
 | macOS (x86_64)      | host-arch SCK (thin x86_64)                                          | universal SCK (arm64 + x86_64)    | no-op (same)                                            |
-| Linux x86_64        | host-arch Wayland (`native/linux/x86_64/spectre-wayland-helper`)     | no-op (host can't build SCK)      | x86_64 + aarch64 Wayland helpers                        |
-| Linux aarch64       | host-arch Wayland (`native/linux/aarch64/spectre-wayland-helper`)    | no-op (same)                      | x86_64 + aarch64 Wayland helpers                        |
+| Linux x86_64        | host-arch Linux helper (`native/linux/x86_64/spectre-wayland-helper`) | no-op (host can't build SCK)      | x86_64 + aarch64 Linux helpers                          |
+| Linux aarch64       | host-arch Linux helper (`native/linux/aarch64/spectre-wayland-helper`) | no-op (same)                      | x86_64 + aarch64 Linux helpers                          |
 | Windows             | x64 + arm64 WGC helper (`native/windows/<arch>/spectre-window-capture.exe`) | no-op                             | no-op                                                   |
 
 ### Project-property reference
@@ -297,7 +307,7 @@ needs is missing.
   universal helper, archives it, and submits it to Apple notarization via
   `xcrun notarytool`. Only used by the release workflow; needs Developer ID + notary
   credentials in env vars.
-- `-PallLinuxArches` — on Linux hosts, cross-compile both `x86_64` and `aarch64` Wayland
+- `-PallLinuxArches` — on Linux hosts, cross-compile both `x86_64` and `aarch64` Linux
   helpers from a single host. Requires the Rust `rustup target add` for the foreign
   arch and the matching cross-linker (`gcc-aarch64-linux-gnu` / `gcc-x86_64-linux-gnu`)
   plus the foreign-arch `libdbus-1-dev` sysroot. The CI workflow at
@@ -316,7 +326,7 @@ generated resources staged by `:recording`'s native build tasks:
 - `:recording-windows` expects both `native/windows/x64/spectre-window-capture.exe` and
   `native/windows/arm64/spectre-window-capture.exe` on Windows.
 
-When `-PallLinuxArches` is set the task expects both `x86_64` and `aarch64` Wayland
+When `-PallLinuxArches` is set the task expects both `x86_64` and `aarch64` Linux
 helpers. CI invokes it as
 
     ./gradlew :recording-linux:verifyRecordingLinuxHelpers -PallLinuxArches
@@ -331,7 +341,7 @@ artifacts:
 
 - `spectre-recording` — API/common JVM implementation only.
 - `spectre-recording-macos` — signed and notarized universal ScreenCaptureKit helper.
-- `spectre-recording-linux` — x86_64 and aarch64 Wayland helpers.
+- `spectre-recording-linux` — x86_64 and aarch64 Linux helpers.
 - `spectre-recording-windows` — x64 and arm64 Windows Graphics Capture helpers.
 
 Local builds still produce a host-shaped subset of helpers unless you opt into the

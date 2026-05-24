@@ -136,12 +136,15 @@ class AutoRecorderTest {
     @Test
     fun `startRegion routes to Wayland region portal on Wayland hosts`() {
         val ffmpeg = StubRegionRecorder()
+        val linux = StubRegionRecorder()
         val portal = StubRegionRecorder()
         val recorder =
             autoRecorder(
                 ffmpegRecorder = ffmpeg,
+                linuxRegionRecorder = linux,
                 waylandPortalRecorder = portal,
                 isMacOs = { false },
+                isLinux = { true },
                 isWayland = { true },
             )
         val output = tempMov()
@@ -155,6 +158,32 @@ class AutoRecorderTest {
                 ffmpeg.startCalled,
                 "Wayland region capture must not fall through to ffmpeg",
             )
+            assertFalse(linux.startCalled, "Wayland region capture must use the portal recorder")
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `startRegion routes to Linux helper on Linux X11 hosts`() {
+        val ffmpeg = StubRegionRecorder()
+        val linux = StubRegionRecorder()
+        val recorder =
+            autoRecorder(
+                ffmpegRecorder = ffmpeg,
+                linuxRegionRecorder = linux,
+                isMacOs = { false },
+                isLinux = { true },
+                isWayland = { false },
+            )
+        val output = tempMov()
+        try {
+            val region = Rectangle(20, 30, 160, 90)
+
+            recorder.startRegion(region = region, output = output)
+
+            assertEquals(region, linux.lastRegion)
+            assertFalse(ffmpeg.startCalled, "Linux X11 region capture must not use ffmpeg")
         } finally {
             output.deleteIfExists()
         }
@@ -275,14 +304,17 @@ class AutoRecorderTest {
     @Test
     fun `startWindow routes to Wayland window portal with window bounds`() {
         val ffmpeg = StubRegionRecorder()
+        val linuxWindow = StubWindowRecorder(name = "linux")
         val portalRegion = StubRegionRecorder()
         val portalWindow = StubWaylandWindowSourceRecorder()
         val recorder =
             autoRecorder(
                 ffmpegRecorder = ffmpeg,
+                linuxWindowRecorder = linuxWindow,
                 waylandPortalRecorder = portalRegion,
                 waylandPortalWindowRecorder = portalWindow,
                 isMacOs = { false },
+                isLinux = { true },
                 isWayland = { true },
             )
         val output = tempMov()
@@ -296,7 +328,33 @@ class AutoRecorderTest {
             assertSame(window, portalWindow.lastWindow)
             assertEquals(bounds, portalWindow.lastRegion)
             assertFalse(portalRegion.startCalled, "Window mode must not use region portal")
+            assertEquals(0, linuxWindow.startCallCount)
             assertFalse(ffmpeg.startCalled)
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `startWindow routes to Linux helper on Linux X11 hosts`() {
+        val ffmpeg = StubRegionRecorder()
+        val linuxWindow = StubWindowRecorder(name = "linux")
+        val recorder =
+            autoRecorder(
+                ffmpegRecorder = ffmpeg,
+                linuxWindowRecorder = linuxWindow,
+                isMacOs = { false },
+                isLinux = { true },
+                isWayland = { false },
+            )
+        val output = tempMov()
+        try {
+            val window = StubTitledWindow(title = "MyApp")
+
+            recorder.startWindow(window = window, output = output)
+
+            assertEquals(1, linuxWindow.startCallCount)
+            assertFalse(ffmpeg.startCalled, "Linux X11 window capture must not use ffmpeg")
         } finally {
             output.deleteIfExists()
         }
@@ -358,12 +416,15 @@ private fun autoRecorder(
     ffmpegRecorder: Recorder = StubRegionRecorder(),
     windowsWindowRecorder: WindowRecorder? = null,
     windowsRegionRecorder: Recorder? = null,
+    linuxRegionRecorder: Recorder? = null,
+    linuxWindowRecorder: WindowRecorder? = null,
     waylandPortalRecorder: Recorder? = null,
     waylandPortalWindowRecorder: WaylandWindowSourceRecorder? = null,
     waylandPortalRecorderFailure: Throwable? = null,
     waylandPortalWindowRecorderFailure: Throwable? = null,
     isMacOs: () -> Boolean,
     isWindows: () -> Boolean = { false },
+    isLinux: () -> Boolean = { false },
     isWayland: () -> Boolean = { false },
 ): AutoRecorder =
     AutoRecorder(
@@ -371,12 +432,15 @@ private fun autoRecorder(
         ffmpegRecorder,
         windowsWindowRecorder,
         windowsRegionRecorder,
+        linuxRegionRecorder,
+        linuxWindowRecorder,
         waylandPortalRecorder,
         waylandPortalWindowRecorder,
         waylandPortalRecorderFailure,
         waylandPortalWindowRecorderFailure,
         isMacOs,
         isWindows,
+        isLinux,
         isWayland,
     )
 

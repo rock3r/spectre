@@ -32,6 +32,7 @@ internal class WaylandHelperBinaryExtractor(
 
     private var cached: Path? = null
 
+    @Synchronized
     fun extract(): Path {
         cached?.let {
             return it
@@ -127,11 +128,14 @@ internal class WaylandHelperBinaryExtractor(
 
 /**
  * Raised when the bundled helper binary isn't at the expected classpath resource. Distinct from a
- * bare `IllegalStateException` so [dev.sebastiano.spectre.recording.AutoRecorder] can pattern-match
- * the cross-platform-jar case (built on macOS or Windows, the Linux helper isn't in the jar) and
- * fall back to ffmpeg region capture rather than throwing.
+ * bare `IllegalStateException` so high-level routers can distinguish "helper not packaged" from
+ * operational capture failures.
  *
  * Mirrors [dev.sebastiano.spectre.recording.screencapturekit.HelperNotBundledException]'s role for
  * the SCK helper.
  */
 internal class HelperNotBundledException(message: String) : IllegalStateException(message)
+
+internal object DefaultWaylandHelperBinaryExtractor {
+    val instance: WaylandHelperBinaryExtractor by lazy { WaylandHelperBinaryExtractor() }
+}

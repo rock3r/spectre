@@ -39,12 +39,13 @@ out of scope.
    a testing affordance for the same machine and the same user, not a remote-control
    protocol. See [Agent attach](guide/agent.md).
 5. **Bundled native helpers are trusted artifacts.** Spectre extracts and executes Swift
-   (`spectre-screencapture`) and Rust (`spectre-wayland-helper`) helpers from the published jar
+   (`spectre-screencapture`), Rust/Linux (`spectre-wayland-helper`), and Windows
+   (`spectre-window-capture.exe`) helpers from the published jar
    resources. The extraction path is process-private; the helpers are launched with `argv`
    lists (never shell strings). Developer-only override env vars exist for local iteration
    and are explicitly documented as such — see the
    [`SPECTRE_WAYLAND_HELPER` note](#developer-only-override-env-vars) below.
-6. **External binaries (ffmpeg, xprop, osascript) come from the host PATH.** Spectre does not
+6. **External binaries (ffmpeg, GStreamer, xprop, osascript) come from the host PATH.** Spectre does not
    pin versions and treats them as prerequisites of the host environment.
 
 ## Capabilities and their exposure
@@ -54,7 +55,7 @@ out of scope.
 | Move mouse / press keys | `RobotDriver.click`, `swipe`, `pressKey`, `scrollWheel` | In-process; trusted-local HTTP via `/spectre/click` |
 | Modify clipboard | `RobotDriver.pasteText` (save / set / paste / restore) | In-process |
 | Capture pixels | `RobotDriver.screenshot(region)` — **captures any rectangle of the virtual desktop**, not just the app under test; `AutoScreenshotter` for native/window-targeted still screenshots where available | In-process; trusted-local HTTP via `/spectre/screenshot` for `RobotDriver`; `AutoScreenshotter` is in-process only |
-| Record video | `AutoRecorder`, `FfmpegRecorder`, `ScreenCaptureKitRecorder`, `WaylandPortalRecorder` | In-process only |
+| Record video | `AutoRecorder`, native recorders, deprecated explicit `FfmpegRecorder`, `WaylandPortalRecorder` | In-process only |
 | Execute a helper binary | `HelperBinaryExtractor` (SCK), `WaylandHelperBinaryExtractor` | Local file system, JVM process |
 | Expose any of the above over HTTP | `installSpectreRoutes` mounts the windows / nodes / click / typeText / screenshot routes | **Unauthenticated, plaintext** — host application chooses bind address |
 | Expose any of the above over UDS | `:agent`'s `IpcServer` mounts the same surface plus detach over a Unix Domain Socket | **Unauthenticated** — filesystem mode 0600 (same UID); macOS + Linux only in v1 |
@@ -106,7 +107,7 @@ expansion); items that are hygiene fixes get their own issues.
   the display, including unrelated windows. A per-window / per-node API for remote callers
   is tracked under #96.
 - **Recording output-path validation.** Spectre passes the caller-supplied output path
-  through to ffmpeg / the helpers without rejecting `/dev/`, `/proc/`, symlinks, or
+  through to ffmpeg, GStreamer, or the helpers without rejecting `/dev/`, `/proc/`, symlinks, or
   not-yet-existing parents. Standalone follow-up issue, separate from #96.
 - **`pasteText` clipboard-restore robustness.** A failure during the post-paste restore is
   swallowed via `runCatching` (clipboard may be left holding the typed text). Standalone

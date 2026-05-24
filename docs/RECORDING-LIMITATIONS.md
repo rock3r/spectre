@@ -9,7 +9,7 @@ a video file, and each has its own limitations:
 - **Region capture** — records a fixed `Rectangle` of the virtual desktop, frame by
   frame. The source of pixels is the OS framebuffer (or the platform's nearest
   equivalent — `avfoundation` on macOS, Windows Graphics Capture on Windows,
-  `x11grab` on Linux Xorg, or the Wayland compositor's PipeWire stream on Linux
+  GStreamer `ximagesrc` on Linux Xorg/Xvfb, or the Wayland compositor's PipeWire stream on Linux
   Wayland). Whatever is showing
   on screen inside that rectangle goes into the file, regardless of which window is
   there. Region capture is the only path available when the Compose surface has no
@@ -26,14 +26,16 @@ Backend → mode mapping:
 
 | Backend                       | Mode                                                |
 | ----------------------------- | --------------------------------------------------- |
-| `FfmpegRecorder`              | Region capture (`avfoundation`/legacy explicit `gdigrab`/`x11grab`).|
-| `FfmpegRegionScreenshotter`   | Linux X11 still-image region fallback (`x11grab`).  |
+| `FfmpegRecorder`              | Deprecated legacy explicit region capture (`avfoundation`/`gdigrab`/`x11grab`).|
+| `FfmpegRegionScreenshotter`   | Deprecated legacy explicit Linux X11 still-image region fallback (`x11grab`).  |
+| `LinuxX11Recorder`            | Linux Xorg/Xvfb region and named-window capture via GStreamer `ximagesrc`. |
+| `LinuxNativeScreenshotter`    | Linux Xorg/Xvfb screenshots via `ximagesrc`, and Linux Wayland screenshots via portal/PipeWire one-frame capture. |
 | `WaylandPortalRecorder`       | Region capture, sourced from the Wayland portal (`SourceType.MONITOR`). |
 | `WaylandPortalWindowRecorder` | Window-targeted (Linux Wayland, portal `SourceType.WINDOW` — only the picked window's pixels are captured). |
 | `ScreenCaptureKitRecorder`    | Window-targeted (macOS).                            |
 | `ScreenCaptureKitScreenshotter` | Window-targeted still screenshots (macOS).         |
 | `WindowsGraphicsCaptureRecorder` | Window-targeted and region capture (Windows Graphics Capture). |
-| `FfmpegWindowRecorder`        | Legacy window-targeted (Windows, `gdigrab title=`). |
+| `FfmpegWindowRecorder`        | Deprecated legacy window-targeted (Windows, `gdigrab title=`). |
 | `WindowsWindowScreenshotter`  | Window-targeted still screenshots (Windows Graphics Capture helper). |
 | `AutoRecorder`                | Routes to the right one based on `TitledWindow?`.   |
 | `AutoScreenshotter`           | Routes still screenshots by platform and window.    |
@@ -53,12 +55,24 @@ failure modes, and the section below
   Windows App Runtime 1.8 installed. `AutoRecorder.startRegion(...)` falls back to
   `FfmpegRecorder`/`gdigrab` when that helper artifact is absent, or when the caller
   sets Windows region options that WGC cannot honour (`RecordingOptions.codec` or
-  `screenIndex`). `FfmpegRecorder` also remains available as an explicit legacy backend.
-- **Linux Xorg sessions** — `x11grab` region capture. Reads `DISPLAY`. Routine
+  `screenIndex`). `FfmpegRecorder` also remains available as a deprecated explicit legacy
+  backend.
+- **Linux Xorg/Xvfb sessions** — helper-driven GStreamer `ximagesrc` capture. Reads `DISPLAY`.
+  `LinuxX11Recorder` records fixed regions or a named X11 window; `LinuxNativeScreenshotter`
+  writes one-frame PNGs through the same helper. Routine
   validation has only been on Ubuntu 22.04's Xorg session (one machine, one X server build)
   and on CI under `xvfb-run` (Xorg protocol over a virtual framebuffer, no GPU). Other
   Xorg WMs/distros fall under the "Linux is best-effort, contributions welcome" line in
-  the README.
+  the README. `AutoRecorder` and `AutoScreenshotter` no longer use ffmpeg for this route;
+  install `spectre-recording-linux` and the GStreamer packages instead. The helper's
+  recording pipeline currently supports only `RecordingOptions.codec = "libx264"` or
+  `"x264enc"`; unsupported codec strings fail at `start(...)` with a targeted error rather
+  than building a broken GStreamer pipeline. The explicit ffmpeg classes remain available
+  only as deprecated compatibility escape hatches.
+  Native Wayland sessions with XWayland are different: Mutter does not expose the composited
+  desktop through the XWayland root framebuffer, so root-region `ximagesrc` capture can be black
+  except for the cursor. `AutoRecorder` detects Wayland before this backend and routes region
+  capture through the portal; do not force the X11 backend in that environment.
 - **Linux Wayland sessions** — `gst-launch-1.0` driven through the
   `xdg-desktop-portal` ScreenCast interface, with the PipeWire FD passed to the encoder by a
   small Rust helper binary from `spectre-recording-linux` (`spectre-wayland-helper`, sources at
@@ -67,8 +81,9 @@ failure modes, and the section below
   monitor, helper crops to the requested rectangle) and `WaylandPortalWindowRecorder`
   (window-targeted, portal `SourceType.WINDOW` — user picks a specific window, the
   granted PipeWire stream contains only that window's pixels, the helper crops to the
-  window's pixel size, #85). Both spawn the helper and talk to it over stdin/stdout via
-  newline-delimited JSON. **First call within a session pops the compositor's
+  window's pixel size, #85). `LinuxNativeScreenshotter` uses the same helper for one-frame
+  portal/PipeWire PNG capture. All of these paths spawn the helper and talk to it over
+  stdin/stdout via newline-delimited JSON. **First call within a session pops the compositor's
   "share your screen" dialog** (asking for a window or a monitor depending on which
   recorder is running); subsequent calls reuse the grant via the portal's `restore_token`.
   Why the helper: a pure-JVM attempt hit a dbus-java UnixFD-unmarshalling bug that wasn't
@@ -77,7 +92,8 @@ failure modes, and the section below
   `fcntl(F_SETFD, ...)` knob. The helper-as-subprocess shape also matches the
   `spectre-recording-macos` SCK helper (`recording/native/macos/`) on the JVM side.
 
-  **Window-targeted Wayland needs `xprop` on `PATH`.** Mutter renders window-source-type
+  **Window-targeted Wayland needs `xprop` on `PATH` and GTK/Mutter-style frame extents.**
+  Mutter renders window-source-type
   streams with the WM-imposed invisible-shadow extents around the visible window —
   typically 25 px on each side for GTK CSD windows on GNOME — but AWT's
   `Frame.getBounds()` reports only the inner window. `WaylandPortalWindowRecorder` queries
@@ -91,7 +107,14 @@ failure modes, and the section below
   `TitledWindow` with a null/blank title, the recorder throws `IllegalStateException`
   rather than producing a silently-misaligned recording. The fallback is explicit
   region capture: call `AutoRecorder.startRegion(...)`, or instantiate
-  `WaylandPortalRecorder` directly.
+  `WaylandPortalRecorder` directly. Installing `xprop` only fixes the missing-binary
+  case; it will not make Qt, JavaFX, Electron, SDL, KDE, or wlroots windows publish the
+  GTK-specific property.
+
+  Wayland still screenshots use the same portal grant model as video. They are supported
+  only when the compositor's ScreenCast portal can provide the requested monitor or window
+  stream and the user accepts the dialog. In unattended SSH/headless runs, a hidden or
+  unanswered portal dialog surfaces as a helper timeout rather than a silent blank PNG.
 
   Validated end-to-end on Ubuntu 22.04/GNOME 42/mutter, Ubuntu 24.04/GNOME 46/mutter, and
   Ubuntu 26.04/GNOME 50/mutter (real-pixel mp4 with the smoke runner, 2026-05-02 and

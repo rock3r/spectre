@@ -29,12 +29,29 @@ internal sealed interface Command {
     @Serializable
     @SerialName("start")
     data class Start(
+        @SerialName("backend") val backend: CaptureBackend = CaptureBackend.WAYLAND_PORTAL,
+        @SerialName("target") val target: CaptureTarget = CaptureTarget.REGION,
         @SerialName("source_types") val sourceTypes: List<SourceType>,
+        @SerialName("display_name") val displayName: String? = null,
+        @SerialName("window_title") val windowTitle: String? = null,
         @SerialName("cursor_mode") val cursorMode: CursorMode,
         @SerialName("frame_rate") val frameRate: Int,
         @SerialName("region") val region: Region,
         @SerialName("output") val output: String,
         @SerialName("codec") val codec: String,
+    ) : Command
+
+    @Serializable
+    @SerialName("screenshot")
+    data class Screenshot(
+        @SerialName("backend") val backend: CaptureBackend,
+        @SerialName("target") val target: CaptureTarget,
+        @SerialName("source_types") val sourceTypes: List<SourceType> = emptyList(),
+        @SerialName("display_name") val displayName: String? = null,
+        @SerialName("window_title") val windowTitle: String? = null,
+        @SerialName("cursor_mode") val cursorMode: CursorMode,
+        @SerialName("region") val region: Region,
+        @SerialName("output") val output: String,
     ) : Command
 
     @Serializable @SerialName("stop") data object Stop : Command
@@ -63,11 +80,27 @@ internal sealed interface Event {
     data class Stopped(@SerialName("output_size_bytes") val outputSizeBytes: Long) : Event
 
     @Serializable
+    @SerialName("screenshot_saved")
+    data class ScreenshotSaved(@SerialName("output_size_bytes") val outputSizeBytes: Long) : Event
+
+    @Serializable
     @SerialName("error")
     data class Error(
         @SerialName("kind") val kind: String,
         @SerialName("message") val message: String,
     ) : Event
+}
+
+@Serializable
+internal enum class CaptureBackend {
+    @SerialName("wayland_portal") WAYLAND_PORTAL,
+    @SerialName("x11") X11,
+}
+
+@Serializable
+internal enum class CaptureTarget {
+    @SerialName("region") REGION,
+    @SerialName("window") WINDOW,
 }
 
 @Serializable

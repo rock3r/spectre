@@ -126,8 +126,8 @@ Returns a `BufferedImage` you can save, hash, or compare against a baseline.
     overlaps the rectangle, those overlapping pixels can appear in the image; if the
     target is partially off-screen, Spectre can only capture the visible screen area.
     For top-level windows, `spectre-recording` also exposes `AutoScreenshotter`,
-    which uses native/window-targeted backends on macOS and Windows, and an explicit
-    X11 region fallback on Linux X11.
+    which uses native/window-targeted backends on macOS and Windows, and the Linux
+    helper on Xorg/Xvfb and Wayland.
 
 !!! note "Captures are normalised to sRGB"
     The returned `BufferedImage` is always sRGB (`TYPE_INT_ARGB` with an sRGB

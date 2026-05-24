@@ -135,8 +135,9 @@ corresponding doc page is touched:
   `Window.focusOwner`, so `typeText` works in `apple.awt.UIElement=true` helper JVMs.
   Keep documenting `pasteText` and OS recording as separate macOS-service paths that
   UIElement mode can still break.
-- **Linux Wayland + `LinuxX11Grab` throws.** It does not silently produce black
-  frames. The thrown message points users at `AutoRecorder`/`WaylandPortalRecorder`.
+- **Linux Wayland routes through the portal.** Xorg/Xvfb capture uses the Linux
+  helper's GStreamer `ximagesrc` path; native Wayland capture uses the portal helper.
+  Do not document a silent X11 fallback on Wayland.
 
 ## Style conventions
 

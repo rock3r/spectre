@@ -2,7 +2,6 @@
 
 package dev.sebastiano.spectre.recording
 
-import dev.sebastiano.spectre.recording.FfmpegBackend.Companion.detectWaylandSession
 import dev.sebastiano.spectre.recording.screencapturekit.asTitledWindow
 import java.awt.BorderLayout
 import java.awt.Color
@@ -27,9 +26,8 @@ import kotlin.system.exitProcess
  * Expected behavior:
  * - macOS: captures a PNG through ScreenCaptureKit (`spectre-screencapture --mode screenshot`).
  * - Windows: captures a PNG through the Windows Graphics Capture helper.
- * - Linux X11: captures a PNG through ffmpeg `x11grab` region fallback.
- * - Linux Wayland: verifies the current still-screenshot unsupported error and exits successfully.
- *   Use `runWaylandPortalWindowSmoke` for the Wayland window-targeted video path.
+ * - Linux X11/XWayland: captures a PNG through the Linux helper's GStreamer `ximagesrc` path.
+ * - Linux Wayland: captures a PNG through the Linux helper's portal + PipeWire one-frame path.
  */
 fun main() {
     var exitCode = 0
@@ -59,23 +57,6 @@ private fun runSmoke() {
         Thread.sleep(WINDOW_SETTLE_MS)
 
         val screenshotter = AutoScreenshotter()
-        if (isWaylandSession()) {
-            val error =
-                runCatching { screenshotter.captureWindow(frame.asTitledWindow()) }
-                    .exceptionOrNull()
-            check(error is UnsupportedOperationException) {
-                "Expected Wayland still screenshot to be unsupported, got $error"
-            }
-            check(error.message.orEmpty().contains("Wayland")) {
-                "Expected Wayland guidance in unsupported message, got: ${error.message}"
-            }
-            println(
-                "Wayland still screenshot unsupported as expected; use " +
-                    "`./gradlew :recording:runWaylandPortalWindowSmoke` for window video."
-            )
-            return
-        }
-
         val image = screenshotter.captureWindow(frame.asTitledWindow())
         check(image.width > 1 && image.height > 1) {
             "Captured image has invalid dimensions: ${image.width}x${image.height}"
@@ -130,10 +111,6 @@ private fun openSmokeWindow(): Pair<JFrame, JLabel> {
     }
     return checkNotNull(frameRef) to checkNotNull(labelRef)
 }
-
-private fun isWaylandSession(): Boolean =
-    System.getProperty("os.name").orEmpty().lowercase().contains("linux") &&
-        detectWaylandSession(System::getenv)
 
 private const val WINDOW_WIDTH: Int = 360
 private const val WINDOW_HEIGHT: Int = 180

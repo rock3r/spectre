@@ -53,6 +53,18 @@ public final class dev/sebastiano/spectre/recording/FfmpegWindowScreenshotter : 
 	public fun captureWindow (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;J)Ljava/awt/image/BufferedImage;
 }
 
+public final class dev/sebastiano/spectre/recording/LinuxNativeScreenshotter : dev/sebastiano/spectre/recording/RegionScreenshotter, dev/sebastiano/spectre/recording/WindowScreenshotter {
+	public fun <init> ()V
+	public fun captureRegion (Ljava/awt/Rectangle;)Ljava/awt/image/BufferedImage;
+	public fun captureWindow (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;J)Ljava/awt/image/BufferedImage;
+}
+
+public final class dev/sebastiano/spectre/recording/LinuxX11Recorder : dev/sebastiano/spectre/recording/Recorder, dev/sebastiano/spectre/recording/screencapturekit/WindowRecorder {
+	public fun <init> ()V
+	public fun start (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;JLjava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;)Ldev/sebastiano/spectre/recording/RecordingHandle;
+	public fun start (Ljava/awt/Rectangle;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;)Ldev/sebastiano/spectre/recording/RecordingHandle;
+}
+
 public final class dev/sebastiano/spectre/recording/MacOsRecordingPermissions {
 	public static final field INSTANCE Ldev/sebastiano/spectre/recording/MacOsRecordingPermissions;
 	public final fun diagnose ()Ldev/sebastiano/spectre/recording/PermissionDiagnostic;
