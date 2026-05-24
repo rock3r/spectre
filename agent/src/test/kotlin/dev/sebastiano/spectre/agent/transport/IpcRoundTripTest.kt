@@ -209,6 +209,104 @@ class IpcRoundTripTest {
     }
 
     @Test
+    fun `server survives malformed frame length prefix and keeps accepting`() {
+        // Regression for Bugbot MEDIUM finding on commit fcf5b14: `Framing.readFrame`
+        // throws `IllegalStateException` via `check(length in 0..MAX_FRAME_BYTES)` when a
+        // client sends a negative or over-cap length header. The earlier per-connection
+        // catch only handled `IOException`, so a single misbehaving client sending an
+        // invalid length prefix would escape, kill the accept thread, and leave the agent
+        // permanently unreachable — exactly the "MUST NOT happen" scenario the per-
+        // connection catch's docstring promises.
+        val server = IpcServer(udsPath, stubHandler())
+        server.use {
+            awaitSocket(udsPath)
+
+            // Send a frame with a deliberately invalid length prefix (negative). The server
+            // will throw `IllegalStateException` inside `readFrame`; we need the per-
+            // connection catch to absorb it without killing the loop.
+            java.nio.channels.SocketChannel.open(java.net.UnixDomainSocketAddress.of(udsPath))
+                .use { rawClient ->
+                    val invalidHeader =
+                        java.nio.ByteBuffer.allocate(Int.SIZE_BYTES)
+                            .order(java.nio.ByteOrder.BIG_ENDIAN)
+                            .putInt(-1)
+                            .flip()
+                    while (invalidHeader.hasRemaining()) {
+                        rawClient.write(invalidHeader)
+                    }
+                }
+
+            // A clean Ping must still round-trip, with a finite timeout because the
+            // regression mode is the server going PERMANENTLY UNREACHABLE — without the
+            // timeout the failing test would just hang the suite.
+            org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+                java.time.Duration.ofSeconds(3),
+                {
+                    IpcClient(udsPath).use { client ->
+                        assertEquals(
+                            AgentResponse.Pong,
+                            client.send(AgentRequest.Ping),
+                            "expected the accept loop to have absorbed the IllegalStateException " +
+                                "from the malformed length prefix and still serve a clean Ping",
+                        )
+                    }
+                },
+                "the accept loop did not respond within 3s — the per-connection catch likely " +
+                    "regressed to only catching IOException, letting the IllegalStateException " +
+                    "from the bad length prefix kill the loop",
+            )
+        }
+    }
+
+    @Test
+    fun `Detach cleanup fires even when the response write fails`() {
+        // Regression for Bugbot MEDIUM finding on commit fcf5b14: in `handleOneRequest`,
+        // when `Framing.writeFrame` throws `IOException` while writing the `Detached`
+        // response (e.g. the attaching client closed mid-Detach), the previous code never
+        // reached `running.set(false)` or `onDetach()`. The `IOException` would propagate
+        // through `handleConnection`, get absorbed by the per-connection catch — leaving
+        // the server alive but with `SpectreAgent.agentState` still non-null. The next
+        // re-attach attempt would hit the idempotency guard, skip creating a new IPC
+        // server, and the caller's `waitForUdsPath` would time out. The target JVM
+        // becomes permanently un-attachable until restart.
+        //
+        // Test approach: open a raw `SocketChannel`, send a Detach frame, immediately
+        // close the channel. The server reads Detach, processes it, calls
+        // `Framing.writeFrame(Detached)` against a closed peer (which races to broken
+        // pipe). The `onDetach` callback MUST still fire because the try/finally guards it.
+        val detached = java.util.concurrent.CountDownLatch(1)
+        val server = IpcServer(udsPath, stubHandler(), onDetach = { detached.countDown() })
+        server.use {
+            awaitSocket(udsPath)
+
+            java.nio.channels.SocketChannel.open(java.net.UnixDomainSocketAddress.of(udsPath))
+                .use { rawClient ->
+                    val detachBytes = WireCodec.encode(AgentRequest.Detach)
+                    val frame =
+                        java.nio.ByteBuffer.allocate(Int.SIZE_BYTES + detachBytes.size).apply {
+                            putInt(detachBytes.size)
+                            put(detachBytes)
+                            flip()
+                        }
+                    while (frame.hasRemaining()) {
+                        rawClient.write(frame)
+                    }
+                    // Close immediately — the server's writeFrame for the Detached response
+                    // will race against a closed client. Whether the broken-pipe IOException
+                    // actually fires depends on OS write buffering; either way, `onDetach`
+                    // MUST fire because of the try/finally guard.
+                }
+
+            assertTrue(
+                detached.await(2, java.util.concurrent.TimeUnit.SECONDS),
+                "onDetach must fire even when the response writeFrame fails — if this " +
+                    "times out, the Detach side-effects regressed to only running on " +
+                    "successful response write",
+            )
+        }
+    }
+
+    @Test
     fun `Server converts a checked TimeoutException from the handler into an Error and keeps the accept loop alive`() {
         // Regression: `BlockingSuspendInvoker.await()` throws
         // `java.util.concurrent.TimeoutException`

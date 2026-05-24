@@ -103,15 +103,24 @@ constructor(
             // `handleConnection` propagated to the outer catch, terminated the accept
             // thread, and — combined with `SpectreAgent.bootstrap`'s "already bootstrapped"
             // idempotency guard — left the agent permanently unreachable for the rest of
-            // the target JVM's lifetime. Bugbot caught it (MEDIUM); the regression test
-            // in `IpcRoundTripTest` ("server survives a client that closes mid-request…")
-            // pins the contract.
+            // the target JVM's lifetime. Bugbot caught the original (MEDIUM); the regression
+            // test in `IpcRoundTripTest` ("server survives a client that closes mid-request
+            // …") pins the contract.
+            //
+            // Catch widened from `IOException` to `Exception` for the same reason: a
+            // misbehaving client can send a malformed length prefix and `Framing.readFrame`'s
+            // `check(length in 0..MAX_FRAME_BYTES)` throws `IllegalStateException` (not an
+            // `IOException`). The pinned regression test "server survives malformed frame
+            // length prefix" covers that path. Errors (OOM, StackOverflow) are intentionally
+            // NOT caught. Detekt's TooGenericExceptionCaught is suppressed with rationale.
+            @Suppress("TooGenericExceptionCaught")
             try {
                 handleConnection(client)
-            } catch (ex: IOException) {
+            } catch (ex: Exception) {
                 if (running.get()) {
                     System.err.println(
-                        "[spectre-agent] connection terminated: ${ex.message ?: "<no message>"}"
+                        "[spectre-agent] connection terminated " +
+                            "(${ex.javaClass.simpleName}): ${ex.message ?: "<no message>"}"
                     )
                 }
             }
@@ -167,13 +176,26 @@ constructor(
             } catch (ex: Exception) {
                 AgentResponse.Error("${ex.javaClass.simpleName}: ${ex.message ?: "<no message>"}")
             }
-        Framing.writeFrame(output, WireCodec.encode(response))
-        if (request is AgentRequest.Detach) {
-            running.set(false)
-            onDetach()
-            return false
+        // Detach side-effects (`running.set(false)` + `onDetach()`) MUST run even if writing
+        // the response fails — e.g. the attaching client closed mid-Detach. Without the
+        // `finally`, an `IOException` from `writeFrame` would propagate out, the per-
+        // connection catch in `acceptLoop` would absorb it, and the server would stay
+        // alive — but `SpectreAgent.agentState` would remain non-null, so the next
+        // re-attach attempt hits the idempotency guard, skips creating a new IPC server
+        // for the new UDS path, and the caller's `waitForUdsPath` polls until
+        // `AgentBootstrapTimeoutException`. The target JVM would become permanently
+        // un-attachable until restart. Bugbot caught this (MEDIUM); the regression test
+        // "Detach cleanup fires even when the response write fails" pins the contract.
+        val isDetach = request is AgentRequest.Detach
+        try {
+            Framing.writeFrame(output, WireCodec.encode(response))
+        } finally {
+            if (isDetach) {
+                running.set(false)
+                onDetach()
+            }
         }
-        return true
+        return !isDetach
     }
 
     /**
