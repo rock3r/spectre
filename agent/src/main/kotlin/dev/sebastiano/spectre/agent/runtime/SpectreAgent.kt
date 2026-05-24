@@ -170,6 +170,13 @@ public object SpectreAgent {
     }
 
     private fun invokeWindowsCountReflectively(automator: Any): Int {
+        // `ComposeAutomator.windows` is a stale `@Volatile` cache populated by
+        // `refreshWindows()` — reading the getter directly without refreshing first reports
+        // 0 even when the target has visible windows. The main per-request handler in
+        // `ReflectiveAutomatorHandler.handleWindows` refreshes before every read; this
+        // attach-time diagnostic must do the same or it reports "windows = 0" misleadingly.
+        // Bugbot caught it (LOW).
+        automator.javaClass.getMethod("refreshWindows").invoke(automator)
         val getWindowsMethod = automator.javaClass.getMethod("getWindows")
         val windows = getWindowsMethod.invoke(automator) as List<*>
         return windows.size
