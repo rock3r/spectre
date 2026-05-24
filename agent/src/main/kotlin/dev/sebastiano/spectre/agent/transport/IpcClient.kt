@@ -23,8 +23,23 @@ import java.nio.file.Path
  */
 internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) : AutoCloseable {
     private val channel: SocketChannel =
-        SocketChannel.open(StandardProtocolFamily.UNIX).apply {
-            connect(UnixDomainSocketAddress.of(udsPath))
+        SocketChannel.open(StandardProtocolFamily.UNIX).also { channel ->
+            // Outer `success` sentinel + `finally` so the channel is unconditionally closed
+            // if `connect()` throws (e.g. agent hasn't bound yet, connection refused, path
+            // doesn't exist). Without this, the opened `SocketChannel` would only get
+            // reclaimed on the next GC cycle via `sun.nio.ch.SocketChannelImpl`'s registered
+            // `Cleaner` — relying on GC for resource lifecycle is anti-pattern. Same fix
+            // shape as `IpcServer`'s constructor (Bugbot LOW on b98e93c) applied to the
+            // symmetric client side. Bugbot caught this side too (LOW). No unit-level
+            // regression test — the GC-reclaim path makes an FD-count assertion flaky
+            // (see the explanatory NOTE in `IpcRoundTripTest`).
+            var success = false
+            try {
+                channel.connect(UnixDomainSocketAddress.of(udsPath))
+                success = true
+            } finally {
+                if (!success) runCatching { channel.close() }
+            }
         }
     private val input: InputStream = Channels.newInputStream(channel)
     private val output: OutputStream = Channels.newOutputStream(channel)

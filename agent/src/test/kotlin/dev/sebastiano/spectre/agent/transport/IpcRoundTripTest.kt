@@ -248,6 +248,18 @@ class IpcRoundTripTest {
         )
     }
 
+    // NOTE: No regression test for the IpcClient FD-leak fix (Bugbot LOW on 9576bcf, fixed
+    // in the same patch as this comment). `SocketChannel` is registered with the JDK's
+    // `Cleaner` (see `sun.nio.ch.SocketChannelImpl`), so leaked client channels get
+    // reclaimed by GC eventually — masking the bug from the
+    // `openFileDescriptorCount`-based technique we use for the symmetric `IpcServer` FD-leak
+    // test (`ServerSocketChannel` is also Cleaner-backed but empirically kept alive longer
+    // by other JDK references, so its leak shows up in the FD count). Attempting the same
+    // measurement against `IpcClient` produced false-greens because GC reaped the FDs
+    // between iterations. The semantic fix (close-on-failure rather than rely on GC) is
+    // still applied — see the `also { channel -> ... }` block in `IpcClient`'s primary
+    // constructor.
+
     @Test
     fun `server survives malformed frame length prefix and keeps accepting`() {
         // Regression for Bugbot MEDIUM finding on commit fcf5b14: `Framing.readFrame`
