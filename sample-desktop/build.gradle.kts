@@ -63,6 +63,20 @@ tasks.withType<Test>().configureEach { useJUnitPlatform() }
 // invocation (`--no-configuration-cache`, the bigger hammer), pin the validation Test tasks to
 // a single-usage shared `BuildService` so Gradle serializes them while CC stays on. Idea: Nelson
 // Osacky / Emil Kantis — https://kantis.github.io/posts/preventing-gradle-task-parallelism/.
+//
+// The BuildService eliminated the parallel-scheduling shape but a residual cold-daemon flake
+// kept reappearing on validation-linux (e.g. PR #156 runs 26355760756, 26357320841,
+// 25927378350): whichever filter-bearing `validationTestLayer*` task happened to be the FIRST
+// validation Test task scheduled would occasionally produce a synthetic "Gradle Test Run …"
+// envelope with a single `<skipped/>` testcase (no method, no reason) and the parent task
+// failing with "No tests found for given includes" — even though the next layer task picked up
+// the same `testClassesDirs` 2 seconds later and ran cleanly. The unfiltered `validationTest`
+// has never been observed to fail in that first slot, and layer tasks have never failed once
+// any validation Test task has already gone through. The `mustRunAfter` below pins the layer
+// tasks to run after `validationTest` whenever both are in the graph (which is always the
+// case on CI — both workflows invoke `:validationTest :validationTestPopupLayers`), so the
+// daemon's class-scan state is warm by the time a filter-bearing task fires. Workaround for
+// the trigger, not a root-cause fix; revisit if Gradle releases a fix or local repros surface.
 abstract class ValidationTestSerialiser : BuildService<BuildServiceParameters.None>
 
 val validationTestSerialiser =
@@ -142,6 +156,12 @@ fun popupLayerTask(suffix: String, layerType: String) =
         filter { includeTestsMatching("$popupLayerVariantTaskName") }
         systemProperty("compose.layers.type", layerType)
         applyValidationJvmArgs()
+        // Workaround the cold-daemon first-validation-Test-task discovery flake — see the
+        // ValidationTestSerialiser block comment above. `mustRunAfter` only orders if
+        // `validationTest` is also in the graph (which it is on CI; both validation workflows
+        // invoke it alongside `:validationTestPopupLayers`). Referenced by name because
+        // `validationTest` is declared further down in this file.
+        mustRunAfter(tasks.named("validationTest"))
     }
 
 val validationTestLayerComponent = popupLayerTask("Component", "COMPONENT")
@@ -161,6 +181,8 @@ val validationTestLayerSameCanvas =
         forkEvery = 1
         filter { includeTestsMatching(popupLayerVariantTaskName) }
         applyValidationJvmArgs()
+        // Same cold-daemon ordering workaround as the popupLayerTask() peers above.
+        mustRunAfter(validationTest)
     }
 
 @Suppress("UNUSED_VARIABLE")
