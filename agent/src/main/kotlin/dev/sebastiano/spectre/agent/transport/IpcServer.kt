@@ -38,33 +38,47 @@ constructor(
 ) : AutoCloseable {
     private val serverChannel: ServerSocketChannel =
         ServerSocketChannel.open(StandardProtocolFamily.UNIX).also { channel ->
-            // Clean up any orphaned socket file from a previous crash; Linux/macOS refuse to bind
-            // if the path already exists, even when stale.
-            Files.deleteIfExists(udsPath)
-            channel.bind(UnixDomainSocketAddress.of(udsPath))
-            // Tighten the socket file permissions to mode 0600 (owner read/write). UDS file
-            // creation respects the process umask, which on common defaults (022) leaves the
-            // socket group/world-readable — broader than the local-only trust model claims.
-            // Explicitly setting the permissions immediately after bind closes that gap.
+            // Outer `success` sentinel + `finally` so the channel is unconditionally closed on
+            // ANY constructor-time failure (bind throwing on a too-long path, `deleteIfExists`
+            // failing, the POSIX permission tightening throwing, ...). Without this, an opened
+            // `ServerSocketChannel` whose bind fails would leak a native file descriptor for
+            // the rest of the JVM's lifetime — `ServerSocketChannel` has no finalizer or
+            // cleaner. Bugbot caught it (LOW); the regression test
+            // `IpcServer constructor releases the ServerSocketChannel when bind fails` pins
+            // the contract by observing `openFileDescriptorCount`.
+            var success = false
             try {
-                Files.setPosixFilePermissions(udsPath, OWNER_ONLY_PERMS)
-            } catch (ex: UnsupportedOperationException) {
-                // Non-POSIX filesystem (e.g. Windows in some setups). Close the channel and
-                // unlink so we don't expose a permissionless socket.
-                runCatching { channel.close() }
-                runCatching { Files.deleteIfExists(udsPath) }
-                throw IOException(
-                    "Filesystem at $udsPath doesn't support POSIX permissions; refusing to " +
-                        "expose a UDS without 0600 access control.",
-                    ex,
-                )
-            } catch (ex: FileSystemException) {
-                runCatching { channel.close() }
-                runCatching { Files.deleteIfExists(udsPath) }
-                throw IOException(
-                    "Failed to set 0600 permissions on UDS at $udsPath: ${ex.message}",
-                    ex,
-                )
+                // Clean up any orphaned socket file from a previous crash; Linux/macOS refuse to
+                // bind if the path already exists, even when stale.
+                Files.deleteIfExists(udsPath)
+                channel.bind(UnixDomainSocketAddress.of(udsPath))
+                // Tighten the socket file permissions to mode 0600 (owner read/write). UDS file
+                // creation respects the process umask, which on common defaults (022) leaves the
+                // socket group/world-readable — broader than the local-only trust model claims.
+                // Explicitly setting the permissions immediately after bind closes that gap.
+                try {
+                    Files.setPosixFilePermissions(udsPath, OWNER_ONLY_PERMS)
+                } catch (ex: UnsupportedOperationException) {
+                    // Non-POSIX filesystem (e.g. Windows in some setups). Bubble up as an
+                    // IOException; the outer `finally` handles channel close + UDS unlink so
+                    // we don't expose a permissionless socket.
+                    throw IOException(
+                        "Filesystem at $udsPath doesn't support POSIX permissions; refusing " +
+                            "to expose a UDS without 0600 access control.",
+                        ex,
+                    )
+                } catch (ex: FileSystemException) {
+                    throw IOException(
+                        "Failed to set 0600 permissions on UDS at $udsPath: ${ex.message}",
+                        ex,
+                    )
+                }
+                success = true
+            } finally {
+                if (!success) {
+                    runCatching { channel.close() }
+                    runCatching { Files.deleteIfExists(udsPath) }
+                }
             }
         }
 

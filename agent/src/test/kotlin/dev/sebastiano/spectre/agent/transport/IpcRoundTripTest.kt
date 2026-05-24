@@ -9,6 +9,7 @@ import kotlin.io.path.deleteIfExists
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.condition.EnabledOnOs
@@ -209,6 +210,45 @@ class IpcRoundTripTest {
     }
 
     @Test
+    fun `IpcServer constructor releases the ServerSocketChannel when bind fails`() {
+        // Regression for Bugbot LOW finding on commit 82be70e: in the `IpcServer` constructor,
+        // `ServerSocketChannel.open()` opens a channel, but if `bind()` (or the `deleteIfExists`
+        // before it, or the POSIX permission tightening after it) throws, the channel was
+        // never closed. `ServerSocketChannel` has no finalizer/cleaner, so the native FD would
+        // persist until JVM exit.
+        //
+        // Direct-evidence approach: observe `UnixOperatingSystemMXBean.openFileDescriptorCount`
+        // before and after N constructor failures. A leaky constructor would grow the count by
+        // ≈ N (one leaked FD per failed bind). The fixed constructor's outer `finally` closes
+        // the channel, so the count should stay flat aside from a few FDs of normal JVM churn.
+        val osBean =
+            java.lang.management.ManagementFactory.getOperatingSystemMXBean()
+                as com.sun.management.UnixOperatingSystemMXBean
+        // Path is way past the `sun_path` cap (~104 bytes macOS, ~108 Linux) so bind must fail.
+        val tooLongUdsPath = Path.of("/tmp", "sp-" + "x".repeat(SUN_PATH_OVERFLOW_LEN) + ".sock")
+
+        // Sanity-check the test scaffolding: bind must actually throw for this path.
+        assertFailsWith<java.io.IOException> { IpcServer(tooLongUdsPath, stubHandler()).use {} }
+
+        // Warm-up — the first few attempts can churn extra FDs from JVM/JNI lazy init
+        // (NIO selectors, etc.) that would dominate the leak signal otherwise.
+        repeat(FD_LEAK_WARMUP) { runCatching { IpcServer(tooLongUdsPath, stubHandler()).use {} } }
+
+        val before = osBean.openFileDescriptorCount
+        repeat(FD_LEAK_ITERATIONS) {
+            assertFailsWith<java.io.IOException> { IpcServer(tooLongUdsPath, stubHandler()).use {} }
+        }
+        val after = osBean.openFileDescriptorCount
+        val growth = after - before
+        assertTrue(
+            growth < FD_LEAK_TOLERANCE,
+            "open FD count grew by $growth after $FD_LEAK_ITERATIONS failed binds " +
+                "(from $before → $after) — tolerance is $FD_LEAK_TOLERANCE. The IpcServer " +
+                "constructor is leaking the ServerSocketChannel on bind failure.",
+        )
+    }
+
+    @Test
     fun `server survives malformed frame length prefix and keeps accepting`() {
         // Regression for Bugbot MEDIUM finding on commit fcf5b14: `Framing.readFrame`
         // throws `IllegalStateException` via `check(length in 0..MAX_FRAME_BYTES)` when a
@@ -376,5 +416,18 @@ class IpcRoundTripTest {
             Thread.sleep(10)
         }
         error("UDS file $path did not appear within ${timeoutMs} ms")
+    }
+
+    private companion object {
+        // Comfortably above macOS's ~104-byte and Linux's ~108-byte `sun_path` cap so the
+        // bind unambiguously fails. Used by the "constructor releases ServerSocketChannel
+        // when bind fails" regression test.
+        const val SUN_PATH_OVERFLOW_LEN: Int = 200
+        // Warm-up + measured iterations for the FD-leak regression test. 50 iterations is
+        // enough that a per-iteration leak would grow the FD count by ~50 — easily detected
+        // even with the tolerance for ambient JVM churn.
+        const val FD_LEAK_WARMUP: Int = 5
+        const val FD_LEAK_ITERATIONS: Int = 50
+        const val FD_LEAK_TOLERANCE: Long = 10
     }
 }
