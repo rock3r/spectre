@@ -36,9 +36,15 @@ internal class BlockingSuspendInvoker(private val timeoutMs: Long = DEFAULT_TIME
      * suspend function's eventual result, or throws the exception that resumed the continuation
      * with failure.
      */
+    // Both spreads below (`*args` into `arrayOf`, `*argsWithCont` into the Java reflection
+    // call) are unavoidable: we need to append `cont` to the caller-supplied vararg array,
+    // then re-spread the result into `Method.invoke`'s Java-side `Object...` parameter so
+    // Kotlin doesn't pass the array as a single argument. The array is small (caller-supplied
+    // suspend-function args + 1 continuation), so the per-call copy is not material.
+    @Suppress("SpreadOperator")
     fun invoke(method: Method, target: Any, vararg args: Any?): Any? {
         val cont = LatchingContinuation()
-        @Suppress("SpreadOperator") val argsWithCont: Array<Any?> = arrayOf(*args, cont)
+        val argsWithCont: Array<Any?> = arrayOf(*args, cont)
         val raw = method.invoke(target, *argsWithCont)
         return if (raw === COROUTINE_SUSPENDED) cont.await(timeoutMs) else raw
     }

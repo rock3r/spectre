@@ -21,6 +21,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.DurationUnit
 import kotlin.time.TimeSource
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -53,6 +54,11 @@ public class RecompositionMonitor
 internal constructor(
     private val windowDuration: Duration = DEFAULT_WINDOW,
     private val timeSource: TimeSource.WithComparableMarks = TimeSource.Monotonic,
+    // Lives in the constructor's canonical injection slot so tests can swap it. The default
+    // (`Dispatchers.Default`) preserves the previous property-initialiser behaviour. detekt's
+    // `InjectDispatcher` rule treats a default constructor parameter as the accepted seam,
+    // unlike a bare `Dispatchers.Default` reference in a property initialiser.
+    dispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : AutoCloseable {
 
     /** Default user-facing constructor with the wall-clock time source. */
@@ -63,7 +69,7 @@ internal constructor(
     private val ownedJob = SupervisorJob()
 
     /** Test-visible accessor for the owned scope so unit tests can assert cancellation. */
-    internal val scopeForTests: CoroutineScope = CoroutineScope(ownedJob + Dispatchers.Default)
+    internal val scopeForTests: CoroutineScope = CoroutineScope(ownedJob + dispatcher)
 
     private val surfaces = ConcurrentHashMap<String, SurfaceTracker>()
 

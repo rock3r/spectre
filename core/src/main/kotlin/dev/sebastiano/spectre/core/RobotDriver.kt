@@ -16,6 +16,7 @@ import java.awt.image.BufferedImage
 import javax.swing.SwingUtilities
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -618,7 +619,15 @@ private fun createAwtRobot(): Robot =
         isAutoWaitForIdle = false
     }
 
-private suspend fun runOffEdt(robot: RobotAdapter, block: suspend () -> Unit) {
+// `dispatcher` defaults to `Dispatchers.IO` because real `java.awt.Robot` calls block and IO is
+// sized for blocking work, but lives in the canonical injection slot (default parameter) so
+// tests/callers can swap it. detekt's `InjectDispatcher` rule treats a default-parameter value
+// as the accepted injection seam.
+private suspend fun runOffEdt(
+    robot: RobotAdapter,
+    block: suspend () -> Unit,
+    dispatcher: CoroutineDispatcher = Dispatchers.IO,
+) {
     // Adapters that don't need the off-EDT marshal (synthetic, headless-throwing) can run
     // inline even on the EDT — switching to another dispatcher would force the synthetic
     // adapter to bounce IO → EDT for every dispatch when the caller is already on the EDT,
@@ -628,9 +637,7 @@ private suspend fun runOffEdt(robot: RobotAdapter, block: suspend () -> Unit) {
         block()
         return
     }
-    // Real `java.awt.Robot` calls block. `Dispatchers.IO` is sized for blocking I/O work and
-    // suspends the calling EDT coroutine without parking the EDT thread.
-    withContext(Dispatchers.IO) { block() }
+    withContext(dispatcher) { block() }
 }
 
 internal fun shortcutModifierKeyCode(isMacOs: Boolean): Int =

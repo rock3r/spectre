@@ -7,5 +7,8 @@ internal fun <T> readOnEdt(block: () -> T): T {
 
     var result: Result<T>? = null
     SwingUtilities.invokeAndWait { result = runCatching(block) }
-    return result!!.getOrThrow()
+    return requireNotNull(result) {
+            "SwingUtilities.invokeAndWait returned without the EDT block setting the result"
+        }
+        .getOrThrow()
 }

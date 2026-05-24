@@ -33,7 +33,7 @@ public fun Frame.asTitledWindow(): TitledWindow =
         override var title: String?
             get() = onEdt { this@asTitledWindow.title }
             set(value) {
-                onEdt { this@asTitledWindow.title = value ?: "" }
+                onEdt { this@asTitledWindow.title = value.orEmpty() }
             }
 
         override val bounds: Rectangle

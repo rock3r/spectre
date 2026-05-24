@@ -14,8 +14,8 @@ public final class dev/sebastiano/spectre/recording/AutoRecorder {
 }
 
 public final class dev/sebastiano/spectre/recording/AutoScreenshotter {
-	public fun <init> (Ldev/sebastiano/spectre/recording/WindowScreenshotter;Ldev/sebastiano/spectre/recording/WindowScreenshotter;Ldev/sebastiano/spectre/recording/RegionScreenshotter;)V
-	public synthetic fun <init> (Ldev/sebastiano/spectre/recording/WindowScreenshotter;Ldev/sebastiano/spectre/recording/WindowScreenshotter;Ldev/sebastiano/spectre/recording/RegionScreenshotter;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ldev/sebastiano/spectre/recording/WindowScreenshotter;Ldev/sebastiano/spectre/recording/WindowScreenshotter;)V
+	public synthetic fun <init> (Ldev/sebastiano/spectre/recording/WindowScreenshotter;Ldev/sebastiano/spectre/recording/WindowScreenshotter;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun captureWindow (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;J)Ljava/awt/image/BufferedImage;
 	public static synthetic fun captureWindow$default (Ldev/sebastiano/spectre/recording/AutoScreenshotter;Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;JILjava/lang/Object;)Ljava/awt/image/BufferedImage;
 }
