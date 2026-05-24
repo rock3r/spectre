@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.sample
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import dev.sebastiano.spectre.core.ComposeAutomator
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
@@ -13,15 +14,24 @@ private const val INITIAL_SETTLE_DELAY_MS = 2000L
 private const val BETWEEN_ACTION_DELAY_MS = 500L
 private const val CLICK_REPETITIONS = 3
 
-@OptIn(DelicateCoroutinesApi::class)
 fun main() = application {
     Window(onCloseRequest = ::exitApplication, title = "Spectre") { App() }
 
     if (System.getProperty("spectre.demo") == "true") {
-        GlobalScope.launch(Dispatchers.Default) {
-            delay(INITIAL_SETTLE_DELAY_MS)
-            runAutomatorDemo()
-        }
+        launchAutomatorDemo()
+    }
+}
+
+// Demo launcher kept separate so the dispatcher can be injected (Detekt's `InjectDispatcher`
+// rule treats default-parameter values as the canonical injection seam). `GlobalScope` is the
+// intended lifetime here — the demo coroutine is decoupled from the Compose application and
+// finishes on its own once `runAutomatorDemo` returns; tying it to a Compose-owned scope would
+// drag in lifecycle ceremony the sample doesn't need.
+@OptIn(DelicateCoroutinesApi::class)
+private fun launchAutomatorDemo(dispatcher: CoroutineDispatcher = Dispatchers.Default) {
+    GlobalScope.launch(dispatcher) {
+        delay(INITIAL_SETTLE_DELAY_MS)
+        runAutomatorDemo()
     }
 }
 
