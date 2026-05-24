@@ -278,7 +278,7 @@ public final class dev/sebastiano/spectre/core/perf/RecompositionMonitor : java/
 	public static final field Companion Ldev/sebastiano/spectre/core/perf/RecompositionMonitor$Companion;
 	public synthetic fun <init> (JILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (JLkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public synthetic fun <init> (JLkotlin/time/TimeSource$WithComparableMarks;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (JLkotlin/time/TimeSource$WithComparableMarks;Lkotlinx/coroutines/CoroutineDispatcher;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun awaitCompositionIdle-2d-g_3Q (JJJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun awaitCompositionIdle-2d-g_3Q$default (Ldev/sebastiano/spectre/core/perf/RecompositionMonitor;JJJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun awaitRateBelow-vLdBGDU (DJJLkotlin/coroutines/Continuation;)Ljava/lang/Object;

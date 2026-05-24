@@ -469,7 +469,10 @@ private constructor(
                 .apply { isDaemon = true }
         thread.start()
         return if (latch.await(budgetMs, TimeUnit.MILLISECONDS)) {
-            resultRef.get()!!.getOrThrow()
+            requireNotNull(resultRef.get()) {
+                    "spectre-bounded-worker counted down the latch without publishing a Result"
+                }
+                .getOrThrow()
         } else {
             thread.interrupt()
             // Brief grace window to let cooperative blockers (invokeAndWait) honour the

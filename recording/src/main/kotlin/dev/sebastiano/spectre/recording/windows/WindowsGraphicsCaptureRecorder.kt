@@ -152,7 +152,7 @@ internal constructor(
                     process.destroyForcibly()
                     -1
                 }
-            throw IllegalStateException(
+            error(
                 messageForWindowsGraphicsCaptureHelperExit(exit, argv) +
                     if (line == null) "" else " First stdout line: $line"
             )
@@ -226,7 +226,7 @@ private class WindowsGraphicsCaptureRecordingHandle(
                             false
                         }
                     if (!terminatedAfterForce && process.isAlive) {
-                        throw IllegalStateException(
+                        error(
                             "spectre-window-capture did not exit after destroyForcibly() " +
                                 "within ${FORCE_STOP_TIMEOUT_SECONDS}s. Argv: $argv"
                         )
@@ -236,9 +236,7 @@ private class WindowsGraphicsCaptureRecordingHandle(
         }
         if (interrupted) Thread.currentThread().interrupt()
         if (process.isAlive) {
-            throw IllegalStateException(
-                "spectre-window-capture is still running after stop. Argv: $argv"
-            )
+            error("spectre-window-capture is still running after stop. Argv: $argv")
         }
         val exit = process.exitValue()
         check(exit == 0 || sentTerminationOurselves) {

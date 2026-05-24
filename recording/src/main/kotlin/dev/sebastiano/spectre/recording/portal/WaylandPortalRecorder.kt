@@ -176,7 +176,7 @@ private constructor(
         )
     }
 
-    @Suppress("LongParameterList", "TooGenericExceptionCaught", "LoopWithTooManyJumpStatements")
+    @Suppress("LongParameterList", "TooGenericExceptionCaught")
     private fun readerLoop(
         reader: BufferedReader,
         started: AtomicReference<Event.Started?>,
@@ -185,26 +185,32 @@ private constructor(
         startedLatch: CountDownLatch,
         stoppedLatch: CountDownLatch,
     ) {
-        while (true) {
-            val line = reader.readLine() ?: break
-            if (line.isBlank()) continue
-            val event =
-                try {
-                    json.decodeFromString(Event.serializer(), line)
-                } catch (e: Throwable) {
-                    errorEvent.compareAndSet(
-                        null,
-                        Event.Error(
-                            kind = "ProtocolDecode",
-                            message =
-                                "failed to parse helper event line " +
-                                    "'${line.take(MALFORMED_LINE_PREVIEW_LENGTH)}': ${e.message}",
-                        ),
-                    )
-                    startedLatch.countDown()
-                    stoppedLatch.countDown()
-                    return
-                }
+        // `reader.lineSequence()` yields `Sequence<String>` directly (vs the platform-nullable
+        // `readLine(): String?`), and the `val event: Event` declaration is split from the
+        // assignment-in-try below. Both are workarounds for detekt 2.x's K2-based
+        // UnreachableCode rule, which cascades a false positive across a loop body when the
+        // loop guard touches a cross-module nullable type (#5186) or when an assignment uses
+        // a `try { ... } catch { ... return }` expression. With the two-step assignment the
+        // analyzer sees a plain `try` statement and the rest of the loop body stays
+        // reachable.
+        for (line in reader.lineSequence().filter { it.isNotBlank() }) {
+            val event: Event
+            try {
+                event = json.decodeFromString(Event.serializer(), line)
+            } catch (e: Throwable) {
+                errorEvent.compareAndSet(
+                    null,
+                    Event.Error(
+                        kind = "ProtocolDecode",
+                        message =
+                            "failed to parse helper event line " +
+                                "'${line.take(MALFORMED_LINE_PREVIEW_LENGTH)}': ${e.message}",
+                    ),
+                )
+                startedLatch.countDown()
+                stoppedLatch.countDown()
+                return
+            }
             when (event) {
                 is Event.Started -> {
                     started.set(event)
@@ -481,7 +487,7 @@ private class GstRecordingHandle(
         readerThread.join()
         val exit = process.exitValue()
         if (exit != 0) {
-            throw IllegalStateException(
+            error(
                 "spectre-wayland-helper exited with non-zero status $exit. Stopped event " +
                     "received was ${stoppedRef.get()}; check helper stderr (forwarded to this " +
                     "process's stderr) for the underlying cause."

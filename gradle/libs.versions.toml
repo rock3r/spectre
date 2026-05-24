@@ -3,7 +3,7 @@ androidx-lifecycle = "2.10.0"
 androidx-tracing = "2.0.0-alpha06"
 composeMultiplatform = "1.10.3"
 composeRules = "0.5.6"
-detekt = "2.0.0-alpha.2"
+detekt = "2.0.0-alpha.3"
 intellijIdea = "2026.1.1"
 # JetBrains' intellij-ide-starter for the #42 IDE-hosted UI test. Pinned to the same build
 # our IDE itself runs (2026.1.1 == 261.23567.138) so the framework matches the IDE's

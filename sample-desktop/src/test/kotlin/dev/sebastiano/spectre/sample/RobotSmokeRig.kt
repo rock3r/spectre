@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import dev.sebastiano.spectre.core.RobotDriver
 import java.awt.Rectangle
 import java.awt.Window
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicReference
 import javax.swing.JFrame
 import kotlin.math.abs
@@ -372,7 +373,7 @@ internal suspend fun scenarioShortcut(driver: RobotDriver, state: SmokeState): S
     )
 }
 
-internal suspend fun scenarioScreenshot(driver: RobotDriver, state: SmokeState): ScenarioResult {
+internal fun scenarioScreenshot(driver: RobotDriver, state: SmokeState): ScenarioResult {
     val target = awtCenter(state, state.colorPatchBounds)
     if (target == null) {
         return ScenarioResult("screenshot of color patch", false, "no target rect available")
@@ -426,7 +427,8 @@ internal suspend fun scenarioScreenshot(driver: RobotDriver, state: SmokeState):
         "screenshot of color patch",
         passed = passed,
         detail =
-            "sampled=#${"%06X".format(sampledRgb)} expected=#${"%06X".format(expectedRgb)} " +
+            "sampled=#${"%06X".format(Locale.ROOT, sampledRgb)} " +
+                "expected=#${"%06X".format(Locale.ROOT, expectedRgb)} " +
                 "image=${image.width}x${image.height} captureRegion=" +
                 "(${captureRegion.x},${captureRegion.y})+${captureRegion.width}x${captureRegion.height}",
     )
@@ -466,10 +468,7 @@ internal suspend fun runFocusedScenarios(
     return results
 }
 
-internal suspend fun scenarioStartsUnfocused(
-    state: SmokeState,
-    distractor: JFrame?,
-): ScenarioResult {
+internal fun scenarioStartsUnfocused(state: SmokeState, distractor: JFrame?): ScenarioResult {
     val sut = state.frame
     val sutFocused = sut?.isFocused == true
     val distractorFocused = distractor?.isFocused == true

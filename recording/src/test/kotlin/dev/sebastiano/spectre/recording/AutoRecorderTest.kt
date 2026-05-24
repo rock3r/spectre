@@ -469,8 +469,7 @@ private class StubWindowRecorder(
             StubBehavior.Succeeds -> NoopHandle(output)
             StubBehavior.HelperNotBundled ->
                 throw HelperNotBundledException("test [$name]: helper not bundled")
-            StubBehavior.RuntimeFailure ->
-                throw IllegalStateException("test [$name]: runtime failure")
+            StubBehavior.RuntimeFailure -> error("test [$name]: runtime failure")
             StubBehavior.ShouldNeverBeCalled ->
                 error("StubWindowRecorder[$name] was not supposed to be invoked in this test")
         }

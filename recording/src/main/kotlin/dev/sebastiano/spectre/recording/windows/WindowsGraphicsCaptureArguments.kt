@@ -33,7 +33,7 @@ internal data class WindowsGraphicsCaptureArguments(
                 }
             }
             WindowsGraphicsCaptureSource.Region -> {
-                require(region != null) { "region is required for region capture" }
+                requireNotNull(region) { "region is required for region capture" }
                 require(region.width > 0 && region.height > 0) {
                     "region dimensions must be positive, was ${region.width}x${region.height}"
                 }

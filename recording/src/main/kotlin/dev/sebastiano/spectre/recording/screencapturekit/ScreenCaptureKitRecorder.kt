@@ -124,7 +124,7 @@ internal constructor(
                     } else {
                         process.exitValue()
                     }
-                throw IllegalStateException(messageForHelperExit(exit, output, argv))
+                error(messageForHelperExit(exit, output, argv))
             }
 
             val handle =
@@ -310,8 +310,12 @@ private class ScreenCaptureKitRecordingHandle(
             process.outputStream?.use { it.write('q'.code) }
         } catch (_: IOException) {
             // helper may have already exited; the waitFor below confirms.
-        } catch (t: Throwable) {
-            if (t is InterruptedException) Thread.currentThread().interrupt()
+        } catch (_: InterruptedException) {
+            // Cancellation drops through to the SIGTERM fallback below; re-flag the thread
+            // so the caller observes the interrupt after we've torn down the subprocess.
+            Thread.currentThread().interrupt()
+        } catch (_: Throwable) {
+            // Any other failure here still goes to the SIGTERM fallback.
         }
         var interrupted = false
         val gracefulExit =
@@ -341,7 +345,7 @@ private class ScreenCaptureKitRecordingHandle(
         }
         if (interrupted) Thread.currentThread().interrupt()
         if (process.isAlive) {
-            throw IllegalStateException(
+            error(
                 "spectre-screencapture did not exit after destroyForcibly() within ${FORCE_KILL_SECONDS}s — " +
                     "output at $output is in an undefined state."
             )
@@ -374,7 +378,7 @@ private class ScreenCaptureKitRecordingHandle(
         // exit lets callers see that the recording's output is unsafe to use. (FfmpegRecorder
         // has a sentSignalOurselves exemption because ffmpeg has no graceful SIGTERM handler;
         // SCK does, so the exemption isn't appropriate here.)
-        throw IllegalStateException(
+        error(
             "spectre-screencapture exited with code $exit during recording — output at $output " +
                 "may be truncated or missing."
         )

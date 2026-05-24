@@ -31,8 +31,6 @@ internal constructor(
     public constructor(
         sckScreenshotter: WindowScreenshotter = ScreenCaptureKitScreenshotter(),
         windowsWindowScreenshotter: WindowScreenshotter? = defaultWindowsWindowScreenshotter(),
-        @Suppress("UNUSED_PARAMETER")
-        x11RegionScreenshotter: RegionScreenshotter = UnusedLegacyX11RegionScreenshotter,
     ) : this(
         sckScreenshotter = sckScreenshotter,
         windowsWindowScreenshotter = windowsWindowScreenshotter,
@@ -121,13 +119,4 @@ public interface WindowScreenshotter {
 
 public interface RegionScreenshotter {
     public fun captureRegion(region: Rectangle): BufferedImage
-}
-
-private object UnusedLegacyX11RegionScreenshotter : RegionScreenshotter {
-    override fun captureRegion(region: Rectangle): BufferedImage =
-        error(
-            "AutoScreenshotter no longer uses the legacy x11RegionScreenshotter constructor " +
-                "parameter. Instantiate LinuxNativeScreenshotter directly for Linux region " +
-                "screenshots."
-        )
 }

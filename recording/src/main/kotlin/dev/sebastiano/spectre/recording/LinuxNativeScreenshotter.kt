@@ -130,7 +130,7 @@ internal constructor(
             writeCommand(process.outputStream, command)
             process.outputStream.close()
             if (!eventLatch.await(SCREENSHOT_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-                throw IllegalStateException(
+                error(
                     "Timed out after ${SCREENSHOT_TIMEOUT_MS}ms waiting for Linux screenshot " +
                         "helper."
                 )

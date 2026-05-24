@@ -204,9 +204,12 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
             process.outputStream?.use { it.write('q'.code) }
         } catch (_: IOException) {
             // ffmpeg may have already exited; the waitFor below confirms.
-        } catch (t: Throwable) {
-            // Any failure here still goes to the SIGTERM fallback.
-            if (t is InterruptedException) Thread.currentThread().interrupt()
+        } catch (_: InterruptedException) {
+            // Cancellation still drops through to the SIGTERM fallback; re-flag the thread so
+            // the caller observes the interrupt after we've cleaned up the subprocess.
+            Thread.currentThread().interrupt()
+        } catch (_: Throwable) {
+            // Any other failure here still goes to the SIGTERM fallback.
         }
         // Catch InterruptedException around every waitFor so cancellation never short-circuits
         // the SIGTERM/SIGKILL fallback path. We still call destroyForcibly() in that case so
@@ -246,7 +249,7 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
             // Even after destroyForcibly(), ffmpeg refused to die within the wait window.
             // Surface this as a hard failure rather than letting the caller observe
             // isStopped=true while the process is still mutating the output file.
-            throw IllegalStateException(
+            error(
                 "ffmpeg did not exit after destroyForcibly() within ${FORCE_KILL_SECONDS}s — " +
                     "output at $output is in an undefined state."
             )
@@ -277,7 +280,7 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
                     exit == POSIX_SIGTERM_EXIT ||
                     exit == FFMPEG_SIGKILL_EXIT)
         if (!isExpectedSelfSignal) {
-            throw IllegalStateException(
+            error(
                 "ffmpeg exited with code $exit during recording — output at $output may be " +
                     "truncated or missing. Common causes: disk full, encoder error, device " +
                     "failure during capture, or external termination."
@@ -333,7 +336,7 @@ internal fun spawnFfmpegRecording(
                 }
             Thread.currentThread().interrupt()
             if (!terminated) {
-                throw IllegalStateException(
+                error(
                     "ffmpeg refused to die after destroyForcibly() during start() interrupt — " +
                         "leaking an orphan recorder is not safe; output at $output is in an " +
                         "undefined state."
@@ -342,7 +345,7 @@ internal fun spawnFfmpegRecording(
             throw e
         }
     if (exitedDuringProbe) {
-        throw IllegalStateException(
+        error(
             "ffmpeg exited immediately (code ${process.exitValue()}) — recording did not start. " +
                 "Common causes: missing macOS Screen Recording permission, invalid codec, " +
                 "unavailable avfoundation/gdigrab device, or a Windows gdigrab `title=` that " +

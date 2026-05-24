@@ -50,6 +50,16 @@ tasks.withType<Detekt>().configureEach {
     exclude(*generatedSourceExcludes)
 }
 
+// The detekt 2.x aggregator (`:detekt`) is a no-op marker that does NOT transitively
+// depend on the per-source-set `:detektMain` / `:detektTest` tasks the plugin also
+// registers. Without this fan-out, `./gradlew check` would skip the source-set tasks
+// where type-resolution-aware rules (UnsafeCallOnNullableType, InjectDispatcher, …)
+// actually run, so findings would never reach CI. `tasks.matching` stays lazy so
+// modules that don't register a `detektTest` (no test source set) are tolerated.
+val perSourceSetDetektNames = setOf("detektMain", "detektTest")
+
+tasks.named("detekt") { dependsOn(tasks.matching { it.name in perSourceSetDetektNames }) }
+
 subprojects {
     apply(plugin = "base")
 
@@ -75,6 +85,8 @@ subprojects {
             jvmTarget = "21"
             exclude(*generatedSourceExcludes)
         }
+
+        tasks.named("detekt") { dependsOn(tasks.matching { it.name in perSourceSetDetektNames }) }
     }
 
     tasks
