@@ -65,3 +65,18 @@ public class AgentJarNotFoundException(searched: List<java.nio.file.Path>) :
             searched.joinToString("\n") { "  - $it" } +
             "\n\nRun `./gradlew :agent:shadowJar` or pass AttachOptions(agentJarPath = ...)."
     )
+
+/**
+ * Thrown when the attach process was interrupted (typically from cooperative cancellation: a test
+ * runner cancelling a long-running fixture, or an interactive caller pressing Ctrl-C). Distinct
+ * from [AgentBootstrapTimeoutException] (which means "the agent never came up") and from a generic
+ * connect failure (which would point at the wrong root cause). The thread's interrupt status is
+ * preserved when this is thrown, so well-behaved callers can re-check it.
+ */
+@ExperimentalSpectreAgentApi
+public class AttachInterruptedException(udsPath: java.nio.file.Path, cause: InterruptedException) :
+    SpectreAttachException(
+        "Attach was interrupted while waiting for the agent's UDS at $udsPath. The thread's " +
+            "interrupt status has been preserved.",
+        cause,
+    )

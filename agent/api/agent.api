@@ -12,6 +12,10 @@ public final class dev/sebastiano/spectre/agent/AgentJarNotFoundException : dev/
 	public fun <init> (Ljava/util/List;)V
 }
 
+public final class dev/sebastiano/spectre/agent/AttachInterruptedException : dev/sebastiano/spectre/agent/SpectreAttachException {
+	public fun <init> (Ljava/nio/file/Path;Ljava/lang/InterruptedException;)V
+}
+
 public final class dev/sebastiano/spectre/agent/AttachOptions {
 	public static final field Companion Ldev/sebastiano/spectre/agent/AttachOptions$Companion;
 	public static final field DEFAULT_ATTACH_TIMEOUT_MS J

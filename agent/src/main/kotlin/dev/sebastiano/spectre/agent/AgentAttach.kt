@@ -182,9 +182,16 @@ public object AgentAttach {
             if (Files.exists(udsPath)) return
             try {
                 Thread.sleep(POLL_INTERVAL_MS)
-            } catch (_: InterruptedException) {
+            } catch (ex: InterruptedException) {
+                // Preserve interrupt status so well-behaved callers can re-check it.
                 Thread.currentThread().interrupt()
-                return
+                // Throw a dedicated cancellation exception rather than returning silently.
+                // Returning would let the caller proceed to `IpcClient(udsPath)`, whose
+                // SocketChannel.open would then throw `ClosedByInterruptException` —
+                // wrapped further as "Failed to connect to agent's UDS at …", burying the
+                // real cause (interruption) under a misleading connect failure. Bugbot
+                // caught the misleading-error path (LOW); pinning the contract here.
+                throw AttachInterruptedException(udsPath, ex)
             }
         }
         throw AgentBootstrapTimeoutException(udsPath, timeoutMs)
