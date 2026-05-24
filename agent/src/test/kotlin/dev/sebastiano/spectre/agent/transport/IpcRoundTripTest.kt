@@ -141,6 +141,74 @@ class IpcRoundTripTest {
     }
 
     @Test
+    fun `server survives a client that closes mid-request and keeps accepting`() {
+        // Regression for Bugbot MEDIUM finding on commit 4b1d777: `acceptLoop` previously
+        // wrapped the entire `while` in a single try-catch, so an `IOException` from
+        // `handleConnection` (e.g. broken pipe when `Framing.writeFrame` writes to a socket
+        // whose client has already closed) terminated the accept thread for good. Combined
+        // with `SpectreAgent.bootstrap`'s "already bootstrapped" idempotency guard, a single
+        // crashed/misbehaving client would make the agent permanently unreachable for the
+        // rest of the target JVM's lifetime — re-attach attempts would see the same agent
+        // state, skip server creation, and hang on the dead socket.
+        //
+        // Test approach: open a raw `SocketChannel`, write a Ping frame, then close the
+        // channel immediately without reading the response. The server will read the Ping,
+        // dispatch to the handler, and try to write Pong back — at which point the OS will
+        // surface either a broken-pipe `IOException` or an EOF on subsequent reads. Either
+        // way, the per-connection catch must absorb it. Then open a clean `IpcClient` and
+        // assert Ping/Pong still round-trips.
+        val server = IpcServer(udsPath, stubHandler())
+        server.use {
+            awaitSocket(udsPath)
+
+            // Repeat to make the test more likely to actually trigger a broken-pipe on the
+            // server-side write (vs. the response being buffered by the OS before close
+            // propagates). A single iteration sometimes races; three is enough to wedge
+            // the loop reliably if the regression returns.
+            repeat(3) {
+                java.nio.channels.SocketChannel.open(java.net.UnixDomainSocketAddress.of(udsPath))
+                    .use { rawClient ->
+                        val pingBytes = WireCodec.encode(AgentRequest.Ping)
+                        val frame =
+                            java.nio.ByteBuffer.allocate(Int.SIZE_BYTES + pingBytes.size).apply {
+                                putInt(pingBytes.size)
+                                put(pingBytes)
+                                flip()
+                            }
+                        while (frame.hasRemaining()) {
+                            rawClient.write(frame)
+                        }
+                        // Close immediately without reading the response so the server's
+                        // writeFrame races against a closed client.
+                    }
+            }
+
+            // The accept loop must still be alive: a clean Ping must round-trip.
+            // Wrapped in `assertTimeoutPreemptively` because the regression mode is the
+            // server going PERMANENTLY UNREACHABLE — without a timeout the failing test
+            // would just hang the suite, hiding the regression behind a wall-clock kill.
+            // 3 s is comfortably above a healthy in-JVM Ping (~ms) and finite enough that
+            // CI surfaces the failure fast.
+            org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+                java.time.Duration.ofSeconds(3),
+                {
+                    IpcClient(udsPath).use { client ->
+                        assertEquals(
+                            AgentResponse.Pong,
+                            client.send(AgentRequest.Ping),
+                            "expected the accept loop to have survived the misbehaving clients " +
+                                "and still serve a clean Ping — if this fails, the per-" +
+                                "connection IOException catch regressed",
+                        )
+                    }
+                },
+                "the accept loop did not respond within 3s — it likely died on the broken-pipe " +
+                    "IOException from the misbehaving clients (per-connection catch regressed)",
+            )
+        }
+    }
+
+    @Test
     fun `Server converts a checked TimeoutException from the handler into an Error and keeps the accept loop alive`() {
         // Regression: `BlockingSuspendInvoker.await()` throws
         // `java.util.concurrent.TimeoutException`

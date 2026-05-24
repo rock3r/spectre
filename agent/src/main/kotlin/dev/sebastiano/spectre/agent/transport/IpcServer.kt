@@ -81,16 +81,39 @@ constructor(
         get() = udsPath
 
     private fun acceptLoop() {
-        try {
-            while (running.get()) {
-                val client = serverChannel.accept() ?: break
+        while (running.get()) {
+            val client =
+                try {
+                    serverChannel.accept() ?: break
+                } catch (_: ClosedChannelException) {
+                    // Normal shutdown — close() closes the server channel, which unblocks
+                    // accept(). Exit the loop cleanly.
+                    return
+                } catch (ex: IOException) {
+                    // accept() itself failed (e.g. the server channel is broken at the OS
+                    // level). There's nothing we can recover here — the channel is unusable.
+                    if (running.get()) {
+                        System.err.println("[spectre-agent] accept failed: ${ex.message}")
+                    }
+                    return
+                }
+            // Per-connection failures (broken pipe from a crashed client mid-`writeFrame`,
+            // half-closed sockets, malformed framing, …) MUST NOT kill the accept loop.
+            // Before this catch was inside the loop, an `IOException` from
+            // `handleConnection` propagated to the outer catch, terminated the accept
+            // thread, and — combined with `SpectreAgent.bootstrap`'s "already bootstrapped"
+            // idempotency guard — left the agent permanently unreachable for the rest of
+            // the target JVM's lifetime. Bugbot caught it (MEDIUM); the regression test
+            // in `IpcRoundTripTest` ("server survives a client that closes mid-request…")
+            // pins the contract.
+            try {
                 handleConnection(client)
-            }
-        } catch (_: ClosedChannelException) {
-            // Normal shutdown — close() closes the server channel which unblocks accept().
-        } catch (ex: IOException) {
-            if (running.get()) {
-                System.err.println("[spectre-agent] accept loop terminated: ${ex.message}")
+            } catch (ex: IOException) {
+                if (running.get()) {
+                    System.err.println(
+                        "[spectre-agent] connection terminated: ${ex.message ?: "<no message>"}"
+                    )
+                }
             }
         }
     }
