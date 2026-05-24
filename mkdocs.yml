@@ -100,6 +100,7 @@ nav:
       - Running on CI: guide/ci.md
       - Recording: guide/recording.md
       - Cross-JVM access: guide/cross-jvm.md
+      - Agent attach: guide/agent.md
       - IntelliJ-hosted Compose: guide/intellij.md
       - Troubleshooting: guide/troubleshooting.md
   - Reference:

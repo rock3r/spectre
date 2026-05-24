@@ -43,11 +43,18 @@ Public declarations annotated with `@ExperimentalSpectreHttpApi` (or any future 
 the API baselines**, but they are explicitly **not covered** by compatibility guarantees and
 may change or be removed in any release, including patch releases.
 
-Today the only experimental marker is `@ExperimentalSpectreHttpApi`, which covers the entire
-`server` module's public surface — the HTTP transport (`installSpectreRoutes`,
-`HttpComposeAutomator`, the `ComposeAutomator.http(...)` factory, and the DTOs). Authentication,
-TLS, narrower per-window capture, and other major reshapes are tracked under #96 and will land
-under this marker.
+Two experimental markers exist today:
+
+- **`@ExperimentalSpectreHttpApi`** covers the entire `server` module's public surface — the
+  HTTP transport (`installSpectreRoutes`, `HttpComposeAutomator`, the
+  `ComposeAutomator.http(...)` factory, and the DTOs). Authentication, TLS, narrower
+  per-window capture, and other major reshapes are tracked under #96 and will land under this
+  marker.
+- **`@ExperimentalSpectreAgentApi`** covers the entire `agent` module's attach-side public
+  surface — `AgentAttach`, `AttachedAutomator`, `AttachOptions`, `SpectreProcesses`, and the
+  wire DTOs. Tracked under #153; the marker stays in place at least until v1.1 lands the
+  Windows-named-pipe support, the streaming wire ops (`waitForVisualIdle` etc.), and the
+  automated IntelliJ-hosted Compose attach tests.
 
 Consumers opt in either at file level or call site:
 
