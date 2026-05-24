@@ -20,6 +20,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeFalse
+import org.junit.jupiter.api.condition.EnabledOnOs
+import org.junit.jupiter.api.condition.OS
 
 /**
  * Plan M-7/M-8: end-to-end attach pipeline against a child JVM running a real Compose Desktop UI
@@ -55,11 +57,18 @@ import org.junit.jupiter.api.Assumptions.assumeFalse
  * future change makes the strict assertions flaky, fix the root cause; don't relax the contract.
  *
  * Gating:
+ * - **Disabled on Windows** via `@EnabledOnOs(OS.LINUX, OS.MAC)`. Per the v1 docs the agent
+ *   transport is macOS+Linux only — `AgentAttach.attach` short-circuits with
+ *   `AttachPermissionDeniedException` on Windows runners (the same-UID preflight via
+ *   `ProcessHandle.info().user()` returns a value the POSIX-shaped check rejects). Until Windows
+ *   support lands (named pipes via JNA/junixsocket follow-up), this test is skipped rather than
+ *   asserting Windows-specific failure shapes.
  * - Skipped on headless JVMs (`java.awt.GraphicsEnvironment.isHeadless()`). Compose Desktop refuses
  *   to create a `JFrame + ComposePanel` without a display.
  * - Skipped when `dev.sebastiano.spectre.agent.runtimeJar` isn't set. Gradle's `:agent:test` task
  *   sets it from the `:agent:shadowJar` output.
  */
+@EnabledOnOs(OS.LINUX, OS.MAC)
 class AgentAttachIntegrationTest {
     private val orphanUdsFiles = mutableListOf<Path>()
 

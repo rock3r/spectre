@@ -7,11 +7,14 @@ import dev.sebastiano.spectre.agent.transport.AgentResponse
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import java.awt.Frame
+import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
 import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeFalse
 
 /**
  * Unit tests for [ReflectiveAutomatorHandler]'s reflective method-lookup + mapping code.
@@ -34,33 +37,61 @@ import kotlin.test.assertTrue
 class ReflectiveAutomatorHandlerMappingTest {
 
     @Test
-    fun `Windows op maps surfaceId, isPopup, bounds, title from a synthetic TrackedWindow`() {
+    fun `Windows op maps surfaceId, isPopup, bounds for a TrackedWindow without a Frame window`() {
+        // This headless-safe variant doesn't need a real `java.awt.Frame` — the handler's
+        // title-extraction path falls through to `null` when `getWindow()` doesn't return a
+        // `Frame`. The non-null Frame title case is exercised by the separate
+        // `…extracts title from a real java.awt.Frame` test, which `assumeFalse`s on
+        // headless JVMs. Splitting keeps CI green on the Linux GitHub runner.
+        val trackedWindow =
+            FakeTrackedWindow(
+                surfaceIdValue = "surface-42",
+                isPopupValue = true,
+                composeSurfaceBoundsOnScreenValue = Rectangle(10, 20, 800, 600),
+                windowValue = null,
+            )
+        val automator = FakeAutomator(windowsValue = listOf(trackedWindow))
+        val handler = ReflectiveAutomatorHandler(automator)
+
+        val response = handler.handle(AgentRequest.Windows)
+        check(response is AgentResponse.Windows) {
+            "expected AgentResponse.Windows, got ${response::class.simpleName}: $response"
+        }
+        assertEquals(1, response.windows.size)
+        val dto: WindowSummaryDto = response.windows.single()
+        assertEquals(0, dto.index)
+        assertEquals("surface-42", dto.surfaceId)
+        assertEquals(true, dto.isPopup)
+        assertNull(dto.title, "title should be null when getWindow() returns no Frame")
+        assertEquals(10, dto.bounds.x)
+        assertEquals(20, dto.bounds.y)
+        assertEquals(800, dto.bounds.width)
+        assertEquals(600, dto.bounds.height)
+    }
+
+    @Test
+    fun `Windows op extracts title from a real java_awt_Frame`() {
+        // `java.awt.Frame` instantiation requires AWT toolkit init, which throws
+        // `HeadlessException` on headless JVMs (the Linux CI runner). Gate accordingly.
+        assumeFalse(
+            GraphicsEnvironment.isHeadless(),
+            "Frame() requires a non-headless JVM; skipped on Linux CI.",
+        )
         val testFrame = Frame("My Test Window") // title comes from java.awt.Frame.getTitle()
         try {
             val trackedWindow =
                 FakeTrackedWindow(
-                    surfaceIdValue = "surface-42",
-                    isPopupValue = true,
-                    composeSurfaceBoundsOnScreenValue = Rectangle(10, 20, 800, 600),
+                    surfaceIdValue = "surface-with-frame",
+                    isPopupValue = false,
+                    composeSurfaceBoundsOnScreenValue = Rectangle(0, 0, 1, 1),
                     windowValue = testFrame,
                 )
             val automator = FakeAutomator(windowsValue = listOf(trackedWindow))
             val handler = ReflectiveAutomatorHandler(automator)
 
             val response = handler.handle(AgentRequest.Windows)
-            check(response is AgentResponse.Windows) {
-                "expected AgentResponse.Windows, got ${response::class.simpleName}: $response"
-            }
-            assertEquals(1, response.windows.size)
-            val dto: WindowSummaryDto = response.windows.single()
-            assertEquals(0, dto.index)
-            assertEquals("surface-42", dto.surfaceId)
-            assertEquals(true, dto.isPopup)
-            assertEquals("My Test Window", dto.title)
-            assertEquals(10, dto.bounds.x)
-            assertEquals(20, dto.bounds.y)
-            assertEquals(800, dto.bounds.width)
-            assertEquals(600, dto.bounds.height)
+            check(response is AgentResponse.Windows)
+            assertEquals("My Test Window", response.windows.single().title)
         } finally {
             testFrame.dispose()
         }
@@ -263,7 +294,7 @@ private class FakeTrackedWindow(
     private val surfaceIdValue: String,
     private val isPopupValue: Boolean,
     private val composeSurfaceBoundsOnScreenValue: Rectangle,
-    private val windowValue: Frame,
+    private val windowValue: Frame?,
 ) {
     @Suppress("unused") fun getSurfaceId(): String = surfaceIdValue
 
@@ -272,7 +303,10 @@ private class FakeTrackedWindow(
     @Suppress("unused")
     fun getComposeSurfaceBoundsOnScreen(): Rectangle = composeSurfaceBoundsOnScreenValue
 
-    @Suppress("unused") fun getWindow(): Frame = windowValue
+    // Returns `java.awt.Window?` typed in the real `TrackedWindow.getWindow()` — but Kotlin's
+    // reflection sees the declared static return type, so declaring `Frame?` here matches the
+    // handler's `(window as? Frame)?.title` shape (and lets the null branch resolve correctly).
+    @Suppress("unused") fun getWindow(): Frame? = windowValue
 }
 
 @Suppress("LongParameterList")

@@ -11,6 +11,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.condition.EnabledOnOs
+import org.junit.jupiter.api.condition.OS
 
 /**
  * In-JVM round-trip test for [IpcServer] + [IpcClient] over a real Unix Domain Socket.
@@ -23,7 +25,13 @@ import kotlin.test.assertTrue
  * Each test creates a unique UDS path under `java.io.tmpdir` and cleans up via @AfterTest. Paths
  * must be short enough to fit Unix's sun_path limit (~104 chars on macOS, ~108 on Linux); a short
  * UUID prefix keeps us well within bounds.
+ *
+ * **Disabled on Windows** via `@EnabledOnOs(OS.LINUX, OS.MAC)`. The agent transport is macOS+Linux
+ * only in v1 — Windows support (named pipes via JNA/junixsocket) is a tracked follow-up. The
+ * hard-coded `/tmp/...` UDS path is meaningless on Windows and the test would `SocketException` on
+ * connect rather than exercising the round-trip contract.
  */
+@EnabledOnOs(OS.LINUX, OS.MAC)
 class IpcRoundTripTest {
     // Use `/tmp` directly rather than `java.io.tmpdir` — on macOS the latter resolves to
     // `/var/folders/...` which can push the path past Unix's 104-char `sun_path` limit.
@@ -128,6 +136,56 @@ class IpcRoundTripTest {
             IpcClient(udsPath).use { client ->
                 val resp = assertIs<AgentResponse.Error>(client.send(AgentRequest.Ping))
                 assertTrue(resp.message.contains("test-handler"))
+            }
+        }
+    }
+
+    @Test
+    fun `Server converts a checked TimeoutException from the handler into an Error and keeps the accept loop alive`() {
+        // Regression: `BlockingSuspendInvoker.await()` throws
+        // `java.util.concurrent.TimeoutException`
+        // (a checked `Exception`, NOT `RuntimeException`). An earlier draft of `handleOneRequest`
+        // only caught `RuntimeException`, which let the timeout escape through `handleConnection` →
+        // `acceptLoop` and kill the accept thread — permanently crashing the IPC server after a
+        // single slow click/typeText. This test pins the contract: a checked exception from the
+        // handler MUST round-trip as `AgentResponse.Error` and the server MUST stay accepting.
+        val server =
+            IpcServer(
+                udsPath,
+                AgentRequestHandler { req ->
+                    when (req) {
+                        is AgentRequest.Click ->
+                            throw java.util.concurrent.TimeoutException(
+                                "synthetic suspend timeout for test"
+                            )
+                        AgentRequest.Ping -> AgentResponse.Pong
+                        else -> AgentResponse.Error("unexpected $req")
+                    }
+                },
+            )
+        server.use {
+            awaitSocket(udsPath)
+            IpcClient(udsPath).use { client ->
+                val resp =
+                    assertIs<AgentResponse.Error>(client.send(AgentRequest.Click(nodeKey = "k1")))
+                assertTrue(
+                    resp.message.contains("TimeoutException"),
+                    "expected error message to mention TimeoutException; got: ${resp.message}",
+                )
+                assertTrue(
+                    resp.message.contains("synthetic suspend timeout"),
+                    "expected error message to include the timeout's text; got: ${resp.message}",
+                )
+                // The server must still be alive — a follow-up request on a fresh connection
+                // proves the accept loop wasn't killed by the checked exception.
+            }
+            IpcClient(udsPath).use { followUp ->
+                assertEquals(
+                    AgentResponse.Pong,
+                    followUp.send(AgentRequest.Ping),
+                    "follow-up Ping after TimeoutException must succeed — the accept loop must " +
+                        "survive a checked exception from the handler",
+                )
             }
         }
     }

@@ -128,15 +128,20 @@ constructor(
                 return true
             }
 
-        // Generic RuntimeException catch: an automator handler may throw NPE / CCE / ISE when
-        // the target's `ComposeAutomator` is in an unexpected state. The IPC layer's job is
-        // to turn any such failure into a wire-level `AgentResponse.Error` rather than crash
-        // the accept loop and orphan the connection. Detekt's TooGenericExceptionCaught is
-        // suppressed here with rationale.
+        // Generic Exception catch: an automator handler may throw NPE / CCE / ISE (unchecked)
+        // when the target's `ComposeAutomator` is in an unexpected state, OR a checked
+        // exception such as `java.util.concurrent.TimeoutException` from
+        // [dev.sebastiano.spectre.agent.runtime.BlockingSuspendInvoker] when a suspend op
+        // (click/typeText) hangs. Both must surface to the client as `AgentResponse.Error`
+        // rather than kill the accept thread and orphan the connection (a `TimeoutException`
+        // is `Exception`, NOT `RuntimeException`, so a narrower catch would let it escape
+        // through `handleConnection` → `acceptLoop` and permanently crash the IPC server
+        // after one slow UI op). Errors (OOM, StackOverflow) are intentionally NOT caught.
+        // Detekt's TooGenericExceptionCaught is suppressed here with rationale.
         val response: AgentResponse =
             try {
                 handler.handle(request)
-            } catch (ex: RuntimeException) {
+            } catch (ex: Exception) {
                 AgentResponse.Error("${ex.javaClass.simpleName}: ${ex.message ?: "<no message>"}")
             }
         Framing.writeFrame(output, WireCodec.encode(response))
