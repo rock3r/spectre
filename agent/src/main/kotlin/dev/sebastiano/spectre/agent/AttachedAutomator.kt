@@ -81,13 +81,21 @@ internal constructor(
      * Send [AgentRequest.Detach], wait for [AgentResponse.Detached], close the underlying client.
      * Idempotent — calling twice is a no-op.
      */
+    @Suppress("TooGenericExceptionCaught")
     override fun close() {
         if (closed) return
         closed = true
         try {
             client.send(AgentRequest.Detach)
-        } catch (_: IOException) {
-            // Server may have closed before sending Detached; carry on with local teardown.
+        } catch (_: Exception) {
+            // Best-effort: the server may have already closed before sending `Detached`
+            // (`IOException`), or the response may be malformed at the framing layer
+            // (`IllegalStateException` from `Framing.readFrame`'s length check) or at the
+            // CBOR layer (`SerializationException` from `WireCodec.decodeResponse`). None
+            // of these should prevent local teardown — the `finally` below closes the
+            // client and runs the detacher regardless. Errors (OOM, StackOverflow) are
+            // intentionally NOT caught. Bugbot caught the narrow-catch (LOW); Detekt's
+            // TooGenericExceptionCaught is suppressed with rationale.
         } finally {
             runCatching { client.close() }
             runCatching { detacher.run() }
