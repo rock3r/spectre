@@ -90,6 +90,13 @@ include(":recording-linux")
 
 include(":testing")
 
+include(":agent")
+
+// Tiny non-publishable Compose Desktop app used only as a target for `:agent`'s integration
+// test (`AgentAttachIntegrationTest`). Lives outside `:agent`'s test source set so the agent
+// module doesn't have to apply Compose plugins module-wide.
+include(":agent-test-fixture")
+
 include(":sample-desktop")
 
 include(":sample-intellij-plugin")

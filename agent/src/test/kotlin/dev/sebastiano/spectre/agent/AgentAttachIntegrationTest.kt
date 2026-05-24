@@ -1,0 +1,271 @@
+@file:OptIn(ExperimentalSpectreAgentApi::class)
+
+package dev.sebastiano.spectre.agent
+
+import dev.sebastiano.spectre.agent.fixture.READY_SENTINEL
+import dev.sebastiano.spectre.agent.fixture.SPECTRE_FIXTURE_WINDOW_TITLE
+import dev.sebastiano.spectre.agent.fixture.TAG_BUTTON
+import dev.sebastiano.spectre.agent.fixture.TAG_LABEL
+import dev.sebastiano.spectre.agent.fixture.TAG_TEXT_FIELD
+import java.awt.GraphicsEnvironment
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.test.AfterTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeFalse
+
+/**
+ * Plan M-7/M-8: end-to-end attach pipeline against a child JVM running a real Compose Desktop UI
+ * (the `:agent-test-fixture` module — `JFrame + ComposePanel` with three tagged nodes).
+ *
+ * Validates the FULL chain on every run:
+ * - `VirtualMachine.attach + loadAgent` delivers `agentmain` in the target.
+ * - `SpectreAgent.bootstrap` finds Spectre, constructs the automator, binds the UDS.
+ * - `IpcClient` connects to the UDS the agent just bound.
+ * - `windows() / allNodes() / findByTestTag() / click() / typeText() / screenshot() / detach()`
+ *   each round-trip without throwing, and the agent runtime cleans up after itself.
+ * - Repeating the cycle ≥ 3× leaves no orphan UDS files (covers the shutdown-hook removal +
+ *   `agentState` reset paths exercised by D-7's Path A).
+ *
+ * **Strict by design.** The fixture polls `ComposePanel.semanticsOwners` on the EDT until it's
+ * non-empty before signalling READY, so by the time the agent attaches the semantics tree is
+ * guaranteed to be populated. The test then asserts:
+ * - `windows()` returns at least the fixture's `'$SPECTRE_FIXTURE_WINDOW_TITLE'` window
+ *   (non-empty).
+ * - `findByTestTag(TAG_LABEL / TAG_BUTTON / TAG_TEXT_FIELD)` each return at least one match.
+ * - `click(buttonKey)` and `typeText("x")` bare-throw on any wire-level error — no `runCatching`,
+ *   no swallowed exceptions. A broken suspend bridge or a regression in the reflective handler
+ *   surfaces as a hard test failure.
+ *
+ * The pure-mapping correctness (getter names, `Rectangle → RectDto`, screenshot's `Rectangle?`
+ * lookup, refresh-before-read contract) is *also* covered at the unit level in
+ * [dev.sebastiano.spectre.agent.runtime.ReflectiveAutomatorHandlerMappingTest] against synthetic
+ * objects with the real getter signatures, so a regression in either layer fails fast.
+ *
+ * **Do not loosen these assertions.** Earlier drafts wrapped `click`/`typeText` in `runCatching`
+ * and let empty `windows()` pass — that hid a real `windows()`-cache-staleness bug (the handler
+ * needed `refreshWindows()`) and a `BufferedReader` deadlock in `FixtureProcess.close()`. If a
+ * future change makes the strict assertions flaky, fix the root cause; don't relax the contract.
+ *
+ * Gating:
+ * - Skipped on headless JVMs (`java.awt.GraphicsEnvironment.isHeadless()`). Compose Desktop refuses
+ *   to create a `JFrame + ComposePanel` without a display.
+ * - Skipped when `dev.sebastiano.spectre.agent.runtimeJar` isn't set. Gradle's `:agent:test` task
+ *   sets it from the `:agent:shadowJar` output.
+ */
+class AgentAttachIntegrationTest {
+    private val orphanUdsFiles = mutableListOf<Path>()
+
+    @AfterTest
+    fun cleanUpOrphans() {
+        orphanUdsFiles.forEach { runCatching { Files.deleteIfExists(it) } }
+    }
+
+    @Test
+    fun `attach exercise detach cycle works against a real Compose fixture`() {
+        assumeFalse(
+            GraphicsEnvironment.isHeadless(),
+            "Requires non-headless JVM for Compose Desktop + java.awt.Robot",
+        )
+        val agentJar = locateAgentJarOrSkip()
+
+        spawnComposeFixture().use { fixture ->
+            repeat(REPEAT_CYCLES) { iteration ->
+                attachExerciseDetach(fixture, agentJar, iteration = iteration)
+            }
+        }
+    }
+
+    private fun attachExerciseDetach(fixture: FixtureProcess, agentJar: Path, iteration: Int) {
+        val udsPath = AttachOptions.defaultUdsPath(fixture.pid)
+        orphanUdsFiles.add(udsPath)
+        val options =
+            AttachOptions(
+                agentJarPath = agentJar,
+                udsPath = udsPath,
+                attachTimeoutMs = ATTACH_TIMEOUT_MS,
+            )
+
+        AgentAttach.attach(fixture.pid, options).use { automator ->
+            assertEquals(fixture.pid, automator.pid)
+
+            // Strict contract: the fixture put up exactly one tagged Compose UI before
+            // signalling READY. The agent's `windows()` and `findByTestTag` must see them,
+            // and `click()` / `typeText()` must not throw — any of these failing is a real
+            // regression in the wire pipeline, the reflective handler, or `WindowTracker`
+            // discovery of `JFrame + ComposePanel` substrates.
+            val windows = automator.windows()
+            assertTrue(
+                windows.isNotEmpty(),
+                "iteration $iteration: windows() returned empty; expected the fixture's " +
+                    "'$SPECTRE_FIXTURE_WINDOW_TITLE' window. Either WindowTracker didn't see the " +
+                    "fixture or the fixture didn't bring up its UI before READY.",
+            )
+
+            val labelMatches = automator.findByTestTag(TAG_LABEL)
+            assertTrue(
+                labelMatches.isNotEmpty(),
+                "iteration $iteration: findByTestTag($TAG_LABEL) returned empty; the fixture's " +
+                    "tagged label node was not discovered.",
+            )
+
+            val buttonMatches = automator.findByTestTag(TAG_BUTTON)
+            assertTrue(
+                buttonMatches.isNotEmpty(),
+                "iteration $iteration: findByTestTag($TAG_BUTTON) returned empty; expected the " +
+                    "fixture's tagged Button.",
+            )
+            val buttonKey = buttonMatches.first().key
+            assertTrue(
+                buttonKey.isNotBlank(),
+                "iteration $iteration: button node key should be non-blank; got '$buttonKey'",
+            )
+            // Click bare-throws on failure (no runCatching) so a broken suspend bridge or a
+            // wire-level error fails the test loudly.
+            automator.click(buttonKey)
+
+            val textFieldMatches = automator.findByTestTag(TAG_TEXT_FIELD)
+            assertTrue(
+                textFieldMatches.isNotEmpty(),
+                "iteration $iteration: findByTestTag($TAG_TEXT_FIELD) returned empty",
+            )
+            // Type into whatever currently holds focus. We don't assert what the TextField's
+            // value becomes (Compose recomposition timing is flaky to wait on); we just require
+            // the wire round-trip to complete without an error.
+            automator.typeText("x")
+
+            val screenshotBytes = automator.screenshot()
+            assertTrue(
+                screenshotBytes.size >= MIN_PNG_BYTES,
+                "iteration $iteration: screenshot too small (${screenshotBytes.size}b) — not a real PNG?",
+            )
+            assertTrue(
+                screenshotBytes.startsWith(PNG_MAGIC),
+                "iteration $iteration: screenshot bytes do not start with PNG magic header",
+            )
+        }
+
+        assertFalse(
+            Files.exists(udsPath),
+            "iteration $iteration: UDS path $udsPath should not exist after detach",
+        )
+    }
+
+    private fun spawnComposeFixture(): FixtureProcess {
+        val javaBin = Paths.get(System.getProperty("java.home"), "bin", "java").toString()
+        val classpath = System.getProperty("java.class.path")
+        val process =
+            ProcessBuilder(
+                    javaBin,
+                    "-cp",
+                    classpath,
+                    "-XX:+EnableDynamicAgentLoading",
+                    "-Djava.awt.headless=false",
+                    "-Dcompose.application.configure.swing.globals=true",
+                    "-Dapple.awt.UIElement=true",
+                    "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt",
+                )
+                .redirectErrorStream(true)
+                .start()
+
+        val reader = BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8))
+        val readyLatch = CountDownLatch(1)
+        val drainerThread =
+            Thread({
+                    try {
+                        generateSequence(reader::readLine).forEach { line ->
+                            if (line.startsWith(READY_SENTINEL) && readyLatch.count > 0) {
+                                readyLatch.countDown()
+                            }
+                            // Otherwise discard — the parent doesn't care about per-line
+                            // diagnostics in a CI run.
+                        }
+                    } catch (_: java.io.IOException) {
+                        // Pipe closed when child exits; normal.
+                    }
+                })
+                .apply {
+                    isDaemon = true
+                    name = "fixture-stdout-drainer"
+                    start()
+                }
+
+        if (!readyLatch.await(FIXTURE_READY_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            process.destroyForcibly()
+            error(
+                "Compose fixture did not emit $READY_SENTINEL within ${FIXTURE_READY_TIMEOUT_MS} ms"
+            )
+        }
+
+        return FixtureProcess(process, process.pid(), reader, drainerThread)
+    }
+
+    private fun locateAgentJarOrSkip(): Path {
+        val prop = System.getProperty("dev.sebastiano.spectre.agent.runtimeJar")
+        assumeFalse(
+            prop.isNullOrBlank(),
+            "Requires -Ddev.sebastiano.spectre.agent.runtimeJar=<path/to/agent-*-all.jar>; the " +
+                ":agent:test task sets it automatically.",
+        )
+        val path = Paths.get(prop!!)
+        assumeFalse(
+            !Files.isRegularFile(path),
+            "Agent runtime JAR not found at $path; run `./gradlew :agent:shadowJar` first.",
+        )
+        return path
+    }
+
+    private fun ByteArray.startsWith(prefix: ByteArray): Boolean {
+        if (size < prefix.size) return false
+        return (0 until prefix.size).all { this[it] == prefix[it] }
+    }
+
+    private fun assertFalse(condition: Boolean, message: String) {
+        assertEquals(false, condition, message)
+    }
+
+    private class FixtureProcess(
+        val process: Process,
+        val pid: Long,
+        val reader: BufferedReader,
+        private val drainerThread: Thread,
+    ) : AutoCloseable {
+        /**
+         * Ordering matters: the drainer thread is blocked inside [BufferedReader.readLine], holding
+         * the reader's `InternalLock`. Calling `reader.close()` *first* would deadlock because
+         * `close()` tries to acquire the same lock. Destroy the process first — that closes the OS
+         * pipe, drives the drainer's `readLine` to return null, the drainer exits and releases the
+         * lock, then `reader.close()` succeeds.
+         */
+        override fun close() {
+            process.destroyForcibly()
+            process.waitFor(SHUTDOWN_GRACE_SECONDS, TimeUnit.SECONDS)
+            // Give the drainer a brief moment to exit its readLine() loop now that the
+            // pipe is closed, so the subsequent reader.close() doesn't race against it.
+            drainerThread.join(DRAINER_JOIN_GRACE_MS)
+            runCatching { reader.close() }
+        }
+
+        private companion object {
+            const val SHUTDOWN_GRACE_SECONDS: Long = 2
+            const val DRAINER_JOIN_GRACE_MS: Long = 500
+        }
+    }
+
+    private companion object {
+        const val REPEAT_CYCLES: Int = 3
+        const val ATTACH_TIMEOUT_MS: Long = 15_000
+        const val FIXTURE_READY_TIMEOUT_MS: Long = 30_000
+        const val MIN_PNG_BYTES: Int = 100
+        // PNG file magic: 89 50 4E 47 0D 0A 1A 0A.
+        val PNG_MAGIC: ByteArray =
+            byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+    }
+}

@@ -1,0 +1,67 @@
+package dev.sebastiano.spectre.agent
+
+/** Base for all attach-side failures surfaced by [AgentAttach.attach]. */
+@ExperimentalSpectreAgentApi
+public sealed class SpectreAttachException(message: String, cause: Throwable? = null) :
+    RuntimeException(message, cause)
+
+/**
+ * Thrown when the JDK Attach API isn't available — the attacher is running on a JRE rather than a
+ * JDK, or `jdk.attach` is not in the module graph (rare, but possible with custom JLink images).
+ */
+@ExperimentalSpectreAgentApi
+public class AttachUnsupportedException(cause: Throwable? = null) :
+    SpectreAttachException(
+        "The JDK Attach API is not available on this JVM. Spectre's agent attach requires a JDK " +
+            "(not a JRE) with the `jdk.attach` module on the module path. The class " +
+            "`com.sun.tools.attach.VirtualMachine` could not be loaded.",
+        cause,
+    )
+
+/**
+ * Thrown when the agent failed to come up at the configured UDS path within
+ * [AttachOptions.attachTimeoutMs].
+ *
+ * If you hit this exception, the most likely causes (in order) are:
+ * 1. `VirtualMachine.loadAgent` already failed for an actionable reason — check the target JVM's
+ *    stderr for `[spectre-agent]` lines or an `AgentInitializationException`. The agent throws on
+ *    bootstrap failures so the cause should usually surface there.
+ * 2. The target JVM crashed mid-bootstrap. Check the target process is still alive.
+ * 3. The UDS bind failed (path too long, permission issue) — see target's stderr.
+ */
+@ExperimentalSpectreAgentApi
+public class AgentBootstrapTimeoutException(udsPath: java.nio.file.Path, timeoutMs: Long) :
+    SpectreAttachException(
+        "Agent runtime did not bind UDS path $udsPath within ${timeoutMs} ms. Check the " +
+            "target JVM's stderr for `[spectre-agent]` diagnostic lines or an " +
+            "AgentInitializationException with the underlying cause."
+    )
+
+/**
+ * Thrown when the target JVM is owned by a different OS user than the attacher.
+ *
+ * The JDK Attach API requires same-UID on POSIX. We pre-check this via
+ * `ProcessHandle.of(pid).info().user()` because the underlying error from `VirtualMachine.attach`
+ * is generic and hard to diagnose.
+ */
+@ExperimentalSpectreAgentApi
+public class AttachPermissionDeniedException(targetPid: Long, targetUser: String?) :
+    SpectreAttachException(
+        "Target JVM (pid=$targetPid) is owned by " +
+            "${targetUser?.let { "user '$it'" } ?: "a different user"} but this process is " +
+            "running as '${System.getProperty("user.name")}'. The JDK Attach API only works " +
+            "across processes owned by the same OS user on POSIX systems."
+    )
+
+/**
+ * Thrown when the agent JAR could not be located by [AgentAttach.attach]. Caller can fix by passing
+ * [AttachOptions.agentJarPath] explicitly or by setting the
+ * `dev.sebastiano.spectre.agent.runtimeJar` system property.
+ */
+@ExperimentalSpectreAgentApi
+public class AgentJarNotFoundException(searched: List<java.nio.file.Path>) :
+    SpectreAttachException(
+        "Could not locate the Spectre agent fat JAR. Searched:\n" +
+            searched.joinToString("\n") { "  - $it" } +
+            "\n\nRun `./gradlew :agent:shadowJar` or pass AttachOptions(agentJarPath = ...)."
+    )

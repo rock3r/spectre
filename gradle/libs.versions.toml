@@ -24,6 +24,14 @@ kotlinx-coroutines = "1.10.2"
 kotlinx-serialization = "1.7.3"
 ktor = "3.0.3"
 material3 = "1.10.0-alpha05"
+# GradleUp Shadow — maintained successor to johnrengelman/shadow. Used by `:agent` to
+# produce the fat `*-all.jar` agent JAR with manifest-driven Agent-Class entry. Pinned to
+# 9.x because 8.x references `org.gradle.api.artifacts.SelfResolvingDependency`, which was
+# removed in Gradle 9.0. See https://github.com/GradleUp/shadow/releases/tag/9.0.0.
+# See `.plans/2026-05-22-issue-153-agent-attach-workshop.md` for the agent packaging
+# rationale (thin agent: bundles only bootstrap + IPC + DTOs + serialization, NOT
+# Compose / Skiko / Kotlin stdlib).
+shadow = "9.4.1"
 
 [libraries]
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
@@ -46,6 +54,7 @@ junit5-api = { module = "org.junit.jupiter:junit-jupiter-api", version.ref = "ju
 junit5-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref = "junit5" }
 junit5-vintageEngine = { module = "org.junit.vintage:junit-vintage-engine", version.ref = "junit5" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+kotlinx-serialization-cbor = { module = "org.jetbrains.kotlinx:kotlinx-serialization-cbor", version.ref = "kotlinx-serialization" }
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
 ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
 ktor-client-contentNegotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
@@ -80,3 +89,4 @@ ktfmt = { id = "com.ncorti.ktfmt.gradle", version.ref = "ktfmt" }
 kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 mavenPublish = { id = "com.vanniktech.maven.publish", version.ref = "mavenPublish" }
+shadow = { id = "com.gradleup.shadow", version.ref = "shadow" }

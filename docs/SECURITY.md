@@ -31,13 +31,20 @@ out of scope.
    `installSpectreRoutes` expose click, keystroke, and screenshot capture to anyone who can
    reach the bound port. Bind to `127.0.0.1`. Anything network-reachable broadens the threat
    model beyond what this release covers.
-4. **Bundled native helpers are trusted artifacts.** Spectre extracts and executes Swift
+4. **The agent transport assumes a same-UID peer.** `:agent`'s Unix Domain Socket in
+   `/tmp/` is protected by filesystem permissions only (mode 0600, owner-only, set
+   explicitly by `IpcServer` immediately after bind to defend against permissive umasks).
+   Any process running as the same OS user can connect and drive the target. There is no
+   authentication, no encryption, and no origin check. The agent transport is intentionally
+   a testing affordance for the same machine and the same user, not a remote-control
+   protocol. See [Agent attach](guide/agent.md).
+5. **Bundled native helpers are trusted artifacts.** Spectre extracts and executes Swift
    (`spectre-screencapture`) and Rust (`spectre-wayland-helper`) helpers from the published jar
    resources. The extraction path is process-private; the helpers are launched with `argv`
    lists (never shell strings). Developer-only override env vars exist for local iteration
    and are explicitly documented as such — see the
    [`SPECTRE_WAYLAND_HELPER` note](#developer-only-override-env-vars) below.
-5. **External binaries (ffmpeg, xprop, osascript) come from the host PATH.** Spectre does not
+6. **External binaries (ffmpeg, xprop, osascript) come from the host PATH.** Spectre does not
    pin versions and treats them as prerequisites of the host environment.
 
 ## Capabilities and their exposure
@@ -50,6 +57,7 @@ out of scope.
 | Record video | `AutoRecorder`, `FfmpegRecorder`, `ScreenCaptureKitRecorder`, `WaylandPortalRecorder` | In-process only |
 | Execute a helper binary | `HelperBinaryExtractor` (SCK), `WaylandHelperBinaryExtractor` | Local file system, JVM process |
 | Expose any of the above over HTTP | `installSpectreRoutes` mounts the windows / nodes / click / typeText / screenshot routes | **Unauthenticated, plaintext** — host application chooses bind address |
+| Expose any of the above over UDS | `:agent`'s `IpcServer` mounts the same surface plus detach over a Unix Domain Socket | **Unauthenticated** — filesystem mode 0600 (same UID); macOS + Linux only in v1 |
 
 The HTTP exposure column is the most important one to internalise: there are **no auth
 tokens, no TLS, and no origin checks** on any route. The transport is intentionally a
