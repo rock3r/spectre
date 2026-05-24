@@ -263,12 +263,18 @@ internal class ReflectiveAutomatorHandler(private val automator: Any) : AgentReq
     }
 
     private fun ReflectiveOperationException.targetMessage(): String {
-        val cause = this.cause ?: return this.message ?: javaClass.simpleName
-        return "${cause.javaClass.simpleName}: ${cause.message ?: javaClass.simpleName}"
+        val cause = this.cause ?: return this.message ?: this.javaClass.simpleName
+        // The cause is the real failure (`InvocationTargetException` unwraps to the automator's
+        // own exception). Both halves of the formatted string must read from `cause` — an earlier
+        // draft fell back to `javaClass.simpleName` on the receiver (`this` =
+        // ReflectiveOperationException), which produced misleading messages like
+        // `"NullPointerException: InvocationTargetException"`. Bugbot caught it.
+        return "${cause.javaClass.simpleName}: ${cause.message ?: NO_MESSAGE_PLACEHOLDER}"
     }
 
     private companion object {
         const val CONTINUATION_FQN: String = "kotlin.coroutines.Continuation"
         const val AWT_RECTANGLE_FQN: String = "java.awt.Rectangle"
+        const val NO_MESSAGE_PLACEHOLDER: String = "<no message>"
     }
 }

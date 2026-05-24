@@ -229,6 +229,40 @@ class ReflectiveAutomatorHandlerMappingTest {
     }
 
     @Test
+    fun `targetMessage formatting uses the unwrapped cause's class and a placeholder when cause has no message`() {
+        // Regression for Bugbot finding on commit 8cb205c: `targetMessage` previously fell back
+        // to `javaClass.simpleName` on the *receiver* (`this` = ReflectiveOperationException —
+        // typically `InvocationTargetException`) instead of `cause.javaClass.simpleName` or a
+        // placeholder. With a null-message cause, the resulting Error would read
+        // `"NullPointerException: InvocationTargetException"` — misleading and useless.
+        // Today the helper formats as `"<causeClassName>: <causeMessage or "<no message>">"`
+        // and never mentions the wrapper class.
+        val automator =
+            FakeAutomator(
+                allNodesImpl = {
+                    // No message → exercises the placeholder branch.
+                    throw IllegalStateException()
+                }
+            )
+        val handler = ReflectiveAutomatorHandler(automator)
+        val response = handler.handle(AgentRequest.AllNodes)
+        check(response is AgentResponse.Error) { "expected Error response, got $response" }
+        assertTrue(
+            response.message.startsWith("Reflective call failed: IllegalStateException:"),
+            "expected error to name the unwrapped cause's class; got: ${response.message}",
+        )
+        assertTrue(
+            response.message.contains("<no message>"),
+            "expected null-message fallback placeholder; got: ${response.message}",
+        )
+        assertTrue(
+            !response.message.contains("InvocationTargetException"),
+            "the InvocationTargetException wrapper must NOT appear in user-facing errors; " +
+                "got: ${response.message}",
+        )
+    }
+
+    @Test
     fun `handler resolves click and typeText methods by name plus Continuation signature`() {
         // We don't call them (the suspend invocation path is exercised in the integration
         // test); we just verify that the constructor can find both methods on a fake

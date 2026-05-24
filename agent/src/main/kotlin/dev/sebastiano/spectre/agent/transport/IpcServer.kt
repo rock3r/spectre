@@ -161,12 +161,17 @@ constructor(
      * [AgentRequest.Detach] flipped it on the handler thread. We still need [close] to release the
      * channel and unlink the path in that case, which the previous CAS-gated implementation skipped
      * (and which `IpcRoundTripTest` caught).
+     *
+     * Uses [AtomicBoolean.compareAndSet] rather than a `@Volatile` boolean with a check-then-set
+     * pattern: the shutdown-hook thread (Path B) and the `onClientDetach` call from the accept
+     * thread (Path A) can both reach [close] concurrently. The inner ops are already idempotent,
+     * but the atomic CAS matches the documented "subsequent calls are no-ops" contract precisely —
+     * only the first caller through CAS executes the body, others fall through immediately.
      */
-    @Volatile private var closed = false
+    private val closed = AtomicBoolean(false)
 
     override fun close() {
-        if (closed) return
-        closed = true
+        if (!closed.compareAndSet(false, true)) return
         running.set(false)
         try {
             serverChannel.close()
