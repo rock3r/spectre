@@ -7,6 +7,7 @@ import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import dev.sebastiano.spectre.agent.transport.logLabel
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Live connection to a Spectre agent running inside a target JVM.
@@ -30,7 +31,7 @@ internal constructor(
     private val detacher: Runnable,
 ) : AutoCloseable {
 
-    private var closed = false
+    private val closed = AtomicBoolean(false)
 
     /** Read the current list of tracked windows in the target. */
     @Throws(IOException::class)
@@ -84,8 +85,7 @@ internal constructor(
      */
     @Suppress("TooGenericExceptionCaught")
     override fun close() {
-        if (closed) return
-        closed = true
+        if (!closed.compareAndSet(false, true)) return
         try {
             client.send(AgentRequest.Detach)
         } catch (_: Exception) {
@@ -104,7 +104,7 @@ internal constructor(
     }
 
     private fun exchange(request: AgentRequest): AgentResponse {
-        check(!closed) { "AttachedAutomator is closed" }
+        check(!closed.get()) { "AttachedAutomator is closed" }
         val resp = client.send(request)
         if (resp is AgentResponse.Error) {
             throw IOException("Agent reported error for ${request.logLabel}: ${resp.message}")

@@ -85,19 +85,18 @@ tasks.withType<Test>().configureEach {
 }
 
 // ---------------------------------------------------------------------------------------
-// `attachSpike` — manual M-1 verification entry point. Wraps a standalone helper from the
+// `attachSpike` — manual verification entry point. Wraps a standalone helper from the
 // non-published `spike` source set so a contributor can run
 // `./gradlew :agent:attachSpike -Ppid=<PID>` from a worktree and see the agent attach to a
 // running Spectre-instrumented JVM. The agent's diagnostic stderr lands in the *target* JVM's
 // console, not this task's output.
 //
-// This task is NOT wired into `:check`. It exists for human-driven verification while M-1
-// is the active milestone. Automated cross-JVM attach tests land in M-7/M-8.
+// This task is NOT wired into `:check`; it exists for human-driven verification.
 // ---------------------------------------------------------------------------------------
 
 tasks.register<JavaExec>("attachSpike") {
     description =
-        "M-1 verification: attaches the Spectre agent runtime JAR to a running JVM identified " +
+        "Attaches the Spectre agent runtime JAR to a running JVM identified " +
             "by -Ppid=<pid>. Output appears in the target JVM's stderr."
     group = "verification"
     val runtimeJarFile =

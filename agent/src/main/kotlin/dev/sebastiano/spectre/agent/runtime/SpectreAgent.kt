@@ -91,8 +91,8 @@ public object SpectreAgent {
 
         val udsPath = agentArgs.takeUnless { it.isNullOrBlank() }?.let(Path::of)
         if (udsPath == null) {
-            // No UDS path → M-1 diagnostic spike (window count to stderr). Useful when a user
-            // just wants to verify Spectre is correctly on a target's classpath.
+            // No UDS path means manual diagnostic mode: report window count to stderr so a user
+            // can verify Spectre is correctly on a target's classpath.
             val count = invokeWindowsCountReflectively(automator)
             System.err.println(
                 "[spectre-agent] no UDS path provided; spike mode reports getWindows().size = $count"

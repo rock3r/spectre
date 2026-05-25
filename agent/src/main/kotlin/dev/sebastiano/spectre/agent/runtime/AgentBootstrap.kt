@@ -50,9 +50,8 @@ internal object AgentBootstrap {
  * resolve it, after which it shows up in subsequent scans and we can read its [ClassLoader].
  *
  * Returns `null` if the system loader can't find the class. **Does not** walk arbitrary other
- * loaders — that case (notably IntelliJ's [PLUGIN_CLASS_LOADER_FQN]) is handled in M-6, because by
- * the time an IntelliJ plugin runs UI code, its plugin classes are reliably loaded and the primary
- * `getAllLoadedClasses` scan finds them.
+ * loaders — IntelliJ plugin loaders are handled by the primary `getAllLoadedClasses` scan because
+ * by the time a plugin runs UI code, its plugin classes are reliably loaded.
  *
  * Uses `Class.forName(name, initialize = false, ...)` to avoid running static initialisers we don't
  * control. `ComposeAutomator` is a Kotlin interface so this is mostly defensive — but Kotlin

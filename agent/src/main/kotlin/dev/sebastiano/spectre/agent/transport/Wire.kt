@@ -118,7 +118,9 @@ internal sealed interface AgentResponse {
 
     /**
      * Server-side failure. Carries a human-readable [message]; the structured failure type isn't
-     * exposed across the wire yet to keep the protocol small.
+     * exposed across the wire yet to keep the protocol small. This response goes back to the
+     * same-UID client that sent the request, so messages may include caller-controlled selectors or
+     * node keys for debugging. Persistent diagnostics must use [AgentRequest.logLabel] instead.
      */
     @Serializable @SerialName("error") data class Error(val message: String) : AgentResponse
 }

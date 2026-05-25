@@ -69,7 +69,9 @@ public object AgentAttach {
      * Resolve the agent runtime JAR by trying in order:
      * 1. [AttachOptions.agentJarPath] if non-null.
      * 2. The system property `dev.sebastiano.spectre.agent.runtimeJar`.
-     * 3. `<cwd>/agent-runtime/build/libs/agent-runtime-*.jar` (any match).
+     * 3. A `spectre-agent-runtime-<version>.jar` or `agent-runtime-<version>.jar` entry on the
+     *    attacher's `java.class.path`.
+     * 4. `<cwd>/agent-runtime/build/libs/agent-runtime-*.jar` (any match).
      */
     @Suppress("ReturnCount")
     private fun resolveAgentJar(options: AttachOptions): Path {

@@ -21,8 +21,8 @@ internal class SpectreNotOnClasspathException :
     SpectreAgentBootstrapException(
         "No `dev.sebastiano.spectre.core.ComposeAutomator` class found in the target JVM's " +
             "loaded classes. The Spectre agent requires the target application to include " +
-            "`dev.sebastiano.spectre:core` on its classpath. The agent JAR itself is supplied " +
-            "by the attaching JVM via `VirtualMachine.loadAgent`, not added as a target-side " +
+            "`dev.sebastiano.spectre:spectre-core` on its classpath. The agent JAR itself is " +
+            "supplied by the attaching JVM via `VirtualMachine.loadAgent`, not added as a target-side " +
             "dependency. See https://github.com/rock3r/spectre/issues/153 for the thin-agent " +
             "design rationale."
     )

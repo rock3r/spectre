@@ -66,7 +66,7 @@ after it has been loaded into that JVM.
 ```kotlin
 // build.gradle.kts of the target application
 dependencies {
-    implementation("dev.sebastiano.spectre:core:<version>")
+    implementation("dev.sebastiano.spectre:spectre-core:<version>")
     // No `spectre-agent` or `spectre-agent-runtime` dependency is needed in the target.
     // The attacher supplies the runtime jar to the JDK Attach API.
 }
@@ -88,8 +88,14 @@ dependencies {
 }
 ```
 
-`AgentAttach` auto-discovers `spectre-agent-runtime-<version>.jar` from the attacher's runtime
-classpath. In practice, `runtimeOnly(...)` makes Gradle launch the attacher with the runtime jar
+`AgentAttach` resolves the loadable runtime jar in this order:
+
+1. `AttachOptions.agentJarPath`
+2. `-Ddev.sebastiano.spectre.agent.runtimeJar=<path>`
+3. Classpath auto-discovery of a physical `spectre-agent-runtime-<version>.jar`
+4. The in-repo fallback at `<cwd>/agent-runtime/build/libs/agent-runtime-*.jar`
+
+In normal Gradle usage, `runtimeOnly(...)` makes Gradle launch the attacher with the runtime jar
 listed in `java.class.path`; Spectre scans that classpath, takes the physical jar path, and passes
 that path to `VirtualMachine.loadAgent(...)`. The attacher does not call classes from the runtime
 jar directly, and the target still does not need `spectre-agent-runtime` declared as a dependency.
@@ -113,10 +119,10 @@ automator, then return DTOs or bytes to the attacher.
 
 ## Custom runtime jar path
 
-Classpath auto-discovery is the default, but it only works when the runtime jar is visible as a
-physical `spectre-agent-runtime-<version>.jar` entry in the attacher's `java.class.path`. Custom
-launchers, shaded tools, module-path launches, and ad-hoc scripts may hide that file. In those
-cases, point Spectre at the runtime jar explicitly:
+Classpath auto-discovery is the default for normal Gradle runs, but `AttachOptions.agentJarPath`
+and `-Ddev.sebastiano.spectre.agent.runtimeJar=<path>` are explicit overrides and win before the
+classpath scan. Use them for custom launchers, shaded tools, module-path launches, and ad-hoc
+scripts that hide the physical runtime jar from `java.class.path`.
 
 ```kotlin
 import dev.sebastiano.spectre.agent.AgentAttach
