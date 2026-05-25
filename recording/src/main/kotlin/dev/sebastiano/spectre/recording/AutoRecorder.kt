@@ -132,16 +132,12 @@ internal constructor(
             return recorder.start(region, output, options)
         }
         if (isWindows()) {
-            if (options.usesLegacyFfmpegOnlyWindowsOptions()) {
-                return ffmpegRecorder.start(region, output, options)
-            }
-
             val recorder =
                 windowsRegionRecorder ?: throw unavailable("Windows region capture", null)
             return try {
                 recorder.start(region, output, options)
-            } catch (_: WindowsGraphicsCaptureHelperNotBundledException) {
-                ffmpegRecorder.start(region, output, options)
+            } catch (e: WindowsGraphicsCaptureHelperNotBundledException) {
+                throw unavailable("Windows region capture", e)
             }
         }
         if (isLinux()) {
@@ -164,10 +160,6 @@ internal constructor(
                 "window-targeted recorder is available. Use startRegion(...) explicitly for " +
                 "region capture."
         )
-
-    private fun RecordingOptions.usesLegacyFfmpegOnlyWindowsOptions(): Boolean =
-        codec != RecordingOptions.DEFAULT_CODEC ||
-            screenIndex != RecordingOptions.DEFAULT_SCREEN_INDEX
 
     private companion object {
         @JvmStatic fun defaultIsMacOs(): Boolean = HostPlatform.isMacOs()

@@ -52,11 +52,11 @@ failure modes, and the section below
   screenshots use the shared .NET helper from `spectre-recording-windows`. The helper
   uses Windows Graphics Capture, is published for x64 and arm64, and does not require
   ffmpeg. It is framework-dependent, so Windows users need .NET 8 Desktop Runtime and
-  Windows App Runtime 1.8 installed. `AutoRecorder.startRegion(...)` falls back to
-  `FfmpegRecorder`/`gdigrab` when that helper artifact is absent, or when the caller
+  Windows App Runtime 1.8 installed. `AutoRecorder.startRegion(...)` no longer falls back
+  to `FfmpegRecorder`/`gdigrab` when that helper artifact is absent, or when the caller
   sets Windows region options that WGC cannot honour (`RecordingOptions.codec` or
-  `screenIndex`). `FfmpegRecorder` also remains available as a deprecated explicit legacy
-  backend.
+  `screenIndex`); those cases fail loudly instead. `FfmpegRecorder` remains available only
+  as a deprecated explicit legacy backend.
 - **Linux Xorg/Xvfb sessions** — helper-driven GStreamer `ximagesrc` capture. Reads `DISPLAY`.
   `LinuxX11Recorder` records fixed regions or a named X11 window; `LinuxNativeScreenshotter`
   writes one-frame PNGs through the same helper. Routine
