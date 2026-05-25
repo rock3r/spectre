@@ -1,10 +1,10 @@
 name: macOS
 
-# Builds the ScreenCaptureKit Swift helper and runs the recording module's tests on a real
-# macOS host. The Linux `ci.yml` workflow runs everything else, but it never exercises the
-# Swift toolchain — without this job a broken `recording/native/macos/Sources/...` change
-# would compile fine on Linux (the Gradle Swift task is gated `onlyIf macOS`) and then break
-# silently for everyone using the recording module on macOS.
+# Unit-tests and builds the ScreenCaptureKit Swift helper, then runs the recording module's tests
+# on a real macOS host. The Linux `ci.yml` workflow runs everything else, but it never exercises
+# the Swift toolchain — without this workflow a broken `recording/native/macos/Sources/...`
+# change would compile fine on Linux (the Gradle Swift task is gated `onlyIf macOS`) and then
+# break silently for everyone using the recording module on macOS.
 #
 # Notes:
 #   - SCK end-to-end recording isn't exercised here (CI runners don't have Screen Recording
@@ -29,6 +29,20 @@ permissions:
   contents: read
 
 jobs:
+  screen-capture-helper-tests:
+    name: ScreenCaptureKit helper unit tests
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Verify Swift toolchain
+        run: swift --version
+
+      - name: Run ScreenCaptureKit helper unit tests
+        run: swift test --package-path recording/native/macos
+
   recording-macos:
     runs-on: macos-latest
 

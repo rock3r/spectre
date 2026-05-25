@@ -53,6 +53,7 @@ class HelperArgumentsTest {
                 "--title-contains",
                 "--fps",
                 "--cursor",
+                "--file-type",
                 "--discovery-timeout-ms",
                 "--output",
             )
@@ -120,6 +121,42 @@ class HelperArgumentsTest {
         assertEquals("99999", argv[argv.indexOf("--pid") + 1])
         assertEquals("60", argv[argv.indexOf("--fps") + 1])
         assertEquals("1500", argv[argv.indexOf("--discovery-timeout-ms") + 1])
+    }
+
+    @Test
+    fun `toArgv infers mp4 file type from mp4 output extension`() {
+        val helper = Path.of("/tmp/spectre-screencapture")
+        val args =
+            HelperArguments(
+                pid = 1,
+                titleContains = "x",
+                output = Path.of("/tmp/o.mp4"),
+                fps = 30,
+                captureCursor = true,
+                discoveryTimeoutMs = 0,
+            )
+
+        val argv = args.toArgv(helper)
+
+        assertEquals("mp4", argv[argv.indexOf("--file-type") + 1])
+    }
+
+    @Test
+    fun `toArgv infers mov file type from mov output extension`() {
+        val helper = Path.of("/tmp/spectre-screencapture")
+        val args =
+            HelperArguments(
+                pid = 1,
+                titleContains = "x",
+                output = Path.of("/tmp/o.mov"),
+                fps = 30,
+                captureCursor = true,
+                discoveryTimeoutMs = 0,
+            )
+
+        val argv = args.toArgv(helper)
+
+        assertEquals("mov", argv[argv.indexOf("--file-type") + 1])
     }
 
     @Test

@@ -17,9 +17,10 @@ import UniformTypeIdentifiers
 //   --title-contains <suffix>  Required. Substring match on the target window's kCGWindowName.
 //                              Spectre stamps a `Spectre/<uuid>` suffix on the ComposeWindow's
 //                              title for the recording's lifetime so this is unique.
-//   --output <path>            Required. Destination .mov file. Overwritten if it exists.
+//   --output <path>            Required. Destination .mov/.mp4 file. Overwritten if it exists.
 //   --fps <int>                Optional. Default 30.
 //   --cursor <true|false>      Optional. Default true.
+//   --file-type <mov|mp4>      Optional. AVAssetWriter container type. Defaults from output path.
 //   --discovery-timeout-ms <int>  Optional. Default 2000.
 //
 // Lifecycle:
@@ -29,7 +30,7 @@ import UniformTypeIdentifiers
 //       * stdin reads `q\n` (graceful, mirrors FfmpegRecorder's shutdown contract)
 //       * stdin closes
 //       * SIGTERM
-//   - Always finalises the writer before exit so the .mov is playable.
+//   - Always finalises the writer before exit so the requested movie file is playable.
 //
 // Exit codes:
 //   0  clean shutdown, file finalised
@@ -38,11 +39,10 @@ import UniformTypeIdentifiers
 //   4  permission denied (Screen Recording TCC)
 //   5  capture pipeline error after start
 
-@main
-struct SpectreScreenCapture {
-    static func main() async {
+public enum SpectreScreenCaptureCommand {
+    public static func main(_ argv: [String] = CommandLine.arguments) async -> Never {
         do {
-            let args = try Arguments.parse(CommandLine.arguments)
+            let args = try Arguments.parse(argv)
             let recorder = Recorder(arguments: args)
             try await recorder.run()
             exit(0)
@@ -69,6 +69,7 @@ struct Arguments {
     let output: URL
     let fps: Int
     let captureCursor: Bool
+    let fileType: RecordingFileType
     let discoveryTimeoutMs: Int
 
     static func parse(_ argv: [String]) throws -> Arguments {
@@ -78,6 +79,7 @@ struct Arguments {
         var output: String?
         var fps = 30
         var cursor = true
+        var fileType: RecordingFileType?
         var discoveryTimeoutMs = 2000
 
         var i = 1
@@ -112,6 +114,11 @@ struct Arguments {
                     throw CLIError(code: 2, message: "--cursor must be true or false")
                 }
                 cursor = parsed
+            case "--file-type":
+                guard let parsed = RecordingFileType(rawValue: value) else {
+                    throw CLIError(code: 2, message: "--file-type must be mov or mp4")
+                }
+                fileType = parsed
             case "--discovery-timeout-ms":
                 guard let parsed = Int(value), parsed >= 0 else {
                     throw CLIError(code: 2, message: "--discovery-timeout-ms must be >= 0")
@@ -130,14 +137,16 @@ struct Arguments {
         guard let output, !output.isEmpty else {
             throw CLIError(code: 2, message: "--output is required")
         }
+        let outputUrl = URL(fileURLWithPath: output)
 
         return Arguments(
             mode: mode,
             pid: pid,
             titleContains: titleContains,
-            output: URL(fileURLWithPath: output),
+            output: outputUrl,
             fps: fps,
             captureCursor: cursor,
+            fileType: fileType ?? RecordingFileType.forOutput(outputUrl),
             discoveryTimeoutMs: discoveryTimeoutMs
         )
     }
@@ -146,6 +155,27 @@ struct Arguments {
 enum CaptureMode: String {
     case recording
     case screenshot
+}
+
+enum RecordingFileType: String {
+    case mov
+    case mp4
+
+    static func forOutput(_ output: URL) -> RecordingFileType {
+        if output.pathExtension.lowercased() == "mp4" {
+            return .mp4
+        }
+        return .mov
+    }
+
+    var assetWriterFileType: AVFileType {
+        switch self {
+        case .mov:
+            return .mov
+        case .mp4:
+            return .mp4
+        }
+    }
 }
 
 // Frame handling lives in a final class with a NSLock rather than an actor. Two reasons:
@@ -338,7 +368,8 @@ final class Recorder {
         try? FileManager.default.removeItem(at: args.output)
 
         if args.mode == .recording {
-            let writer = try AVAssetWriter(outputURL: args.output, fileType: .mov)
+            let writer = try AVAssetWriter(
+                outputURL: args.output, fileType: args.fileType.assetWriterFileType)
             let videoSettings: [String: Any] = [
                 AVVideoCodecKey: AVVideoCodecType.h264,
                 AVVideoWidthKey: width,

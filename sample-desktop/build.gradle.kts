@@ -261,6 +261,7 @@ tasks.register<JavaExec>("runLinuxRobotSmoke") {
     onlyIf { OperatingSystem.current().isLinux }
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("dev.sebastiano.spectre.sample.LinuxRobotSmoke")
+    jvmArgs("-Dskiko.renderApi=SOFTWARE_COMPAT")
 }
 
 tasks.register<JavaExec>("runLinuxRobotUnfocusedSmoke") {
@@ -271,6 +272,7 @@ tasks.register<JavaExec>("runLinuxRobotUnfocusedSmoke") {
     onlyIf { OperatingSystem.current().isLinux }
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("dev.sebastiano.spectre.sample.LinuxRobotUnfocusedSmoke")
+    jvmArgs("-Dskiko.renderApi=SOFTWARE_COMPAT")
 }
 
 // macOS counterparts to the Windows Robot smokes. NOT wired into CI — GitHub-hosted macos-*

@@ -89,7 +89,7 @@ internal constructor(
                 } catch (e: InterruptedException) {
                     // destroyForcibly() is asynchronous on the JVM. Without a bounded wait
                     // here we can return from start() while the helper is still alive +
-                    // writing the output file — leaks a subprocess and leaves the .mov
+                    // writing the output file — leaks a subprocess and leaves the recording
                     // mutating after the caller thinks startup aborted. Mirror the non-ready
                     // path's bounded wait so the helper is genuinely gone by the time we
                     // propagate the interrupt.
@@ -363,7 +363,7 @@ private class ScreenCaptureKitRecordingHandle(
             }
         if (exit == 0) return
         // Any non-zero exit (including SIGTERM 143 / SIGKILL 137) means the helper did not
-        // run the AVAssetWriter finalize path — the .mov is truncated or missing entirely.
+        // run the AVAssetWriter finalize path — the recording is truncated or missing entirely.
         // The helper installs a SIGTERM handler BEFORE writing READY to stdout, and start()
         // only returns once READY is received, so by the time the JVM-side stop() can call
         // process.destroy() the SIGTERM handler is guaranteed to be in place — SIGTERM goes

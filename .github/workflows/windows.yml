@@ -52,6 +52,22 @@ permissions:
   contents: read
 
 jobs:
+  windows-helper-tests:
+    name: Windows helper argument tests
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Run Windows Graphics Capture helper unit tests
+        run: dotnet test recording/native/windows/SpectreWindowCapture.Tests/SpectreWindowCapture.Tests.csproj
+
   check-windows:
     runs-on: windows-latest
 

@@ -155,6 +155,24 @@ class ScreenCaptureKitHelperContractTest {
     }
 
     @Test
+    fun `helper exits 2 on unknown file type`() {
+        val exit =
+            runHelper(
+                listOf(
+                    "--pid",
+                    "1",
+                    "--title-contains",
+                    "x",
+                    "--output",
+                    output.toString(),
+                    "--file-type",
+                    "avi",
+                )
+            )
+        assertEquals(2, exit, "--file-type accepts only 'mov' or 'mp4'")
+    }
+
+    @Test
     fun `helper exits 2 when output points at an existing directory`() {
         val outputDir = Files.createTempDirectory("spectre-helper-contract-dir-")
         try {

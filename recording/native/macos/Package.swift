@@ -14,9 +14,19 @@ let package = Package(
     name: "SpectreScreenCapture",
     platforms: [.macOS(.v13)],
     targets: [
+        .target(
+            name: "SpectreScreenCaptureCore",
+            path: "Sources/SpectreScreenCaptureCore"
+        ),
         .executableTarget(
             name: "SpectreScreenCapture",
+            dependencies: ["SpectreScreenCaptureCore"],
             path: "Sources/SpectreScreenCapture"
+        ),
+        .testTarget(
+            name: "SpectreScreenCaptureCoreTests",
+            dependencies: ["SpectreScreenCaptureCore"],
+            path: "Tests/SpectreScreenCaptureCoreTests"
         )
     ]
 )
