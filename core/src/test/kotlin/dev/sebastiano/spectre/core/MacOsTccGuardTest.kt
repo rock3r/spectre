@@ -57,6 +57,22 @@ class MacOsTccGuardTest {
     }
 
     @Test
+    fun `requireScreenRecording throws on Locked with lock guidance`() {
+        val guard =
+            MacOsTccGuard(
+                accessibilityProbe = { TccStatus.Granted },
+                screenRecordingProbe = { TccStatus.Locked },
+                warn = {},
+            )
+
+        val error = assertFailsWith<IllegalStateException> { guard.requireScreenRecording() }
+
+        val message = error.message.orEmpty()
+        assertTrue("locked" in message.lowercase(), "expected locked-screen guidance: $message")
+        assertTrue("unlock" in message.lowercase(), "expected unlock instruction: $message")
+    }
+
+    @Test
     fun `requireAccessibility on Granted does not throw`() {
         val guard =
             MacOsTccGuard(
@@ -116,6 +132,25 @@ class MacOsTccGuardTest {
         repeat(5) { guard.requireScreenRecording() }
 
         assertEquals(1, probeInvocations)
+    }
+
+    @Test
+    fun `locked screen recording result is not cached`() {
+        var probeInvocations = 0
+        val guard =
+            MacOsTccGuard(
+                accessibilityProbe = { TccStatus.Granted },
+                screenRecordingProbe = {
+                    probeInvocations++
+                    if (probeInvocations == 1) TccStatus.Locked else TccStatus.Granted
+                },
+                warn = {},
+            )
+
+        assertFailsWith<IllegalStateException> { guard.requireScreenRecording() }
+        guard.requireScreenRecording()
+
+        assertEquals(2, probeInvocations)
     }
 
     @Test
@@ -263,5 +298,12 @@ class MacOsTccGuardTest {
         assertFailsWith<IllegalStateException> { guard.requireAccessibility() }
 
         assertEquals(1, probeInvocations, "probe should run only once even when denied")
+    }
+
+    @Test
+    fun `macOS console lock status parses ioreg output`() {
+        assertEquals(true, macOsConsoleLockStatus("\"IOConsoleLocked\" = Yes"))
+        assertEquals(false, macOsConsoleLockStatus("\"IOConsoleLocked\" = No"))
+        assertEquals(null, macOsConsoleLockStatus("\"IOConsoleUsers\" = ()"))
     }
 }

@@ -17,13 +17,11 @@ public data class RecordingOptions(
      */
     val codec: String = DEFAULT_CODEC,
     /**
-     * Index of the macOS display to capture from, used to build ffmpeg's avfoundation device name
-     * `Capture screen $screenIndex`. Defaults to `0` — the primary display. Multi-monitor users
-     * whose target region lives on a secondary display must set this to the matching index
-     * (typically the AWT `GraphicsDevice` index of the screen, but verify by running `ffmpeg -f
-     * avfoundation -list_devices true -i ""` once and matching the "Capture screen N" entries
-     * against your physical display arrangement). The crop coordinates in the region are
-     * interpreted relative to the chosen screen's top-left.
+     * Index of the display to capture for fixed-region recorders that support multiple displays.
+     * Defaults to `0` — the primary display. macOS ScreenCaptureKit region capture orders displays
+     * primary first, then by display frame `minX`, then by `minY`; region coordinates use the
+     * selected display's ScreenCaptureKit source-rect space. Explicit legacy [FfmpegRecorder]
+     * callers still get ffmpeg avfoundation device ordering (`Capture screen N`).
      */
     val screenIndex: Int = DEFAULT_SCREEN_INDEX,
 ) {

@@ -124,9 +124,9 @@ Current backends:
 - `FfmpegRegionScreenshotter` — deprecated legacy explicit Linux X11 still screenshot
   fallback via one-frame `x11grab` region capture; the target must be visible and frontmost
   because this is not true window capture.
-- `screencapturekit.ScreenCaptureKitRecorder` — macOS-only window-targeted capture via a
-  Swift helper (`recording/native/macos/`). The helper is built by Gradle on macOS,
-  staged under `recording/build/generated/screenCaptureHelper/...`, and packaged by
+- `screencapturekit.ScreenCaptureKitRecorder` — macOS-only window-targeted and region
+  capture via a Swift helper (`recording/native/macos/`). The helper is built by Gradle on
+  macOS, staged under `recording/build/generated/screenCaptureHelper/...`, and packaged by
   `:recording-macos`.
 - `screencapturekit.ScreenCaptureKitScreenshotter` — macOS-only still window screenshots
   through the same Swift helper in `--mode screenshot`.
@@ -135,9 +135,9 @@ Current backends:
   (`recording/native/linux/spectre-wayland-helper`) packaged by `:recording-linux`.
   The helper hands the PipeWire FD to `gst-launch-1.0`.
 - `AutoRecorder` — high-level router that picks per call from `startWindow(...)` /
-  `startRegion(...)` + OS detection: Wayland portal first, then macOS SCK for window
-  capture, Windows Graphics Capture for window and region capture, Linux helper capture
-  for Linux Xorg/Xvfb window and region capture, and ffmpeg region capture for macOS.
+  `startRegion(...)` + OS detection: Wayland portal first, then macOS SCK for window and
+  region capture, Windows Graphics Capture for window and region capture, and Linux helper
+  capture for Linux Xorg/Xvfb window and region capture.
 - `AutoScreenshotter` — high-level still screenshot router: macOS SCK window source,
   Windows Graphics Capture, and Linux helper still capture on Xorg/Xvfb and Wayland.
 

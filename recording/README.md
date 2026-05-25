@@ -1,7 +1,7 @@
 # Recording
 
 Screen recording and native still-window screenshots for Spectre scenarios. Region capture
-(Windows Graphics Capture on Windows, ffmpeg on macOS, the Linux helper/GStreamer on
+(ScreenCaptureKit on macOS, Windows Graphics Capture on Windows, the Linux helper/GStreamer on
 Xorg/Xvfb, xdg-desktop-portal on Linux Wayland), window-targeted video capture, and still
 screenshot routing live side by side — pick by what you need.
 
@@ -23,12 +23,17 @@ implementer's view of the same module.
   Linux helper and GStreamer `ximagesrc`. This is the default Linux Xorg/Xvfb route used by
   `AutoRecorder`; `ffmpeg` is no longer required for that path. The helper currently accepts
   only `RecordingOptions.codec = "libx264"` or `"x264enc"` for recording.
+- `screencapturekit.ScreenCaptureKitRecorder` — macOS ScreenCaptureKit region and
+  window-targeted capture through the bundled Swift helper. Region mode records a fixed
+  rectangle from the selected display; window mode follows the target window and captures
+  only its backing store.
 
 ### Window-targeted capture
 - `screencapturekit.ScreenCaptureKitRecorder` — forks a bundled Swift helper that drives
-  `SCStream` + `AVAssetWriter` against a single window identified by `(pid, title-substring)`.
-  Captures only that window's pixels even when partially occluded, and survives the host
-  window moving across the screen. macOS only. Implements `WindowRecorder`.
+  `SCStream` + `AVAssetWriter` against either a fixed display region or a single window
+  identified by `(pid, title-substring)`. Window capture records only that window's pixels
+  even when partially occluded, and survives the host window moving across the screen. macOS
+  only. Implements `Recorder` and `WindowRecorder`.
 - `screencapturekit.WindowRecorder` — interface for window-targeted backends. SCK is the
   macOS implementation; `windows.WindowsGraphicsCaptureRecorder` covers Windows, and
   `LinuxX11Recorder`/`WaylandPortalWindowRecorder` cover Linux Xorg/Xvfb and Wayland.
@@ -50,14 +55,14 @@ implementer's view of the same module.
   in `.plans/`.
 
 ### Auto-routing
-- `AutoRecorder` — high-level wrapper that takes a `WindowRecorder`, a `Recorder`, and the
+- `AutoRecorder` — high-level wrapper that takes platform recorders and the
   Linux portal recorders (when wired). Routing is Wayland-first (window-targeted portal,
   region portal, or loud failure if no portal recorder is wired), then macOS SCK for
   window capture, Windows Graphics Capture for Windows window/region capture, Linux helper
-  capture for Linux Xorg/Xvfb window/region capture, and ffmpeg region capture for macOS.
-  Windows region capture no longer falls back to ffmpeg when the WGC helper artifact is
-  absent, and WGC-unsupported options such as custom `RecordingOptions.codec` or
-  `screenIndex` now fail loudly. Operational native-helper failures after the helper is
+  capture for Linux Xorg/Xvfb window/region capture, and macOS SCK for macOS region capture.
+  macOS and Windows region capture no longer fall back to ffmpeg when native helper artifacts
+  are absent, and unsupported options such as custom `RecordingOptions.codec` now fail loudly.
+  Operational native-helper failures after the helper is
   found (permissions denied, window not found, helper crash) also propagate with actionable
   messages instead of silently changing capture semantics.
 - `AutoScreenshotter` — high-level still-image router. Uses ScreenCaptureKit window capture
@@ -73,9 +78,11 @@ implementer's view of the same module.
 - `RecordingHandle` — `AutoCloseable`. Stop uses the backend's clean-shutdown path (`q` for
   ffmpeg/SCK-style helpers, JSON `Stop` for the Linux helper), waits for a graceful exit, then
   escalates to process termination when the backend supports that lifecycle.
-- `RecordingOptions` — frame rate, cursor capture, codec.
-  Custom codecs are ffmpeg-backend-specific today; the Linux helper/GStreamer path rejects
-  non-x264 codec strings until encoder pipelines are represented structurally.
+- `RecordingOptions` — frame rate, cursor capture, codec, and display index. For macOS SCK
+  region capture, `screenIndex` is primary display first, then by display frame `minX` and
+  `minY`; explicit legacy `FfmpegRecorder` callers still get avfoundation device ordering.
+  Custom codecs are legacy ffmpeg-backend-specific today; the SCK/WGC/native-helper paths
+  reject unsupported codec strings until encoder pipelines are represented structurally.
 - `MacOsRecordingPermissions.diagnose()` — best-effort startup diagnostic for Screen Recording
   and Accessibility permissions. Full native detection (`CGPreflightScreenCaptureAccess`,
   `AXIsProcessTrusted`) is a future improvement — the SCK helper detects TCC denial by exit
@@ -85,7 +92,8 @@ implementer's view of the same module.
 
 | Capability | Status |
 |---|---|
-| macOS region capture (`avfoundation`) | ✅ deprecated `FfmpegRecorder` |
+| macOS region capture (ScreenCaptureKit) | ✅ `ScreenCaptureKitRecorder` |
+| macOS legacy region capture (`avfoundation`) | ✅ deprecated `FfmpegRecorder` |
 | macOS window-targeted capture (ScreenCaptureKit) | ✅ `ScreenCaptureKitRecorder` |
 | Embedded `ComposePanel` (`windowHandle == 0L`) | ✅ region capture (window-targeted not applicable) |
 | Windows region/fullscreen capture (Windows Graphics Capture) | ✅ `WindowsGraphicsCaptureRecorder` |
@@ -264,8 +272,8 @@ the whole recording" and "frames at the configured rate". Keep it that way.
 ## Permissions
 
 The JVM running Spectre needs two macOS permissions for recording to work:
-- **Screen Recording** — for ffmpeg's avfoundation capture, for `ScreenCaptureKitRecorder`'s
-  helper subprocess, and for AWT `Robot` screenshots.
+- **Screen Recording** — for `ScreenCaptureKitRecorder`'s region/window capture, explicit
+  legacy ffmpeg avfoundation capture, and AWT `Robot` screenshots.
 - **Accessibility** — for AWT `Robot` mouse / keyboard control.
 
 Grant them under **System Settings → Privacy & Security**, targeting whichever process is

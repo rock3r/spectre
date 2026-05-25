@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.recording.screencapturekit
 
+import java.awt.Rectangle
 import java.nio.file.Path
 
 /**
@@ -16,8 +17,11 @@ import java.nio.file.Path
  */
 internal data class HelperArguments(
     val mode: String = "recording",
-    val pid: Long,
-    val titleContains: String,
+    val source: HelperSource,
+    val pid: Long? = null,
+    val titleContains: String? = null,
+    val region: Rectangle? = null,
+    val displayIndex: Int = 0,
     val output: Path,
     val fps: Int,
     val captureCursor: Boolean,
@@ -28,8 +32,28 @@ internal data class HelperArguments(
         require(mode == "recording" || mode == "screenshot") {
             "mode must be recording or screenshot (got $mode)"
         }
-        require(titleContains.isNotBlank()) {
-            "titleContains must be a non-blank substring; the helper rejects empty discriminators"
+        when (source) {
+            HelperSource.Window -> {
+                requireNotNull(pid) { "pid is required for window capture" }
+                val discriminator =
+                    requireNotNull(titleContains) { "titleContains is required for window capture" }
+                require(discriminator.isNotBlank()) {
+                    "titleContains must be a non-blank substring; the helper rejects empty discriminators"
+                }
+            }
+            HelperSource.Region -> {
+                val captureRegion =
+                    requireNotNull(region) { "region capture requires a non-empty region" }
+                require(captureRegion.width > 0 && captureRegion.height > 0) {
+                    "region capture requires a non-empty region; got $captureRegion"
+                }
+                require(captureRegion.x >= 0 && captureRegion.y >= 0) {
+                    "region capture requires an origin within the selected display; got $captureRegion"
+                }
+                require(displayIndex >= 0) {
+                    "displayIndex must be non-negative (got $displayIndex)"
+                }
+            }
         }
         require(fps > 0) { "fps must be positive (got $fps)" }
         require(discoveryTimeoutMs >= 0) {
@@ -46,10 +70,31 @@ internal data class HelperArguments(
         add(helperPath.toString())
         add("--mode")
         add(mode)
-        add("--pid")
-        add(pid.toString())
-        add("--title-contains")
-        add(titleContains)
+        add("--source")
+        add(source.cliValue)
+        when (source) {
+            HelperSource.Window -> {
+                add("--pid")
+                add(pid.toString())
+                add("--title-contains")
+                add(titleContains.orEmpty())
+            }
+            HelperSource.Region -> {
+                val captureRegion = requireNotNull(region)
+                add("--region")
+                add(
+                    listOf(
+                            captureRegion.x,
+                            captureRegion.y,
+                            captureRegion.width,
+                            captureRegion.height,
+                        )
+                        .joinToString(",")
+                )
+                add("--display-index")
+                add(displayIndex.toString())
+            }
+        }
         add("--fps")
         add(fps.toString())
         add("--cursor")
@@ -79,4 +124,9 @@ internal data class HelperArguments(
                 else -> RecordingFileType.Mov
             }
     }
+}
+
+internal enum class HelperSource(val cliValue: String) {
+    Window("window"),
+    Region("region"),
 }

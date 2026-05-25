@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.recording.screencapturekit
 
+import java.awt.Rectangle
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -14,6 +15,7 @@ class HelperArgumentsTest {
         val output = Path.of("/tmp/recording.mov")
         val args =
             HelperArguments(
+                source = HelperSource.Window,
                 pid = 4242,
                 titleContains = "Spectre/abc123",
                 output = output,
@@ -33,6 +35,7 @@ class HelperArgumentsTest {
         val helper = Path.of("/tmp/spectre-screencapture")
         val args =
             HelperArguments(
+                source = HelperSource.Window,
                 pid = 4242,
                 titleContains = "Spectre/abc123",
                 output = Path.of("/tmp/out.mov"),
@@ -43,12 +46,13 @@ class HelperArgumentsTest {
 
         val argv = args.toArgv(helper)
 
-        // The helper's CLI documents `--mode`, `--pid`, `--title-contains`, `--fps`,
+        // The helper's CLI documents `--mode`, `--source`, `--pid`, `--title-contains`, `--fps`,
         // `--cursor`, `--discovery-timeout-ms`, `--output`. Every emitted flag must be one
         // of those.
         val expectedFlags =
             setOf(
                 "--mode",
+                "--source",
                 "--pid",
                 "--title-contains",
                 "--fps",
@@ -62,10 +66,32 @@ class HelperArgumentsTest {
     }
 
     @Test
+    fun `toArgv emits region source flags`() {
+        val helper = Path.of("/tmp/spectre-screencapture")
+        val args =
+            HelperArguments(
+                source = HelperSource.Region,
+                region = Rectangle(10, 20, 300, 200),
+                displayIndex = 2,
+                output = Path.of("/tmp/out.mov"),
+                fps = 30,
+                captureCursor = true,
+                discoveryTimeoutMs = 2000,
+            )
+
+        val argv = args.toArgv(helper)
+
+        assertEquals("region", argv[argv.indexOf("--source") + 1])
+        assertEquals("10,20,300,200", argv[argv.indexOf("--region") + 1])
+        assertEquals("2", argv[argv.indexOf("--display-index") + 1])
+    }
+
+    @Test
     fun `toArgv encodes captureCursor as the literal true or false expected by the helper`() {
         val helper = Path.of("/tmp/spectre-screencapture")
         val baseline =
             HelperArguments(
+                source = HelperSource.Window,
                 pid = 1,
                 titleContains = "x",
                 output = Path.of("/tmp/o.mov"),
@@ -88,6 +114,7 @@ class HelperArgumentsTest {
         val helper = Path.of("/tmp/spectre-screencapture")
         val baseline =
             HelperArguments(
+                source = HelperSource.Window,
                 pid = 1,
                 titleContains = "x",
                 output = Path.of("/tmp/o.mov"),
@@ -108,6 +135,7 @@ class HelperArgumentsTest {
         val helper = Path.of("/tmp/spectre-screencapture")
         val args =
             HelperArguments(
+                source = HelperSource.Window,
                 pid = 99_999,
                 titleContains = "x",
                 output = Path.of("/tmp/o.mov"),
@@ -128,6 +156,7 @@ class HelperArgumentsTest {
         val helper = Path.of("/tmp/spectre-screencapture")
         val args =
             HelperArguments(
+                source = HelperSource.Window,
                 pid = 1,
                 titleContains = "x",
                 output = Path.of("/tmp/o.mp4"),
@@ -146,6 +175,7 @@ class HelperArgumentsTest {
         val helper = Path.of("/tmp/spectre-screencapture")
         val args =
             HelperArguments(
+                source = HelperSource.Window,
                 pid = 1,
                 titleContains = "x",
                 output = Path.of("/tmp/o.mov"),
@@ -167,6 +197,7 @@ class HelperArgumentsTest {
         val ex =
             assertFailsWith<IllegalArgumentException> {
                 HelperArguments(
+                    source = HelperSource.Window,
                     pid = 1,
                     titleContains = "   ",
                     output = Path.of("/tmp/o.mov"),
@@ -182,6 +213,7 @@ class HelperArgumentsTest {
     fun `constructor rejects non-positive fps`() {
         assertFailsWith<IllegalArgumentException> {
             HelperArguments(
+                source = HelperSource.Window,
                 pid = 1,
                 titleContains = "x",
                 output = Path.of("/tmp/o.mov"),
@@ -196,6 +228,7 @@ class HelperArgumentsTest {
     fun `constructor rejects negative discoveryTimeout`() {
         assertFailsWith<IllegalArgumentException> {
             HelperArguments(
+                source = HelperSource.Window,
                 pid = 1,
                 titleContains = "x",
                 output = Path.of("/tmp/o.mov"),
@@ -204,5 +237,22 @@ class HelperArgumentsTest {
                 discoveryTimeoutMs = -1,
             )
         }
+    }
+
+    @Test
+    fun `constructor rejects negative region origins`() {
+        val ex =
+            assertFailsWith<IllegalArgumentException> {
+                HelperArguments(
+                    source = HelperSource.Region,
+                    region = Rectangle(-1, 0, 10, 10),
+                    output = Path.of("/tmp/o.mov"),
+                    fps = 30,
+                    captureCursor = true,
+                    discoveryTimeoutMs = 0,
+                )
+            }
+
+        assertTrue(ex.message?.contains("origin") == true)
     }
 }

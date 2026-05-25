@@ -26,6 +26,7 @@ internal constructor(
             val argv =
                 HelperArguments(
                         mode = "screenshot",
+                        source = HelperSource.Window,
                         pid = windowOwnerPid,
                         titleContains = discriminator.value,
                         output = output,

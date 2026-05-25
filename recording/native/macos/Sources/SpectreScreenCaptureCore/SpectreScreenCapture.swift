@@ -12,11 +12,15 @@ import UniformTypeIdentifiers
 //
 // spectre-screencapture
 //   --mode <recording|screenshot>  Optional. Default recording.
-//   --pid <jvm pid>            Required. Filters CGWindowList by owner PID so we never
+//   --source <window|region>   Optional. Default window.
+//   --pid <jvm pid>            Required for window source. Filters CGWindowList by owner PID so we never
 //                              capture another process's window matching the discriminator.
-//   --title-contains <suffix>  Required. Substring match on the target window's kCGWindowName.
+//   --title-contains <suffix>  Required for window source. Substring match on the target window's kCGWindowName.
 //                              Spectre stamps a `Spectre/<uuid>` suffix on the ComposeWindow's
 //                              title for the recording's lifetime so this is unique.
+//   --region <x,y,w,h>         Required for region source. Coordinates use the selected
+//                              display's top-left ScreenCaptureKit sourceRect space.
+//   --display-index <int>      Optional for region source. Default 0; primary display first.
 //   --output <path>            Required. Destination .mov/.mp4 file. Overwritten if it exists.
 //   --fps <int>                Optional. Default 30.
 //   --cursor <true|false>      Optional. Default true.
@@ -64,8 +68,11 @@ struct CLIError: Error {
 
 struct Arguments {
     let mode: CaptureMode
-    let pid: pid_t
-    let titleContains: String
+    let source: CaptureSource
+    let pid: pid_t?
+    let titleContains: String?
+    let region: CaptureRegion?
+    let displayIndex: Int
     let output: URL
     let fps: Int
     let captureCursor: Bool
@@ -74,8 +81,11 @@ struct Arguments {
 
     static func parse(_ argv: [String]) throws -> Arguments {
         var mode = CaptureMode.recording
+        var source = CaptureSource.window
         var pid: pid_t?
         var titleContains: String?
+        var region: CaptureRegion?
+        var displayIndex = 0
         var output: String?
         var fps = 30
         var cursor = true
@@ -95,6 +105,11 @@ struct Arguments {
                     throw CLIError(code: 2, message: "--mode must be recording or screenshot")
                 }
                 mode = parsed
+            case "--source":
+                guard let parsed = CaptureSource(rawValue: value) else {
+                    throw CLIError(code: 2, message: "--source must be window or region")
+                }
+                source = parsed
             case "--pid":
                 guard let parsed = pid_t(value) else {
                     throw CLIError(code: 2, message: "--pid must be an integer")
@@ -102,6 +117,13 @@ struct Arguments {
                 pid = parsed
             case "--title-contains":
                 titleContains = value
+            case "--region":
+                region = try CaptureRegion.parse(value)
+            case "--display-index":
+                guard let parsed = Int(value), parsed >= 0 else {
+                    throw CLIError(code: 2, message: "--display-index must be >= 0")
+                }
+                displayIndex = parsed
             case "--output":
                 output = value
             case "--fps":
@@ -130,9 +152,17 @@ struct Arguments {
             i += 2
         }
 
-        guard let pid else { throw CLIError(code: 2, message: "--pid is required") }
-        guard let titleContains, !titleContains.isEmpty else {
-            throw CLIError(code: 2, message: "--title-contains is required")
+        switch source {
+        case .window:
+            guard pid != nil else { throw CLIError(code: 2, message: "--pid is required") }
+            guard let titleContains, !titleContains.isEmpty else {
+                throw CLIError(code: 2, message: "--title-contains is required")
+            }
+        case .region:
+            guard region != nil else { throw CLIError(code: 2, message: "--region is required") }
+            guard mode == .recording else {
+                throw CLIError(code: 2, message: "region source only supports --mode recording")
+            }
         }
         guard let output, !output.isEmpty else {
             throw CLIError(code: 2, message: "--output is required")
@@ -141,8 +171,11 @@ struct Arguments {
 
         return Arguments(
             mode: mode,
+            source: source,
             pid: pid,
             titleContains: titleContains,
+            region: region,
+            displayIndex: displayIndex,
             output: outputUrl,
             fps: fps,
             captureCursor: cursor,
@@ -155,6 +188,11 @@ struct Arguments {
 enum CaptureMode: String {
     case recording
     case screenshot
+}
+
+enum CaptureSource: String {
+    case window
+    case region
 }
 
 enum RecordingFileType: String {
@@ -175,6 +213,38 @@ enum RecordingFileType: String {
         case .mp4:
             return .mp4
         }
+    }
+}
+
+struct CaptureRegion {
+    let x: Int
+    let y: Int
+    let width: Int
+    let height: Int
+
+    static func parse(_ value: String) throws -> CaptureRegion {
+        let parts = value.split(separator: ",", omittingEmptySubsequences: false)
+        guard parts.count == 4, let x = Int(parts[0]), let y = Int(parts[1]),
+            let width = Int(parts[2]), let height = Int(parts[3])
+        else {
+            throw CLIError(code: 2, message: "--region must be x,y,width,height")
+        }
+        guard x >= 0, y >= 0, width > 0, height > 0 else {
+            throw CLIError(
+                code: 2,
+                message:
+                    "--region x/y must be non-negative and width/height must be positive")
+        }
+        return CaptureRegion(x: x, y: y, width: width, height: height)
+    }
+
+    func sourceRect() -> CGRect {
+        CGRect(
+            x: CGFloat(x),
+            y: CGFloat(y),
+            width: CGFloat(width),
+            height: CGFloat(height)
+        )
     }
 }
 
@@ -236,8 +306,8 @@ final class Recorder {
         // existing.
         try validateOutputPath(args.output)
 
-        let target = try await discoverTargetWindow()
-        try await startCapture(targetWindow: target)
+        let target = try await discoverTarget()
+        try await startCapture(target: target)
         var waitError: Error?
         if args.mode == .recording {
             await waitForStop()
@@ -299,7 +369,43 @@ final class Recorder {
         }
     }
 
+    private enum CaptureTarget {
+        case window(SCWindow)
+        case region(display: SCDisplay, region: CaptureRegion)
+    }
+
+    private func requirePid() throws -> pid_t {
+        guard let pid = args.pid else { throw CLIError(code: 2, message: "--pid is required") }
+        return pid
+    }
+
+    private func requireTitleContains() throws -> String {
+        guard let titleContains = args.titleContains, !titleContains.isEmpty else {
+            throw CLIError(code: 2, message: "--title-contains is required")
+        }
+        return titleContains
+    }
+
+    private func requireRegion() throws -> CaptureRegion {
+        guard let region = args.region else {
+            throw CLIError(code: 2, message: "--region is required")
+        }
+        return region
+    }
+
+    private func discoverTarget() async throws -> CaptureTarget {
+        switch args.source {
+        case .window:
+            return .window(try await discoverTargetWindow())
+        case .region:
+            let region = try requireRegion()
+            return .region(display: try await discoverTargetDisplay(), region: region)
+        }
+    }
+
     private func discoverTargetWindow() async throws -> SCWindow {
+        let pid = try requirePid()
+        let titleContains = try requireTitleContains()
         let deadline = Date().addingTimeInterval(Double(args.discoveryTimeoutMs) / 1000.0)
         repeat {
             let content: SCShareableContent
@@ -312,9 +418,9 @@ final class Recorder {
             }
 
             if let match = content.windows.first(where: { window in
-                guard window.owningApplication?.processID == args.pid else { return false }
+                guard window.owningApplication?.processID == pid else { return false }
                 guard let title = window.title, !title.isEmpty else { return false }
-                return title.contains(args.titleContains)
+                return title.contains(titleContains)
             }) {
                 return match
             }
@@ -325,34 +431,80 @@ final class Recorder {
         throw CLIError(
             code: 3,
             message:
-                "no window with pid=\(args.pid) and title containing '\(args.titleContains)' found within \(args.discoveryTimeoutMs) ms"
+                "no window with pid=\(pid) and title containing '\(titleContains)' found within \(args.discoveryTimeoutMs) ms"
         )
     }
 
-    private func startCapture(targetWindow: SCWindow) async throws {
-        // Use the backing-scale of the screen the target window actually lives on, not
-        // `NSScreen.main`'s. Mixed-DPI setups (Retina laptop + non-Retina external) would
-        // otherwise pick the wrong scale and produce stretched / cropped output for windows
-        // off the main screen. Falls back to NSScreen.main and finally a hardcoded 2.0 if
-        // neither lookup succeeds — neither degrades worse than the previous behaviour.
-        let scale = backingScaleFactor(for: targetWindow.frame)
-        let width = max(2, Int((targetWindow.frame.width * scale).rounded()))
-        let height = max(2, Int((targetWindow.frame.height * scale).rounded()))
+    private func discoverTargetDisplay() async throws -> SCDisplay {
+        let content: SCShareableContent
+        do {
+            content = try await SCShareableContent.excludingDesktopWindows(
+                false, onScreenWindowsOnly: true)
+        } catch {
+            throw CLIError(code: 4, message: "screen recording permission denied: \(error)")
+        }
+        let displays = sortedDisplays(content.displays)
+        guard args.displayIndex < displays.count else {
+            throw CLIError(
+                code: 3,
+                message:
+                    "display index \(args.displayIndex) is out of range; only \(displays.count) display(s) are shareable"
+            )
+        }
+        return displays[args.displayIndex]
+    }
 
-        // Window-attached filter — output is exactly the target window's pixels, sized to
-        // `config.width` × `config.height`, with no display-coordinate masking. Display-mode
-        // filters (`SCContentFilter(display:including:)`) deliver frames just as well but
-        // place the window inside the display's coordinate space, leaving large black areas
-        // outside the window in the output buffer.
-        //
-        // Earlier diagnostic runs suggested this filter dropped frames; that was actually the
-        // FrameOutput being released right after `startCapture` returned (we hadn't retained
-        // it as a member). With the strong reference in place SCStream delivers frames at the
-        // configured rate even for window-attached filters.
-        let filter = SCContentFilter(desktopIndependentWindow: targetWindow)
+    private func sortedDisplays(_ displays: [SCDisplay]) -> [SCDisplay] {
+        let mainDisplayId = CGMainDisplayID()
+        return displays.sorted { lhs, rhs in
+            if lhs.displayID == mainDisplayId { return true }
+            if rhs.displayID == mainDisplayId { return false }
+            if lhs.frame.minX != rhs.frame.minX { return lhs.frame.minX < rhs.frame.minX }
+            return lhs.frame.minY < rhs.frame.minY
+        }
+    }
+
+    private func startCapture(target: CaptureTarget) async throws {
+        let filter: SCContentFilter
+        let sourceRect: CGRect?
+        let width: Int
+        let height: Int
+
+        switch target {
+        case .window(let targetWindow):
+            // Use the backing-scale of the screen the target window actually lives on, not
+            // `NSScreen.main`'s. Mixed-DPI setups (Retina laptop + non-Retina external) would
+            // otherwise pick the wrong scale and produce stretched / cropped output for windows
+            // off the main screen. Falls back to NSScreen.main and finally a hardcoded 2.0 if
+            // neither lookup succeeds — neither degrades worse than the previous behaviour.
+            let scale = backingScaleFactor(for: targetWindow.frame)
+            width = max(2, Int((targetWindow.frame.width * scale).rounded()))
+            height = max(2, Int((targetWindow.frame.height * scale).rounded()))
+
+            // Window-attached filter — output is exactly the target window's pixels, sized to
+            // `config.width` × `config.height`, with no display-coordinate masking. Display-mode
+            // filters (`SCContentFilter(display:including:)`) deliver frames just as well but
+            // place the window inside the display's coordinate space, leaving large black areas
+            // outside the window in the output buffer.
+            //
+            // Earlier diagnostic runs suggested this filter dropped frames; that was actually the
+            // FrameOutput being released right after `startCapture` returned (we hadn't retained
+            // it as a member). With the strong reference in place SCStream delivers frames at the
+            // configured rate even for window-attached filters.
+            filter = SCContentFilter(desktopIndependentWindow: targetWindow)
+            sourceRect = nil
+        case .region(let display, let region):
+            width = max(2, region.width)
+            height = max(2, region.height)
+            filter = SCContentFilter(display: display, excludingWindows: [])
+            sourceRect = region.sourceRect()
+        }
         let config = SCStreamConfiguration()
         config.width = width
         config.height = height
+        if let sourceRect {
+            config.sourceRect = sourceRect
+        }
         config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(args.fps))
         config.showsCursor = args.captureCursor
         config.queueDepth = 8

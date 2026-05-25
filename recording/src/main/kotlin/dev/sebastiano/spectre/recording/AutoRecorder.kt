@@ -21,15 +21,15 @@ import java.nio.file.Path
  * window-source path on Linux Wayland. If the requested window mode is unavailable, it throws with
  * an actionable error instead of silently falling back to region capture.
  *
- * [startRegion] uses region capture only: Windows Graphics Capture on Windows, ffmpeg region
- * capture on macOS, the Linux helper's Xorg/Xvfb path, and the Wayland portal monitor-source path
- * on Linux Wayland. If the requested region mode is unavailable, it throws instead of switching
- * capture semantics.
+ * [startRegion] uses region capture only: ScreenCaptureKit on macOS, Windows Graphics Capture on
+ * Windows, the Linux helper's Xorg/Xvfb path, and the Wayland portal monitor-source path on Linux
+ * Wayland. If the requested region mode is unavailable, it throws instead of switching capture
+ * semantics.
  */
 public class AutoRecorder
 internal constructor(
     private val sckRecorder: WindowRecorder,
-    private val ffmpegRecorder: Recorder,
+    private val macOsRegionRecorder: Recorder,
     private val windowsWindowRecorder: WindowRecorder?,
     private val windowsRegionRecorder: Recorder?,
     private val linuxRegionRecorder: Recorder?,
@@ -46,14 +46,14 @@ internal constructor(
 
     public constructor(
         sckRecorder: WindowRecorder = ScreenCaptureKitRecorder(),
-        ffmpegRecorder: Recorder = DefaultLegacyFfmpegRecorder,
+        macOsRegionRecorder: Recorder = sckRecorder as? Recorder ?: ScreenCaptureKitRecorder(),
         windowsWindowRecorder: WindowRecorder? = defaultWindowsWindowRecorder(),
         windowsRegionRecorder: Recorder? = defaultWindowsRegionRecorder(),
         waylandPortalRecorder: Recorder? = defaultPortals.region,
         waylandPortalWindowRecorder: WaylandWindowSourceRecorder? = defaultPortals.window,
     ) : this(
         sckRecorder = sckRecorder,
-        ffmpegRecorder = ffmpegRecorder,
+        macOsRegionRecorder = macOsRegionRecorder,
         windowsWindowRecorder = windowsWindowRecorder,
         windowsRegionRecorder = windowsRegionRecorder,
         linuxRegionRecorder = defaultLinuxRecorder,
@@ -140,11 +140,18 @@ internal constructor(
                 throw unavailable("Windows region capture", e)
             }
         }
+        if (isMacOs()) {
+            return try {
+                macOsRegionRecorder.start(region, output, options)
+            } catch (e: HelperNotBundledException) {
+                throw unavailable("macOS region capture", e)
+            }
+        }
         if (isLinux()) {
             return linuxRegionRecorder?.start(region, output, options)
                 ?: throw unavailable("Linux X11 region capture", null)
         }
-        return ffmpegRecorder.start(region, output, options)
+        throw unsupportedRegionCapture()
     }
 
     private fun unavailable(mode: String, cause: Throwable?): IllegalStateException {
@@ -159,6 +166,12 @@ internal constructor(
             "AutoRecorder.startWindow is unsupported on this platform because no true " +
                 "window-targeted recorder is available. Use startRegion(...) explicitly for " +
                 "region capture."
+        )
+
+    private fun unsupportedRegionCapture(): IllegalStateException =
+        IllegalStateException(
+            "AutoRecorder.startRegion is unsupported on this platform because no region recorder " +
+                "is available."
         )
 
     private companion object {
@@ -222,16 +235,6 @@ internal constructor(
             WaylandPortalRecorders.resolveDefaults(::defaultIsLinux)
         }
     }
-}
-
-private object DefaultLegacyFfmpegRecorder : Recorder {
-    @Suppress("DEPRECATION") private val delegate: FfmpegRecorder by lazy { FfmpegRecorder() }
-
-    override fun start(
-        region: Rectangle,
-        output: Path,
-        options: RecordingOptions,
-    ): RecordingHandle = delegate.start(region, output, options)
 }
 
 /**

@@ -189,8 +189,8 @@ public surface:
   `screenshot()` under a synthetic driver still uses the OS framebuffer via
   `Robot.createScreenCapture`, so screenshots show the pixels the display compositor
   currently exposes rather than a Swing repaint of the Compose host. On macOS this
-  still requires Screen Recording permission, but synthetic input itself does not need
-  Accessibility permission.
+  still requires Screen Recording permission and an unlocked screen, but synthetic input
+  itself does not need Accessibility permission.
 - **`RobotDriver.headless()`** — for read-only flows in headless CI where real OS I/O is
   unavailable. Every input, clipboard, and screenshot call throws
   `UnsupportedOperationException` so an accidental `automator.click(...)` /
