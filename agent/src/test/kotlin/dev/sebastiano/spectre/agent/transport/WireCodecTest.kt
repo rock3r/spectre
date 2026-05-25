@@ -105,8 +105,10 @@ class WireCodecTest {
                         key = "surface-0:0:1",
                         testTag = "submit",
                         texts = listOf("Submit"),
+                        editableText = "edited",
                         role = "Button",
                         contentDescription = null,
+                        isFocused = true,
                         isVisible = true,
                         bounds = RectDto(10, 20, 100, 40),
                     )

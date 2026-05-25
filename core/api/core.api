@@ -26,6 +26,7 @@ public final class dev/sebastiano/spectre/core/AutomatorNode {
 	public final fun isDisabled ()Z
 	public final fun isFocused ()Z
 	public final fun isSelected ()Z
+	public final fun isVisible ()Z
 	public fun toString ()Ljava/lang/String;
 }
 

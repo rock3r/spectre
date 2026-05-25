@@ -8,8 +8,12 @@ import dev.sebastiano.spectre.agent.transport.AgentResponse
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.RectDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
+import java.awt.KeyboardFocusManager
+import java.awt.Window
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
+import java.lang.reflect.Method
+import java.util.concurrent.ConcurrentHashMap
 import javax.imageio.ImageIO
 
 /**
@@ -30,12 +34,17 @@ import javax.imageio.ImageIO
  * developers expect them; we deliberately don't ship them across the wire because that would mean
  * smuggling `Throwable` types we can't safely reconstruct on the client side.
  */
-internal class ReflectiveAutomatorHandler(private val automator: Any) : AgentRequestHandler {
+internal class ReflectiveAutomatorHandler(
+    private val automator: Any,
+    private val isTargetJvmFocused: () -> Boolean = ::targetJvmHasKeyboardFocus,
+) : AgentRequestHandler {
 
     private val automatorClass: Class<*> = automator.javaClass
     private val getWindowsMethod = automatorClass.getMethod("getWindows")
     private val allNodesMethod = automatorClass.getMethod("allNodes")
     private val findByTestTagMethod = automatorClass.getMethod("findByTestTag", String::class.java)
+    private val nodeBooleanMethods = ConcurrentHashMap<Pair<Class<*>, String>, Method>()
+    private val nodeEditableTextMethods = ConcurrentHashMap<Class<*>, Method>()
 
     /**
      * `ComposeAutomator.windows` is a Volatile cache populated by `refreshWindows()` (or by any of
@@ -137,6 +146,27 @@ internal class ReflectiveAutomatorHandler(private val automator: Any) : AgentReq
                 ?: return AgentResponse.Error(
                     "ComposeAutomator does not expose a typeText(text) method"
                 )
+        refreshWindowsMethod.invoke(automator)
+        val allNodes = allNodesMethod.invoke(automator) as List<*>
+        val focusedNodes =
+            allNodes.filterNotNull().filter { nodeBooleanProperty(it, methodName = "isFocused") }
+        if (focusedNodes.isEmpty()) {
+            return AgentResponse.Error(
+                "Refusing typeText because no focused Spectre node was found in the " +
+                    "target JVM. Focus a target node before sending real keyboard events."
+            )
+        }
+        if (focusedNodes.none { extractKey(it).isNotBlank() }) {
+            return AgentResponse.Error(
+                "Refusing typeText because every focused Spectre node has a blank key."
+            )
+        }
+        if (!isTargetJvmFocused()) {
+            return AgentResponse.Error(
+                "Refusing typeText because the target JVM does not currently own OS keyboard " +
+                    "focus. Activate the target window before sending real keyboard events."
+            )
+        }
         suspendInvoker.invoke(method, automator, text)
         return AgentResponse.Ok
     }
@@ -208,6 +238,7 @@ internal class ReflectiveAutomatorHandler(private val automator: Any) : AgentReq
                         ?.invoke(node) as? List<*>)
                     ?.filterIsInstance<String>()
                     .orEmpty(),
+            editableText = nodeEditableText(node),
             role =
                 klass.methods
                     .firstOrNull { it.name == "getRole" && it.parameterCount == 0 }
@@ -217,10 +248,8 @@ internal class ReflectiveAutomatorHandler(private val automator: Any) : AgentReq
                 klass.methods
                     .firstOrNull { it.name == "getContentDescription" && it.parameterCount == 0 }
                     ?.invoke(node) as? String,
-            isVisible =
-                (klass.methods
-                    .firstOrNull { it.name == "isVisible" && it.parameterCount == 0 }
-                    ?.invoke(node) as? Boolean) ?: true,
+            isFocused = nodeBooleanProperty(node, methodName = "isFocused"),
+            isVisible = nodeBooleanProperty(node, methodName = "isVisible"),
             bounds =
                 boundsToRect(
                     // `AutomatorNode.boundsOnScreen: Rectangle` → getBoundsOnScreen(). The
@@ -238,6 +267,25 @@ internal class ReflectiveAutomatorHandler(private val automator: Any) : AgentReq
             .firstOrNull { it.name == "getKey" && it.parameterCount == 0 }
             ?.invoke(node)
             ?.toString() ?: node.toString()
+
+    private fun nodeBooleanProperty(node: Any, methodName: String): Boolean =
+        nodeBooleanMethods
+            .computeIfAbsent(node.javaClass to methodName) { (klass, name) ->
+                klass.methods.firstOrNull { it.name == name && it.parameterCount == 0 }
+                    ?: error("AutomatorNode API mismatch: ${klass.name} does not expose $name()")
+            }
+            .invoke(node) as Boolean
+
+    private fun nodeEditableText(node: Any): String? =
+        nodeEditableTextMethods
+            .computeIfAbsent(node.javaClass) { klass ->
+                klass.methods.firstOrNull { it.name == "getEditableText" && it.parameterCount == 0 }
+                    ?: error(
+                        "AutomatorNode API mismatch: ${klass.name} does not expose " +
+                            "getEditableText()"
+                    )
+            }
+            .invoke(node) as? String
 
     private fun boundsToRect(bounds: Any?): RectDto {
         if (bounds == null) return RectDto(0, 0, 0, 0)
@@ -276,5 +324,14 @@ internal class ReflectiveAutomatorHandler(private val automator: Any) : AgentReq
         const val CONTINUATION_FQN: String = "kotlin.coroutines.Continuation"
         const val AWT_RECTANGLE_FQN: String = "java.awt.Rectangle"
         const val NO_MESSAGE_PLACEHOLDER: String = "<no message>"
+
+        fun targetJvmHasKeyboardFocus(): Boolean {
+            val focusManager = KeyboardFocusManager.getCurrentKeyboardFocusManager()
+            val focusedWindow = focusManager.focusedWindow
+            val activeWindow = focusManager.activeWindow
+            return (listOfNotNull(focusedWindow, activeWindow) + Window.getWindows()).any {
+                it.isShowing && (it.isFocused || it.isActive)
+            }
+        }
     }
 }

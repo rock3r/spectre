@@ -7,6 +7,7 @@ import dev.sebastiano.spectre.agent.fixture.SPECTRE_FIXTURE_WINDOW_TITLE
 import dev.sebastiano.spectre.agent.fixture.TAG_BUTTON
 import dev.sebastiano.spectre.agent.fixture.TAG_LABEL
 import dev.sebastiano.spectre.agent.fixture.TAG_TEXT_FIELD
+import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import java.awt.GraphicsEnvironment
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -42,9 +43,9 @@ import org.junit.jupiter.api.condition.OS
  * - `windows()` returns at least the fixture's `'$SPECTRE_FIXTURE_WINDOW_TITLE'` window
  *   (non-empty).
  * - `findByTestTag(TAG_LABEL / TAG_BUTTON / TAG_TEXT_FIELD)` each return at least one match.
- * - `click(buttonKey)` and `typeText("x")` bare-throw on any wire-level error — no `runCatching`,
- *   no swallowed exceptions. A broken suspend bridge or a regression in the reflective handler
- *   surfaces as a hard test failure.
+ * - `click(buttonKey)` and focused-field `typeText("x")` bare-throw on any wire-level error — no
+ *   `runCatching`, no swallowed exceptions. A broken suspend bridge or a regression in the
+ *   reflective handler surfaces as a hard test failure.
  *
  * The pure-mapping correctness (getter names, `Rectangle → RectDto`, screenshot's `Rectangle?`
  * lookup, refresh-before-read contract) is *also* covered at the unit level in
@@ -145,10 +146,24 @@ class AgentAttachIntegrationTest {
                 textFieldMatches.isNotEmpty(),
                 "iteration $iteration: findByTestTag($TAG_TEXT_FIELD) returned empty",
             )
-            // Type into whatever currently holds focus. We don't assert what the TextField's
-            // value becomes (Compose recomposition timing is flaky to wait on); we just require
-            // the wire round-trip to complete without an error.
+            val textFieldKey = textFieldMatches.first().key
+            assertTrue(
+                textFieldKey.isNotBlank(),
+                "iteration $iteration: text field node key should be non-blank; got '$textFieldKey'",
+            )
+            val focusedTextField =
+                automator.waitForFocusedTextField(textFieldKey, iteration = iteration)
+            val editableTextBefore = focusedTextField.editableText.orEmpty()
+            // This is a real keyboard event path. Do not call typeText until a refreshed
+            // semantics snapshot proves the fixture text field owns Compose focus; the in-target
+            // handler also checks that this JVM owns OS keyboard focus before dispatching Robot
+            // key events.
             automator.typeText("x")
+            automator.waitForTextFieldToReceiveTypedCharacter(
+                textFieldKey = textFieldKey,
+                previousEditableText = editableTextBefore,
+                iteration = iteration,
+            )
 
             val screenshotBytes = automator.screenshot()
             assertTrue(
@@ -178,7 +193,10 @@ class AgentAttachIntegrationTest {
                     "-XX:+EnableDynamicAgentLoading",
                     "-Djava.awt.headless=false",
                     "-Dcompose.application.configure.swing.globals=true",
-                    "-Dapple.awt.UIElement=true",
+                    // This test exercises real Robot-backed focus and keyboard input. A macOS
+                    // UIElement/background app can render semantics but may never become the
+                    // active focus owner, which would make the focus-before-type guard fail.
+                    "-Dapple.awt.UIElement=false",
                     "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt",
                 )
                 .redirectErrorStream(true)
@@ -231,6 +249,66 @@ class AgentAttachIntegrationTest {
         return path
     }
 
+    private fun AttachedAutomator.waitForFocusedTextField(
+        textFieldKey: String,
+        iteration: Int,
+    ): NodeSnapshotDto {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(FOCUS_TIMEOUT_MS)
+        var lastMatches: List<NodeSnapshotDto> = emptyList()
+        while (System.nanoTime() < deadline) {
+            // On macOS the first click may only activate the fixture app; retry until a refreshed
+            // semantics snapshot proves the field itself owns Compose focus.
+            click(textFieldKey)
+            lastMatches = findByTestTag(TAG_TEXT_FIELD)
+            lastMatches
+                .firstOrNull { it.key == textFieldKey && it.isFocused }
+                ?.let {
+                    return it
+                }
+            sleepBetweenFocusPolls()
+        }
+        error(
+            "iteration $iteration: fixture text field $textFieldKey did not become focused " +
+                "within ${FOCUS_TIMEOUT_MS}ms after click. Last matches: " +
+                lastMatches.joinToString { "${it.key}(focused=${it.isFocused})" }
+        )
+    }
+
+    private fun AttachedAutomator.waitForTextFieldToReceiveTypedCharacter(
+        textFieldKey: String,
+        previousEditableText: String,
+        iteration: Int,
+    ): NodeSnapshotDto {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(FOCUS_TIMEOUT_MS)
+        val previousTypedCount = previousEditableText.count { it == TYPED_CHARACTER }
+        var lastText: String? = null
+        while (System.nanoTime() < deadline) {
+            val match = findByTestTag(TAG_TEXT_FIELD).firstOrNull { it.key == textFieldKey }
+            lastText = match?.editableText
+            if (
+                match != null &&
+                    lastText.orEmpty().count { it == TYPED_CHARACTER } > previousTypedCount
+            ) {
+                return match
+            }
+            sleepBetweenFocusPolls()
+        }
+        error(
+            "iteration $iteration: fixture text field $textFieldKey did not receive " +
+                "'$TYPED_CHARACTER' within ${FOCUS_TIMEOUT_MS}ms after typeText. " +
+                "Before='$previousEditableText', last='$lastText'"
+        )
+    }
+
+    private fun sleepBetweenFocusPolls() {
+        try {
+            Thread.sleep(FOCUS_POLL_INTERVAL_MS)
+        } catch (ex: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw ex
+        }
+    }
+
     private fun ByteArray.startsWith(prefix: ByteArray): Boolean {
         if (size < prefix.size) return false
         return (0 until prefix.size).all { this[it] == prefix[it] }
@@ -272,6 +350,9 @@ class AgentAttachIntegrationTest {
         const val REPEAT_CYCLES: Int = 3
         const val ATTACH_TIMEOUT_MS: Long = 15_000
         const val FIXTURE_READY_TIMEOUT_MS: Long = 30_000
+        const val FOCUS_TIMEOUT_MS: Long = 2_000
+        const val FOCUS_POLL_INTERVAL_MS: Long = 50
+        const val TYPED_CHARACTER: Char = 'x'
         const val MIN_PNG_BYTES: Int = 100
         // PNG file magic: 89 50 4E 47 0D 0A 1A 0A.
         val PNG_MAGIC: ByteArray =

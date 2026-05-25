@@ -136,8 +136,10 @@ public data class NodeSnapshotDto(
     public val key: String,
     public val testTag: String?,
     public val texts: List<String>,
+    public val editableText: String? = null,
     public val role: String?,
     public val contentDescription: String?,
+    public val isFocused: Boolean = false,
     public val isVisible: Boolean,
     public val bounds: RectDto,
 )
