@@ -39,6 +39,7 @@ on:
     paths:
       - "core/**"
       - "agent/**"
+      - "agent-runtime/**"
       - "agent-test-fixture/**"
       - "recording/**"
       - "recording-linux/**"
@@ -60,6 +61,7 @@ on:
     paths:
       - "core/**"
       - "agent/**"
+      - "agent-runtime/**"
       - "agent-test-fixture/**"
       - "recording/**"
       - "recording-linux/**"
