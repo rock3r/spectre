@@ -149,3 +149,4 @@ Current Spectre-local skills:
 - `using-git-worktree`
 - `jewel-swing-interop`
 - `addressing-detekt-violations`
+- `spectre-release`

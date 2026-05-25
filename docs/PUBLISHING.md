@@ -69,6 +69,8 @@ Manual promotion checklist:
   `native/windows/arm64/spectre-window-capture.exe`.
 - Confirm `spectre-agent-runtime-<version>.jar` exists and its manifest declares
   `Agent-Class: dev.sebastiano.spectre.agent.runtime.SpectreAgent`.
+- Run the Central Portal deployment checker:
+  `scripts/central_portal_check.py validate --deployment-id <id> --version <version>`.
 - Promote the Central staging deployment from the Central Portal UI.
 - Undraft the GitHub release with `gh release edit <tag> --draft=false`.
 

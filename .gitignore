@@ -9,6 +9,10 @@ out/
 # Kotlin
 .kotlin/
 
+# Python
+__pycache__/
+*.py[cod]
+
 # IntelliJ / Android Studio
 .idea/*
 !.idea/codeStyles/
