@@ -11,7 +11,7 @@ This is the right transport when:
 - You want to inspect a long-running Spectre-aware app interactively (the future
   `spectre attach <pid>` CLI builds on this surface).
 - You're driving an IntelliJ-hosted Compose surface from a sister process. *Note: see the
-  v1 limitations below — IntelliJ support is gated until further validation.*
+  current limitations below — IntelliJ support is gated until further validation.*
 
 For comparison with the other transports, see [Cross-JVM access](cross-jvm.md) (HTTP) and
 [IntelliJ-hosted Compose](intellij.md) (in-process via `intellij-ide-starter`).
@@ -27,13 +27,13 @@ For comparison with the other transports, see [Cross-JVM access](cross-jvm.md) (
     The agent transport is **local only** and intended for **trusted dev/test
     environments**. Trust model:
 
-    - Communication is over a **Unix Domain Socket** in `/tmp/`. Filesystem permissions
-      (mode 0600, owner-only) are the only access control.
+    - Communication is over a **Unix Domain Socket** under a short private directory in `/tmp/`.
+      Filesystem permissions (directory mode 0700, socket mode 0600) are the only access control.
     - The attaching JVM must run as the same OS user as the target JVM.
     - There is **no authentication** and **no encryption** on the wire.
-    - The agent module is **unpublished in v1** — no Maven Central, no `mavenLocal`.
-      Consume via a direct project dependency or an explicit `AttachOptions.agentJarPath`.
-      See [Target setup](#target-setup) below.
+    - The published `spectre-agent` API jar is for the attaching JVM. The
+      `spectre-agent-runtime` jar gets loaded into the target JVM. See
+      [Artifact roles](#artifact-roles) below.
 
     See [Security notes](../SECURITY.md) for the full risk register.
 
@@ -45,32 +45,100 @@ For comparison with the other transports, see [Cross-JVM access](cross-jvm.md) (
 - The target JVM must include **Spectre `:core`** on its classpath. The agent does not
   inject Spectre into the target; it reflectively bootstraps off the `:core` that's
   already loaded. The agent JAR itself is supplied by the attaching JVM at attach time.
-- **macOS and Linux only** in v1. Windows support is tracked as a follow-up (named pipes
+- **macOS and Linux only** in the current preview. Windows support is tracked as a follow-up (named pipes
   via JNA or junixsocket).
 - The target JVM should be started with **`-XX:+EnableDynamicAgentLoading`**. Without it,
   attach prints a stderr warning per
   [JEP 451](https://openjdk.org/jeps/451) and a future JDK will reject the attach
   entirely.
 
-## Target setup
+## Artifact roles
 
-The agent JAR is a thin bootstrap. It reflectively locates `ComposeAutomator` in the
-target's classloader at attach time, so the target **must already have Spectre `:core`
-on its classpath** — typically as a normal runtime dependency. The agent JAR doesn't
-need to be on the target's classpath; it gets loaded via `VirtualMachine.loadAgent`.
+Agent attach involves two JVMs:
+
+- **Target JVM** — the Compose app you want to inspect or drive.
+- **Attacher JVM** — the test, inspector, or tool process that calls `AgentAttach.attach(pid)`.
+
+The target JVM must already have Spectre `:core` on its classpath. The agent runtime does
+not inject `:core`; it reflectively locates `ComposeAutomator` in the target's classloader
+after it has been loaded into that JVM.
 
 ```kotlin
 // build.gradle.kts of the target application
 dependencies {
     implementation("dev.sebastiano.spectre:core:<version>")
-    // No `:agent` dependency needed in the target. The agent fat JAR is supplied by the
-    // attaching JVM (the test/inspector) and loaded into this process at attach time.
+    // No `spectre-agent` or `spectre-agent-runtime` dependency is needed in the target.
+    // The attacher supplies the runtime jar to the JDK Attach API.
 }
 ```
 
-**`:agent` is not published to Maven Central or `mavenLocal` in v1.** The module
-deliberately doesn't apply `mavenPublish` — see plan Q-1 (track Central publishing as a
-v1.1 follow-up). Today, attaching-side consumers have two supported paths:
+The attacher JVM usually needs two artifacts:
+
+- `spectre-agent` — the normal API jar that your test/inspector code compiles against.
+- `spectre-agent-runtime` — the loadable Java-agent runtime jar that gets passed to
+  `VirtualMachine.loadAgent(...)`.
+
+The easiest Gradle shape is a normal implementation dependency plus a runtime-only dependency on
+the loadable runtime artifact:
+
+```kotlin
+dependencies {
+    implementation("dev.sebastiano.spectre:spectre-agent:<version>")
+    runtimeOnly("dev.sebastiano.spectre:spectre-agent-runtime:<version>")
+}
+```
+
+`AgentAttach` auto-discovers `spectre-agent-runtime-<version>.jar` from the attacher's runtime
+classpath. In practice, `runtimeOnly(...)` makes Gradle launch the attacher with the runtime jar
+listed in `java.class.path`; Spectre scans that classpath, takes the physical jar path, and passes
+that path to `VirtualMachine.loadAgent(...)`. The attacher does not call classes from the runtime
+jar directly, and the target still does not need `spectre-agent-runtime` declared as a dependency.
+
+## How attach works
+
+`AgentAttach.attach(pid)` performs this sequence:
+
+1. Resolve the loadable `spectre-agent-runtime-<version>.jar`.
+2. Create a fresh Unix Domain Socket path such as `/tmp/sp-a-<pid>-<8char-uuid>/agent.sock`.
+3. Run attach preflights, including the same-OS-user check.
+4. Call `VirtualMachine.attach(pid).loadAgent(runtimeJarPath, udsPath)`.
+5. The target JVM loads the runtime jar and invokes `SpectreAgent.agentmain(...)`.
+6. Inside the target JVM, `SpectreAgent` finds `ComposeAutomator` from the target's existing
+   `:core` dependency, creates an in-process automator, and starts an IPC server on the UDS path.
+7. The attacher connects an `IpcClient` to that socket and returns `AttachedAutomator`.
+
+After that, calls such as `windows()`, `findByTestTag(...)`, `click(...)`, and `screenshot()` are
+small CBOR requests over the socket. They execute inside the target JVM against the in-process
+automator, then return DTOs or bytes to the attacher.
+
+## Custom runtime jar path
+
+Classpath auto-discovery is the default, but it only works when the runtime jar is visible as a
+physical `spectre-agent-runtime-<version>.jar` entry in the attacher's `java.class.path`. Custom
+launchers, shaded tools, module-path launches, and ad-hoc scripts may hide that file. In those
+cases, point Spectre at the runtime jar explicitly:
+
+```kotlin
+import dev.sebastiano.spectre.agent.AgentAttach
+import dev.sebastiano.spectre.agent.AttachOptions
+import java.nio.file.Path
+
+AgentAttach.attach(
+    pid = targetPid,
+    options =
+        AttachOptions(
+            agentJarPath = Path.of("/abs/path/to/spectre-agent-runtime-<version>.jar"),
+        ),
+)
+```
+
+Equivalent: set `-Ddev.sebastiano.spectre.agent.runtimeJar=<path>` on the attacher's JVM.
+
+When working inside the Spectre repo, `AgentAttach` also falls back to
+`<cwd>/agent-runtime/build/libs/agent-runtime-*.jar` so local manual recipes keep working after
+`./gradlew :agent-runtime:jar`.
+
+Consumers that cannot use the published Maven coordinate still have two supported paths:
 
 1. **As a project dependency** (you're inside the Spectre repo or a Gradle composite
    build that includes it):
@@ -79,27 +147,12 @@ v1.1 follow-up). Today, attaching-side consumers have two supported paths:
     // build.gradle.kts of the test/attacher module
     dependencies {
         implementation(projects.agent)
+        runtimeOnly(projects.agentRuntime)
     }
     ```
 
-2. **As a path to the fat agent JAR** — useful when the attacher and target are wired
-   up out-of-band (e.g. CI scripts, ad-hoc inspector tools). Build the JAR once with
-   `./gradlew :agent:shadowJar` (output at `agent/build/libs/agent-*-all.jar`) and tell
-   `AgentAttach` where to find it via:
-
-    ```kotlin
-    AgentAttach.attach(
-        pid = targetPid,
-        options = AttachOptions(agentJarPath = Path.of("/abs/path/to/agent-*-all.jar")),
-    )
-    ```
-
-    Equivalent: set `-Ddev.sebastiano.spectre.agent.runtimeJar=<path>` on the attacher's
-    JVM. Spectre's own `:agent:test` task uses this property to point integration tests
-    at the freshly-built shadow JAR.
-
-If neither is set explicitly, `AgentAttach` falls back to scanning
-`<cwd>/agent/build/libs/agent-*-all.jar` — convenient for in-repo manual recipes only.
+2. **As an explicit path** via `AttachOptions.agentJarPath` or
+   `dev.sebastiano.spectre.agent.runtimeJar`, as shown above.
 
 Start the target with the dynamic-agent flag (suppresses the JEP 451 stderr warning):
 
@@ -142,21 +195,25 @@ cleanup.
 
 ```kotlin
 AttachOptions(
-    agentJarPath = null,        // null = auto-locate (see "Target setup" above)
-    udsPath = null,             // null = /tmp/sp-a-<pid>-<8char-uuid>.sock
+    agentJarPath = null,        // null = auto-locate (see "Artifact roles" above)
+    udsPath = null,             // null = /tmp/sp-a-<pid>-<8char-uuid>/agent.sock
     attachTimeoutMs = 5_000,    // how long to wait for the agent's IPC server to come up
 )
 ```
 
-`AgentAttach.attach` runs a **same-UID preflight** via `ProcessHandle` and throws
+If you override `udsPath` with a path under an existing directory, you own that parent
+directory's permissions. Spectre creates the default per-attach directory as mode 0700 and the
+socket as mode 0600, but it does not chmod directories it did not create.
+
+`AgentAttach.attach` runs a **same-user preflight** via `ProcessHandle` and throws
 `AttachPermissionDeniedException` if the target JVM is owned by a different OS user (the
-JDK Attach API only works across same-UID processes on POSIX).
+JDK Attach API only works across attach-compatible same-user processes on POSIX).
 
-The JEP 451 `-XX:+EnableDynamicAgentLoading` flag is **not** verified by Spectre in v1 —
-the JVM itself prints a stderr warning if it's missing, which is the source of truth.
-v1.1 will add a reliable preflight via `HotSpotDiagnosticMXBean`.
+The JEP 451 `-XX:+EnableDynamicAgentLoading` flag is **not** verified by Spectre yet — the
+JVM itself prints a stderr warning if it's missing, which is the source of truth. A follow-up
+can add a reliable preflight via `HotSpotDiagnosticMXBean`.
 
-## Operation set (v1)
+## Operation set
 
 `AttachedAutomator` exposes the same operations as the HTTP transport, plus `detach`:
 
@@ -171,7 +228,7 @@ v1.1 will add a reliable preflight via `HotSpotDiagnosticMXBean`.
 | `close()` (auto)      | `AgentRequest.Detach`            | tear-down         |
 
 Streaming / long-poll ops (`waitForVisualIdle`, idling resources, `withTracing`) are
-deferred to v1.1.
+deferred to a follow-up.
 
 ## Wire format
 
@@ -185,20 +242,17 @@ DTOs live in `dev.sebastiano.spectre.agent.transport.*`. Both sides share the sa
 classes; CBOR's `@SerialName` discriminators pin each variant in the sealed-interface
 hierarchy.
 
-## v1 limitations
+## Current limitations
 
 - **macOS and Linux only.** Windows support is a tracked follow-up.
-- **No streaming ops.** `waitForVisualIdle` and friends are HTTP-only or in-process only
-  until v1.1.
+- **No streaming ops.** `waitForVisualIdle` and friends are HTTP-only or in-process only for now.
 - **IntelliJ-hosted Compose**: the classloader-disambiguation rule (D-14 in the plan) was
-  designed to handle `PluginClassLoader` chains but isn't automatically tested in v1. If
+  designed to handle `PluginClassLoader` chains but isn't automatically tested yet. If
   you hit issues attaching to an IntelliJ-hosted target, file a Spectre issue with the
   `agent-attach` label.
-- **Unpublished — no Maven Central, no `mavenLocal`.** `:agent` doesn't apply
-  `mavenPublish` in v1. Attaching-side consumers use a direct project dependency
-  (`implementation(projects.agent)`) or point at the built fat JAR via
-  `AttachOptions.agentJarPath` / `-Ddev.sebastiano.spectre.agent.runtimeJar=...`. See
-  [Target setup](#target-setup) above.
+- **Runtime jar is separate from the API jar.** The normal `spectre-agent` dependency is not the
+  jar loaded into the target JVM. Add `spectre-agent-runtime`, pass
+  `AttachOptions.agentJarPath`, or set `-Ddev.sebastiano.spectre.agent.runtimeJar=...`.
 
 ## Manual verification recipe
 

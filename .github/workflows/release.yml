@@ -419,6 +419,8 @@ jobs:
             :recording-macos:publishToMavenCentral \
             :recording-linux:publishToMavenCentral \
             :recording-windows:publishToMavenCentral \
+            :agent:publishToMavenCentral \
+            :agent-runtime:publishToMavenCentral \
             :testing:publishToMavenCentral \
             -PVERSION_NAME="$RELEASE_VERSION" \
             -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/spectre-screencapture" \

@@ -26,7 +26,7 @@ import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
  *   by a later `resumeWith` call from wherever the coroutine completes.
  *
  * A timeout guards against hangs (a misbehaving Compose tree, a robot driver stuck on a permission
- * dialog, …). The default [timeoutMs] of 30 s is generous for any single UI op; if v1.1 adds
+ * dialog, …). The default [timeoutMs] of 30 s is generous for any single UI op; if Spectre adds
  * genuinely long-running ops like `waitForVisualIdle` they should be modelled as their own
  * streaming wire op rather than relying on this synchronous bridge.
  */

@@ -5,6 +5,7 @@ import com.vanniktech.maven.publish.MavenPublishBaseExtension
 import com.vanniktech.maven.publish.SourcesJar
 import dev.detekt.gradle.Detekt
 import dev.detekt.gradle.extensions.DetektExtension
+import java.util.jar.JarFile
 import java.util.zip.ZipFile
 import javax.xml.parsers.DocumentBuilderFactory
 import org.gradle.api.tasks.SourceTask
@@ -95,10 +96,10 @@ subprojects {
 
     // --- Maven Central publishing convention (#84) -------------------------------------------
     //
-    // Library modules (:core, :server, :recording, :testing) apply `com.vanniktech.maven.publish`
-    // in their own build scripts. This block fires only when the plugin is present, so samples
-    // never accidentally pick up a `publish` task — the issue requires the artefact set to be
-    // exactly the four library modules.
+    // Library modules apply `com.vanniktech.maven.publish` in their own build scripts. This
+    // block fires only when the plugin is present, so samples and fixtures never accidentally
+    // pick up a `publish` task. Keep the expected artifact set in sync with
+    // `publishedLibraryProjects` and docs/PUBLISHING.md.
     //
     // POM scalars (name, description, licence URL, SCM, developer) come from gradle.properties:
     // `POM_*` in the root file is the source of truth for everything shared; per-module
@@ -184,6 +185,8 @@ val publishedLibraryProjects =
         ":recording-macos",
         ":recording-linux",
         ":recording-windows",
+        ":agent",
+        ":agent-runtime",
         ":testing",
     )
 
@@ -304,7 +307,7 @@ val verifyMavenLocalPublication by tasks.registering {
             }
             val baseName = "$artifactId-$version"
             val expectedArtefacts =
-                listOf(
+                mutableListOf(
                     "$baseName.jar",
                     "$baseName-sources.jar",
                     "$baseName-javadoc.jar",
@@ -402,6 +405,48 @@ val verifyMavenLocalPublication by tasks.registering {
                             errors +=
                                 "$moduleName: published jar (${jar.name}) has empty " +
                                     "helper entry `$path`"
+                        }
+                    }
+                }
+            }
+            if (moduleName == ":agent-runtime") {
+                val runtimeJar = moduleDir.resolve("$baseName.jar")
+                if (runtimeJar.isFile) {
+                    JarFile(runtimeJar).use { jar ->
+                        val manifest = jar.manifest
+                        val attributes = manifest?.mainAttributes
+                        val agentClass = attributes?.getValue("Agent-Class")
+                        val premainClass = attributes?.getValue("Premain-Class")
+                        val expectedAgentClass = "dev.sebastiano.spectre.agent.runtime.SpectreAgent"
+                        if (agentClass != expectedAgentClass) {
+                            errors +=
+                                ":agent-runtime: jar (${runtimeJar.name}) has Agent-Class " +
+                                    "'$agentClass', expected '$expectedAgentClass'"
+                        }
+                        if (premainClass != expectedAgentClass) {
+                            errors +=
+                                ":agent-runtime: jar (${runtimeJar.name}) has Premain-Class " +
+                                    "'$premainClass', expected '$expectedAgentClass'"
+                        }
+                        val forbiddenPrefixes =
+                            listOf(
+                                "androidx/compose/",
+                                "org/jetbrains/compose/",
+                                "org/jetbrains/skiko/",
+                                "dev/sebastiano/spectre/core/",
+                                "kotlin/Pair.class",
+                                "kotlinx/coroutines/",
+                            )
+                        val leaks =
+                            jar.entries()
+                                .asSequence()
+                                .map { it.name }
+                                .filter { entry -> forbiddenPrefixes.any { entry.startsWith(it) } }
+                        val leakList = leaks.toList()
+                        if (leakList.isNotEmpty()) {
+                            errors +=
+                                ":agent-runtime: jar (${runtimeJar.name}) contains forbidden " +
+                                    "classes: ${leakList.sorted().joinToString()}"
                         }
                     }
                 }

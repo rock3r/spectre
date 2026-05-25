@@ -4,6 +4,7 @@ package dev.sebastiano.spectre.agent.transport
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 /**
  * Round-trip tests for [WireCodec]. Each variant of [AgentRequest] / [AgentResponse] gets a
@@ -44,6 +45,15 @@ class WireCodecTest {
     fun `TypeText round-trips with unicode payload`() {
         val req = AgentRequest.TypeText(text = "hello 🦀 world café")
         assertEquals(req, WireCodec.decodeRequest(WireCodec.encode(req)))
+    }
+
+    @Test
+    fun `request log label redacts TypeText payload`() {
+        val req = AgentRequest.TypeText(text = "password=super-secret")
+
+        assertEquals("typeText", req.logLabel)
+        assertFalse(req.logLabel.contains("super-secret"))
+        assertFalse(req.logLabel.contains(req.text))
     }
 
     @Test

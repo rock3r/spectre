@@ -14,10 +14,10 @@ import kotlinx.serialization.Serializable
  * share types with) the HTTP transport at `:server`; see plan UC-2 in
  * `.plans/2026-05-22-issue-153-agent-attach-workshop.md`.
  *
- * The v1 operation surface (D-4 in the plan) is exactly the operations the HTTP transport exposes
- * today: windows, allNodes, findByTestTag, click, typeText, screenshot, plus the new detach.
- * Streaming/long-poll ops (`waitForVisualIdle`, idling resources, `withTracing`) are deferred to
- * v1.1 (Q-3 resolution).
+ * The current operation surface (D-4 in the plan) mirrors the operations the HTTP transport exposes
+ * today: windows, allNodes, findByTestTag, click, typeText, screenshot, plus detach.
+ * Streaming/long-poll ops (`waitForVisualIdle`, idling resources, `withTracing`) are deferred
+ * follow-ups (Q-3 resolution).
  */
 @Serializable
 internal sealed interface AgentRequest {
@@ -68,6 +68,20 @@ internal sealed interface AgentRequest {
     @Serializable @SerialName("detach") data object Detach : AgentRequest
 }
 
+/** Payload-free operation label for diagnostics. Never include caller-controlled request data. */
+internal val AgentRequest.logLabel: String
+    get() =
+        when (this) {
+            AgentRequest.Ping -> "ping"
+            AgentRequest.Windows -> "windows"
+            AgentRequest.AllNodes -> "allNodes"
+            is AgentRequest.FindByTestTag -> "findByTestTag"
+            is AgentRequest.Click -> "click"
+            is AgentRequest.TypeText -> "typeText"
+            AgentRequest.Screenshot -> "screenshot"
+            AgentRequest.Detach -> "detach"
+        }
+
 /** Server-to-client response envelope. */
 @Serializable
 internal sealed interface AgentResponse {
@@ -104,7 +118,7 @@ internal sealed interface AgentResponse {
 
     /**
      * Server-side failure. Carries a human-readable [message]; the structured failure type isn't
-     * exposed across the wire (yet) to keep the v1 protocol small.
+     * exposed across the wire yet to keep the protocol small.
      */
     @Serializable @SerialName("error") data class Error(val message: String) : AgentResponse
 }

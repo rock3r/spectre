@@ -1,7 +1,7 @@
 # Publishing
 
 Spectre's library modules (`:core`, `:server`, `:recording`, `:recording-macos`,
-`:recording-linux`, `:testing`) publish to Sonatype Central via the
+`:recording-linux`, `:recording-windows`, `:agent`, `:agent-runtime`, `:testing`) publish to Sonatype Central via the
 [`com.vanniktech.maven.publish`][vanniktech] plugin.
 The sample modules (`:sample-desktop`, `:sample-intellij-plugin`) never apply
 the plugin — they're deliverables, not libraries.
@@ -20,7 +20,7 @@ published library module.
 
 [release-yml]: https://github.com/rock3r/spectre/blob/main/.github/workflows/release.yml
 
-Four jobs run on tag push:
+Five jobs run on tag push:
 
 1. **`release-gate`** (Linux runner) — validates the tag shape, runs
    `./gradlew check`, installs the docs dependencies, and runs
@@ -35,11 +35,14 @@ Four jobs run on tag push:
    toolchain dance documented in [`ci.yml`][ci-yml]: dpkg multi-arch +
    per-arch libdbus sysroot + cross-linker). Uploads the per-arch binaries as a
    GitHub Actions artefact.
-4. **`publish`** (Linux runner, depends on the gate and both helper jobs) — downloads the helper
-   artefacts, runs `:verifyMavenLocalPublication` to assert the publication
-   shape, then runs `publishToMavenCentral` against the
-   [Sonatype Central Portal][central-portal]. Finally creates a draft GitHub
-   release with the recording API jar and platform helper jars attached.
+4. **`windows-helper`** (Windows runner, depends on `release-gate`) — builds the
+   .NET Windows Graphics Capture helper for `x64` and `arm64`, then uploads the
+   per-arch helper directories as a GitHub Actions artefact.
+5. **`publish`** (Linux runner, depends on the gate and all helper jobs) — downloads the
+   helper artefacts, runs `:verifyMavenLocalPublication` to assert the publication shape, then
+   runs `publishToMavenCentral` against the [Sonatype Central Portal][central-portal].
+   Finally creates a draft GitHub release with the recording API jar and platform helper jars
+   attached.
 
 [ci-yml]: https://github.com/rock3r/spectre/blob/main/.github/workflows/ci.yml
 [central-portal]: https://central.sonatype.com/
@@ -53,7 +56,7 @@ sanity-checked the artefacts side-by-side.
 Manual promotion checklist:
 
 - Confirm the tag points at the intended, already-reviewed `main` SHA.
-- Inspect the Central Portal staging deployment for all six modules, including
+- Inspect the Central Portal staging deployment for all nine modules, including
   POM metadata, sources jars, javadoc jars, and Gradle module metadata.
 - Confirm `spectre-recording-<version>.jar` contains no `native/...` entries.
 - Confirm `spectre-recording-macos-<version>.jar` contains
@@ -61,6 +64,11 @@ Manual promotion checklist:
 - Confirm `spectre-recording-linux-<version>.jar` contains
   `native/linux/x86_64/spectre-wayland-helper` and
   `native/linux/aarch64/spectre-wayland-helper`.
+- Confirm `spectre-recording-windows-<version>.jar` contains
+  `native/windows/x64/spectre-window-capture.exe` and
+  `native/windows/arm64/spectre-window-capture.exe`.
+- Confirm `spectre-agent-runtime-<version>.jar` exists and its manifest declares
+  `Agent-Class: dev.sebastiano.spectre.agent.runtime.SpectreAgent`.
 - Promote the Central staging deployment from the Central Portal UI.
 - Undraft the GitHub release with `gh release edit <tag> --draft=false`.
 
@@ -97,8 +105,9 @@ signing convention only fires when `ORG_GRADLE_PROJECT_signingInMemoryKey` is
 set. The `:verifyMavenLocalPublication` task drives the full shape check:
 
 ```shell
-# Publish all library modules + verify shape. Stub mac helper because Linux can't
-# build the real one; cross-arch Linux helpers come from the real Rust build.
+# Publish all library modules + verify shape. Stub mac helper because Linux cannot build the
+# real one; cross-arch Linux helpers come from the real Rust build. Windows helpers are only
+# expected when provided explicitly or when running on Windows.
 ./gradlew verifyMavenLocalPublication \
     -PstubMacHelperForTesting \
     -PallLinuxArches
@@ -120,6 +129,10 @@ It additionally asserts:
 - `:recording-macos` contains `native/macos/spectre-screencapture`
 - `:recording-linux` contains `native/linux/x86_64/spectre-wayland-helper` and
   `native/linux/aarch64/spectre-wayland-helper` when built with release helper inputs
+- `:recording-windows` contains `native/windows/x64/spectre-window-capture.exe` and
+  `native/windows/arm64/spectre-window-capture.exe` when built with release helper inputs
+- `:agent-runtime` publishes the Java Agent runtime jar; it must carry the Java Agent
+  manifest and must not bundle Compose, Skiko, Spectre core, or Kotlin stdlib classes
 
 If you have a real notarised mac helper on disk (e.g. downloaded from a
 previous release-CI run), point at it instead of the stub:
@@ -127,11 +140,14 @@ previous release-CI run), point at it instead of the stub:
 ```shell
 ./gradlew verifyMavenLocalPublication \
     -PprebuiltMacHelperPath=/path/to/SpectreScreenCapture \
-    -PprebuiltLinuxHelpersDir=/path/to/linux-helpers
+    -PprebuiltLinuxHelpersDir=/path/to/linux-helpers \
+    -PprebuiltWindowsHelpersDir=/path/to/windows-helpers
 ```
 
 The `prebuiltLinuxHelpersDir` directory must contain
 `x86_64/spectre-wayland-helper` and `aarch64/spectre-wayland-helper`.
+The `prebuiltWindowsHelpersDir` directory must contain
+`x64/spectre-window-capture.exe` and `arm64/spectre-window-capture.exe`.
 
 ## Coordinates
 
@@ -142,6 +158,9 @@ The `prebuiltLinuxHelpersDir` directory must contain
 | `:recording` | `dev.sebastiano.spectre:spectre-recording:<version>` |
 | `:recording-macos` | `dev.sebastiano.spectre:spectre-recording-macos:<version>` |
 | `:recording-linux` | `dev.sebastiano.spectre:spectre-recording-linux:<version>` |
+| `:recording-windows` | `dev.sebastiano.spectre:spectre-recording-windows:<version>` |
+| `:agent` | `dev.sebastiano.spectre:spectre-agent:<version>` |
+| `:agent-runtime` | `dev.sebastiano.spectre:spectre-agent-runtime:<version>` |
 | `:testing` | `dev.sebastiano.spectre:spectre-testing:<version>` |
 
 The shared metadata (group, license, SCM, developer) lives in

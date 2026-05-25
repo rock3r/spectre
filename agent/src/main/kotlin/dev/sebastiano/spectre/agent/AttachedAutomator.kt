@@ -5,6 +5,7 @@ import dev.sebastiano.spectre.agent.transport.AgentResponse
 import dev.sebastiano.spectre.agent.transport.IpcClient
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
+import dev.sebastiano.spectre.agent.transport.logLabel
 import java.io.IOException
 
 /**
@@ -14,8 +15,8 @@ import java.io.IOException
  * [AgentRequest.Detach] over the wire (Path A of the plan's D-7) before tearing down the underlying
  * socket. The target JVM's shutdown hook (Path B) covers crash cleanup.
  *
- * Operation set is the v1 wire surface (D-4): windows, allNodes, findByTestTag, click, typeText,
- * screenshot, plus detach. Streaming/long-poll ops are out of scope for v1 (Q-3).
+ * Current wire surface (D-4): windows, allNodes, findByTestTag, click, typeText, screenshot, plus
+ * detach. Streaming/long-poll ops are deferred follow-ups (Q-3).
  *
  * Not thread-safe. Callers needing concurrent automator access must serialise externally.
  *
@@ -106,7 +107,7 @@ internal constructor(
         check(!closed) { "AttachedAutomator is closed" }
         val resp = client.send(request)
         if (resp is AgentResponse.Error) {
-            throw IOException("Agent reported error for $request: ${resp.message}")
+            throw IOException("Agent reported error for ${request.logLabel}: ${resp.message}")
         }
         return resp
     }

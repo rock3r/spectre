@@ -58,16 +58,15 @@ import org.junit.jupiter.api.condition.OS
  * future change makes the strict assertions flaky, fix the root cause; don't relax the contract.
  *
  * Gating:
- * - **Disabled on Windows** via `@EnabledOnOs(OS.LINUX, OS.MAC)`. Per the v1 docs the agent
- *   transport is macOS+Linux only — `AgentAttach.attach` short-circuits with
- *   `AttachPermissionDeniedException` on Windows runners (the same-UID preflight via
- *   `ProcessHandle.info().user()` returns a value the POSIX-shaped check rejects). Until Windows
- *   support lands (named pipes via JNA/junixsocket follow-up), this test is skipped rather than
- *   asserting Windows-specific failure shapes.
+ * - **Disabled on Windows** via `@EnabledOnOs(OS.LINUX, OS.MAC)`. The current agent transport is
+ *   macOS+Linux only — `AgentAttach.attach` short-circuits with
+ *   `AttachPlatformUnsupportedException` on Windows runners. Until Windows support lands (named
+ *   pipes via JNA/junixsocket follow-up), this test is skipped rather than asserting
+ *   Windows-specific failure shapes.
  * - Skipped on headless JVMs (`java.awt.GraphicsEnvironment.isHeadless()`). Compose Desktop refuses
  *   to create a `JFrame + ComposePanel` without a display.
  * - Skipped when `dev.sebastiano.spectre.agent.runtimeJar` isn't set. Gradle's `:agent:test` task
- *   sets it from the `:agent:shadowJar` output.
+ *   sets it from the `:agent-runtime:jar` output.
  */
 @EnabledOnOs(OS.LINUX, OS.MAC)
 class AgentAttachIntegrationTest {
@@ -240,13 +239,13 @@ class AgentAttachIntegrationTest {
         val prop = System.getProperty("dev.sebastiano.spectre.agent.runtimeJar")
         assumeFalse(
             prop.isNullOrBlank(),
-            "Requires -Ddev.sebastiano.spectre.agent.runtimeJar=<path/to/agent-*-all.jar>; the " +
+            "Requires -Ddev.sebastiano.spectre.agent.runtimeJar=<path/to/agent-runtime.jar>; the " +
                 ":agent:test task sets it automatically.",
         )
         val path = Paths.get(prop!!)
         assumeFalse(
             !Files.isRegularFile(path),
-            "Agent runtime JAR not found at $path; run `./gradlew :agent:shadowJar` first.",
+            "Agent runtime JAR not found at $path; run `./gradlew :agent-runtime:jar` first.",
         )
         return path
     }

@@ -4,6 +4,7 @@ package dev.sebastiano.spectre.agent.transport
 
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermission
 import java.util.UUID
 import kotlin.io.path.deleteIfExists
 import kotlin.test.AfterTest
@@ -28,9 +29,9 @@ import org.junit.jupiter.api.condition.OS
  * UUID prefix keeps us well within bounds.
  *
  * **Disabled on Windows** via `@EnabledOnOs(OS.LINUX, OS.MAC)`. The agent transport is macOS+Linux
- * only in v1 — Windows support (named pipes via JNA/junixsocket) is a tracked follow-up. The
- * hard-coded `/tmp/...` UDS path is meaningless on Windows and the test would `SocketException` on
- * connect rather than exercising the round-trip contract.
+ * only in the current preview — Windows support (named pipes via JNA/junixsocket) is a tracked
+ * follow-up. The hard-coded `/tmp/...` UDS path is meaningless on Windows and the test would
+ * `SocketException` on connect rather than exercising the round-trip contract.
  */
 @EnabledOnOs(OS.LINUX, OS.MAC)
 class IpcRoundTripTest {
@@ -57,6 +58,25 @@ class IpcRoundTripTest {
                 assertEquals(AgentResponse.Pong, resp)
             }
         }
+    }
+
+    @Test
+    fun `server creates missing UDS parent owner-only and removes it on close`() {
+        val parent = Path.of("/tmp", "sp-t-${UUID.randomUUID().toString().take(8)}")
+        val nestedUdsPath = parent.resolve("agent.sock")
+
+        val server = IpcServer(nestedUdsPath, stubHandler())
+        server.use {
+            awaitSocket(nestedUdsPath)
+            assertEquals(
+                OWNER_ONLY_DIRECTORY_PERMS,
+                Files.getPosixFilePermissions(parent),
+                "created UDS parent should be owner-only",
+            )
+        }
+
+        assertTrue(!Files.exists(nestedUdsPath), "UDS path should be removed after close")
+        assertTrue(!Files.exists(parent), "private UDS parent should be removed after close")
     }
 
     @Test
@@ -441,5 +461,11 @@ class IpcRoundTripTest {
         const val FD_LEAK_WARMUP: Int = 5
         const val FD_LEAK_ITERATIONS: Int = 50
         const val FD_LEAK_TOLERANCE: Long = 10
+        val OWNER_ONLY_DIRECTORY_PERMS =
+            setOf(
+                PosixFilePermission.OWNER_READ,
+                PosixFilePermission.OWNER_WRITE,
+                PosixFilePermission.OWNER_EXECUTE,
+            )
     }
 }
