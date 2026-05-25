@@ -8,7 +8,7 @@ package dev.sebastiano.spectre.agent
  * `@OptIn(ExperimentalSpectreAgentApi::class)`.
  *
  * The agent attach surface (`AgentAttach`, `AttachedAutomator`, `AttachOptions`,
- * `SpectreProcesses`) carries this annotation in v1 until the UX has stabilised — see issue
+ * `SpectreProcesses`) carries this annotation until the UX has stabilised — see issue
  * [#153](https://github.com/rock3r/spectre/issues/153).
  */
 @RequiresOptIn(

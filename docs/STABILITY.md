@@ -52,9 +52,9 @@ Two experimental markers exist today:
   marker.
 - **`@ExperimentalSpectreAgentApi`** covers the entire `agent` module's attach-side public
   surface — `AgentAttach`, `AttachedAutomator`, `AttachOptions`, `SpectreProcesses`, and the
-  wire DTOs. Tracked under #153; the marker stays in place at least until v1.1 lands the
-  Windows-named-pipe support, the streaming wire ops (`waitForVisualIdle` etc.), and the
-  automated IntelliJ-hosted Compose attach tests.
+  wire DTOs. Tracked under #153; the marker stays in place while the attach UX, Windows
+  transport shape, streaming wire ops (`waitForVisualIdle` etc.), and automated
+  IntelliJ-hosted Compose attach tests settle.
 
 Consumers opt in either at file level or call site:
 

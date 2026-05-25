@@ -43,6 +43,11 @@ public final class dev/sebastiano/spectre/agent/AttachPermissionDeniedException 
 	public fun <init> (JLjava/lang/String;)V
 }
 
+public final class dev/sebastiano/spectre/agent/AttachPlatformUnsupportedException : dev/sebastiano/spectre/agent/SpectreAttachException {
+	public fun <init> (Ljava/lang/String;)V
+	public final fun getOsName ()Ljava/lang/String;
+}
+
 public final class dev/sebastiano/spectre/agent/AttachUnsupportedException : dev/sebastiano/spectre/agent/SpectreAttachException {
 	public fun <init> ()V
 	public fun <init> (Ljava/lang/Throwable;)V

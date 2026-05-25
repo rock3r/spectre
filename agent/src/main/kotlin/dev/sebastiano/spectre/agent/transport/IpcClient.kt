@@ -15,8 +15,8 @@ import java.nio.file.Path
  * synchronously sends [AgentRequest]s with [send].
  *
  * Single-shot send/receive: each [send] writes one framed CBOR request and reads the next framed
- * response. The wire protocol is strictly request/response in v1 (no streaming), so this is safe to
- * use without explicit pipelining.
+ * response. The current wire protocol is strictly request/response (no streaming), so this is safe
+ * to use without explicit pipelining.
  *
  * Not thread-safe — callers that need concurrent automator access should synchronise externally.
  * The `AttachedAutomator` wrapper exposes only serial operations.
@@ -54,7 +54,7 @@ internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) 
         val responseBytes =
             Framing.readFrame(input)
                 ?: throw EOFException(
-                    "Agent closed the connection before sending a response to $request"
+                    "Agent closed the connection before sending a response to ${request.logLabel}"
                 )
         return WireCodec.decodeResponse(responseBytes)
     }

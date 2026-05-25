@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicReference
  *
  * Listed in the agent JAR's manifest as both `Premain-Class` and `Agent-Class`:
  * - [premain] is invoked when the JVM is started with
- *   `-javaagent:spectre-agent-runtime-<v>-all.jar=<udsPath>`.
+ *   `-javaagent:spectre-agent-runtime-<version>.jar=<udsPath>`.
  * - [agentmain] is invoked when the JAR is dynamically loaded via
  *   [com.sun.tools.attach.VirtualMachine.loadAgent].
  *

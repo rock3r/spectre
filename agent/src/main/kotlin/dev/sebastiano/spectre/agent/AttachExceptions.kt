@@ -18,6 +18,15 @@ public class AttachUnsupportedException(cause: Throwable? = null) :
         cause,
     )
 
+/** Thrown when the current operating system does not support the agent transport. */
+@ExperimentalSpectreAgentApi
+public class AttachPlatformUnsupportedException(public val osName: String) :
+    SpectreAttachException(
+        "The Spectre agent transport is currently supported on macOS and Linux only. " +
+            "This JVM reports os.name='$osName'. Windows support needs a named-pipe " +
+            "transport instead of Unix Domain Sockets."
+    )
+
 /**
  * Thrown when the agent failed to come up at the configured UDS path within
  * [AttachOptions.attachTimeoutMs].
@@ -40,9 +49,9 @@ public class AgentBootstrapTimeoutException(udsPath: java.nio.file.Path, timeout
 /**
  * Thrown when the target JVM is owned by a different OS user than the attacher.
  *
- * The JDK Attach API requires same-UID on POSIX. We pre-check this via
- * `ProcessHandle.of(pid).info().user()` because the underlying error from `VirtualMachine.attach`
- * is generic and hard to diagnose.
+ * The JDK Attach API requires compatible same-user ownership on POSIX. We pre-check this with
+ * `ProcessHandle.of(pid).info().user()`, which reports user names rather than numeric UIDs, because
+ * the underlying error from `VirtualMachine.attach` is generic and hard to diagnose.
  */
 @ExperimentalSpectreAgentApi
 public class AttachPermissionDeniedException(targetPid: Long, targetUser: String?) :
@@ -61,9 +70,11 @@ public class AttachPermissionDeniedException(targetPid: Long, targetUser: String
 @ExperimentalSpectreAgentApi
 public class AgentJarNotFoundException(searched: List<java.nio.file.Path>) :
     SpectreAttachException(
-        "Could not locate the Spectre agent fat JAR. Searched:\n" +
+        "Could not locate the Spectre agent runtime JAR. Searched:\n" +
             searched.joinToString("\n") { "  - $it" } +
-            "\n\nRun `./gradlew :agent:shadowJar` or pass AttachOptions(agentJarPath = ...)."
+            "\n\nAdd the `spectre-agent-runtime` jar to the attacher's runtime classpath, " +
+            "run `./gradlew :agent-runtime:jar`, or pass " +
+            "AttachOptions(agentJarPath = ...)."
     )
 
 /**

@@ -31,9 +31,11 @@ out of scope.
    `installSpectreRoutes` expose click, keystroke, and screenshot capture to anyone who can
    reach the bound port. Bind to `127.0.0.1`. Anything network-reachable broadens the threat
    model beyond what this release covers.
-4. **The agent transport assumes a same-UID peer.** `:agent`'s Unix Domain Socket in
-   `/tmp/` is protected by filesystem permissions only (mode 0600, owner-only, set
-   explicitly by `IpcServer` immediately after bind to defend against permissive umasks).
+4. **The agent transport assumes a same-user peer.** `:agent`'s Unix Domain Socket is created
+   under a short private directory in `/tmp/`. The directory is mode 0700 and the socket is mode
+   0600, both set explicitly by `IpcServer` to defend against permissive umasks.
+   If callers override `AttachOptions.udsPath` with a path under an existing directory, they own
+   that parent directory's permissions; Spectre only tightens directories it creates itself.
    Any process running as the same OS user can connect and drive the target. There is no
    authentication, no encryption, and no origin check. The agent transport is intentionally
    a testing affordance for the same machine and the same user, not a remote-control
@@ -58,7 +60,7 @@ out of scope.
 | Record video | `AutoRecorder`, native recorders, deprecated explicit `FfmpegRecorder`, `WaylandPortalRecorder` | In-process only |
 | Execute a helper binary | `HelperBinaryExtractor` (SCK), `WaylandHelperBinaryExtractor` | Local file system, JVM process |
 | Expose any of the above over HTTP | `installSpectreRoutes` mounts the windows / nodes / click / typeText / screenshot routes | **Unauthenticated, plaintext** — host application chooses bind address |
-| Expose any of the above over UDS | `:agent`'s `IpcServer` mounts the same surface plus detach over a Unix Domain Socket | **Unauthenticated** — filesystem mode 0600 (same UID); macOS + Linux only in v1 |
+| Expose any of the above over UDS | `:agent`'s `IpcServer` mounts the same surface plus detach over a Unix Domain Socket | **Unauthenticated** — filesystem mode 0600 (same UID); macOS + Linux only in the current preview |
 
 The HTTP exposure column is the most important one to internalise: there are **no auth
 tokens, no TLS, and no origin checks** on any route. The transport is intentionally a

@@ -1,6 +1,6 @@
 ---
 name: spectre
-description: Use when writing, debugging, or reviewing tests that drive a real, on-screen Compose Desktop window with Spectre — the JVM/Kotlin library for automating live Compose Desktop UIs (and IntelliJ/Jewel-hosted Compose) via the semantics tree plus java.awt.Robot or synthetic AWT input. Trigger on mentions of `ComposeAutomator`, `RobotDriver`, `AutomatorNode`, `findByTestTag`, `waitForNode`, `waitForIdle`, "automate a Compose window", "live/real-window Compose Desktop UI test", screenshotting or recording a Compose Desktop window, or any task involving `dev.sebastiano.spectre.*` imports. Also use when the user is writing JUnit 4/5 tests against Compose Desktop **and** the test opens a real top-level window — but NOT when the user wants the off-screen `runComposeUiTest` / `createComposeRule` / `onNodeWithTag` framework, which is a different tool.
+description: Use when writing, debugging, or reviewing tests that drive a real, on-screen Compose Desktop window with Spectre — the JVM/Kotlin library for automating live Compose Desktop UIs (and IntelliJ/Jewel-hosted Compose) via the semantics tree plus java.awt.Robot, synthetic AWT input, HTTP, or Java-agent attach. Trigger on mentions of `ComposeAutomator`, `RobotDriver`, `AutomatorNode`, `AgentAttach`, `AttachedAutomator`, `AttachOptions`, `findByTestTag`, `waitForNode`, `waitForIdle`, "automate a Compose window", "live/real-window Compose Desktop UI test", cross-JVM Compose automation, attaching to a running Compose JVM, screenshotting or recording a Compose Desktop window, or any task involving `dev.sebastiano.spectre.*` imports. Also use when the user is writing JUnit 4/5 tests against Compose Desktop **and** the test opens a real top-level window — but NOT when the user wants the off-screen `runComposeUiTest` / `createComposeRule` / `onNodeWithTag` framework, which is a different tool.
 ---
 
 # Spectre
@@ -13,6 +13,16 @@ window, reads its semantics tree, and feeds it real OS input via
 
 Pick Spectre when the test needs to exercise the actual window, popups,
 IntelliJ/Jewel-hosted Compose, or to record a real video of the UI.
+
+## User guide source of truth
+
+Use the published docs as the source of truth when answering setup questions:
+
+- Installation and coordinates: <https://spectre.sebastiano.dev/guide/installation/>
+- Agent attach: <https://spectre.sebastiano.dev/guide/agent/>
+- Cross-JVM HTTP transport: <https://spectre.sebastiano.dev/guide/cross-jvm/>
+
+In the Spectre repository, the same pages live under `docs/guide/`.
 
 ## The 30-second mental model
 
@@ -282,6 +292,10 @@ touches that area*; they are not needed for the common case.
   pooled-thread requirement, and the `synthetic` driver. If the work also
   involves Jewel popups, `ComposePanel` embedding, or `SwingBridgeTheme`,
   the repo-local `jewel-swing-interop` skill applies as well.
+- **Java-agent attach** → `references/agent.md` — `AgentAttach`,
+  `AttachedAutomator`, `AttachOptions`, the `spectre-agent` /
+  `spectre-agent-runtime` split, runtime jar auto-discovery, and custom
+  attach paths.
 
 ## Common pitfalls (memorise these)
 
@@ -303,9 +317,8 @@ touches that area*; they are not needed for the common case.
 
 ## What Spectre is NOT (don't pretend it is)
 
-- It is **not** published to Maven Central yet. Consumers wire it as a
-  composite build or local clone. Do not suggest `implementation("dev.sebastiano.spectre:…")`
-  unless the user confirms artifacts exist.
+- If a tagged release is not available on Maven Central yet, consumers wire Spectre as a
+  composite build or local clone. Check the installation guide before giving coordinates.
 - It is **not** `compose-test` / `runComposeUiTest` / `onNodeWithTag`. Don't
   mix those APIs into a Spectre test.
 - It does **not** capture audio. Recording is video-only.

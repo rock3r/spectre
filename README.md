@@ -57,10 +57,16 @@ npx skills add rock3r/spectre --skill spectre
   window screenshots where available (ScreenCaptureKit on macOS, Windows Graphics Capture
   on Windows, X11 region fallback on Linux). `AutoRecorder` / `AutoScreenshotter` pick per call. See
   [`docs/RECORDING-LIMITATIONS.md`](docs/RECORDING-LIMITATIONS.md).
+- `recording-macos` — runtime-only macOS ScreenCaptureKit helper resources for native
+  window/region recording and still screenshots.
+- `recording-linux` — runtime-only Linux helper resources for native Xorg and Wayland capture.
 - `recording-windows` — runtime-only Windows Graphics Capture helper resources for native
   window/region recording and still screenshots. Runtime machines need Windows 10 version
   1903+, .NET 8 Desktop Runtime, and Windows App Runtime 1.8; contributors building the
   helper need the .NET 8 SDK.
+- `agent` — experimental local attach transport for driving a Spectre-instrumented JVM from a
+  separate process.
+- `agent-runtime` — loadable Java-agent runtime jar used by `agent` when attaching to a target JVM.
 - `testing` — JUnit 5 extension and JUnit 4 rule.
 - `sample-desktop` — Compose Desktop app for manual smokes.
 - `sample-intellij-plugin` — in-tree IntelliJ plugin hosting a Jewel tool window. Unpublished;

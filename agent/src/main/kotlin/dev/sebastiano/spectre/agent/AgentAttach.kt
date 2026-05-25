@@ -18,9 +18,9 @@ import java.nio.file.Paths
  * } // Detach + cleanup on AutoCloseable.close()
  * ```
  *
- * Implementation: locates the agent fat JAR, runs Attach-API preconditions (per plan D-13), picks a
- * fresh UDS path, calls `VirtualMachine.attach(pid).loadAgent(jar, udsPath)`, polls for the UDS
- * path to appear, and connects an [IpcClient].
+ * Implementation: locates the loadable agent runtime JAR, runs Attach-API preconditions (per plan
+ * D-13), picks a fresh UDS path, calls `VirtualMachine.attach(pid).loadAgent(jar, udsPath)`, polls
+ * for the UDS path to appear, and connects an [IpcClient].
  */
 @ExperimentalSpectreAgentApi
 public object AgentAttach {
@@ -28,15 +28,16 @@ public object AgentAttach {
     /** Attach to the JVM identified by [pid] and return a connected [AttachedAutomator]. */
     @Throws(SpectreAttachException::class)
     public fun attach(pid: Long, options: AttachOptions = AttachOptions()): AttachedAutomator {
+        AgentPlatformPreflight.requireSupported()
         val agentJar = resolveAgentJar(options)
         val udsPath = options.udsPath ?: AttachOptions.defaultUdsPath(pid)
         // Pre-flight: ensure the path doesn't already exist (collisions would confuse the bind).
         Files.deleteIfExists(udsPath)
 
-        // Same-UID preflight (plan D-13). The Attach API's underlying error when UIDs differ is
+        // Same-user preflight (plan D-13). The Attach API's underlying error when users differ is
         // generic ("Operation not permitted") and hard to diagnose; this gives a clear message
         // before we even open the VM connection.
-        checkSameUid(pid)
+        checkSameUser(pid)
 
         val (vmClass, vm) = openVirtualMachine(pid)
         try {
@@ -65,10 +66,10 @@ public object AgentAttach {
     }
 
     /**
-     * Resolve the agent fat JAR by trying in order:
+     * Resolve the agent runtime JAR by trying in order:
      * 1. [AttachOptions.agentJarPath] if non-null.
      * 2. The system property `dev.sebastiano.spectre.agent.runtimeJar`.
-     * 3. `<cwd>/agent/build/libs/agent-*-all.jar` (any match).
+     * 3. `<cwd>/agent-runtime/build/libs/agent-runtime-*.jar` (any match).
      */
     @Suppress("ReturnCount")
     private fun resolveAgentJar(options: AttachOptions): Path {
@@ -86,20 +87,15 @@ public object AgentAttach {
             if (Files.isRegularFile(path)) return path
         }
 
-        val cwdGuess = Paths.get(System.getProperty("user.dir")).resolve("agent/build/libs")
+        val classpathRuntime =
+            AgentJarResolution.findRuntimeJarOnClasspath(System.getProperty("java.class.path"))
+        if (classpathRuntime != null) return classpathRuntime
+
+        val cwdGuess = Paths.get(System.getProperty("user.dir")).resolve("agent-runtime/build/libs")
         if (Files.isDirectory(cwdGuess)) {
-            val match =
-                Files.list(cwdGuess).use { stream ->
-                    stream
-                        .filter { p ->
-                            val n = p.fileName.toString()
-                            n.startsWith("agent-") && n.endsWith("-all.jar")
-                        }
-                        .findFirst()
-                        .orElse(null)
-                }
+            val match = AgentJarResolution.findRuntimeJarInDirectory(cwdGuess)
             if (match != null) return match
-            tried.add(cwdGuess.resolve("agent-*-all.jar"))
+            tried.add(cwdGuess.resolve("agent-runtime-*.jar"))
         }
 
         throw AgentJarNotFoundException(tried)
@@ -134,15 +130,16 @@ public object AgentAttach {
     }
 
     /**
-     * Same-UID preflight. The Attach API's POSIX implementation requires both processes share an
-     * effective UID; otherwise the rendezvous file under `/tmp/.java_pid<pid>` is unreadable and
-     * `VirtualMachine.attach` fails with a hard-to-diagnose error.
+     * Same-user preflight. The Attach API's POSIX implementation requires both processes to be
+     * attach-compatible under the OS user/permission rules; otherwise the rendezvous file under
+     * `/tmp/.java_pid<pid>` is unreadable and `VirtualMachine.attach` fails with a hard-to-diagnose
+     * error.
      *
-     * We use `ProcessHandle` which is portable; missing process info (some sandboxes return empty
-     * `user()`) is treated as "can't tell — let the attach proceed and surface whatever error it
-     * gives".
+     * We use `ProcessHandle` which is portable and gives user names rather than numeric UIDs;
+     * missing process info (some sandboxes return empty `user()`) is treated as "can't tell — let
+     * the attach proceed and surface whatever error it gives".
      */
-    private fun checkSameUid(targetPid: Long) {
+    private fun checkSameUser(targetPid: Long) {
         val handle = ProcessHandle.of(targetPid).orElse(null) ?: return
         val targetUser = handle.info().user().orElse(null) ?: return
         val currentUser = System.getProperty("user.name") ?: return

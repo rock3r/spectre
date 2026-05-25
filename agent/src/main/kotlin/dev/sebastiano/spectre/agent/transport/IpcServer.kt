@@ -19,9 +19,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * connection at a time, and dispatches each [AgentRequest] frame to [handler], writing the
  * resulting [AgentResponse] back over the same channel.
  *
- * V1 limits itself to one concurrent attached client — Spectre's automation model is intrinsically
- * serial (one set of windows, one focus state, one input device), so layering client multiplexing
- * on top would just paint over reality. Multi-client support, if it ever lands, is a v1.1 problem.
+ * The current transport limits itself to one concurrent attached client — Spectre's automation
+ * model is intrinsically serial (one set of windows, one focus state, one input device), so
+ * layering client multiplexing on top would just paint over reality. Multi-client support, if it
+ * ever lands, is a follow-up.
  *
  * The accept loop runs on a single daemon thread; per-request work happens inline on that thread.
  * [close] interrupts the loop, closes the server channel, and unlinks the UDS path.
@@ -36,6 +37,8 @@ constructor(
     private val handler: AgentRequestHandler,
     private val onDetach: () -> Unit = {},
 ) : AutoCloseable {
+    private var createdParentDir: Path? = null
+
     private val serverChannel: ServerSocketChannel =
         ServerSocketChannel.open(StandardProtocolFamily.UNIX).also { channel ->
             // Outer `success` sentinel + `finally` so the channel is unconditionally closed on
@@ -48,6 +51,7 @@ constructor(
             // the contract by observing `openFileDescriptorCount`.
             var success = false
             try {
+                createdParentDir = createMissingParentDirectory(udsPath)
                 // Clean up any orphaned socket file from a previous crash; Linux/macOS refuse to
                 // bind if the path already exists, even when stale.
                 Files.deleteIfExists(udsPath)
@@ -78,6 +82,7 @@ constructor(
                 if (!success) {
                     runCatching { channel.close() }
                     runCatching { Files.deleteIfExists(udsPath) }
+                    runCatching { createdParentDir?.let(Files::deleteIfExists) }
                 }
             }
         }
@@ -242,6 +247,11 @@ constructor(
         } catch (_: IOException) {
             // Best-effort — if the file is gone or undeletable, the shutdown hook reaps it.
         }
+        try {
+            createdParentDir?.let(Files::deleteIfExists)
+        } catch (_: IOException) {
+            // Best-effort — if the parent is gone or non-empty, leaving it is safer.
+        }
         acceptThread.interrupt()
     }
 }
@@ -264,3 +274,35 @@ private val OWNER_ONLY_PERMS =
             "Expected OWNER_ONLY_PERMS to be 0600 (rw-------), got $it"
         }
     }
+
+private val OWNER_ONLY_DIRECTORY_PERMS =
+    PosixFilePermissions.fromString("rwx------").also {
+        require(
+            it ==
+                setOf(
+                    PosixFilePermission.OWNER_READ,
+                    PosixFilePermission.OWNER_WRITE,
+                    PosixFilePermission.OWNER_EXECUTE,
+                )
+        ) {
+            "Expected OWNER_ONLY_DIRECTORY_PERMS to be 0700 (rwx------), got $it"
+        }
+    }
+
+private fun createMissingParentDirectory(udsPath: Path): Path? {
+    val parent = udsPath.parent ?: return null
+    if (Files.exists(parent)) return null
+    return try {
+        Files.createDirectories(
+            parent,
+            PosixFilePermissions.asFileAttribute(OWNER_ONLY_DIRECTORY_PERMS),
+        )
+        parent
+    } catch (ex: UnsupportedOperationException) {
+        throw IOException(
+            "Filesystem at $parent doesn't support POSIX permissions; refusing to create " +
+                "an agent UDS parent without 0700 access control.",
+            ex,
+        )
+    }
+}

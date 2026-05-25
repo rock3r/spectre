@@ -11,6 +11,8 @@ Spectre publishes these library modules to Maven Central:
 | `recording-linux` | `dev.sebastiano.spectre:spectre-recording-linux:<version>` |
 | `recording-windows` | `dev.sebastiano.spectre:spectre-recording-windows:<version>` |
 | `server` | `dev.sebastiano.spectre:spectre-server:<version>` |
+| `agent` | `dev.sebastiano.spectre:spectre-agent:<version>` |
+| `agent-runtime` | `dev.sebastiano.spectre:spectre-agent-runtime:<version>` |
 
 !!! note "Before a release tag is published"
     The `main` branch declares `0.1.0-SNAPSHOT`. Until a tagged release has been published
@@ -45,6 +47,8 @@ dependencies {
     testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-linux:<version>") // Linux capture helper
     testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-windows:<version>") // Windows WGC helper
     testImplementation("dev.sebastiano.spectre:spectre-server:<version>")
+    testImplementation("dev.sebastiano.spectre:spectre-agent:<version>")
+    testRuntimeOnly("dev.sebastiano.spectre:spectre-agent-runtime:<version>") // Java-agent runtime
 }
 ```
 
@@ -55,6 +59,19 @@ production application code.
 
 If you depend on `server`, you also need to add a Ktor server engine yourself — Spectre
 intentionally doesn't bundle one. See [Cross-JVM access](cross-jvm.md) for the choice.
+
+If you depend on `agent`, keep the artifact roles separate:
+
+- Add `spectre-agent` to the attacher's compile/test classpath. This is the API containing
+  `AgentAttach`, `AttachedAutomator`, and `AttachOptions`.
+- Add `spectre-agent-runtime` to the attacher's runtime/test-runtime classpath. `AgentAttach`
+  locates that physical jar and passes it to `VirtualMachine.loadAgent(...)`.
+- Add `spectre-core` to the target app. The target does not need `spectre-agent` or
+  `spectre-agent-runtime` declared as dependencies.
+
+Custom launchers that do not expose the runtime jar on `java.class.path` can pass an explicit
+`AttachOptions.agentJarPath` or set `-Ddev.sebastiano.spectre.agent.runtimeJar=<path>`. See
+[Agent attach](agent.md) for the full attach flow and custom path examples.
 
 You also need the JUnit version that matches the wrapper you'll use:
 
@@ -105,6 +122,10 @@ includeBuild("../spectre") {
             .using(project(":recording-windows"))
         substitute(module("dev.sebastiano.spectre:spectre-server"))
             .using(project(":server"))
+        substitute(module("dev.sebastiano.spectre:spectre-agent"))
+            .using(project(":agent"))
+        substitute(module("dev.sebastiano.spectre:spectre-agent-runtime"))
+            .using(project(":agent-runtime"))
     }
 }
 ```
@@ -123,6 +144,8 @@ dependencies {
     testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-linux")
     testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-windows")
     testImplementation("dev.sebastiano.spectre:spectre-server")
+    testImplementation("dev.sebastiano.spectre:spectre-agent")
+    testRuntimeOnly("dev.sebastiano.spectre:spectre-agent-runtime")
 }
 ```
 
@@ -148,10 +171,12 @@ Maven Local:
 | `recording-linux` | Runtime-only Linux capture helper resources for `recording`. |
 | `recording-windows` | Runtime-only Windows Graphics Capture helper resources for `recording`. |
 | `server`    | Embedded HTTP transport (Ktor) and `HttpComposeAutomator` for cross-JVM access. **Experimental**; see [Security notes](../SECURITY.md). |
+| `agent`     | Local attach transport API. **Experimental**; see [Agent attach](agent.md). |
+| `agent-runtime` | Loadable Java-agent runtime for `agent`; add as runtime-only beside the API jar. |
 
 Most projects only need `core` + `testing`. Add `recording` if you want video output for
 test runs, add the platform helper artifact(s) for the OSes you run recording tests on, and
-add `server` if your test process needs to reach a UI in a different JVM.
+add `server` or `agent` if your test process needs to reach a UI in a different JVM.
 
 ## Next
 
