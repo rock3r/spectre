@@ -246,6 +246,11 @@ automator.screenshot(windowIndex = 0)   // a tracked window
 Always `waitForVisualIdle()` immediately before screenshotting — otherwise
 you may capture a mid-animation frame.
 
+On macOS, screenshots need an unlocked console session in addition to Screen
+Recording TCC. A locked screen can make `Robot.createScreenCapture` return black
+pixels; current Spectre checks the macOS `IOConsoleLocked` flag first and tells
+the caller to unlock/retry before pointing at TCC.
+
 For a **top-level window-scoped still screenshot**, use `AutoScreenshotter`
 from `:recording` instead of `ComposeAutomator.screenshot(...)`. This is
 separate from video recording:

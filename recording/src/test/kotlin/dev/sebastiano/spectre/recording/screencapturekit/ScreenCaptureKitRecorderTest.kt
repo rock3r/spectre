@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.recording.screencapturekit
 
 import dev.sebastiano.spectre.recording.RecordingOptions
+import java.awt.Rectangle
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
@@ -97,6 +98,30 @@ class ScreenCaptureKitRecorderTest {
             )
             // Title must be restored even when start fails.
             assertEquals("MyApp", window.title)
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `start with region surfaces helper exit-3 as missing display`() {
+        val process = InstantlyExitingFakeProcess(exitCode = 3)
+        val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        val (recorder, _) = newRecorder(process = process)
+        try {
+            val ex =
+                assertFailsWith<IllegalStateException> {
+                    recorder.start(
+                        region = Rectangle(10, 20, 320, 180),
+                        output = output,
+                        options = RecordingOptions(screenIndex = 5),
+                    )
+                }
+
+            assertTrue(
+                ex.message?.contains("display") == true,
+                "Error must mention the missing display for region capture; got: ${ex.message}",
+            )
         } finally {
             output.deleteIfExists()
         }
@@ -205,6 +230,117 @@ class ScreenCaptureKitRecorderTest {
                 ProcessHandle.current().pid().toString(),
                 factory.lastArgv[factory.lastArgv.indexOf("--pid") + 1],
             )
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `start with region spawns the helper with region source arguments`() {
+        val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        val (recorder, factory) = newRecorder()
+        try {
+            recorder.start(
+                region = Rectangle(10, 20, 320, 180),
+                output = output,
+                options = RecordingOptions(frameRate = 24, captureCursor = false, screenIndex = 1),
+            )
+
+            val argv = factory.lastArgv
+            assertTrue(argv.isNotEmpty())
+            assertContainsSequence(argv, listOf("--source", "region"))
+            assertContainsSequence(argv, listOf("--region", "10,20,320,180"))
+            assertContainsSequence(argv, listOf("--display-index", "1"))
+            assertContainsSequence(argv, listOf("--fps", "24"))
+            assertContainsSequence(argv, listOf("--cursor", "false"))
+            assertEquals(output.toString(), argv.last())
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `start with region rejects custom codec before spawning helper`() {
+        val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        val (recorder, factory) = newRecorder()
+        try {
+            val error =
+                assertFailsWith<IllegalArgumentException> {
+                    recorder.start(
+                        region = Rectangle(10, 20, 320, 180),
+                        output = output,
+                        options = RecordingOptions(codec = "hevc"),
+                    )
+                }
+
+            assertTrue(error.message.orEmpty().contains("custom RecordingOptions.codec"))
+            assertTrue(factory.lastArgv.isEmpty())
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `start with window rejects custom codec before mutating the title`() {
+        val window = FakeTitledWindow(initialTitle = "MyApp")
+        val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        val (recorder, factory) = newRecorder()
+        try {
+            val error =
+                assertFailsWith<IllegalArgumentException> {
+                    recorder.start(
+                        window = window,
+                        windowOwnerPid = 4242L,
+                        output = output,
+                        options = RecordingOptions(codec = "hevc"),
+                    )
+                }
+
+            assertTrue(error.message.orEmpty().contains("custom RecordingOptions.codec"))
+            assertEquals("MyApp", window.title)
+            assertTrue(factory.lastArgv.isEmpty())
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `start with region rejects negative origins before spawning helper`() {
+        val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        val (recorder, factory) = newRecorder()
+        try {
+            val error =
+                assertFailsWith<IllegalArgumentException> {
+                    recorder.start(
+                        region = Rectangle(-1, 20, 320, 180),
+                        output = output,
+                        options = RecordingOptions(),
+                    )
+                }
+
+            assertTrue(error.message.orEmpty().contains("origin"))
+            assertTrue(factory.lastArgv.isEmpty())
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `start with region rejects empty regions before spawning helper`() {
+        val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        val (recorder, factory) = newRecorder()
+        try {
+            val error =
+                assertFailsWith<IllegalArgumentException> {
+                    recorder.start(
+                        region = Rectangle(10, 20, 0, 180),
+                        output = output,
+                        options = RecordingOptions(),
+                    )
+                }
+
+            assertTrue(error.message.orEmpty().contains("non-empty region"))
+            assertTrue(factory.lastArgv.isEmpty())
         } finally {
             output.deleteIfExists()
         }
@@ -330,4 +466,12 @@ private class InstantlyExitingFakeProcess(private val exitCode: Int) : Process()
     override fun toHandle(): ProcessHandle = ProcessHandle.current()
 
     override fun onExit(): CompletableFuture<Process> = CompletableFuture.completedFuture(this)
+}
+
+private fun assertContainsSequence(actual: List<String>, expected: List<String>) {
+    val window =
+        actual.windowed(size = expected.size, step = 1, partialWindows = false).firstOrNull {
+            it == expected
+        }
+    assertTrue(window != null, "Expected argv to contain $expected, got $actual")
 }

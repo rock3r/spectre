@@ -201,9 +201,8 @@ class FfmpegRecorderTest {
     fun `construction does not resolve the backend so unsupported hosts can build a recorder`() {
         // Codex regression report on PR #51: prior to deferred resolution, an Ubuntu CI runner
         // (or a Linux/BSD developer box) would see `FfmpegRecorder()` throw at construction
-        // because `FfmpegBackend.detect()` rejects non-mac/non-Windows hosts. AutoRecorder's
-        // default ffmpegRecorder argument would crash app startup even when recording was never
-        // attempted. Pin: the backend lambda must NOT be invoked during construction.
+        // because `FfmpegBackend.detect()` rejects non-mac/non-Windows hosts. Pin: the backend
+        // lambda must NOT be invoked during construction.
         var resolveCount = 0
         val recorder =
             FfmpegRecorder(FfmpegRecorder.PROBE_PATH, RecordingProcessFactory()) {

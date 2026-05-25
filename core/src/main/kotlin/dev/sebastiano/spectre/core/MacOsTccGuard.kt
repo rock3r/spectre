@@ -11,6 +11,7 @@ import java.util.concurrent.TimeUnit
 internal enum class TccStatus {
     Granted,
     Denied,
+    Locked,
     Unknown,
     NotApplicable,
 }
@@ -65,6 +66,7 @@ internal open class MacOsTccGuard(
             probe = screenRecordingProbe,
             store = { screenRecordingStatus = it },
             deniedMessage = SCREEN_RECORDING_DENIED_MESSAGE,
+            lockedMessage = SCREEN_RECORDING_LOCKED_MESSAGE,
             unknownWarning = SCREEN_RECORDING_UNKNOWN_WARNING,
         )
     }
@@ -74,12 +76,20 @@ internal open class MacOsTccGuard(
         probe: () -> TccStatus,
         store: (TccStatus) -> Unit,
         deniedMessage: String,
+        lockedMessage: String? = null,
         unknownWarning: String,
     ) {
         val firstCheck = cached == null
-        val status = cached ?: probe().also(store)
+        val status =
+            cached
+                ?: probe().also {
+                    // A locked screen is transient; do not memoise it as a permanent capture
+                    // denial for long-lived Gradle daemons or IDE-hosted test JVMs.
+                    if (it != TccStatus.Locked) store(it)
+                }
         when (status) {
             TccStatus.Denied -> error(deniedMessage)
+            TccStatus.Locked -> error(lockedMessage ?: deniedMessage)
             TccStatus.Unknown -> if (firstCheck) warn(unknownWarning)
             TccStatus.Granted,
             TccStatus.NotApplicable -> Unit
@@ -151,6 +161,43 @@ internal fun robotScreenRecordingProbe(screenCapture: ScreenCaptureAdapter): Tcc
     return TccStatus.Denied
 }
 
+internal fun macOsScreenRecordingProbe(screenCapture: ScreenCaptureAdapter): TccStatus {
+    if (macOsConsoleLockedProbe() == true) return TccStatus.Locked
+    return robotScreenRecordingProbe(screenCapture)
+}
+
+internal fun macOsConsoleLockStatus(ioregOutput: String): Boolean? {
+    val match = Regex(""""IOConsoleLocked"\s*=\s*(Yes|No)""").find(ioregOutput) ?: return null
+    return match.groupValues[1] == "Yes"
+}
+
+@Suppress("TooGenericExceptionCaught")
+private fun macOsConsoleLockedProbe(): Boolean? {
+    val process =
+        try {
+            ProcessBuilder("/usr/sbin/ioreg", "-n", "Root", "-d", "1", "-r")
+                .redirectErrorStream(true)
+                .start()
+        } catch (_: Throwable) {
+            return null
+        }
+    return try {
+        if (!process.waitFor(IOREG_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            process.destroyForcibly()
+            null
+        } else {
+            macOsConsoleLockStatus(process.inputStream.bufferedReader().use { it.readText() })
+        }
+    } catch (_: InterruptedException) {
+        process.destroyForcibly()
+        Thread.currentThread().interrupt()
+        null
+    } catch (_: Throwable) {
+        process.destroyForcibly()
+        null
+    }
+}
+
 @Suppress("TooGenericExceptionCaught")
 private fun runOsascript(script: String): OsascriptResult? {
     // Mirrors `dev.sebastiano.spectre.recording.MacOsRecordingPermissions.runOsascript` — kept in
@@ -187,6 +234,7 @@ private fun runOsascript(script: String): OsascriptResult? {
 private data class OsascriptResult(val output: String, val exitCode: Int)
 
 private const val OSASCRIPT_TIMEOUT_SECONDS: Long = 3
+private const val IOREG_TIMEOUT_SECONDS: Long = 3
 private const val PROBE_SIZE_PX: Int = 32
 // Mask out the alpha channel from BufferedImage.TYPE_INT_ARGB pixels so probe checks see the
 // 24-bit RGB tuple. A TCC-denied capture returns RGB=0 across every pixel; alpha may not be 0
@@ -219,6 +267,13 @@ internal const val SCREEN_RECORDING_DENIED_MESSAGE: String =
         "launched this JVM. $PARENT_PROCESS_GUIDANCE On macOS 26+ the toggle grants " +
         "picker-based access only; the first direct screen-capture call also prompts a " +
         "second 'bypass the system private window picker' dialog that you must accept."
+
+internal const val SCREEN_RECORDING_LOCKED_MESSAGE: String =
+    "Spectre RobotDriver: macOS screen capture is unavailable because the console session is " +
+        "locked — Robot screen capture may return an all-black image while locked. Unlock the " +
+        "screen and retry. If capture still fails after unlocking, grant System Settings → " +
+        "Privacy & Security → Screen & System Audio Recording to the wrapping app that " +
+        "launched this JVM. $PARENT_PROCESS_GUIDANCE"
 
 internal const val SCREEN_RECORDING_UNKNOWN_WARNING: String =
     "Spectre RobotDriver: could not determine macOS Screen Recording TCC permission state " +

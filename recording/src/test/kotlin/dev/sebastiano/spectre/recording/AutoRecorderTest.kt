@@ -19,16 +19,39 @@ import kotlin.test.assertTrue
 class AutoRecorderTest {
 
     @Test
-    fun `startRegion routes to ffmpeg on non-Wayland hosts`() {
+    fun `startRegion routes to ScreenCaptureKit on macOS`() {
         val ffmpeg = StubRegionRecorder()
-        val recorder = autoRecorder(ffmpegRecorder = ffmpeg, isMacOs = { true })
+        val sckRegion = StubRegionRecorder()
+        val recorder = autoRecorder(macOsRegionRecorder = sckRegion, isMacOs = { true })
         val output = tempMov()
         try {
             val region = Rectangle(0, 0, 100, 100)
 
             recorder.startRegion(region = region, output = output)
 
-            assertEquals(region, ffmpeg.lastRegion)
+            assertEquals(region, sckRegion.lastRegion)
+            assertFalse(ffmpeg.startCalled, "macOS region capture must not fall through to ffmpeg")
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `startRegion fails loudly on macOS when SCK helper is not bundled`() {
+        val ffmpeg = StubRegionRecorder()
+        val recorder =
+            autoRecorder(macOsRegionRecorder = MissingSckHelperRecorder(), isMacOs = { true })
+        val output = tempMov()
+        try {
+            val region = Rectangle(0, 0, 100, 100)
+
+            val error =
+                assertFailsWith<IllegalStateException> {
+                    recorder.startRegion(region = region, output = output)
+                }
+
+            assertTrue(error.message.orEmpty().contains("macOS region capture"))
+            assertFalse(ffmpeg.startCalled)
         } finally {
             output.deleteIfExists()
         }
@@ -40,7 +63,6 @@ class AutoRecorderTest {
         val windowsRegion = StubRegionRecorder()
         val recorder =
             autoRecorder(
-                ffmpegRecorder = ffmpeg,
                 windowsRegionRecorder = windowsRegion,
                 isMacOs = { false },
                 isWindows = { true },
@@ -67,7 +89,6 @@ class AutoRecorderTest {
         val windowsRegion = UnsupportedWindowsOptionsRecorder()
         val recorder =
             autoRecorder(
-                ffmpegRecorder = ffmpeg,
                 windowsRegionRecorder = windowsRegion,
                 isMacOs = { false },
                 isWindows = { true },
@@ -95,7 +116,6 @@ class AutoRecorderTest {
         val ffmpeg = StubRegionRecorder()
         val recorder =
             autoRecorder(
-                ffmpegRecorder = ffmpeg,
                 windowsRegionRecorder = MissingWindowsHelperRecorder(),
                 isMacOs = { false },
                 isWindows = { true },
@@ -120,12 +140,7 @@ class AutoRecorderTest {
     fun `startRegion fails loudly when Windows region recorder is unavailable`() {
         val ffmpeg = StubRegionRecorder()
         val recorder =
-            autoRecorder(
-                ffmpegRecorder = ffmpeg,
-                windowsRegionRecorder = null,
-                isMacOs = { false },
-                isWindows = { true },
-            )
+            autoRecorder(windowsRegionRecorder = null, isMacOs = { false }, isWindows = { true })
         val output = tempMov()
         try {
             val error =
@@ -147,7 +162,6 @@ class AutoRecorderTest {
         val portal = StubRegionRecorder()
         val recorder =
             autoRecorder(
-                ffmpegRecorder = ffmpeg,
                 linuxRegionRecorder = linux,
                 waylandPortalRecorder = portal,
                 isMacOs = { false },
@@ -177,7 +191,6 @@ class AutoRecorderTest {
         val linux = StubRegionRecorder()
         val recorder =
             autoRecorder(
-                ffmpegRecorder = ffmpeg,
                 linuxRegionRecorder = linux,
                 isMacOs = { false },
                 isLinux = { true },
@@ -224,7 +237,7 @@ class AutoRecorderTest {
     fun `startWindow routes to SCK on macOS`() {
         val sck = StubWindowRecorder(name = "sck")
         val ffmpeg = StubRegionRecorder()
-        val recorder = autoRecorder(sckRecorder = sck, ffmpegRecorder = ffmpeg, isMacOs = { true })
+        val recorder = autoRecorder(sckRecorder = sck, isMacOs = { true })
         val output = tempMov()
         try {
             val window = StubTitledWindow(title = "MyApp")
@@ -242,7 +255,7 @@ class AutoRecorderTest {
     fun `startWindow propagates missing SCK helper as loud window-capture failure`() {
         val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.HelperNotBundled)
         val ffmpeg = StubRegionRecorder()
-        val recorder = autoRecorder(sckRecorder = sck, ffmpegRecorder = ffmpeg, isMacOs = { true })
+        val recorder = autoRecorder(sckRecorder = sck, isMacOs = { true })
         val output = tempMov()
         try {
             val error =
@@ -266,7 +279,6 @@ class AutoRecorderTest {
         val windowRecorder = StubWindowRecorder(name = "ffmpegWindow")
         val recorder =
             autoRecorder(
-                ffmpegRecorder = ffmpeg,
                 windowsWindowRecorder = windowRecorder,
                 isMacOs = { false },
                 isWindows = { true },
@@ -288,7 +300,6 @@ class AutoRecorderTest {
         val windowRecorder = StubWindowRecorder(name = "ffmpegWindow")
         val recorder =
             autoRecorder(
-                ffmpegRecorder = ffmpeg,
                 windowsWindowRecorder = windowRecorder,
                 isMacOs = { false },
                 isWindows = { true },
@@ -316,7 +327,6 @@ class AutoRecorderTest {
         val portalWindow = StubWaylandWindowSourceRecorder()
         val recorder =
             autoRecorder(
-                ffmpegRecorder = ffmpeg,
                 linuxWindowRecorder = linuxWindow,
                 waylandPortalRecorder = portalRegion,
                 waylandPortalWindowRecorder = portalWindow,
@@ -348,7 +358,6 @@ class AutoRecorderTest {
         val linuxWindow = StubWindowRecorder(name = "linux")
         val recorder =
             autoRecorder(
-                ffmpegRecorder = ffmpeg,
                 linuxWindowRecorder = linuxWindow,
                 isMacOs = { false },
                 isLinux = { true },
@@ -397,7 +406,7 @@ class AutoRecorderTest {
     @Test
     fun `startWindow fails loudly on unsupported window-capture platforms`() {
         val ffmpeg = StubRegionRecorder()
-        val recorder = autoRecorder(ffmpegRecorder = ffmpeg, isMacOs = { false })
+        val recorder = autoRecorder(isMacOs = { false })
         val output = tempMov()
         try {
             val error =
@@ -420,11 +429,11 @@ class AutoRecorderTest {
 
 private fun autoRecorder(
     sckRecorder: WindowRecorder = StubWindowRecorder(name = "sck"),
-    ffmpegRecorder: Recorder = StubRegionRecorder(),
     windowsWindowRecorder: WindowRecorder? = null,
     windowsRegionRecorder: Recorder? = null,
     linuxRegionRecorder: Recorder? = null,
     linuxWindowRecorder: WindowRecorder? = null,
+    macOsRegionRecorder: Recorder = StubRegionRecorder(),
     waylandPortalRecorder: Recorder? = null,
     waylandPortalWindowRecorder: WaylandWindowSourceRecorder? = null,
     waylandPortalRecorderFailure: Throwable? = null,
@@ -436,7 +445,7 @@ private fun autoRecorder(
 ): AutoRecorder =
     AutoRecorder(
         sckRecorder,
-        ffmpegRecorder,
+        macOsRegionRecorder,
         windowsWindowRecorder,
         windowsRegionRecorder,
         linuxRegionRecorder,
@@ -502,6 +511,16 @@ private class StubRegionRecorder : Recorder {
         lastRegion = region
         lastOptions = options
         return NoopHandle(output)
+    }
+}
+
+private class MissingSckHelperRecorder : Recorder {
+    override fun start(
+        region: Rectangle,
+        output: Path,
+        options: RecordingOptions,
+    ): RecordingHandle {
+        throw HelperNotBundledException("test: helper not bundled")
     }
 }
 

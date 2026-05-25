@@ -1,7 +1,9 @@
 package dev.sebastiano.spectre.recording.screencapturekit
 
+import dev.sebastiano.spectre.recording.Recorder
 import dev.sebastiano.spectre.recording.RecordingHandle
 import dev.sebastiano.spectre.recording.RecordingOptions
+import java.awt.Rectangle
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -11,25 +13,23 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Window-targeted recorder backed by ScreenCaptureKit via the bundled `spectre-screencapture` Swift
- * helper.
+ * macOS recorder backed by ScreenCaptureKit via the bundled `spectre-screencapture` Swift helper.
  *
  * Lifecycle:
- * 1. [start] extracts the helper binary, stamps a unique `Spectre/<id>` suffix on the target
- *    window's title (so the helper can find that exact window across the process boundary), builds
- *    the helper argv, and spawns the subprocess.
+ * 1. [start] extracts the helper binary, builds the helper argv, and spawns the subprocess. Window
+ *    capture also stamps a unique `Spectre/<id>` suffix on the target window's title so the helper
+ *    can find that exact window across the process boundary.
  * 2. The recorder waits a short startup probe to catch the common fast-fail exit codes
  *    ([HELPER_EXIT_BAD_ARGS], [HELPER_EXIT_WINDOW_NOT_FOUND], [HELPER_EXIT_TCC_DENIED]) and
- *    surfaces them with mapped error messages — restoring the title on failure so the user's app
- *    isn't left with a stale Spectre suffix.
+ *    surfaces them with mapped error messages. Window mode restores the title on every failure so
+ *    the user's app isn't left with a stale Spectre suffix.
  * 3. The returned [RecordingHandle] stops the helper by writing `q` to its stdin (mirrors
  *    `FfmpegRecorder`'s shutdown contract). Title restoration happens unconditionally during stop,
  *    including the crashed-mid-recording branch.
  *
- * Implements [WindowRecorder] (window-targeted) rather than the region-based
- * [dev.sebastiano.spectre.recording.Recorder] — ScreenCaptureKit is fundamentally window-attached
- * and coordinates aren't necessary. The high-level [dev.sebastiano.spectre.recording.AutoRecorder]
- * takes both backends and picks per call: SCK when there's a window on macOS, ffmpeg otherwise.
+ * Implements [WindowRecorder] for window-targeted capture and [Recorder] for fixed display-region
+ * capture. The high-level [dev.sebastiano.spectre.recording.AutoRecorder] routes both macOS
+ * recording modes here by default.
  *
  * macOS-only. On non-macOS hosts the helper isn't bundled; [start] fails early with a clear "helper
  * not found" error from [HelperBinaryExtractor].
@@ -38,7 +38,7 @@ public class ScreenCaptureKitRecorder
 internal constructor(
     private val helperExtractor: HelperBinaryExtractor,
     private val processFactory: ProcessFactory,
-) : WindowRecorder {
+) : WindowRecorder, Recorder {
 
     public constructor() : this(HelperBinaryExtractor(), SystemProcessFactory)
 
@@ -48,12 +48,13 @@ internal constructor(
         output: Path,
         options: RecordingOptions,
     ): RecordingHandle {
+        validateOptions(options)
         // Resolve everything that can fail without touching window state first. Anything we do
         // before `discriminator.apply()` doesn't need a restore path; anything after must
         // restore on every error branch (the original window title is held by the
         // discriminator and would otherwise stay dirty across a failed start).
         val helperPath = helperExtractor.extract()
-        Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
+        output.toAbsolutePath().parent?.let(Files::createDirectories)
 
         val discriminator = TitleDiscriminator(window)
         discriminator.apply()
@@ -64,6 +65,7 @@ internal constructor(
         try {
             val argv =
                 HelperArguments(
+                        source = HelperSource.Window,
                         pid = windowOwnerPid,
                         titleContains = discriminator.value,
                         output = output,
@@ -73,71 +75,113 @@ internal constructor(
                     )
                     .toArgv(helperPath)
 
-            val process = processFactory.start(argv)
-
-            // Wait for the helper to either:
-            //   - emit the READY marker on stdout (window discovered, SCK is streaming
-            //     frames), or
-            //   - exit with one of the documented fast-fail codes (2/3/4/5).
-            // A plain `process.waitFor(STARTUP_PROBE_MILLIS)`-style probe was racy: when the
-            // helper's window discovery took longer than the probe, start() reported success
-            // before the helper had actually started capturing. Reading stdout removes the
-            // race.
-            val ready =
-                try {
-                    awaitHelperReady(process, READY_WAIT_MILLIS)
-                } catch (e: InterruptedException) {
-                    // destroyForcibly() is asynchronous on the JVM. Without a bounded wait
-                    // here we can return from start() while the helper is still alive +
-                    // writing the output file — leaks a subprocess and leaves the recording
-                    // mutating after the caller thinks startup aborted. Mirror the non-ready
-                    // path's bounded wait so the helper is genuinely gone by the time we
-                    // propagate the interrupt.
-                    process.destroyForcibly()
-                    @Suppress("SwallowedException")
-                    try {
-                        process.waitFor(FORCE_KILL_DURING_START_SECONDS, TimeUnit.SECONDS)
-                    } catch (_: InterruptedException) {
-                        // A second interrupt during cleanup means the JVM is being torn down
-                        // anyway — daemon-process semantics will let the helper die with us.
-                    }
-                    Thread.currentThread().interrupt()
-                    throw e
-                }
-            if (!ready) {
-                val exit =
-                    if (process.isAlive) {
-                        process.destroyForcibly()
-                        // Bounded wait — destroyForcibly() is asynchronous and an unbounded
-                        // `waitFor()` can pin the calling thread indefinitely if the kernel
-                        // hasn't reaped the helper yet. If the helper still hasn't died after
-                        // the timeout, fall back to a sentinel exit code so we don't propagate
-                        // a hang into the caller.
-                        val terminated =
-                            try {
-                                process.waitFor(FORCE_KILL_DURING_START_SECONDS, TimeUnit.SECONDS)
-                            } catch (e: InterruptedException) {
-                                Thread.currentThread().interrupt()
-                                throw e
-                            }
-                        if (terminated) process.exitValue() else EXIT_HELPER_NOT_REAPED
-                    } else {
-                        process.exitValue()
-                    }
-                error(messageForHelperExit(exit, output, argv))
-            }
-
-            val handle =
-                ScreenCaptureKitRecordingHandle(
-                    process = process,
-                    output = output,
-                    discriminator = discriminator,
-                )
+            val handle = startHelper(output, argv, discriminator::restore)
             success = true
             return handle
         } finally {
             if (!success) discriminator.restore()
         }
+    }
+
+    override fun start(
+        region: Rectangle,
+        output: Path,
+        options: RecordingOptions,
+    ): RecordingHandle {
+        require(region.width > 0 && region.height > 0) {
+            "ScreenCaptureKitRecorder requires a non-empty region; got $region."
+        }
+        require(region.x >= 0 && region.y >= 0) {
+            "ScreenCaptureKitRecorder requires a region origin within the selected display; got $region."
+        }
+        validateOptions(options)
+        val helperPath = helperExtractor.extract()
+        output.toAbsolutePath().parent?.let(Files::createDirectories)
+        val argv =
+            HelperArguments(
+                    source = HelperSource.Region,
+                    region = region,
+                    displayIndex = options.screenIndex,
+                    output = output,
+                    fps = options.frameRate,
+                    captureCursor = options.captureCursor,
+                    discoveryTimeoutMs = DEFAULT_DISCOVERY_TIMEOUT_MS,
+                )
+                .toArgv(helperPath)
+        return startHelper(output, argv) {}
+    }
+
+    private fun validateOptions(options: RecordingOptions) {
+        require(options.codec == RecordingOptions.DEFAULT_CODEC) {
+            "ScreenCaptureKitRecorder does not support custom RecordingOptions.codec; " +
+                "got ${options.codec}."
+        }
+    }
+
+    private fun startHelper(
+        output: Path,
+        argv: List<String>,
+        cleanup: () -> Unit,
+    ): RecordingHandle {
+        val process = processFactory.start(argv)
+
+        // Wait for the helper to either:
+        //   - emit the READY marker on stdout (target discovered, SCK is streaming
+        //     frames), or
+        //   - exit with one of the documented fast-fail codes (2/3/4/5).
+        // A plain `process.waitFor(STARTUP_PROBE_MILLIS)`-style probe was racy: when the
+        // helper's window discovery took longer than the probe, start() reported success
+        // before the helper had actually started capturing. Reading stdout removes the
+        // race.
+        val ready =
+            try {
+                awaitHelperReady(process, READY_WAIT_MILLIS)
+            } catch (e: InterruptedException) {
+                // destroyForcibly() is asynchronous on the JVM. Without a bounded wait
+                // here we can return from start() while the helper is still alive +
+                // writing the output file — leaks a subprocess and leaves the recording
+                // mutating after the caller thinks startup aborted. Mirror the non-ready
+                // path's bounded wait so the helper is genuinely gone by the time we
+                // propagate the interrupt.
+                process.destroyForcibly()
+                @Suppress("SwallowedException")
+                try {
+                    process.waitFor(FORCE_KILL_DURING_START_SECONDS, TimeUnit.SECONDS)
+                } catch (_: InterruptedException) {
+                    // A second interrupt during cleanup means the JVM is being torn down
+                    // anyway — daemon-process semantics will let the helper die with us.
+                }
+                Thread.currentThread().interrupt()
+                throw e
+            }
+        if (!ready) {
+            val exit =
+                if (process.isAlive) {
+                    process.destroyForcibly()
+                    // Bounded wait — destroyForcibly() is asynchronous and an unbounded
+                    // `waitFor()` can pin the calling thread indefinitely if the kernel
+                    // hasn't reaped the helper yet. If the helper still hasn't died after
+                    // the timeout, fall back to a sentinel exit code so we don't propagate
+                    // a hang into the caller.
+                    val terminated =
+                        try {
+                            process.waitFor(FORCE_KILL_DURING_START_SECONDS, TimeUnit.SECONDS)
+                        } catch (e: InterruptedException) {
+                            Thread.currentThread().interrupt()
+                            throw e
+                        }
+                    if (terminated) process.exitValue() else EXIT_HELPER_NOT_REAPED
+                } else {
+                    process.exitValue()
+                }
+            error(messageForHelperExit(exit, output, argv))
+        }
+
+        return ScreenCaptureKitRecordingHandle(
+            process = process,
+            output = output,
+            cleanup = cleanup,
+        )
     }
 
     /**
@@ -218,10 +262,7 @@ internal constructor(
             when (exit) {
                 HELPER_EXIT_BAD_ARGS ->
                     "spectre-screencapture rejected its arguments (exit 2). Argv: $argv"
-                HELPER_EXIT_WINDOW_NOT_FOUND ->
-                    "spectre-screencapture could not find the target window within the discovery " +
-                        "timeout (exit 3). The window may not be on screen, or its title may have " +
-                        "been changed before the helper had time to scan. Argv: $argv"
+                HELPER_EXIT_WINDOW_NOT_FOUND -> messageForMissingCaptureSource(argv)
                 HELPER_EXIT_TCC_DENIED ->
                     "spectre-screencapture was denied Screen Recording permission (exit 4). " +
                         "Grant the JVM Screen Recording under System Settings → Privacy & Security " +
@@ -240,10 +281,25 @@ internal constructor(
     }
 }
 
+private fun messageForMissingCaptureSource(argv: List<String>): String =
+    if (argv.valueAfter("--source") == "region") {
+        "spectre-screencapture could not find the requested display for region capture " +
+            "(exit 3). Check RecordingOptions.screenIndex. Argv: $argv"
+    } else {
+        "spectre-screencapture could not find the target window within the discovery timeout " +
+            "(exit 3). The window may not be on screen, or its title may have been changed " +
+            "before the helper had time to scan. Argv: $argv"
+    }
+
+private fun List<String>.valueAfter(flag: String): String? {
+    val index = indexOf(flag)
+    return if (index >= 0 && index + 1 < size) this[index + 1] else null
+}
+
 private class ScreenCaptureKitRecordingHandle(
     private val process: Process,
     override val output: Path,
-    private val discriminator: TitleDiscriminator,
+    private val cleanup: () -> Unit,
 ) : RecordingHandle {
 
     private val stopInitiated = AtomicBoolean(false)
@@ -259,10 +315,10 @@ private class ScreenCaptureKitRecordingHandle(
             result.get()?.getOrThrow()
             return
         }
-        // Run both `stopInternal()` and `discriminator.restore()` even if the first one
-        // throws — restoring the window title is part of the cleanup contract even on the
-        // crash branch, otherwise the user's window stays dirtied with the Spectre/<id>
-        // suffix forever after a failed recording.
+        // Run both `stopInternal()` and `cleanup()` even if the first one throws — restoring the
+        // window title is part of the cleanup contract even on the crash branch, otherwise the
+        // user's window stays dirtied with the Spectre/<id> suffix forever after a failed
+        // recording. Region recordings pass a no-op cleanup.
         //
         // Both outcomes are folded into a single `Result` published BEFORE `countDown` so
         // every concurrent caller (the one that won the CAS race AND the ones blocked on
@@ -278,7 +334,7 @@ private class ScreenCaptureKitRecordingHandle(
         }
         // `stopInternal` re-sets the thread's interrupt flag if any of its `waitFor` calls saw
         // an interrupt — that's correct behaviour for propagating cancellation to the caller.
-        // But `discriminator.restore()` in the production AWT adapter goes through
+        // But window cleanup in the production AWT adapter goes through
         // `EventQueue.invokeAndWait`, whose internal `Object.wait` throws InterruptedException
         // immediately when the interrupt flag is set. That would skip title restoration on
         // every interrupted stop and leave the window dirty with a `Spectre/<id>` suffix
@@ -287,7 +343,7 @@ private class ScreenCaptureKitRecordingHandle(
         val wasInterrupted = Thread.interrupted()
         @Suppress("TooGenericExceptionCaught")
         try {
-            discriminator.restore()
+            cleanup()
         } catch (t: Throwable) {
             if (primary == null) primary = t else primary.addSuppressed(t)
         } finally {

@@ -841,6 +841,17 @@ tasks.register<JavaExec>("runScreenCaptureKitSmoke") {
     mainClass.set("dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitRecorderSmoke")
 }
 
+// Manual macOS region smoke for the AutoRecorder route. Opens a JFrame, records its screen
+// rectangle through AutoRecorder.startRegion(...), and writes a mid-recording PNG for comparison.
+tasks.register<JavaExec>("runMacOsSckRegionSmoke") {
+    group = "verification"
+    description =
+        "Boots a JFrame, records its region for ~3s via AutoRecorder/SCK, prints output stats."
+    onlyIf { OperatingSystem.current().isMacOsX }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.MacOsSckRegionSmoke")
+}
+
 // Manual still-screenshot smoke for AutoScreenshotter. Opens a JFrame and writes a PNG on
 // macOS/Windows/Linux X11/XWayland/Linux Wayland. Wayland runs through the compositor's
 // portal dialog, so manual acceptance may be required.

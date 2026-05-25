@@ -325,11 +325,13 @@ internal constructor(
      *
      * On macOS, the underlying `java.awt.Robot.createScreenCapture` requires the wrapping process
      * to hold Screen Recording TCC permission. Without it the call returns silently with an
-     * all-black image rather than throwing. The default [RobotDriver] guards against this: on the
-     * first `screenshot` call from a Mac, it probes Screen Recording TCC and throws
-     * [IllegalStateException] with an actionable remediation message if the probe sees an all-black
-     * capture. The probe and the resulting status are cached, so subsequent calls have no extra
-     * cost. Use [headless] to opt out entirely.
+     * all-black image rather than throwing; a locked console session can produce the same symptom.
+     * The default [RobotDriver] guards against this: on the first `screenshot` call from a Mac, it
+     * checks whether the console is locked, then probes Screen Recording TCC and throws
+     * [IllegalStateException] with an actionable remediation message if capture is blocked. Stable
+     * probe outcomes are cached, so subsequent calls have no extra cost; locked-screen outcomes are
+     * deliberately not cached so unlocking can recover in the same JVM. Use [headless] to opt out
+     * entirely.
      *
      * On Linux, captures work against X11 (real Xorg or XWayland-bridged X clients) but not against
      * native Wayland surfaces — Wayland's security model forbids cross-process framebuffer reads.
@@ -430,7 +432,7 @@ internal fun defaultTccGuardFor(
                 },
             screenRecordingProbe =
                 if (screenCapture.gatesMacOsScreenRecordingTcc) {
-                    { robotScreenRecordingProbe(screenCapture) }
+                    { macOsScreenRecordingProbe(screenCapture) }
                 } else {
                     { TccStatus.Granted }
                 },

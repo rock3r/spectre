@@ -38,9 +38,9 @@ import java.util.concurrent.atomic.AtomicReference
  * overridden via the internal constructor for tests (so the produced argv is deterministic
  * regardless of the host OS).
  *
- * Window-targeted capture (`windowHandle != 0`) — i.e. ScreenCaptureKit on macOS — is handled by a
- * separate `WindowRecorder` and routed by [AutoRecorder]. Embedded ComposePanel surfaces with
- * `windowHandle == 0L` always fall through to region capture, which is what this recorder does.
+ * Platform-native auto-routed capture is handled outside this deprecated backend: ScreenCaptureKit
+ * on macOS, Windows Graphics Capture on Windows, and the Linux helper/portal paths. Instantiate
+ * this class directly only when you intentionally need the legacy ffmpeg behaviour.
  *
  * The [processFactory] seam exists so the lifecycle can be unit-tested without spawning a real
  * `ffmpeg` (a fake factory can return a `Process`-like stand-in driven by an in-memory pipe).
@@ -55,10 +55,9 @@ internal constructor(
     private val processFactory: ProcessFactory,
     // Provider — resolved on first [start] call rather than at construction time. Eagerly
     // calling `FfmpegBackend.detect()` from the public constructor would make `FfmpegRecorder()`
-    // (and `AutoRecorder()`'s default ffmpegRecorder) throw immediately on Linux/BSD even when
-    // recording is never attempted, breaking call sites that instantiate recorders during app
-    // startup. Deferring keeps construction OS-agnostic and surfaces the unsupported-host error
-    // only at the point of use.
+    // throw immediately on Linux/BSD even when recording is never attempted, breaking call sites
+    // that instantiate recorders during app startup. Deferring keeps construction OS-agnostic and
+    // surfaces the unsupported-host error only at the point of use.
     private val backendProvider: () -> FfmpegBackend,
 ) : Recorder {
 

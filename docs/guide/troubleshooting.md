@@ -241,12 +241,14 @@ needs and throws on first use if either is denied:
   AppleEvents/Automation refusal, etc.) prints a one-shot stderr warning and
   proceeds.
 - **Screen Recording** — required for `Robot.createScreenCapture` to return real
-  pixels. Without it the call silently returns an all-black image. The probe runs
-  on the first `screenshot(...)` call: it captures a small region near the screen
+  pixels. Without it the call silently returns an all-black image. A locked
+  screen can produce the same symptom, so the probe first checks whether macOS
+  reports the console session as locked; if so, unlock the screen and retry. If
+  the session is unlocked, the probe captures a small region near the screen
   origin (which on macOS overlaps the menu bar) and treats an all-black result as
-  denial. False positives are vanishingly rare in practice; if your screen really
-  is fully black at the origin, switch to `RobotDriver.headless()` for tests
-  or grant Screen Recording to silence the probe.
+  denial. False positives are rare in practice; if your screen really is fully
+  black at the origin, switch to `RobotDriver.headless()` for tests or grant
+  Screen Recording to silence the probe.
 
 Fix: grant System Settings → Privacy & Security → Accessibility (or → Screen &
 System Audio Recording) to whichever app launched the JVM — IntelliJ, Terminal,

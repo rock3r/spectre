@@ -8,7 +8,7 @@ a video file, and each has its own limitations:
 
 - **Region capture** — records a fixed `Rectangle` of the virtual desktop, frame by
   frame. The source of pixels is the OS framebuffer (or the platform's nearest
-  equivalent — `avfoundation` on macOS, Windows Graphics Capture on Windows,
+  equivalent — ScreenCaptureKit on macOS, Windows Graphics Capture on Windows,
   GStreamer `ximagesrc` on Linux Xorg/Xvfb, or the Wayland compositor's PipeWire stream on Linux
   Wayland). Whatever is showing
   on screen inside that rectangle goes into the file, regardless of which window is
@@ -32,7 +32,7 @@ Backend → mode mapping:
 | `LinuxNativeScreenshotter`    | Linux Xorg/Xvfb screenshots via `ximagesrc`, and Linux Wayland screenshots via portal/PipeWire one-frame capture. |
 | `WaylandPortalRecorder`       | Region capture, sourced from the Wayland portal (`SourceType.MONITOR`). |
 | `WaylandPortalWindowRecorder` | Window-targeted (Linux Wayland, portal `SourceType.WINDOW` — only the picked window's pixels are captured). |
-| `ScreenCaptureKitRecorder`    | Window-targeted (macOS).                            |
+| `ScreenCaptureKitRecorder`    | Region and window-targeted capture (macOS).         |
 | `ScreenCaptureKitScreenshotter` | Window-targeted still screenshots (macOS).         |
 | `WindowsGraphicsCaptureRecorder` | Window-targeted and region capture (Windows Graphics Capture). |
 | `FfmpegWindowRecorder`        | Deprecated legacy window-targeted (Windows, `gdigrab title=`). |
@@ -47,7 +47,13 @@ failure modes, and the section below
 
 ## Platform
 
-- **macOS** — `avfoundation` region capture. Requires the Screen Recording permission.
+- **macOS** — ScreenCaptureKit region and window capture through the
+  `spectre-recording-macos` helper. Requires the Screen Recording permission. `AutoRecorder`
+  no longer falls back to `FfmpegRecorder`/`avfoundation` when that helper artifact is absent
+  or when callers set SCK-incompatible options such as a custom `RecordingOptions.codec`.
+  `RecordingOptions.screenIndex` is the SCK display index: primary display first, then by
+  display frame `minX` and `minY`. The explicit `FfmpegRecorder` remains available only as a
+  deprecated legacy backend.
 - **Windows** — native window recording, region/fullscreen recording, and still window
   screenshots use the shared .NET helper from `spectre-recording-windows`. The helper
   uses Windows Graphics Capture, is published for x64 and arm64, and does not require
@@ -222,8 +228,12 @@ compositor and not raw framebuffer reads.
 ## Permissions and process lifecycle
 
 - The JVM process needs **macOS Screen Recording permission** (`MacOsRecordingPermissions`
-  documents the path). Without it, `ffmpeg` exits during the startup probe and `Recorder.start`
+  documents the path). Without it, the SCK helper exits during startup and `Recorder.start`
   surfaces an error rather than handing back a handle.
+- The macOS console session must be **unlocked**. A locked screen can make Robot
+  screenshots or ScreenCaptureKit recordings fail, or produce black/incorrect frames, even
+  when Screen Recording TCC is granted. Unlock the display and retry before treating the
+  failure as a missing permission.
 - The underlying encoder process/helper is spawned eagerly: by the time `start(...)`
   returns, frames are landing in the output file. A failure to spawn (binary/helper not
   available, codec unavailable, permission/device busy) surfaces as an exception from

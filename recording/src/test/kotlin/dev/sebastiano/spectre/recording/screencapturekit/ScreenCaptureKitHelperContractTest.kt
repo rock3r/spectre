@@ -155,6 +155,24 @@ class ScreenCaptureKitHelperContractTest {
     }
 
     @Test
+    fun `helper exits 2 on unknown source`() {
+        val exit =
+            runHelper(
+                listOf(
+                    "--source",
+                    "display",
+                    "--pid",
+                    "1",
+                    "--title-contains",
+                    "x",
+                    "--output",
+                    output.toString(),
+                )
+            )
+        assertEquals(2, exit, "--source accepts only window or region")
+    }
+
+    @Test
     fun `helper exits 2 on unknown file type`() {
         val exit =
             runHelper(
@@ -170,6 +188,67 @@ class ScreenCaptureKitHelperContractTest {
                 )
             )
         assertEquals(2, exit, "--file-type accepts only 'mov' or 'mp4'")
+    }
+
+    @Test
+    fun `helper exits 2 on malformed region`() {
+        val exit =
+            runHelper(
+                listOf("--source", "region", "--region", "10,20,30", "--output", output.toString())
+            )
+        assertEquals(2, exit, "Malformed --region must exit 2")
+    }
+
+    @Test
+    fun `helper exits 2 on negative region origin`() {
+        val exit =
+            runHelper(
+                listOf(
+                    "--source",
+                    "region",
+                    "--region",
+                    "-1,20,30,40",
+                    "--output",
+                    output.toString(),
+                )
+            )
+        assertEquals(2, exit, "Negative region origins must exit 2")
+    }
+
+    @Test
+    fun `helper exits 2 on region screenshot mode`() {
+        val exit =
+            runHelper(
+                listOf(
+                    "--mode",
+                    "screenshot",
+                    "--source",
+                    "region",
+                    "--region",
+                    "10,20,30,40",
+                    "--output",
+                    output.toString(),
+                )
+            )
+        assertEquals(2, exit, "Region source is recording-only until Kotlin exposes screenshots")
+    }
+
+    @Test
+    fun `helper exits 2 on negative display index`() {
+        val exit =
+            runHelper(
+                listOf(
+                    "--source",
+                    "region",
+                    "--region",
+                    "10,20,30,40",
+                    "--display-index",
+                    "-1",
+                    "--output",
+                    output.toString(),
+                )
+            )
+        assertEquals(2, exit, "Negative --display-index must exit 2")
     }
 
     @Test

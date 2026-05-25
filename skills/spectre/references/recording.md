@@ -15,7 +15,7 @@ the pixels for one top-level OS window:
 |---|---|---|
 | macOS | ScreenCaptureKit still-image mode | `spectre-recording-macos` |
 | Windows | Windows Graphics Capture helper (`spectre-window-capture.exe`) | `spectre-recording-windows` |
-| Linux X11 / XWayland | `x11grab` region fallback | none beyond ffmpeg |
+| Linux X11 / XWayland | Linux helper (`ximagesrc`) | `spectre-recording-linux` |
 | Linux Wayland | unsupported for still images | use video portal path instead |
 
 Windows still screenshots and native window/region recording share the same Windows Graphics
@@ -33,9 +33,9 @@ source need the .NET 8 SDK. The local verification task is:
 
 | Platform | `startWindow` | `startRegion` |
 |---|---|---|
-| macOS | ScreenCaptureKit (native) | ffmpeg region capture |
+| macOS | ScreenCaptureKit (native) | ScreenCaptureKit helper; missing helper artifacts and SCK-unsupported options (`codec`) fail loudly instead of falling back to ffmpeg/avfoundation. `screenIndex` is the SCK display index: primary first, then by frame `minX`/`minY` |
 | Windows | Windows Graphics Capture helper | Windows Graphics Capture helper; missing helper artifacts and WGC-unsupported options (`codec`, `screenIndex`) fail loudly instead of falling back to ffmpeg |
-| Linux X11 / XWayland | unsupported | ffmpeg `x11grab` |
+| Linux X11 / XWayland | Linux helper | Linux helper |
 | Linux Wayland (GNOME/Mutter) | xdg-desktop-portal window source | xdg-desktop-portal monitor source |
 
 ```kotlin
@@ -70,6 +70,14 @@ Two trade-offs, pick deliberately:
 Embedded `ComposePanel` instances have no top-level window title, so use
 `startRegion(...)` with an explicit rectangle. `startWindow(...)` fails loudly when a
 true window-targeted backend is unavailable.
+
+For macOS region capture, `RecordingOptions.screenIndex` is interpreted by the SCK helper:
+display `0` is the primary display, then remaining displays are sorted by frame `minX` and
+`minY`. Explicit legacy `FfmpegRecorder` callers still get avfoundation device ordering.
+
+macOS capture also requires an unlocked console session. If a smoke or test suddenly reports
+black screenshots/frames or a permission-looking capture failure, unlock the screen and retry
+before debugging TCC; Robot screenshot diagnostics check `IOConsoleLocked` for this case.
 
 ## Linux Wayland caveats
 
