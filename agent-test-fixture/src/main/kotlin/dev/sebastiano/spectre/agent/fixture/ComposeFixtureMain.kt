@@ -88,6 +88,8 @@ fun main() {
 
         frame.contentPane.add(composePanel)
         frame.isVisible = true
+        frame.toFront()
+        frame.requestFocus()
         panelRef.set(composePanel)
     }
 

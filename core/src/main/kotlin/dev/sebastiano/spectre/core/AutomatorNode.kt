@@ -92,6 +92,7 @@ internal constructor(
         semanticsNode.config.getOrNull(SemanticsProperties.Focused) == true
     public val isSelected: Boolean =
         semanticsNode.config.getOrNull(SemanticsProperties.Selected) == true
+    public val isVisible: Boolean = true
 
     // Geometry is always read live: layout can change between node lookup and action,
     // so a snapshot would let click/screenshot drift to stale coordinates after scrolling

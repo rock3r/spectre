@@ -12,6 +12,7 @@ import java.awt.Rectangle
 import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeFalse
@@ -98,14 +99,16 @@ class ReflectiveAutomatorHandlerMappingTest {
     }
 
     @Test
-    fun `AllNodes op maps key, testTag, texts, role, contentDescription, isVisible, bounds`() {
+    fun `AllNodes op maps key, testTag, texts, role, contentDescription, focused, visible, bounds`() {
         val node =
             FakeAutomatorNode(
                 keyValue = "surface-0:0:42",
                 testTagValue = "submit-button",
                 textsValue = listOf("Submit"),
+                editableTextValue = "typed text",
                 roleValue = "Button",
                 contentDescriptionValue = "Click to submit the form",
+                isFocusedValue = true,
                 isVisibleValue = true,
                 boundsOnScreenValue = Rectangle(100, 200, 80, 24),
             )
@@ -121,13 +124,28 @@ class ReflectiveAutomatorHandlerMappingTest {
         assertEquals("surface-0:0:42", dto.key)
         assertEquals("submit-button", dto.testTag)
         assertEquals(listOf("Submit"), dto.texts)
+        assertEquals("typed text", dto.editableText)
         assertEquals("Button", dto.role)
         assertEquals("Click to submit the form", dto.contentDescription)
+        assertEquals(true, dto.isFocused)
         assertEquals(true, dto.isVisible)
         assertEquals(100, dto.bounds.x)
         assertEquals(200, dto.bounds.y)
         assertEquals(80, dto.bounds.width)
         assertEquals(24, dto.bounds.height)
+    }
+
+    @Test
+    fun `AllNodes op fails loudly when AutomatorNode visible accessor is missing`() {
+        val automator = FakeAutomator(allNodesValue = listOf(FakeNodeWithoutVisible()))
+        val handler = ReflectiveAutomatorHandler(automator)
+
+        val error = assertFailsWith<IllegalStateException> { handler.handle(AgentRequest.AllNodes) }
+
+        assertTrue(
+            error.message.orEmpty().contains("does not expose isVisible()"),
+            "expected API mismatch error for missing isVisible(); got: ${error.message}",
+        )
     }
 
     @Test
@@ -281,6 +299,56 @@ class ReflectiveAutomatorHandlerMappingTest {
             "expected node-not-found error, got: ${click.message}",
         )
     }
+
+    @Test
+    fun `TypeText op refuses to type when no target node is focused`() {
+        val fake =
+            FakeSuspendCapableAutomator(
+                allNodesValue = listOf(FakeAutomatorNode(keyValue = "k1", isFocusedValue = false))
+            )
+        val handler = ReflectiveAutomatorHandler(fake, isTargetJvmFocused = { true })
+
+        val response = handler.handle(AgentRequest.TypeText("x"))
+
+        check(response is AgentResponse.Error)
+        assertTrue(
+            response.message.contains("no focused", ignoreCase = true),
+            "expected focused-node guard error, got: ${response.message}",
+        )
+        assertEquals(emptyList(), fake.typedTexts)
+    }
+
+    @Test
+    fun `TypeText op refuses to type when the target JVM does not own OS focus`() {
+        val fake =
+            FakeSuspendCapableAutomator(
+                allNodesValue = listOf(FakeAutomatorNode(keyValue = "k1", isFocusedValue = true))
+            )
+        val handler = ReflectiveAutomatorHandler(fake, isTargetJvmFocused = { false })
+
+        val response = handler.handle(AgentRequest.TypeText("x"))
+
+        check(response is AgentResponse.Error)
+        assertTrue(
+            response.message.contains("OS keyboard focus"),
+            "expected OS-focus guard error, got: ${response.message}",
+        )
+        assertEquals(emptyList(), fake.typedTexts)
+    }
+
+    @Test
+    fun `TypeText op dispatches only when a target node is focused`() {
+        val fake =
+            FakeSuspendCapableAutomator(
+                allNodesValue = listOf(FakeAutomatorNode(keyValue = "k1", isFocusedValue = true))
+            )
+        val handler = ReflectiveAutomatorHandler(fake, isTargetJvmFocused = { true })
+
+        val response = handler.handle(AgentRequest.TypeText("x"))
+
+        assertEquals(AgentResponse.Ok, response)
+        assertEquals(listOf("x"), fake.typedTexts)
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -348,8 +416,10 @@ private class FakeAutomatorNode(
     private val keyValue: String,
     private val testTagValue: String? = null,
     private val textsValue: List<String> = emptyList(),
+    private val editableTextValue: String? = null,
     private val roleValue: String? = null,
     private val contentDescriptionValue: String? = null,
+    private val isFocusedValue: Boolean = false,
     private val isVisibleValue: Boolean = true,
     private val boundsOnScreenValue: Rectangle = Rectangle(0, 0, 0, 0),
 ) {
@@ -359,21 +429,52 @@ private class FakeAutomatorNode(
 
     @Suppress("unused") fun getTexts(): List<String> = textsValue
 
+    @Suppress("unused") fun getEditableText(): String? = editableTextValue
+
     @Suppress("unused") fun getRole(): String? = roleValue
 
     @Suppress("unused") fun getContentDescription(): String? = contentDescriptionValue
+
+    @Suppress("unused") fun isFocused(): Boolean = isFocusedValue
 
     @Suppress("unused") fun isVisible(): Boolean = isVisibleValue
 
     @Suppress("unused") fun getBoundsOnScreen(): Rectangle = boundsOnScreenValue
 }
 
-private class FakeSuspendCapableAutomator {
+private class FakeNodeWithoutVisible(
+    private val keyValue: String = "missing-visible",
+    private val testTagValue: String? = null,
+    private val editableTextValue: String? = null,
+    private val roleValue: String? = null,
+    private val contentDescriptionValue: String? = null,
+    private val isFocusedValue: Boolean = false,
+) {
+    @Suppress("unused") fun getKey(): String = keyValue
+
+    @Suppress("unused") fun getTestTag(): String? = testTagValue
+
+    @Suppress("unused") fun getTexts(): List<String> = emptyList()
+
+    @Suppress("unused") fun getEditableText(): String? = editableTextValue
+
+    @Suppress("unused") fun getRole(): String? = roleValue
+
+    @Suppress("unused") fun getContentDescription(): String? = contentDescriptionValue
+
+    @Suppress("unused") fun isFocused(): Boolean = isFocusedValue
+
+    @Suppress("unused") fun getBoundsOnScreen(): Rectangle = Rectangle(0, 0, 0, 0)
+}
+
+private class FakeSuspendCapableAutomator(private val allNodesValue: List<Any> = emptyList()) {
+    val typedTexts = mutableListOf<String>()
+
     @Suppress("unused") fun refreshWindows() = Unit
 
     @Suppress("unused") fun getWindows(): List<Any> = emptyList()
 
-    @Suppress("unused") fun allNodes(): List<Any> = emptyList()
+    @Suppress("unused") fun allNodes(): List<Any> = allNodesValue
 
     @Suppress("unused") fun findByTestTag(tag: String): List<Any> = emptyList()
 
@@ -383,5 +484,8 @@ private class FakeSuspendCapableAutomator {
     fun click(node: Any, continuation: kotlin.coroutines.Continuation<Any?>): Any? = Unit
 
     @Suppress("unused", "UNUSED_PARAMETER")
-    fun typeText(text: String, continuation: kotlin.coroutines.Continuation<Any?>): Any? = Unit
+    fun typeText(text: String, continuation: kotlin.coroutines.Continuation<Any?>): Any? {
+        typedTexts += text
+        return Unit
+    }
 }
