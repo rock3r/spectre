@@ -238,10 +238,10 @@ import dev.sebastiano.spectre.recording.screencapturekit.asTitledWindow
 val recorder = ScreenCaptureKitRecorder()
 val handle = recorder.start(
     window = composeWindow.asTitledWindow(), // public adapter for any java.awt.Frame
-    output = Paths.get("/tmp/spectre-sck.mov"),
+    output = Paths.get("/tmp/spectre-sck.mp4"),
 )
 // drive the UI...
-handle.stop() // restores the original title, finalises the .mov
+handle.stop() // restores the original title, finalises the .mp4
 ```
 
 `asTitledWindow()` is a `Frame.() -> TitledWindow` extension that works against

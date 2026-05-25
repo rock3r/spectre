@@ -24,7 +24,7 @@ import kotlin.system.exitProcess
 /**
  * Manual end-to-end smoke for [ScreenCaptureKitRecorder]. Run via `./gradlew
  * :recording:runScreenCaptureKitSmoke` — opens a small JFrame, records it for ~3 seconds, prints
- * the resulting file path + size. Eyeball the .mov to confirm.
+ * the resulting file path + size. Eyeball the .mp4 to confirm.
  *
  * Uses a plain Swing JFrame rather than Compose so this can live in the recording module without
  * breaking its dependency isolation. The label is updated via `JLabel.setText` rather than a custom
@@ -47,7 +47,7 @@ fun main() {
 }
 
 private fun runSmoke() {
-    val output = Path.of(System.getProperty("java.io.tmpdir"), "spectre-sck-smoke.mov")
+    val output = Path.of(System.getProperty("java.io.tmpdir"), "spectre-sck-smoke.mp4")
     val midRecordingPng = Path.of(System.getProperty("java.io.tmpdir"), "spectre-sck-smoke.png")
     Files.deleteIfExists(output)
     Files.deleteIfExists(midRecordingPng)
@@ -78,7 +78,7 @@ private fun runSmoke() {
         }
 
     // Halfway through the recording, take a JVM-side `Robot` screenshot of the JFrame's bounds.
-    // If THAT shows the tick text, Swing is painting and any blankness in the .mov is on the
+    // If THAT shows the tick text, Swing is painting and any blankness in the .mp4 is on the
     // SCK side. If it does NOT, Swing isn't painting and we have a UI bug to chase.
     Thread.sleep(RECORD_DURATION_MS / 2)
     val frameBounds = frame.bounds

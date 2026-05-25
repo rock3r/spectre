@@ -54,9 +54,29 @@ internal data class HelperArguments(
         add(fps.toString())
         add("--cursor")
         add(if (captureCursor) "true" else "false")
+        add("--file-type")
+        add(fileTypeFor(output).cliValue)
         add("--discovery-timeout-ms")
         add(discoveryTimeoutMs.toString())
         add("--output")
         add(output.toString())
+    }
+
+    private enum class RecordingFileType(val cliValue: String) {
+        Mov("mov"),
+        Mp4("mp4"),
+    }
+
+    private companion object {
+        fun fileTypeFor(output: Path): RecordingFileType =
+            when (
+                output.fileName
+                    ?.toString()
+                    ?.substringAfterLast('.', missingDelimiterValue = "")
+                    ?.lowercase()
+            ) {
+                "mp4" -> RecordingFileType.Mp4
+                else -> RecordingFileType.Mov
+            }
     }
 }
