@@ -93,16 +93,7 @@ public object AgentAttach {
 
         val cwdGuess = Paths.get(System.getProperty("user.dir")).resolve("agent-runtime/build/libs")
         if (Files.isDirectory(cwdGuess)) {
-            val match =
-                Files.list(cwdGuess).use { stream ->
-                    stream
-                        .filter { p ->
-                            val n = p.fileName.toString()
-                            n.startsWith("agent-runtime-") && n.endsWith(".jar")
-                        }
-                        .findFirst()
-                        .orElse(null)
-                }
+            val match = AgentJarResolution.findRuntimeJarInDirectory(cwdGuess)
             if (match != null) return match
             tried.add(cwdGuess.resolve("agent-runtime-*.jar"))
         }

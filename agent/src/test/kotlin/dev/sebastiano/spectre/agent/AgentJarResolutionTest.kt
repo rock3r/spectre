@@ -20,6 +20,27 @@ class AgentJarResolutionTest {
     }
 
     @Test
+    fun `skips auxiliary agent runtime jars on classpath`() {
+        val dir = Files.createTempDirectory("spectre-agent-jar-resolution")
+        val sourcesJar = Files.createFile(dir.resolve("spectre-agent-runtime-0.2.0-sources.jar"))
+        val javadocJar = Files.createFile(dir.resolve("spectre-agent-runtime-0.2.0-javadoc.jar"))
+        val runtimeJar = Files.createFile(dir.resolve("spectre-agent-runtime-0.2.0.jar"))
+        val classPath = listOf(sourcesJar, javadocJar, runtimeJar).joinToString(File.pathSeparator)
+
+        assertEquals(runtimeJar, AgentJarResolution.findRuntimeJarOnClasspath(classPath))
+    }
+
+    @Test
+    fun `skips auxiliary agent runtime jars in directory fallback`() {
+        val dir = Files.createTempDirectory("spectre-agent-jar-resolution")
+        Files.createFile(dir.resolve("agent-runtime-0.2.0-sources.jar"))
+        Files.createFile(dir.resolve("agent-runtime-0.2.0-javadoc.jar"))
+        val runtimeJar = Files.createFile(dir.resolve("agent-runtime-0.2.0.jar"))
+
+        assertEquals(runtimeJar, AgentJarResolution.findRuntimeJarInDirectory(dir))
+    }
+
+    @Test
     fun `ignores non-runtime agent jar on classpath`() {
         val dir = Files.createTempDirectory("spectre-agent-jar-resolution")
         val apiJar = Files.createFile(dir.resolve("spectre-agent-0.2.0.jar"))
