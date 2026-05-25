@@ -2,8 +2,9 @@ name: macOS check
 
 # Runs the JVM checks on a real macOS host for full-OS-matrix parity with `ci.yml` (ubuntu)
 # and `windows.yml` (Windows). The existing `macos.yml` is *focused* — it builds the SCK Swift
-# helper and runs `:recording:check` only, gated on `recording/**`. That doesn't catch macOS-
-# specific regressions in `core/`, `server/`, `sample-desktop/`, or `testing/`.
+# helper and runs `:recording:check` only, gated on `recording/**` and `recording-macos/**`.
+# That doesn't catch macOS-specific regressions in `core/`, `server/`, `sample-desktop/`, or
+# `testing/`.
 #
 # The split into two macOS workflows is intentional: `macos.yml` stays small + fast and only
 # fires when the recording surface changes, while this `macos-check` job mirrors the broader
@@ -22,7 +23,12 @@ on:
   pull_request:
     paths:
       - "core/**"
+      - "agent/**"
+      - "agent-test-fixture/**"
       - "recording/**"
+      - "recording-linux/**"
+      - "recording-macos/**"
+      - "recording-windows/**"
       - "sample-desktop/**"
       - "server/**"
       - "testing/**"
@@ -35,7 +41,12 @@ on:
       - main
     paths:
       - "core/**"
+      - "agent/**"
+      - "agent-test-fixture/**"
       - "recording/**"
+      - "recording-linux/**"
+      - "recording-macos/**"
+      - "recording-windows/**"
       - "sample-desktop/**"
       - "server/**"
       - "testing/**"

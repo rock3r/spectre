@@ -10,19 +10,22 @@ name: macOS
 #   - SCK end-to-end recording isn't exercised here (CI runners don't have Screen Recording
 #     TCC). The `ScreenCaptureKitHelperContractTest` exec'es the bundled binary against
 #     intentionally-bad argv to validate the JVM↔Swift CLI contract without needing TCC.
-#   - Job is gated on changes to recording/** + this workflow file so unrelated PRs don't
-#     pay the macos-runner cost (macos-* runners are slower and more expensive than ubuntu).
+#   - Job is gated on changes to recording/**, recording-macos/**, and this workflow file so
+#     unrelated PRs don't pay the macos-runner cost (macos-* runners are slower and more
+#     expensive than ubuntu).
 
 on:
   pull_request:
     paths:
       - "recording/**"
+      - "recording-macos/**"
       - ".github/workflows/macos.yml"
   push:
     branches:
       - main
     paths:
       - "recording/**"
+      - "recording-macos/**"
       - ".github/workflows/macos.yml"
 
 permissions:

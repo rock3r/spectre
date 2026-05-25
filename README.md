@@ -99,7 +99,7 @@ Two heavier checks live outside `:check`:
 - `:sample-intellij-plugin:uiTest` — boots IntelliJ via `intellij-ide-starter`, installs the
   plugin, fires `RunSpectreAction`, and asserts every tagged Compose node shows up in
   `idea.log`.
-- `:recording:check` on macOS — covers the Swift ScreenCaptureKit helper.
+- `:recording:check` on macOS — covers the Swift ScreenCaptureKit helper contract.
 
 ## Supported JVMs
 
@@ -112,7 +112,7 @@ with IntelliJ 2026.1). Any JDK 21+ works for the non-IDE modules. CI runs on Tem
 - [`macos-check.yml`](.github/workflows/macos-check.yml) — `:check` on macOS, broad path filter.
 - [`windows.yml`](.github/workflows/windows.yml) — `:check` on Windows, broad path filter.
 - [`macos.yml`](.github/workflows/macos.yml) — Swift helper build + `:recording:check`, gated
-  on `recording/**`.
+  on `recording/**` and `recording-macos/**`.
 - [`ide-uitest.yml`](.github/workflows/ide-uitest.yml) — IDE-hosted UI test on macOS + Windows,
   gated on plugin / core / recording changes. `out/ide-tests/{installers,cache}` is cached
   between runs.

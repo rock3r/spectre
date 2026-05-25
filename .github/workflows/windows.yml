@@ -20,13 +20,18 @@ name: Windows
 #     The OnWindow popup variant currently crashes JBR's skiko on Windows (see #23); the test
 #     class `Assumptions.assumeFalse`-skips that variant on Windows hosts.
 #   - Job is gated on changes likely to affect Windows behaviour so unrelated PRs don't pay
-#     the windows-runner cost. Mirrors the path-filter pattern from `macos.yml`.
+#     the windows-runner cost. Mirrors the broad path-filter pattern from `macos-check.yml`.
 
 on:
   pull_request:
     paths:
       - "core/**"
+      - "agent/**"
+      - "agent-test-fixture/**"
       - "recording/**"
+      - "recording-linux/**"
+      - "recording-macos/**"
+      - "recording-windows/**"
       - "sample-desktop/**"
       - "server/**"
       - "testing/**"
@@ -39,7 +44,12 @@ on:
       - main
     paths:
       - "core/**"
+      - "agent/**"
+      - "agent-test-fixture/**"
       - "recording/**"
+      - "recording-linux/**"
+      - "recording-macos/**"
+      - "recording-windows/**"
       - "sample-desktop/**"
       - "server/**"
       - "testing/**"

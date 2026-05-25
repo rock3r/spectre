@@ -43,7 +43,11 @@ Public declarations annotated with `@ExperimentalSpectreHttpApi` (or any future 
 the API baselines**, but they are explicitly **not covered** by compatibility guarantees and
 may change or be removed in any release, including patch releases.
 
-Two experimental markers exist today:
+Three experimental markers exist today:
+
+- **`@ExperimentalSpectreApi`** covers selected `core` APIs that are useful now but still
+  settling, such as the recomposition-monitor surface exposed through
+  `ComposeAutomator.monitorRecompositions()`.
 
 - **`@ExperimentalSpectreHttpApi`** covers the entire `server` module's public surface — the
   HTTP transport (`installSpectreRoutes`, `HttpComposeAutomator`, the

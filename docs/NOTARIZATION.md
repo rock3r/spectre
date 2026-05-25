@@ -1,9 +1,9 @@
 # Notarization
 
 Spectre ships the macOS ScreenCaptureKit recorder as a small Swift command-line helper inside
-the `recording` jar. Distribution builds must Developer ID sign and notarize that helper before
-the jar is published, otherwise macOS Gatekeeper can reject the extracted helper when a consumer
-starts `ScreenCaptureKitRecorder`.
+the `spectre-recording-macos` jar. Distribution builds must Developer ID sign and notarize that
+helper before the jar is published, otherwise macOS Gatekeeper can reject the extracted helper
+when a consumer starts `ScreenCaptureKitRecorder`.
 
 Local development builds do not need Apple credentials. The notarization path is opt-in and is
 only intended for release builds.
@@ -79,7 +79,7 @@ compose.desktop.mac.notarization.keychainProfile=<notary-profile>
 Then run:
 
 ```bash
-./gradlew :recording:jar -PuniversalHelper -PnotarizeScreenCaptureKitHelper
+./gradlew :recording-macos:jar -PuniversalHelper -PnotarizeScreenCaptureKitHelper
 ```
 
 If Apple accepts the submission, the build verifies the helper's signature and packages the jar.
@@ -95,8 +95,8 @@ xcrun notarytool info <submission-id> --keychain-profile <notary-profile>
 The tag workflow at
 [`.github/workflows/release.yml`](https://github.com/rock3r/spectre/blob/main/.github/workflows/release.yml)
 builds the universal helper on `macos-latest`, imports the Developer ID certificate into a
-temporary keychain, signs and notarizes the helper, and uploads the recording jars to the
-GitHub release.
+temporary keychain, signs and notarizes the helper, and uploads the notarized helper artifact
+for the publish job to package into `spectre-recording-macos`.
 
 Set these repository secrets:
 

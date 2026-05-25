@@ -112,26 +112,26 @@ implementer's view of the same module.
 
 `recording/native/macos/` is a SwiftPM project that produces the `spectre-screencapture`
 helper binary. The `assembleScreenCaptureKitHelper` Gradle task runs `swift build -c release`
-and stages the binary under `build/generated/screenCaptureHelper/native/macos/`, then
-wires that generated directory into the JAR resources transparently. The Swift `swift
-build` step only runs on macOS hosts — non-macOS hosts produce a structurally-correct jar
-that just doesn't contain the helper file (consumers see
+and stages the binary under `build/generated/screenCaptureHelper/native/macos/`; the
+`:recording-macos` platform artifact then packages that generated directory into its JAR
+resources. The Swift `swift build` step only runs on macOS hosts — non-macOS hosts produce a
+structurally-correct `spectre-recording-macos` jar that just doesn't contain the helper file
+(consumers see
 `HelperBinaryExtractor`'s "binary not found" message at runtime if they try to use SCK).
 
-**Distribution must be built on macOS.** A jar published from a Linux CI runner won't carry
-the helper, so any macOS consumer of that jar would fail with "helper binary not found" the
-first time `ScreenCaptureKitRecorder.start()` runs. The release workflow builds on
-`macos-latest`, signs and notarizes the universal helper, then packages the recording jar.
+**Distribution must use a macOS-built helper.** The release workflow builds on `macos-latest`,
+signs and notarizes the universal helper, then passes that prebuilt helper into the Linux
+publish job so `spectre-recording-macos` carries the signed binary.
 
 For local dev the default `:recording:assembleScreenCaptureKitHelper` builds host-arch only
 — faster iteration. The universal `arm64+x86_64` binary is opt-in via a project property:
 
 ```bash
 # Default: host-arch helper, fast.
-./gradlew :recording:jar
+./gradlew :recording-macos:jar
 
 # Distribution: universal helper bundled in the jar instead.
-./gradlew :recording:jar -PuniversalHelper
+./gradlew :recording-macos:jar -PuniversalHelper
 ```
 
 The `-PuniversalHelper` flag swaps `processResources`'s dependency from
@@ -163,7 +163,7 @@ The distribution path is opt-in so local development does not require Apple cred
 ```bash
 APPLE_DEVELOPER_IDENTITY="Developer ID Application: Example, Inc. (TEAMID1234)" \
 APPLE_NOTARY_KEYCHAIN_PROFILE="<notary-profile>" \
-./gradlew :recording:jar -PuniversalHelper -PnotarizeScreenCaptureKitHelper
+./gradlew :recording-macos:jar -PuniversalHelper -PnotarizeScreenCaptureKitHelper
 ```
 
 Create the keychain profile once with:
@@ -290,13 +290,13 @@ Spectre's recording module ships three native helpers — the macOS ScreenCaptur
 (Swift, requires `swiftc` + macOS frameworks), the Linux capture helper (Rust, requires
 `cargo` + `libdbus-1-dev`), and the Windows Graphics Capture helper (.NET 8 SDK). The
 macOS and Linux toolchains do not work cross-host, while the Windows helper is built on
-Windows for both x64 and arm64. The recording jar's layout is host-agnostic — the
+Windows for both x64 and arm64. Each platform helper jar's layout is host-agnostic — the
 non-producible directories are simply empty or absent depending on Gradle's jar-packing
 behavior — and the recorder gates on resource presence at runtime, throwing
 `HelperNotBundledException` with a clear message when the helper its current backend
 needs is missing.
 
-| Host                | Default `./gradlew :recording:build`                                 | `-PuniversalHelper`               | `-PallLinuxArches`                                      |
+| Host                | Default platform-helper build                                        | `-PuniversalHelper`               | `-PallLinuxArches`                                      |
 | ------------------- | -------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------- |
 | macOS (arm64)       | host-arch SCK (`native/macos/spectre-screencapture` thin arm64)      | universal SCK (arm64 + x86_64)    | no-op (host can't build Linux helper)                   |
 | macOS (x86_64)      | host-arch SCK (thin x86_64)                                          | universal SCK (arm64 + x86_64)    | no-op (same)                                            |

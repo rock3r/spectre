@@ -34,7 +34,12 @@ on:
   pull_request:
     paths:
       - "core/**"
+      - "agent/**"
+      - "agent-test-fixture/**"
       - "recording/**"
+      - "recording-linux/**"
+      - "recording-macos/**"
+      - "recording-windows/**"
       - "sample-desktop/**"
       - "testing/**"
       # Broad gradle/** rather than just libs.versions.toml so wrapper bumps and any other
@@ -49,7 +54,12 @@ on:
       - main
     paths:
       - "core/**"
+      - "agent/**"
+      - "agent-test-fixture/**"
       - "recording/**"
+      - "recording-linux/**"
+      - "recording-macos/**"
+      - "recording-windows/**"
       - "sample-desktop/**"
       - "testing/**"
       - "gradle/**"
