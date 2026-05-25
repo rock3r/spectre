@@ -55,13 +55,11 @@ implementer's view of the same module.
   region portal, or loud failure if no portal recorder is wired), then macOS SCK for
   window capture, Windows Graphics Capture for Windows window/region capture, Linux helper
   capture for Linux Xorg/Xvfb window/region capture, and ffmpeg region capture for macOS.
-  If the Windows WGC helper
-  artifact is absent, `startRegion(...)` falls back to the legacy ffmpeg `gdigrab`
-  region path for compatibility. It also uses ffmpeg for Windows region calls with custom
-  `RecordingOptions.codec` or `screenIndex`, because the WGC backend cannot honour those
-  ffmpeg-specific knobs. Operational native-helper failures after the helper is found
-  (permissions denied, window not found, helper crash) propagate with actionable messages
-  instead of silently changing capture semantics.
+  Windows region capture no longer falls back to ffmpeg when the WGC helper artifact is
+  absent, and WGC-unsupported options such as custom `RecordingOptions.codec` or
+  `screenIndex` now fail loudly. Operational native-helper failures after the helper is
+  found (permissions denied, window not found, helper crash) also propagate with actionable
+  messages instead of silently changing capture semantics.
 - `AutoScreenshotter` — high-level still-image router. Uses ScreenCaptureKit window capture
   on macOS, Windows Graphics Capture on Windows, and the Linux helper on Xorg/Xvfb and
   Wayland. Wayland still screenshots require the compositor portal dialog to be accepted.

@@ -62,9 +62,9 @@ class AutoRecorderTest {
     }
 
     @Test
-    fun `startRegion routes Windows custom ffmpeg options to ffmpeg`() {
+    fun `startRegion rejects Windows custom ffmpeg options instead of falling back to ffmpeg`() {
         val ffmpeg = StubRegionRecorder()
-        val windowsRegion = StubRegionRecorder()
+        val windowsRegion = UnsupportedWindowsOptionsRecorder()
         val recorder =
             autoRecorder(
                 ffmpegRecorder = ffmpeg,
@@ -77,18 +77,21 @@ class AutoRecorderTest {
             val region = Rectangle(10, 20, 300, 200)
             val options = RecordingOptions(codec = "libx264rgb")
 
-            recorder.startRegion(region = region, output = output, options = options)
+            val error =
+                assertFailsWith<IllegalArgumentException> {
+                    recorder.startRegion(region = region, output = output, options = options)
+                }
 
-            assertEquals(region, ffmpeg.lastRegion)
-            assertEquals(options, ffmpeg.lastOptions)
-            assertFalse(windowsRegion.startCalled)
+            assertTrue(error.message.orEmpty().contains("custom RecordingOptions.codec"))
+            assertFalse(ffmpeg.startCalled)
+            assertTrue(windowsRegion.startCalled)
         } finally {
             output.deleteIfExists()
         }
     }
 
     @Test
-    fun `startRegion falls back to ffmpeg on Windows when WGC helper is not bundled`() {
+    fun `startRegion fails loudly on Windows when WGC helper is not bundled`() {
         val ffmpeg = StubRegionRecorder()
         val recorder =
             autoRecorder(
@@ -101,9 +104,13 @@ class AutoRecorderTest {
         try {
             val region = Rectangle(10, 20, 300, 200)
 
-            recorder.startRegion(region = region, output = output)
+            val error =
+                assertFailsWith<IllegalStateException> {
+                    recorder.startRegion(region = region, output = output)
+                }
 
-            assertEquals(region, ffmpeg.lastRegion)
+            assertTrue(error.message.orEmpty().contains("Windows region capture"))
+            assertFalse(ffmpeg.startCalled)
         } finally {
             output.deleteIfExists()
         }
@@ -505,6 +512,23 @@ private class MissingWindowsHelperRecorder : Recorder {
         options: RecordingOptions,
     ): RecordingHandle {
         throw WindowsGraphicsCaptureHelperNotBundledException("missing helper")
+    }
+}
+
+private class UnsupportedWindowsOptionsRecorder : Recorder {
+    var startCalled: Boolean = false
+        private set
+
+    override fun start(
+        region: Rectangle,
+        output: Path,
+        options: RecordingOptions,
+    ): RecordingHandle {
+        startCalled = true
+        throw IllegalArgumentException(
+            "WindowsGraphicsCaptureRecorder does not support custom RecordingOptions.codec; " +
+                "got ${options.codec}."
+        )
     }
 }
 

@@ -21,6 +21,14 @@ routers that pick the right one per call.
     fallback is no longer used by `AutoRecorder` or `AutoScreenshotter`; `ffmpeg` on
     `PATH` is only relevant if you instantiate the explicit legacy ffmpeg backends.
 
+!!! note "Windows migration note"
+    Windows window, region, and fullscreen recording now use the
+    `spectre-recording-windows` helper through Windows Graphics Capture. `AutoRecorder`
+    no longer falls back to ffmpeg/gdigrab when the helper artifact is absent or when
+    Windows-incompatible options such as custom `RecordingOptions.codec` or `screenIndex`
+    are supplied; those cases fail at `start(...)` with an actionable error. `ffmpeg` on
+    `PATH` is only relevant if you instantiate the explicit legacy ffmpeg backends.
+
 ## Still Window Screenshots
 
 `ComposeAutomator.screenshot(...)` lives in `spectre-core` and captures a rectangle
@@ -210,14 +218,13 @@ A few details worth knowing:
   SCK failures — permission denied, target window not found, helper crashed during
   init — propagate as exceptions rather than falling back silently, so you see
   the real cause.
-- **Windows WGC helper fallback.** If `spectre-recording-windows` is absent at
-  runtime, `AutoRecorder.startRegion(...)` falls back to the legacy
-  `FfmpegRecorder`/`gdigrab` region path for compatibility with older
-  `spectre-recording`-only setups. `startRegion(...)` also uses the legacy ffmpeg
-  path when you set Windows options that WGC cannot honour, such as a custom
-  `RecordingOptions.codec` or `screenIndex`. Window-targeted recording, fullscreen
-  recording through `WindowsGraphicsCaptureRecorder`, and still window screenshots
-  require the helper artifact; operational WGC failures still propagate.
+- **Windows WGC helper is required for AutoRecorder.** If `spectre-recording-windows`
+  is absent at runtime, `AutoRecorder.startRegion(...)` fails loudly instead of
+  falling back to legacy `FfmpegRecorder`/`gdigrab`. Windows options that WGC cannot
+  honour, such as a custom `RecordingOptions.codec` or `screenIndex`, also fail
+  rather than changing backends. Window-targeted recording, fullscreen recording
+  through `WindowsGraphicsCaptureRecorder`, and still window screenshots all require
+  the helper artifact; operational WGC failures propagate.
 - **Linux Xorg/Xvfb uses the Linux helper by default.** `AutoRecorder` no longer uses
   `ffmpeg` for the Linux Xorg/Xvfb route. Region and window capture go through the
   bundled Rust helper from `spectre-recording-linux`, which spawns `gst-launch-1.0`
@@ -319,9 +326,8 @@ trade-offs.
   still window screenshots. Runtime machines need Windows Graphics Capture support
   (Windows 10 version 1903 or newer), .NET 8 Desktop Runtime, and Windows App Runtime
   1.8; contributors and CI building that helper from source need the .NET 8 SDK.
-  `AutoRecorder.startRegion(...)` can fall back to `ffmpeg`/`gdigrab` when the helper
-  artifact is absent; otherwise `ffmpeg` is only needed if you instantiate the explicit
-  legacy ffmpeg backends.
+  `AutoRecorder.startRegion(...)` requires this helper; `ffmpeg` is only needed if you
+  instantiate the explicit legacy ffmpeg backends.
 - **Linux Xorg/Xvfb** — add `dev.sebastiano.spectre:spectre-recording-linux:<version>`
   as a runtime-only dependency. Runtime machines need `gst-launch-1.0` plus GStreamer
   plugins for `ximagesrc`, H.264, MP4 muxing, PNG encoding, and colour conversion.

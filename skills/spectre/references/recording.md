@@ -34,7 +34,7 @@ source need the .NET 8 SDK. The local verification task is:
 | Platform | `startWindow` | `startRegion` |
 |---|---|---|
 | macOS | ScreenCaptureKit (native) | ffmpeg region capture |
-| Windows | Windows Graphics Capture helper | Windows Graphics Capture helper, with ffmpeg `gdigrab` fallback if the helper artifact is absent or the call uses ffmpeg-only options (`codec`, `screenIndex`) |
+| Windows | Windows Graphics Capture helper | Windows Graphics Capture helper; missing helper artifacts and WGC-unsupported options (`codec`, `screenIndex`) fail loudly instead of falling back to ffmpeg |
 | Linux X11 / XWayland | unsupported | ffmpeg `x11grab` |
 | Linux Wayland (GNOME/Mutter) | xdg-desktop-portal window source | xdg-desktop-portal monitor source |
 
