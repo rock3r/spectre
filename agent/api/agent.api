@@ -98,11 +98,6 @@ public final class dev/sebastiano/spectre/agent/runtime/SpectreAgent {
 	public static final fun premain (Ljava/lang/String;Ljava/lang/instrument/Instrumentation;)V
 }
 
-public final class dev/sebastiano/spectre/agent/spike/AttachSpike {
-	public static final field INSTANCE Ldev/sebastiano/spectre/agent/spike/AttachSpike;
-	public static final fun main ([Ljava/lang/String;)V
-}
-
 public final class dev/sebastiano/spectre/agent/transport/NodeSnapshotDto {
 	public static final field Companion Ldev/sebastiano/spectre/agent/transport/NodeSnapshotDto$Companion;
 	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZLdev/sebastiano/spectre/agent/transport/RectDto;)V

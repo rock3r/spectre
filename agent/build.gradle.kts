@@ -1,4 +1,6 @@
+import javax.inject.Inject
 import org.gradle.jvm.tasks.Jar
+import org.gradle.process.CommandLineArgumentProvider
 
 plugins {
     alias(libs.plugins.detekt)
@@ -37,6 +39,31 @@ dependencies {
     testImplementation(projects.agentTestFixture)
 }
 
+val spikeSourceSet = sourceSets.create("spike")
+
+tasks.withType<Jar>().configureEach {
+    includeEmptyDirs = false
+    exclude("dev/sebastiano/spectre/agent/spike/**")
+}
+
+abstract class AttachSpikeArgumentProvider @Inject constructor() : CommandLineArgumentProvider {
+    @get:org.gradle.api.tasks.Input abstract val pid: org.gradle.api.provider.Property<String>
+
+    @get:org.gradle.api.tasks.InputFile
+    @get:org.gradle.api.tasks.PathSensitive(org.gradle.api.tasks.PathSensitivity.NONE)
+    abstract val runtimeJar: org.gradle.api.file.RegularFileProperty
+
+    override fun asArguments(): Iterable<String> {
+        val targetPid =
+            pid.orNull
+                ?: throw GradleException(
+                    "attachSpike requires -Ppid=<target JVM pid>. Find the target via " +
+                        "`jps` (look for the main class you want to attach to)."
+                )
+        return listOf(targetPid, runtimeJar.get().asFile.absolutePath)
+    }
+}
+
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
 
@@ -58,10 +85,11 @@ tasks.withType<Test>().configureEach {
 }
 
 // ---------------------------------------------------------------------------------------
-// `attachSpike` — manual M-1 verification entry point. Wraps the standalone `AttachSpike`
-// main so a contributor can run `./gradlew :agent:attachSpike -Ppid=<PID>` from a worktree
-// and see the agent attach to a running Spectre-instrumented JVM. The agent's diagnostic
-// stderr lands in the *target* JVM's console, not this task's output.
+// `attachSpike` — manual M-1 verification entry point. Wraps a standalone helper from the
+// non-published `spike` source set so a contributor can run
+// `./gradlew :agent:attachSpike -Ppid=<PID>` from a worktree and see the agent attach to a
+// running Spectre-instrumented JVM. The agent's diagnostic stderr lands in the *target* JVM's
+// console, not this task's output.
 //
 // This task is NOT wired into `:check`. It exists for human-driven verification while M-1
 // is the active milestone. Automated cross-JVM attach tests land in M-7/M-8.
@@ -74,25 +102,14 @@ tasks.register<JavaExec>("attachSpike") {
     group = "verification"
     val runtimeJarFile =
         project(":agent-runtime").tasks.named<Jar>("jar").flatMap { it.archiveFile }
-    dependsOn(runtimeJarFile)
+    dependsOn(runtimeJarFile, spikeSourceSet.classesTaskName)
 
-    // The pid is taken per-invocation via `-Ppid=<pid>`, which would invalidate the
-    // configuration cache on every run anyway. Wrapping the args lookup in a
-    // CommandLineArgumentProvider SAM also tries to capture the build-script class,
-    // which the cache can't serialize. Opting this task out is honest about its nature
-    // and simpler than the abstract-class workaround.
-    notCompatibleWithConfigurationCache("attachSpike reads -Ppid=<pid> dynamically per invocation.")
-
-    classpath = sourceSets["main"].runtimeClasspath
+    classpath = spikeSourceSet.runtimeClasspath
     mainClass.set("dev.sebastiano.spectre.agent.spike.AttachSpike")
-
-    doFirst {
-        val pid =
-            providers.gradleProperty("pid").orNull
-                ?: throw GradleException(
-                    "attachSpike requires -Ppid=<target JVM pid>. Find the target via " +
-                        "`jps` (look for the main class you want to attach to)."
-                )
-        args = listOf(pid, runtimeJarFile.get().asFile.absolutePath)
-    }
+    argumentProviders.add(
+        objects.newInstance<AttachSpikeArgumentProvider>().apply {
+            pid.set(providers.gradleProperty("pid"))
+            runtimeJar.set(runtimeJarFile)
+        }
+    )
 }
