@@ -41,8 +41,8 @@ Five jobs run on tag push:
 5. **`publish`** (Linux runner, depends on the gate and all helper jobs) — downloads the
    helper artefacts, runs `:verifyMavenLocalPublication` to assert the publication shape, then
    runs `publishToMavenCentral` against the [Sonatype Central Portal][central-portal].
-   Finally creates a draft GitHub release with the recording API jar and platform helper jars
-   attached.
+   Finally creates a draft GitHub release. Maven Central is the canonical artifact host; do
+   not attach a partial jar set to the GitHub release.
 
 [ci-yml]: https://github.com/rock3r/spectre/blob/main/.github/workflows/ci.yml
 [central-portal]: https://central.sonatype.com/
@@ -72,6 +72,8 @@ Manual promotion checklist:
 - Run the Central Portal deployment checker:
   `scripts/central_portal_check.py validate --deployment-id <id> --version <version>`.
 - Promote the Central staging deployment from the Central Portal UI.
+- Confirm the GitHub release notes link to Maven Central for artifacts instead
+  of attaching a partial jar set.
 - Undraft the GitHub release with `gh release edit <tag> --draft=false`.
 
 ## Required secrets

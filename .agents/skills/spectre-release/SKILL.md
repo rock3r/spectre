@@ -66,4 +66,6 @@ After Central reports `PUBLISHED`, undraft the GitHub release:
 gh release edit v<version> --draft=false
 ```
 
-Then verify the public Maven Central coordinates resolve from a clean consumer project.
+GitHub releases should point readers to Maven Central for artifacts instead of attaching
+a partial jar set. Then verify the public Maven Central coordinates resolve from a clean
+consumer project.

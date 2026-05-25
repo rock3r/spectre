@@ -37,10 +37,9 @@ name: Release
 #                            `-PprebuiltLinuxHelpersDir=...` and
 #                            `-PprebuiltWindowsHelpersDir=...`, runs the publication-shape
 #                            verification, then `publish` against the Sonatype Central
-#                            Portal staging endpoint. Finally creates the GitHub release
-#                            (draft, with the recording API jar plus platform helper jars
-#                            attached) so the maintainer can sanity-check Central + GitHub
-#                            side-by-side before promoting.
+#                            Portal staging endpoint. Finally creates the draft GitHub
+#                            release notes so the maintainer can sanity-check Central +
+#                            GitHub side-by-side before promoting.
 #
 # Secrets used (all from repo settings):
 #   APPLE_DEVELOPER_ID_P12 / _PASSWORD                  → keychain import (mac-helper)
@@ -427,24 +426,9 @@ jobs:
             -PprebuiltLinuxHelpersDir="$RUNNER_TEMP/linux-helpers" \
             -PprebuiltWindowsHelpersDir="$RUNNER_TEMP/windows-helper"
 
-      - name: Stage published recording jars for GitHub release attachment
-        # mavenLocal already has the artefact from the earlier verify step. Pulling from
-        # there avoids the publish step needing a second jar build.
-        run: |
-          set -euo pipefail
-          RELEASE_ASSETS="$RUNNER_TEMP/release-assets"
-          mkdir -p "$RELEASE_ASSETS"
-          for artifact in spectre-recording spectre-recording-macos spectre-recording-linux spectre-recording-windows; do
-            jar="$HOME/.m2/repository/dev/sebastiano/spectre/$artifact/$RELEASE_VERSION/$artifact-$RELEASE_VERSION.jar"
-            test -f "$jar"
-            cp "$jar" "$RELEASE_ASSETS/"
-          done
-          echo "GH_RELEASE_ASSETS=$RELEASE_ASSETS/*.jar" >> "$GITHUB_ENV"
-
       - name: Create / update draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view "$GITHUB_REF_NAME" \
             || gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME"
-          gh release upload "$GITHUB_REF_NAME" $GH_RELEASE_ASSETS --clobber
