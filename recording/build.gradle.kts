@@ -97,7 +97,9 @@ val buildScreenCaptureKitHelper by
         group = "build"
         onlyIf { OperatingSystem.current().isMacOsX }
         workingDir = swiftHelperSource.asFile
-        commandLine("swift", "build", "-c", "release")
+        // --disable-sandbox prevents SwiftPM's internal `sandbox-exec` manifest compilation
+        // from failing when the host process runs inside a macOS seatbelt sandbox.
+        commandLine("swift", "build", "-c", "release", "--disable-sandbox")
         inputs.dir(swiftHelperSource.dir("Sources"))
         inputs.file(swiftHelperSource.file("Package.swift"))
         outputs.file(swiftHelperBinary)
@@ -136,7 +138,7 @@ val perArchSwiftBuildTasks = universalArchitectures.map { arch ->
         group = "build"
         onlyIf { OperatingSystem.current().isMacOsX }
         workingDir = swiftHelperSource.asFile
-        commandLine("swift", "build", "-c", "release", "--triple", triple)
+        commandLine("swift", "build", "-c", "release", "--disable-sandbox", "--triple", triple)
         inputs.dir(swiftHelperSource.dir("Sources"))
         inputs.file(swiftHelperSource.file("Package.swift"))
         outputs.file(perArchOutput)
