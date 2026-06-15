@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.recording.screencapturekit
 
+import dev.sebastiano.spectre.recording.HelperExtractionPaths
 import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.Path
@@ -19,9 +20,8 @@ import java.nio.file.attribute.PosixFilePermissions
  *    [targetDirProvider]'s directory, and chmods it executable.
  * 3. Subsequent calls return the cached path without re-extracting (the in-memory cache is
  *    per-instance; create one extractor per recorder process and reuse).
- * 4. Caller is responsible for the lifetime of the file. When [HELPER_DIR_PROPERTY] is not set the
- *    default stashes it under `java.io.tmpdir/spectre-screencapture-<random>/` so a JVM exit cleans
- *    it up eventually but doesn't pin live recording.
+ * 4. Caller is responsible for the lifetime of the file. By default the helper lands in Spectre's
+ *    stable per-user helper directory so macOS TCC can keep recognising the same executable path.
  *
  * All four seams (env lookup, system-property lookup, resource locator, target dir) are injectable
  * so unit tests can drive the extractor with arbitrary bytes against arbitrary directories without
@@ -34,19 +34,10 @@ import java.nio.file.attribute.PosixFilePermissions
  * binaries by their path on disk, so the permission grant is lost every time the binary lands in a
  * new random temp directory.
  *
- * To allow a persistent TCC grant, set [HELPER_DIR_PROPERTY] to a stable directory before the test
- * JVM starts. From Gradle:
- * ```kotlin
- * systemProperty(
- *     "spectre.recording.screencapturekit.helperDir",
- *     layout.buildDirectory.dir("spectre-helper").get().asFile.absolutePath,
- * )
- * ```
- *
- * Then grant Screen Recording to `<helperDir>/spectre-screencapture` once in System Settings. The
- * binary is re-extracted to the same path on every subsequent run, so TCC continues to recognise
- * it. A `./gradlew clean` removes the file, but the TCC grant survives and takes effect again the
- * next time the binary is extracted to the same path.
+ * The default extraction directory is stable across runs. If you want to control the exact path,
+ * set [HELPER_DIR_PROPERTY] before the test JVM starts. Then grant Screen Recording to
+ * `<helperDir>/spectre-screencapture` once in System Settings. The binary is re-extracted to the
+ * same path on every subsequent run, so TCC continues to recognise it.
  */
 internal class HelperBinaryExtractor(
     private val envLookup: (String) -> String? = System::getenv,
@@ -57,6 +48,7 @@ internal class HelperBinaryExtractor(
 
     private var cached: Path? = null
 
+    @Synchronized
     fun extract(): Path {
         cached?.let {
             return it
@@ -86,10 +78,9 @@ internal class HelperBinaryExtractor(
                         "via the assembleScreenCaptureKitHelper task — verify the module was " +
                         "built on macOS with the Swift toolchain available."
                 )
-        // Stable-dir system property: extract to a caller-controlled directory instead of a
-        // fresh temp dir. When set the binary lands at the same path on every JVM launch, so
-        // macOS TCC can persistently identify it. Without it the default produces a new random
-        // temp dir each run and TCC grants evaporate. See class-level KDoc for setup details.
+        // Stable-dir system property: extract to a caller-controlled directory instead of the
+        // stable default. In both cases the binary lands at the same path on every JVM launch, so
+        // macOS TCC can persistently identify it. See class-level KDoc for setup details.
         val dir =
             sysPropLookup(HELPER_DIR_PROPERTY)?.takeIf { it.isNotBlank() }?.let { Path.of(it) }
                 ?: targetDirProvider()
@@ -132,10 +123,8 @@ internal class HelperBinaryExtractor(
         const val OVERRIDE_ENV: String = "SPECTRE_SCREENCAPTURE_HELPER"
 
         /**
-         * JVM system property that pins the extraction directory to a stable, persistent path
-         * instead of the default random temp directory. Required for macOS TCC Screen Recording
-         * grants to survive across JVM launches — see the class-level KDoc for the full rationale
-         * and Gradle wiring instructions.
+         * JVM system property that overrides the default stable extraction directory. Useful when a
+         * project wants the helper at a repo- or build-specific path for macOS TCC grants.
          */
         const val HELPER_DIR_PROPERTY: String = "spectre.recording.screencapturekit.helperDir"
 
@@ -144,6 +133,6 @@ internal class HelperBinaryExtractor(
             HelperBinaryExtractor::class.java.classLoader.getResourceAsStream(RESOURCE_PATH)
 
         @JvmStatic
-        fun defaultTargetDir(): Path = Files.createTempDirectory("spectre-screencapture-")
+        fun defaultTargetDir(): Path = HelperExtractionPaths.defaultHelperDir(BINARY_NAME)
     }
 }

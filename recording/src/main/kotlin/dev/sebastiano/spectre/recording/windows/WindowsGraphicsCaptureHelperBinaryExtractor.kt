@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.recording.windows
 
+import dev.sebastiano.spectre.recording.HelperExtractionPaths
 import java.io.InputStream
 import java.net.JarURLConnection
 import java.nio.file.Files
@@ -56,7 +57,8 @@ internal class WindowsGraphicsCaptureHelperBinaryExtractor(
         const val LEGACY_SCREENSHOT_HELPER_ENV: String = "SPECTRE_WINDOWS_SCREENSHOT_HELPER"
 
         @JvmStatic
-        fun defaultTargetDir(): Path = Files.createTempDirectory("spectre-window-capture-")
+        fun defaultTargetDir(): Path =
+            HelperExtractionPaths.defaultHelperDir("spectre-window-capture")
 
         fun resourcePath(osArch: String): String =
             "native/windows/${windowsArch(osArch)}/$BINARY_NAME"

@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.recording.portal
 
+import dev.sebastiano.spectre.recording.HelperExtractionPaths
 import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.Path
@@ -105,7 +106,7 @@ internal class WaylandHelperBinaryExtractor(
             WaylandHelperBinaryExtractor::class.java.classLoader.getResourceAsStream(resource)
 
         @JvmStatic
-        fun defaultTargetDir(): Path = Files.createTempDirectory("spectre-wayland-helper-")
+        fun defaultTargetDir(): Path = HelperExtractionPaths.defaultHelperDir(BINARY_NAME)
 
         /**
          * Map JVM's `os.arch` to the directory name we ship the helper under. The values mirror
