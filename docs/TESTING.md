@@ -56,6 +56,8 @@ Some concerns still need live manual verification even with good automated tests
 - popup discovery across different layer modes
 - Robot focus behaviour and click targeting
 - recording permission and capture behaviour on macOS
+- AWT/Compose Desktop painting and `Robot` capture when the test JVM runs under a macOS
+  `sandbox-exec` profile; see [Running on CI](guide/ci.md#macos-sandbox-exec-runners)
 
 Use `sample-desktop` to make those checks reproducible. If a manual validation step is required
 for a change, note it explicitly in the final report.

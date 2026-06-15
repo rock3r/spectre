@@ -34,9 +34,9 @@ Notes:
 ## Style Choices
 
 - `ktfmt` uses KotlinLang style in this repo.
-- Detekt follows the same 2.x line as Compose Pi and builds on the default rule set using a
-  Pi-inspired profile tuned for Compose/Desktop work: 120-char lines, a looser
-  return-count/complexity envelope, and Compose-friendly naming exceptions.
+- Detekt follows the 2.x line and builds on the default rule set using a profile tuned for
+  Compose/Desktop work: 120-char lines, a looser return-count/complexity envelope, and
+  Compose-friendly naming exceptions.
 - Compose-bearing modules also load the upstream Compose Rules Detekt plugin. We keep its defaults
   unless the repo develops a clear recurring need for local overrides.
 - Generated and `build/` outputs are excluded from both Detekt and ktfmt tasks.

@@ -1,4 +1,4 @@
-// swift-tools-version:5.9
+// swift-tools-version:6.0
 import PackageDescription
 
 // Out-of-process helper that Spectre forks per recording. The JVM side
@@ -16,17 +16,20 @@ let package = Package(
     targets: [
         .target(
             name: "SpectreScreenCaptureCore",
-            path: "Sources/SpectreScreenCaptureCore"
+            path: "Sources/SpectreScreenCaptureCore",
+            swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(
             name: "SpectreScreenCapture",
             dependencies: ["SpectreScreenCaptureCore"],
-            path: "Sources/SpectreScreenCapture"
+            path: "Sources/SpectreScreenCapture",
+            swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(
             name: "SpectreScreenCaptureCoreTests",
             dependencies: ["SpectreScreenCaptureCore"],
-            path: "Tests/SpectreScreenCaptureCoreTests"
+            path: "Tests/SpectreScreenCaptureCoreTests",
+            swiftSettings: [.swiftLanguageMode(.v5)]
         )
     ]
 )

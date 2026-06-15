@@ -204,6 +204,40 @@ ls "$XDG_RUNTIME_DIR" | grep wayland   # should be empty
 
 See [Recording limitations](../RECORDING-LIMITATIONS.md) for the full Wayland story.
 
+## "macOS `sandbox-exec` blocks my Compose Desktop/Spectre test"
+
+A macOS process sandbox can block AWT, Swing, Compose Desktop, and `java.awt.Robot`
+even when the JVM is not headless. If your Gradle test runs inside `sandbox-exec`,
+the sandbox profile must allow the desktop Mach services documented in
+[Running on CI](ci.md#macos-sandbox-exec-runners).
+
+| Symptom                                                                      | Likely cause                                                 | What to check                                                                                                       |
+|------------------------------------------------------------------------------|--------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------|
+| `Connection Invalid error for service com.apple.hiservices-xpcservice`       | Missing HiServices lookup                                    | Allow `com.apple.hiservices-xpcservice`.                                                                            |
+| `Frame.isVisible()`/`Frame.isShowing()` are `true`, but no window appears    | Missing render/window-manager services                       | Allow `com.apple.CARenderServer` and `com.apple.windowmanager.server`; also verify `com.apple.windowserver.active`. |
+| Pixel probes sample the desktop background instead of the test window colour | The window exists in Java state but macOS is not painting it | Check `com.apple.CARenderServer` first, then window-manager logs.                                                   |
+| `Robot.createScreenCapture(...)` hangs after the `Robot` is created          | Missing capture service or TCC grant                         | Grant Screen Recording to the launching app, restart that app, and allow `com.apple.replayd`.                       |
+| `log: Cannot run while sandboxed`                                            | `/usr/bin/log` is itself blocked by `sandbox-exec`           | Use a narrow read-only macOS log diagnostic lane outside the sandbox.                                               |
+| Spectre times out waiting for/capturing a window                             | Stale Gradle daemon or missing UI Mach services              | Re-run with `./gradlew --no-daemon spectreTest --tests '*SpectreSmokeTest'` and inspect sandbox denies.             |
+
+Screen Recording belongs to the app that launched the JVM, not to `java` itself.
+If you grant permission to Terminal.app, iTerm2, IntelliJ IDEA, or another launcher,
+fully quit and restart that app before retrying. TCC permission alone is not enough
+inside a sandbox: `Robot` capture can still hang until `com.apple.replayd` is
+allowed.
+
+For missing-service diagnosis, inspect recent macOS logs from outside the sandbox:
+
+```shell
+/usr/bin/log show --last 3m --style compact --predicate 'process == "java" OR eventMessage CONTAINS "Sandbox:" OR eventMessage CONTAINS "ClientCallsAuxiliary" OR eventMessage CONTAINS "deny"'
+/usr/bin/log show --last 2m --style compact --predicate 'processID == <PID> OR eventMessage CONTAINS "<PID>"'
+```
+
+Look for patterns such as `Sandbox: java(...) deny(1) mach-lookup`,
+`Service "com.apple.CARenderServer" failed bootstrap look up`,
+`WMClientWindowManager: Invalid connection`, `ScreenCaptureKit`, `ReplayKit`,
+`com.apple.replayd`, and `kTCCServiceScreenCapture`.
+
 ## "macOS recording errors out or produces no file"
 
 - **Screen Recording permission.** macOS gates screen capture behind an explicit
