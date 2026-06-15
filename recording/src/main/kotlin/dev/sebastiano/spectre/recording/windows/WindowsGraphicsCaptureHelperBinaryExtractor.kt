@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.recording.windows
 
 import dev.sebastiano.spectre.recording.HelperExtractionPaths
+import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.net.JarURLConnection
 import java.nio.file.Files
@@ -32,17 +33,22 @@ internal class WindowsGraphicsCaptureHelperBinaryExtractor(
         cached?.let {
             return it
         }
+        val overrideBytes = resourceLocator()?.use { it.readBytes() }
         val helperBytes =
-            resourceLocator()?.use { it.readBytes() }
+            overrideBytes
                 ?: bundledHelperBytes(osArch())
                 ?: throw WindowsGraphicsCaptureHelperNotBundledException(
                     "Bundled Windows Graphics Capture helper not found at classpath resource " +
                         "'${resourcePath(osArch())}'. Add spectre-recording-windows as a " +
                         "runtime dependency when using native Windows capture."
                 )
+        val fingerprint =
+            overrideBytes?.let { HelperExtractionPaths.helperFingerprint(it) }
+                ?: bundledHelperDirectoryFingerprint(osArch())
+                ?: HelperExtractionPaths.helperFingerprint(helperBytes)
         val target =
             targetDirProvider()
-                .resolve(HelperExtractionPaths.helperFingerprint(helperBytes))
+                .resolve(fingerprint)
                 .resolve(windowsArch(osArch()))
                 .resolve(BINARY_NAME)
         val extracted =
@@ -87,6 +93,43 @@ internal class WindowsGraphicsCaptureHelperBinaryExtractor(
         fun bundledHelperBytes(osArch: String): ByteArray? {
             val loader = WindowsGraphicsCaptureHelperBinaryExtractor::class.java.classLoader
             return loader.getResourceAsStream(resourcePath(osArch))?.use { it.readBytes() }
+        }
+
+        fun bundledHelperDirectoryFingerprint(osArch: String): String? {
+            val prefix = "native/windows/${windowsArch(osArch)}/"
+            val loader = WindowsGraphicsCaptureHelperBinaryExtractor::class.java.classLoader
+            val exeUrl = loader.getResource("$prefix$BINARY_NAME") ?: return null
+            val bytes = ByteArrayOutputStream()
+            when (exeUrl.protocol) {
+                "file" -> {
+                    val sourceDir = Path.of(exeUrl.toURI()).parent
+                    Files.list(sourceDir).use { entries ->
+                        entries
+                            .filter { Files.isRegularFile(it) }
+                            .sorted(Comparator.comparing { it.fileName.toString() })
+                            .forEach { source ->
+                                bytes.write(source.fileName.toString().toByteArray(Charsets.UTF_8))
+                                bytes.write(Files.readAllBytes(source))
+                            }
+                    }
+                }
+                "jar" -> {
+                    val connection = exeUrl.openConnection() as JarURLConnection
+                    connection.jarFile
+                        .entries()
+                        .asSequence()
+                        .filter { !it.isDirectory && it.name.startsWith(prefix) }
+                        .sortedBy { it.name }
+                        .forEach { entry ->
+                            bytes.write(entry.name.removePrefix(prefix).toByteArray(Charsets.UTF_8))
+                            connection.jarFile.getInputStream(entry).use {
+                                bytes.write(it.readBytes())
+                            }
+                        }
+                }
+                else -> bytes.write(bundledHelperBytes(osArch) ?: return null)
+            }
+            return HelperExtractionPaths.helperFingerprint(bytes.toByteArray())
         }
 
         fun copyBundledHelperDirectory(
