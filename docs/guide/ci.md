@@ -45,6 +45,93 @@ Synthetic typing posts key events into the window hierarchy and does not require
 the foreground Dock application. Clipboard-backed `pasteText(...)` still needs
 `apple.awt.UIElement=false`, because that path goes through macOS clipboard services.
 
+## macOS `sandbox-exec` runners
+
+If your local agent, test harness, or CI wrapper launches Gradle inside a macOS
+`sandbox-exec` profile, the sandbox must allow the desktop services used by AWT,
+Swing, Compose Desktop, and `java.awt.Robot`. This is separate from JVM headless
+mode: `-Djava.awt.headless=false` is still required, but it does not grant access
+to the WindowServer, Core Animation, input, or screen-capture services.
+
+A working profile needs Mach lookup access to these services:
+
+| Service                            | Why Spectre/Compose Desktop needs it                                                                                                                                      |
+|------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `com.apple.hiservices-xpcservice`  | AWT/Compose Desktop startup. Missing access commonly logs `Connection Invalid error for service com.apple.hiservices-xpcservice`.                                         |
+| `com.apple.windowserver.active`    | WindowServer integration for desktop windows.                                                                                                                             |
+| `com.apple.windowmanager.server`   | Window-manager transactions. Without it, AppKit can log `WMClientWindowManager: Invalid connection` and `SLSTransaction commit with no context`.                          |
+| `com.apple.CARenderServer`         | Actual Core Animation painting. Without it, `Frame.isVisible()`/`Frame.isShowing()` can both be `true` while no window appears on screen.                                 |
+| `com.apple.tsm.uiserver`           | Text Services Manager and input plumbing.                                                                                                                                 |
+| `com.apple.carboncore.csnameddata` | Carbon named data lookup used by the desktop stack.                                                                                                                       |
+| `com.apple.dock.server`            | Dock/window integration.                                                                                                                                                  |
+| `com.apple.dock.fullscreen`        | Full-screen/Dock integration used by AppKit.                                                                                                                              |
+| `com.apple.iohideventsystem`       | Real `Robot` input paths. Synthetic Spectre input does not need OS-level input delivery, but real `RobotDriver()` does.                                                   |
+| `com.apple.tccd.system`            | TCC checks, including screen-capture and accessibility-style checks.                                                                                                      |
+| `com.apple.replayd`                | `Robot.createScreenCapture(...)`, ScreenCaptureKit, and ReplayKit capture plumbing. Without it, a capture can hang after the `Robot` is created.                          |
+| `com.apple.logd.events`            | Log/event integration observed on the Robot/capture path. Treat `com.apple.diagnosticd` as noisy rather than a baseline requirement unless your harness proves otherwise. |
+
+Think of the requirements in layers:
+
+- **Window creation** needs HiServices, WindowServer/window-manager, Text Services,
+  Carbon named data, and Dock integration.
+- **Actual painting** needs `com.apple.CARenderServer`. Java visibility state is not
+  proof that macOS has painted the window.
+- **Real `Robot` input and screen capture** need the input/TCC/capture services,
+  especially `com.apple.iohideventsystem`, `com.apple.tccd.system`, and
+  `com.apple.replayd`.
+- **Synthetic Spectre input** avoids OS-level mouse/keyboard delivery, but the JVM
+  still needs enough AWT/Compose Desktop access to create and paint the target
+  window. Screenshots and `waitForVisualIdle()` still go through capture paths.
+
+macOS Screen Recording permission is also required for capture. Grant it to the
+app that launched the JVM — Terminal.app, iTerm2, IntelliJ IDEA, or your runner app —
+then fully quit and restart that app. TCC can be granted correctly and capture can
+still hang if the sandbox profile does not allow `com.apple.replayd`.
+
+When validating sandbox profile changes, avoid stale Gradle daemons:
+
+```shell
+./gradlew --no-daemon spectreTest --tests '*SpectreSmokeTest'
+```
+
+A normal `./gradlew spectreTest ...` may reuse a daemon launched under an older
+sandbox profile. Use `./gradlew --stop` only deliberately: if your desktop app or
+runner itself was launched via Gradle, stopping all Gradle daemons can kill that
+parent process too.
+
+For painting/capture debugging, a useful probe is a small always-on-top Swing frame
+filled with a known colour, placed at a known location, followed by
+`Robot.createScreenCapture(Rectangle(x, y, 1, 1))`. If `Frame.isVisible()` and
+`Frame.isShowing()` are `true` but the sampled pixel is the desktop background,
+look at `com.apple.CARenderServer` and `com.apple.windowmanager.server`. If the
+capture hangs after creating the `Robot`, look at Screen Recording permission and
+`com.apple.replayd`.
+
+The macOS `log` tool cannot run inside `sandbox-exec`:
+
+```text
+log: Cannot run while sandboxed
+```
+
+If your runner enforces `sandbox-exec`, provide a narrow diagnostic lane outside the
+sandbox for read-only commands such as `log show ...`, `/usr/bin/log show ...`,
+`log stream ...`, and `/usr/bin/log stream ...`. Keep it read-only: reject shell
+metacharacters and mutating subcommands such as `log collect` and `log erase`. If
+your policy logger supports reason codes, label this escape clearly, e.g.,
+`macos-log-diagnostic-lane`.
+
+Useful diagnostics:
+
+```shell
+/usr/bin/log show --last 3m --style compact --predicate 'process == "java" OR eventMessage CONTAINS "Sandbox:" OR eventMessage CONTAINS "ClientCallsAuxiliary" OR eventMessage CONTAINS "deny"'
+/usr/bin/log show --last 2m --style compact --predicate 'processID == <PID> OR eventMessage CONTAINS "<PID>"'
+```
+
+Useful patterns to search for include `Sandbox: java(...) deny(1) mach-lookup`,
+`Service "com.apple.CARenderServer" failed bootstrap look up`,
+`WMClientWindowManager: Invalid connection`, `ScreenCaptureKit`, `ReplayKit`,
+`com.apple.replayd`, and `kTCCServiceScreenCapture`.
+
 ## Recording tests
 
 Keep recording tests tagged separately from normal UI tests. Linux CI can validate Xorg / `xvfb`
