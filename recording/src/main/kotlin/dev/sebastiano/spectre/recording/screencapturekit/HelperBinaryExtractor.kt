@@ -69,35 +69,37 @@ internal class HelperBinaryExtractor(
                 return path
             }
 
+        val helperBytes =
+            resourceLocator()?.use { it.readBytes() }
+                ?: throw HelperNotBundledException(
+                    "Bundled helper binary not found at classpath resource '$RESOURCE_PATH'. " +
+                        "The recording module's macOS build stages 'spectre-screencapture' " +
+                        "there via the assembleScreenCaptureKitHelper task — verify the module " +
+                        "was built on macOS with the Swift toolchain available."
+                )
         // Stable-dir system property: extract to a caller-controlled directory instead of the
-        // stable default. In both cases the binary lands at the same path on every JVM launch, so
+        // fingerprinted stable default. In both cases the binary lands at a repeatable path so
         // macOS TCC can persistently identify it. See class-level KDoc for setup details.
-        val dir =
+        val propertyDir =
             sysPropLookup(HELPER_DIR_PROPERTY)?.takeIf { it.isNotBlank() }?.let { Path.of(it) }
-                ?: targetDirProvider()
+        val dir =
+            propertyDir
+                ?: targetDirProvider().resolve(HelperExtractionPaths.helperFingerprint(helperBytes))
         val target = dir.resolve(BINARY_NAME)
         val extracted =
             HelperExtractionPaths.withExtractionLock(target.parent) {
-                if (Files.exists(target)) {
-                    markExecutable(target)
-                } else {
-                    val source =
-                        resourceLocator()
-                            ?: throw HelperNotBundledException(
-                                "Bundled helper binary not found at classpath resource " +
-                                    "'$RESOURCE_PATH'. The recording module's macOS build " +
-                                    "stages 'spectre-screencapture' there via the " +
-                                    "assembleScreenCaptureKitHelper task — verify the module " +
-                                    "was built on macOS with the Swift toolchain available."
-                            )
-                    source.use { stream -> Files.copy(stream, target) }
-                    markExecutable(target)
+                if (!Files.exists(target) || !target.readBytesContentEquals(helperBytes)) {
+                    Files.write(target, helperBytes)
                 }
+                markExecutable(target)
                 target
             }
         cached = extracted
         return extracted
     }
+
+    private fun Path.readBytesContentEquals(expected: ByteArray): Boolean =
+        Files.readAllBytes(this).contentEquals(expected)
 
     private fun markExecutable(path: Path) {
         // POSIX path: explicit mode bits so we get rwxr-xr-x rather than relying on the JVM's

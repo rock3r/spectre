@@ -32,30 +32,33 @@ internal class WindowsGraphicsCaptureHelperBinaryExtractor(
         cached?.let {
             return it
         }
-        val target = targetDirProvider().resolve(windowsArch(osArch())).resolve(BINARY_NAME)
+        val helperBytes =
+            resourceLocator()?.use { it.readBytes() }
+                ?: bundledHelperBytes(osArch())
+                ?: throw WindowsGraphicsCaptureHelperNotBundledException(
+                    "Bundled Windows Graphics Capture helper not found at classpath resource " +
+                        "'${resourcePath(osArch())}'. Add spectre-recording-windows as a " +
+                        "runtime dependency when using native Windows capture."
+                )
+        val target =
+            targetDirProvider()
+                .resolve(HelperExtractionPaths.helperFingerprint(helperBytes))
+                .resolve(windowsArch(osArch()))
+                .resolve(BINARY_NAME)
         val extracted =
             HelperExtractionPaths.withExtractionLock(target.parent) {
-                if (!Files.exists(target)) {
-                    val source = resourceLocator()
-                    if (source != null) {
-                        source.use { stream -> Files.copy(stream, target) }
-                    } else {
-                        copyBundledHelperDirectory(target.parent, osArch())
-                        if (!Files.exists(target)) {
-                            throw WindowsGraphicsCaptureHelperNotBundledException(
-                                "Bundled Windows Graphics Capture helper not found at classpath " +
-                                    "resource '${resourcePath(osArch())}'. Add " +
-                                    "spectre-recording-windows as a runtime dependency when " +
-                                    "using native Windows capture."
-                            )
-                        }
-                    }
+                if (!Files.exists(target) || !target.readBytesContentEquals(helperBytes)) {
+                    Files.write(target, helperBytes)
                 }
+                copyBundledHelperDirectory(target.parent, osArch(), skipExisting = true)
                 target
             }
         cached = extracted
         return extracted
     }
+
+    private fun Path.readBytesContentEquals(expected: ByteArray): Boolean =
+        Files.readAllBytes(this).contentEquals(expected)
 
     private companion object {
         const val BINARY_NAME: String = "spectre-window-capture.exe"
@@ -81,7 +84,16 @@ internal class WindowsGraphicsCaptureHelperBinaryExtractor(
                     )
             }
 
-        fun copyBundledHelperDirectory(targetDir: Path, osArch: String) {
+        fun bundledHelperBytes(osArch: String): ByteArray? {
+            val loader = WindowsGraphicsCaptureHelperBinaryExtractor::class.java.classLoader
+            return loader.getResourceAsStream(resourcePath(osArch))?.use { it.readBytes() }
+        }
+
+        fun copyBundledHelperDirectory(
+            targetDir: Path,
+            osArch: String,
+            skipExisting: Boolean = false,
+        ) {
             val prefix = "native/windows/${windowsArch(osArch)}/"
             val loader = WindowsGraphicsCaptureHelperBinaryExtractor::class.java.classLoader
             val exeUrl = loader.getResource("$prefix$BINARY_NAME") ?: return
@@ -92,30 +104,33 @@ internal class WindowsGraphicsCaptureHelperBinaryExtractor(
                         entries
                             .filter { Files.isRegularFile(it) }
                             .forEach { source ->
-                                Files.copy(
-                                    source,
-                                    targetDir.resolve(source.fileName.toString()),
-                                    StandardCopyOption.REPLACE_EXISTING,
-                                )
+                                val target = targetDir.resolve(source.fileName.toString())
+                                if (!skipExisting || !Files.exists(target)) {
+                                    Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING)
+                                }
                             }
                     }
                 }
                 "jar" -> {
                     val connection = exeUrl.openConnection() as JarURLConnection
-                    copyJarPrefix(connection.jarFile, prefix, targetDir)
+                    copyJarPrefix(connection.jarFile, prefix, targetDir, skipExisting)
                 }
                 else ->
                     loader.getResourceAsStream("$prefix$BINARY_NAME")?.use { stream ->
-                        Files.copy(
-                            stream,
-                            targetDir.resolve(BINARY_NAME),
-                            StandardCopyOption.REPLACE_EXISTING,
-                        )
+                        val target = targetDir.resolve(BINARY_NAME)
+                        if (!skipExisting || !Files.exists(target)) {
+                            Files.copy(stream, target, StandardCopyOption.REPLACE_EXISTING)
+                        }
                     }
             }
         }
 
-        private fun copyJarPrefix(jar: JarFile, prefix: String, targetDir: Path) {
+        private fun copyJarPrefix(
+            jar: JarFile,
+            prefix: String,
+            targetDir: Path,
+            skipExisting: Boolean,
+        ) {
             jar.entries()
                 .asSequence()
                 .filter { !it.isDirectory && it.name.startsWith(prefix) }
@@ -123,11 +138,10 @@ internal class WindowsGraphicsCaptureHelperBinaryExtractor(
                     val relative = entry.name.removePrefix(prefix)
                     if (!relative.contains('/')) {
                         jar.getInputStream(entry).use { stream ->
-                            Files.copy(
-                                stream,
-                                targetDir.resolve(relative),
-                                StandardCopyOption.REPLACE_EXISTING,
-                            )
+                            val target = targetDir.resolve(relative)
+                            if (!skipExisting || !Files.exists(target)) {
+                                Files.copy(stream, target, StandardCopyOption.REPLACE_EXISTING)
+                            }
                         }
                     }
                 }

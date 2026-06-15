@@ -330,12 +330,13 @@ Spectre extracts the ScreenCaptureKit helper from `spectre-recording-macos` befo
 it. By default, it uses a stable per-user path:
 
 ```text
-~/Library/Application Support/spectre/helpers/spectre-screencapture/spectre-screencapture
+~/Library/Application Support/spectre/helpers/spectre-screencapture/<helper-hash>/spectre-screencapture
 ```
 
-Grant Screen Recording to that helper once in System Settings. The helper name appears twice
-because Spectre keeps each native helper in its own subdirectory. Later runs re-extract the helper
-to the same path, so macOS continues to recognise it.
+Grant Screen Recording to that helper once in System Settings. Spectre includes a short helper
+content hash in the path, so native-helper fixes in future Spectre versions get a fresh extracted
+binary instead of silently reusing stale bytes. Later runs of the same helper binary re-extract to
+the same path, so macOS continues to recognise it.
 
 If you prefer a project-specific helper location, set the extraction directory before the test JVM
 starts:

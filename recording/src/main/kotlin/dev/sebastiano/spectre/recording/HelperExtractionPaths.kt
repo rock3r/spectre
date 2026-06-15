@@ -4,6 +4,7 @@ import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
+import java.security.MessageDigest
 
 internal object HelperExtractionPaths {
     fun defaultHelperDir(
@@ -13,6 +14,15 @@ internal object HelperExtractionPaths {
         getenv: (String) -> String? = System::getenv,
     ): Path =
         stableBaseDir(osName = osName, userHome = userHome, getenv = getenv).resolve(helperName)
+
+    fun helperFingerprint(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString(
+            separator = "",
+            limit = FINGERPRINT_BYTE_COUNT,
+            truncated = "",
+        ) {
+            (it.toInt() and BYTE_MASK).toString(HEX_RADIX).padStart(HEX_BYTE_WIDTH, '0')
+        }
 
     private fun stableBaseDir(osName: String, userHome: String, getenv: (String) -> String?): Path {
         val normalizedOs = osName.lowercase()
@@ -49,4 +59,8 @@ internal object HelperExtractionPaths {
     }
 
     private const val LOCK_FILE_NAME: String = ".extract.lock"
+    private const val FINGERPRINT_BYTE_COUNT: Int = 6
+    private const val BYTE_MASK: Int = 0xff
+    private const val HEX_RADIX: Int = 16
+    private const val HEX_BYTE_WIDTH: Int = 2
 }
