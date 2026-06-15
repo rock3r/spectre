@@ -58,7 +58,14 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
 }
 
-tasks.withType<Test>().configureEach { useJUnitPlatform() }
+val useStubMacHelperForTesting = providers.gradleProperty("stubMacHelperForTesting").isPresent
+
+tasks.withType<Test>().configureEach {
+    useJUnitPlatform()
+    if (useStubMacHelperForTesting) {
+        systemProperty("spectre.test.stubMacHelperForTesting", "true")
+    }
+}
 
 // --- ScreenCaptureKit helper binary (issue #18) ----------------------------------------------
 //
@@ -402,7 +409,6 @@ val prebuiltMacHelperPath = providers.gradleProperty("prebuiltMacHelperPath")
 val prebuiltLinuxHelpersDir = providers.gradleProperty("prebuiltLinuxHelpersDir")
 val prebuiltWindowsHelperPath = providers.gradleProperty("prebuiltWindowsHelperPath")
 val prebuiltWindowsHelpersDir = providers.gradleProperty("prebuiltWindowsHelpersDir")
-val useStubMacHelperForTesting = providers.gradleProperty("stubMacHelperForTesting").isPresent
 
 // --- Windows .NET Graphics Capture helper --------------------------------------------------
 //
@@ -738,9 +744,9 @@ val useAllLinuxArches = providers.gradleProperty("allLinuxArches").isPresent
 // becomes the prebuilt staging task instead of the host-built one — so a Linux publish
 // runner can produce a recording jar bundling the macOS helper without a Swift toolchain.
 // `prebuiltMacHelperPath`, `prebuiltLinuxHelpersDir`, and `useStubMacHelperForTesting` are
-// declared earlier in the file (right after the universal-helper switches) so the host-
-// platform `processResources` hookups can gate themselves on them — see the comment there
-// for why the prebuilt path is mutually exclusive with the host build.
+// declared earlier in the file so the test and host-platform `processResources` hookups can
+// gate themselves on them — see the comment there for why the prebuilt path is mutually
+// exclusive with the host build.
 
 // `rootProject` is not config-cache-serialisable, so resolve to a plain File at config time
 // and capture only that into the `from(...)` provider mapping.
