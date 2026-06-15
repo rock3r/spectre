@@ -36,6 +36,7 @@ class HelperBinaryExtractorTest {
             byteArrayOf(0x7F, 0x45, 0x4C, 0x46, 0x02, 0x01, 0x01, 0x00) // ELF header bytes
         val extractor =
             HelperBinaryExtractor(
+                envLookup = { null },
                 resourceLocator = { ByteArrayInputStream(payload) },
                 targetDirProvider = { tempRoot },
             )
@@ -54,6 +55,7 @@ class HelperBinaryExtractorTest {
         var locatorCalls = 0
         val extractor =
             HelperBinaryExtractor(
+                envLookup = { null },
                 resourceLocator = {
                     locatorCalls += 1
                     ByteArrayInputStream(byteArrayOf(0x01, 0x02, 0x03))
@@ -71,7 +73,11 @@ class HelperBinaryExtractorTest {
     @Test
     fun `extract throws a meaningful error when the resource is missing`() {
         val extractor =
-            HelperBinaryExtractor(resourceLocator = { null }, targetDirProvider = { tempRoot })
+            HelperBinaryExtractor(
+                envLookup = { null },
+                resourceLocator = { null },
+                targetDirProvider = { tempRoot },
+            )
 
         val ex = assertFailsWith<IllegalStateException> { extractor.extract() }
         assertNotNull(ex.message)
@@ -90,7 +96,8 @@ class HelperBinaryExtractorTest {
         val isMacOs = System.getProperty("os.name").lowercase().contains("mac")
         if (!isMacOs) return
 
-        val extractor = HelperBinaryExtractor(targetDirProvider = { tempRoot })
+        val extractor =
+            HelperBinaryExtractor(envLookup = { null }, targetDirProvider = { tempRoot })
         val path = extractor.extract()
         assertTrue(path.exists())
         assertTrue(Files.isExecutable(path))
