@@ -4,7 +4,6 @@ import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.attribute.PosixFilePermissions
 import kotlin.io.path.deleteRecursively
 import kotlin.io.path.exists
 import kotlin.io.path.readBytes
@@ -102,9 +101,7 @@ class HelperBinaryExtractorTest {
 
     @Test
     fun `env-var override returns the target path without extracting from the classpath`() {
-        val fakeHelper = tempRoot.resolve("pre-extracted-spectre-screencapture")
-        fakeHelper.toFile().writeBytes(byteArrayOf(0x01, 0x02))
-        Files.setPosixFilePermissions(fakeHelper, PosixFilePermissions.fromString("rwxr-xr-x"))
+        val fakeHelper = createExecutableHelper("pre-extracted-spectre-screencapture", 0x01, 0x02)
 
         var locatorCalled = false
         val extractor =
@@ -125,9 +122,7 @@ class HelperBinaryExtractorTest {
 
     @Test
     fun `env-var override is cached — subsequent calls return the same path`() {
-        val fakeHelper = tempRoot.resolve("pre-extracted-spectre-screencapture")
-        fakeHelper.toFile().writeBytes(byteArrayOf(0x01))
-        Files.setPosixFilePermissions(fakeHelper, PosixFilePermissions.fromString("rwxr-xr-x"))
+        val fakeHelper = createExecutableHelper("pre-extracted-spectre-screencapture", 0x01)
 
         val extractor =
             HelperBinaryExtractor(
@@ -140,14 +135,12 @@ class HelperBinaryExtractorTest {
     }
 
     @Test
-    fun `env-var override with non-executable path throws a clear error`() {
-        val notExecutable = tempRoot.resolve("not-executable")
-        notExecutable.toFile().writeBytes(byteArrayOf(0x01))
-        Files.setPosixFilePermissions(notExecutable, PosixFilePermissions.fromString("rw-r--r--"))
+    fun `env-var override with unusable path throws a clear error`() {
+        val unusablePath = tempRoot.resolve("missing-helper")
 
         val extractor =
             HelperBinaryExtractor(
-                envLookup = { key -> if (key == OVERRIDE_ENV) notExecutable.toString() else null }
+                envLookup = { key -> if (key == OVERRIDE_ENV) unusablePath.toString() else null }
             )
 
         val ex = assertFailsWith<IllegalStateException> { extractor.extract() }
@@ -251,9 +244,7 @@ class HelperBinaryExtractorTest {
 
     @Test
     fun `env-var override takes priority over helperDir system property`() {
-        val fakeHelper = tempRoot.resolve("env-override-binary")
-        fakeHelper.toFile().writeBytes(byteArrayOf(0x01))
-        Files.setPosixFilePermissions(fakeHelper, PosixFilePermissions.fromString("rwxr-xr-x"))
+        val fakeHelper = createExecutableHelper("env-override-binary", 0x01)
 
         var locatorCalled = false
         val extractor =
@@ -272,6 +263,18 @@ class HelperBinaryExtractorTest {
 
         assertEquals(fakeHelper, path, "Env-var override must win over helperDir property")
         assertTrue(!locatorCalled, "Classpath resource must not be read when env-var wins")
+    }
+
+    private fun createExecutableHelper(name: String, vararg bytes: Int): Path {
+        val path = tempRoot.resolve(name)
+        path.toFile().writeBytes(bytes.map { it.toByte() }.toByteArray())
+        check(path.toFile().setExecutable(true, false)) {
+            "Test setup could not mark $path executable"
+        }
+        check(Files.isExecutable(path)) {
+            "Test setup produced a helper that is not executable: $path"
+        }
+        return path
     }
 }
 
