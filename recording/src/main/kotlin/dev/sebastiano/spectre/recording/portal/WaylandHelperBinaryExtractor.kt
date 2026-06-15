@@ -1,9 +1,9 @@
 package dev.sebastiano.spectre.recording.portal
 
+import dev.sebastiano.spectre.recording.HelperExtractionPaths
 import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermissions
 
 /**
@@ -61,22 +61,33 @@ internal class WaylandHelperBinaryExtractor(
 
         val arch = archProvider()
         val resourcePath = "$RESOURCE_PATH_BASE/$arch/$BINARY_NAME"
-        val source =
-            resourceLocator(resourcePath)
+        val helperBytes =
+            resourceLocator(resourcePath)?.use { it.readBytes() }
                 ?: throw HelperNotBundledException(
-                    "Bundled helper binary not found at classpath resource '$resourcePath'. " +
-                        "The recording module's Linux build stages 'spectre-wayland-helper' " +
-                        "there via the assembleWaylandHelper task — verify the module was " +
-                        "built on Linux with the Rust toolchain (cargo) available, or set " +
-                        "$OVERRIDE_ENV to a locally-built binary path for dev iteration."
+                    "Bundled helper binary not found at classpath resource '$resourcePath'. The " +
+                        "recording module's Linux build stages 'spectre-wayland-helper' there via " +
+                        "the assembleWaylandHelper task — verify the module was built on Linux " +
+                        "with the Rust toolchain (cargo) available, or set $OVERRIDE_ENV to a " +
+                        "locally-built binary path for dev iteration."
                 )
-        val target = targetDirProvider().resolve(BINARY_NAME)
-        Files.createDirectories(target.parent)
-        source.use { stream -> Files.copy(stream, target, StandardCopyOption.REPLACE_EXISTING) }
-        markExecutable(target)
-        cached = target
-        return target
+        val target =
+            targetDirProvider()
+                .resolve(HelperExtractionPaths.helperFingerprint(helperBytes))
+                .resolve(BINARY_NAME)
+        val extracted =
+            HelperExtractionPaths.withExtractionLock(target.parent) {
+                if (!Files.exists(target) || !target.readBytesContentEquals(helperBytes)) {
+                    Files.write(target, helperBytes)
+                }
+                markExecutable(target)
+                target
+            }
+        cached = extracted
+        return extracted
     }
+
+    private fun Path.readBytesContentEquals(expected: ByteArray): Boolean =
+        Files.readAllBytes(this).contentEquals(expected)
 
     private fun markExecutable(path: Path) {
         // POSIX path: explicit mode bits so we get rwxr-xr-x rather than relying on the
@@ -105,7 +116,7 @@ internal class WaylandHelperBinaryExtractor(
             WaylandHelperBinaryExtractor::class.java.classLoader.getResourceAsStream(resource)
 
         @JvmStatic
-        fun defaultTargetDir(): Path = Files.createTempDirectory("spectre-wayland-helper-")
+        fun defaultTargetDir(): Path = HelperExtractionPaths.defaultHelperDir(BINARY_NAME)
 
         /**
          * Map JVM's `os.arch` to the directory name we ship the helper under. The values mirror

@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.recording.windows
 
+import dev.sebastiano.spectre.recording.HelperExtractionPaths
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
@@ -120,7 +121,36 @@ class WindowsWindowScreenshotterTest {
         assertEquals(first, second)
         assertEquals(1, opened)
         assertEquals("arm64", first.parent.fileName.toString())
+        assertEquals(
+            HelperExtractionPaths.helperFingerprint(byteArrayOf(1, 2, 3)),
+            first.parent.parent.fileName.toString(),
+        )
         assertTrue(Files.readAllBytes(first).contentEquals(byteArrayOf(1, 2, 3)))
+    }
+
+    @Test
+    fun `extractor reuses an existing helper without overwriting it`() {
+        val targetDir = Files.createTempDirectory("spectre-windows-helper-test")
+        val payload = byteArrayOf(9, 8, 7)
+        val existing =
+            targetDir
+                .resolve(HelperExtractionPaths.helperFingerprint(payload))
+                .resolve("x64")
+                .resolve("spectre-window-capture.exe")
+        Files.createDirectories(existing.parent)
+        Files.write(existing, payload)
+        val extractor =
+            WindowsGraphicsCaptureHelperBinaryExtractor(
+                resourceLocator = { ByteArrayInputStream(payload) },
+                targetDirProvider = { targetDir },
+                getenv = { null },
+                osArch = { "amd64" },
+            )
+
+        val path = extractor.extract()
+
+        assertEquals(existing, path)
+        assertTrue(Files.readAllBytes(path).contentEquals(payload))
     }
 
     @Test

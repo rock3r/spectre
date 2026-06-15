@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.recording.screencapturekit
 
+import dev.sebastiano.spectre.recording.HelperExtractionPaths
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.nio.file.Files
@@ -46,6 +47,77 @@ class HelperBinaryExtractorTest {
         assertTrue(path.exists(), "Extracted path must exist")
         assertContentEquals(payload, path.readBytes())
         assertTrue(Files.isExecutable(path), "Extracted helper must be marked executable")
+    }
+
+    @Test
+    fun `extract reuses same-byte stable helper path`() {
+        val payload = byteArrayOf(0x09, 0x08, 0x07)
+        val existingDir = tempRoot.resolve(HelperExtractionPaths.helperFingerprint(payload))
+        Files.createDirectories(existingDir)
+        val existing = existingDir.resolve(BINARY_NAME)
+        Files.write(existing, payload)
+        check(existing.toFile().setExecutable(true, false))
+        val extractor =
+            HelperBinaryExtractor(
+                envLookup = { null },
+                resourceLocator = { ByteArrayInputStream(payload) },
+                targetDirProvider = { tempRoot },
+            )
+
+        val path = extractor.extract()
+
+        assertEquals(existing, path)
+        assertContentEquals(payload, path.readBytes())
+    }
+
+    @Test
+    fun `extract uses a new stable helper path when bundled bytes change`() {
+        val oldPayload = byteArrayOf(0x01)
+        val newPayload = byteArrayOf(0x02)
+        val oldDir = tempRoot.resolve(HelperExtractionPaths.helperFingerprint(oldPayload))
+        Files.createDirectories(oldDir)
+        Files.write(oldDir.resolve(BINARY_NAME), oldPayload)
+        val extractor =
+            HelperBinaryExtractor(
+                envLookup = { null },
+                resourceLocator = { ByteArrayInputStream(newPayload) },
+                targetDirProvider = { tempRoot },
+            )
+
+        val path = extractor.extract()
+
+        assertEquals(
+            tempRoot
+                .resolve(HelperExtractionPaths.helperFingerprint(newPayload))
+                .resolve(BINARY_NAME),
+            path,
+        )
+        assertContentEquals(newPayload, path.readBytes())
+        assertContentEquals(oldPayload, oldDir.resolve(BINARY_NAME).readBytes())
+    }
+
+    @Test
+    fun `helperDir system property refreshes stale helper bytes in place`() {
+        val stale = byteArrayOf(0x01)
+        val fresh = byteArrayOf(0x02)
+        val stableDir = tempRoot.resolve("stable")
+        Files.createDirectories(stableDir)
+        val target = stableDir.resolve(BINARY_NAME)
+        Files.write(target, stale)
+        val extractor =
+            HelperBinaryExtractor(
+                envLookup = { null },
+                sysPropLookup = { key ->
+                    if (key == HELPER_DIR_PROPERTY) stableDir.toString() else null
+                },
+                resourceLocator = { ByteArrayInputStream(fresh) },
+                targetDirProvider = { tempRoot.resolve("default") },
+            )
+
+        val path = extractor.extract()
+
+        assertEquals(target, path)
+        assertContentEquals(fresh, path.readBytes())
     }
 
     @Test

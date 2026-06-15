@@ -326,6 +326,32 @@ run again". See
 [Troubleshooting](troubleshooting.md#macos-recording-errors-out-or-produces-no-file)
 for failure modes when permission is missing or attached to the wrong binary.
 
+Spectre extracts the ScreenCaptureKit helper from `spectre-recording-macos` before running
+it. By default, it uses a stable per-user path:
+
+```text
+~/Library/Application Support/spectre/helpers/spectre-screencapture/<helper-hash>/spectre-screencapture
+```
+
+Grant Screen Recording to that helper once in System Settings. Spectre includes a short helper
+content hash in the path, so native-helper fixes in future Spectre versions get a fresh extracted
+binary instead of silently reusing stale bytes. Later runs of the same helper binary re-extract to
+the same path, so macOS continues to recognise it.
+
+If you prefer a project-specific helper location, set the extraction directory before the test JVM
+starts:
+
+```kotlin
+systemProperty(
+    "spectre.recording.screencapturekit.helperDir",
+    layout.buildDirectory.dir("spectre-helper").get().asFile.absolutePath,
+)
+```
+
+Then grant Screen Recording to `<helperDir>/spectre-screencapture` instead. If `./gradlew clean`
+removes that file, the TCC grant still applies the next time Spectre extracts the helper to the
+same path.
+
 `apple.awt.UIElement=true` helper/test JVMs are useful with `RobotDriver.synthetic(...)`
 for focus-safe per-character `typeText`, but clipboard-backed `pasteText` and recording
 still go through macOS services outside Spectre's synthetic key path. Prefer a normal
@@ -334,6 +360,10 @@ Recording TCC grants. See [Running on CI](ci.md#macos-helper-jvms) for the CI-si
 trade-offs.
 
 ### Other platforms
+
+Spectre extracts bundled native helpers to stable per-user directories on every platform:
+`~/Library/Application Support/spectre/helpers` on macOS, `%LOCALAPPDATA%\\spectre\\helpers`
+on Windows, and `$XDG_CACHE_HOME/spectre/helpers` or `~/.cache/spectre/helpers` on Linux.
 
 - **Windows** — add `dev.sebastiano.spectre:spectre-recording-windows:<version>` as a
   runtime-only dependency for native window recording, region/fullscreen recording, and
