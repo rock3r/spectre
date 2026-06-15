@@ -49,6 +49,22 @@ class HelperBinaryExtractorTest {
     }
 
     @Test
+    fun `extract reuses an existing stable helper without opening the resource`() {
+        val existing = createExecutableHelper(BINARY_NAME, 0x09, 0x08, 0x07)
+        val extractor =
+            HelperBinaryExtractor(
+                envLookup = { null },
+                resourceLocator = { error("resource should not be opened when helper exists") },
+                targetDirProvider = { tempRoot },
+            )
+
+        val path = extractor.extract()
+
+        assertEquals(existing, path)
+        assertContentEquals(byteArrayOf(0x09, 0x08, 0x07), path.readBytes())
+    }
+
+    @Test
     fun `extract is idempotent — second call returns the same path without re-reading the resource`() {
         // Caching matters because every Recorder instance asks for the helper, and re-extracting
         // means another temp file + another stream copy + another chmod for no value.

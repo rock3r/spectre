@@ -124,6 +124,26 @@ class WindowsWindowScreenshotterTest {
     }
 
     @Test
+    fun `extractor reuses an existing helper without overwriting it`() {
+        val targetDir = Files.createTempDirectory("spectre-windows-helper-test")
+        val existing = targetDir.resolve("x64").resolve("spectre-window-capture.exe")
+        Files.createDirectories(existing.parent)
+        Files.write(existing, byteArrayOf(9, 8, 7))
+        val extractor =
+            WindowsGraphicsCaptureHelperBinaryExtractor(
+                resourceLocator = { error("resource should not be opened when helper exists") },
+                targetDirProvider = { targetDir },
+                getenv = { null },
+                osArch = { "amd64" },
+            )
+
+        val path = extractor.extract()
+
+        assertEquals(existing, path)
+        assertTrue(Files.readAllBytes(path).contentEquals(byteArrayOf(9, 8, 7)))
+    }
+
+    @Test
     fun `extractor rejects unsupported architecture`() {
         val extractor =
             WindowsGraphicsCaptureHelperBinaryExtractor(

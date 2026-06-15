@@ -4,7 +4,6 @@ import dev.sebastiano.spectre.recording.HelperExtractionPaths
 import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermissions
 
 /**
@@ -70,14 +69,6 @@ internal class HelperBinaryExtractor(
                 return path
             }
 
-        val source =
-            resourceLocator()
-                ?: throw HelperNotBundledException(
-                    "Bundled helper binary not found at classpath resource '$RESOURCE_PATH'. " +
-                        "The recording module's macOS build stages 'spectre-screencapture' there " +
-                        "via the assembleScreenCaptureKitHelper task — verify the module was " +
-                        "built on macOS with the Swift toolchain available."
-                )
         // Stable-dir system property: extract to a caller-controlled directory instead of the
         // stable default. In both cases the binary lands at the same path on every JVM launch, so
         // macOS TCC can persistently identify it. See class-level KDoc for setup details.
@@ -85,11 +76,27 @@ internal class HelperBinaryExtractor(
             sysPropLookup(HELPER_DIR_PROPERTY)?.takeIf { it.isNotBlank() }?.let { Path.of(it) }
                 ?: targetDirProvider()
         val target = dir.resolve(BINARY_NAME)
-        Files.createDirectories(target.parent)
-        source.use { stream -> Files.copy(stream, target, StandardCopyOption.REPLACE_EXISTING) }
-        markExecutable(target)
-        cached = target
-        return target
+        val extracted =
+            HelperExtractionPaths.withExtractionLock(target.parent) {
+                if (Files.exists(target)) {
+                    markExecutable(target)
+                } else {
+                    val source =
+                        resourceLocator()
+                            ?: throw HelperNotBundledException(
+                                "Bundled helper binary not found at classpath resource " +
+                                    "'$RESOURCE_PATH'. The recording module's macOS build " +
+                                    "stages 'spectre-screencapture' there via the " +
+                                    "assembleScreenCaptureKitHelper task — verify the module " +
+                                    "was built on macOS with the Swift toolchain available."
+                            )
+                    source.use { stream -> Files.copy(stream, target) }
+                    markExecutable(target)
+                }
+                target
+            }
+        cached = extracted
+        return extracted
     }
 
     private fun markExecutable(path: Path) {

@@ -4,7 +4,6 @@ import dev.sebastiano.spectre.recording.HelperExtractionPaths
 import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermissions
 
 /**
@@ -62,21 +61,29 @@ internal class WaylandHelperBinaryExtractor(
 
         val arch = archProvider()
         val resourcePath = "$RESOURCE_PATH_BASE/$arch/$BINARY_NAME"
-        val source =
-            resourceLocator(resourcePath)
-                ?: throw HelperNotBundledException(
-                    "Bundled helper binary not found at classpath resource '$resourcePath'. " +
-                        "The recording module's Linux build stages 'spectre-wayland-helper' " +
-                        "there via the assembleWaylandHelper task — verify the module was " +
-                        "built on Linux with the Rust toolchain (cargo) available, or set " +
-                        "$OVERRIDE_ENV to a locally-built binary path for dev iteration."
-                )
         val target = targetDirProvider().resolve(BINARY_NAME)
-        Files.createDirectories(target.parent)
-        source.use { stream -> Files.copy(stream, target, StandardCopyOption.REPLACE_EXISTING) }
-        markExecutable(target)
-        cached = target
-        return target
+        val extracted =
+            HelperExtractionPaths.withExtractionLock(target.parent) {
+                if (Files.exists(target)) {
+                    markExecutable(target)
+                } else {
+                    val source =
+                        resourceLocator(resourcePath)
+                            ?: throw HelperNotBundledException(
+                                "Bundled helper binary not found at classpath resource " +
+                                    "'$resourcePath'. The recording module's Linux build stages " +
+                                    "'spectre-wayland-helper' there via the assembleWaylandHelper " +
+                                    "task — verify the module was built on Linux with the Rust " +
+                                    "toolchain (cargo) available, or set $OVERRIDE_ENV to a " +
+                                    "locally-built binary path for dev iteration."
+                            )
+                    source.use { stream -> Files.copy(stream, target) }
+                    markExecutable(target)
+                }
+                target
+            }
+        cached = extracted
+        return extracted
     }
 
     private fun markExecutable(path: Path) {

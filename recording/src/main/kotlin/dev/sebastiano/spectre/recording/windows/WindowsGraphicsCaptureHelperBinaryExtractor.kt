@@ -33,22 +33,28 @@ internal class WindowsGraphicsCaptureHelperBinaryExtractor(
             return it
         }
         val target = targetDirProvider().resolve(windowsArch(osArch())).resolve(BINARY_NAME)
-        Files.createDirectories(target.parent)
-        val source = resourceLocator()
-        if (source != null) {
-            source.use { stream -> Files.copy(stream, target, StandardCopyOption.REPLACE_EXISTING) }
-        } else {
-            copyBundledHelperDirectory(target.parent, osArch())
-            if (!Files.exists(target)) {
-                throw WindowsGraphicsCaptureHelperNotBundledException(
-                    "Bundled Windows Graphics Capture helper not found at classpath resource " +
-                        "'${resourcePath(osArch())}'. Add spectre-recording-windows as a " +
-                        "runtime dependency when using native Windows capture."
-                )
+        val extracted =
+            HelperExtractionPaths.withExtractionLock(target.parent) {
+                if (!Files.exists(target)) {
+                    val source = resourceLocator()
+                    if (source != null) {
+                        source.use { stream -> Files.copy(stream, target) }
+                    } else {
+                        copyBundledHelperDirectory(target.parent, osArch())
+                        if (!Files.exists(target)) {
+                            throw WindowsGraphicsCaptureHelperNotBundledException(
+                                "Bundled Windows Graphics Capture helper not found at classpath " +
+                                    "resource '${resourcePath(osArch())}'. Add " +
+                                    "spectre-recording-windows as a runtime dependency when " +
+                                    "using native Windows capture."
+                            )
+                        }
+                    }
+                }
+                target
             }
-        }
-        cached = target
-        return target
+        cached = extracted
+        return extracted
     }
 
     private companion object {

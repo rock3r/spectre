@@ -1,6 +1,9 @@
 package dev.sebastiano.spectre.recording
 
+import java.nio.channels.FileChannel
+import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardOpenOption
 
 internal object HelperExtractionPaths {
     fun defaultHelperDir(
@@ -27,9 +30,23 @@ internal object HelperExtractionPaths {
         return base.resolve("spectre").resolve("helpers")
     }
 
+    @Synchronized
+    fun <T> withExtractionLock(dir: Path, body: () -> T): T {
+        Files.createDirectories(dir)
+        val lockPath = dir.resolve(LOCK_FILE_NAME)
+        FileChannel.open(lockPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE).use {
+            channel ->
+            channel.lock().use {
+                return body()
+            }
+        }
+    }
+
     private fun linuxBaseDir(userHome: String, getenv: (String) -> String?): Path {
         val xdgCacheHome = getenv("XDG_CACHE_HOME")?.takeIf { it.isNotBlank() }
         val base = xdgCacheHome?.let { Path.of(it) } ?: Path.of(userHome, ".cache")
         return base.resolve("spectre").resolve("helpers")
     }
+
+    private const val LOCK_FILE_NAME: String = ".extract.lock"
 }
