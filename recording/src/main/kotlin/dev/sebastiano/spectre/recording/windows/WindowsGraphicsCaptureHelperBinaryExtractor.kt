@@ -55,7 +55,9 @@ internal class WindowsGraphicsCaptureHelperBinaryExtractor(
                 if (!Files.exists(target) || !target.readBytesContentEquals(helperBytes)) {
                     Files.write(target, helperBytes)
                 }
-                copyBundledHelperDirectory(target.parent, osArch())
+                if (overrideBytes == null) {
+                    copyBundledHelperDirectory(target.parent, osArch())
+                }
                 target
             }
         cached = extracted
