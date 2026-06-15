@@ -32,6 +32,10 @@ class ScreenCaptureKitHelperContractTest {
     @BeforeTest
     fun setUp() {
         assumeTrue(
+            !System.getProperty("spectre.test.stubMacHelperForTesting").toBoolean(),
+            "ScreenCaptureKit helper contract tests require the real Swift helper, not the stub fixture",
+        )
+        assumeTrue(
             System.getProperty("os.name").orEmpty().lowercase().contains("mac"),
             "Helper binary is only bundled on macOS hosts",
         )
