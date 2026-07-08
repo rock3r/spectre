@@ -192,9 +192,18 @@ jobs:
         # tasks — both sides drive real focus/keyboard input and would fight over the
         # active window if Gradle ran them in parallel. `if: always()` for independent
         # failure attribution, same as the smoke steps above.
+        #
+        # `--rerun-tasks` is load-bearing, not belt-and-braces: `gradle.properties` sets
+        # `org.gradle.caching=true` and `gradle/actions/setup-gradle` restores the local
+        # build cache between jobs, and `Test` is a cacheable task. Without this flag, a
+        # later run with unchanged `:agent:test` inputs could mark the task `FROM-CACHE`,
+        # restore a previous run's passing JUnit XML, and let the verifier below see
+        # `tests=1 skipped=0` even though the attach round-trip never executed under *this*
+        # job's Xvfb display. Forcing re-execution is the whole point of the check, so we
+        # ignore the cache for this invocation.
         if: always()
         run: |
-          xvfb-run -a ./gradlew :agent:test --tests "*AgentAttachIntegrationTest*"
+          xvfb-run -a ./gradlew :agent:test --tests "*AgentAttachIntegrationTest*" --rerun-tasks
         shell: bash
 
       - name: Verify validation tests passed via JUnit XML
@@ -290,13 +299,12 @@ jobs:
       - name: Verify agent attach test executed via JUnit XML
         # A green `:agent:test` exit code is NOT sufficient evidence the round-trip ran:
         # the test self-skips through JUnit assumptions (headless JVM, missing
-        # `runtimeJar` system property), and with `org.gradle.caching=true` a cached test
-        # result could in principle be replayed instead of executing under this Xvfb
-        # display. Every one of those failure modes exits 0 — which is precisely how the
-        # test sat silently skipped in `ci.yml`'s headless `:check` run while the docs
-        # claimed Linux coverage. So beyond the failures/errors hygiene the sample-desktop
-        # verifier above does, this one also requires the test to have actually RUN:
-        # tests ≥ 1 and skipped = 0.
+        # `runtimeJar` system property), and both of those exit 0 — which is precisely how
+        # the test sat silently skipped in `ci.yml`'s headless `:check` run while the docs
+        # claimed Linux coverage. (Cache-replay of a stale passing XML is handled upstream
+        # by `--rerun-tasks` on the run step; this verifier catches the assumption-skips.)
+        # So beyond the failures/errors hygiene the sample-desktop verifier above does,
+        # this one also requires the test to have actually RUN: tests ≥ 1 and skipped = 0.
         if: always()
         run: |
           set -euo pipefail
