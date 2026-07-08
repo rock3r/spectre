@@ -1,0 +1,55 @@
+{
+  "skill_name": "spectre-ui-automation",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I have a Compose Desktop app built with Gradle (Kotlin DSL). My project has a root settings.gradle.kts and a desktop/ subdirectory with its own build.gradle.kts. I want to add Spectre to write automated UI tests. How do I set it up and write my first test that clicks a button and checks the result?",
+      "expected_output": "Gradle dependency setup with dev.sebastiano.spectre coordinates, a JUnit 5 test class using ComposeAutomatorExtension, runBlocking (not runTest), waitForNode before any interaction, and a click + assertion example.",
+      "files": [],
+      "expectations": [
+        "Includes testImplementation dependency coordinates for dev.sebastiano.spectre:core and dev.sebastiano.spectre:testing",
+        "Uses runBlocking (not runTest) in the test body",
+        "Calls waitForNode before interacting with any UI element",
+        "Uses ComposeAutomatorExtension (JUnit 5) or ComposeAutomatorRule (JUnit 4) to obtain the automator",
+        "Includes a click interaction followed by an assertion on the resulting node state"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "My Spectre test keeps failing. I have `val btn = automator.findOneByTestTag(\"submitBtn\")` right after I launch my app, and it always returns null — but I can clearly see the button on screen. What's going wrong?",
+      "expected_output": "Explanation that findOneByTestTag is non-waiting (single read), suggestion to use waitForNode first, and mention of printTree() for debugging the actual semantics tree state.",
+      "files": [],
+      "expectations": [
+        "Explains that findOneByTestTag is non-waiting — it reads the semantics tree once and does not poll",
+        "Identifies the timing issue: the selector runs before the UI has finished composing",
+        "Suggests waitForNode as the fix",
+        "Mentions printTree() as a debugging tool to inspect the actual semantics tree state",
+        "Does not suggest Thread.sleep or a bare delay() as the primary fix"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "I'm writing a Spectre test for a dialog flow: clicking 'Add Item' opens a modal with a name field and a Save button. The dialog appears after a short delay. After Save, the dialog closes and the item should appear in the list. How do I write this test so it doesn't flake?",
+      "expected_output": "A complete test showing waitForNode to wait for the dialog, typeText or clearAndTypeText for the name field, waitForIdle/waitForVisualIdle after Save, and waitForNode or findOneByTestTag to verify the item in the list.",
+      "files": [],
+      "expectations": [
+        "Uses waitForNode to wait for the dialog to appear before interacting with it",
+        "Uses typeText or clearAndTypeText to fill the name field",
+        "Uses waitForIdle or waitForVisualIdle after clicking Save",
+        "Checks that the new item appears in the list after the dialog closes",
+        "Does not use Thread.sleep as the synchronization strategy"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "I want to test that my CounterButton composable increments the count correctly when clicked. It takes an onIncrement callback and shows the current count as text. What's the best way to write an automated test for this?",
+      "expected_output": "Recommends ComposeTestRule (compose-ui-test) as the right tool for testing an isolated composable, explains why Spectre is for full-app e2e automation rather than composable unit tests.",
+      "files": [],
+      "expectations": [
+        "Recommends ComposeTestRule or compose-ui-test as the right tool for this use case",
+        "Explains why Spectre is not the right fit here — it is for end-to-end automation of a running app, not isolated composable testing",
+        "Does not present Spectre as the primary or recommended approach"
+      ]
+    }
+  ]
+}

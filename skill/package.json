@@ -1,0 +1,9 @@
+{
+  "name": "spectre-ui-automation",
+  "version": "0.1.0",
+  "description": "Claude skill for automating Compose Desktop UIs with Spectre",
+  "keywords": ["claude-skill", "spectre", "compose-desktop", "ui-automation", "kotlin"],
+  "author": "Sebastiano Poggi <poggos@gmail.com>",
+  "license": "Apache-2.0",
+  "files": ["SKILL.md"]
+}
