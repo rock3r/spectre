@@ -112,7 +112,68 @@ jobs:
           targets: aarch64-unknown-linux-gnu
 
       - name: Run checks
+        id: check
         run: ./gradlew check
+
+      - name: Surface skipped agent attach test (headless runner)
+        # `AgentAttachIntegrationTest` is IN `:check`'s scope, but it assumption-skips on
+        # headless JVMs (Compose Desktop can't create a `JFrame + ComposePanel` without a
+        # display) and this runner has no display server — so on every PR the test skips
+        # here and `:check` exits green regardless. That green is misleading: a reader of
+        # this job can't tell the attach round-trip was *validated* from the fact that it
+        # was silently *skipped*. Its real Linux execution runs under Xvfb in
+        # `validation-linux.yml` (whose "Verify agent attach test executed" step asserts the
+        # inverse: tests ≥ 1 AND skipped = 0). This step is the mirror image of that one — it
+        # makes the expected headless skip LOUD instead of hidden, so nobody mistakes the
+        # skip for coverage.
+        #
+        # Purely a visibility annotation: it never fails the job (the skip is expected and
+        # `validation-linux.yml` is the gate). It emits a `::warning::` (surfaced in the PR
+        # checks annotations panel) and appends to the run summary, and it also flags the
+        # surprising inverse — if the test somehow *executed* here, the headless guard in
+        # `AgentAttachIntegrationTest.kt` changed and this note's premise no longer holds.
+        #
+        # `if: always()` so the annotation is emitted even when `:check` fails for unrelated
+        # reasons — the reader still gets told whether the attach test ran or skipped.
+        if: always()
+        run: |
+          set -euo pipefail
+          xml="agent/build/test-results/test/TEST-dev.sebastiano.spectre.agent.AgentAttachIntegrationTest.xml"
+          summary() { echo "$1" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"; }
+          if [ ! -f "$xml" ]; then
+            # No XML: either `:check` failed before `:agent:test` produced a report, or the
+            # test class was renamed/removed out from under this step. Either way, warn — a
+            # missing report is not silent green.
+            echo "::warning::No JUnit XML for AgentAttachIntegrationTest at $xml — could not confirm whether it ran or skipped (\`:check\` outcome: ${{ steps.check.outcome }}). Its real run is under Xvfb in validation-linux.yml."
+            summary "> :warning: **AgentAttachIntegrationTest** — no JUnit XML found; run status unknown on this headless runner."
+            exit 0
+          fi
+          # `grep -oE` exits non-zero on no match; `|| true` turns a missing attribute into
+          # an empty string (handled below) instead of aborting under `set -e`. Same pattern
+          # as validation-linux.yml's XML verifiers.
+          get_attr() {
+            grep -oE "$1=\"[0-9]+\"" "$xml" | head -n1 | grep -oE '[0-9]+' || true
+          }
+          tests=$(get_attr tests)
+          skipped=$(get_attr skipped)
+          if [ -z "$tests" ] || [ -z "$skipped" ]; then
+            echo "::warning file=$xml::Malformed JUnit XML — missing/unparsable tests/skipped attribute; could not confirm AgentAttachIntegrationTest skip status."
+            summary "> :warning: **AgentAttachIntegrationTest** — JUnit XML present but unparsable; skip status unknown."
+            exit 0
+          fi
+          if [ "$skipped" -gt 0 ]; then
+            echo "::warning file=$xml::AgentAttachIntegrationTest was SKIPPED on this headless runner (skipped=$skipped of tests=$tests) — the attach → exercise → detach round-trip is NOT validated by :check. Its real Linux execution runs under Xvfb in validation-linux.yml."
+            summary "> :warning: **AgentAttachIntegrationTest skipped here** (skipped=$skipped/tests=$tests). This headless \`:check\` job cannot run Compose Desktop; the round-trip is validated under Xvfb in \`validation-linux.yml\`, not here."
+          elif [ "$tests" -ge 1 ]; then
+            # Unexpected: the test executed on a runner we believe is headless. The headless
+            # assumption-skip guard must have changed — worth a note, not a failure.
+            echo "::notice file=$xml::AgentAttachIntegrationTest EXECUTED on this runner (tests=$tests skipped=0) — unexpected on a headless \`:check\` job. If intentional, this surfacing step's headless-skip premise is stale."
+            summary "> :information_source: **AgentAttachIntegrationTest executed** here (tests=$tests skipped=0) — unexpected on a headless runner."
+          else
+            echo "::warning file=$xml::AgentAttachIntegrationTest reported tests=$tests skipped=$skipped — no test cases recorded; run status unclear."
+            summary "> :warning: **AgentAttachIntegrationTest** — reported tests=$tests skipped=$skipped; run status unclear."
+          fi
+        shell: bash
 
       - name: Verify cross-arch helper bundling (issue #86)
         # Proves on every PR that `:recording:assembleWaylandHelperAllArches` can produce
