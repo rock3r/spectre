@@ -55,3 +55,6 @@ recording/native/macos/Package.resolved
 # Cargo.toml alone given the `rust-version = "1.75"` floor.
 recording/native/linux/target/
 recording/native/linux/Cargo.lock
+
+# Skill eval run outputs
+/spectre-ui-automation-workspace/
