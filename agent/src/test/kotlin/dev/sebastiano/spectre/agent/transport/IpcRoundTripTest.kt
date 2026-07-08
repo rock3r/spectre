@@ -24,21 +24,20 @@ import org.junit.jupiter.api.condition.OS
  * canned responses — the real `ReflectiveAutomatorHandler` is exercised in M-7/M-8's child-JVM
  * integration tests where a real `ComposeAutomator` exists.
  *
- * Each test creates a unique UDS path under `java.io.tmpdir` and cleans up via @AfterTest. Paths
- * must be short enough to fit Unix's sun_path limit (~104 chars on macOS, ~108 on Linux); a short
- * UUID prefix keeps us well within bounds.
+ * Each test creates a unique UDS path via [udsBase] and cleans up via @AfterTest. The base
+ * directory is platform-aware — `/tmp` on POSIX, `%TEMP%` (`java.io.tmpdir`) on Windows, where
+ * `/tmp` is meaningless — and short enough to fit the `sun_path` limit (~104 chars macOS, ~108
+ * Linux/Windows); a short UUID prefix keeps us well within bounds.
  *
- * **Disabled on Windows** via `@EnabledOnOs(OS.LINUX, OS.MAC)`. The agent transport is macOS+Linux
- * only in the current preview — Windows support (named pipes via JNA/junixsocket) is a tracked
- * follow-up. The hard-coded `/tmp/...` UDS path is meaningless on Windows and the test would
- * `SocketException` on connect rather than exercising the round-trip contract.
+ * Runs on Windows too (native `AF_UNIX`, #196). Two POSIX-mode-specific cases carry a method-level
+ * `@EnabledOnOs(OS.LINUX, OS.MAC)`: the parent-permissions assertion and the FD-leak probe (which
+ * needs `UnixOperatingSystemMXBean`). The Windows analog — owner-only ACLs on the created dir and
+ * socket plus cleanup on close — lives in [IpcServerWindowsAclTest].
  */
-@EnabledOnOs(OS.LINUX, OS.MAC)
+@EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)
 class IpcRoundTripTest {
-    // Use `/tmp` directly rather than `java.io.tmpdir` — on macOS the latter resolves to
-    // `/var/folders/...` which can push the path past Unix's 104-char `sun_path` limit.
-    // `/tmp` is symlinked to `/private/tmp` (12 chars) and works on both macOS and Linux.
-    private val udsPath: Path = Path.of("/tmp", "sp-t-${UUID.randomUUID().toString().take(8)}.sock")
+    private val udsPath: Path =
+        udsBase().resolve("sp-t-${UUID.randomUUID().toString().take(8)}.sock")
 
     @AfterTest
     fun cleanUp() {
@@ -61,6 +60,10 @@ class IpcRoundTripTest {
     }
 
     @Test
+    @EnabledOnOs(
+        OS.LINUX,
+        OS.MAC,
+    ) // POSIX mode assertion; Windows ACL analog: IpcServerWindowsAclTest
     fun `server creates missing UDS parent owner-only and removes it on close`() {
         val parent = Path.of("/tmp", "sp-t-${UUID.randomUUID().toString().take(8)}")
         val nestedUdsPath = parent.resolve("agent.sock")
@@ -230,6 +233,7 @@ class IpcRoundTripTest {
     }
 
     @Test
+    @EnabledOnOs(OS.LINUX, OS.MAC) // relies on UnixOperatingSystemMXBean.openFileDescriptorCount
     fun `IpcServer constructor releases the ServerSocketChannel when bind fails`() {
         // Regression for Bugbot LOW finding on commit 82be70e: in the `IpcServer` constructor,
         // `ServerSocketChannel.open()` opens a channel, but if `bind()` (or the `deleteIfExists`
@@ -449,6 +453,14 @@ class IpcRoundTripTest {
         }
         error("UDS file $path did not appear within ${timeoutMs} ms")
     }
+
+    // Short, platform-appropriate base dir for UDS paths: `/tmp` on POSIX (macOS `java.io.tmpdir`
+    // is `/var/folders/...` and can exceed sun_path); `%TEMP%` on Windows, where `/tmp` is
+    // drive-relative nonsense. Reads only system properties, so it's safe from a property init.
+    private fun udsBase(): Path =
+        if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true))
+            Path.of(System.getProperty("java.io.tmpdir"))
+        else Path.of("/tmp")
 
     private companion object {
         // Comfortably above macOS's ~104-byte and Linux's ~108-byte `sun_path` cap so the
