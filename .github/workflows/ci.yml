@@ -112,7 +112,90 @@ jobs:
           targets: aarch64-unknown-linux-gnu
 
       - name: Run checks
+        id: check
         run: ./gradlew check
+
+      - name: Surface skipped agent attach test (headless runner)
+        # `AgentAttachIntegrationTest` is IN `:check`'s scope, but it assumption-skips on
+        # headless JVMs (Compose Desktop can't create a `JFrame + ComposePanel` without a
+        # display) and this runner has no display server — so on every PR the test skips
+        # here and `:check` exits green regardless. That green is misleading: a reader of
+        # this job can't tell the attach round-trip was *validated* from the fact that it
+        # was silently *skipped*. Its real Linux execution runs under Xvfb in
+        # `validation-linux.yml` (whose "Verify agent attach test executed" step asserts the
+        # inverse: tests ≥ 1 AND skipped = 0). This step is the mirror image of that one — it
+        # makes the expected headless skip LOUD instead of hidden, so nobody mistakes the
+        # skip for coverage.
+        #
+        # Why re-run the test instead of parsing `:check`'s report directly: `:agent:test` is
+        # cacheable and headless-ness is NOT one of its Gradle task inputs, so with
+        # `org.gradle.caching=true` + `setup-gradle` output restore the report `check` leaves on
+        # disk could be a result restored from a display-bearing run (e.g. validation-linux.yml's
+        # Xvfb job) showing `tests=1 skipped=0` — which would make this annotation report the
+        # opposite of what happened on THIS runner. So the step forces a fresh run of only this
+        # test (`--rerun` ignores up-to-date, `--no-build-cache` prevents a cache restore; there
+        # is then no path for the task to be skipped or replayed, while upstream compile stays
+        # up-to-date, so it's cheap). On a headless runner that fresh run is an instant
+        # assumption-skip — it does NOT re-execute the real attach → exercise → detach round-trip
+        # (that runs under Xvfb in validation-linux.yml). The XML it inspects is guaranteed to be
+        # from this job.
+        #
+        # Purely a visibility annotation: it never fails the job (the skip is expected and
+        # `validation-linux.yml` is the gate). It emits a `::warning::` (surfaced in the PR
+        # checks annotations panel) and appends to the run summary, and flags the surprising
+        # inverse — because the re-run is fresh, a `skipped=0` here genuinely means the test
+        # executed, so the runner had a display or the headless guard in
+        # `AgentAttachIntegrationTest.kt` changed.
+        #
+        # `if: always()` so the annotation is emitted even when `:check` fails for unrelated
+        # reasons — the reader still gets told whether the attach test ran or skipped.
+        if: always()
+        run: |
+          set -euo pipefail
+          # Force a fresh, guaranteed-this-runner execution of just the attach test. `--rerun`
+          # ignores up-to-date and `--no-build-cache` blocks a cache restore, so the report
+          # below cannot be a replay from a display-bearing environment. `|| true` because an
+          # upstream compile/build failure (when `:check` itself failed) leaves no report — that
+          # is handled by the missing-XML branch, and this step must never fail the job.
+          ./gradlew :agent:test --tests "*AgentAttachIntegrationTest*" --rerun --no-build-cache || true
+          xml="agent/build/test-results/test/TEST-dev.sebastiano.spectre.agent.AgentAttachIntegrationTest.xml"
+          summary() { echo "$1" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"; }
+          if [ ! -f "$xml" ]; then
+            # No XML even after a forced re-run: an upstream compile/build failure (typically
+            # `:check` already failed), or the test class was renamed/removed out from under this
+            # step. Either way, warn — a missing report is not silent green.
+            echo "::warning::No JUnit XML for AgentAttachIntegrationTest at $xml after a forced re-run — likely an upstream compile/build failure (\`:check\` outcome: ${{ steps.check.outcome }}). Its real run is under Xvfb in validation-linux.yml."
+            summary "> :warning: **AgentAttachIntegrationTest** — no JUnit XML produced; run status unknown on this headless runner."
+            exit 0
+          fi
+          # `grep -oE` exits non-zero on no match; `|| true` turns a missing attribute into
+          # an empty string (handled below) instead of aborting under `set -e`. Same pattern
+          # as validation-linux.yml's XML verifiers.
+          get_attr() {
+            grep -oE "$1=\"[0-9]+\"" "$xml" | head -n1 | grep -oE '[0-9]+' || true
+          }
+          tests=$(get_attr tests)
+          skipped=$(get_attr skipped)
+          if [ -z "$tests" ] || [ -z "$skipped" ]; then
+            echo "::warning file=$xml::Malformed JUnit XML — missing/unparsable tests/skipped attribute; could not confirm AgentAttachIntegrationTest skip status."
+            summary "> :warning: **AgentAttachIntegrationTest** — JUnit XML present but unparsable; skip status unknown."
+            exit 0
+          fi
+          if [ "$skipped" -gt 0 ]; then
+            echo "::warning file=$xml::AgentAttachIntegrationTest was SKIPPED on this headless runner (skipped=$skipped of tests=$tests) — the attach → exercise → detach round-trip is NOT validated by :check. Its real Linux execution runs under Xvfb in validation-linux.yml."
+            summary "> :warning: **AgentAttachIntegrationTest skipped here** (skipped=$skipped/tests=$tests). This headless \`:check\` job cannot run Compose Desktop; the round-trip is validated under Xvfb in \`validation-linux.yml\`, not here."
+          elif [ "$tests" -ge 1 ]; then
+            # The re-run above is fresh (cache ruled out by --no-build-cache), so skipped=0
+            # genuinely means the test executed on this runner — unexpected for a job we run
+            # headless. Either the runner had a display or the assumeFalse(isHeadless) guard in
+            # AgentAttachIntegrationTest.kt changed. A note, not a failure.
+            echo "::notice file=$xml::AgentAttachIntegrationTest EXECUTED on this runner (tests=$tests skipped=0) after a forced headless re-run — unexpected on a headless \`:check\` job, so the runner had a display or the headless guard in AgentAttachIntegrationTest.kt changed."
+            summary "> :information_source: **AgentAttachIntegrationTest executed** here (tests=$tests skipped=0) — unexpected on a headless runner (display present or headless guard changed)."
+          else
+            echo "::warning file=$xml::AgentAttachIntegrationTest reported tests=$tests skipped=$skipped — no test cases recorded; run status unclear."
+            summary "> :warning: **AgentAttachIntegrationTest** — reported tests=$tests skipped=$skipped; run status unclear."
+          fi
+        shell: bash
 
       - name: Verify cross-arch helper bundling (issue #86)
         # Proves on every PR that `:recording:assembleWaylandHelperAllArches` can produce
