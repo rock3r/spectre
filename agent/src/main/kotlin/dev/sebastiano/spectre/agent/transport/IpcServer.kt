@@ -7,11 +7,8 @@ import java.nio.channels.Channels
 import java.nio.channels.ClosedChannelException
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
-import java.nio.file.FileSystemException
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.attribute.PosixFilePermission
-import java.nio.file.attribute.PosixFilePermissions
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -39,11 +36,13 @@ constructor(
 ) : AutoCloseable {
     private var createdParentDir: Path? = null
 
+    private val protection: SocketFileProtection = SocketFileProtection.forPath(udsPath)
+
     private val serverChannel: ServerSocketChannel =
         ServerSocketChannel.open(StandardProtocolFamily.UNIX).also { channel ->
             // Outer `success` sentinel + `finally` so the channel is unconditionally closed on
             // ANY constructor-time failure (bind throwing on a too-long path, `deleteIfExists`
-            // failing, the POSIX permission tightening throwing, ...). Without this, an opened
+            // failing, the owner-only protection throwing, ...). Without this, an opened
             // `ServerSocketChannel` whose bind fails would leak a native file descriptor for
             // the rest of the JVM's lifetime — `ServerSocketChannel` has no finalizer or
             // cleaner. Bugbot caught it (LOW); the regression test
@@ -51,32 +50,15 @@ constructor(
             // the contract by observing `openFileDescriptorCount`.
             var success = false
             try {
-                createdParentDir = createMissingParentDirectory(udsPath)
-                // Clean up any orphaned socket file from a previous crash; Linux/macOS refuse to
+                createdParentDir = protection.createMissingParentDirectory(udsPath)
+                // Clean up any orphaned socket file from a previous crash; the OS refuses to
                 // bind if the path already exists, even when stale.
                 Files.deleteIfExists(udsPath)
                 channel.bind(UnixDomainSocketAddress.of(udsPath))
-                // Tighten the socket file permissions to mode 0600 (owner read/write). UDS file
-                // creation respects the process umask, which on common defaults (022) leaves the
-                // socket group/world-readable — broader than the local-only trust model claims.
-                // Explicitly setting the permissions immediately after bind closes that gap.
-                try {
-                    Files.setPosixFilePermissions(udsPath, OWNER_ONLY_PERMS)
-                } catch (ex: UnsupportedOperationException) {
-                    // Non-POSIX filesystem (e.g. Windows in some setups). Bubble up as an
-                    // IOException; the outer `finally` handles channel close + UDS unlink so
-                    // we don't expose a permissionless socket.
-                    throw IOException(
-                        "Filesystem at $udsPath doesn't support POSIX permissions; refusing " +
-                            "to expose a UDS without 0600 access control.",
-                        ex,
-                    )
-                } catch (ex: FileSystemException) {
-                    throw IOException(
-                        "Failed to set 0600 permissions on UDS at $udsPath: ${ex.message}",
-                        ex,
-                    )
-                }
+                // Tighten the freshly-bound socket to owner-only access (POSIX mode 0600 /
+                // Windows owner-only ACL). UDS file creation otherwise respects the ambient umask
+                // or inherited ACL, which is broader than the local-only trust model claims.
+                protection.protectSocketFile(udsPath)
                 success = true
             } finally {
                 if (!success) {
@@ -263,46 +245,4 @@ constructor(
  */
 internal fun interface AgentRequestHandler {
     fun handle(request: AgentRequest): AgentResponse
-}
-
-private val OWNER_ONLY_PERMS =
-    PosixFilePermissions.fromString("rw-------").also {
-        // Sanity assertion: the parsed set should be exactly OWNER_READ + OWNER_WRITE. Cheap
-        // self-check so a typo here surfaces at module-init time rather than only when a peer
-        // tries to connect.
-        require(it == setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)) {
-            "Expected OWNER_ONLY_PERMS to be 0600 (rw-------), got $it"
-        }
-    }
-
-private val OWNER_ONLY_DIRECTORY_PERMS =
-    PosixFilePermissions.fromString("rwx------").also {
-        require(
-            it ==
-                setOf(
-                    PosixFilePermission.OWNER_READ,
-                    PosixFilePermission.OWNER_WRITE,
-                    PosixFilePermission.OWNER_EXECUTE,
-                )
-        ) {
-            "Expected OWNER_ONLY_DIRECTORY_PERMS to be 0700 (rwx------), got $it"
-        }
-    }
-
-private fun createMissingParentDirectory(udsPath: Path): Path? {
-    val parent = udsPath.parent ?: return null
-    if (Files.exists(parent)) return null
-    return try {
-        Files.createDirectories(
-            parent,
-            PosixFilePermissions.asFileAttribute(OWNER_ONLY_DIRECTORY_PERMS),
-        )
-        parent
-    } catch (ex: UnsupportedOperationException) {
-        throw IOException(
-            "Filesystem at $parent doesn't support POSIX permissions; refusing to create " +
-                "an agent UDS parent without 0700 access control.",
-            ex,
-        )
-    }
 }
