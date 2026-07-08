@@ -32,8 +32,13 @@ out of scope.
    reach the bound port. Bind to `127.0.0.1`. Anything network-reachable broadens the threat
    model beyond what this release covers.
 4. **The agent transport assumes a same-user peer.** `:agent`'s Unix Domain Socket is created
-   under a short private directory in `/tmp/`. The directory is mode 0700 and the socket is mode
-   0600, both set explicitly by `IpcServer` to defend against permissive umasks.
+   under a short private directory (in `/tmp/` on Linux/macOS, under `%TEMP%` on Windows). On
+   Linux/macOS the directory is mode 0700 and the socket is mode 0600. On Windows/NTFS, where
+   POSIX modes are meaningless, `IpcServer` instead applies an **owner-only ACL** — a single
+   ALLOW full-control ACE for the owning user, with inherited ACEs dropped — to both the private
+   directory and the socket file. Either way the protection is set explicitly by `IpcServer` to
+   defend against permissive umasks or inherited ACLs, and the same-user preflight compares the
+   attacher's and target's process owners (`ProcessHandle`) rather than trusting the socket alone.
    If callers override `AttachOptions.udsPath` with a path under an existing directory, they own
    that parent directory's permissions; Spectre only tightens directories it creates itself.
    Any process running as the same OS user can connect and drive the target. There is no
@@ -60,7 +65,7 @@ out of scope.
 | Record video | `AutoRecorder`, native recorders, deprecated explicit `FfmpegRecorder`, `WaylandPortalRecorder` | In-process only |
 | Execute a helper binary | `HelperBinaryExtractor` (SCK), `WaylandHelperBinaryExtractor` | Local file system, JVM process |
 | Expose any of the above over HTTP | `installSpectreRoutes` mounts the windows / nodes / click / typeText / screenshot routes | **Unauthenticated, plaintext** — host application chooses bind address |
-| Expose any of the above over UDS | `:agent`'s `IpcServer` mounts the same surface plus detach over a Unix Domain Socket | **Unauthenticated** — filesystem mode 0600 (same UID); macOS + Linux only in the current preview |
+| Expose any of the above over UDS | `:agent`'s `IpcServer` mounts the same surface plus detach over a Unix Domain Socket | **Unauthenticated** — owner-only filesystem access (POSIX mode 0600 on Linux/macOS, owner-only ACL on Windows/NTFS); same OS user only. Windows attach enablement is tracked under #193 |
 
 The HTTP exposure column is the most important one to internalise: there are **no auth
 tokens, no TLS, and no origin checks** on any route. The transport is intentionally a
@@ -114,6 +119,13 @@ expansion); items that are hygiene fixes get their own issues.
 - **`pasteText` clipboard-restore robustness.** A failure during the post-paste restore is
   swallowed via `runCatching` (clipboard may be left holding the typed text). Standalone
   follow-up issue.
+- **Windows agent socket: local administrators and SYSTEM retain access.** The owner-only ACL on
+  the agent's private directory and socket blocks other standard users, but members of the local
+  `Administrators` group and `SYSTEM` can take ownership of any file and therefore read or connect
+  regardless — the same reality as `root` on a POSIX mode-0600 socket. The same-user preflight on
+  Windows also treats elevated and non-elevated processes of the same account as the same user
+  (they share the account SID); Windows may still deny the OS-level attach across integrity levels.
+  These are accepted for the same-machine, same-user testing model. Tracked under #193.
 - **Helper-extraction cleanup.** Extracted helper binaries are not `deleteOnExit`-registered.
   This is hygiene, not security (the extraction path is process-private and writable only by
   the user), but a tidy-up follow-up is worth tracking.

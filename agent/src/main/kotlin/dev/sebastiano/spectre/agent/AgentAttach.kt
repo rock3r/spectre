@@ -132,22 +132,12 @@ public object AgentAttach {
     }
 
     /**
-     * Same-user preflight. The Attach API's POSIX implementation requires both processes to be
-     * attach-compatible under the OS user/permission rules; otherwise the rendezvous file under
-     * `/tmp/.java_pid<pid>` is unreadable and `VirtualMachine.attach` fails with a hard-to-diagnose
-     * error.
-     *
-     * We use `ProcessHandle` which is portable and gives user names rather than numeric UIDs;
-     * missing process info (some sandboxes return empty `user()`) is treated as "can't tell — let
-     * the attach proceed and surface whatever error it gives".
+     * Same-user preflight, delegated to the per-platform [AttachUserPreflight] seam. See that type
+     * for the rationale (the JDK Attach API only rendezvous across same-user processes) and the
+     * per-OS ownership-comparison semantics.
      */
     private fun checkSameUser(targetPid: Long) {
-        val handle = ProcessHandle.of(targetPid).orElse(null) ?: return
-        val targetUser = handle.info().user().orElse(null) ?: return
-        val currentUser = System.getProperty("user.name") ?: return
-        if (targetUser != currentUser) {
-            throw AttachPermissionDeniedException(targetPid, targetUser)
-        }
+        AttachUserPreflight.forOs().requireSameUser(targetPid)
     }
 
     private fun loadAgentReflectively(
