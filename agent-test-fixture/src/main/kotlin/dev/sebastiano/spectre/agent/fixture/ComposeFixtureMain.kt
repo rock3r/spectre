@@ -36,6 +36,17 @@ import javax.swing.WindowConstants
  * Spectre's IntelliJ-hosted path uses, behaves deterministically under headless detection, and lets
  * `main()` print the sentinel itself after the EDT has finished its first paint pass.
  *
+ * **Why `isAlwaysOnTop`?** The integration test drives the attached agent's *real* `java.awt.Robot`
+ * click and keyboard paths against this window. On Windows, foreground-stealing prevention stops a
+ * JVM spawned by another foreground process (the Gradle/IDE terminal running the test) from raising
+ * its window via `toFront()` alone, so Robot clicks would land on the terminal and the text field
+ * would never take focus — a spurious hard failure that isn't a real regression. `isAlwaysOnTop`
+ * puts the fixture above the spawning terminal so Robot clicks hit Compose pixels and a genuine
+ * click grants OS keyboard focus. This is the same pattern `sample-desktop`'s `WindowsRobotSmoke`
+ * relies on (its finding #1). It's inert elsewhere: `LinuxRobotSmoke` keeps it on too (a no-op
+ * under Xvfb's minimal focus stacking), and `MacOsRobotSmoke` documents it as unnecessary on macOS
+ * (AppKit has no foreground-stealing prevention), so leaving it enabled there does no harm.
+ *
  * Lives in a separate Gradle module from `:agent` because applying the Compose Compiler plugin
  * module-wide to `:agent` would pull `@Composable` processing into the production agent runtime,
  * which has no business knowing about Compose.
@@ -58,6 +69,10 @@ fun main() {
                 defaultCloseOperation = WindowConstants.EXIT_ON_CLOSE
                 size = Dimension(FIXTURE_WIDTH_PX, FIXTURE_HEIGHT_PX)
                 setLocationRelativeTo(null)
+                // Keep the fixture above the spawning terminal so the agent's real java.awt.Robot
+                // clicks land on Compose pixels and can take OS keyboard focus on Windows. See the
+                // `isAlwaysOnTop` rationale in this file's KDoc.
+                isAlwaysOnTop = true
             }
 
         val composePanel =

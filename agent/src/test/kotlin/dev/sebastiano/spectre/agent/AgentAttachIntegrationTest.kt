@@ -62,7 +62,10 @@ import org.junit.jupiter.api.condition.OS
  * Gating:
  * - **Runs on Linux, macOS, and Windows** via `@EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)`. The
  *   agent transport rides native `AF_UNIX` on all three (#196); the fixture is spawned with the
- *   platform's `java`/`java.exe`.
+ *   platform's `java`/`java.exe`. The fixture window is `isAlwaysOnTop` so the agent's real
+ *   `java.awt.Robot` clicks land on it and can take OS keyboard focus even when a foreground
+ *   terminal/IDE spawned the test on Windows (foreground-stealing prevention) — otherwise the
+ *   focus-dependent subpath would spuriously hard-fail locally. See `ComposeFixtureMain`'s KDoc.
  * - Skipped on headless JVMs (`java.awt.GraphicsEnvironment.isHeadless()`). Compose Desktop refuses
  *   to create a `JFrame + ComposePanel` without a display.
  * - Skipped when `dev.sebastiano.spectre.agent.runtimeJar` isn't set. Gradle's `:agent:test` task
