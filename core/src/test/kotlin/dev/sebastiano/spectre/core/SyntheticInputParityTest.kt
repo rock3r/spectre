@@ -368,20 +368,39 @@ class SyntheticInputParityTest {
     fun `synthetic screenshot uses framebuffer capture for the requested dimensions`() {
         assumeLiveAwtAvailable()
         val target = ColoredPanel(Color.RED)
-        val frame = showFrameOnEdt(target)
+        // isAlwaysOnTop: on Windows a JVM spawned by Gradle/IntelliJ can't raise its window past
+        // the foreground terminal with toFront() alone (foreground-stealing prevention), so a real
+        // framebuffer capture at the window coords reads the terminal/desktop pixels instead of the
+        // panel. showFrameOnEdt raises always-on-top frames to front once realised. Mirrors the
+        // established real-Robot Windows pattern — see WindowsRobotSmoke.
+        val frame = showFrameOnEdt(target) { isAlwaysOnTop = true }
         try {
-            val driver = RobotDriver.synthetic(frame.frame)
             val origin = frame.targetTopLeftOnScreen(target)
             // Capture a sub-region inside the panel — keeps the test robust against frame
             // padding / WM decorations that could pollute pixels near the edges.
             val captureRegion =
                 Rectangle(origin.x + 20, origin.y + 20, REGION_SIZE_PX, REGION_SIZE_PX)
+            // Even when frontmost, a locked console / RDP-VNC session with no on-screen framebuffer
+            // / occluded worker can show the window yet never composite it into the captured pixels
+            // — the exact failure this hit on a non-interactive Windows box (capture returned the
+            // desktop's dark-grey background, not red). assumeLiveAwtAvailable()'s headless check
+            // doesn't catch that. Probe on-screen capture independently of the driver and skip
+            // there; a genuine capture-path regression (probe sees red, driver doesn't) still fails
+            // below rather than being masked as a skip.
+            assumeOnScreenCaptureReflects(captureRegion, Color.RED)
+            val driver = RobotDriver.synthetic(frame.frame)
             val image = waitForScreenshotColor(driver, captureRegion, Color.RED)
+            // java.awt.Robot.createScreenCapture returns an image sized to the *requested logical*
+            // rectangle regardless of display DPI scaling: verified on Windows at forced
+            // sun.java2d.uiScale=2, where a 60×60 logical request still yields a 60×60 image (the
+            // 2× device pixels surface only via createMultiResolutionScreenCapture). So
+            // REGION_SIZE_PX is the correct expectation on HiDPI too — no scale factor applies.
             assertEquals(REGION_SIZE_PX, image.width, "image width must match requested width")
             assertEquals(REGION_SIZE_PX, image.height, "image height must match requested height")
-            // Sample a pixel inside the captured region. Synthetic input still uses real
-            // framebuffer capture for screenshots, so the visible red panel should come through.
-            val sampledRgb = image.getRGB(REGION_SIZE_PX / 2, REGION_SIZE_PX / 2)
+            // Sample the captured image's own centre rather than a hardcoded offset, so the pixel
+            // assertion stays correct even if a capture ever returns a differently sized image.
+            // Synthetic input still uses real framebuffer capture, so the red panel comes through.
+            val sampledRgb = image.getRGB(image.width / 2, image.height / 2)
             val sampled = Color(sampledRgb)
             assertEquals(
                 Color.RED.rgb and 0x00FFFFFF,
@@ -411,6 +430,12 @@ class SyntheticInputParityTest {
                     size = Dimension(FRAME_SIZE_PX, FRAME_SIZE_PX)
                     setLocation(FRAME_OFFSET_PX, FRAME_OFFSET_PX)
                     isVisible = true
+                    // A frame that opted into always-on-top is a screen-capture target and must be
+                    // the frontmost, composited surface for a real framebuffer read to see its
+                    // pixels. Raise it now that it's realised — toFront() before isVisible is a
+                    // no-op. Synthetic-input-only frames skip this: they dispatch AWT events
+                    // straight into the hierarchy and don't depend on OS z-order.
+                    if (isAlwaysOnTop) toFront()
                 }
         }
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(SHOW_TIMEOUT_SECONDS)
@@ -436,8 +461,7 @@ class SyntheticInputParityTest {
         return latest
     }
 
-    private fun BufferedImage.centerRgb(): Int =
-        getRGB(REGION_SIZE_PX / 2, REGION_SIZE_PX / 2) and 0x00FFFFFF
+    private fun BufferedImage.centerRgb(): Int = getRGB(width / 2, height / 2) and 0x00FFFFFF
 
     private fun drainEdt() {
         // Drain twice: the first invokeAndWait flushes events already on the queue, the second

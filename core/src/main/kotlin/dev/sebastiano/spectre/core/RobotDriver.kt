@@ -309,6 +309,12 @@ internal constructor(
      * Captures the given screen [region] (or the entire virtual desktop, if `null`) and returns the
      * pixels as a [BufferedImage].
      *
+     * **Dimensions.** The returned image is sized to the requested *logical* [region] regardless of
+     * display DPI scaling — `java.awt.Robot.createScreenCapture` downsamples HiDPI device pixels to
+     * the logical rectangle, so a 60×60 request yields a 60×60 image even on a 2× display. The
+     * device-resolution pixels are reachable only via `createMultiResolutionScreenCapture`, which
+     * this path deliberately does not use.
+     *
      * **Colour space.** The returned image is sRGB (`TYPE_INT_ARGB` / sRGB `ColorModel`), matching
      * `java.awt.Robot.createScreenCapture`'s contract. Pixel values are post-display-pipeline: what
      * the OS composited and what the framebuffer holds, not the source values your Compose code
