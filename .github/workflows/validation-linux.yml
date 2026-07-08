@@ -7,6 +7,12 @@ name: Validation tests (Linux)
 # in popup discovery, HiDPI mapping, or Robot input would only surface in manual testing on
 # the dev VM.
 #
+# Also runs `:agent`'s `AgentAttachIntegrationTest` (the attach → exercise → detach
+# round-trip against a child-JVM Compose fixture). That test IS in `:check`'s scope, but it
+# assumption-skips on headless JVMs, and `ci.yml` runs `:check` without a display server —
+# so on Linux CI it only ever *executes* here, under Xvfb. A dedicated XML verifier below
+# fails the workflow if the test silently skipped instead of running.
+#
 # ## Display server
 #
 # `ubuntu-latest` runners ship without a display server, so we install `xvfb` and drive the
@@ -28,6 +34,7 @@ name: Validation tests (Linux)
 #
 # Local invocation (with a working DISPLAY):
 #   ./gradlew :sample-desktop:validationTest :sample-desktop:validationTestPopupLayers
+#   ./gradlew :agent:test --tests "*AgentAttachIntegrationTest*"
 
 on:
   workflow_dispatch:
@@ -165,6 +172,31 @@ jobs:
           xvfb-run -a ./gradlew :sample-desktop:runLinuxRobotUnfocusedSmoke
         shell: bash
 
+      - name: Run agent attach integration test under Xvfb
+        # `AgentAttachIntegrationTest` validates the full attach → exercise → detach chain
+        # against a child JVM running the `:agent-test-fixture` Compose app. It
+        # assumption-skips on headless JVMs (Compose Desktop can't create a
+        # `JFrame + ComposePanel` without a display), and `ci.yml`'s `:check` job runs
+        # headless — so this Xvfb step is the only place the test executes on Linux CI.
+        # Without it, "macOS and Linux" agent support (docs/guide/agent.md) is only ever
+        # proven on macOS dev machines.
+        #
+        # Child-process display inheritance: the test spawns the fixture via
+        # `ProcessBuilder` without touching `environment()`, so the child inherits
+        # `xvfb-run`'s `DISPLAY` (and the test JVM itself already passes
+        # `-Djava.awt.headless=false` and `-XX:+EnableDynamicAgentLoading` to the fixture —
+        # see `spawnComposeFixture` in `AgentAttachIntegrationTest.kt`).
+        #
+        # Runs as its own step (not folded into the validation Gradle invocation above) so
+        # the agent test never shares the X display with the Robot-driven sample-desktop
+        # tasks — both sides drive real focus/keyboard input and would fight over the
+        # active window if Gradle ran them in parallel. `if: always()` for independent
+        # failure attribution, same as the smoke steps above.
+        if: always()
+        run: |
+          xvfb-run -a ./gradlew :agent:test --tests "*AgentAttachIntegrationTest*"
+        shell: bash
+
       - name: Verify validation tests passed via JUnit XML
         # Plain two-pass test-hygiene verifier (no longer compensating for the
         # protocol-flake — see workflow header):
@@ -255,6 +287,49 @@ jobs:
           echo "All required classes present; ${#all_xml[@]} discovered XML report(s) clean."
         shell: bash
 
+      - name: Verify agent attach test executed via JUnit XML
+        # A green `:agent:test` exit code is NOT sufficient evidence the round-trip ran:
+        # the test self-skips through JUnit assumptions (headless JVM, missing
+        # `runtimeJar` system property), and with `org.gradle.caching=true` a cached test
+        # result could in principle be replayed instead of executing under this Xvfb
+        # display. Every one of those failure modes exits 0 — which is precisely how the
+        # test sat silently skipped in `ci.yml`'s headless `:check` run while the docs
+        # claimed Linux coverage. So beyond the failures/errors hygiene the sample-desktop
+        # verifier above does, this one also requires the test to have actually RUN:
+        # tests ≥ 1 and skipped = 0.
+        if: always()
+        run: |
+          set -euo pipefail
+          xml="agent/build/test-results/test/TEST-dev.sebastiano.spectre.agent.AgentAttachIntegrationTest.xml"
+          if [ ! -f "$xml" ]; then
+            echo "::error::Missing JUnit XML report $xml — :agent:test never ran AgentAttachIntegrationTest"
+            exit 1
+          fi
+          # `grep -oE` returns non-zero on no match; `|| true` captures missing attributes
+          # as empty strings so they fall into the malformation branch instead of aborting
+          # the script under `set -e` (same pattern as the verifier above).
+          get_attr() {
+            grep -oE "$1=\"[0-9]+\"" "$xml" | head -n1 | grep -oE '[0-9]+' || true
+          }
+          tests=$(get_attr tests)
+          skipped=$(get_attr skipped)
+          failures=$(get_attr failures)
+          errors=$(get_attr errors)
+          if [ -z "$tests" ] || [ -z "$skipped" ] || [ -z "$failures" ] || [ -z "$errors" ]; then
+            echo "::error file=$xml::Malformed JUnit XML — missing/unparsable tests/skipped/failures/errors attribute"
+            exit 1
+          fi
+          if [ "$tests" -lt 1 ] || [ "$skipped" -gt 0 ]; then
+            echo "::error file=$xml::AgentAttachIntegrationTest did not execute (tests=$tests skipped=$skipped) — an assumption-skip under Xvfb means the display setup or the runtimeJar wiring in agent/build.gradle.kts broke"
+            exit 1
+          fi
+          if [ "$failures" -gt 0 ] || [ "$errors" -gt 0 ]; then
+            echo "::error file=$xml::AgentAttachIntegrationTest reported failures=$failures errors=$errors"
+            exit 1
+          fi
+          echo "AgentAttachIntegrationTest executed: tests=$tests skipped=0 failures=0 errors=0."
+        shell: bash
+
       - name: Upload validation artefacts
         # Always upload — useful both for diagnosing failures and for confirming what ran on
         # green builds.
@@ -266,5 +341,8 @@ jobs:
             sample-desktop/build/reports/tests/
             sample-desktop/build/test-results/
             sample-desktop/hs_err_*.log
+            agent/build/reports/tests/
+            agent/build/test-results/
+            agent/hs_err_*.log
           if-no-files-found: ignore
           retention-days: 14
