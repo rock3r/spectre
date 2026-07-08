@@ -27,8 +27,9 @@ For comparison with the other transports, see [Cross-JVM access](cross-jvm.md) (
     The agent transport is **local only** and intended for **trusted dev/test
     environments**. Trust model:
 
-    - Communication is over a **Unix Domain Socket** under a short private directory in `/tmp/`.
-      Filesystem permissions (directory mode 0700, socket mode 0600) are the only access control.
+    - Communication is over a **Unix Domain Socket** under a short private directory (`/tmp/` on
+      Linux/macOS, `%TEMP%` on Windows). Filesystem permissions are the only access control —
+      directory mode 0700 / socket mode 0600 on POSIX, or an owner-only ACL on Windows/NTFS.
     - The attaching JVM must run as the same OS user as the target JVM.
     - There is **no authentication** and **no encryption** on the wire.
     - The published `spectre-agent` API jar is for the attaching JVM. The
@@ -45,8 +46,10 @@ For comparison with the other transports, see [Cross-JVM access](cross-jvm.md) (
 - The target JVM must include **Spectre `:core`** on its classpath. The agent does not
   inject Spectre into the target; it reflectively bootstraps off the `:core` that's
   already loaded. The agent JAR itself is supplied by the attaching JVM at attach time.
-- **macOS and Linux only** in the current preview. Windows support is tracked as a follow-up (named pipes
-  via JNA or junixsocket).
+- **Linux, macOS, and Windows.** The transport uses native Unix Domain Sockets (`AF_UNIX`) on all
+  three — no named pipes, no extra dependencies. Windows requires **Windows 10 version 1803 /
+  Windows Server 2019 or newer**, when native `AF_UNIX` landed; older Windows fails the attach
+  preflight with a clear message.
 - The target JVM should be started with **`-XX:+EnableDynamicAgentLoading`**. Without it,
   attach prints a stderr warning per
   [JEP 451](https://openjdk.org/jeps/451) and a future JDK will reject the attach
@@ -202,14 +205,15 @@ cleanup.
 ```kotlin
 AttachOptions(
     agentJarPath = null,        // null = auto-locate (see "Artifact roles" above)
-    udsPath = null,             // null = /tmp/sp-a-<pid>-<8char-uuid>/agent.sock
+    udsPath = null,             // null = <tmp>/sp-a-<pid>-<8char-uuid>/agent.sock (/tmp on POSIX, %TEMP% on Windows)
     attachTimeoutMs = 5_000,    // how long to wait for the agent's IPC server to come up
 )
 ```
 
 If you override `udsPath` with a path under an existing directory, you own that parent
-directory's permissions. Spectre creates the default per-attach directory as mode 0700 and the
-socket as mode 0600, but it does not chmod directories it did not create.
+directory's permissions. Spectre creates the default per-attach directory and socket owner-only —
+mode 0700/0600 on POSIX, an owner-only ACL (owner full control, inherited ACEs dropped) on
+Windows — but it does not tighten directories it did not create.
 
 `AgentAttach.attach` runs a **same-user preflight** via `ProcessHandle` and throws
 `AttachPermissionDeniedException` if the target JVM is owned by a different OS user (the
@@ -250,7 +254,8 @@ hierarchy.
 
 ## Current limitations
 
-- **macOS and Linux only.** Windows support is a tracked follow-up.
+- **Windows needs 10 version 1803 / Server 2019 or newer.** That's when native `AF_UNIX` landed;
+  older Windows fails the attach preflight with `AttachPlatformUnsupportedException`.
 - **No streaming ops.** `waitForVisualIdle` and friends are HTTP-only or in-process only for now.
 - **IntelliJ-hosted Compose**: the classloader-disambiguation rule (D-14 in the plan) was
   designed to handle `PluginClassLoader` chains but isn't automatically tested yet. If
@@ -266,8 +271,9 @@ hierarchy.
 # Terminal A — start a Spectre-instrumented app
 ./gradlew :sample-desktop:run
 
-# Find its PID
-ps -A | grep "dev.sebastiano.spectre.sample.MainKt" | awk '{print $1}'
+# Find its PID (cross-platform: jps ships with the JDK)
+jps -l | grep "dev.sebastiano.spectre.sample.MainKt"
+# POSIX alternative: ps -A | grep "…MainKt" | awk '{print $1}'
 
 # Terminal B — attach the agent. The agent's stderr lands in Terminal A.
 ./gradlew :agent:attachSpike -Ppid=<pid>

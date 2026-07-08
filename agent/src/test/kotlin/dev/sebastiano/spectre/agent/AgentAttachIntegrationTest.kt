@@ -60,17 +60,17 @@ import org.junit.jupiter.api.condition.OS
  * developers can diagnose real keyboard regressions.
  *
  * Gating:
- * - **Disabled on Windows** via `@EnabledOnOs(OS.LINUX, OS.MAC)`. The current agent transport is
- *   macOS+Linux only — `AgentAttach.attach` short-circuits with
- *   `AttachPlatformUnsupportedException` on Windows runners. Until Windows support lands (named
- *   pipes via JNA/junixsocket follow-up), this test is skipped rather than asserting
- *   Windows-specific failure shapes.
+ * - **Runs on Linux, macOS, and Windows** via `@EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)`. The
+ *   agent transport rides native `AF_UNIX` on all three (#196); the fixture is spawned with the
+ *   platform's `java`/`java.exe`.
  * - Skipped on headless JVMs (`java.awt.GraphicsEnvironment.isHeadless()`). Compose Desktop refuses
  *   to create a `JFrame + ComposePanel` without a display.
  * - Skipped when `dev.sebastiano.spectre.agent.runtimeJar` isn't set. Gradle's `:agent:test` task
  *   sets it from the `:agent-runtime:jar` output.
+ * - Real-keyboard `typeText` tolerates a CI-only loss of OS keyboard focus on any platform (see
+ *   `typeTextOrSkipCiFocusLoss`); the attach/click/focus contract is still asserted.
  */
-@EnabledOnOs(OS.LINUX, OS.MAC)
+@EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)
 class AgentAttachIntegrationTest {
     private val orphanUdsFiles = mutableListOf<Path>()
 
@@ -187,7 +187,13 @@ class AgentAttachIntegrationTest {
     }
 
     private fun spawnComposeFixture(): FixtureProcess {
-        val javaBin = Paths.get(System.getProperty("java.home"), "bin", "java").toString()
+        // ProcessBuilder does not append `.exe` for an absolute path on Windows, so pick the
+        // launcher name explicitly.
+        val javaExe =
+            if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true))
+                "java.exe"
+            else "java"
+        val javaBin = Paths.get(System.getProperty("java.home"), "bin", javaExe).toString()
         val classpath = System.getProperty("java.class.path")
         val process =
             ProcessBuilder(

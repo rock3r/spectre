@@ -65,7 +65,7 @@ out of scope.
 | Record video | `AutoRecorder`, native recorders, deprecated explicit `FfmpegRecorder`, `WaylandPortalRecorder` | In-process only |
 | Execute a helper binary | `HelperBinaryExtractor` (SCK), `WaylandHelperBinaryExtractor` | Local file system, JVM process |
 | Expose any of the above over HTTP | `installSpectreRoutes` mounts the windows / nodes / click / typeText / screenshot routes | **Unauthenticated, plaintext** — host application chooses bind address |
-| Expose any of the above over UDS | `:agent`'s `IpcServer` mounts the same surface plus detach over a Unix Domain Socket | **Unauthenticated** — owner-only filesystem access (POSIX mode 0600 on Linux/macOS, owner-only ACL on Windows/NTFS); same OS user only. Windows attach enablement is tracked under #193 |
+| Expose any of the above over UDS | `:agent`'s `IpcServer` mounts the same surface plus detach over a Unix Domain Socket | **Unauthenticated** — owner-only filesystem access (POSIX mode 0600 on Linux/macOS, owner-only ACL on Windows/NTFS); same OS user only. Supported on Linux, macOS, and Windows (10 version 1803 / Server 2019+) |
 
 The HTTP exposure column is the most important one to internalise: there are **no auth
 tokens, no TLS, and no origin checks** on any route. The transport is intentionally a
@@ -125,7 +125,7 @@ expansion); items that are hygiene fixes get their own issues.
   regardless — the same reality as `root` on a POSIX mode-0600 socket. The same-user preflight on
   Windows also treats elevated and non-elevated processes of the same account as the same user
   (they share the account SID); Windows may still deny the OS-level attach across integrity levels.
-  These are accepted for the same-machine, same-user testing model. Tracked under #193.
+  These are accepted for the same-machine, same-user testing model.
 - **Helper-extraction cleanup.** Extracted helper binaries are not `deleteOnExit`-registered.
   This is hygiene, not security (the extraction path is process-private and writable only by
   the user), but a tidy-up follow-up is worth tracking.

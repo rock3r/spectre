@@ -42,15 +42,33 @@ public data class AttachOptions(
         public const val DEFAULT_ATTACH_TIMEOUT_MS: Long = 5_000
 
         /**
-         * Default UDS path: `/tmp/sp-a-<pid>-<8char-uuid>/agent.sock`. Deliberately short to stay
-         * inside Unix's `sun_path` limit (~104 chars on macOS, ~108 on Linux). `java.io.tmpdir`
-         * resolves to a much longer path on macOS (`/var/folders/...`) and can blow past the limit,
-         * so we hard-code `/tmp` (symlinked to `/private/tmp` on macOS).
+         * Default UDS path: `<base>/sp-a-<pid>-<8char-uuid>/agent.sock`.
+         *
+         * The base directory is platform-aware and deliberately short to stay inside the `sun_path`
+         * limit (~104 chars on macOS, ~108 on Linux and Windows):
+         * - **Linux/macOS**: hard-coded `/tmp` (symlinked to `/private/tmp` on macOS).
+         *   `java.io.tmpdir` resolves to a much longer `/var/folders/...` on macOS and can blow
+         *   past the limit.
+         * - **Windows**: `java.io.tmpdir` (i.e. `%TEMP%`, per-user ACL'd). `/tmp` is meaningless on
+         *   Windows — `Paths.get("/tmp", …)` yields the drive-relative `\tmp\…`, outside the
+         *   protected per-user temp area.
          */
         public fun defaultUdsPath(targetPid: Long): Path {
             val shortUuid = UUID.randomUUID().toString().take(SHORT_UUID_LENGTH)
-            return Paths.get("/tmp", "sp-a-${targetPid}-${shortUuid}", "agent.sock")
+            val base = udsBaseDir(System.getProperty("os.name").orEmpty(), TMP_DIR)
+            return Paths.get(base, "sp-a-${targetPid}-${shortUuid}", "agent.sock")
         }
+
+        /**
+         * Base directory for the default UDS path: `java.io.tmpdir` (`%TEMP%`) on Windows, `/tmp`
+         * elsewhere. Extracted for testing — `java.nio.file.Path` construction is
+         * filesystem-specific so the selection logic is validated as strings here.
+         */
+        internal fun udsBaseDir(osName: String, tmpDir: String): String =
+            if (osName.startsWith("Windows", ignoreCase = true)) tmpDir else "/tmp"
+
+        private val TMP_DIR: String
+            get() = System.getProperty("java.io.tmpdir").orEmpty()
 
         private const val SHORT_UUID_LENGTH = 8
     }

@@ -56,9 +56,9 @@ Three experimental markers exist today:
   marker.
 - **`@ExperimentalSpectreAgentApi`** covers the entire `agent` module's attach-side public
   surface — `AgentAttach`, `AttachedAutomator`, `AttachOptions`, `SpectreProcesses`, and the
-  wire DTOs. Tracked under #153; the marker stays in place while the attach UX, Windows
-  transport shape, streaming wire ops (`waitForVisualIdle` etc.), and automated
-  IntelliJ-hosted Compose attach tests settle.
+  wire DTOs. Tracked under #153; the marker stays in place while the attach UX, streaming wire
+  ops (`waitForVisualIdle` etc.), and automated IntelliJ-hosted Compose attach tests settle.
+  The transport itself runs on Linux, macOS, and Windows (native `AF_UNIX`).
 
 Consumers opt in either at file level or call site:
 
@@ -137,7 +137,7 @@ Spectre is JVM-first and targets desktop OSes.
 | Platform | Tier | Notes |
 | --- | --- | --- |
 | **macOS** | Primary | Full support. AWT Robot input, ScreenCaptureKit recording (with `spectre-recording-macos` helper), TCC permission diagnostics. |
-| **Windows** | Full | AWT Robot input + Windows Graphics Capture region/window recording. |
+| **Windows** | Full | AWT Robot input + Windows Graphics Capture region/window recording + agent attach over native `AF_UNIX` (Windows 10 1803 / Server 2019+). |
 | **Linux Xorg** | Full | AWT Robot input + helper/GStreamer Xorg/Xvfb recording and screenshots. Validated against Xvfb in CI. |
 | **Linux Wayland** | Best-effort | Portal-mediated capture via `WaylandPortalRecorder`, `WaylandPortalWindowRecorder`, and `LinuxNativeScreenshotter`. **Validated on GNOME/Mutter only**; KDE / sway / wlroots compositors may behave differently and are not exercised in CI. Real Robot input is unavailable on Wayland — use the synthetic adapter for tests. |
 | **BSD** | Unsupported | Not built or tested. |

@@ -22,9 +22,9 @@ public class AttachUnsupportedException(cause: Throwable? = null) :
 @ExperimentalSpectreAgentApi
 public class AttachPlatformUnsupportedException(public val osName: String) :
     SpectreAttachException(
-        "The Spectre agent transport is currently supported on macOS and Linux only. " +
-            "This JVM reports os.name='$osName'. Windows support needs a named-pipe " +
-            "transport instead of Unix Domain Sockets."
+        "The Spectre agent transport requires native AF_UNIX socket support. This JVM reports " +
+            "os.name='$osName' without it. On Windows, native AF_UNIX requires Windows 10 " +
+            "version 1803 / Windows Server 2019 or newer."
     )
 
 /**
