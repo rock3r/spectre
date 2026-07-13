@@ -15,6 +15,7 @@ import java.nio.file.attribute.AclEntry
 import java.nio.file.attribute.AclEntryPermission
 import java.nio.file.attribute.AclEntryType
 import java.nio.file.attribute.AclFileAttributeView
+import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.EnumSet
 import java.util.concurrent.atomic.AtomicBoolean
@@ -146,11 +147,20 @@ public constructor(
     }
 
     private fun requireStaleSocket(path: Path) {
-        if ("unix" !in path.fileSystem.supportedFileAttributeViews()) {
-            throw IOException("Unable to verify stale daemon socket $path on this filesystem")
+        if ("unix" in path.fileSystem.supportedFileAttributeViews()) {
+            val mode = Files.getAttribute(path, "unix:mode", NOFOLLOW_LINKS) as Int
+            if (mode and FILE_TYPE_MASK != UNIX_SOCKET_FILE_TYPE) {
+                throw IOException("Refusing to replace non-socket daemon path $path")
+            }
+            return
         }
-        val mode = Files.getAttribute(path, "unix:mode", NOFOLLOW_LINKS) as Int
-        if (mode and FILE_TYPE_MASK != UNIX_SOCKET_FILE_TYPE) {
+
+        // Windows exposes an AF_UNIX socket as an "other" filesystem entry, while it does not
+        // expose Unix FIFO/device nodes at an ordinary Path. Keep this platform-specific fallback
+        // so a crashed Windows daemon can recover its socket without weakening Unix's exact mode
+        // check, which protects user-owned FIFOs and device nodes.
+        val attributes = Files.readAttributes(path, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
+        if (!isWindows() || !attributes.isOther) {
             throw IOException("Refusing to replace non-socket daemon path $path")
         }
     }
@@ -183,6 +193,9 @@ public constructor(
 
     private companion object {
         private const val DEFAULT_TERMINATION_TIMEOUT_MILLIS: Long = 5_000
+
+        private fun isWindows(): Boolean =
+            System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
     }
 }
 
