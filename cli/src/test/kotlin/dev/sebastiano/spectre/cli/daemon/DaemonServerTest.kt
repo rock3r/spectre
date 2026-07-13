@@ -17,6 +17,23 @@ import kotlin.test.assertTrue
 
 class DaemonServerTest {
     @Test
+    fun `close unblocks an idle connected client`() {
+        val socketPath = Files.createTempDirectory("spectre-daemon-test").resolve("daemon.sock")
+        val server = DaemonServer(socketPath)
+        val client = SocketChannel.open(java.net.StandardProtocolFamily.UNIX)
+        client.connect(java.net.UnixDomainSocketAddress.of(socketPath))
+
+        try {
+            server.close()
+            assertTrue(server.awaitTermination(timeoutMillis = 2_000))
+        } finally {
+            client.close()
+            server.close()
+            Files.deleteIfExists(socketPath.parent)
+        }
+    }
+
+    @Test
     fun `does not replace a regular file at the daemon socket path`() {
         val socketPath = Files.createTempDirectory("spectre-daemon-test").resolve("daemon.sock")
         Files.writeString(socketPath, "keep me")

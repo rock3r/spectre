@@ -15,10 +15,10 @@ import java.nio.file.attribute.AclEntry
 import java.nio.file.attribute.AclEntryPermission
 import java.nio.file.attribute.AclEntryType
 import java.nio.file.attribute.AclFileAttributeView
-import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.EnumSet
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Long-lived local daemon endpoint for the CLI/MCP protocol.
@@ -34,6 +34,7 @@ public constructor(
 ) : AutoCloseable {
     private val running: AtomicBoolean = AtomicBoolean(true)
     private val closed: AtomicBoolean = AtomicBoolean(false)
+    private val activeClient: AtomicReference<SocketChannel?> = AtomicReference(null)
     private val socketProtection: DaemonSocketProtection =
         DaemonSocketProtection.forPath(socketPath)
     private val createdParent: Path? = socketProtection.createMissingParent(socketPath)
@@ -98,22 +99,27 @@ public constructor(
     }
 
     private fun handleConnection(client: SocketChannel) {
-        client.use { channel ->
-            val input = Channels.newInputStream(channel)
-            val output = Channels.newOutputStream(channel)
-            while (running.get()) {
-                val request = DaemonWireCodec.readRequest(input) ?: return
-                val response = registry.handle(request)
-                val isShutdown = request is DaemonRequest.Shutdown
-                try {
-                    DaemonWireCodec.writeResponse(output, response)
-                } finally {
-                    // The registry transitions before the response is written. A disconnected
-                    // client must not leave this process listening in that shut-down state.
-                    if (isShutdown) close()
+        activeClient.set(client)
+        try {
+            client.use { channel ->
+                val input = Channels.newInputStream(channel)
+                val output = Channels.newOutputStream(channel)
+                while (running.get()) {
+                    val request = DaemonWireCodec.readRequest(input) ?: return
+                    val response = registry.handle(request)
+                    val isShutdown = request is DaemonRequest.Shutdown
+                    try {
+                        DaemonWireCodec.writeResponse(output, response)
+                    } finally {
+                        // The registry transitions before the response is written. A disconnected
+                        // client must not leave this process listening in that shut-down state.
+                        if (isShutdown) close()
+                    }
+                    if (isShutdown) return
                 }
-                if (isShutdown) return
             }
+        } finally {
+            activeClient.compareAndSet(client, null)
         }
     }
 
@@ -140,8 +146,11 @@ public constructor(
     }
 
     private fun requireStaleSocket(path: Path) {
-        val attributes = Files.readAttributes(path, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
-        if (!attributes.isOther) {
+        if ("unix" !in path.fileSystem.supportedFileAttributeViews()) {
+            throw IOException("Unable to verify stale daemon socket $path on this filesystem")
+        }
+        val mode = Files.getAttribute(path, "unix:mode", NOFOLLOW_LINKS) as Int
+        if (mode and FILE_TYPE_MASK != UNIX_SOCKET_FILE_TYPE) {
             throw IOException("Refusing to replace non-socket daemon path $path")
         }
     }
@@ -165,6 +174,7 @@ public constructor(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         running.set(false)
+        runCatching { activeClient.getAndSet(null)?.close() }
         runCatching { serverChannel.close() }
         runCatching { Files.deleteIfExists(socketPath) }
         runCatching { createdParent?.let(Files::deleteIfExists) }
@@ -241,3 +251,5 @@ private data object WindowsAcl : DaemonSocketProtection {
 
 private val OWNER_ONLY_DIRECTORY_PERMISSIONS = PosixFilePermissions.fromString("rwx------")
 private val OWNER_ONLY_SOCKET_PERMISSIONS = PosixFilePermissions.fromString("rw-------")
+private const val FILE_TYPE_MASK: Int = 0xF000
+private const val UNIX_SOCKET_FILE_TYPE: Int = 0xC000
