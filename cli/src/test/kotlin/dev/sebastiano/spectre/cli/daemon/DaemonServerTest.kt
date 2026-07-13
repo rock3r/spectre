@@ -18,7 +18,7 @@ import kotlin.test.assertTrue
 class DaemonServerTest {
     @Test
     fun `close unblocks an idle connected client`() {
-        val socketPath = Files.createTempDirectory("spectre-daemon-test").resolve("daemon.sock")
+        val socketPath = temporarySocketPath()
         val server = DaemonServer(socketPath)
         val client = SocketChannel.open(java.net.StandardProtocolFamily.UNIX)
         client.connect(java.net.UnixDomainSocketAddress.of(socketPath))
@@ -29,25 +29,31 @@ class DaemonServerTest {
         } finally {
             client.close()
             server.close()
-            Files.deleteIfExists(socketPath.parent)
+            deleteTemporarySocketPath(socketPath)
         }
     }
 
     @Test
     fun `does not replace a regular file at the daemon socket path`() {
-        val socketPath = Files.createTempDirectory("spectre-daemon-test").resolve("daemon.sock")
+        val socketPath = temporarySocketPath()
+        val bootstrapServer = DaemonServer(socketPath.resolveSibling("bootstrap.sock"))
         Files.writeString(socketPath, "keep me")
 
-        assertFailsWith<java.io.IOException> { DaemonServer(socketPath) }
+        try {
+            assertFailsWith<java.io.IOException> { DaemonServer(socketPath) }
 
-        assertEquals("keep me", Files.readString(socketPath))
-        Files.deleteIfExists(socketPath)
-        Files.deleteIfExists(socketPath.parent)
+            assertEquals("keep me", Files.readString(socketPath))
+        } finally {
+            Files.deleteIfExists(socketPath)
+            bootstrapServer.close()
+            assertTrue(bootstrapServer.awaitTermination())
+            deleteTemporarySocketPath(socketPath)
+        }
     }
 
     @Test
     fun `zero termination timeout does not block`() {
-        val socketPath = Files.createTempDirectory("spectre-daemon-test").resolve("daemon.sock")
+        val socketPath = temporarySocketPath()
         val server = DaemonServer(socketPath)
 
         try {
@@ -55,13 +61,14 @@ class DaemonServerTest {
         } finally {
             server.close()
             assertTrue(server.awaitTermination())
-            Files.deleteIfExists(socketPath.parent)
+            deleteTemporarySocketPath(socketPath)
         }
     }
 
     @Test
     fun `replaces a stale daemon socket`() {
-        val socketPath = Files.createTempDirectory("spectre-daemon-test").resolve("daemon.sock")
+        val socketPath = temporarySocketPath()
+        val bootstrapServer = DaemonServer(socketPath.resolveSibling("bootstrap.sock"))
         ServerSocketChannel.open(java.net.StandardProtocolFamily.UNIX).use { channel ->
             channel.bind(java.net.UnixDomainSocketAddress.of(socketPath))
         }
@@ -83,13 +90,15 @@ class DaemonServerTest {
         } finally {
             server.close()
             assertTrue(server.awaitTermination())
-            Files.deleteIfExists(socketPath.parent)
+            bootstrapServer.close()
+            assertTrue(bootstrapServer.awaitTermination())
+            deleteTemporarySocketPath(socketPath)
         }
     }
 
     @Test
     fun `refuses to replace a live daemon socket`() {
-        val socketPath = Files.createTempDirectory("spectre-daemon-test").resolve("daemon.sock")
+        val socketPath = temporarySocketPath()
         val firstServer = DaemonServer(socketPath)
 
         try {
@@ -111,7 +120,7 @@ class DaemonServerTest {
         } finally {
             firstServer.close()
             assertTrue(firstServer.awaitTermination())
-            Files.deleteIfExists(socketPath.parent)
+            deleteTemporarySocketPath(socketPath)
         }
     }
 
@@ -165,7 +174,7 @@ class DaemonServerTest {
 
     @Test
     fun `serves lifecycle requests over a unix domain socket and removes it on shutdown`() {
-        val socketPath = Files.createTempDirectory("spectre-daemon-test").resolve("daemon.sock")
+        val socketPath = temporarySocketPath()
         val server = DaemonServer(socketPath)
 
         try {
@@ -197,13 +206,13 @@ class DaemonServerTest {
             assertFalse(Files.exists(socketPath))
         } finally {
             server.close()
-            Files.deleteIfExists(socketPath.parent)
+            deleteTemporarySocketPath(socketPath)
         }
     }
 
     @Test
     fun `keeps accepting requests after a malformed client frame`() {
-        val socketPath = Files.createTempDirectory("spectre-daemon-test").resolve("daemon.sock")
+        val socketPath = temporarySocketPath()
         val server = DaemonServer(socketPath)
 
         try {
@@ -225,7 +234,20 @@ class DaemonServerTest {
         } finally {
             server.close()
             assertTrue(server.awaitTermination())
-            Files.deleteIfExists(socketPath.parent)
+            deleteTemporarySocketPath(socketPath)
         }
     }
+}
+
+private fun temporarySocketPath(): Path =
+    if ("posix" in FileSystems.getDefault().supportedFileAttributeViews()) {
+        Path.of("/tmp", "sp-d-${UUID.randomUUID().toString().take(8)}", "daemon", "daemon.sock")
+    } else {
+        Files.createTempDirectory("spectre-daemon-test").resolve("daemon").resolve("daemon.sock")
+    }
+
+private fun deleteTemporarySocketPath(socketPath: Path) {
+    Files.deleteIfExists(socketPath)
+    Files.deleteIfExists(socketPath.parent)
+    Files.deleteIfExists(socketPath.parent.parent)
 }
