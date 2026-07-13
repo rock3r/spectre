@@ -17,6 +17,32 @@ import kotlin.test.assertTrue
 
 class DaemonServerTest {
     @Test
+    fun `does not replace a regular file at the daemon socket path`() {
+        val socketPath = Files.createTempDirectory("spectre-daemon-test").resolve("daemon.sock")
+        Files.writeString(socketPath, "keep me")
+
+        assertFailsWith<java.io.IOException> { DaemonServer(socketPath) }
+
+        assertEquals("keep me", Files.readString(socketPath))
+        Files.deleteIfExists(socketPath)
+        Files.deleteIfExists(socketPath.parent)
+    }
+
+    @Test
+    fun `zero termination timeout does not block`() {
+        val socketPath = Files.createTempDirectory("spectre-daemon-test").resolve("daemon.sock")
+        val server = DaemonServer(socketPath)
+
+        try {
+            assertFalse(server.awaitTermination(timeoutMillis = 0))
+        } finally {
+            server.close()
+            assertTrue(server.awaitTermination())
+            Files.deleteIfExists(socketPath.parent)
+        }
+    }
+
+    @Test
     fun `replaces a stale daemon socket`() {
         val socketPath = Files.createTempDirectory("spectre-daemon-test").resolve("daemon.sock")
         ServerSocketChannel.open(java.net.StandardProtocolFamily.UNIX).use { channel ->

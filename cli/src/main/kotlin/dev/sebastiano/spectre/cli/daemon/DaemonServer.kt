@@ -8,12 +8,14 @@ import java.nio.channels.ClosedChannelException
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.attribute.AclEntry
 import java.nio.file.attribute.AclEntryPermission
 import java.nio.file.attribute.AclEntryType
 import java.nio.file.attribute.AclFileAttributeView
+import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.EnumSet
 import java.util.concurrent.atomic.AtomicBoolean
@@ -70,6 +72,7 @@ public constructor(
     @Throws(InterruptedException::class)
     public fun awaitTermination(timeoutMillis: Long = DEFAULT_TERMINATION_TIMEOUT_MILLIS): Boolean {
         require(timeoutMillis >= 0) { "timeoutMillis must be non-negative" }
+        if (timeoutMillis == 0L) return !acceptThread.isAlive
         acceptThread.join(timeoutMillis)
         return !acceptThread.isAlive
     }
@@ -131,8 +134,16 @@ public constructor(
 
         if (isDaemonListening(socketPath)) throw DaemonAlreadyRunningException(socketPath)
 
+        requireStaleSocket(socketPath)
         Files.deleteIfExists(socketPath)
         channel.bind(UnixDomainSocketAddress.of(socketPath))
+    }
+
+    private fun requireStaleSocket(path: Path) {
+        val attributes = Files.readAttributes(path, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
+        if (!attributes.isOther) {
+            throw IOException("Refusing to replace non-socket daemon path $path")
+        }
     }
 
     private fun isDaemonListening(path: Path): Boolean =
