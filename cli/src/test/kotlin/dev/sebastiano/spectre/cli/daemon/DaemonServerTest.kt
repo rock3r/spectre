@@ -145,21 +145,20 @@ class DaemonServerTest {
     }
 
     @Test
-    fun `hardens an existing socket directory`() {
+    fun `refuses an existing socket directory with permissive permissions`() {
         if ("posix" !in FileSystems.getDefault().supportedFileAttributeViews()) return
 
         val socketParent = Files.createTempDirectory("spectre-daemon-test")
         Files.setPosixFilePermissions(socketParent, PosixFilePermissions.fromString("rwxrwxrwx"))
-        val server = DaemonServer(socketParent.resolve("daemon.sock"))
-
+        val socketPath = socketParent.resolve("daemon.sock")
         try {
+            assertFailsWith<java.io.IOException> { DaemonServer(socketPath) }
             assertEquals(
-                PosixFilePermissions.fromString("rwx------"),
+                PosixFilePermissions.fromString("rwxrwxrwx"),
                 Files.getPosixFilePermissions(socketParent),
             )
         } finally {
-            server.close()
-            assertTrue(server.awaitTermination())
+            Files.deleteIfExists(socketPath)
             Files.deleteIfExists(socketParent)
         }
     }

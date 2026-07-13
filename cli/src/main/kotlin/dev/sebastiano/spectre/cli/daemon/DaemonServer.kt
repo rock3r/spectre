@@ -244,7 +244,7 @@ private sealed interface DaemonSocketProtection {
     fun createMissingParent(socketPath: Path): Path? {
         val parent = socketPath.parent ?: return null
         if (Files.exists(parent)) {
-            protectExistingDirectory(parent)
+            validateExistingDirectory(parent)
             return null
         }
         createProtectedDirectory(parent)
@@ -253,7 +253,7 @@ private sealed interface DaemonSocketProtection {
 
     @Throws(IOException::class) fun createProtectedDirectory(directory: Path)
 
-    @Throws(IOException::class) fun protectExistingDirectory(directory: Path)
+    @Throws(IOException::class) fun validateExistingDirectory(directory: Path)
 
     @Throws(IOException::class) fun protectSocket(socketPath: Path)
 
@@ -275,8 +275,10 @@ private data object Posix : DaemonSocketProtection {
         Files.setPosixFilePermissions(socketPath, OWNER_ONLY_SOCKET_PERMISSIONS)
     }
 
-    override fun protectExistingDirectory(directory: Path) {
-        Files.setPosixFilePermissions(directory, OWNER_ONLY_DIRECTORY_PERMISSIONS)
+    override fun validateExistingDirectory(directory: Path) {
+        if (Files.getPosixFilePermissions(directory) != OWNER_ONLY_DIRECTORY_PERMISSIONS) {
+            throw IOException("Existing daemon socket directory $directory must be owner-only")
+        }
     }
 }
 
@@ -290,8 +292,21 @@ private data object WindowsAcl : DaemonSocketProtection {
         setOwnerOnlyAcl(socketPath)
     }
 
-    override fun protectExistingDirectory(directory: Path) {
-        setOwnerOnlyAcl(directory)
+    override fun validateExistingDirectory(directory: Path) {
+        val view =
+            Files.getFileAttributeView(directory, AclFileAttributeView::class.java)
+                ?: throw IOException("Filesystem at $directory does not support ACLs")
+        val owner = view.owner
+        if (
+            view.acl.isEmpty() ||
+                view.acl.any { entry ->
+                    entry.type() != AclEntryType.ALLOW ||
+                        entry.principal() != owner ||
+                        !entry.permissions().containsAll(ALL_ACL_PERMISSIONS)
+                }
+        ) {
+            throw IOException("Existing daemon socket directory $directory must be owner-only")
+        }
     }
 
     private fun setOwnerOnlyAcl(path: Path) {
@@ -310,5 +325,7 @@ private data object WindowsAcl : DaemonSocketProtection {
 
 private val OWNER_ONLY_DIRECTORY_PERMISSIONS = PosixFilePermissions.fromString("rwx------")
 private val OWNER_ONLY_SOCKET_PERMISSIONS = PosixFilePermissions.fromString("rw-------")
+private val ALL_ACL_PERMISSIONS: Set<AclEntryPermission> =
+    EnumSet.allOf(AclEntryPermission::class.java)
 private const val FILE_TYPE_MASK: Int = 0xF000
 private const val UNIX_SOCKET_FILE_TYPE: Int = 0xC000
