@@ -37,7 +37,6 @@ public enum class VersionCompatibility {
 @Serializable
 public sealed interface DaemonRequest {
     @Serializable
-    @SerialName("hello")
     public data class Hello(public val clientVersion: DaemonProtocolVersion) : DaemonRequest
 
     @Serializable
@@ -56,7 +55,6 @@ public sealed interface DaemonRequest {
 @Serializable
 public sealed interface DaemonResponse {
     @Serializable
-    @SerialName("hello")
     public data class Hello(public val daemonVersion: DaemonProtocolVersion) : DaemonResponse
 
     @Serializable
