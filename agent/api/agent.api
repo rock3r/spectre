@@ -98,6 +98,16 @@ public final class dev/sebastiano/spectre/agent/runtime/SpectreAgent {
 	public static final fun premain (Ljava/lang/String;Ljava/lang/instrument/Instrumentation;)V
 }
 
+public final class dev/sebastiano/spectre/agent/transport/Framing {
+	public static final field INSTANCE Ldev/sebastiano/spectre/agent/transport/Framing;
+	public final fun readFrame (Ljava/io/InputStream;)[B
+	public final fun writeFrame (Ljava/io/OutputStream;[B)V
+}
+
+public final class dev/sebastiano/spectre/agent/transport/FramingKt {
+	public static final field MAX_FRAME_BYTES I
+}
+
 public final class dev/sebastiano/spectre/agent/transport/NodeSnapshotDto {
 	public static final field Companion Ldev/sebastiano/spectre/agent/transport/NodeSnapshotDto$Companion;
 	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZLdev/sebastiano/spectre/agent/transport/RectDto;)V

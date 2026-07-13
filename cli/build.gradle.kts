@@ -11,6 +11,7 @@ kotlin {
 }
 
 dependencies {
+    implementation(projects.agent)
     implementation(libs.kotlinx.serialization.cbor)
 
     detektPlugins(libs.compose.rules.detekt)
