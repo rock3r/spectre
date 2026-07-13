@@ -16,7 +16,7 @@ class DaemonHandshakeTest {
 
         val hello = assertIs<DaemonRequest.Hello>(decoded)
         assertEquals(1, hello.clientVersion.major)
-        assertEquals(0, hello.clientVersion.minor)
+        assertEquals(1, hello.clientVersion.minor)
     }
 
     @Test
