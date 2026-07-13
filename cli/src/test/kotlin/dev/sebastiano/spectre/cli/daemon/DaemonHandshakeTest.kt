@@ -16,7 +16,7 @@ class DaemonHandshakeTest {
 
         val hello = assertIs<DaemonRequest.Hello>(decoded)
         assertEquals(1, hello.clientVersion.major)
-        assertEquals(0, hello.clientVersion.minor)
+        assertEquals(1, hello.clientVersion.minor)
     }
 
     @Test
@@ -42,5 +42,48 @@ class DaemonHandshakeTest {
                 daemon = DaemonProtocolVersion(major = 1, minor = 0),
             ),
         )
+    }
+}
+
+@OptIn(ExperimentalSerializationApi::class)
+class DaemonSessionCommandProtocolTest {
+    @Test
+    fun `session lifecycle requests round trip through cbor`() {
+        val requests =
+            listOf<DaemonRequest>(
+                DaemonRequest.Attach(targetPid = 1234),
+                DaemonRequest.Detach(sessionId = "session-1234"),
+                DaemonRequest.ListSessions,
+                DaemonRequest.Shutdown,
+            )
+
+        val decoded = requests.map { request ->
+            val bytes = DaemonProtocol.cbor.encodeToByteArray(DaemonRequest.serializer(), request)
+            DaemonProtocol.cbor.decodeFromByteArray(DaemonRequest.serializer(), bytes)
+        }
+
+        assertEquals(requests, decoded)
+    }
+
+    @Test
+    fun `session lifecycle responses round trip through cbor`() {
+        val responses =
+            listOf<DaemonResponse>(
+                DaemonResponse.Attached(sessionId = "session-1234", targetPid = 1234),
+                DaemonResponse.Detached(sessionId = "session-1234"),
+                DaemonResponse.Sessions(
+                    sessions =
+                        listOf(DaemonSessionSummary(sessionId = "session-1234", targetPid = 1234))
+                ),
+                DaemonResponse.ShuttingDown,
+                DaemonResponse.Error(code = DaemonErrorCode.SessionNotFound, message = "missing"),
+            )
+
+        val decoded = responses.map { response ->
+            val bytes = DaemonProtocol.cbor.encodeToByteArray(DaemonResponse.serializer(), response)
+            DaemonProtocol.cbor.decodeFromByteArray(DaemonResponse.serializer(), bytes)
+        }
+
+        assertEquals(responses, decoded)
     }
 }
