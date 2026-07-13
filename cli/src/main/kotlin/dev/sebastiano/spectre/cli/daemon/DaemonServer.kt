@@ -8,6 +8,7 @@ import java.nio.channels.ClosedChannelException
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.attribute.AclEntry
 import java.nio.file.attribute.AclEntryPermission
@@ -38,9 +39,10 @@ public constructor(
     private val serverChannel: ServerSocketChannel =
         ServerSocketChannel.open(StandardProtocolFamily.UNIX).also { channel ->
             var bound = false
+            var socketBound = false
             try {
-                Files.deleteIfExists(socketPath)
-                channel.bind(UnixDomainSocketAddress.of(socketPath))
+                bindOrRecoverStaleSocket(channel)
+                socketBound = true
                 socketProtection.protectSocket(socketPath)
                 bound = true
             } finally {
@@ -48,7 +50,7 @@ public constructor(
                     // Preserve the original bind/protection error. Best-effort cleanup must not
                     // obscure the actionable failure or leak an opened native socket descriptor.
                     runCatching { channel.close() }
-                    runCatching { Files.deleteIfExists(socketPath) }
+                    if (socketBound) runCatching { Files.deleteIfExists(socketPath) }
                     runCatching { createdParent?.let(Files::deleteIfExists) }
                 }
             }
@@ -99,11 +101,15 @@ public constructor(
             while (running.get()) {
                 val request = DaemonWireCodec.readRequest(input) ?: return
                 val response = registry.handle(request)
-                DaemonWireCodec.writeResponse(output, response)
-                if (request is DaemonRequest.Shutdown) {
-                    close()
-                    return
+                val isShutdown = request is DaemonRequest.Shutdown
+                try {
+                    DaemonWireCodec.writeResponse(output, response)
+                } finally {
+                    // The registry transitions before the response is written. A disconnected
+                    // client must not leave this process listening in that shut-down state.
+                    if (isShutdown) close()
                 }
+                if (isShutdown) return
             }
         }
     }
@@ -114,6 +120,32 @@ public constructor(
                 "(${exception.javaClass.simpleName}): ${exception.message ?: "<no message>"}"
         )
     }
+
+    private fun bindOrRecoverStaleSocket(channel: ServerSocketChannel) {
+        try {
+            channel.bind(UnixDomainSocketAddress.of(socketPath))
+            return
+        } catch (exception: IOException) {
+            if (!Files.exists(socketPath)) throw exception
+        }
+
+        if (isDaemonListening(socketPath)) throw DaemonAlreadyRunningException(socketPath)
+
+        Files.deleteIfExists(socketPath)
+        channel.bind(UnixDomainSocketAddress.of(socketPath))
+    }
+
+    private fun isDaemonListening(path: Path): Boolean =
+        try {
+            SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
+                channel.connect(UnixDomainSocketAddress.of(path))
+                true
+            }
+        } catch (_: java.net.ConnectException) {
+            false
+        } catch (_: NoSuchFileException) {
+            false
+        }
 
     /**
      * Stops accepting clients and removes the socket plus any parent directory created by this
@@ -132,6 +164,10 @@ public constructor(
         private const val DEFAULT_TERMINATION_TIMEOUT_MILLIS: Long = 5_000
     }
 }
+
+/** Thrown instead of replacing an existing daemon that is still accepting local connections. */
+public class DaemonAlreadyRunningException(socketPath: Path) :
+    IOException("A Spectre daemon is already listening at $socketPath")
 
 /**
  * Keeps the daemon's per-user UDS directory and socket private on POSIX and Windows filesystems.

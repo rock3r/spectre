@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.cli.daemon
 
 import java.nio.channels.Channels
+import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import java.nio.file.FileSystems
 import java.nio.file.Files
@@ -9,11 +10,68 @@ import java.nio.file.attribute.PosixFilePermissions
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class DaemonServerTest {
+    @Test
+    fun `replaces a stale daemon socket`() {
+        val socketPath = Files.createTempDirectory("spectre-daemon-test").resolve("daemon.sock")
+        ServerSocketChannel.open(java.net.StandardProtocolFamily.UNIX).use { channel ->
+            channel.bind(java.net.UnixDomainSocketAddress.of(socketPath))
+        }
+        assertTrue(Files.exists(socketPath))
+
+        val server = DaemonServer(socketPath)
+
+        try {
+            SocketChannel.open(java.net.StandardProtocolFamily.UNIX).use { channel ->
+                channel.connect(java.net.UnixDomainSocketAddress.of(socketPath))
+                val input = Channels.newInputStream(channel)
+                val output = Channels.newOutputStream(channel)
+                DaemonWireCodec.writeRequest(output, DaemonRequest.ListSessions)
+                assertEquals(
+                    DaemonResponse.Sessions(emptyList()),
+                    DaemonWireCodec.readResponse(input),
+                )
+            }
+        } finally {
+            server.close()
+            assertTrue(server.awaitTermination())
+            Files.deleteIfExists(socketPath.parent)
+        }
+    }
+
+    @Test
+    fun `refuses to replace a live daemon socket`() {
+        val socketPath = Files.createTempDirectory("spectre-daemon-test").resolve("daemon.sock")
+        val firstServer = DaemonServer(socketPath)
+
+        try {
+            assertFailsWith<DaemonAlreadyRunningException> { DaemonServer(socketPath) }
+
+            SocketChannel.open(java.net.StandardProtocolFamily.UNIX).use { channel ->
+                channel.connect(java.net.UnixDomainSocketAddress.of(socketPath))
+                val input = Channels.newInputStream(channel)
+                val output = Channels.newOutputStream(channel)
+                DaemonWireCodec.writeRequest(
+                    output,
+                    DaemonRequest.Hello(DaemonProtocol.CurrentVersion),
+                )
+                assertEquals(
+                    DaemonResponse.Hello(DaemonProtocol.CurrentVersion),
+                    DaemonWireCodec.readResponse(input),
+                )
+            }
+        } finally {
+            firstServer.close()
+            assertTrue(firstServer.awaitTermination())
+            Files.deleteIfExists(socketPath.parent)
+        }
+    }
+
     @Test
     fun `creates an owner-only socket directory and socket file`() {
         if ("posix" !in FileSystems.getDefault().supportedFileAttributeViews()) return
