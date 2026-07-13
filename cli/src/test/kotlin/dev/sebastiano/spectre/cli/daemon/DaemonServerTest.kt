@@ -145,6 +145,26 @@ class DaemonServerTest {
     }
 
     @Test
+    fun `hardens an existing socket directory`() {
+        if ("posix" !in FileSystems.getDefault().supportedFileAttributeViews()) return
+
+        val socketParent = Files.createTempDirectory("spectre-daemon-test")
+        Files.setPosixFilePermissions(socketParent, PosixFilePermissions.fromString("rwxrwxrwx"))
+        val server = DaemonServer(socketParent.resolve("daemon.sock"))
+
+        try {
+            assertEquals(
+                PosixFilePermissions.fromString("rwx------"),
+                Files.getPosixFilePermissions(socketParent),
+            )
+        } finally {
+            server.close()
+            assertTrue(server.awaitTermination())
+            Files.deleteIfExists(socketParent)
+        }
+    }
+
+    @Test
     fun `serves lifecycle requests over a unix domain socket and removes it on shutdown`() {
         val socketPath = Files.createTempDirectory("spectre-daemon-test").resolve("daemon.sock")
         val server = DaemonServer(socketPath)

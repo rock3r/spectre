@@ -5,12 +5,15 @@ import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
 import java.nio.channels.Channels
 import java.nio.channels.ClosedChannelException
+import java.nio.channels.FileChannel
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
+import java.nio.file.StandardOpenOption.CREATE
+import java.nio.file.StandardOpenOption.WRITE
 import java.nio.file.attribute.AclEntry
 import java.nio.file.attribute.AclEntryPermission
 import java.nio.file.attribute.AclEntryType
@@ -18,6 +21,7 @@ import java.nio.file.attribute.AclFileAttributeView
 import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.EnumSet
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -139,11 +143,38 @@ public constructor(
             if (!Files.exists(socketPath)) throw exception
         }
 
-        if (isDaemonListening(socketPath)) throw DaemonAlreadyRunningException(socketPath)
+        withStaleSocketRecoveryLock {
+            // Another process may have recovered the stale path while this process waited for the
+            // lock. Rebinding before the liveness probe avoids unlinking its live socket.
+            try {
+                channel.bind(UnixDomainSocketAddress.of(socketPath))
+                return@withStaleSocketRecoveryLock
+            } catch (exception: IOException) {
+                if (!Files.exists(socketPath)) throw exception
+            }
 
-        requireStaleSocket(socketPath)
-        Files.deleteIfExists(socketPath)
-        channel.bind(UnixDomainSocketAddress.of(socketPath))
+            if (isDaemonListening(socketPath)) throw DaemonAlreadyRunningException(socketPath)
+
+            requireStaleSocket(socketPath)
+            Files.deleteIfExists(socketPath)
+            channel.bind(UnixDomainSocketAddress.of(socketPath))
+        }
+    }
+
+    private inline fun withStaleSocketRecoveryLock(action: () -> Unit) {
+        val lockPath = socketPath.resolveSibling("${socketPath.fileName}.lock")
+        val jvmLock = staleSocketRecoveryLocks.computeIfAbsent(lockPath) { Any() }
+        synchronized(jvmLock) {
+            try {
+                FileChannel.open(lockPath, CREATE, WRITE).use { channel ->
+                    channel.lock().use { action() }
+                }
+            } finally {
+                // The lock is retained through a successful bind. Removing it only after releasing
+                // the lock cannot expose a newly bound socket to another recovery attempt.
+                Files.deleteIfExists(lockPath)
+            }
+        }
     }
 
     private fun requireStaleSocket(path: Path) {
@@ -196,6 +227,8 @@ public constructor(
 
         private fun isWindows(): Boolean =
             System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
+
+        private val staleSocketRecoveryLocks: ConcurrentHashMap<Path, Any> = ConcurrentHashMap()
     }
 }
 
@@ -210,12 +243,17 @@ private sealed interface DaemonSocketProtection {
     @Throws(IOException::class)
     fun createMissingParent(socketPath: Path): Path? {
         val parent = socketPath.parent ?: return null
-        if (Files.exists(parent)) return null
+        if (Files.exists(parent)) {
+            protectExistingDirectory(parent)
+            return null
+        }
         createProtectedDirectory(parent)
         return parent
     }
 
     @Throws(IOException::class) fun createProtectedDirectory(directory: Path)
+
+    @Throws(IOException::class) fun protectExistingDirectory(directory: Path)
 
     @Throws(IOException::class) fun protectSocket(socketPath: Path)
 
@@ -236,6 +274,10 @@ private data object Posix : DaemonSocketProtection {
     override fun protectSocket(socketPath: Path) {
         Files.setPosixFilePermissions(socketPath, OWNER_ONLY_SOCKET_PERMISSIONS)
     }
+
+    override fun protectExistingDirectory(directory: Path) {
+        Files.setPosixFilePermissions(directory, OWNER_ONLY_DIRECTORY_PERMISSIONS)
+    }
 }
 
 private data object WindowsAcl : DaemonSocketProtection {
@@ -246,6 +288,10 @@ private data object WindowsAcl : DaemonSocketProtection {
 
     override fun protectSocket(socketPath: Path) {
         setOwnerOnlyAcl(socketPath)
+    }
+
+    override fun protectExistingDirectory(directory: Path) {
+        setOwnerOnlyAcl(directory)
     }
 
     private fun setOwnerOnlyAcl(path: Path) {
