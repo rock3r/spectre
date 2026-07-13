@@ -6,6 +6,7 @@
 spectre
 ├── core/                    — shared automation model and desktop automation primitives
 ├── server/                  — optional transport layer for cross-JVM access
+├── cli/                     — agent-facing CLI / daemon / MCP entrypoint
 ├── recording/               — screenshot / recording API and common JVM implementation
 ├── recording-macos/         — runtime-only macOS ScreenCaptureKit helper artifact
 ├── recording-linux/         — runtime-only Linux capture helper artifact
@@ -78,6 +79,18 @@ Expected long-term responsibilities:
 - remote client
 
 Keep server concerns out of the core data model unless they are genuinely transport-independent.
+
+
+### `cli`
+
+The `cli` module is the agent-facing entrypoint track for issue #173. It owns the thin
+`spectre` client surface, the long-lived per-user session daemon contract, and the future
+`mcp` facade. The first checked-in surface is the client↔daemon handshake protocol: both
+frontends must speak the same versioned CBOR messages before issuing session commands.
+
+The CLI/daemon protocol intentionally lives outside `agent-runtime`: the daemon may use
+`jdk.attach` and the existing agent transport, while the runtime jar must stay thin enough
+to load into arbitrary target JVMs.
 
 ### `recording`
 
