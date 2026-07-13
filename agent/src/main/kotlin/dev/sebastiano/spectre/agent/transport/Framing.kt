@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.agent.transport
 
+import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import java.io.EOFException
 import java.io.InputStream
 import java.io.OutputStream
@@ -9,7 +10,7 @@ import java.nio.ByteOrder
 /**
  * Default upper bound on a single frame's payload. Screenshots are the bulkiest reasonable case.
  */
-internal const val MAX_FRAME_BYTES: Int = 16 * 1024 * 1024
+@ExperimentalSpectreAgentApi public const val MAX_FRAME_BYTES: Int = 16 * 1024 * 1024
 
 /**
  * Length-prefixed binary framing for the agent's IPC wire protocol.
@@ -24,13 +25,14 @@ internal const val MAX_FRAME_BYTES: Int = 16 * 1024 * 1024
  * same code drives Unix-domain-socket connections, pipe-pair tests, and any future transport that
  * produces stream-like endpoints.
  */
-internal object Framing {
+@ExperimentalSpectreAgentApi
+public object Framing {
     /**
      * Writes one frame: the 4-byte big-endian header followed by [payload]. Flushes the stream so
      * the receiver doesn't block waiting for buffered bytes.
      */
     @Throws(java.io.IOException::class)
-    fun writeFrame(output: OutputStream, payload: ByteArray) {
+    public fun writeFrame(output: OutputStream, payload: ByteArray) {
         require(payload.size <= MAX_FRAME_BYTES) {
             "Frame payload size ${payload.size} exceeds MAX_FRAME_BYTES=$MAX_FRAME_BYTES"
         }
@@ -50,7 +52,7 @@ internal object Framing {
      * mid-frame, and [IllegalStateException] on negative or over-cap lengths.
      */
     @Throws(java.io.IOException::class)
-    fun readFrame(input: InputStream): ByteArray? {
+    public fun readFrame(input: InputStream): ByteArray? {
         val header = readFullyOrNull(input, HEADER_BYTES) ?: return null
         val length = ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN).int
         check(length in 0..MAX_FRAME_BYTES) {
