@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.cli.daemon
 
 import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.cbor.Cbor
 
@@ -36,34 +37,45 @@ public enum class VersionCompatibility {
 @Serializable
 public sealed interface DaemonRequest {
     @Serializable
+    @SerialName("hello")
     public data class Hello(public val clientVersion: DaemonProtocolVersion) : DaemonRequest
 
-    @Serializable public data class Attach(public val targetPid: Long) : DaemonRequest
+    @Serializable
+    @SerialName("attach")
+    public data class Attach(public val targetPid: Long) : DaemonRequest
 
-    @Serializable public data class Detach(public val sessionId: String) : DaemonRequest
+    @Serializable
+    @SerialName("detach")
+    public data class Detach(public val sessionId: String) : DaemonRequest
 
-    @Serializable public data object ListSessions : DaemonRequest
+    @Serializable @SerialName("listSessions") public data object ListSessions : DaemonRequest
 
-    @Serializable public data object Shutdown : DaemonRequest
+    @Serializable @SerialName("shutdown") public data object Shutdown : DaemonRequest
 }
 
 @Serializable
 public sealed interface DaemonResponse {
     @Serializable
+    @SerialName("hello")
     public data class Hello(public val daemonVersion: DaemonProtocolVersion) : DaemonResponse
 
     @Serializable
+    @SerialName("attached")
     public data class Attached(public val sessionId: String, public val targetPid: Long) :
         DaemonResponse
 
-    @Serializable public data class Detached(public val sessionId: String) : DaemonResponse
+    @Serializable
+    @SerialName("detached")
+    public data class Detached(public val sessionId: String) : DaemonResponse
 
     @Serializable
+    @SerialName("sessions")
     public data class Sessions(public val sessions: List<DaemonSessionSummary>) : DaemonResponse
 
-    @Serializable public data object ShuttingDown : DaemonResponse
+    @Serializable @SerialName("shuttingDown") public data object ShuttingDown : DaemonResponse
 
     @Serializable
+    @SerialName("error")
     public data class Error(public val code: DaemonErrorCode, public val message: String) :
         DaemonResponse
 }
