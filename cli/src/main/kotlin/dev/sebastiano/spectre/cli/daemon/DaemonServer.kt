@@ -42,7 +42,7 @@ public constructor(
     private val activeClient: AtomicReference<SocketChannel?> = AtomicReference(null)
     private val socketProtection: DaemonSocketProtection =
         DaemonSocketProtection.forPath(socketPath)
-    private val createdParent: Path? = socketProtection.createMissingParent(socketPath)
+    private val createdParents: List<Path> = socketProtection.createMissingParents(socketPath)
 
     private val serverChannel: ServerSocketChannel =
         ServerSocketChannel.open(StandardProtocolFamily.UNIX).also { channel ->
@@ -59,7 +59,7 @@ public constructor(
                     // obscure the actionable failure or leak an opened native socket descriptor.
                     runCatching { channel.close() }
                     if (socketBound) runCatching { Files.deleteIfExists(socketPath) }
-                    runCatching { createdParent?.let(Files::deleteIfExists) }
+                    removeCreatedParents()
                 }
             }
         }
@@ -218,8 +218,12 @@ public constructor(
         runCatching { activeClient.getAndSet(null)?.close() }
         runCatching { serverChannel.close() }
         runCatching { Files.deleteIfExists(socketPath) }
-        runCatching { createdParent?.let(Files::deleteIfExists) }
+        removeCreatedParents()
         acceptThread.interrupt()
+    }
+
+    private fun removeCreatedParents() {
+        createdParents.forEach { parent -> runCatching { Files.deleteIfExists(parent) } }
     }
 
     private companion object {
@@ -241,14 +245,23 @@ public class DaemonAlreadyRunningException(socketPath: Path) :
  */
 private sealed interface DaemonSocketProtection {
     @Throws(IOException::class)
-    fun createMissingParent(socketPath: Path): Path? {
-        val parent = socketPath.parent ?: return null
+    fun createMissingParents(socketPath: Path): List<Path> {
+        val parent = socketPath.parent ?: return emptyList()
         if (Files.exists(parent)) {
             validateExistingDirectory(parent)
-            return null
+            return emptyList()
         }
-        createProtectedDirectory(parent)
-        return parent
+        val missingParents =
+            generateSequence(parent) { path -> path.parent }
+                .takeWhile { path -> !Files.exists(path) }
+                .toList()
+        try {
+            missingParents.asReversed().forEach(::createProtectedDirectory)
+        } catch (exception: IOException) {
+            missingParents.forEach { path -> runCatching { Files.deleteIfExists(path) } }
+            throw exception
+        }
+        return missingParents
     }
 
     @Throws(IOException::class) fun createProtectedDirectory(directory: Path)
