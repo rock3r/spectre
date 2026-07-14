@@ -342,8 +342,11 @@ private sealed interface DaemonSocketProtection {
         if ("unix" in directory.fileSystem.supportedFileAttributeViews()) {
             val mode = Files.getAttribute(directory, "unix:mode", NOFOLLOW_LINKS) as Int
             if (mode and STICKY_BIT != 0) return
+            if (mode and GROUP_OR_OTHER_WRITE_BITS == 0) return
+            throw IOException(
+                "Daemon socket ancestor $directory must not be group or world writable"
+            )
         }
-        validateExistingDirectory(directory)
     }
 
     private fun rejectSymbolicLink(path: Path) {
@@ -437,3 +440,4 @@ private val ALL_ACL_PERMISSIONS: Set<AclEntryPermission> =
 private const val FILE_TYPE_MASK: Int = 0xF000
 private const val UNIX_SOCKET_FILE_TYPE: Int = 0xC000
 private const val STICKY_BIT: Int = 0x200
+private const val GROUP_OR_OTHER_WRITE_BITS: Int = 0x12
