@@ -25,9 +25,7 @@ public constructor(
                 server ?: serverFactory(socketPath).also { server = it }
             }
         while (!activeServer.awaitTermination(IDLE_POLL_INTERVAL_MILLIS)) {
-            if (activeServer.idleMillis() >= idleTimeoutMillis) {
-                activeServer.close()
-            }
+            activeServer.closeIfIdle(idleTimeoutMillis)
         }
     }
 

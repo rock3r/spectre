@@ -19,6 +19,24 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalSpectreAgentApi::class)
 class DaemonServerTest {
     @Test
+    fun `idle cleanup keeps servers with active sessions alive`() {
+        val socketPath = temporarySocketPath()
+        val registry = DaemonSessionRegistry { TestDaemonSessionAutomator() }
+        val server = DaemonServer(socketPath, registry = registry)
+
+        try {
+            registry.handle(DaemonRequest.Attach(1234))
+            Thread.sleep(10)
+
+            assertFalse(server.closeIfIdle(timeoutMillis = 1))
+            assertTrue(Files.exists(socketPath))
+        } finally {
+            server.close()
+            deleteTemporarySocketPath(socketPath)
+        }
+    }
+
+    @Test
     fun `close detaches all owned agent sessions`() {
         val socketPath = temporarySocketPath()
         var closes = 0

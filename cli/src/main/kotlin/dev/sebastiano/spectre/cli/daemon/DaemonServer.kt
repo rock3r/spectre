@@ -26,7 +26,6 @@ import java.util.EnumSet
 import java.util.HexFormat
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -46,7 +45,8 @@ public constructor(
     }
     private val running: AtomicBoolean = AtomicBoolean(true)
     private val closed: AtomicBoolean = AtomicBoolean(false)
-    private val lastActivityNanos: AtomicLong = AtomicLong(System.nanoTime())
+    private val activityLock: Any = Any()
+    private var lastActivityNanos: Long = System.nanoTime()
     private val activeClient: AtomicReference<SocketChannel?> = AtomicReference(null)
     private val socketProtection: DaemonSocketProtection =
         DaemonSocketProtection.forPath(socketPath)
@@ -99,10 +99,20 @@ public constructor(
     }
 
     /** Milliseconds elapsed since the most recently received daemon request. */
-    public fun idleMillis(): Long =
-        java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(
-            System.nanoTime() - lastActivityNanos.get()
-        )
+    public fun idleMillis(): Long = synchronized(activityLock) { idleMillisLocked() }
+
+    /** Stops this server only when it remains inactive for at least [timeoutMillis]. */
+    public fun closeIfIdle(timeoutMillis: Long): Boolean {
+        require(timeoutMillis > 0) { "timeoutMillis must be positive" }
+        synchronized(activityLock) {
+            if (registry.hasSessions || idleMillisLocked() < timeoutMillis) return false
+            close()
+            return true
+        }
+    }
+
+    private fun idleMillisLocked(): Long =
+        java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - lastActivityNanos)
 
     private fun acceptLoop() {
         while (running.get()) {
@@ -133,7 +143,7 @@ public constructor(
                 var handshakeComplete = false
                 while (running.get()) {
                     val request = DaemonWireCodec.readRequest(input) ?: return
-                    lastActivityNanos.set(System.nanoTime())
+                    synchronized(activityLock) { lastActivityNanos = System.nanoTime() }
                     val response = handleRequest(request, handshakeComplete)
                     if (request is DaemonRequest.Hello) {
                         handshakeComplete = response is DaemonResponse.Hello

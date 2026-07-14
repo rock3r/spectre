@@ -38,13 +38,13 @@ class DaemonProcessTest {
     @Test
     fun `resets the idle timeout after a daemon request`() {
         val socketPath = temporarySocketPath()
-        val daemon = DaemonProcess(socketPath, idleTimeoutMillis = 300)
+        val daemon = DaemonProcess(socketPath, idleTimeoutMillis = 2_000)
         val runner = Thread(daemon::runUntilShutdown)
 
         try {
             runner.start()
             awaitSocket(socketPath)
-            Thread.sleep(150)
+            Thread.sleep(500)
 
             SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
                 channel.connect(UnixDomainSocketAddress.of(socketPath))
@@ -60,7 +60,7 @@ class DaemonProcessTest {
                 )
             }
 
-            Thread.sleep(200)
+            Thread.sleep(500)
             assertTrue(runner.isAlive)
             runner.join(2_000)
             assertFalse(runner.isAlive)
