@@ -44,10 +44,16 @@ public class SpectreCli(
             destination.appendLine()
             exception.statusCode
         } catch (exception: IOException) {
-            errorOutput.append("Spectre daemon error: ${exception.message ?: "I/O failure"}")
-            errorOutput.appendLine()
-            EXIT_FAILURE
+            daemonFailure(exception.message ?: "I/O failure")
+        } catch (exception: IllegalArgumentException) {
+            daemonFailure(exception.message ?: "invalid daemon endpoint")
         }
+    }
+
+    private fun daemonFailure(message: String): Int {
+        errorOutput.append("Spectre daemon error: $message")
+        errorOutput.appendLine()
+        return EXIT_FAILURE
     }
 }
 
