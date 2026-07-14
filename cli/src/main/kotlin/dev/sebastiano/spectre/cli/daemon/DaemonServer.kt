@@ -302,7 +302,7 @@ public class DaemonAlreadyRunningException(socketPath: Path) :
 private sealed interface DaemonSocketProtection {
     @Throws(IOException::class)
     fun createMissingParents(socketPath: Path, validateAncestor: Boolean = true): List<Path> {
-        val parent = socketPath.parent ?: Path.of("").toAbsolutePath()
+        val parent = (socketPath.parent ?: Path.of("")).toAbsolutePath().normalize()
         if (Files.exists(parent, NOFOLLOW_LINKS)) {
             rejectSymbolicLink(parent)
             parent.parent?.let { validateAncestorChain(it, validateAncestor) }
@@ -344,7 +344,7 @@ private sealed interface DaemonSocketProtection {
                 if (validateAncestor) {
                     validateExistingAncestor(path)
                 } else {
-                    rejectSymbolicLink(path)
+                    if (!isTrustedTempAlias(path)) rejectSymbolicLink(path)
                 }
             }
     }
