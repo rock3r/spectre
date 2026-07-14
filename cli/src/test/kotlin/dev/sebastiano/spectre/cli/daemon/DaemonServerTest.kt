@@ -205,6 +205,26 @@ class DaemonServerTest {
     }
 
     @Test
+    fun `refuses an existing socket directory below a writable ancestor`() {
+        if ("posix" !in FileSystems.getDefault().supportedFileAttributeViews()) return
+
+        val ancestor = Files.createTempDirectory("spectre-daemon-test")
+        val socketDirectory = Files.createDirectory(ancestor.resolve("socket-directory"))
+        Files.setPosixFilePermissions(ancestor, PosixFilePermissions.fromString("rwxrwxrwx"))
+        Files.setPosixFilePermissions(socketDirectory, PosixFilePermissions.fromString("rwx------"))
+
+        try {
+            assertFailsWith<java.io.IOException> {
+                DaemonServer(socketDirectory.resolve("daemon.sock"))
+            }
+        } finally {
+            Files.deleteIfExists(socketDirectory.resolve("daemon.sock"))
+            Files.deleteIfExists(socketDirectory)
+            Files.deleteIfExists(ancestor)
+        }
+    }
+
+    @Test
     fun `refuses a bare relative socket path in a permissive working directory`() {
         if ("posix" !in FileSystems.getDefault().supportedFileAttributeViews()) return
         if (

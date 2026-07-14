@@ -305,6 +305,7 @@ private sealed interface DaemonSocketProtection {
         val parent = socketPath.parent ?: Path.of("").toAbsolutePath()
         if (Files.exists(parent, NOFOLLOW_LINKS)) {
             rejectSymbolicLink(parent)
+            parent.parent?.let(::validateExistingAncestor)
             validateExistingDirectory(parent)
             return emptyList()
         }
