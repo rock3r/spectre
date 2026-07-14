@@ -1,9 +1,23 @@
 plugins {
+    application
     alias(libs.plugins.detekt)
     alias(libs.plugins.ktfmt)
     alias(libs.plugins.kotlinJvm)
     alias(libs.plugins.kotlinSerialization)
+    alias(libs.plugins.shadow)
 }
+
+application {
+    applicationName = "spectre"
+    mainClass = "dev.sebastiano.spectre.cli.SpectreCliKt"
+}
+
+tasks.shadowJar {
+    archiveClassifier = "all"
+    manifest { attributes["Main-Class"] = application.mainClass.get() }
+}
+
+tasks.assemble { dependsOn(tasks.shadowJar) }
 
 kotlin {
     jvmToolchain(21)

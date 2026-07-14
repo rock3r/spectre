@@ -20,6 +20,22 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class SpectreCliTest {
     @Test
+    fun `JDK preflight rejects Java versions older than 21`() {
+        assertEquals(
+            "Spectre requires JDK 21 or later; found Java 17.",
+            jdkPreflightError(featureVersion = 17, hasAttachModule = true),
+        )
+    }
+
+    @Test
+    fun `JDK preflight rejects runtimes without jdk attach`() {
+        assertEquals(
+            "Spectre requires a full JDK with the jdk.attach module; the current Java runtime does not provide it.",
+            jdkPreflightError(featureVersion = 21, hasAttachModule = false),
+        )
+    }
+
+    @Test
     fun `type prints stable JSON completion output`() {
         val output = StringBuilder()
         val cli =
