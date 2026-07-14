@@ -28,6 +28,7 @@ public object AgentAttach {
     /** Attach to the JVM identified by [pid] and return a connected [AttachedAutomator]. */
     @Throws(SpectreAttachException::class)
     public fun attach(pid: Long, options: AttachOptions = AttachOptions()): AttachedAutomator {
+        AttachRuntimePreflight.requireSupported()
         AgentPlatformPreflight.requireSupported()
         val agentJar = resolveAgentJar(options)
         val udsPath = options.udsPath ?: AttachOptions.defaultUdsPath(pid)
