@@ -32,6 +32,10 @@ abstract class PatchStartScripts : DefaultTask() {
             script
                 .readText()
                 .replace("@rem Find java.exe", WINDOWS_JAVA_SEARCH)
+                .replace(
+                    WINDOWS_PATH_PROBE,
+                    "$WINDOWS_PATH_PROBE\n\n$WINDOWS_JDK_FALLBACK",
+                )
                 .replace(":execute\n@rem Setup the command line", WINDOWS_JDK_PREFLIGHT),
         )
     }
@@ -76,11 +80,18 @@ abstract class PatchStartScripts : DefaultTask() {
 
         private val WINDOWS_JAVA_SEARCH =
             """
-            @rem Find a locally installed JDK when JAVA_HOME and PATH are unset.
-            if defined JAVA_HOME goto findJavaFromJavaHome
-            for %%d in ("%ProgramFiles%\\Java\\*" "%ProgramFiles%\\Eclipse Adoptium\\*" "%ProgramFiles%\\Microsoft\\jdk-*") do if not defined JAVA_HOME if exist "%%~fd\\bin\\java.exe" set JAVA_HOME=%%~fd
-
             @rem Find java.exe
+            """
+                .trimIndent()
+
+        private const val WINDOWS_PATH_PROBE =
+            """if %ERRORLEVEL% equ 0 goto execute"""
+
+        private val WINDOWS_JDK_FALLBACK =
+            """
+            @rem PATH did not provide Java; now try common local JDK installations.
+            for %%d in ("%ProgramFiles%\\Java\\*" "%ProgramFiles%\\Eclipse Adoptium\\*" "%ProgramFiles%\\Microsoft\\jdk-*") do if not defined JAVA_HOME if exist "%%~fd\\bin\\java.exe" set JAVA_HOME=%%~fd
+            if defined JAVA_HOME goto findJavaFromJavaHome
             """
                 .trimIndent()
 
