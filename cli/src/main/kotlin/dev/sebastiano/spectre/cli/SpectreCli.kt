@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.cli
 
 import com.github.ajalt.clikt.core.CliktCommand
+import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.clikt.core.parse
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.parameters.options.flag
@@ -12,6 +13,7 @@ import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import dev.sebastiano.spectre.cli.daemon.DaemonSessionSummary
 import java.nio.file.Path
+import kotlin.system.exitProcess
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -29,15 +31,20 @@ public class SpectreCli(
 
     /** Parses and executes one CLI invocation, returning zero when it succeeds. */
     public fun run(arguments: List<String>): Int {
-        RootCommand(request, output).parse(arguments)
-        return EXIT_SUCCESS
+        val command = RootCommand(request, output)
+        return try {
+            command.parse(arguments)
+            EXIT_SUCCESS
+        } catch (exception: CliktError) {
+            output.append(command.getFormattedHelp(exception))
+            output.appendLine()
+            exception.statusCode
+        }
     }
 }
 
 /** Runs the Spectre CLI with its default per-user daemon endpoint. */
-public fun main(arguments: Array<String>) {
-    SpectreCli().run(arguments.asList())
-}
+public fun main(arguments: Array<String>): Unit = exitProcess(SpectreCli().run(arguments.asList()))
 
 private class RootCommand(request: (DaemonRequest) -> DaemonResponse, output: Appendable) :
     CliktCommand(name = "spectre") {

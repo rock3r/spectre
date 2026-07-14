@@ -5,6 +5,7 @@ import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import dev.sebastiano.spectre.cli.daemon.DaemonSessionSummary
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class SpectreCliTest {
     @Test
@@ -35,5 +36,14 @@ class SpectreCliTest {
 
         assertEquals(0, cli.run(listOf("daemon", "status")))
         assertEquals("No daemon sessions.\n", output.toString())
+    }
+
+    @Test
+    fun `usage errors are printed and returned as a nonzero exit code`() {
+        val output = StringBuilder()
+        val cli = SpectreCli(request = { error("Daemon should not be contacted") }, output = output)
+
+        assertEquals(1, cli.run(listOf("unknown")))
+        assertTrue(output.contains("unknown"))
     }
 }
