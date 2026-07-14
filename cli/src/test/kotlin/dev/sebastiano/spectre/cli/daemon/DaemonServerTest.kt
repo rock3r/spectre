@@ -322,7 +322,7 @@ class DaemonServerTest {
     @Test
     fun `serves lifecycle requests over a unix domain socket and removes it on shutdown`() {
         val socketPath = temporarySocketPath()
-        val server = DaemonServer(socketPath)
+        val server = DaemonServer(socketPath, registry = DaemonSessionRegistry { AutoCloseable {} })
 
         try {
             SocketChannel.open(java.net.StandardProtocolFamily.UNIX).use { channel ->

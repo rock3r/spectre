@@ -1,8 +1,17 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import dev.sebastiano.spectre.agent.AgentAttach
+import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.SpectreAttachException
+
 /** In-memory session table for one daemon process. */
-public class DaemonSessionRegistry {
-    private val sessionsByPid: MutableMap<Long, DaemonSessionSummary> = linkedMapOf()
+@OptIn(ExperimentalSpectreAgentApi::class)
+public class DaemonSessionRegistry(
+    private val attachAutomator: (Long) -> AutoCloseable = { targetPid ->
+        AgentAttach.attach(targetPid)
+    }
+) {
+    private val sessionsByPid: MutableMap<Long, DaemonSession> = linkedMapOf()
 
     public val isShutdown: Boolean
         get() = shutdown
@@ -26,8 +35,27 @@ public class DaemonSessionRegistry {
                 message = "daemon shutdown is already in progress",
             )
         }
-        val session = sessionsByPid.getOrPut(targetPid) { targetPid.toSessionSummary() }
-        return DaemonResponse.Attached(sessionId = session.sessionId, targetPid = session.targetPid)
+        sessionsByPid[targetPid]?.let { session ->
+            return DaemonResponse.Attached(
+                sessionId = session.summary.sessionId,
+                targetPid = session.summary.targetPid,
+            )
+        }
+        val attached =
+            try {
+                attachAutomator(targetPid)
+            } catch (exception: SpectreAttachException) {
+                return DaemonResponse.Error(
+                    code = DaemonErrorCode.AttachFailed,
+                    message = exception.message ?: "Failed to attach to process $targetPid",
+                )
+            }
+        val session = DaemonSession(summary = targetPid.toSessionSummary(), automator = attached)
+        sessionsByPid[targetPid] = session
+        return DaemonResponse.Attached(
+            sessionId = session.summary.sessionId,
+            targetPid = session.summary.targetPid,
+        )
     }
 
     private fun detach(sessionId: String): DaemonResponse {
@@ -37,19 +65,30 @@ public class DaemonSessionRegistry {
                     code = DaemonErrorCode.SessionNotFound,
                     message = "session not found: $sessionId",
                 )
-        sessionsByPid.remove(removed.key)
+        sessionsByPid.remove(removed.key)?.automator?.close()
         return DaemonResponse.Detached(sessionId = sessionId)
     }
 
     private fun listSessions(): DaemonResponse =
-        DaemonResponse.Sessions(sessions = sessionsByPid.values.sortedBy { it.targetPid })
+        DaemonResponse.Sessions(
+            sessions = sessionsByPid.values.map { it.summary }.sortedBy { it.targetPid }
+        )
 
     private fun shutdown(): DaemonResponse {
         shutdown = true
+        sessionsByPid.values.forEach { session -> session.automator.close() }
         sessionsByPid.clear()
         return DaemonResponse.ShuttingDown
     }
 
     private fun Long.toSessionSummary(): DaemonSessionSummary =
         DaemonSessionSummary(sessionId = "pid-$this", targetPid = this)
+
+    private data class DaemonSession(
+        val summary: DaemonSessionSummary,
+        val automator: AutoCloseable,
+    ) {
+        val sessionId: String
+            get() = summary.sessionId
+    }
 }

@@ -66,7 +66,7 @@ class DaemonClientTest {
     @Test
     fun `sends a handshake before forwarding requests to the daemon`() {
         val socketPath = temporaryDaemonClientSocketPath()
-        val server = DaemonServer(socketPath)
+        val server = DaemonServer(socketPath, registry = testDaemonSessionRegistry())
 
         try {
             DaemonClient(socketPath).use { client ->
@@ -118,3 +118,7 @@ private fun testRuntimeClassPath(): String =
     requireNotNull(System.getProperty("spectre.cli.testRuntimeClasspath")) {
         "Missing CLI test runtime classpath"
     }
+
+private fun testDaemonSessionRegistry(): DaemonSessionRegistry = DaemonSessionRegistry {
+    AutoCloseable {}
+}
