@@ -105,7 +105,13 @@ public constructor(
     public fun closeIfIdle(timeoutMillis: Long): Boolean {
         require(timeoutMillis > 0) { "timeoutMillis must be positive" }
         synchronized(activityLock) {
-            if (registry.hasSessions || idleMillisLocked() < timeoutMillis) return false
+            if (
+                activeClient.get() != null ||
+                    registry.hasSessions ||
+                    idleMillisLocked() < timeoutMillis
+            ) {
+                return false
+            }
             close()
             return true
         }
@@ -125,6 +131,7 @@ public constructor(
                     if (running.get()) logConnectionFailure(exception)
                     return
                 }
+            activeClient.set(client)
             @Suppress("TooGenericExceptionCaught")
             try {
                 handleConnection(client)
@@ -135,7 +142,6 @@ public constructor(
     }
 
     private fun handleConnection(client: SocketChannel) {
-        activeClient.set(client)
         try {
             client.use { channel ->
                 val input = Channels.newInputStream(channel)
