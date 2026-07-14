@@ -171,13 +171,15 @@ private fun daemonRequest(socketPath: Path?): (DaemonRequest) -> DaemonResponse 
                 DaemonProtocol.minimumDaemonVersion(request).minor <
                     DaemonProtocol.CurrentVersion.minor
         ) {
-            DaemonEndpoint.legacySocketPaths().firstOrNull(Files::exists)?.let { legacySocketPath ->
+            for (legacySocketPath in DaemonEndpoint.legacySocketPaths()) {
+                if (!Files.exists(legacySocketPath)) continue
                 try {
                     return@daemonRequest DaemonClient(legacySocketPath).use { client ->
                         client.request(request)
                     }
                 } catch (_: IOException) {
-                    // A stale legacy socket must not prevent startup on the stable endpoint.
+                    // A stale legacy socket must not prevent probing older endpoints or new
+                    // startup.
                 }
             }
         }

@@ -51,8 +51,12 @@ class DaemonHandshakeTest {
     @Test
     fun `JVM process listing requires the daemon protocol minor that introduced it`() {
         assertEquals(
-            DaemonProtocolVersion(major = 1, minor = 0),
+            DaemonProtocolVersion(major = 1, minor = 1),
             DaemonProtocol.minimumDaemonVersion(DaemonRequest.ListSessions),
+        )
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 2),
+            DaemonProtocol.minimumDaemonVersion(DaemonRequest.Windows(sessionId = "session-1234")),
         )
         assertEquals(
             DaemonProtocolVersion(major = 1, minor = 3),

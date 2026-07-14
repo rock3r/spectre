@@ -30,9 +30,27 @@ public object DaemonProtocol {
 
     internal fun minimumDaemonVersion(request: DaemonRequest): DaemonProtocolVersion =
         when (request) {
-            is DaemonRequest.ListJvmProcesses -> CurrentVersion
-            else -> DaemonProtocolVersion(major = CurrentVersion.major, minor = 0)
+            is DaemonRequest.Hello -> versionFor(MINIMUM_PROTOCOL_MINOR)
+            is DaemonRequest.Attach,
+            is DaemonRequest.Detach,
+            DaemonRequest.ListSessions,
+            DaemonRequest.Shutdown -> versionFor(SESSION_LIFECYCLE_INTRODUCED_MINOR)
+            is DaemonRequest.Windows,
+            is DaemonRequest.AllNodes,
+            is DaemonRequest.FindByTestTag,
+            is DaemonRequest.Click,
+            is DaemonRequest.TypeText,
+            is DaemonRequest.Screenshot -> versionFor(SESSION_COMMANDS_INTRODUCED_MINOR)
+            is DaemonRequest.ListJvmProcesses -> versionFor(LIST_JVM_PROCESSES_INTRODUCED_MINOR)
         }
+
+    private fun versionFor(minor: Int): DaemonProtocolVersion =
+        DaemonProtocolVersion(major = CurrentVersion.major, minor = minor)
+
+    private const val MINIMUM_PROTOCOL_MINOR: Int = 0
+    private const val SESSION_LIFECYCLE_INTRODUCED_MINOR: Int = 1
+    private const val SESSION_COMMANDS_INTRODUCED_MINOR: Int = 2
+    private const val LIST_JVM_PROCESSES_INTRODUCED_MINOR: Int = 3
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)
