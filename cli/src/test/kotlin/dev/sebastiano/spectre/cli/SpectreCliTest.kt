@@ -8,12 +8,65 @@ import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import dev.sebastiano.spectre.cli.daemon.DaemonSessionSummary
 import java.io.IOException
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 class SpectreCliTest {
+    @Test
+    fun `screenshot writes PNG output and reports its stable JSON path`() {
+        val output = StringBuilder()
+        val imagePath = Files.createTempFile("spectre-cli-test", ".png")
+        Files.deleteIfExists(imagePath)
+        val cli =
+            SpectreCli(
+                request = { request ->
+                    assertEquals(DaemonRequest.Screenshot("pid-42"), request)
+                    DaemonResponse.Screenshot("pid-42", byteArrayOf(1, 2, 3))
+                },
+                output = output,
+            )
+
+        try {
+            assertEquals(
+                0,
+                cli.run(listOf("screenshot", "pid-42", "--output", imagePath.toString(), "--json")),
+            )
+            assertEquals(byteArrayOf(1, 2, 3).toList(), Files.readAllBytes(imagePath).toList())
+            val json = Json.parseToJsonElement(output.toString())
+            assertEquals(1, json.jsonObject.getValue("version").jsonPrimitive.content.toInt())
+            assertEquals(
+                imagePath.toString(),
+                json.jsonObject.getValue("path").jsonPrimitive.content,
+            )
+        } finally {
+            Files.deleteIfExists(imagePath)
+        }
+    }
+
+    @Test
+    fun `screenshot reports local output errors separately from daemon errors`() {
+        val output = StringBuilder()
+        val errorOutput = StringBuilder()
+        val missingDirectory = Files.createTempDirectory("spectre-cli-test").resolve("missing")
+        val imagePath = missingDirectory.resolve("capture.png")
+        val cli =
+            SpectreCli(
+                request = { DaemonResponse.Screenshot("pid-42", byteArrayOf(1, 2, 3)) },
+                output = output,
+                errorOutput = errorOutput,
+            )
+
+        assertEquals(1, cli.run(listOf("screenshot", "pid-42", "--output", imagePath.toString())))
+        assertEquals("", output.toString())
+        assertTrue(errorOutput.startsWith("Spectre output error:"))
+    }
+
     @Test
     fun `click prints stable JSON completion output`() {
         val output = StringBuilder()
