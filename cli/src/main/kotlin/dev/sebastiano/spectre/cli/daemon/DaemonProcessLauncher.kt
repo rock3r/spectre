@@ -32,12 +32,9 @@ public class DaemonProcessLauncher(
     }
 
     private fun agentRuntimePropertyArgument(): List<String> =
-        System.getProperty("dev.sebastiano.spectre.agent.runtimeJar")?.let {
-            listOf("-Ddev.sebastiano.spectre.agent.runtimeJar=$it")
-        }
-            ?: EmbeddedAgentRuntime.install()
-                ?.let { runtime -> listOf("-Ddev.sebastiano.spectre.agent.runtimeJar=$runtime") }
-                .orEmpty()
+        System.getProperty("dev.sebastiano.spectre.agent.runtimeJar")
+            ?.let { listOf("-Ddev.sebastiano.spectre.agent.runtimeJar=$it") }
+            .orEmpty()
 
     private companion object {
         private const val DAEMON_MAIN_CLASS: String =

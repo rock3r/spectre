@@ -11,6 +11,7 @@ public class DaemonSessionRegistry
 internal constructor(
     private val jvmProcessDiscovery: DaemonJvmProcessDiscovery = DaemonJvmProcessDiscovery(),
     private val attachAutomator: (Long) -> DaemonSessionAutomator = { targetPid ->
+        installEmbeddedAgentRuntimeIfNeeded()
         AttachedDaemonSession(AgentAttach.attach(targetPid))
     },
 ) : AutoCloseable {
@@ -175,5 +176,14 @@ internal constructor(
     ) {
         val sessionId: String
             get() = summary.sessionId
+    }
+}
+
+private const val AGENT_RUNTIME_JAR_PROPERTY: String = "dev.sebastiano.spectre.agent.runtimeJar"
+
+private fun installEmbeddedAgentRuntimeIfNeeded() {
+    if (System.getProperty(AGENT_RUNTIME_JAR_PROPERTY) != null) return
+    EmbeddedAgentRuntime.install()?.let { runtime ->
+        System.setProperty(AGENT_RUNTIME_JAR_PROPERTY, runtime.toString())
     }
 }
