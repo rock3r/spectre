@@ -76,12 +76,36 @@ private class RootCommand(request: (DaemonRequest) -> DaemonResponse, output: Ap
             DetachCommand(request, output),
             WindowsCommand(request, output),
             TreeCommand(request, output),
+            FindCommand(request, output),
             PsCommand(request, output),
             DaemonCommand(request, output),
         )
     }
 
     override fun run(): Unit = Unit
+}
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private class FindCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "find") {
+    private val sessionId: String by argument()
+    private val testTag: String by argument()
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val nodes =
+            when (val response = request(DaemonRequest.FindByTestTag(sessionId, testTag))) {
+                is DaemonResponse.Nodes -> response.nodes
+                is DaemonResponse.Error -> throw IOException(response.message)
+                else -> error("Daemon returned an unexpected response to find")
+            }
+        if (json) output.append(CLI_JSON.encodeToString(TreeJson(nodes = nodes.map(::NodeJson))))
+        else
+            output.append(nodes.joinToString("\n") { node -> "${node.key} ${node.role ?: "Node"}" })
+        output.appendLine()
+    }
 }
 
 @OptIn(ExperimentalSpectreAgentApi::class)
