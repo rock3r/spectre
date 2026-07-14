@@ -68,6 +68,10 @@ public final class dev/sebastiano/spectre/agent/AttachedAutomator : java/lang/Au
 public abstract interface annotation class dev/sebastiano/spectre/agent/ExperimentalSpectreAgentApi : java/lang/annotation/Annotation {
 }
 
+public final class dev/sebastiano/spectre/agent/JavaVersionUnsupportedException : dev/sebastiano/spectre/agent/SpectreAttachException {
+	public fun <init> (I)V
+}
+
 public final class dev/sebastiano/spectre/agent/JvmProcessInfo {
 	public fun <init> (JLjava/lang/String;)V
 	public final fun component1 ()J

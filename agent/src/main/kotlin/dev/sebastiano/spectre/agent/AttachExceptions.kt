@@ -18,6 +18,14 @@ public class AttachUnsupportedException(cause: Throwable? = null) :
         cause,
     )
 
+/** Thrown when the attaching JVM is older than Spectre's minimum supported Java version. */
+@ExperimentalSpectreAgentApi
+public class JavaVersionUnsupportedException(javaFeature: Int) :
+    SpectreAttachException(
+        "Spectre's agent attach requires JDK 21 or newer, but this JVM reports Java $javaFeature. " +
+            "Run the CLI with a JDK 21+ distribution."
+    )
+
 /** Thrown when the current operating system does not support the agent transport. */
 @ExperimentalSpectreAgentApi
 public class AttachPlatformUnsupportedException(public val osName: String) :
