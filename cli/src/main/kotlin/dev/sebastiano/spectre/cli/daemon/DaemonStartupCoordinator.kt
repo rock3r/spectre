@@ -28,6 +28,7 @@ public class DaemonStartupCoordinator<T>(
             try {
                 return connectUntilReady()
             } catch (connectFailure: IOException) {
+                if (connectFailure.cause is InterruptedException) throw connectFailure
                 startFailure.addSuppressed(connectFailure)
                 throw startFailure
             }
