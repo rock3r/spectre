@@ -7,6 +7,11 @@ import dev.sebastiano.spectre.agent.fixture.READY_SENTINEL
 import dev.sebastiano.spectre.agent.fixture.SPECTRE_FIXTURE_WINDOW_TITLE
 import dev.sebastiano.spectre.agent.fixture.TAG_BUTTON
 import dev.sebastiano.spectre.agent.fixture.TAG_LABEL
+import io.modelcontextprotocol.kotlin.sdk.client.Client
+import io.modelcontextprotocol.kotlin.sdk.client.StdioClientTransport
+import io.modelcontextprotocol.kotlin.sdk.types.ImageContent
+import io.modelcontextprotocol.kotlin.sdk.types.Implementation
+import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import java.awt.GraphicsEnvironment
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -20,6 +25,11 @@ import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.io.asSink
+import kotlinx.io.asSource
+import kotlinx.io.buffered
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -31,6 +41,68 @@ import org.junit.jupiter.api.condition.OS
 /** Verifies the daemon owns a real attached agent session across client connections. */
 @EnabledOnOs(OS.LINUX, OS.MAC)
 class DaemonFixtureIntegrationTest {
+    @Test
+    fun `MCP stdio drives a Compose fixture through attach tree click and inline screenshot`() =
+        runBlocking {
+            assumeFalse(GraphicsEnvironment.isHeadless(), "Requires a Compose Desktop display")
+            val daemonUser = "spectre-mcp-e2e-${UUID.randomUUID()}"
+            val process = startMcpBinary(daemonUser)
+            val transport =
+                StdioClientTransport(
+                    input = process.inputStream.asSource().buffered(),
+                    output = process.outputStream.asSink().buffered(),
+                )
+
+            try {
+                spawnComposeFixture().use { fixture ->
+                    val client = Client(Implementation(name = "spectre-test", version = "1"))
+                    withTimeout(MCP_CONNECTION_TIMEOUT_MILLIS) { client.connect(transport) }
+                    val attached =
+                        mcpText(client, "attach", mapOf("pid" to fixture.pid)).let { response ->
+                            Json.parseToJsonElement(response)
+                                .jsonObject
+                                .getValue("sessionId")
+                                .jsonPrimitive
+                                .content
+                        }
+                    val tree = mcpText(client, "tree", mapOf("session_id" to attached))
+                    assertTrue(tree.contains(TAG_LABEL))
+                    val button =
+                        Json.parseToJsonElement(
+                                mcpText(
+                                    client,
+                                    "find",
+                                    mapOf("session_id" to attached, "test_tag" to TAG_BUTTON),
+                                )
+                            )
+                            .jsonObject
+                            .getValue("nodes")
+                            .jsonArray
+                            .single()
+                            .jsonObject
+                            .getValue("key")
+                            .jsonPrimitive
+                            .content
+                    mcpText(client, "click", mapOf("session_id" to attached, "node_key" to button))
+                    val image =
+                        client
+                            .callTool("screenshot", mapOf("session_id" to attached))
+                            .content
+                            .single() as ImageContent
+                    assertEquals("image/png", image.mimeType)
+                    assertTrue(
+                        java.util.Base64.getDecoder().decode(image.data).startsWith(PNG_MAGIC)
+                    )
+                }
+            } finally {
+                transport.close()
+                process.destroyForcibly()
+                process.waitFor()
+                runCatching { runCliBinary(daemonUser, "daemon", "kill") }
+                deleteDaemonSocketAndParent(DaemonEndpoint.defaultSocketPath(userName = daemonUser))
+            }
+        }
+
     @Test
     fun `CLI binary drives a Compose fixture through ps attach find click and screenshot`() {
         assumeFalse(GraphicsEnvironment.isHeadless(), "Requires a Compose Desktop display")
@@ -264,6 +336,28 @@ private fun runCliBinary(daemonUser: String, vararg arguments: String): CliBinar
     return CliBinaryResult(exitCode = process.exitValue(), output = output.toString())
 }
 
+private fun startMcpBinary(daemonUser: String): Process {
+    val javaExe =
+        if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "java.exe"
+        else "java"
+    return ProcessBuilder(
+            Paths.get(System.getProperty("java.home"), "bin", javaExe).toString(),
+            "-Duser.name=$daemonUser",
+            "-Djava.awt.headless=false",
+            "-cp",
+            daemonFixtureRuntimeClassPath(),
+            "dev.sebastiano.spectre.cli.SpectreCliKt",
+            "mcp",
+        )
+        .start()
+}
+
+private suspend fun mcpText(client: Client, tool: String, arguments: Map<String, Any?>): String {
+    val result = client.callTool(tool, arguments)
+    assertTrue(result.isError != true, "MCP $tool failed: ${result.content}")
+    return (result.content.single() as TextContent).text
+}
+
 private data class CliBinaryResult(val exitCode: Int, val output: String)
 
 private class FixtureProcess(
@@ -289,6 +383,7 @@ private const val FIXTURE_READY_TIMEOUT_SECONDS: Long = 30
 private const val FIXTURE_STOP_TIMEOUT_SECONDS: Long = 2
 private const val DRAINER_JOIN_TIMEOUT_MILLIS: Long = 500
 private const val CLI_PROCESS_TIMEOUT_SECONDS: Long = 30
+private const val MCP_CONNECTION_TIMEOUT_MILLIS: Long = 10_000
 private const val MIN_PNG_BYTES: Int = 100
 private val PNG_MAGIC: ByteArray =
     byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
