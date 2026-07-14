@@ -8,12 +8,39 @@ import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import dev.sebastiano.spectre.cli.daemon.DaemonSessionSummary
 import java.io.IOException
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class SpectreCliTest {
+    @Test
+    fun `screenshot writes PNG output and reports its stable JSON path`() {
+        val output = StringBuilder()
+        val imagePath = Files.createTempFile("spectre-cli-test", ".png")
+        Files.deleteIfExists(imagePath)
+        val cli =
+            SpectreCli(
+                request = { request ->
+                    assertEquals(DaemonRequest.Screenshot("pid-42"), request)
+                    DaemonResponse.Screenshot("pid-42", byteArrayOf(1, 2, 3))
+                },
+                output = output,
+            )
+
+        try {
+            assertEquals(
+                0,
+                cli.run(listOf("screenshot", "pid-42", "--output", imagePath.toString(), "--json")),
+            )
+            assertEquals(byteArrayOf(1, 2, 3).toList(), Files.readAllBytes(imagePath).toList())
+            assertEquals("{\"version\":1,\"path\":\"${imagePath}\"}\n", output.toString())
+        } finally {
+            Files.deleteIfExists(imagePath)
+        }
+    }
+
     @Test
     fun `click prints stable JSON completion output`() {
         val output = StringBuilder()

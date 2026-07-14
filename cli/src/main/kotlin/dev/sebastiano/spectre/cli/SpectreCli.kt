@@ -8,6 +8,7 @@ import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.long
+import com.github.ajalt.clikt.parameters.types.path
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
@@ -78,12 +79,37 @@ private class RootCommand(request: (DaemonRequest) -> DaemonResponse, output: Ap
             TreeCommand(request, output),
             FindCommand(request, output),
             ClickCommand(request, output),
+            ScreenshotCommand(request, output),
             PsCommand(request, output),
             DaemonCommand(request, output),
         )
     }
 
     override fun run(): Unit = Unit
+}
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private class ScreenshotCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "screenshot") {
+    private val sessionId: String by argument()
+    private val outputPath: Path? by option("--output").path()
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val pngBytes =
+            when (val response = request(DaemonRequest.Screenshot(sessionId))) {
+                is DaemonResponse.Screenshot -> response.pngBytes
+                is DaemonResponse.Error -> throw IOException(response.message)
+                else -> error("Daemon returned an unexpected response to screenshot")
+            }
+        val path = outputPath ?: Files.createTempFile("spectre-screenshot-", ".png")
+        Files.write(path, pngBytes)
+        if (json) output.append(CLI_JSON.encodeToString(ScreenshotJson(path = path.toString())))
+        else output.append(path.toString())
+        output.appendLine()
+    }
 }
 
 @OptIn(ExperimentalSpectreAgentApi::class)
@@ -308,6 +334,8 @@ private data class AttachJson(val version: Int = JSON_VERSION, val id: String, v
 @Serializable private data class DetachJson(val version: Int = JSON_VERSION, val id: String)
 
 @Serializable private data class CompletionJson(val version: Int = JSON_VERSION, val id: String)
+
+@Serializable private data class ScreenshotJson(val version: Int = JSON_VERSION, val path: String)
 
 @Serializable
 private data class WindowsJson(val version: Int = JSON_VERSION, val windows: List<WindowJson>)
