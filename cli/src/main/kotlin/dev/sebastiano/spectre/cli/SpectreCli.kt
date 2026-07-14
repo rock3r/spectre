@@ -14,6 +14,7 @@ import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import dev.sebastiano.spectre.cli.daemon.DaemonClient
 import dev.sebastiano.spectre.cli.daemon.DaemonEndpoint
+import dev.sebastiano.spectre.cli.daemon.DaemonErrorCode
 import dev.sebastiano.spectre.cli.daemon.DaemonJvmProcessSummary
 import dev.sebastiano.spectre.cli.daemon.DaemonProcessLauncher
 import dev.sebastiano.spectre.cli.daemon.DaemonProtocol
@@ -57,9 +58,11 @@ public class SpectreCli(
             val destination = if (exception.statusCode == EXIT_SUCCESS) output else errorOutput
             destination.append(command.getFormattedHelp(exception))
             destination.appendLine()
-            exception.statusCode
+            if (exception.statusCode == EXIT_SUCCESS) EXIT_SUCCESS else EXIT_USAGE_FAILURE
         } catch (exception: CliOutputException) {
             outputFailure(exception.message ?: "failed to write command output")
+        } catch (exception: DaemonCommandException) {
+            daemonFailure(exception.message ?: "daemon command failed", exitCodeFor(exception.code))
         } catch (exception: IOException) {
             daemonFailure(exception.message ?: "I/O failure")
         } catch (exception: IllegalArgumentException) {
@@ -67,16 +70,16 @@ public class SpectreCli(
         }
     }
 
-    private fun daemonFailure(message: String): Int {
+    private fun daemonFailure(message: String, exitCode: Int = EXIT_DAEMON_FAILURE): Int {
         errorOutput.append("Spectre daemon error: $message")
         errorOutput.appendLine()
-        return EXIT_FAILURE
+        return exitCode
     }
 
     private fun outputFailure(message: String): Int {
         errorOutput.append("Spectre output error: $message")
         errorOutput.appendLine()
-        return EXIT_FAILURE
+        return EXIT_OUTPUT_FAILURE
     }
 }
 
@@ -119,7 +122,7 @@ private class TypeCommand(
         val completedSessionId =
             when (val response = request(DaemonRequest.TypeText(sessionId, text))) {
                 is DaemonResponse.Completed -> response.sessionId
-                is DaemonResponse.Error -> throw IOException(response.message)
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
                 else -> error("Daemon returned an unexpected response to type")
             }
         if (json) output.append(CLI_JSON.encodeToString(CompletionJson(id = completedSessionId)))
@@ -141,7 +144,7 @@ private class ScreenshotCommand(
         val pngBytes =
             when (val response = request(DaemonRequest.Screenshot(sessionId))) {
                 is DaemonResponse.Screenshot -> response.pngBytes
-                is DaemonResponse.Error -> throw IOException(response.message)
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
                 else -> error("Daemon returned an unexpected response to screenshot")
             }
         val path =
@@ -171,7 +174,7 @@ private class ClickCommand(
         val completedSessionId =
             when (val response = request(DaemonRequest.Click(sessionId, nodeKey))) {
                 is DaemonResponse.Completed -> response.sessionId
-                is DaemonResponse.Error -> throw IOException(response.message)
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
                 else -> error("Daemon returned an unexpected response to click")
             }
         if (json) output.append(CLI_JSON.encodeToString(CompletionJson(id = completedSessionId)))
@@ -193,7 +196,7 @@ private class FindCommand(
         val nodes =
             when (val response = request(DaemonRequest.FindByTestTag(sessionId, testTag))) {
                 is DaemonResponse.Nodes -> response.nodes
-                is DaemonResponse.Error -> throw IOException(response.message)
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
                 else -> error("Daemon returned an unexpected response to find")
             }
         if (json) output.append(CLI_JSON.encodeToString(TreeJson(nodes = nodes.map(::NodeJson))))
@@ -215,7 +218,7 @@ private class TreeCommand(
         val nodes =
             when (val response = request(DaemonRequest.AllNodes(sessionId))) {
                 is DaemonResponse.Nodes -> response.nodes
-                is DaemonResponse.Error -> throw IOException(response.message)
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
                 else -> error("Daemon returned an unexpected response to tree")
             }
         if (json) output.append(CLI_JSON.encodeToString(TreeJson(nodes = nodes.map(::NodeJson))))
@@ -237,7 +240,7 @@ private class WindowsCommand(
         val windows =
             when (val response = request(DaemonRequest.Windows(sessionId))) {
                 is DaemonResponse.Windows -> response.windows
-                is DaemonResponse.Error -> throw IOException(response.message)
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
                 else -> error("Daemon returned an unexpected response to windows")
             }
         if (json) {
@@ -263,7 +266,7 @@ private class DetachCommand(
         val detachedSessionId =
             when (val response = request(DaemonRequest.Detach(sessionId))) {
                 is DaemonResponse.Detached -> response.sessionId
-                is DaemonResponse.Error -> throw IOException(response.message)
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
                 else -> error("Daemon returned an unexpected response to detach")
             }
         if (json) {
@@ -286,7 +289,7 @@ private class AttachCommand(
         val session =
             when (val response = request(DaemonRequest.Attach(targetPid))) {
                 is DaemonResponse.Attached -> response
-                is DaemonResponse.Error -> throw IOException(response.message)
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
                 else -> error("Daemon returned an unexpected response to attach")
             }
         if (json) {
@@ -313,7 +316,7 @@ private class PsCommand(
                     request(DaemonRequest.ListJvmProcesses(ProcessHandle.current().pid()))
             ) {
                 is DaemonResponse.JvmProcesses -> response.processes
-                is DaemonResponse.Error -> throw IOException(response.message)
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
                 else -> error("Daemon returned an unexpected response to list JVM processes")
             }
         if (json) {
@@ -354,7 +357,7 @@ private class DaemonKillCommand(
     override fun run() {
         when (val response = shutdownRequest()) {
             DaemonResponse.ShuttingDown -> Unit
-            is DaemonResponse.Error -> throw IOException(response.message)
+            is DaemonResponse.Error -> throw DaemonCommandException(response)
             else -> error("Daemon returned an unexpected response to shutdown")
         }
         if (json) output.append(CLI_JSON.encodeToString(DaemonKillJson()))
@@ -529,8 +532,26 @@ private fun daemonShutdownRequest(socketPath: Path?): () -> DaemonResponse = dae
 }
 
 private const val EXIT_SUCCESS: Int = 0
-private const val EXIT_FAILURE: Int = 1
+private const val EXIT_OUTPUT_FAILURE: Int = 1
+private const val EXIT_USAGE_FAILURE: Int = 2
+private const val EXIT_ATTACH_FAILURE: Int = 3
+private const val EXIT_TARGET_NOT_FOUND: Int = 4
+private const val EXIT_DAEMON_FAILURE: Int = 5
 private const val JSON_VERSION: Int = 1
 private val CLI_JSON: Json = Json { encodeDefaults = true }
 
 private class CliOutputException(cause: IOException) : IOException(cause.message, cause)
+
+private class DaemonCommandException(response: DaemonResponse.Error) :
+    IOException(response.message) {
+    val code: DaemonErrorCode = response.code
+}
+
+private fun exitCodeFor(code: DaemonErrorCode): Int =
+    when (code) {
+        DaemonErrorCode.AttachFailed -> EXIT_ATTACH_FAILURE
+        DaemonErrorCode.SessionNotFound -> EXIT_TARGET_NOT_FOUND
+        DaemonErrorCode.ProtocolError,
+        DaemonErrorCode.ShutdownInProgress,
+        DaemonErrorCode.OperationFailed -> EXIT_DAEMON_FAILURE
+    }
