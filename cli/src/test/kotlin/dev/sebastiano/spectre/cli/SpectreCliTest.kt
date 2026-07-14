@@ -15,6 +15,22 @@ import kotlin.test.assertTrue
 
 class SpectreCliTest {
     @Test
+    fun `click prints stable JSON completion output`() {
+        val output = StringBuilder()
+        val cli =
+            SpectreCli(
+                request = { request ->
+                    assertEquals(DaemonRequest.Click("pid-42", "main:0:1"), request)
+                    DaemonResponse.Completed("pid-42")
+                },
+                output = output,
+            )
+
+        assertEquals(0, cli.run(listOf("click", "pid-42", "main:0:1", "--json")))
+        assertEquals("{\"version\":1,\"id\":\"pid-42\"}\n", output.toString())
+    }
+
+    @Test
     fun `find prints stable JSON node output`() {
         val output = StringBuilder()
         val node =

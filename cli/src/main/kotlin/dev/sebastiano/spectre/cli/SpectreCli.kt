@@ -77,12 +77,35 @@ private class RootCommand(request: (DaemonRequest) -> DaemonResponse, output: Ap
             WindowsCommand(request, output),
             TreeCommand(request, output),
             FindCommand(request, output),
+            ClickCommand(request, output),
             PsCommand(request, output),
             DaemonCommand(request, output),
         )
     }
 
     override fun run(): Unit = Unit
+}
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private class ClickCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "click") {
+    private val sessionId: String by argument()
+    private val nodeKey: String by argument()
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val completedSessionId =
+            when (val response = request(DaemonRequest.Click(sessionId, nodeKey))) {
+                is DaemonResponse.Completed -> response.sessionId
+                is DaemonResponse.Error -> throw IOException(response.message)
+                else -> error("Daemon returned an unexpected response to click")
+            }
+        if (json) output.append(CLI_JSON.encodeToString(CompletionJson(id = completedSessionId)))
+        else output.append("Clicked $nodeKey.")
+        output.appendLine()
+    }
 }
 
 @OptIn(ExperimentalSpectreAgentApi::class)
@@ -283,6 +306,8 @@ private data class DaemonStatusJson(
 private data class AttachJson(val version: Int = JSON_VERSION, val id: String, val pid: Long)
 
 @Serializable private data class DetachJson(val version: Int = JSON_VERSION, val id: String)
+
+@Serializable private data class CompletionJson(val version: Int = JSON_VERSION, val id: String)
 
 @Serializable
 private data class WindowsJson(val version: Int = JSON_VERSION, val windows: List<WindowJson>)
