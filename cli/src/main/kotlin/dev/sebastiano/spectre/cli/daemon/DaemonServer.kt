@@ -409,6 +409,13 @@ private data object Posix : DaemonSocketProtection {
         if (Files.getPosixFilePermissions(directory) != OWNER_ONLY_DIRECTORY_PERMISSIONS) {
             throw IOException("Existing daemon socket directory $directory must be owner-only")
         }
+        val owner = Files.getOwner(directory, NOFOLLOW_LINKS).name
+        val currentUser = Files.getOwner(Path.of(System.getProperty("user.home"))).name
+        if (owner != "root" && owner != currentUser) {
+            throw IOException(
+                "Existing daemon socket directory $directory must be owned by root or user"
+            )
+        }
     }
 }
 
