@@ -305,13 +305,7 @@ private sealed interface DaemonSocketProtection {
         val parent = socketPath.parent ?: Path.of("").toAbsolutePath()
         if (Files.exists(parent, NOFOLLOW_LINKS)) {
             rejectSymbolicLink(parent)
-            parent.parent?.let { ancestor ->
-                if (validateAncestor) {
-                    validateExistingAncestor(ancestor)
-                } else {
-                    rejectSymbolicLink(ancestor)
-                }
-            }
+            parent.parent?.let { validateAncestorChain(it, validateAncestor) }
             validateExistingDirectory(parent)
             return emptyList()
         }
@@ -319,13 +313,7 @@ private sealed interface DaemonSocketProtection {
             generateSequence(parent) { path -> path.parent }
                 .takeWhile { path -> !Files.exists(path, NOFOLLOW_LINKS) }
                 .toList()
-        missingParents.last().parent?.let { ancestor ->
-            if (validateAncestor) {
-                validateExistingAncestor(ancestor)
-            } else {
-                rejectSymbolicLink(ancestor)
-            }
-        }
+        missingParents.last().parent?.let { validateAncestorChain(it, validateAncestor) }
         val createdParents = mutableListOf<Path>()
         try {
             missingParents.asReversed().forEach { path ->
@@ -349,6 +337,17 @@ private sealed interface DaemonSocketProtection {
     @Throws(IOException::class) fun createProtectedDirectory(directory: Path)
 
     @Throws(IOException::class) fun validateExistingDirectory(directory: Path)
+
+    private fun validateAncestorChain(ancestor: Path, validateAncestor: Boolean) {
+        generateSequence(ancestor) { path -> path.parent }
+            .forEach { path ->
+                if (validateAncestor) {
+                    validateExistingAncestor(path)
+                } else {
+                    rejectSymbolicLink(path)
+                }
+            }
+    }
 
     private fun validateExistingAncestor(directory: Path) {
         if (isTrustedTempAlias(directory)) return
