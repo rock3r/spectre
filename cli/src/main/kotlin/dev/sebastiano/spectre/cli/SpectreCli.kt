@@ -87,6 +87,7 @@ private class RootCommand(request: (DaemonRequest) -> DaemonResponse, output: Ap
             TreeCommand(request, output),
             FindCommand(request, output),
             ClickCommand(request, output),
+            TypeCommand(request, output),
             ScreenshotCommand(request, output),
             PsCommand(request, output),
             DaemonCommand(request, output),
@@ -94,6 +95,28 @@ private class RootCommand(request: (DaemonRequest) -> DaemonResponse, output: Ap
     }
 
     override fun run(): Unit = Unit
+}
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private class TypeCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "type") {
+    private val sessionId: String by argument()
+    private val text: String by argument()
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val completedSessionId =
+            when (val response = request(DaemonRequest.TypeText(sessionId, text))) {
+                is DaemonResponse.Completed -> response.sessionId
+                is DaemonResponse.Error -> throw IOException(response.message)
+                else -> error("Daemon returned an unexpected response to type")
+            }
+        if (json) output.append(CLI_JSON.encodeToString(CompletionJson(id = completedSessionId)))
+        else output.append("Typed text.")
+        output.appendLine()
+    }
 }
 
 @OptIn(ExperimentalSpectreAgentApi::class)
