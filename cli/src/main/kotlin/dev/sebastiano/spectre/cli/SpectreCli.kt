@@ -24,6 +24,7 @@ import dev.sebastiano.spectre.cli.daemon.DaemonSessionSummary
 import dev.sebastiano.spectre.cli.mcp.SpectreMcpServer
 import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import kotlin.system.exitProcess
 import kotlinx.serialization.Serializable
@@ -85,7 +86,34 @@ public class SpectreCli(
 }
 
 /** Runs the Spectre CLI with its default per-user daemon endpoint. */
-public fun main(arguments: Array<String>): Unit = exitProcess(SpectreCli().run(arguments.asList()))
+public fun main(arguments: Array<String>): Unit =
+    exitProcess(
+        minimumJdkPreflightError()?.let { message ->
+            System.err.println(message)
+            EXIT_DAEMON_FAILURE
+        } ?: run { SpectreCli().run(arguments.asList()) }
+    )
+
+internal fun jdkPreflightError(
+    featureVersion: Int = Runtime.version().feature(),
+    hasAttachModule: Boolean = ModuleLayer.boot().findModule("jdk.attach").isPresent,
+): String? =
+    when {
+        featureVersion < MINIMUM_JDK_FEATURE_VERSION ->
+            "Spectre requires JDK $MINIMUM_JDK_FEATURE_VERSION or later; found Java $featureVersion."
+        !hasAttachModule ->
+            "Spectre requires a full JDK with the jdk.attach module; the current Java runtime does not provide it."
+        else -> null
+    }
+
+internal fun minimumJdkPreflightError(featureVersion: Int = Runtime.version().feature()): String? =
+    if (featureVersion < MINIMUM_JDK_FEATURE_VERSION) {
+        "Spectre requires JDK $MINIMUM_JDK_FEATURE_VERSION or later; found Java $featureVersion."
+    } else {
+        null
+    }
+
+private const val MINIMUM_JDK_FEATURE_VERSION: Int = 21
 
 private class RootCommand(
     request: (DaemonRequest) -> DaemonResponse,
@@ -574,29 +602,53 @@ private fun NodeJson(node: NodeSnapshotDto): NodeJson =
         bounds = RectJson(node.bounds.x, node.bounds.y, node.bounds.width, node.bounds.height),
     )
 
-private fun daemonRequest(socketPath: Path?): (DaemonRequest) -> DaemonResponse =
-    daemonRequest@{ request ->
-        val resolvedSocketPath = socketPath ?: DaemonEndpoint.defaultSocketPath()
-        if (
-            socketPath == null &&
-                DaemonProtocol.minimumDaemonVersion(request).minor <
-                    DaemonProtocol.CurrentVersion.minor
-        ) {
-            for (legacySocketPath in DaemonEndpoint.legacySocketPaths()) {
-                if (!Files.exists(legacySocketPath)) continue
-                try {
-                    return@daemonRequest DaemonClient(legacySocketPath).use { client ->
-                        client.request(request)
-                    }
-                } catch (_: IOException) {
-                    // A stale legacy socket must not prevent probing older endpoints or new
-                    // startup.
+internal fun daemonRequest(
+    socketPath: Path?,
+    attachPreflight: (DaemonRequest) -> String? = ::attachStartupPreflight,
+): (DaemonRequest) -> DaemonResponse = daemonRequest@{ request ->
+    val resolvedSocketPath = socketPath ?: DaemonEndpoint.defaultSocketPath()
+    if (
+        socketPath == null &&
+            DaemonProtocol.minimumDaemonVersion(request).minor < DaemonProtocol.CurrentVersion.minor
+    ) {
+        for (legacySocketPath in DaemonEndpoint.legacySocketPaths()) {
+            if (!Files.exists(legacySocketPath)) continue
+            try {
+                return@daemonRequest DaemonClient(legacySocketPath).use { client ->
+                    client.request(request)
                 }
+            } catch (_: IOException) {
+                // A stale legacy socket must not prevent probing older endpoints or new
+                // startup.
             }
         }
-        DaemonClient(resolvedSocketPath).use { client ->
-            client.requestOrStart(request) { DaemonProcessLauncher(resolvedSocketPath).start() }
+    }
+    DaemonClient(resolvedSocketPath).use { client ->
+        if (request == DaemonRequest.ListSessions) {
+            try {
+                client.requestIfPresent(request)
+            } catch (_: NoSuchFileException) {
+                DaemonResponse.Sessions(emptyList())
+            }
+        } else {
+            client.requestOrStart(
+                request = request,
+                start = { DaemonProcessLauncher(resolvedSocketPath).start() },
+                onAbsent = {
+                    attachPreflight(request)?.let { message ->
+                        DaemonResponse.Error(DaemonErrorCode.AttachFailed, message)
+                    }
+                },
+            )
         }
+    }
+}
+
+private fun attachStartupPreflight(request: DaemonRequest): String? =
+    if (request is DaemonRequest.Attach || request is DaemonRequest.ListJvmProcesses) {
+        jdkPreflightError()
+    } else {
+        null
     }
 
 private fun daemonShutdownRequest(socketPath: Path?): () -> DaemonResponse = daemonShutdownRequest@{

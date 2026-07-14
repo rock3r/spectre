@@ -47,6 +47,23 @@ class DaemonStartupCoordinatorTest {
     }
 
     @Test
+    fun `returns an absent-endpoint response without starting`() {
+        var starts = 0
+
+        assertEquals(
+            "attach unavailable",
+            DaemonStartupCoordinator(
+                    connect = { throw ConnectException("missing") },
+                    start = { starts++ },
+                    onAbsent = { "attach unavailable" },
+                )
+                .connectOrStart(),
+        )
+
+        assertEquals(0, starts)
+    }
+
+    @Test
     fun `starts once and retries when the socket path is absent`() {
         var attempts = 0
         var starts = 0

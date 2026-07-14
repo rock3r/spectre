@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.cli.daemon
 import dev.sebastiano.spectre.agent.AgentAttach
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.SpectreAttachException
+import dev.sebastiano.spectre.cli.jdkPreflightError
 import java.io.IOException
 
 /** In-memory session table for one daemon process. */
@@ -11,6 +12,7 @@ public class DaemonSessionRegistry
 internal constructor(
     private val jvmProcessDiscovery: DaemonJvmProcessDiscovery = DaemonJvmProcessDiscovery(),
     private val attachAutomator: (Long) -> DaemonSessionAutomator = { targetPid ->
+        installEmbeddedAgentRuntimeIfNeeded()
         AttachedDaemonSession(AgentAttach.attach(targetPid))
     },
 ) : AutoCloseable {
@@ -32,7 +34,8 @@ internal constructor(
             is DaemonRequest.Attach -> attach(request.targetPid)
             is DaemonRequest.Detach -> detach(request.sessionId)
             DaemonRequest.ListSessions -> listSessions()
-            is DaemonRequest.ListJvmProcesses -> jvmProcessDiscovery.list(request.requesterPid)
+            is DaemonRequest.ListJvmProcesses ->
+                listJvmProcesses(jvmProcessDiscovery, request.requesterPid)
             is DaemonRequest.Windows -> windows(request.sessionId)
             is DaemonRequest.AllNodes -> allNodes(request.sessionId)
             is DaemonRequest.FindByTestTag -> findByTestTag(request.sessionId, request.tag)
@@ -54,6 +57,9 @@ internal constructor(
         }
 
     private fun attach(targetPid: Long): DaemonResponse {
+        attachPreflightFailure()?.let {
+            return it
+        }
         if (shutdown) {
             return DaemonResponse.Error(
                 code = DaemonErrorCode.ShutdownInProgress,
@@ -73,6 +79,11 @@ internal constructor(
                 return DaemonResponse.Error(
                     code = DaemonErrorCode.AttachFailed,
                     message = exception.message ?: "Failed to attach to process $targetPid",
+                )
+            } catch (exception: IOException) {
+                return DaemonResponse.Error(
+                    code = DaemonErrorCode.AttachFailed,
+                    message = exception.message ?: "Failed to prepare the agent runtime",
                 )
             }
         val session = DaemonSession(summary = targetPid.toSessionSummary(), automator = attached)
@@ -177,3 +188,22 @@ internal constructor(
             get() = summary.sessionId
     }
 }
+
+private const val AGENT_RUNTIME_JAR_PROPERTY: String = "dev.sebastiano.spectre.agent.runtimeJar"
+
+private fun installEmbeddedAgentRuntimeIfNeeded() {
+    if (System.getProperty(AGENT_RUNTIME_JAR_PROPERTY) != null) return
+    EmbeddedAgentRuntime.install()?.let { runtime ->
+        System.setProperty(AGENT_RUNTIME_JAR_PROPERTY, runtime.toString())
+    }
+}
+
+private fun listJvmProcesses(
+    discovery: DaemonJvmProcessDiscovery,
+    requesterPid: Long,
+): DaemonResponse = attachPreflightFailure() ?: discovery.list(requesterPid)
+
+private fun attachPreflightFailure(): DaemonResponse.Error? =
+    jdkPreflightError()?.let { message ->
+        DaemonResponse.Error(code = DaemonErrorCode.AttachFailed, message = message)
+    }

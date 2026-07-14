@@ -1,9 +1,29 @@
 plugins {
+    application
     alias(libs.plugins.detekt)
     alias(libs.plugins.ktfmt)
     alias(libs.plugins.kotlinJvm)
     alias(libs.plugins.kotlinSerialization)
+    alias(libs.plugins.shadow)
 }
+
+application {
+    applicationName = "spectre"
+    mainClass = "dev.sebastiano.spectre.cli.SpectreCliKt"
+}
+
+tasks.shadowJar {
+    val agentRuntimeJar = project(":agent-runtime").tasks.named<Jar>("jar")
+    dependsOn(agentRuntimeJar)
+    archiveClassifier = "all"
+    manifest { attributes["Main-Class"] = application.mainClass.get() }
+    from(agentRuntimeJar.flatMap { it.archiveFile }) {
+        into("spectre")
+        rename { "agent-runtime.jar" }
+    }
+}
+
+tasks.assemble { dependsOn(tasks.shadowJar) }
 
 kotlin {
     jvmToolchain(21)

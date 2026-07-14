@@ -3,11 +3,15 @@ package dev.sebastiano.spectre.cli
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.RectDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
+import dev.sebastiano.spectre.cli.daemon.DaemonErrorCode
 import dev.sebastiano.spectre.cli.daemon.DaemonJvmProcessSummary
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import dev.sebastiano.spectre.cli.daemon.DaemonSessionSummary
 import java.io.IOException
+import java.net.StandardProtocolFamily
+import java.net.UnixDomainSocketAddress
+import java.nio.channels.ServerSocketChannel
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
@@ -19,6 +23,27 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 class SpectreCliTest {
+    @Test
+    fun `JDK preflight rejects Java versions older than 21`() {
+        assertEquals(
+            "Spectre requires JDK 21 or later; found Java 17.",
+            jdkPreflightError(featureVersion = 17, hasAttachModule = true),
+        )
+    }
+
+    @Test
+    fun `JDK preflight rejects runtimes without jdk attach`() {
+        assertEquals(
+            "Spectre requires a full JDK with the jdk.attach module; the current Java runtime does not provide it.",
+            jdkPreflightError(featureVersion = 21, hasAttachModule = false),
+        )
+    }
+
+    @Test
+    fun `CLI-level JDK preflight permits a Java 21 runtime without jdk attach`() {
+        assertEquals(null, minimumJdkPreflightError(featureVersion = 21))
+    }
+
     @Test
     fun `type prints stable JSON completion output`() {
         val output = StringBuilder()
@@ -475,5 +500,43 @@ class SpectreCliTest {
         assertEquals(5, cli.run(listOf("daemon", "status")))
         assertEquals("", output.toString())
         assertEquals("Spectre daemon error: Socket unavailable\n", errorOutput.toString())
+    }
+
+    @Test
+    fun `daemon status reports a failure from an existing daemon endpoint`() {
+        val socketDirectory = Files.createTempDirectory("spectre-cli-status")
+        val socketPath = socketDirectory.resolve("daemon.sock")
+        ServerSocketChannel.open(StandardProtocolFamily.UNIX).use { server ->
+            server.bind(UnixDomainSocketAddress.of(socketPath))
+        }
+        val output = StringBuilder()
+        val errorOutput = StringBuilder()
+        val cli = SpectreCli(output = output, errorOutput = errorOutput, socketPath = socketPath)
+
+        try {
+            assertEquals(5, cli.run(listOf("daemon", "status")))
+            assertEquals("", output.toString())
+            assertTrue(errorOutput.startsWith("Spectre daemon error: "))
+        } finally {
+            Files.deleteIfExists(socketPath)
+            Files.deleteIfExists(socketDirectory)
+        }
+    }
+
+    @Test
+    fun `daemon request reports attach preflight failures before daemon startup`() {
+        val request =
+            daemonRequest(
+                socketPath = Path.of("/tmp/spectre-test/daemon.sock"),
+                attachPreflight = { "The JDK Attach API is not available" },
+            )
+
+        assertEquals(
+            DaemonResponse.Error(
+                code = DaemonErrorCode.AttachFailed,
+                message = "The JDK Attach API is not available",
+            ),
+            request(DaemonRequest.Attach(targetPid = 42)),
+        )
     }
 }

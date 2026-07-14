@@ -18,15 +18,20 @@ public class DaemonProcessLauncher(
             .start()
 
     /** Returns the isolated daemon command without starting a process. */
-    public fun command(): List<String> =
-        listOf(
-            javaExecutable,
-            "-cp",
-            classPath,
-            DAEMON_MAIN_CLASS,
-            "--socket",
-            socketPath.toString(),
-        )
+    public fun command(): List<String> = buildList {
+        add(javaExecutable)
+        addAll(agentRuntimePropertyArgument())
+        add("-cp")
+        add(classPath)
+        add(DAEMON_MAIN_CLASS)
+        add("--socket")
+        add(socketPath.toString())
+    }
+
+    private fun agentRuntimePropertyArgument(): List<String> =
+        System.getProperty("dev.sebastiano.spectre.agent.runtimeJar")
+            ?.let { listOf("-Ddev.sebastiano.spectre.agent.runtimeJar=$it") }
+            .orEmpty()
 
     private companion object {
         private const val DAEMON_MAIN_CLASS: String =

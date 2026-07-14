@@ -9,6 +9,7 @@ import java.nio.file.NoSuchFileException
 public class DaemonStartupCoordinator<T>(
     private val connect: () -> T,
     private val start: () -> Unit,
+    private val onAbsent: () -> T? = { null },
 ) {
     /** Connects immediately or starts the daemon before waiting for its endpoint. */
     @Throws(IOException::class)
@@ -17,6 +18,9 @@ public class DaemonStartupCoordinator<T>(
             return connect()
         } catch (exception: IOException) {
             if (!isAbsentEndpoint(exception)) throw exception
+            onAbsent()?.let {
+                return it
+            }
             return startOrConnectAfterRace()
         }
     }
