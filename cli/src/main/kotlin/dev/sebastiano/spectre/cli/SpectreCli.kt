@@ -70,12 +70,36 @@ private class RootCommand(request: (DaemonRequest) -> DaemonResponse, output: Ap
     init {
         subcommands(
             AttachCommand(request, output),
+            DetachCommand(request, output),
             PsCommand(request, output),
             DaemonCommand(request, output),
         )
     }
 
     override fun run(): Unit = Unit
+}
+
+private class DetachCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "detach") {
+    private val sessionId: String by argument()
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val detachedSessionId =
+            when (val response = request(DaemonRequest.Detach(sessionId))) {
+                is DaemonResponse.Detached -> response.sessionId
+                is DaemonResponse.Error -> throw IOException(response.message)
+                else -> error("Daemon returned an unexpected response to detach")
+            }
+        if (json) {
+            output.append(CLI_JSON.encodeToString(DetachJson(id = detachedSessionId)))
+        } else {
+            output.append("Detached $detachedSessionId.")
+        }
+        output.appendLine()
+    }
 }
 
 private class AttachCommand(
@@ -179,6 +203,8 @@ private data class DaemonStatusJson(
 
 @Serializable
 private data class AttachJson(val version: Int = JSON_VERSION, val id: String, val pid: Long)
+
+@Serializable private data class DetachJson(val version: Int = JSON_VERSION, val id: String)
 
 @Serializable
 private data class PsJson(val version: Int = JSON_VERSION, val processes: List<PsProcessJson>)
