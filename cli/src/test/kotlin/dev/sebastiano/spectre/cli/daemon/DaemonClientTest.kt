@@ -19,7 +19,12 @@ class DaemonClientTest {
                 assertEquals(
                     DaemonResponse.Sessions(emptyList()),
                     client.requestOrStart(DaemonRequest.ListSessions) {
-                        process = DaemonProcessLauncher(socketPath).start()
+                        process =
+                            DaemonProcessLauncher(
+                                    socketPath = socketPath,
+                                    classPath = testRuntimeClassPath(),
+                                )
+                                .start()
                     },
                 )
                 assertEquals(DaemonResponse.ShuttingDown, client.request(DaemonRequest.Shutdown))
@@ -108,3 +113,8 @@ private fun awaitDaemonClientSocketRemoval(socketPath: Path) {
 
 private const val MAX_SOCKET_REMOVAL_ATTEMPTS: Int = 100
 private const val SOCKET_REMOVAL_WAIT_MILLIS: Long = 10
+
+private fun testRuntimeClassPath(): String =
+    requireNotNull(System.getProperty("spectre.cli.testRuntimeClasspath")) {
+        "Missing CLI test runtime classpath"
+    }
