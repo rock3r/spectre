@@ -88,7 +88,8 @@ abstract class PatchStartScripts : DefaultTask() {
             """
             :execute
             @rem Spectre attaches an agent, so it requires a full JDK rather than a JRE.
-            for /f "tokens=2 delims=\"" %%v in ('"%JAVA_EXE%" -version 2^>^&1 ^| findstr /c:"version"') do set SPECTRE_JAVA_VERSION=%%v
+            for /f "tokens=3" %%v in ('"%JAVA_EXE%" -version 2^>^&1 ^| findstr /c:"version"') do set SPECTRE_JAVA_VERSION=%%v
+            set SPECTRE_JAVA_VERSION=%SPECTRE_JAVA_VERSION:"=%
             for /f "tokens=1 delims=." %%v in ("%SPECTRE_JAVA_VERSION%") do set SPECTRE_JAVA_FEATURE=%%v
             if not defined SPECTRE_JAVA_FEATURE goto invalidJavaVersion
             if %SPECTRE_JAVA_FEATURE% LSS 21 goto oldJavaVersion
