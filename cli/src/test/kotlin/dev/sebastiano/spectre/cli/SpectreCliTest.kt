@@ -41,9 +41,16 @@ class SpectreCliTest {
     @Test
     fun `usage errors are printed and returned as a nonzero exit code`() {
         val output = StringBuilder()
-        val cli = SpectreCli(request = { error("Daemon should not be contacted") }, output = output)
+        val errorOutput = StringBuilder()
+        val cli =
+            SpectreCli(
+                request = { error("Daemon should not be contacted") },
+                output = output,
+                errorOutput = errorOutput,
+            )
 
         assertEquals(1, cli.run(listOf("unknown")))
-        assertTrue(output.contains("unknown"))
+        assertEquals("", output.toString())
+        assertTrue(errorOutput.contains("unknown"))
     }
 }

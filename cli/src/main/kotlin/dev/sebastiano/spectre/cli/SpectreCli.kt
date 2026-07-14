@@ -22,12 +22,14 @@ import kotlinx.serialization.json.Json
 public class SpectreCli(
     private val request: (DaemonRequest) -> DaemonResponse,
     private val output: Appendable = System.out,
+    private val errorOutput: Appendable = System.err,
 ) {
     /** Creates a CLI client that auto-starts the per-user daemon when needed. */
     public constructor(
         output: Appendable = System.out,
+        errorOutput: Appendable = System.err,
         socketPath: Path = DaemonEndpoint.defaultSocketPath(),
-    ) : this(request = daemonRequest(socketPath), output = output)
+    ) : this(request = daemonRequest(socketPath), output = output, errorOutput = errorOutput)
 
     /** Parses and executes one CLI invocation, returning zero when it succeeds. */
     public fun run(arguments: List<String>): Int {
@@ -36,8 +38,9 @@ public class SpectreCli(
             command.parse(arguments)
             EXIT_SUCCESS
         } catch (exception: CliktError) {
-            output.append(command.getFormattedHelp(exception))
-            output.appendLine()
+            val destination = if (exception.statusCode == EXIT_SUCCESS) output else errorOutput
+            destination.append(command.getFormattedHelp(exception))
+            destination.appendLine()
             exception.statusCode
         }
     }
