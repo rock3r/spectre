@@ -9,6 +9,27 @@ import kotlin.test.assertEquals
 
 class DaemonClientTest {
     @Test
+    fun `starts a detached daemon process for the first request`() {
+        val socketPath = temporaryDaemonClientSocketPath()
+
+        try {
+            DaemonClient(socketPath).use { client ->
+                assertEquals(
+                    DaemonResponse.Sessions(emptyList()),
+                    client.requestOrStart(DaemonRequest.ListSessions) {
+                        DaemonProcessLauncher(socketPath).start()
+                    },
+                )
+                assertEquals(DaemonResponse.ShuttingDown, client.request(DaemonRequest.Shutdown))
+            }
+
+            awaitDaemonClientSocketRemoval(socketPath)
+        } finally {
+            deleteTemporaryDaemonClientSocketPath(socketPath)
+        }
+    }
+
+    @Test
     fun `starts the daemon then sends the first request when the socket is absent`() {
         val socketPath = temporaryDaemonClientSocketPath()
         var server: DaemonServer? = null
@@ -72,3 +93,14 @@ private fun deleteTemporaryDaemonClientSocketPath(socketPath: Path) {
     Files.deleteIfExists(socketPath.parent)
     Files.deleteIfExists(socketPath.parent.parent)
 }
+
+private fun awaitDaemonClientSocketRemoval(socketPath: Path) {
+    repeat(MAX_SOCKET_REMOVAL_ATTEMPTS) {
+        if (!Files.exists(socketPath)) return
+        Thread.sleep(SOCKET_REMOVAL_WAIT_MILLIS)
+    }
+    error("Timed out waiting for daemon socket removal")
+}
+
+private const val MAX_SOCKET_REMOVAL_ATTEMPTS: Int = 100
+private const val SOCKET_REMOVAL_WAIT_MILLIS: Long = 10
