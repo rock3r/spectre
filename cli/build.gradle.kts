@@ -18,6 +18,7 @@ dependencies {
     detektPlugins(libs.compose.rules.detekt)
 
     testImplementation(libs.kotlin.testJunit5)
+    testImplementation(projects.agentTestFixture)
 }
 
 tasks.withType<Test>().configureEach {
