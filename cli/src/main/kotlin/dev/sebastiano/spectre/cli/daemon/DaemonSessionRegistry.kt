@@ -10,7 +10,7 @@ public class DaemonSessionRegistry(
     private val attachAutomator: (Long) -> AutoCloseable = { targetPid ->
         AgentAttach.attach(targetPid)
     }
-) {
+) : AutoCloseable {
     private val sessionsByPid: MutableMap<Long, DaemonSession> = linkedMapOf()
 
     public val isShutdown: Boolean
@@ -18,6 +18,7 @@ public class DaemonSessionRegistry(
 
     private var shutdown: Boolean = false
 
+    @Synchronized
     public fun handle(request: DaemonRequest): DaemonResponse =
         when (request) {
             is DaemonRequest.Hello ->
@@ -75,10 +76,15 @@ public class DaemonSessionRegistry(
         )
 
     private fun shutdown(): DaemonResponse {
+        close()
+        return DaemonResponse.ShuttingDown
+    }
+
+    @Synchronized
+    override fun close() {
         shutdown = true
         sessionsByPid.values.forEach { session -> session.automator.close() }
         sessionsByPid.clear()
-        return DaemonResponse.ShuttingDown
     }
 
     private fun Long.toSessionSummary(): DaemonSessionSummary =

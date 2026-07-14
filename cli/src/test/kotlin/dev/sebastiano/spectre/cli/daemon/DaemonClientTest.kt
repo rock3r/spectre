@@ -1,13 +1,26 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import java.io.File
 import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class DaemonClientTest {
+    @Test
+    fun `daemon runtime classpath includes the loadable agent runtime`() {
+        val runtimeEntries = testRuntimeClassPath().split(File.pathSeparator)
+
+        assertTrue(
+            runtimeEntries.any { entry ->
+                File(entry).name.startsWith("agent-runtime-") && entry.endsWith(".jar")
+            }
+        )
+    }
+
     @Test
     fun `starts a detached daemon process for the first request`() {
         val socketPath = temporaryDaemonClientSocketPath()
