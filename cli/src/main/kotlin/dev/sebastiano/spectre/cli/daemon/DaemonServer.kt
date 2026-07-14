@@ -131,7 +131,19 @@ public constructor(
                     if (running.get()) logConnectionFailure(exception)
                     return
                 }
-            activeClient.set(client)
+            val accepted =
+                synchronized(activityLock) {
+                    if (!running.get()) {
+                        false
+                    } else {
+                        activeClient.set(client)
+                        true
+                    }
+                }
+            if (!accepted) {
+                client.close()
+                return
+            }
             @Suppress("TooGenericExceptionCaught")
             try {
                 handleConnection(client)
@@ -166,7 +178,7 @@ public constructor(
                 }
             }
         } finally {
-            activeClient.compareAndSet(client, null)
+            synchronized(activityLock) { activeClient.compareAndSet(client, null) }
         }
     }
 

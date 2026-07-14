@@ -1,6 +1,8 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import java.io.EOFException
 import java.io.IOException
+import java.net.SocketException
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
 import java.nio.channels.Channels
@@ -21,7 +23,13 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
             channel.connect(UnixDomainSocketAddress.of(socketPath))
             val input = Channels.newInputStream(channel)
             val output = Channels.newOutputStream(channel)
-            requireCompatibleDaemon(output, input)
+            try {
+                requireCompatibleDaemon(output, input)
+            } catch (exception: EOFException) {
+                throw DaemonConnectionClosedException(exception)
+            } catch (exception: SocketException) {
+                throw DaemonConnectionClosedException(exception)
+            }
             DaemonWireCodec.writeRequest(output, request)
             DaemonWireCodec.readResponse(input)
                 ?: throw IOException("Daemon closed the connection before responding")
@@ -41,11 +49,13 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
                 }
             is DaemonResponse.Error ->
                 throw IOException("Daemon handshake failed: ${response.message}")
-            null ->
-                throw IOException("Daemon closed the connection before completing the handshake")
+            null -> throw DaemonConnectionClosedException()
             else -> throw IOException("Daemon returned an unexpected handshake response")
         }
     }
 
     override fun close(): Unit = Unit
 }
+
+internal class DaemonConnectionClosedException(cause: Throwable? = null) :
+    IOException("Daemon closed the connection during handshake", cause)

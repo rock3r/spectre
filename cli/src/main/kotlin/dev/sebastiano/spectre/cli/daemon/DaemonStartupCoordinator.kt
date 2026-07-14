@@ -60,6 +60,7 @@ public class DaemonStartupCoordinator<T>(
     private fun isAbsentEndpoint(exception: IOException): Boolean =
         exception is ConnectException ||
             exception is NoSuchFileException ||
+            exception is DaemonConnectionClosedException ||
             (exception is SocketException && exception.message == MISSING_UNIX_SOCKET_MESSAGE)
 
     private companion object {
