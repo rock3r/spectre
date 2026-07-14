@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.cli.daemon
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class DaemonEndpointTest {
     @Test
@@ -18,13 +19,13 @@ class DaemonEndpointTest {
     }
 
     @Test
-    fun `uses the windows temp directory on windows`() {
-        assertEquals(
-            "C:\\Users\\alice\\AppData\\Local\\Temp",
-            DaemonEndpoint.baseDirectory(
+    fun `rejects a socket path too long for unix domain sockets`() {
+        assertFailsWith<IllegalArgumentException> {
+            DaemonEndpoint.defaultSocketPath(
                 osName = "Windows 11",
-                tempDirectory = "C:\\Users\\alice\\AppData\\Local\\Temp",
-            ),
-        )
+                tempDirectory = "C:\\Users\\${"a".repeat(80)}\\AppData\\Local\\Temp",
+                userName = "alice",
+            )
+        }
     }
 }

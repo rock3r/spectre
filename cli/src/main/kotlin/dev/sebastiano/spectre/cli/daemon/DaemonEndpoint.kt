@@ -13,10 +13,11 @@ public object DaemonEndpoint {
         userName: String = System.getProperty("user.name").orEmpty(),
     ): Path =
         Path.of(
-            baseDirectory(osName, tempDirectory),
-            "sp-d-${shortUserId(userName)}",
-            "daemon.sock",
-        )
+                baseDirectory(osName, tempDirectory),
+                "sp-d-${shortUserId(userName)}",
+                "daemon.sock",
+            )
+            .also(::requireSocketPathFits)
 
     /** Selects the platform-specific short base directory for daemon sockets. */
     internal fun baseDirectory(osName: String, tempDirectory: String): String =
@@ -27,5 +28,12 @@ public object DaemonEndpoint {
             .formatHex(MessageDigest.getInstance("SHA-256").digest(userName.toByteArray()))
             .take(SHORT_USER_ID_LENGTH)
 
+    private fun requireSocketPathFits(socketPath: Path) {
+        require(socketPath.toString().toByteArray().size <= MAX_SOCKET_PATH_BYTES) {
+            "Daemon socket path exceeds $MAX_SOCKET_PATH_BYTES bytes: $socketPath"
+        }
+    }
+
     private const val SHORT_USER_ID_LENGTH: Int = 8
+    private const val MAX_SOCKET_PATH_BYTES: Int = 100
 }
