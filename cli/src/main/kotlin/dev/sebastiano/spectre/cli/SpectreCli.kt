@@ -114,7 +114,7 @@ private class RootCommand(
 
 private class McpCommand(private val request: (DaemonRequest) -> DaemonResponse) :
     CliktCommand(name = "mcp") {
-    override fun run(): Nothing = SpectreMcpServer.run(request)
+    override fun run(): Unit = SpectreMcpServer.run(request)
 }
 
 @OptIn(ExperimentalSpectreAgentApi::class)

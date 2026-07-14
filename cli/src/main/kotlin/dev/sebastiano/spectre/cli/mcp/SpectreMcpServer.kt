@@ -13,7 +13,7 @@ import io.modelcontextprotocol.kotlin.sdk.types.ServerCapabilities
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
 import java.util.Base64
-import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
 import kotlinx.io.Sink
 import kotlinx.io.Source
@@ -44,9 +44,13 @@ public object SpectreMcpServer {
         request: (DaemonRequest) -> DaemonResponse,
         input: Source = System.`in`.asSource().buffered(),
         output: Sink = System.out.asSink().buffered(),
-    ): Nothing = runBlocking {
-        create(request).createSession(StdioServerTransport(input, output) {})
-        awaitCancellation()
+    ): Unit = runBlocking {
+        val transportClosed = CompletableDeferred<Unit>()
+        val transport = StdioServerTransport(input, output) {}
+        transport.onClose { transportClosed.complete(Unit) }
+
+        create(request).createSession(transport)
+        transportClosed.await()
     }
 
     private fun registerTools(server: Server, request: (DaemonRequest) -> DaemonResponse) {
@@ -158,7 +162,7 @@ public object SpectreMcpServer {
             request(
                     DaemonRequest.StartRecording(
                         call.requiredString("session_id"),
-                        call.requiredString("output_path"),
+                        normalizeRecordingOutputPath(call.requiredString("output_path")),
                     )
                 )
                 .asResult { it is DaemonResponse.RecordingStarted }
@@ -212,6 +216,9 @@ public object SpectreMcpServer {
     private const val MCP_VERSION: String = "0.1.0"
     private val MCP_JSON: Json = Json { encodeDefaults = true }
 }
+
+internal fun normalizeRecordingOutputPath(outputPath: String): String =
+    java.nio.file.Path.of(outputPath).toAbsolutePath().normalize().toString()
 
 internal fun DaemonResponse.screenshotResult(): CallToolResult =
     when (this) {

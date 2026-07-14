@@ -4,11 +4,22 @@ import dev.sebastiano.spectre.cli.daemon.DaemonErrorCode
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import io.modelcontextprotocol.kotlin.sdk.types.ImageContent
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
+import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class SpectreMcpServerTest {
+    @Test
+    fun `normalizes recording output paths before sending them to the daemon`() {
+        val outputPath = "captures/../captures/session.mp4"
+
+        assertEquals(
+            Path.of(outputPath).toAbsolutePath().normalize().toString(),
+            normalizeRecordingOutputPath(outputPath),
+        )
+    }
+
     @Test
     fun `advertises agent-oriented schemas for the initial daemon tool set`() {
         val server =
