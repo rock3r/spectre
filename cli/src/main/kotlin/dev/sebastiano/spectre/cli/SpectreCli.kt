@@ -52,6 +52,8 @@ public class SpectreCli(
             destination.append(command.getFormattedHelp(exception))
             destination.appendLine()
             exception.statusCode
+        } catch (exception: CliOutputException) {
+            outputFailure(exception.message ?: "failed to write command output")
         } catch (exception: IOException) {
             daemonFailure(exception.message ?: "I/O failure")
         } catch (exception: IllegalArgumentException) {
@@ -61,6 +63,12 @@ public class SpectreCli(
 
     private fun daemonFailure(message: String): Int {
         errorOutput.append("Spectre daemon error: $message")
+        errorOutput.appendLine()
+        return EXIT_FAILURE
+    }
+
+    private fun outputFailure(message: String): Int {
+        errorOutput.append("Spectre output error: $message")
         errorOutput.appendLine()
         return EXIT_FAILURE
     }
@@ -104,8 +112,14 @@ private class ScreenshotCommand(
                 is DaemonResponse.Error -> throw IOException(response.message)
                 else -> error("Daemon returned an unexpected response to screenshot")
             }
-        val path = outputPath ?: Files.createTempFile("spectre-screenshot-", ".png")
-        Files.write(path, pngBytes)
+        val path =
+            try {
+                val destination = outputPath ?: Files.createTempFile("spectre-screenshot-", ".png")
+                Files.write(destination, pngBytes)
+                destination
+            } catch (exception: IOException) {
+                throw CliOutputException(exception)
+            }
         if (json) output.append(CLI_JSON.encodeToString(ScreenshotJson(path = path.toString())))
         else output.append(path.toString())
         output.appendLine()
@@ -438,3 +452,5 @@ private const val EXIT_SUCCESS: Int = 0
 private const val EXIT_FAILURE: Int = 1
 private const val JSON_VERSION: Int = 1
 private val CLI_JSON: Json = Json { encodeDefaults = true }
+
+private class CliOutputException(cause: IOException) : IOException(cause.message, cause)

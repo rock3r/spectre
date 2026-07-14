@@ -13,6 +13,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 class SpectreCliTest {
     @Test
@@ -35,10 +38,33 @@ class SpectreCliTest {
                 cli.run(listOf("screenshot", "pid-42", "--output", imagePath.toString(), "--json")),
             )
             assertEquals(byteArrayOf(1, 2, 3).toList(), Files.readAllBytes(imagePath).toList())
-            assertEquals("{\"version\":1,\"path\":\"${imagePath}\"}\n", output.toString())
+            val json = Json.parseToJsonElement(output.toString())
+            assertEquals(1, json.jsonObject.getValue("version").jsonPrimitive.content.toInt())
+            assertEquals(
+                imagePath.toString(),
+                json.jsonObject.getValue("path").jsonPrimitive.content,
+            )
         } finally {
             Files.deleteIfExists(imagePath)
         }
+    }
+
+    @Test
+    fun `screenshot reports local output errors separately from daemon errors`() {
+        val output = StringBuilder()
+        val errorOutput = StringBuilder()
+        val missingDirectory = Files.createTempDirectory("spectre-cli-test").resolve("missing")
+        val imagePath = missingDirectory.resolve("capture.png")
+        val cli =
+            SpectreCli(
+                request = { DaemonResponse.Screenshot("pid-42", byteArrayOf(1, 2, 3)) },
+                output = output,
+                errorOutput = errorOutput,
+            )
+
+        assertEquals(1, cli.run(listOf("screenshot", "pid-42", "--output", imagePath.toString())))
+        assertEquals("", output.toString())
+        assertTrue(errorOutput.startsWith("Spectre output error:"))
     }
 
     @Test
