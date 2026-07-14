@@ -19,6 +19,43 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalSpectreAgentApi::class)
 class DaemonServerTest {
     @Test
+    fun `idle cleanup keeps an accepted client alive through its first request`() {
+        val socketPath = temporarySocketPath()
+        val server = DaemonServer(socketPath)
+        val client = SocketChannel.open(java.net.StandardProtocolFamily.UNIX)
+
+        try {
+            client.connect(java.net.UnixDomainSocketAddress.of(socketPath))
+            Thread.sleep(10)
+
+            assertFalse(server.closeIfIdle(timeoutMillis = 1))
+            assertTrue(Files.exists(socketPath))
+        } finally {
+            client.close()
+            server.close()
+            deleteTemporarySocketPath(socketPath)
+        }
+    }
+
+    @Test
+    fun `idle cleanup keeps servers with active sessions alive`() {
+        val socketPath = temporarySocketPath()
+        val registry = DaemonSessionRegistry { TestDaemonSessionAutomator() }
+        val server = DaemonServer(socketPath, registry = registry)
+
+        try {
+            registry.handle(DaemonRequest.Attach(1234))
+            Thread.sleep(10)
+
+            assertFalse(server.closeIfIdle(timeoutMillis = 1))
+            assertTrue(Files.exists(socketPath))
+        } finally {
+            server.close()
+            deleteTemporarySocketPath(socketPath)
+        }
+    }
+
+    @Test
     fun `close detaches all owned agent sessions`() {
         val socketPath = temporarySocketPath()
         var closes = 0

@@ -11,8 +11,66 @@ import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class DaemonProcessTest {
+    @Test
+    fun `closes after the idle timeout`() {
+        val socketPath = temporarySocketPath()
+        val daemon = DaemonProcess(socketPath, idleTimeoutMillis = 100)
+        val runner = Thread(daemon::runUntilShutdown)
+
+        try {
+            runner.start()
+            awaitSocket(socketPath)
+
+            runner.join(2_000)
+
+            assertFalse(runner.isAlive)
+            assertFalse(Files.exists(socketPath))
+        } finally {
+            daemon.close()
+            runner.join(2_000)
+            deleteTemporarySocketPath(socketPath)
+        }
+    }
+
+    @Test
+    fun `resets the idle timeout after a daemon request`() {
+        val socketPath = temporarySocketPath()
+        val daemon = DaemonProcess(socketPath, idleTimeoutMillis = 2_000)
+        val runner = Thread(daemon::runUntilShutdown)
+
+        try {
+            runner.start()
+            awaitSocket(socketPath)
+            Thread.sleep(500)
+
+            SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
+                channel.connect(UnixDomainSocketAddress.of(socketPath))
+                val input = Channels.newInputStream(channel)
+                val output = Channels.newOutputStream(channel)
+                DaemonWireCodec.writeRequest(
+                    output,
+                    DaemonRequest.Hello(DaemonProtocol.CurrentVersion),
+                )
+                assertEquals(
+                    DaemonResponse.Hello(DaemonProtocol.CurrentVersion),
+                    DaemonWireCodec.readResponse(input),
+                )
+            }
+
+            Thread.sleep(500)
+            assertTrue(runner.isAlive)
+            runner.join(2_000)
+            assertFalse(runner.isAlive)
+        } finally {
+            daemon.close()
+            runner.join(2_000)
+            deleteTemporarySocketPath(socketPath)
+        }
+    }
+
     @Test
     fun `close before run prevents starting a daemon`() {
         val socketPath = temporarySocketPath()

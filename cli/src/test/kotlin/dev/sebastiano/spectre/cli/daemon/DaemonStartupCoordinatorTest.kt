@@ -11,6 +11,24 @@ import kotlin.test.assertTrue
 
 class DaemonStartupCoordinatorTest {
     @Test
+    fun `starts once when the daemon closes during handshake`() {
+        var attempts = 0
+        var starts = 0
+
+        DaemonStartupCoordinator(
+                connect = {
+                    attempts++
+                    if (attempts == 1) throw DaemonConnectionClosedException()
+                },
+                start = { starts++ },
+            )
+            .connectOrStart()
+
+        assertEquals(2, attempts)
+        assertEquals(1, starts)
+    }
+
+    @Test
     fun `starts once and retries when the daemon is absent`() {
         var attempts = 0
         var starts = 0

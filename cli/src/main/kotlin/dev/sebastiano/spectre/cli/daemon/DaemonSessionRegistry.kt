@@ -18,6 +18,9 @@ internal constructor(
     public val isShutdown: Boolean
         get() = shutdown
 
+    public val hasSessions: Boolean
+        @Synchronized get() = sessionsByPid.isNotEmpty()
+
     private var shutdown: Boolean = false
 
     @Synchronized
