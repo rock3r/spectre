@@ -622,8 +622,26 @@ private fun daemonRequest(socketPath: Path?): (DaemonRequest) -> DaemonResponse 
             }
         }
         DaemonClient(resolvedSocketPath).use { client ->
-            client.requestOrStart(request) { DaemonProcessLauncher(resolvedSocketPath).start() }
+            if (request == DaemonRequest.ListSessions) {
+                try {
+                    client.request(request)
+                } catch (_: IOException) {
+                    DaemonResponse.Sessions(emptyList())
+                }
+            } else {
+                client.requestOrStart(request) {
+                    attachStartupPreflight(request)?.let { message -> throw IOException(message) }
+                    DaemonProcessLauncher(resolvedSocketPath).start()
+                }
+            }
         }
+    }
+
+private fun attachStartupPreflight(request: DaemonRequest): String? =
+    if (request is DaemonRequest.Attach || request is DaemonRequest.ListJvmProcesses) {
+        jdkPreflightError()
+    } else {
+        null
     }
 
 private fun daemonShutdownRequest(socketPath: Path?): () -> DaemonResponse = daemonShutdownRequest@{
