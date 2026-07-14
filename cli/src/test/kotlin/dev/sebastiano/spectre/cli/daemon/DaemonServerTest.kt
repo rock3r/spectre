@@ -283,6 +283,23 @@ class DaemonServerTest {
     }
 
     @Test
+    fun `refuses a socket parent that is a symbolic link`() {
+        val temporaryDirectory = Files.createTempDirectory("spectre-daemon-test")
+        val socketDirectory = Files.createDirectory(temporaryDirectory.resolve("socket-directory"))
+        val socketLink = temporaryDirectory.resolve("socket-link")
+        Files.createSymbolicLink(socketLink, socketDirectory)
+
+        try {
+            assertFailsWith<java.io.IOException> { DaemonServer(socketLink.resolve("daemon.sock")) }
+            assertTrue(Files.isSymbolicLink(socketLink))
+        } finally {
+            Files.deleteIfExists(socketLink)
+            Files.deleteIfExists(socketDirectory)
+            Files.deleteIfExists(temporaryDirectory)
+        }
+    }
+
+    @Test
     fun `serves lifecycle requests over a unix domain socket and removes it on shutdown`() {
         val socketPath = temporarySocketPath()
         val server = DaemonServer(socketPath)

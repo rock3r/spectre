@@ -304,6 +304,7 @@ private sealed interface DaemonSocketProtection {
     fun createMissingParents(socketPath: Path): List<Path> {
         val parent = socketPath.parent ?: Path.of("").toAbsolutePath()
         if (Files.exists(parent, NOFOLLOW_LINKS)) {
+            rejectSymbolicLink(parent)
             validateExistingDirectory(parent)
             return emptyList()
         }
@@ -311,6 +312,7 @@ private sealed interface DaemonSocketProtection {
             generateSequence(parent) { path -> path.parent }
                 .takeWhile { path -> !Files.exists(path, NOFOLLOW_LINKS) }
                 .toList()
+        missingParents.last().parent?.let(::validateExistingAncestor)
         val createdParents = mutableListOf<Path>()
         try {
             missingParents.asReversed().forEach { path ->
@@ -333,6 +335,27 @@ private sealed interface DaemonSocketProtection {
     @Throws(IOException::class) fun createProtectedDirectory(directory: Path)
 
     @Throws(IOException::class) fun validateExistingDirectory(directory: Path)
+
+    private fun validateExistingAncestor(directory: Path) {
+        if (isTrustedTempAlias(directory)) return
+        rejectSymbolicLink(directory)
+        if ("unix" in directory.fileSystem.supportedFileAttributeViews()) {
+            val mode = Files.getAttribute(directory, "unix:mode", NOFOLLOW_LINKS) as Int
+            if (mode and STICKY_BIT != 0) return
+        }
+        validateExistingDirectory(directory)
+    }
+
+    private fun rejectSymbolicLink(path: Path) {
+        if (Files.isSymbolicLink(path)) {
+            throw IOException("Daemon socket directories must not be symbolic links: $path")
+        }
+    }
+
+    private fun isTrustedTempAlias(path: Path): Boolean =
+        path == Path.of("/tmp") &&
+            runCatching { Files.readSymbolicLink(path) == Path.of("private/tmp") }
+                .getOrDefault(false)
 
     @Throws(IOException::class) fun protectSocket(socketPath: Path)
 
@@ -413,3 +436,4 @@ private val ALL_ACL_PERMISSIONS: Set<AclEntryPermission> =
     EnumSet.allOf(AclEntryPermission::class.java)
 private const val FILE_TYPE_MASK: Int = 0xF000
 private const val UNIX_SOCKET_FILE_TYPE: Int = 0xC000
+private const val STICKY_BIT: Int = 0x200
