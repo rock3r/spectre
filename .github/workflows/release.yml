@@ -400,6 +400,14 @@ jobs:
             -PprebuiltLinuxHelpersDir="$RUNNER_TEMP/linux-helpers" \
             -PprebuiltWindowsHelpersDir="$RUNNER_TEMP/windows-helper"
 
+      - name: Build version-stamped CLI distribution
+        run: |
+          ./gradlew :cli:shadowDistZip \
+            -PVERSION_NAME="$RELEASE_VERSION" \
+            -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/spectre-screencapture" \
+            -PprebuiltLinuxHelpersDir="$RUNNER_TEMP/linux-helpers" \
+            -PprebuiltWindowsHelpersDir="$RUNNER_TEMP/windows-helper"
+
       - name: Publish signed artefacts to Sonatype Central Portal
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
@@ -432,3 +440,6 @@ jobs:
         run: |
           gh release view "$GITHUB_REF_NAME" \
             || gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME"
+          gh release upload "$GITHUB_REF_NAME" \
+            "cli/build/distributions/spectre-cli-$RELEASE_VERSION.zip" \
+            --clobber

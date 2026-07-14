@@ -26,6 +26,8 @@ on:
       - "agent/**"
       - "agent-runtime/**"
       - "agent-test-fixture/**"
+      - "cli/**"
+      - "buildSrc/**"
       - "recording/**"
       - "recording-linux/**"
       - "recording-macos/**"
@@ -45,6 +47,8 @@ on:
       - "agent/**"
       - "agent-runtime/**"
       - "agent-test-fixture/**"
+      - "cli/**"
+      - "buildSrc/**"
       - "recording/**"
       - "recording-linux/**"
       - "recording-macos/**"
@@ -80,3 +84,15 @@ jobs:
 
       - name: Run checks
         run: ./gradlew check
+
+      - name: Smoke the unpacked CLI distribution against the Compose fixture
+        run: |
+          ./gradlew :cli:shadowDistZip
+          archive="$(find cli/build/distributions -name 'spectre-cli-*.zip' -print -quit)"
+          distribution="$RUNNER_TEMP/spectre-cli"
+          unzip -q "$archive" -d "$distribution"
+          launcher="$(find "$distribution" -path '*/bin/spectre' -type f -print -quit)"
+          ./gradlew :cli:test \
+            --tests "*DaemonFixtureIntegrationTest.CLI binary drives a Compose fixture through ps attach find click and screenshot" \
+            --rerun-tasks \
+            -Dspectre.cli.distributionExecutable="$launcher"

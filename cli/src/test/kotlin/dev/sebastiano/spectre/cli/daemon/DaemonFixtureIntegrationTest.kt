@@ -296,20 +296,34 @@ private fun spawnComposeFixture(): FixtureProcess {
 }
 
 private fun runCliBinary(daemonUser: String, vararg arguments: String): CliBinaryResult {
-    val javaExe =
-        if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "java.exe"
-        else "java"
-    val javaBin = Paths.get(System.getProperty("java.home"), "bin", javaExe).toString()
+    val distributionExecutable = System.getProperty("spectre.cli.distributionExecutable")
+    val command =
+        distributionExecutable?.let { executable -> listOf(executable, *arguments) }
+            ?: run {
+                val javaExe =
+                    if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+                        "java.exe"
+                    } else {
+                        "java"
+                    }
+                listOf(
+                    Paths.get(System.getProperty("java.home"), "bin", javaExe).toString(),
+                    "-Duser.name=$daemonUser",
+                    "-Djava.awt.headless=false",
+                    "-cp",
+                    daemonFixtureRuntimeClassPath(),
+                    "dev.sebastiano.spectre.cli.SpectreCliKt",
+                    *arguments,
+                )
+            }
     val process =
-        ProcessBuilder(
-                javaBin,
-                "-Duser.name=$daemonUser",
-                "-Djava.awt.headless=false",
-                "-cp",
-                daemonFixtureRuntimeClassPath(),
-                "dev.sebastiano.spectre.cli.SpectreCliKt",
-                *arguments,
-            )
+        ProcessBuilder(command)
+            .apply {
+                if (distributionExecutable != null) {
+                    environment()["SPECTRE_OPTS"] =
+                        "-Duser.name=$daemonUser -Djava.awt.headless=false"
+                }
+            }
             .redirectErrorStream(true)
             .start()
     val output = StringBuilder()
