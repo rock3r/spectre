@@ -87,7 +87,7 @@ public class SpectreCli(
 /** Runs the Spectre CLI with its default per-user daemon endpoint. */
 public fun main(arguments: Array<String>): Unit =
     exitProcess(
-        jdkPreflightError()?.let { message ->
+        minimumJdkPreflightError()?.let { message ->
             System.err.println(message)
             EXIT_DAEMON_FAILURE
         } ?: run { SpectreCli().run(arguments.asList()) }
@@ -103,6 +103,13 @@ internal fun jdkPreflightError(
         !hasAttachModule ->
             "Spectre requires a full JDK with the jdk.attach module; the current Java runtime does not provide it."
         else -> null
+    }
+
+internal fun minimumJdkPreflightError(featureVersion: Int = Runtime.version().feature()): String? =
+    if (featureVersion < MINIMUM_JDK_FEATURE_VERSION) {
+        "Spectre requires JDK $MINIMUM_JDK_FEATURE_VERSION or later; found Java $featureVersion."
+    } else {
+        null
     }
 
 private const val MINIMUM_JDK_FEATURE_VERSION: Int = 21

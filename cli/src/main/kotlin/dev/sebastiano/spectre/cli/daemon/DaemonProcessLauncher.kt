@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import dev.sebastiano.spectre.cli.jdkPreflightError
 import java.io.IOException
 import java.nio.file.Path
 
@@ -11,11 +12,13 @@ public class DaemonProcessLauncher(
 ) {
     /** Launches the daemon process without inheriting this client's standard streams. */
     @Throws(IOException::class)
-    public fun start(): Process =
-        ProcessBuilder(command())
+    public fun start(): Process {
+        jdkPreflightError()?.let { message -> throw IOException(message) }
+        return ProcessBuilder(command())
             .redirectOutput(ProcessBuilder.Redirect.DISCARD)
             .redirectError(ProcessBuilder.Redirect.DISCARD)
             .start()
+    }
 
     /** Returns the isolated daemon command without starting a process. */
     public fun command(): List<String> = buildList {

@@ -36,6 +36,11 @@ class SpectreCliTest {
     }
 
     @Test
+    fun `CLI-level JDK preflight permits a Java 21 runtime without jdk attach`() {
+        assertEquals(null, minimumJdkPreflightError(featureVersion = 21))
+    }
+
+    @Test
     fun `type prints stable JSON completion output`() {
         val output = StringBuilder()
         val cli =
