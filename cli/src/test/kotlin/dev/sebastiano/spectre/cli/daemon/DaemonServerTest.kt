@@ -173,6 +173,23 @@ class DaemonServerTest {
     }
 
     @Test
+    fun `preserves a dangling symlink in the socket path`() {
+        val temporaryDirectory = Files.createTempDirectory("spectre-daemon-test")
+        val danglingLink = temporaryDirectory.resolve("link")
+        Files.createSymbolicLink(danglingLink, temporaryDirectory.resolve("missing-target"))
+
+        try {
+            assertFailsWith<java.io.IOException> {
+                DaemonServer(danglingLink.resolve("daemon.sock"))
+            }
+            assertTrue(Files.isSymbolicLink(danglingLink))
+        } finally {
+            Files.deleteIfExists(danglingLink)
+            Files.deleteIfExists(temporaryDirectory)
+        }
+    }
+
+    @Test
     fun `serves lifecycle requests over a unix domain socket and removes it on shutdown`() {
         val socketPath = temporarySocketPath()
         val server = DaemonServer(socketPath)

@@ -8,6 +8,7 @@ import java.nio.channels.ClosedChannelException
 import java.nio.channels.FileChannel
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
+import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.NoSuchFileException
@@ -247,21 +248,31 @@ private sealed interface DaemonSocketProtection {
     @Throws(IOException::class)
     fun createMissingParents(socketPath: Path): List<Path> {
         val parent = socketPath.parent ?: return emptyList()
-        if (Files.exists(parent)) {
+        if (Files.exists(parent, NOFOLLOW_LINKS)) {
             validateExistingDirectory(parent)
             return emptyList()
         }
         val missingParents =
             generateSequence(parent) { path -> path.parent }
-                .takeWhile { path -> !Files.exists(path) }
+                .takeWhile { path -> !Files.exists(path, NOFOLLOW_LINKS) }
                 .toList()
+        val createdParents = mutableListOf<Path>()
         try {
-            missingParents.asReversed().forEach(::createProtectedDirectory)
+            missingParents.asReversed().forEach { path ->
+                try {
+                    createProtectedDirectory(path)
+                    createdParents.add(path)
+                } catch (_: FileAlreadyExistsException) {
+                    validateExistingDirectory(path)
+                }
+            }
         } catch (exception: IOException) {
-            missingParents.forEach { path -> runCatching { Files.deleteIfExists(path) } }
+            createdParents.asReversed().forEach { path ->
+                runCatching { Files.deleteIfExists(path) }
+            }
             throw exception
         }
-        return missingParents
+        return createdParents.asReversed()
     }
 
     @Throws(IOException::class) fun createProtectedDirectory(directory: Path)
@@ -278,7 +289,7 @@ private sealed interface DaemonSocketProtection {
 
 private data object Posix : DaemonSocketProtection {
     override fun createProtectedDirectory(directory: Path) {
-        Files.createDirectories(
+        Files.createDirectory(
             directory,
             PosixFilePermissions.asFileAttribute(OWNER_ONLY_DIRECTORY_PERMISSIONS),
         )
@@ -297,8 +308,13 @@ private data object Posix : DaemonSocketProtection {
 
 private data object WindowsAcl : DaemonSocketProtection {
     override fun createProtectedDirectory(directory: Path) {
-        Files.createDirectories(directory)
-        setOwnerOnlyAcl(directory)
+        Files.createDirectory(directory)
+        try {
+            setOwnerOnlyAcl(directory)
+        } catch (exception: IOException) {
+            runCatching { Files.deleteIfExists(directory) }
+            throw exception
+        }
     }
 
     override fun protectSocket(socketPath: Path) {
