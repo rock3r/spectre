@@ -69,7 +69,7 @@ public class DaemonStartupCoordinator<T>(
         private const val MISSING_UNIX_SOCKET_MESSAGE: String = "No such file or directory"
         private const val MISSING_WINDOWS_SOCKET_MESSAGE: String =
             "The system cannot find the file specified"
-        private const val MAXIMUM_STARTUP_CONNECTION_ATTEMPTS: Int = 100
-        private const val STARTUP_RETRY_DELAY_MILLIS: Long = 10
+        private const val MAXIMUM_STARTUP_CONNECTION_ATTEMPTS: Int = 500
+        private const val STARTUP_RETRY_DELAY_MILLIS: Long = 20
     }
 }
