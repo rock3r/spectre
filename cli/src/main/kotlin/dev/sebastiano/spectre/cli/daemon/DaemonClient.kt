@@ -41,6 +41,11 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
                 ?: throw IOException("Daemon closed the connection before responding")
         }
 
+    /** Sends [request], reporting a missing daemon endpoint distinctly from other I/O failures. */
+    @Throws(IOException::class)
+    public fun requestIfPresent(request: DaemonRequest): DaemonResponse =
+        requestWithAbsentEndpointCheck(request)
+
     private fun requireCompatibleDaemon(
         output: java.io.OutputStream,
         input: java.io.InputStream,

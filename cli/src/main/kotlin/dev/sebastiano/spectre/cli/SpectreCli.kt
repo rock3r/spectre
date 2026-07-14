@@ -24,6 +24,7 @@ import dev.sebastiano.spectre.cli.daemon.DaemonSessionSummary
 import dev.sebastiano.spectre.cli.mcp.SpectreMcpServer
 import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import kotlin.system.exitProcess
 import kotlinx.serialization.Serializable
@@ -601,41 +602,42 @@ private fun NodeJson(node: NodeSnapshotDto): NodeJson =
         bounds = RectJson(node.bounds.x, node.bounds.y, node.bounds.width, node.bounds.height),
     )
 
-private fun daemonRequest(socketPath: Path?): (DaemonRequest) -> DaemonResponse =
-    daemonRequest@{ request ->
-        val resolvedSocketPath = socketPath ?: DaemonEndpoint.defaultSocketPath()
-        if (
-            socketPath == null &&
-                DaemonProtocol.minimumDaemonVersion(request).minor <
-                    DaemonProtocol.CurrentVersion.minor
-        ) {
-            for (legacySocketPath in DaemonEndpoint.legacySocketPaths()) {
-                if (!Files.exists(legacySocketPath)) continue
-                try {
-                    return@daemonRequest DaemonClient(legacySocketPath).use { client ->
-                        client.request(request)
-                    }
-                } catch (_: IOException) {
-                    // A stale legacy socket must not prevent probing older endpoints or new
-                    // startup.
-                }
-            }
-        }
-        DaemonClient(resolvedSocketPath).use { client ->
-            if (request == DaemonRequest.ListSessions) {
-                try {
+internal fun daemonRequest(
+    socketPath: Path?,
+    attachPreflight: (DaemonRequest) -> String? = ::attachStartupPreflight,
+): (DaemonRequest) -> DaemonResponse = daemonRequest@{ request ->
+    val resolvedSocketPath = socketPath ?: DaemonEndpoint.defaultSocketPath()
+    if (
+        socketPath == null &&
+            DaemonProtocol.minimumDaemonVersion(request).minor < DaemonProtocol.CurrentVersion.minor
+    ) {
+        for (legacySocketPath in DaemonEndpoint.legacySocketPaths()) {
+            if (!Files.exists(legacySocketPath)) continue
+            try {
+                return@daemonRequest DaemonClient(legacySocketPath).use { client ->
                     client.request(request)
-                } catch (_: IOException) {
-                    DaemonResponse.Sessions(emptyList())
                 }
-            } else {
-                client.requestOrStart(request) {
-                    attachStartupPreflight(request)?.let { message -> throw IOException(message) }
-                    DaemonProcessLauncher(resolvedSocketPath).start()
-                }
+            } catch (_: IOException) {
+                // A stale legacy socket must not prevent probing older endpoints or new
+                // startup.
             }
         }
     }
+    attachPreflight(request)?.let { message ->
+        return@daemonRequest DaemonResponse.Error(DaemonErrorCode.AttachFailed, message)
+    }
+    DaemonClient(resolvedSocketPath).use { client ->
+        if (request == DaemonRequest.ListSessions) {
+            try {
+                client.requestIfPresent(request)
+            } catch (_: NoSuchFileException) {
+                DaemonResponse.Sessions(emptyList())
+            }
+        } else {
+            client.requestOrStart(request) { DaemonProcessLauncher(resolvedSocketPath).start() }
+        }
+    }
+}
 
 private fun attachStartupPreflight(request: DaemonRequest): String? =
     if (request is DaemonRequest.Attach || request is DaemonRequest.ListJvmProcesses) {
