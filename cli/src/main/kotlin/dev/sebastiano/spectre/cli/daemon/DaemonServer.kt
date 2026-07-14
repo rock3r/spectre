@@ -214,10 +214,7 @@ public constructor(
             false
         }
 
-    /**
-     * Stops accepting clients and removes the socket plus any parent directory created by this
-     * server.
-     */
+    /** Stops accepting clients and attempts to remove the socket plus server-created parents. */
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         running.set(false)
@@ -227,8 +224,13 @@ public constructor(
                     // Hold the same lock as stale recovery before closing the channel. Otherwise a
                     // successor can bind after close and before this server unlinks the path.
                     withStaleSocketRecoveryLock {
-                        serverChannel.close()
-                        Files.deleteIfExists(socketPath)
+                        try {
+                            serverChannel.close()
+                        } finally {
+                            // Keep the recovery lock until the delete has at least been attempted.
+                            // Retrying after releasing the lock could unlink a successor daemon.
+                            runCatching { Files.deleteIfExists(socketPath) }
+                        }
                     }
                 }
                 .isSuccess
