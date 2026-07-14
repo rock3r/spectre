@@ -321,6 +321,20 @@ class SpectreCliTest {
     }
 
     @Test
+    fun `daemon kill prints stable JSON confirmation`() {
+        val output = StringBuilder()
+        val cli =
+            SpectreCli(
+                request = { error("Kill must not use the auto-starting daemon request path") },
+                shutdownRequest = { DaemonResponse.ShuttingDown },
+                output = output,
+            )
+
+        assertEquals(0, cli.run(listOf("daemon", "kill", "--json")))
+        assertEquals("{\"version\":1,\"stopped\":true}\n", output.toString())
+    }
+
+    @Test
     fun `usage errors are printed and returned as a nonzero exit code`() {
         val output = StringBuilder()
         val errorOutput = StringBuilder()
