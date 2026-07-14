@@ -324,10 +324,28 @@ private class PsCommand(
 private class DaemonCommand(request: (DaemonRequest) -> DaemonResponse, output: Appendable) :
     CliktCommand(name = "daemon") {
     init {
-        subcommands(DaemonStatusCommand(request, output))
+        subcommands(DaemonStatusCommand(request, output), DaemonKillCommand(request, output))
     }
 
     override fun run(): Unit = Unit
+}
+
+private class DaemonKillCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "kill") {
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        when (val response = request(DaemonRequest.Shutdown)) {
+            DaemonResponse.ShuttingDown -> Unit
+            is DaemonResponse.Error -> throw IOException(response.message)
+            else -> error("Daemon returned an unexpected response to shutdown")
+        }
+        if (json) output.append(CLI_JSON.encodeToString(DaemonKillJson()))
+        else output.append("Daemon stopped.")
+        output.appendLine()
+    }
 }
 
 private class DaemonStatusCommand(
@@ -362,6 +380,9 @@ private data class DaemonStatusJson(
     val version: Int = JSON_VERSION,
     val sessions: List<DaemonSessionJson>,
 )
+
+@Serializable
+private data class DaemonKillJson(val version: Int = JSON_VERSION, val stopped: Boolean = true)
 
 @Serializable private data class DaemonSessionJson(val id: String, val pid: Long)
 
