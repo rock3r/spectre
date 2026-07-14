@@ -119,10 +119,14 @@ public constructor(
             client.use { channel ->
                 val input = Channels.newInputStream(channel)
                 val output = Channels.newOutputStream(channel)
+                var handshakeComplete = false
                 while (running.get()) {
                     val request = DaemonWireCodec.readRequest(input) ?: return
-                    val response = registry.handle(request)
-                    val isShutdown = request is DaemonRequest.Shutdown
+                    val response = handleRequest(request, handshakeComplete)
+                    if (request is DaemonRequest.Hello) {
+                        handshakeComplete = response is DaemonResponse.Hello
+                    }
+                    val isShutdown = request is DaemonRequest.Shutdown && handshakeComplete
                     try {
                         DaemonWireCodec.writeResponse(output, response)
                     } finally {
@@ -137,6 +141,32 @@ public constructor(
             activeClient.compareAndSet(client, null)
         }
     }
+
+    private fun handleRequest(request: DaemonRequest, handshakeComplete: Boolean): DaemonResponse =
+        when (request) {
+            is DaemonRequest.Hello ->
+                when (
+                    DaemonProtocol.checkCompatibility(
+                        request.clientVersion,
+                        DaemonProtocol.CurrentVersion,
+                    )
+                ) {
+                    VersionCompatibility.Compatible -> registry.handle(request)
+                    else ->
+                        DaemonResponse.Error(
+                            code = DaemonErrorCode.ProtocolError,
+                            message = "incompatible daemon protocol version",
+                        )
+                }
+            else ->
+                if (handshakeComplete) registry.handle(request)
+                else {
+                    DaemonResponse.Error(
+                        code = DaemonErrorCode.ProtocolError,
+                        message = "send a compatible Hello request before session commands",
+                    )
+                }
+        }
 
     private fun logConnectionFailure(exception: Exception) {
         System.err.println(

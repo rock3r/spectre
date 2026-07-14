@@ -81,6 +81,14 @@ class DaemonServerTest {
                 channel.connect(java.net.UnixDomainSocketAddress.of(socketPath))
                 val input = Channels.newInputStream(channel)
                 val output = Channels.newOutputStream(channel)
+                DaemonWireCodec.writeRequest(
+                    output,
+                    DaemonRequest.Hello(DaemonProtocol.CurrentVersion),
+                )
+                assertEquals(
+                    DaemonResponse.Hello(DaemonProtocol.CurrentVersion),
+                    DaemonWireCodec.readResponse(input),
+                )
                 DaemonWireCodec.writeRequest(output, DaemonRequest.ListSessions)
                 assertEquals(
                     DaemonResponse.Sessions(emptyList()),
@@ -199,8 +207,62 @@ class DaemonServerTest {
     @Test
     fun `refuses a bare relative socket path in a permissive working directory`() {
         if ("posix" !in FileSystems.getDefault().supportedFileAttributeViews()) return
+        if (
+            Files.getPosixFilePermissions(Path.of("")) ==
+                PosixFilePermissions.fromString("rwx------")
+        ) {
+            return
+        }
 
         assertFailsWith<java.io.IOException> { DaemonServer(Path.of("daemon.sock")) }
+    }
+
+    @Test
+    fun `requires a compatible hello before session commands`() {
+        val socketPath = temporarySocketPath()
+        val server = DaemonServer(socketPath)
+
+        try {
+            SocketChannel.open(java.net.StandardProtocolFamily.UNIX).use { channel ->
+                channel.connect(java.net.UnixDomainSocketAddress.of(socketPath))
+                val input = Channels.newInputStream(channel)
+                val output = Channels.newOutputStream(channel)
+
+                DaemonWireCodec.writeRequest(output, DaemonRequest.Attach(1234))
+                assertEquals(
+                    DaemonResponse.Error(
+                        DaemonErrorCode.ProtocolError,
+                        "send a compatible Hello request before session commands",
+                    ),
+                    DaemonWireCodec.readResponse(input),
+                )
+
+                DaemonWireCodec.writeRequest(
+                    output,
+                    DaemonRequest.Hello(DaemonProtocolVersion(major = 2, minor = 0)),
+                )
+                assertEquals(
+                    DaemonResponse.Error(
+                        DaemonErrorCode.ProtocolError,
+                        "incompatible daemon protocol version",
+                    ),
+                    DaemonWireCodec.readResponse(input),
+                )
+
+                DaemonWireCodec.writeRequest(output, DaemonRequest.Attach(1234))
+                assertEquals(
+                    DaemonResponse.Error(
+                        DaemonErrorCode.ProtocolError,
+                        "send a compatible Hello request before session commands",
+                    ),
+                    DaemonWireCodec.readResponse(input),
+                )
+            }
+        } finally {
+            server.close()
+            assertTrue(server.awaitTermination())
+            deleteTemporarySocketPath(socketPath)
+        }
     }
 
     @Test
@@ -277,6 +339,14 @@ class DaemonServerTest {
                 channel.connect(java.net.UnixDomainSocketAddress.of(socketPath))
                 val input = Channels.newInputStream(channel)
                 val output = Channels.newOutputStream(channel)
+                DaemonWireCodec.writeRequest(
+                    output,
+                    DaemonRequest.Hello(DaemonProtocol.CurrentVersion),
+                )
+                assertEquals(
+                    DaemonResponse.Hello(DaemonProtocol.CurrentVersion),
+                    DaemonWireCodec.readResponse(input),
+                )
                 DaemonWireCodec.writeRequest(output, DaemonRequest.ListSessions)
 
                 val response =
