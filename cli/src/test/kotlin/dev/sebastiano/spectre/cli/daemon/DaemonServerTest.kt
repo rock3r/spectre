@@ -205,7 +205,9 @@ class DaemonServerTest {
             assertTrue(server.awaitTermination())
             assertFalse(Files.exists(socketPath))
             assertFalse(Files.exists(socketPath.parent))
-            assertFalse(Files.exists(socketPath.parent.parent))
+            if ("posix" in FileSystems.getDefault().supportedFileAttributeViews()) {
+                assertFalse(Files.exists(socketPath.parent.parent))
+            }
         } finally {
             server.close()
             deleteTemporarySocketPath(socketPath)
