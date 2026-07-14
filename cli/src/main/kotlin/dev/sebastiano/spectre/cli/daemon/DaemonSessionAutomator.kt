@@ -69,6 +69,8 @@ internal class AttachedDaemonSession(private val delegate: AttachedAutomator) :
             outputPath
         } catch (exception: IllegalStateException) {
             throw IOException(exception.message ?: "failed to start recording", exception)
+        } catch (exception: IllegalArgumentException) {
+            throw IOException(exception.message ?: "failed to start recording", exception)
         }
     }
 
