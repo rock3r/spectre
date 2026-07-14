@@ -240,12 +240,28 @@ private fun runCliBinary(daemonUser: String, vararg arguments: String): CliBinar
             )
             .redirectErrorStream(true)
             .start()
-    check(process.waitFor(CLI_PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+    val output = StringBuilder()
+    val drainer =
+        Thread({
+                process.inputStream.bufferedReader().use { reader ->
+                    output.append(reader.readText())
+                }
+            })
+            .apply {
+                isDaemon = true
+                start()
+            }
+    if (!process.waitFor(CLI_PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
         process.destroyForcibly()
-        "CLI binary did not exit within $CLI_PROCESS_TIMEOUT_SECONDS seconds: ${arguments.joinToString()}"
+        process.waitFor()
+        drainer.join()
+        error(
+            "CLI binary did not exit within $CLI_PROCESS_TIMEOUT_SECONDS seconds: " +
+                arguments.joinToString()
+        )
     }
-    val output = process.inputStream.bufferedReader().use { reader -> reader.readText() }
-    return CliBinaryResult(exitCode = process.exitValue(), output = output)
+    drainer.join()
+    return CliBinaryResult(exitCode = process.exitValue(), output = output.toString())
 }
 
 private data class CliBinaryResult(val exitCode: Int, val output: String)
