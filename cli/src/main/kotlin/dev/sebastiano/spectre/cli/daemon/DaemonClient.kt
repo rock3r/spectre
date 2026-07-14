@@ -62,7 +62,7 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
                 }
             }
             is DaemonResponse.Error ->
-                throw IOException("Daemon handshake failed: ${response.message}")
+                throw IOException(daemonHandshakeFailure(requiredVersion, response))
             null -> throw DaemonConnectionClosedException()
             else -> throw IOException("Daemon returned an unexpected handshake response")
         }
@@ -92,4 +92,19 @@ internal fun daemonCompatibilityFailure(
     } else {
         "Incompatible daemon protocol version ${daemon.major}.${daemon.minor}; " +
             "this command requires ${required.major}.${required.minor}."
+    }
+
+internal fun daemonHandshakeFailure(
+    required: DaemonProtocolVersion,
+    response: DaemonResponse.Error,
+): String =
+    if (
+        response.code == DaemonErrorCode.ProtocolError &&
+            response.message == "incompatible daemon protocol version" &&
+            required.major == DaemonProtocol.CurrentVersion.major &&
+            required.minor > 0
+    ) {
+        "Spectre daemon does not support this command. Run `spectre daemon kill` and retry."
+    } else {
+        "Daemon handshake failed: ${response.message}"
     }
