@@ -38,6 +38,7 @@ class DaemonClientTest {
                             DaemonProcessLauncher(
                                     socketPath = socketPath,
                                     classPath = testRuntimeClassPath(),
+                                    errorRedirect = ProcessBuilder.Redirect.INHERIT,
                                 )
                                 .start()
                     },
@@ -66,6 +67,7 @@ class DaemonClientTest {
                         DaemonProcessLauncher(
                                 socketPath = socketPath,
                                 classPath = testRuntimeClassPath(),
+                                errorRedirect = ProcessBuilder.Redirect.INHERIT,
                             )
                             .start()
                 }
