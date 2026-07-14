@@ -263,7 +263,7 @@ public class DaemonAlreadyRunningException(socketPath: Path) :
 private sealed interface DaemonSocketProtection {
     @Throws(IOException::class)
     fun createMissingParents(socketPath: Path): List<Path> {
-        val parent = socketPath.parent ?: return emptyList()
+        val parent = socketPath.parent ?: Path.of("").toAbsolutePath()
         if (Files.exists(parent, NOFOLLOW_LINKS)) {
             validateExistingDirectory(parent)
             return emptyList()

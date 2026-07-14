@@ -197,6 +197,13 @@ class DaemonServerTest {
     }
 
     @Test
+    fun `refuses a bare relative socket path in a permissive working directory`() {
+        if ("posix" !in FileSystems.getDefault().supportedFileAttributeViews()) return
+
+        assertFailsWith<java.io.IOException> { DaemonServer(Path.of("daemon.sock")) }
+    }
+
+    @Test
     fun `preserves a dangling symlink in the socket path`() {
         val temporaryDirectory = Files.createTempDirectory("spectre-daemon-test")
         val danglingLink = temporaryDirectory.resolve("link")
