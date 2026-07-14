@@ -19,6 +19,22 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class SpectreCliTest {
     @Test
+    fun `type prints stable JSON completion output`() {
+        val output = StringBuilder()
+        val cli =
+            SpectreCli(
+                request = { request ->
+                    assertEquals(DaemonRequest.TypeText("pid-42", "hello"), request)
+                    DaemonResponse.Completed("pid-42")
+                },
+                output = output,
+            )
+
+        assertEquals(0, cli.run(listOf("type", "pid-42", "hello", "--json")))
+        assertEquals("{\"version\":1,\"id\":\"pid-42\"}\n", output.toString())
+    }
+
+    @Test
     fun `screenshot writes PNG output and reports its stable JSON path`() {
         val output = StringBuilder()
         val imagePath = Files.createTempFile("spectre-cli-test", ".png")
