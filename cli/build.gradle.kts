@@ -19,4 +19,10 @@ dependencies {
     testImplementation(libs.kotlin.testJunit5)
 }
 
-tasks.withType<Test>().configureEach { useJUnitPlatform() }
+tasks.withType<Test>().configureEach {
+    useJUnitPlatform()
+    systemProperty(
+        "spectre.cli.testRuntimeClasspath",
+        sourceSets.test.get().runtimeClasspath.asPath,
+    )
+}
