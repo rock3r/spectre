@@ -36,6 +36,30 @@ class SpectreCliTest {
     }
 
     @Test
+    fun `ps reports daemon discovery errors without a stack trace`() {
+        val output = StringBuilder()
+        val errorOutput = StringBuilder()
+        val cli =
+            SpectreCli(
+                request = {
+                    DaemonResponse.Error(
+                        code = dev.sebastiano.spectre.cli.daemon.DaemonErrorCode.AttachFailed,
+                        message = "The JDK Attach API is not available",
+                    )
+                },
+                output = output,
+                errorOutput = errorOutput,
+            )
+
+        assertEquals(1, cli.run(listOf("ps")))
+        assertEquals("", output.toString())
+        assertEquals(
+            "Spectre daemon error: The JDK Attach API is not available\n",
+            errorOutput.toString(),
+        )
+    }
+
+    @Test
     fun `daemon status prints stable JSON session output`() {
         val output = StringBuilder()
         val cli =

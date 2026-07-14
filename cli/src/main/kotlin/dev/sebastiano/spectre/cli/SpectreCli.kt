@@ -78,9 +78,14 @@ private class PsCommand(
 
     override fun run() {
         val processes =
-            (request(DaemonRequest.ListJvmProcesses(requesterPid = ProcessHandle.current().pid()))
-                    as? DaemonResponse.JvmProcesses)
-                ?.processes ?: error("Daemon returned an unexpected response to list JVM processes")
+            when (
+                val response =
+                    request(DaemonRequest.ListJvmProcesses(ProcessHandle.current().pid()))
+            ) {
+                is DaemonResponse.JvmProcesses -> response.processes
+                is DaemonResponse.Error -> throw IOException(response.message)
+                else -> error("Daemon returned an unexpected response to list JVM processes")
+            }
         if (json) {
             output.append(
                 CLI_JSON.encodeToString(PsJson(processes = processes.map(::PsProcessJson)))
