@@ -37,9 +37,12 @@ import java.util.concurrent.atomic.AtomicReference
 public class DaemonServer
 @Throws(IOException::class)
 public constructor(
-    private val socketPath: Path,
+    socketPath: Path,
     private val registry: DaemonSessionRegistry = DaemonSessionRegistry(),
 ) : AutoCloseable {
+    private val socketPath: Path = socketPath.also { path ->
+        require(path == path.normalize()) { "Daemon socket path must not contain dot segments" }
+    }
     private val running: AtomicBoolean = AtomicBoolean(true)
     private val closed: AtomicBoolean = AtomicBoolean(false)
     private val activeClient: AtomicReference<SocketChannel?> = AtomicReference(null)
@@ -360,7 +363,6 @@ private sealed interface DaemonSocketProtection {
                 "Daemon socket ancestor $directory must not be group or world writable"
             )
         }
-        validateExistingDirectory(directory)
     }
 
     private fun rejectSymbolicLink(path: Path) {
