@@ -1,5 +1,9 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
+import dev.sebastiano.spectre.agent.transport.RectDto
+import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -16,7 +20,7 @@ class DaemonHandshakeTest {
 
         val hello = assertIs<DaemonRequest.Hello>(decoded)
         assertEquals(1, hello.clientVersion.major)
-        assertEquals(1, hello.clientVersion.minor)
+        assertEquals(2, hello.clientVersion.minor)
     }
 
     @Test
@@ -47,6 +51,67 @@ class DaemonHandshakeTest {
 
 @OptIn(ExperimentalSerializationApi::class)
 class DaemonSessionCommandProtocolTest {
+    @OptIn(ExperimentalSpectreAgentApi::class)
+    @Test
+    fun `session operation requests round trip through cbor`() {
+        val requests =
+            listOf<DaemonRequest>(
+                DaemonRequest.Windows("session-1234"),
+                DaemonRequest.AllNodes("session-1234"),
+                DaemonRequest.FindByTestTag("session-1234", "submit"),
+                DaemonRequest.Click("session-1234", "main:0:1"),
+                DaemonRequest.TypeText("session-1234", "hello"),
+                DaemonRequest.Screenshot("session-1234"),
+            )
+
+        val decoded = requests.map(::roundTripRequest)
+
+        assertEquals(requests, decoded)
+    }
+
+    @OptIn(ExperimentalSpectreAgentApi::class)
+    @Test
+    fun `session operation responses round trip through cbor`() {
+        val bounds = RectDto(x = 0, y = 0, width = 100, height = 100)
+        val responses =
+            listOf<DaemonResponse>(
+                DaemonResponse.Windows(
+                    sessionId = "session-1234",
+                    windows =
+                        listOf(
+                            WindowSummaryDto(
+                                index = 0,
+                                surfaceId = "main",
+                                title = "Fixture",
+                                isPopup = false,
+                                bounds = bounds,
+                            )
+                        ),
+                ),
+                DaemonResponse.Nodes(
+                    sessionId = "session-1234",
+                    nodes =
+                        listOf(
+                            NodeSnapshotDto(
+                                key = "main:0:1",
+                                testTag = "submit",
+                                texts = listOf("Submit"),
+                                role = "Button",
+                                contentDescription = null,
+                                isVisible = true,
+                                bounds = bounds,
+                            )
+                        ),
+                ),
+                DaemonResponse.Completed("session-1234"),
+                DaemonResponse.Screenshot("session-1234", byteArrayOf(1, 2, 3)),
+            )
+
+        val decoded = responses.map(::roundTripResponse)
+
+        assertEquals(responses, decoded)
+    }
+
     @Test
     fun `session lifecycle requests round trip through cbor`() {
         val requests =
@@ -57,10 +122,7 @@ class DaemonSessionCommandProtocolTest {
                 DaemonRequest.Shutdown,
             )
 
-        val decoded = requests.map { request ->
-            val bytes = DaemonProtocol.cbor.encodeToByteArray(DaemonRequest.serializer(), request)
-            DaemonProtocol.cbor.decodeFromByteArray(DaemonRequest.serializer(), bytes)
-        }
+        val decoded = requests.map(::roundTripRequest)
 
         assertEquals(requests, decoded)
     }
@@ -79,11 +141,18 @@ class DaemonSessionCommandProtocolTest {
                 DaemonResponse.Error(code = DaemonErrorCode.SessionNotFound, message = "missing"),
             )
 
-        val decoded = responses.map { response ->
-            val bytes = DaemonProtocol.cbor.encodeToByteArray(DaemonResponse.serializer(), response)
-            DaemonProtocol.cbor.decodeFromByteArray(DaemonResponse.serializer(), bytes)
-        }
+        val decoded = responses.map(::roundTripResponse)
 
         assertEquals(responses, decoded)
+    }
+
+    private fun roundTripRequest(request: DaemonRequest): DaemonRequest {
+        val bytes = DaemonProtocol.cbor.encodeToByteArray(DaemonRequest.serializer(), request)
+        return DaemonProtocol.cbor.decodeFromByteArray(DaemonRequest.serializer(), bytes)
+    }
+
+    private fun roundTripResponse(response: DaemonResponse): DaemonResponse {
+        val bytes = DaemonProtocol.cbor.encodeToByteArray(DaemonResponse.serializer(), response)
+        return DaemonProtocol.cbor.decodeFromByteArray(DaemonResponse.serializer(), bytes)
     }
 }

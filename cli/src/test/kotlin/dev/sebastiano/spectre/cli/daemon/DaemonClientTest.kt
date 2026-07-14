@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import java.io.File
 import java.nio.file.FileSystems
 import java.nio.file.Files
@@ -9,6 +10,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
+@OptIn(ExperimentalSpectreAgentApi::class)
 class DaemonClientTest {
     @Test
     fun `daemon runtime classpath includes the loadable agent runtime`() {
@@ -132,6 +134,7 @@ private fun testRuntimeClassPath(): String =
         "Missing CLI test runtime classpath"
     }
 
+@OptIn(ExperimentalSpectreAgentApi::class)
 private fun testDaemonSessionRegistry(): DaemonSessionRegistry = DaemonSessionRegistry {
-    AutoCloseable {}
+    TestDaemonSessionAutomator()
 }

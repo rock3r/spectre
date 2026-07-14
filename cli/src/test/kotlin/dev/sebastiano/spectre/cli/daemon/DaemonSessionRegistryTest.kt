@@ -2,12 +2,95 @@ package dev.sebastiano.spectre.cli.daemon
 
 import dev.sebastiano.spectre.agent.AttachUnsupportedException
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
+import dev.sebastiano.spectre.agent.transport.RectDto
+import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
+import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
+@OptIn(ExperimentalSpectreAgentApi::class)
 class DaemonSessionRegistryTest {
+    @OptIn(ExperimentalSpectreAgentApi::class)
+    @Test
+    fun `dispatches every automator operation through the attached session`() {
+        val window =
+            WindowSummaryDto(
+                index = 0,
+                surfaceId = "main",
+                title = "Fixture",
+                isPopup = false,
+                bounds = RectDto(x = 0, y = 0, width = 100, height = 100),
+            )
+        val node =
+            NodeSnapshotDto(
+                key = "main:0:1",
+                testTag = "submit",
+                texts = listOf("Submit"),
+                role = "Button",
+                contentDescription = null,
+                isVisible = true,
+                bounds = RectDto(x = 1, y = 2, width = 3, height = 4),
+            )
+        var clicked: String? = null
+        var typed: String? = null
+        val registry = DaemonSessionRegistry {
+            TestDaemonSessionAutomator(
+                windowsResult = { listOf(window) },
+                nodesResult = { listOf(node) },
+                findByTestTagResult = { tag -> if (tag == "submit") listOf(node) else emptyList() },
+                clickAction = { nodeKey -> clicked = nodeKey },
+                typeTextAction = { text -> typed = text },
+                screenshotResult = { byteArrayOf(1, 2, 3) },
+            )
+        }
+        val sessionId =
+            assertIs<DaemonResponse.Attached>(registry.handle(DaemonRequest.Attach(1234))).sessionId
+
+        assertEquals(
+            DaemonResponse.Windows(sessionId, listOf(window)),
+            registry.handle(DaemonRequest.Windows(sessionId)),
+        )
+        assertEquals(
+            DaemonResponse.Nodes(sessionId, listOf(node)),
+            registry.handle(DaemonRequest.AllNodes(sessionId)),
+        )
+        assertEquals(
+            DaemonResponse.Nodes(sessionId, listOf(node)),
+            registry.handle(DaemonRequest.FindByTestTag(sessionId, "submit")),
+        )
+        assertEquals(
+            DaemonResponse.Completed(sessionId),
+            registry.handle(DaemonRequest.Click(sessionId, node.key)),
+        )
+        assertEquals(node.key, clicked)
+        assertEquals(
+            DaemonResponse.Completed(sessionId),
+            registry.handle(DaemonRequest.TypeText(sessionId, "hello")),
+        )
+        assertEquals("hello", typed)
+        assertEquals(
+            DaemonResponse.Screenshot(sessionId, byteArrayOf(1, 2, 3)),
+            registry.handle(DaemonRequest.Screenshot(sessionId)),
+        )
+    }
+
+    @Test
+    fun `maps automator operation failures to protocol errors`() {
+        val registry = DaemonSessionRegistry {
+            TestDaemonSessionAutomator(windowsResult = { throw IOException("target disconnected") })
+        }
+        val sessionId =
+            assertIs<DaemonResponse.Attached>(registry.handle(DaemonRequest.Attach(1234))).sessionId
+
+        val response =
+            assertIs<DaemonResponse.Error>(registry.handle(DaemonRequest.Windows(sessionId)))
+
+        assertEquals(DaemonErrorCode.OperationFailed, response.code)
+    }
+
     @OptIn(ExperimentalSpectreAgentApi::class)
     @Test
     fun `maps agent attach failures to protocol errors`() {
@@ -21,7 +104,9 @@ class DaemonSessionRegistryTest {
     @Test
     fun `closes the attached session when detached`() {
         var closes = 0
-        val registry = DaemonSessionRegistry { AutoCloseable { closes++ } }
+        val registry = DaemonSessionRegistry {
+            TestDaemonSessionAutomator(closeAction = { closes++ })
+        }
 
         registry.handle(DaemonRequest.Attach(1234))
         registry.handle(DaemonRequest.Detach("pid-1234"))
@@ -32,7 +117,9 @@ class DaemonSessionRegistryTest {
     @Test
     fun `closes every attached session when shutting down`() {
         var closes = 0
-        val registry = DaemonSessionRegistry { AutoCloseable { closes++ } }
+        val registry = DaemonSessionRegistry {
+            TestDaemonSessionAutomator(closeAction = { closes++ })
+        }
 
         registry.handle(DaemonRequest.Attach(1234))
         registry.handle(DaemonRequest.Attach(5678))
@@ -106,4 +193,7 @@ class DaemonSessionRegistryTest {
     }
 }
 
-private fun testRegistry(): DaemonSessionRegistry = DaemonSessionRegistry { AutoCloseable {} }
+@OptIn(ExperimentalSpectreAgentApi::class)
+private fun testRegistry(): DaemonSessionRegistry = DaemonSessionRegistry {
+    TestDaemonSessionAutomator()
+}
