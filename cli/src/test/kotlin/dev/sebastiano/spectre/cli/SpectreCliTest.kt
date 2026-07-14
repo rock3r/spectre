@@ -325,10 +325,8 @@ class SpectreCliTest {
         val output = StringBuilder()
         val cli =
             SpectreCli(
-                request = { request ->
-                    assertEquals(DaemonRequest.Shutdown, request)
-                    DaemonResponse.ShuttingDown
-                },
+                request = { error("Kill must not use the auto-starting daemon request path") },
+                shutdownRequest = { DaemonResponse.ShuttingDown },
                 output = output,
             )
 
