@@ -25,7 +25,7 @@ import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
 
 /** Verifies the daemon owns a real attached agent session across client connections. */
-@EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)
+@EnabledOnOs(OS.LINUX, OS.MAC)
 class DaemonFixtureIntegrationTest {
     @Test
     fun `daemon attaches to a real Compose fixture and dispatches operations`() {

@@ -83,6 +83,25 @@ class DaemonStartupCoordinatorTest {
     }
 
     @Test
+    fun `starts once when Windows socket connection reports a missing path`() {
+        var attempts = 0
+        var starts = 0
+
+        DaemonStartupCoordinator(
+                connect = {
+                    attempts++
+                    if (attempts == 1)
+                        throw SocketException("The system cannot find the file specified")
+                },
+                start = { starts++ },
+            )
+            .connectOrStart()
+
+        assertEquals(2, attempts)
+        assertEquals(1, starts)
+    }
+
+    @Test
     fun `does not start for a daemon protocol failure`() {
         var starts = 0
 

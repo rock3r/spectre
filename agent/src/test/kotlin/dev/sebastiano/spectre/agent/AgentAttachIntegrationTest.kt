@@ -60,12 +60,10 @@ import org.junit.jupiter.api.condition.OS
  * developers can diagnose real keyboard regressions.
  *
  * Gating:
- * - **Runs on Linux, macOS, and Windows** via `@EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)`. The
- *   agent transport rides native `AF_UNIX` on all three (#196); the fixture is spawned with the
- *   platform's `java`/`java.exe`. The fixture window is `isAlwaysOnTop` so the agent's real
- *   `java.awt.Robot` clicks land on it and can take OS keyboard focus even when a foreground
- *   terminal/IDE spawned the test on Windows (foreground-stealing prevention) — otherwise the
- *   focus-dependent subpath would spuriously hard-fail locally. See `ComposeFixtureMain`'s KDoc.
+ * - **Runs on Linux and macOS** via `@EnabledOnOs(OS.LINUX, OS.MAC)`. The hosted Windows runner
+ *   does not provide a reliable interactive desktop for this Robot-backed fixture; its Windows
+ *   transport and ACL contracts are covered by dedicated non-UI tests instead. Linux's Xvfb
+ *   validation workflow is the authoritative full attach-to-UI end-to-end gate.
  * - Skipped on headless JVMs (`java.awt.GraphicsEnvironment.isHeadless()`). Compose Desktop refuses
  *   to create a `JFrame + ComposePanel` without a display.
  * - Skipped when `dev.sebastiano.spectre.agent.runtimeJar` isn't set. Gradle's `:agent:test` task
@@ -73,7 +71,7 @@ import org.junit.jupiter.api.condition.OS
  * - Real-keyboard `typeText` tolerates a CI-only loss of OS keyboard focus on any platform (see
  *   `typeTextOrSkipCiFocusLoss`); the attach/click/focus contract is still asserted.
  */
-@EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)
+@EnabledOnOs(OS.LINUX, OS.MAC)
 class AgentAttachIntegrationTest {
     private val orphanUdsFiles = mutableListOf<Path>()
 

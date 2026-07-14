@@ -7,6 +7,8 @@ import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
 import java.nio.channels.Channels
 import java.nio.channels.SocketChannel
+import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 
 /** One-request client for the local Spectre daemon protocol. */
@@ -14,7 +16,11 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
     /** Starts the daemon when its endpoint is absent, then sends [request]. */
     @Throws(IOException::class)
     public fun requestOrStart(request: DaemonRequest, start: () -> Unit): DaemonResponse =
-        DaemonStartupCoordinator(connect = { request(request) }, start = start).connectOrStart()
+        DaemonStartupCoordinator(
+                connect = { requestWithAbsentEndpointCheck(request) },
+                start = start,
+            )
+            .connectOrStart()
 
     /** Sends one compatible request and returns the daemon's response. */
     @Throws(IOException::class)
@@ -55,6 +61,14 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
     }
 
     override fun close(): Unit = Unit
+
+    private fun requestWithAbsentEndpointCheck(request: DaemonRequest): DaemonResponse =
+        try {
+            request(request)
+        } catch (exception: SocketException) {
+            if (Files.exists(socketPath)) throw exception
+            throw NoSuchFileException(socketPath.toString()).also { it.initCause(exception) }
+        }
 }
 
 internal class DaemonConnectionClosedException(cause: Throwable? = null) :
