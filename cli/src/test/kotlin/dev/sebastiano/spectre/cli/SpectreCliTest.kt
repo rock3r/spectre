@@ -12,6 +12,35 @@ import kotlin.test.assertTrue
 
 class SpectreCliTest {
     @Test
+    fun `attach prints stable JSON session output`() {
+        val output = StringBuilder()
+        val cli =
+            SpectreCli(
+                request = { request ->
+                    assertEquals(DaemonRequest.Attach(targetPid = 42), request)
+                    DaemonResponse.Attached(sessionId = "pid-42", targetPid = 42)
+                },
+                output = output,
+            )
+
+        assertEquals(0, cli.run(listOf("attach", "42", "--json")))
+        assertEquals("{\"version\":1,\"id\":\"pid-42\",\"pid\":42}\n", output.toString())
+    }
+
+    @Test
+    fun `attach prints human-readable session output`() {
+        val output = StringBuilder()
+        val cli =
+            SpectreCli(
+                request = { DaemonResponse.Attached(sessionId = "pid-42", targetPid = 42) },
+                output = output,
+            )
+
+        assertEquals(0, cli.run(listOf("attach", "42")))
+        assertEquals("pid-42 (pid 42)\n", output.toString())
+    }
+
+    @Test
     fun `ps prints stable JSON JVM process output`() {
         val output = StringBuilder()
         val cli =
