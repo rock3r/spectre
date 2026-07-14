@@ -51,7 +51,7 @@ public constructor(
         DaemonSocketProtection.forPath(recoveryLockPath)
 
     init {
-        recoveryLockProtection.createMissingParents(recoveryLockPath)
+        recoveryLockProtection.createMissingParents(recoveryLockPath, validateAncestor = false)
     }
 
     private val serverChannel: ServerSocketChannel =
@@ -301,7 +301,7 @@ public class DaemonAlreadyRunningException(socketPath: Path) :
  */
 private sealed interface DaemonSocketProtection {
     @Throws(IOException::class)
-    fun createMissingParents(socketPath: Path): List<Path> {
+    fun createMissingParents(socketPath: Path, validateAncestor: Boolean = true): List<Path> {
         val parent = socketPath.parent ?: Path.of("").toAbsolutePath()
         if (Files.exists(parent, NOFOLLOW_LINKS)) {
             rejectSymbolicLink(parent)
@@ -312,7 +312,13 @@ private sealed interface DaemonSocketProtection {
             generateSequence(parent) { path -> path.parent }
                 .takeWhile { path -> !Files.exists(path, NOFOLLOW_LINKS) }
                 .toList()
-        missingParents.last().parent?.let(::validateExistingAncestor)
+        missingParents.last().parent?.let { ancestor ->
+            if (validateAncestor) {
+                validateExistingAncestor(ancestor)
+            } else {
+                rejectSymbolicLink(ancestor)
+            }
+        }
         val createdParents = mutableListOf<Path>()
         try {
             missingParents.asReversed().forEach { path ->
@@ -320,6 +326,7 @@ private sealed interface DaemonSocketProtection {
                     createProtectedDirectory(path)
                     createdParents.add(path)
                 } catch (_: FileAlreadyExistsException) {
+                    rejectSymbolicLink(path)
                     validateExistingDirectory(path)
                 }
             }
@@ -347,6 +354,7 @@ private sealed interface DaemonSocketProtection {
                 "Daemon socket ancestor $directory must not be group or world writable"
             )
         }
+        validateExistingDirectory(directory)
     }
 
     private fun rejectSymbolicLink(path: Path) {
