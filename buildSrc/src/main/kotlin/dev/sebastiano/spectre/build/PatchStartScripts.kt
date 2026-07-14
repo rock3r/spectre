@@ -36,6 +36,10 @@ abstract class PatchStartScripts : DefaultTask() {
                     WINDOWS_PATH_PROBE,
                     "$WINDOWS_PATH_PROBE\n\n$WINDOWS_JDK_FALLBACK",
                 )
+                .replace(
+                    ":findJavaFromJavaHome",
+                    "$WINDOWS_JDK_CANDIDATE_PROBE\n\n:findJavaFromJavaHome",
+                )
                 .replace(":execute\n@rem Setup the command line", WINDOWS_JDK_PREFLIGHT),
         )
     }
@@ -50,7 +54,14 @@ abstract class PatchStartScripts : DefaultTask() {
                 fi
                 for spectre_java_home in "${'$'}{HOME:-}/.sdkman/candidates/java/current" /usr/lib/jvm/* /Library/Java/JavaVirtualMachines/*/Contents/Home; do
                     if [ -z "${'$'}{JAVA_HOME:-}" ] && [ -x "${'$'}spectre_java_home/bin/java" ]; then
-                        JAVA_HOME=${'$'}spectre_java_home
+                        spectre_java_version=${'$'}("${'$'}spectre_java_home/bin/java" -version 2>&1 | sed -n '1s/.*version "\([^" ]*\)".*/\1/p')
+                        spectre_java_feature=${'$'}{spectre_java_version%%.*}
+                        case "${'$'}spectre_java_feature" in
+                            '' | *[!0-9]*) continue ;;
+                        esac
+                        if [ "${'$'}spectre_java_feature" -ge 21 ] && "${'$'}spectre_java_home/bin/java" --list-modules 2>/dev/null | grep -q '^jdk.attach@'; then
+                            JAVA_HOME=${'$'}spectre_java_home
+                        fi
                     fi
                 done
             fi
@@ -90,8 +101,25 @@ abstract class PatchStartScripts : DefaultTask() {
         private val WINDOWS_JDK_FALLBACK =
             """
             @rem PATH did not provide Java; now try common local JDK installations.
-            for %%d in ("%ProgramFiles%\\Java\\*" "%ProgramFiles%\\Eclipse Adoptium\\*" "%ProgramFiles%\\Microsoft\\jdk-*") do if not defined JAVA_HOME if exist "%%~fd\\bin\\java.exe" set JAVA_HOME=%%~fd
+            for %%d in ("%ProgramFiles%\\Java\\*" "%ProgramFiles%\\Eclipse Adoptium\\*" "%ProgramFiles%\\Microsoft\\jdk-*") do call :findCompatibleSpectreJdk "%%~fd"
             if defined JAVA_HOME goto findJavaFromJavaHome
+            """
+                .trimIndent()
+
+        private val WINDOWS_JDK_CANDIDATE_PROBE =
+            """
+            :findCompatibleSpectreJdk
+            if defined JAVA_HOME goto :eof
+            if not exist "%~1\\bin\\java.exe" goto :eof
+            for /f "tokens=3" %%v in ('"%~1\\bin\\java.exe" -version 2^>^&1 ^| findstr /c:"version"') do set SPECTRE_JAVA_VERSION=%%v
+            set SPECTRE_JAVA_VERSION=%SPECTRE_JAVA_VERSION:"=%
+            for /f "tokens=1 delims=." %%v in ("%SPECTRE_JAVA_VERSION%") do set SPECTRE_JAVA_FEATURE=%%v
+            if not defined SPECTRE_JAVA_FEATURE goto :eof
+            if %SPECTRE_JAVA_FEATURE% LSS 21 goto :eof
+            "%~1\\bin\\java.exe" --list-modules 2^>NUL | findstr /r /c:"^jdk.attach@" >NUL
+            if %ERRORLEVEL% neq 0 goto :eof
+            set JAVA_HOME=%~1
+            goto :eof
             """
                 .trimIndent()
 
