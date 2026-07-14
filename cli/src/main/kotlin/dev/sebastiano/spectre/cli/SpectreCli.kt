@@ -623,9 +623,6 @@ internal fun daemonRequest(
             }
         }
     }
-    attachPreflight(request)?.let { message ->
-        return@daemonRequest DaemonResponse.Error(DaemonErrorCode.AttachFailed, message)
-    }
     DaemonClient(resolvedSocketPath).use { client ->
         if (request == DaemonRequest.ListSessions) {
             try {
@@ -634,7 +631,14 @@ internal fun daemonRequest(
                 DaemonResponse.Sessions(emptyList())
             }
         } else {
-            client.requestOrStart(request) { DaemonProcessLauncher(resolvedSocketPath).start() }
+            try {
+                client.requestIfPresent(request)
+            } catch (_: NoSuchFileException) {
+                attachPreflight(request)?.let { message ->
+                    return@daemonRequest DaemonResponse.Error(DaemonErrorCode.AttachFailed, message)
+                }
+                client.requestOrStart(request) { DaemonProcessLauncher(resolvedSocketPath).start() }
+            }
         }
     }
 }
