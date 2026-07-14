@@ -9,8 +9,6 @@ import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
-import org.junit.jupiter.api.condition.EnabledOnOs
-import org.junit.jupiter.api.condition.OS
 
 @OptIn(ExperimentalSpectreAgentApi::class)
 class DaemonClientTest {
@@ -26,7 +24,6 @@ class DaemonClientTest {
     }
 
     @Test
-    @EnabledOnOs(OS.LINUX, OS.MAC)
     fun `starts a detached daemon process for the first request`() {
         val socketPath = temporaryDaemonClientSocketPath()
         var process: Process? = null
@@ -57,7 +54,6 @@ class DaemonClientTest {
     }
 
     @Test
-    @EnabledOnOs(OS.LINUX, OS.MAC)
     fun `restarts a daemon after its process is killed`() {
         val socketPath = temporaryDaemonClientSocketPath()
         val processes = mutableListOf<Process>()
@@ -98,7 +94,6 @@ class DaemonClientTest {
     }
 
     @Test
-    @EnabledOnOs(OS.LINUX, OS.MAC)
     fun `starts the daemon then sends the first request when the socket is absent`() {
         val socketPath = temporaryDaemonClientSocketPath()
         var server: DaemonServer? = null
@@ -124,7 +119,6 @@ class DaemonClientTest {
     }
 
     @Test
-    @EnabledOnOs(OS.LINUX, OS.MAC)
     fun `sends a handshake before forwarding requests to the daemon`() {
         val socketPath = temporaryDaemonClientSocketPath()
         val server = DaemonServer(socketPath, registry = testDaemonSessionRegistry())
