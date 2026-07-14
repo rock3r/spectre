@@ -1,5 +1,8 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
+import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -8,7 +11,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 1)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 2)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -34,6 +37,7 @@ public enum class VersionCompatibility {
     DaemonTooOld,
 }
 
+@OptIn(ExperimentalSpectreAgentApi::class)
 @Serializable
 public sealed interface DaemonRequest {
     @Serializable
@@ -49,9 +53,37 @@ public sealed interface DaemonRequest {
 
     @Serializable @SerialName("listSessions") public data object ListSessions : DaemonRequest
 
+    @Serializable
+    @SerialName("windows")
+    public data class Windows(public val sessionId: String) : DaemonRequest
+
+    @Serializable
+    @SerialName("allNodes")
+    public data class AllNodes(public val sessionId: String) : DaemonRequest
+
+    @Serializable
+    @SerialName("findByTestTag")
+    public data class FindByTestTag(public val sessionId: String, public val tag: String) :
+        DaemonRequest
+
+    @Serializable
+    @SerialName("click")
+    public data class Click(public val sessionId: String, public val nodeKey: String) :
+        DaemonRequest
+
+    @Serializable
+    @SerialName("typeText")
+    public data class TypeText(public val sessionId: String, public val text: String) :
+        DaemonRequest
+
+    @Serializable
+    @SerialName("screenshot")
+    public data class Screenshot(public val sessionId: String) : DaemonRequest
+
     @Serializable @SerialName("shutdown") public data object Shutdown : DaemonRequest
 }
 
+@OptIn(ExperimentalSpectreAgentApi::class)
 @Serializable
 public sealed interface DaemonResponse {
     @Serializable
@@ -70,6 +102,34 @@ public sealed interface DaemonResponse {
     @SerialName("sessions")
     public data class Sessions(public val sessions: List<DaemonSessionSummary>) : DaemonResponse
 
+    @Serializable
+    @SerialName("windows")
+    public data class Windows(
+        public val sessionId: String,
+        public val windows: List<WindowSummaryDto>,
+    ) : DaemonResponse
+
+    @Serializable
+    @SerialName("nodes")
+    public data class Nodes(public val sessionId: String, public val nodes: List<NodeSnapshotDto>) :
+        DaemonResponse
+
+    @Serializable
+    @SerialName("completed")
+    public data class Completed(public val sessionId: String) : DaemonResponse
+
+    @Serializable
+    @SerialName("screenshot")
+    public data class Screenshot(public val sessionId: String, public val pngBytes: ByteArray) :
+        DaemonResponse {
+        override fun equals(other: Any?): Boolean =
+            other is Screenshot &&
+                sessionId == other.sessionId &&
+                pngBytes.contentEquals(other.pngBytes)
+
+        override fun hashCode(): Int = 31 * sessionId.hashCode() + pngBytes.contentHashCode()
+    }
+
     @Serializable @SerialName("shuttingDown") public data object ShuttingDown : DaemonResponse
 
     @Serializable
@@ -86,4 +146,5 @@ public enum class DaemonErrorCode {
     AttachFailed,
     ProtocolError,
     ShutdownInProgress,
+    OperationFailed,
 }

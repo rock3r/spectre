@@ -3,12 +3,14 @@ package dev.sebastiano.spectre.cli.daemon
 import dev.sebastiano.spectre.agent.AgentAttach
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.SpectreAttachException
+import java.io.IOException
 
 /** In-memory session table for one daemon process. */
 @OptIn(ExperimentalSpectreAgentApi::class)
-public class DaemonSessionRegistry(
-    private val attachAutomator: (Long) -> AutoCloseable = { targetPid ->
-        AgentAttach.attach(targetPid)
+public class DaemonSessionRegistry
+internal constructor(
+    private val attachAutomator: (Long) -> DaemonSessionAutomator = { targetPid ->
+        AttachedDaemonSession(AgentAttach.attach(targetPid))
     }
 ) : AutoCloseable {
     private val sessionsByPid: MutableMap<Long, DaemonSession> = linkedMapOf()
@@ -26,6 +28,12 @@ public class DaemonSessionRegistry(
             is DaemonRequest.Attach -> attach(request.targetPid)
             is DaemonRequest.Detach -> detach(request.sessionId)
             DaemonRequest.ListSessions -> listSessions()
+            is DaemonRequest.Windows -> windows(request.sessionId)
+            is DaemonRequest.AllNodes -> allNodes(request.sessionId)
+            is DaemonRequest.FindByTestTag -> findByTestTag(request.sessionId, request.tag)
+            is DaemonRequest.Click -> click(request.sessionId, request.nodeKey)
+            is DaemonRequest.TypeText -> typeText(request.sessionId, request.text)
+            is DaemonRequest.Screenshot -> screenshot(request.sessionId)
             DaemonRequest.Shutdown -> shutdown()
         }
 
@@ -75,6 +83,61 @@ public class DaemonSessionRegistry(
             sessions = sessionsByPid.values.map { it.summary }.sortedBy { it.targetPid }
         )
 
+    private fun windows(sessionId: String): DaemonResponse =
+        invoke(sessionId) { automator ->
+            DaemonResponse.Windows(sessionId = sessionId, windows = automator.windows())
+        }
+
+    private fun allNodes(sessionId: String): DaemonResponse =
+        invoke(sessionId) { automator ->
+            DaemonResponse.Nodes(sessionId = sessionId, nodes = automator.allNodes())
+        }
+
+    private fun findByTestTag(sessionId: String, tag: String): DaemonResponse =
+        invoke(sessionId) { automator ->
+            DaemonResponse.Nodes(sessionId = sessionId, nodes = automator.findByTestTag(tag))
+        }
+
+    private fun click(sessionId: String, nodeKey: String): DaemonResponse =
+        invoke(sessionId) { automator ->
+            automator.click(nodeKey)
+            DaemonResponse.Completed(sessionId)
+        }
+
+    private fun typeText(sessionId: String, text: String): DaemonResponse =
+        invoke(sessionId) { automator ->
+            automator.typeText(text)
+            DaemonResponse.Completed(sessionId)
+        }
+
+    private fun screenshot(sessionId: String): DaemonResponse =
+        invoke(sessionId) { automator ->
+            DaemonResponse.Screenshot(sessionId = sessionId, pngBytes = automator.screenshot())
+        }
+
+    private fun invoke(
+        sessionId: String,
+        operation: (DaemonSessionAutomator) -> DaemonResponse,
+    ): DaemonResponse {
+        val session =
+            sessionsByPid.values.firstOrNull { it.sessionId == sessionId }
+                ?: return sessionNotFound(sessionId)
+        return try {
+            operation(session.automator)
+        } catch (exception: IOException) {
+            DaemonResponse.Error(
+                code = DaemonErrorCode.OperationFailed,
+                message = exception.message ?: "session operation failed",
+            )
+        }
+    }
+
+    private fun sessionNotFound(sessionId: String): DaemonResponse.Error =
+        DaemonResponse.Error(
+            code = DaemonErrorCode.SessionNotFound,
+            message = "session not found: $sessionId",
+        )
+
     private fun shutdown(): DaemonResponse {
         close()
         return DaemonResponse.ShuttingDown
@@ -92,7 +155,7 @@ public class DaemonSessionRegistry(
 
     private data class DaemonSession(
         val summary: DaemonSessionSummary,
-        val automator: AutoCloseable,
+        val automator: DaemonSessionAutomator,
     ) {
         val sessionId: String
             get() = summary.sessionId

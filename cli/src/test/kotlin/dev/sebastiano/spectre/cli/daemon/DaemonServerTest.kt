@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import java.nio.channels.Channels
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
@@ -15,12 +16,15 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
+@OptIn(ExperimentalSpectreAgentApi::class)
 class DaemonServerTest {
     @Test
     fun `close detaches all owned agent sessions`() {
         val socketPath = temporarySocketPath()
         var closes = 0
-        val registry = DaemonSessionRegistry { AutoCloseable { closes++ } }
+        val registry = DaemonSessionRegistry {
+            TestDaemonSessionAutomator(closeAction = { closes++ })
+        }
         val server = DaemonServer(socketPath, registry = registry)
 
         try {
@@ -341,7 +345,11 @@ class DaemonServerTest {
     @Test
     fun `serves lifecycle requests over a unix domain socket and removes it on shutdown`() {
         val socketPath = temporarySocketPath()
-        val server = DaemonServer(socketPath, registry = DaemonSessionRegistry { AutoCloseable {} })
+        val server =
+            DaemonServer(
+                socketPath,
+                registry = DaemonSessionRegistry { TestDaemonSessionAutomator() },
+            )
 
         try {
             SocketChannel.open(java.net.StandardProtocolFamily.UNIX).use { channel ->
