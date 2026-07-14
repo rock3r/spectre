@@ -97,6 +97,30 @@ class DaemonServerTest {
     }
 
     @Test
+    fun `preserves an existing recovery lock file`() {
+        val socketPath = temporarySocketPath()
+        val bootstrapServer = DaemonServer(socketPath.resolveSibling("bootstrap.sock"))
+        val lockPath = socketPath.resolveSibling("${socketPath.fileName}.lock")
+        Files.writeString(lockPath, "preserve me")
+        ServerSocketChannel.open(java.net.StandardProtocolFamily.UNIX).use { channel ->
+            channel.bind(java.net.UnixDomainSocketAddress.of(socketPath))
+        }
+
+        val server = DaemonServer(socketPath)
+
+        try {
+            assertEquals("preserve me", Files.readString(lockPath))
+        } finally {
+            server.close()
+            assertTrue(server.awaitTermination())
+            Files.deleteIfExists(lockPath)
+            bootstrapServer.close()
+            assertTrue(bootstrapServer.awaitTermination())
+            deleteTemporarySocketPath(socketPath)
+        }
+    }
+
+    @Test
     fun `refuses to replace a live daemon socket`() {
         val socketPath = temporarySocketPath()
         val firstServer = DaemonServer(socketPath)

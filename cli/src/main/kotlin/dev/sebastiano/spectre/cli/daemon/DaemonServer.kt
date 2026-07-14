@@ -13,7 +13,7 @@ import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
-import java.nio.file.StandardOpenOption.CREATE
+import java.nio.file.StandardOpenOption.CREATE_NEW
 import java.nio.file.StandardOpenOption.WRITE
 import java.nio.file.attribute.AclEntry
 import java.nio.file.attribute.AclEntryPermission
@@ -166,14 +166,19 @@ public constructor(
         val lockPath = socketPath.resolveSibling("${socketPath.fileName}.lock")
         val jvmLock = staleSocketRecoveryLocks.computeIfAbsent(lockPath) { Any() }
         synchronized(jvmLock) {
+            var createdLock = false
             try {
-                FileChannel.open(lockPath, CREATE, WRITE).use { channel ->
-                    channel.lock().use { action() }
-                }
+                val channel =
+                    try {
+                        FileChannel.open(lockPath, CREATE_NEW, WRITE).also { createdLock = true }
+                    } catch (_: FileAlreadyExistsException) {
+                        FileChannel.open(lockPath, WRITE)
+                    }
+                channel.use { channel -> channel.lock().use { action() } }
             } finally {
-                // The lock is retained through a successful bind. Removing it only after releasing
-                // the lock cannot expose a newly bound socket to another recovery attempt.
-                Files.deleteIfExists(lockPath)
+                // An existing lock may have been created by the user or another process. Remove
+                // only the lock atomically created by this server.
+                if (createdLock) Files.deleteIfExists(lockPath)
             }
         }
     }
@@ -217,8 +222,17 @@ public constructor(
         if (!closed.compareAndSet(false, true)) return
         running.set(false)
         runCatching { activeClient.getAndSet(null)?.close() }
-        runCatching { serverChannel.close() }
-        runCatching { Files.deleteIfExists(socketPath) }
+        val removedSocket =
+            runCatching {
+                    // Hold the same lock as stale recovery before closing the channel. Otherwise a
+                    // successor can bind after close and before this server unlinks the path.
+                    withStaleSocketRecoveryLock {
+                        serverChannel.close()
+                        Files.deleteIfExists(socketPath)
+                    }
+                }
+                .isSuccess
+        if (!removedSocket) runCatching { serverChannel.close() }
         removeCreatedParents()
         acceptThread.interrupt()
     }
