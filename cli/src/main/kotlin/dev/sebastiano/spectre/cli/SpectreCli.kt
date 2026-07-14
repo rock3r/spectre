@@ -4,8 +4,10 @@ import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.clikt.core.parse
 import com.github.ajalt.clikt.core.subcommands
+import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
+import com.github.ajalt.clikt.parameters.types.long
 import dev.sebastiano.spectre.cli.daemon.DaemonClient
 import dev.sebastiano.spectre.cli.daemon.DaemonEndpoint
 import dev.sebastiano.spectre.cli.daemon.DaemonJvmProcessSummary
@@ -66,10 +68,39 @@ public fun main(arguments: Array<String>): Unit = exitProcess(SpectreCli().run(a
 private class RootCommand(request: (DaemonRequest) -> DaemonResponse, output: Appendable) :
     CliktCommand(name = "spectre") {
     init {
-        subcommands(PsCommand(request, output), DaemonCommand(request, output))
+        subcommands(
+            AttachCommand(request, output),
+            PsCommand(request, output),
+            DaemonCommand(request, output),
+        )
     }
 
     override fun run(): Unit = Unit
+}
+
+private class AttachCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "attach") {
+    private val targetPid: Long by argument().long()
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val session =
+            when (val response = request(DaemonRequest.Attach(targetPid))) {
+                is DaemonResponse.Attached -> response
+                is DaemonResponse.Error -> throw IOException(response.message)
+                else -> error("Daemon returned an unexpected response to attach")
+            }
+        if (json) {
+            output.append(
+                CLI_JSON.encodeToString(AttachJson(id = session.sessionId, pid = session.targetPid))
+            )
+        } else {
+            output.append(humanSession(DaemonSessionSummary(session.sessionId, session.targetPid)))
+        }
+        output.appendLine()
+    }
 }
 
 private class PsCommand(
@@ -145,6 +176,9 @@ private data class DaemonStatusJson(
 )
 
 @Serializable private data class DaemonSessionJson(val id: String, val pid: Long)
+
+@Serializable
+private data class AttachJson(val version: Int = JSON_VERSION, val id: String, val pid: Long)
 
 @Serializable
 private data class PsJson(val version: Int = JSON_VERSION, val processes: List<PsProcessJson>)
