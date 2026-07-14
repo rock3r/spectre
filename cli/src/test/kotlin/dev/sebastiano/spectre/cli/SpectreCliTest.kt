@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.cli
 
+import dev.sebastiano.spectre.cli.daemon.DaemonJvmProcessSummary
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import dev.sebastiano.spectre.cli.daemon.DaemonSessionSummary
@@ -9,6 +10,27 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class SpectreCliTest {
+    @Test
+    fun `ps prints stable JSON JVM process output`() {
+        val output = StringBuilder()
+        val cli =
+            SpectreCli(
+                request = { request ->
+                    assertEquals(DaemonRequest.ListJvmProcesses, request)
+                    DaemonResponse.JvmProcesses(
+                        listOf(DaemonJvmProcessSummary(pid = 42, displayName = "com.example.App"))
+                    )
+                },
+                output = output,
+            )
+
+        assertEquals(0, cli.run(listOf("ps", "--json")))
+        assertEquals(
+            "{\"version\":1,\"processes\":[{\"pid\":42,\"displayName\":\"com.example.App\"}]}\n",
+            output.toString(),
+        )
+    }
+
     @Test
     fun `daemon status prints stable JSON session output`() {
         val output = StringBuilder()

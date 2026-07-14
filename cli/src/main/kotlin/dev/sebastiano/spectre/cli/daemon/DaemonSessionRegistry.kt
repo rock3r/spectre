@@ -3,15 +3,21 @@ package dev.sebastiano.spectre.cli.daemon
 import dev.sebastiano.spectre.agent.AgentAttach
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.SpectreAttachException
+import dev.sebastiano.spectre.agent.SpectreProcesses
 import java.io.IOException
 
 /** In-memory session table for one daemon process. */
 @OptIn(ExperimentalSpectreAgentApi::class)
 public class DaemonSessionRegistry
 internal constructor(
+    private val jvmProcessDiscovery: () -> List<DaemonJvmProcessSummary> = {
+        SpectreProcesses.listJvmProcesses().map { process ->
+            DaemonJvmProcessSummary(pid = process.pid, displayName = process.displayName)
+        }
+    },
     private val attachAutomator: (Long) -> DaemonSessionAutomator = { targetPid ->
         AttachedDaemonSession(AgentAttach.attach(targetPid))
-    }
+    },
 ) : AutoCloseable {
     private val sessionsByPid: MutableMap<Long, DaemonSession> = linkedMapOf()
 
@@ -31,6 +37,10 @@ internal constructor(
             is DaemonRequest.Attach -> attach(request.targetPid)
             is DaemonRequest.Detach -> detach(request.sessionId)
             DaemonRequest.ListSessions -> listSessions()
+            DaemonRequest.ListJvmProcesses ->
+                DaemonResponse.JvmProcesses(
+                    jvmProcessDiscovery().sortedBy { process -> process.pid }
+                )
             is DaemonRequest.Windows -> windows(request.sessionId)
             is DaemonRequest.AllNodes -> allNodes(request.sessionId)
             is DaemonRequest.FindByTestTag -> findByTestTag(request.sessionId, request.tag)

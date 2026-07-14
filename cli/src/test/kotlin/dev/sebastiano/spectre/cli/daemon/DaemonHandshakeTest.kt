@@ -20,7 +20,7 @@ class DaemonHandshakeTest {
 
         val hello = assertIs<DaemonRequest.Hello>(decoded)
         assertEquals(1, hello.clientVersion.major)
-        assertEquals(2, hello.clientVersion.minor)
+        assertEquals(3, hello.clientVersion.minor)
     }
 
     @Test
@@ -119,6 +119,7 @@ class DaemonSessionCommandProtocolTest {
                 DaemonRequest.Attach(targetPid = 1234),
                 DaemonRequest.Detach(sessionId = "session-1234"),
                 DaemonRequest.ListSessions,
+                DaemonRequest.ListJvmProcesses,
                 DaemonRequest.Shutdown,
             )
 
@@ -136,6 +137,9 @@ class DaemonSessionCommandProtocolTest {
                 DaemonResponse.Sessions(
                     sessions =
                         listOf(DaemonSessionSummary(sessionId = "session-1234", targetPid = 1234))
+                ),
+                DaemonResponse.JvmProcesses(
+                    processes = listOf(DaemonJvmProcessSummary(pid = 1234, displayName = "Fixture"))
                 ),
                 DaemonResponse.ShuttingDown,
                 DaemonResponse.Error(code = DaemonErrorCode.SessionNotFound, message = "missing"),

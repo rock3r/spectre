@@ -11,7 +11,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 2)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 3)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -52,6 +52,10 @@ public sealed interface DaemonRequest {
     public data class Detach(public val sessionId: String) : DaemonRequest
 
     @Serializable @SerialName("listSessions") public data object ListSessions : DaemonRequest
+
+    @Serializable
+    @SerialName("listJvmProcesses")
+    public data object ListJvmProcesses : DaemonRequest
 
     @Serializable
     @SerialName("windows")
@@ -103,6 +107,11 @@ public sealed interface DaemonResponse {
     public data class Sessions(public val sessions: List<DaemonSessionSummary>) : DaemonResponse
 
     @Serializable
+    @SerialName("jvmProcesses")
+    public data class JvmProcesses(public val processes: List<DaemonJvmProcessSummary>) :
+        DaemonResponse
+
+    @Serializable
     @SerialName("windows")
     public data class Windows(
         public val sessionId: String,
@@ -140,6 +149,10 @@ public sealed interface DaemonResponse {
 
 @Serializable
 public data class DaemonSessionSummary(public val sessionId: String, public val targetPid: Long)
+
+/** A JVM process that can be targeted through the local daemon. */
+@Serializable
+public data class DaemonJvmProcessSummary(public val pid: Long, public val displayName: String)
 
 public enum class DaemonErrorCode {
     SessionNotFound,

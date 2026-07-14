@@ -13,6 +13,21 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalSpectreAgentApi::class)
 class DaemonSessionRegistryTest {
+    @Test
+    fun `lists JVM processes through the injected daemon discovery service`() {
+        val processes =
+            listOf(
+                DaemonJvmProcessSummary(pid = 20, displayName = "second"),
+                DaemonJvmProcessSummary(pid = 10, displayName = "first"),
+            )
+        val registry = DaemonSessionRegistry(jvmProcessDiscovery = { processes })
+
+        assertEquals(
+            DaemonResponse.JvmProcesses(processes.reversed()),
+            registry.handle(DaemonRequest.ListJvmProcesses),
+        )
+    }
+
     @OptIn(ExperimentalSpectreAgentApi::class)
     @Test
     fun `dispatches every automator operation through the attached session`() {
