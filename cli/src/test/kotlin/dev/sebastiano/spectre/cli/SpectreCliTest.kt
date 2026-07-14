@@ -32,6 +32,20 @@ class SpectreCliTest {
     }
 
     @Test
+    fun `windows uses a readable label for untitled windows`() {
+        val output = StringBuilder()
+        val window = WindowSummaryDto(0, "popup", null, true, RectDto(1, 2, 3, 4))
+        val cli =
+            SpectreCli(
+                request = { DaemonResponse.Windows("pid-42", listOf(window)) },
+                output = output,
+            )
+
+        assertEquals(0, cli.run(listOf("windows", "pid-42")))
+        assertEquals("0 (untitled)\n", output.toString())
+    }
+
+    @Test
     fun `detach prints stable JSON session output`() {
         val output = StringBuilder()
         val cli =

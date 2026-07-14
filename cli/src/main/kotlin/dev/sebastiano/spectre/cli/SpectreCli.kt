@@ -97,10 +97,13 @@ private class WindowsCommand(
                 is DaemonResponse.Error -> throw IOException(response.message)
                 else -> error("Daemon returned an unexpected response to windows")
             }
-        if (json) output.append(CLI_JSON.encodeToString(WindowsJson(windows = windows)))
-        else
+        if (json) {
+            output.append(CLI_JSON.encodeToString(WindowsJson(windows = windows.map(::WindowJson))))
+        } else
             output.append(
-                windows.joinToString("\n") { window -> "${window.index} ${window.title}" }
+                windows.joinToString("\n") { window ->
+                    "${window.index} ${window.title ?: "(untitled)"}"
+                }
             )
         output.appendLine()
     }
@@ -233,9 +236,19 @@ private data class AttachJson(val version: Int = JSON_VERSION, val id: String, v
 
 @Serializable private data class DetachJson(val version: Int = JSON_VERSION, val id: String)
 
-@OptIn(ExperimentalSpectreAgentApi::class)
 @Serializable
-private data class WindowsJson(val version: Int = JSON_VERSION, val windows: List<WindowSummaryDto>)
+private data class WindowsJson(val version: Int = JSON_VERSION, val windows: List<WindowJson>)
+
+@Serializable
+private data class WindowJson(
+    val index: Int,
+    val surfaceId: String,
+    val title: String?,
+    val isPopup: Boolean,
+    val bounds: RectJson,
+)
+
+@Serializable private data class RectJson(val x: Int, val y: Int, val width: Int, val height: Int)
 
 @Serializable
 private data class PsJson(val version: Int = JSON_VERSION, val processes: List<PsProcessJson>)
@@ -253,6 +266,17 @@ private fun PsProcessJson(summary: DaemonJvmProcessSummary): PsProcessJson =
 
 private fun humanProcess(summary: DaemonJvmProcessSummary): String =
     "${summary.pid} ${summary.displayName}"
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private fun WindowJson(window: WindowSummaryDto): WindowJson =
+    WindowJson(
+        index = window.index,
+        surfaceId = window.surfaceId,
+        title = window.title,
+        isPopup = window.isPopup,
+        bounds =
+            RectJson(window.bounds.x, window.bounds.y, window.bounds.width, window.bounds.height),
+    )
 
 private fun daemonRequest(socketPath: Path?): (DaemonRequest) -> DaemonResponse =
     daemonRequest@{ request ->
