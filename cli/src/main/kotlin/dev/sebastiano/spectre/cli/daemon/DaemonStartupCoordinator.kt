@@ -6,34 +6,33 @@ import java.net.SocketException
 import java.nio.file.NoSuchFileException
 
 /** Connects to the daemon, starting it once when the endpoint is absent. */
-public class DaemonStartupCoordinator(
-    private val connect: () -> Unit,
+public class DaemonStartupCoordinator<T>(
+    private val connect: () -> T,
     private val start: () -> Unit,
 ) {
     /** Connects immediately or starts the daemon before one retry. */
     @Throws(IOException::class)
-    public fun connectOrStart() {
+    public fun connectOrStart(): T {
         try {
-            connect()
+            return connect()
         } catch (exception: IOException) {
             if (!isAbsentEndpoint(exception)) throw exception
-            startOrConnectAfterRace()
+            return startOrConnectAfterRace()
         }
     }
 
-    private fun startOrConnectAfterRace() {
+    private fun startOrConnectAfterRace(): T {
         try {
             start()
         } catch (startFailure: IOException) {
             try {
-                connect()
-                return
+                return connect()
             } catch (connectFailure: IOException) {
                 startFailure.addSuppressed(connectFailure)
                 throw startFailure
             }
         }
-        connect()
+        return connect()
     }
 
     private fun isAbsentEndpoint(exception: IOException): Boolean =

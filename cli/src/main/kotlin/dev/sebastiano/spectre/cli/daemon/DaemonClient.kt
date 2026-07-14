@@ -9,6 +9,11 @@ import java.nio.file.Path
 
 /** One-request client for the local Spectre daemon protocol. */
 public class DaemonClient(public val socketPath: Path) : AutoCloseable {
+    /** Starts the daemon when its endpoint is absent, then sends [request]. */
+    @Throws(IOException::class)
+    public fun requestOrStart(request: DaemonRequest, start: () -> Unit): DaemonResponse =
+        DaemonStartupCoordinator(connect = { request(request) }, start = start).connectOrStart()
+
     /** Sends one compatible request and returns the daemon's response. */
     @Throws(IOException::class)
     public fun request(request: DaemonRequest): DaemonResponse =

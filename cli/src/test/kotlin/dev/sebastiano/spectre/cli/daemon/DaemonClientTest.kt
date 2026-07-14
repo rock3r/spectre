@@ -9,6 +9,31 @@ import kotlin.test.assertEquals
 
 class DaemonClientTest {
     @Test
+    fun `starts the daemon then sends the first request when the socket is absent`() {
+        val socketPath = temporaryDaemonClientSocketPath()
+        var server: DaemonServer? = null
+        var starts = 0
+
+        try {
+            DaemonClient(socketPath).use { client ->
+                assertEquals(
+                    DaemonResponse.Sessions(emptyList()),
+                    client.requestOrStart(DaemonRequest.ListSessions) {
+                        starts++
+                        server = DaemonServer(socketPath)
+                    },
+                )
+            }
+
+            assertEquals(1, starts)
+        } finally {
+            server?.close()
+            server?.awaitTermination()
+            deleteTemporaryDaemonClientSocketPath(socketPath)
+        }
+    }
+
+    @Test
     fun `sends a handshake before forwarding requests to the daemon`() {
         val socketPath = temporaryDaemonClientSocketPath()
         val server = DaemonServer(socketPath)
