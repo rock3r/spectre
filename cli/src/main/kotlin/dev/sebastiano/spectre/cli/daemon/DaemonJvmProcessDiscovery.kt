@@ -4,7 +4,7 @@ import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.SpectreAttachException
 import dev.sebastiano.spectre.agent.SpectreProcesses
 
-/** Lists JVM processes while excluding the daemon and the requesting CLI process. */
+/** Lists JVM processes while excluding Spectre daemons and the requesting CLI process. */
 @OptIn(ExperimentalSpectreAgentApi::class)
 internal class DaemonJvmProcessDiscovery(
     private val discover: () -> List<DaemonJvmProcessSummary> = {
@@ -18,7 +18,9 @@ internal class DaemonJvmProcessDiscovery(
             DaemonResponse.JvmProcesses(
                 discover()
                     .filter { process ->
-                        process.pid != requesterPid && process.pid != ProcessHandle.current().pid()
+                        process.pid != requesterPid &&
+                            process.pid != ProcessHandle.current().pid() &&
+                            DAEMON_MAIN_CLASS !in process.displayName
                     }
                     .sortedBy { process -> process.pid }
             )
@@ -28,4 +30,8 @@ internal class DaemonJvmProcessDiscovery(
                 message = exception.message ?: "Failed to list attachable JVM processes",
             )
         }
+
+    private companion object {
+        const val DAEMON_MAIN_CLASS = "dev.sebastiano.spectre.cli.daemon.DaemonMainKt"
+    }
 }

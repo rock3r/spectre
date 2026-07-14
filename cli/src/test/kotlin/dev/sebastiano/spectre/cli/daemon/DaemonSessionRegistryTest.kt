@@ -19,6 +19,11 @@ class DaemonSessionRegistryTest {
         val processes =
             listOf(
                 DaemonJvmProcessSummary(pid = daemonPid, displayName = "spectre daemon"),
+                DaemonJvmProcessSummary(
+                    pid = 40,
+                    displayName =
+                        "dev.sebastiano.spectre.cli.daemon.DaemonMainKt --socket daemon-v1-2.sock",
+                ),
                 DaemonJvmProcessSummary(pid = 30, displayName = "spectre cli"),
                 DaemonJvmProcessSummary(pid = 20, displayName = "second"),
                 DaemonJvmProcessSummary(pid = 10, displayName = "first"),
