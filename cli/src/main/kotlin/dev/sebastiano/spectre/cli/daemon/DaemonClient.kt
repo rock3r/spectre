@@ -16,9 +16,19 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
     /** Starts the daemon when its endpoint is absent, then sends [request]. */
     @Throws(IOException::class)
     public fun requestOrStart(request: DaemonRequest, start: () -> Unit): DaemonResponse =
+        requestOrStart(request = request, start = start, onAbsent = { null })
+
+    /** Starts the daemon when its endpoint is absent unless [onAbsent] supplies a response. */
+    @Throws(IOException::class)
+    public fun requestOrStart(
+        request: DaemonRequest,
+        start: () -> Unit,
+        onAbsent: () -> DaemonResponse?,
+    ): DaemonResponse =
         DaemonStartupCoordinator(
                 connect = { requestWithAbsentEndpointCheck(request) },
                 start = start,
+                onAbsent = onAbsent,
             )
             .connectOrStart()
 

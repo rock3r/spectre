@@ -631,14 +631,15 @@ internal fun daemonRequest(
                 DaemonResponse.Sessions(emptyList())
             }
         } else {
-            try {
-                client.requestIfPresent(request)
-            } catch (_: NoSuchFileException) {
-                attachPreflight(request)?.let { message ->
-                    return@daemonRequest DaemonResponse.Error(DaemonErrorCode.AttachFailed, message)
-                }
-                client.requestOrStart(request) { DaemonProcessLauncher(resolvedSocketPath).start() }
-            }
+            client.requestOrStart(
+                request = request,
+                start = { DaemonProcessLauncher(resolvedSocketPath).start() },
+                onAbsent = {
+                    attachPreflight(request)?.let { message ->
+                        DaemonResponse.Error(DaemonErrorCode.AttachFailed, message)
+                    }
+                },
+            )
         }
     }
 }
