@@ -9,6 +9,7 @@ import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.long
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import dev.sebastiano.spectre.cli.daemon.DaemonClient
 import dev.sebastiano.spectre.cli.daemon.DaemonEndpoint
@@ -74,12 +75,35 @@ private class RootCommand(request: (DaemonRequest) -> DaemonResponse, output: Ap
             AttachCommand(request, output),
             DetachCommand(request, output),
             WindowsCommand(request, output),
+            TreeCommand(request, output),
             PsCommand(request, output),
             DaemonCommand(request, output),
         )
     }
 
     override fun run(): Unit = Unit
+}
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private class TreeCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "tree") {
+    private val sessionId: String by argument()
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val nodes =
+            when (val response = request(DaemonRequest.AllNodes(sessionId))) {
+                is DaemonResponse.Nodes -> response.nodes
+                is DaemonResponse.Error -> throw IOException(response.message)
+                else -> error("Daemon returned an unexpected response to tree")
+            }
+        if (json) output.append(CLI_JSON.encodeToString(TreeJson(nodes = nodes.map(::NodeJson))))
+        else
+            output.append(nodes.joinToString("\n") { node -> "${node.key} ${node.role ?: "Node"}" })
+        output.appendLine()
+    }
 }
 
 @OptIn(ExperimentalSpectreAgentApi::class)
@@ -240,6 +264,22 @@ private data class AttachJson(val version: Int = JSON_VERSION, val id: String, v
 private data class WindowsJson(val version: Int = JSON_VERSION, val windows: List<WindowJson>)
 
 @Serializable
+private data class TreeJson(val version: Int = JSON_VERSION, val nodes: List<NodeJson>)
+
+@Serializable
+private data class NodeJson(
+    val key: String,
+    val testTag: String?,
+    val texts: List<String>,
+    val editableText: String?,
+    val role: String?,
+    val contentDescription: String?,
+    val isFocused: Boolean,
+    val isVisible: Boolean,
+    val bounds: RectJson,
+)
+
+@Serializable
 private data class WindowJson(
     val index: Int,
     val surfaceId: String,
@@ -276,6 +316,20 @@ private fun WindowJson(window: WindowSummaryDto): WindowJson =
         isPopup = window.isPopup,
         bounds =
             RectJson(window.bounds.x, window.bounds.y, window.bounds.width, window.bounds.height),
+    )
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private fun NodeJson(node: NodeSnapshotDto): NodeJson =
+    NodeJson(
+        key = node.key,
+        testTag = node.testTag,
+        texts = node.texts,
+        editableText = node.editableText,
+        role = node.role,
+        contentDescription = node.contentDescription,
+        isFocused = node.isFocused,
+        isVisible = node.isVisible,
+        bounds = RectJson(node.bounds.x, node.bounds.y, node.bounds.width, node.bounds.height),
     )
 
 private fun daemonRequest(socketPath: Path?): (DaemonRequest) -> DaemonResponse =
