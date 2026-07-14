@@ -27,6 +27,12 @@ public object DaemonProtocol {
             daemon.minor < client.minor -> VersionCompatibility.DaemonTooOld
             else -> VersionCompatibility.Compatible
         }
+
+    internal fun minimumDaemonVersion(request: DaemonRequest): DaemonProtocolVersion =
+        when (request) {
+            is DaemonRequest.ListJvmProcesses -> CurrentVersion
+            else -> DaemonProtocolVersion(major = CurrentVersion.major, minor = 0)
+        }
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)

@@ -30,7 +30,7 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
             val input = Channels.newInputStream(channel)
             val output = Channels.newOutputStream(channel)
             try {
-                requireCompatibleDaemon(output, input)
+                requireCompatibleDaemon(output, input, request)
             } catch (exception: EOFException) {
                 throw DaemonConnectionClosedException(exception)
             } catch (exception: SocketException) {
@@ -41,18 +41,26 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
                 ?: throw IOException("Daemon closed the connection before responding")
         }
 
-    private fun requireCompatibleDaemon(output: java.io.OutputStream, input: java.io.InputStream) {
-        DaemonWireCodec.writeRequest(output, DaemonRequest.Hello(DaemonProtocol.CurrentVersion))
+    private fun requireCompatibleDaemon(
+        output: java.io.OutputStream,
+        input: java.io.InputStream,
+        request: DaemonRequest,
+    ) {
+        val requiredVersion = DaemonProtocol.minimumDaemonVersion(request)
+        DaemonWireCodec.writeRequest(output, DaemonRequest.Hello(requiredVersion))
         when (val response = DaemonWireCodec.readResponse(input)) {
-            is DaemonResponse.Hello ->
-                check(
+            is DaemonResponse.Hello -> {
+                if (
                     DaemonProtocol.checkCompatibility(
-                        client = DaemonProtocol.CurrentVersion,
+                        client = requiredVersion,
                         daemon = response.daemonVersion,
-                    ) == VersionCompatibility.Compatible
+                    ) != VersionCompatibility.Compatible
                 ) {
-                    "Incompatible daemon protocol version ${response.daemonVersion}"
+                    throw IOException(
+                        "Incompatible daemon protocol version ${response.daemonVersion}"
+                    )
                 }
+            }
             is DaemonResponse.Error ->
                 throw IOException("Daemon handshake failed: ${response.message}")
             null -> throw DaemonConnectionClosedException()

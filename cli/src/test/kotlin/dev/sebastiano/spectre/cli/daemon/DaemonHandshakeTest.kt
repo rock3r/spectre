@@ -47,6 +47,18 @@ class DaemonHandshakeTest {
             ),
         )
     }
+
+    @Test
+    fun `JVM process listing requires the daemon protocol minor that introduced it`() {
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 0),
+            DaemonProtocol.minimumDaemonVersion(DaemonRequest.ListSessions),
+        )
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 3),
+            DaemonProtocol.minimumDaemonVersion(DaemonRequest.ListJvmProcesses(requesterPid = 1234)),
+        )
+    }
 }
 
 @OptIn(ExperimentalSerializationApi::class)

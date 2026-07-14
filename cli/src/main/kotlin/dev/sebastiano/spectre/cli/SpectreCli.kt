@@ -10,10 +10,12 @@ import dev.sebastiano.spectre.cli.daemon.DaemonClient
 import dev.sebastiano.spectre.cli.daemon.DaemonEndpoint
 import dev.sebastiano.spectre.cli.daemon.DaemonJvmProcessSummary
 import dev.sebastiano.spectre.cli.daemon.DaemonProcessLauncher
+import dev.sebastiano.spectre.cli.daemon.DaemonProtocol
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import dev.sebastiano.spectre.cli.daemon.DaemonSessionSummary
 import java.io.IOException
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.system.exitProcess
 import kotlinx.serialization.Serializable
@@ -161,12 +163,28 @@ private fun PsProcessJson(summary: DaemonJvmProcessSummary): PsProcessJson =
 private fun humanProcess(summary: DaemonJvmProcessSummary): String =
     "${summary.pid} ${summary.displayName}"
 
-private fun daemonRequest(socketPath: Path?): (DaemonRequest) -> DaemonResponse = { request ->
-    val resolvedSocketPath = socketPath ?: DaemonEndpoint.defaultSocketPath()
-    DaemonClient(resolvedSocketPath).use { client ->
-        client.requestOrStart(request) { DaemonProcessLauncher(resolvedSocketPath).start() }
+private fun daemonRequest(socketPath: Path?): (DaemonRequest) -> DaemonResponse =
+    daemonRequest@{ request ->
+        val resolvedSocketPath = socketPath ?: DaemonEndpoint.defaultSocketPath()
+        if (
+            socketPath == null &&
+                DaemonProtocol.minimumDaemonVersion(request).minor <
+                    DaemonProtocol.CurrentVersion.minor
+        ) {
+            DaemonEndpoint.legacySocketPaths().firstOrNull(Files::exists)?.let { legacySocketPath ->
+                try {
+                    return@daemonRequest DaemonClient(legacySocketPath).use { client ->
+                        client.request(request)
+                    }
+                } catch (_: IOException) {
+                    // A stale legacy socket must not prevent startup on the stable endpoint.
+                }
+            }
+        }
+        DaemonClient(resolvedSocketPath).use { client ->
+            client.requestOrStart(request) { DaemonProcessLauncher(resolvedSocketPath).start() }
+        }
     }
-}
 
 private const val EXIT_SUCCESS: Int = 0
 private const val EXIT_FAILURE: Int = 1
