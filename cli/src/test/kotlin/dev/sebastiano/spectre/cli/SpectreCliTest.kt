@@ -84,6 +84,53 @@ class SpectreCliTest {
     }
 
     @Test
+    fun `record start prints the caller supplied output path as stable JSON`() {
+        val output = StringBuilder()
+        val recordingPath = Files.createTempDirectory("spectre-cli-test").resolve("capture.mp4")
+        val cli =
+            SpectreCli(
+                request = { request ->
+                    assertEquals(
+                        DaemonRequest.StartRecording("pid-42", recordingPath.toString()),
+                        request,
+                    )
+                    DaemonResponse.RecordingStarted("pid-42", recordingPath.toString())
+                },
+                output = output,
+            )
+
+        assertEquals(
+            0,
+            cli.run(
+                listOf("record", "start", "pid-42", "--output", recordingPath.toString(), "--json")
+            ),
+        )
+        assertEquals(
+            "{\"version\":1,\"id\":\"pid-42\",\"path\":\"$recordingPath\"}\n",
+            output.toString(),
+        )
+    }
+
+    @Test
+    fun `record stop prints the final output path as stable JSON`() {
+        val output = StringBuilder()
+        val cli =
+            SpectreCli(
+                request = { request ->
+                    assertEquals(DaemonRequest.StopRecording("pid-42"), request)
+                    DaemonResponse.RecordingStopped("pid-42", "/tmp/capture.mp4")
+                },
+                output = output,
+            )
+
+        assertEquals(0, cli.run(listOf("record", "stop", "pid-42", "--json")))
+        assertEquals(
+            "{\"version\":1,\"id\":\"pid-42\",\"path\":\"/tmp/capture.mp4\"}\n",
+            output.toString(),
+        )
+    }
+
+    @Test
     fun `click prints stable JSON completion output`() {
         val output = StringBuilder()
         val cli =

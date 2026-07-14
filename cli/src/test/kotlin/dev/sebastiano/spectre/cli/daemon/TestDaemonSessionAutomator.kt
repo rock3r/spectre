@@ -12,6 +12,8 @@ internal class TestDaemonSessionAutomator(
     private val clickAction: (String) -> Unit = {},
     private val typeTextAction: (String) -> Unit = {},
     private val screenshotResult: () -> ByteArray = { ByteArray(0) },
+    private val startRecordingAction: (String) -> String = { it },
+    private val stopRecordingResult: () -> String = { error("no recording is in progress") },
     private val closeAction: () -> Unit = {},
 ) : DaemonSessionAutomator {
     override fun windows(): List<WindowSummaryDto> = windowsResult()
@@ -25,6 +27,10 @@ internal class TestDaemonSessionAutomator(
     override fun typeText(text: String): Unit = typeTextAction(text)
 
     override fun screenshot(): ByteArray = screenshotResult()
+
+    override fun startRecording(outputPath: String): String = startRecordingAction(outputPath)
+
+    override fun stopRecording(): String = stopRecordingResult()
 
     override fun close(): Unit = closeAction()
 }

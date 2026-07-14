@@ -101,6 +101,7 @@ private class RootCommand(
             ClickCommand(request, output),
             TypeCommand(request, output),
             ScreenshotCommand(request, output),
+            RecordCommand(request, output),
             PsCommand(request, output),
             DaemonCommand(request, shutdownRequest, output),
         )
@@ -158,6 +159,69 @@ private class ScreenshotCommand(
         if (json) output.append(CLI_JSON.encodeToString(ScreenshotJson(path = path.toString())))
         else output.append(path.toString())
         output.appendLine()
+    }
+}
+
+private class RecordCommand(request: (DaemonRequest) -> DaemonResponse, output: Appendable) :
+    CliktCommand(name = "record") {
+    init {
+        subcommands(RecordStartCommand(request, output), RecordStopCommand(request, output))
+    }
+
+    override fun run(): Unit = Unit
+}
+
+private class RecordStartCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "start") {
+    private val sessionId: String by argument()
+    private val outputPath: Path? by option("--output").path()
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val destination =
+            try {
+                outputPath
+                    ?: Files.createTempFile("spectre-recording-", ".mp4")
+                        .also(Files::deleteIfExists)
+            } catch (exception: IOException) {
+                throw CliOutputException(exception)
+            }
+        val recording =
+            when (
+                val response =
+                    request(DaemonRequest.StartRecording(sessionId, destination.toString()))
+            ) {
+                is DaemonResponse.RecordingStarted -> response
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
+                else -> error("Daemon returned an unexpected response to record start")
+            }
+        printRecording(recording.sessionId, recording.outputPath, json, output, "Recording to")
+    }
+}
+
+private class RecordStopCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "stop") {
+    private val sessionId: String by argument()
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val recording =
+            when (val response = request(DaemonRequest.StopRecording(sessionId))) {
+                is DaemonResponse.RecordingStopped -> response
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
+                else -> error("Daemon returned an unexpected response to record stop")
+            }
+        printRecording(
+            recording.sessionId,
+            recording.outputPath,
+            json,
+            output,
+            "Recording saved to",
+        )
     }
 }
 
@@ -414,6 +478,9 @@ private data class AttachJson(val version: Int = JSON_VERSION, val id: String, v
 @Serializable private data class ScreenshotJson(val version: Int = JSON_VERSION, val path: String)
 
 @Serializable
+private data class RecordingJson(val version: Int = JSON_VERSION, val id: String, val path: String)
+
+@Serializable
 private data class WindowsJson(val version: Int = JSON_VERSION, val windows: List<WindowJson>)
 
 @Serializable
@@ -450,6 +517,19 @@ private data class PsJson(val version: Int = JSON_VERSION, val processes: List<P
 
 private fun DaemonSessionJson(summary: DaemonSessionSummary): DaemonSessionJson =
     DaemonSessionJson(id = summary.sessionId, pid = summary.targetPid)
+
+private fun printRecording(
+    sessionId: String,
+    outputPath: String,
+    json: Boolean,
+    output: Appendable,
+    label: String,
+) {
+    if (json)
+        output.append(CLI_JSON.encodeToString(RecordingJson(id = sessionId, path = outputPath)))
+    else output.append("$label $outputPath.")
+    output.appendLine()
+}
 
 private fun humanSession(summary: DaemonSessionSummary): String =
     "${summary.sessionId} (pid ${summary.targetPid})"

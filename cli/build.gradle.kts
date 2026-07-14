@@ -12,6 +12,7 @@ kotlin {
 
 dependencies {
     implementation(projects.agent)
+    implementation(projects.recording)
     runtimeOnly(projects.agentRuntime)
     implementation(libs.clikt)
     implementation(libs.kotlinx.serialization.cbor)
