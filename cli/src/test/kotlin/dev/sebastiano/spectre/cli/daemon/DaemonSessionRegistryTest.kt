@@ -131,6 +131,52 @@ class DaemonSessionRegistryTest {
         assertEquals(DaemonErrorCode.OperationFailed, response.code)
     }
 
+    @Test
+    fun `starts and stops a recording through the attached session`() {
+        val outputPath = "/tmp/spectre-recording.mp4"
+        var startedAt: String? = null
+        val registry = DaemonSessionRegistry {
+            TestDaemonSessionAutomator(
+                startRecordingAction = { path ->
+                    startedAt = path
+                    path
+                },
+                stopRecordingResult = { outputPath },
+            )
+        }
+        val sessionId =
+            assertIs<DaemonResponse.Attached>(registry.handle(DaemonRequest.Attach(1234))).sessionId
+
+        assertEquals(
+            DaemonResponse.RecordingStarted(sessionId, outputPath),
+            registry.handle(DaemonRequest.StartRecording(sessionId, outputPath)),
+        )
+        assertEquals(outputPath, startedAt)
+        assertEquals(
+            DaemonResponse.RecordingStopped(sessionId, outputPath),
+            registry.handle(DaemonRequest.StopRecording(sessionId)),
+        )
+    }
+
+    @Test
+    fun `maps recording lifecycle failures to operation errors`() {
+        val registry = DaemonSessionRegistry {
+            TestDaemonSessionAutomator(
+                startRecordingAction = { throw IOException("recording already started") }
+            )
+        }
+        val sessionId =
+            assertIs<DaemonResponse.Attached>(registry.handle(DaemonRequest.Attach(1234))).sessionId
+
+        val response =
+            assertIs<DaemonResponse.Error>(
+                registry.handle(DaemonRequest.StartRecording(sessionId, "/tmp/capture.mp4"))
+            )
+
+        assertEquals(DaemonErrorCode.OperationFailed, response.code)
+        assertEquals("recording already started", response.message)
+    }
+
     @OptIn(ExperimentalSpectreAgentApi::class)
     @Test
     fun `maps agent attach failures to protocol errors`() {

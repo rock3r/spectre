@@ -39,6 +39,17 @@ internal constructor(
             is DaemonRequest.Click -> click(request.sessionId, request.nodeKey)
             is DaemonRequest.TypeText -> typeText(request.sessionId, request.text)
             is DaemonRequest.Screenshot -> screenshot(request.sessionId)
+            is DaemonRequest.StartRecording ->
+                invoke(request.sessionId) { automator ->
+                    DaemonResponse.RecordingStarted(
+                        request.sessionId,
+                        automator.startRecording(request.outputPath),
+                    )
+                }
+            is DaemonRequest.StopRecording ->
+                invoke(request.sessionId) { automator ->
+                    DaemonResponse.RecordingStopped(request.sessionId, automator.stopRecording())
+                }
             DaemonRequest.Shutdown -> shutdown()
         }
 

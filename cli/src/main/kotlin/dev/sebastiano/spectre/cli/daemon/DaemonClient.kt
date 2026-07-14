@@ -50,19 +50,19 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
         DaemonWireCodec.writeRequest(output, DaemonRequest.Hello(requiredVersion))
         when (val response = DaemonWireCodec.readResponse(input)) {
             is DaemonResponse.Hello -> {
-                if (
+                val compatibility =
                     DaemonProtocol.checkCompatibility(
                         client = requiredVersion,
                         daemon = response.daemonVersion,
-                    ) != VersionCompatibility.Compatible
-                ) {
+                    )
+                if (compatibility != VersionCompatibility.Compatible) {
                     throw IOException(
-                        "Incompatible daemon protocol version ${response.daemonVersion}"
+                        daemonCompatibilityFailure(requiredVersion, response.daemonVersion)
                     )
                 }
             }
             is DaemonResponse.Error ->
-                throw IOException("Daemon handshake failed: ${response.message}")
+                throw IOException(daemonHandshakeFailure(requiredVersion, response))
             null -> throw DaemonConnectionClosedException()
             else -> throw IOException("Daemon returned an unexpected handshake response")
         }
@@ -81,3 +81,30 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
 
 internal class DaemonConnectionClosedException(cause: Throwable? = null) :
     IOException("Daemon closed the connection during handshake", cause)
+
+internal fun daemonCompatibilityFailure(
+    required: DaemonProtocolVersion,
+    daemon: DaemonProtocolVersion,
+): String =
+    if (daemon.major == required.major && daemon.minor < required.minor) {
+        "Spectre daemon protocol ${daemon.major}.${daemon.minor} is too old for this command. " +
+            "Run `spectre daemon kill` and retry."
+    } else {
+        "Incompatible daemon protocol version ${daemon.major}.${daemon.minor}; " +
+            "this command requires ${required.major}.${required.minor}."
+    }
+
+internal fun daemonHandshakeFailure(
+    required: DaemonProtocolVersion,
+    response: DaemonResponse.Error,
+): String =
+    if (
+        response.code == DaemonErrorCode.ProtocolError &&
+            response.message == "incompatible daemon protocol version" &&
+            required.major == DaemonProtocol.CurrentVersion.major &&
+            required.minor > 0
+    ) {
+        "Spectre daemon does not support this command. Run `spectre daemon kill` and retry."
+    } else {
+        "Daemon handshake failed: ${response.message}"
+    }

@@ -13,6 +13,33 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalSpectreAgentApi::class)
 class DaemonClientTest {
     @Test
+    fun `explains how to replace a daemon that rejects a newer hello`() {
+        assertEquals(
+            "Spectre daemon does not support this command. Run `spectre daemon kill` and retry.",
+            daemonHandshakeFailure(
+                required = DaemonProtocolVersion(major = 1, minor = 4),
+                response =
+                    DaemonResponse.Error(
+                        code = DaemonErrorCode.ProtocolError,
+                        message = "incompatible daemon protocol version",
+                    ),
+            ),
+        )
+    }
+
+    @Test
+    fun `explains how to replace a daemon too old for a request`() {
+        assertEquals(
+            "Spectre daemon protocol 1.3 is too old for this command. " +
+                "Run `spectre daemon kill` and retry.",
+            daemonCompatibilityFailure(
+                required = DaemonProtocolVersion(major = 1, minor = 4),
+                daemon = DaemonProtocolVersion(major = 1, minor = 3),
+            ),
+        )
+    }
+
+    @Test
     fun `daemon runtime classpath includes the loadable agent runtime`() {
         val runtimeEntries = testRuntimeClassPath().split(File.pathSeparator)
 

@@ -11,7 +11,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 3)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 4)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -42,6 +42,8 @@ public object DaemonProtocol {
             is DaemonRequest.TypeText,
             is DaemonRequest.Screenshot -> versionFor(SESSION_COMMANDS_INTRODUCED_MINOR)
             is DaemonRequest.ListJvmProcesses -> versionFor(LIST_JVM_PROCESSES_INTRODUCED_MINOR)
+            is DaemonRequest.StartRecording,
+            is DaemonRequest.StopRecording -> versionFor(RECORDING_INTRODUCED_MINOR)
         }
 
     private fun versionFor(minor: Int): DaemonProtocolVersion =
@@ -51,6 +53,7 @@ public object DaemonProtocol {
     private const val SESSION_LIFECYCLE_INTRODUCED_MINOR: Int = 1
     private const val SESSION_COMMANDS_INTRODUCED_MINOR: Int = 2
     private const val LIST_JVM_PROCESSES_INTRODUCED_MINOR: Int = 3
+    private const val RECORDING_INTRODUCED_MINOR: Int = 4
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)
@@ -108,6 +111,15 @@ public sealed interface DaemonRequest {
     @SerialName("screenshot")
     public data class Screenshot(public val sessionId: String) : DaemonRequest
 
+    @Serializable
+    @SerialName("startRecording")
+    public data class StartRecording(public val sessionId: String, public val outputPath: String) :
+        DaemonRequest
+
+    @Serializable
+    @SerialName("stopRecording")
+    public data class StopRecording(public val sessionId: String) : DaemonRequest
+
     @Serializable @SerialName("shutdown") public data object Shutdown : DaemonRequest
 }
 
@@ -162,6 +174,20 @@ public sealed interface DaemonResponse {
 
         override fun hashCode(): Int = 31 * sessionId.hashCode() + pngBytes.contentHashCode()
     }
+
+    @Serializable
+    @SerialName("recordingStarted")
+    public data class RecordingStarted(
+        public val sessionId: String,
+        public val outputPath: String,
+    ) : DaemonResponse
+
+    @Serializable
+    @SerialName("recordingStopped")
+    public data class RecordingStopped(
+        public val sessionId: String,
+        public val outputPath: String,
+    ) : DaemonResponse
 
     @Serializable @SerialName("shuttingDown") public data object ShuttingDown : DaemonResponse
 
