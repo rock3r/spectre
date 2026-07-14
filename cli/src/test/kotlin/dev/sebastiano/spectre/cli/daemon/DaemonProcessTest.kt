@@ -4,6 +4,7 @@ import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
 import java.nio.channels.Channels
 import java.nio.channels.SocketChannel
+import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
@@ -78,7 +79,11 @@ private fun awaitSocket(socketPath: Path) {
 }
 
 private fun temporarySocketPath(): Path =
-    Path.of("/tmp", "sp-d-${UUID.randomUUID().toString().take(8)}", "daemon", "daemon.sock")
+    if ("posix" in FileSystems.getDefault().supportedFileAttributeViews()) {
+        Path.of("/tmp", "sp-d-${UUID.randomUUID().toString().take(8)}", "daemon", "daemon.sock")
+    } else {
+        Files.createTempDirectory("spectre-daemon-test").resolve("daemon").resolve("daemon.sock")
+    }
 
 private fun deleteTemporarySocketPath(socketPath: Path) {
     Files.deleteIfExists(socketPath)
