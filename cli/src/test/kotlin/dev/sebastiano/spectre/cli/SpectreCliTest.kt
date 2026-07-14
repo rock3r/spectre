@@ -7,6 +7,7 @@ import dev.sebastiano.spectre.cli.daemon.DaemonSessionSummary
 import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class SpectreCliTest {
@@ -16,7 +17,10 @@ class SpectreCliTest {
         val cli =
             SpectreCli(
                 request = { request ->
-                    assertEquals(DaemonRequest.ListJvmProcesses, request)
+                    assertEquals(
+                        ProcessHandle.current().pid(),
+                        assertIs<DaemonRequest.ListJvmProcesses>(request).requesterPid,
+                    )
                     DaemonResponse.JvmProcesses(
                         listOf(DaemonJvmProcessSummary(pid = 42, displayName = "com.example.App"))
                     )

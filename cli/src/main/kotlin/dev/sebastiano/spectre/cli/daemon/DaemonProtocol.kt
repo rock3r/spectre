@@ -55,7 +55,7 @@ public sealed interface DaemonRequest {
 
     @Serializable
     @SerialName("listJvmProcesses")
-    public data object ListJvmProcesses : DaemonRequest
+    public data class ListJvmProcesses(public val requesterPid: Long) : DaemonRequest
 
     @Serializable
     @SerialName("windows")

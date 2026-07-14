@@ -119,7 +119,7 @@ class DaemonSessionCommandProtocolTest {
                 DaemonRequest.Attach(targetPid = 1234),
                 DaemonRequest.Detach(sessionId = "session-1234"),
                 DaemonRequest.ListSessions,
-                DaemonRequest.ListJvmProcesses,
+                DaemonRequest.ListJvmProcesses(requesterPid = 1234),
                 DaemonRequest.Shutdown,
             )
 

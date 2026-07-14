@@ -15,17 +15,37 @@ import kotlin.test.assertTrue
 class DaemonSessionRegistryTest {
     @Test
     fun `lists JVM processes through the injected daemon discovery service`() {
+        val daemonPid = ProcessHandle.current().pid()
         val processes =
             listOf(
+                DaemonJvmProcessSummary(pid = daemonPid, displayName = "spectre daemon"),
+                DaemonJvmProcessSummary(pid = 30, displayName = "spectre cli"),
                 DaemonJvmProcessSummary(pid = 20, displayName = "second"),
                 DaemonJvmProcessSummary(pid = 10, displayName = "first"),
             )
-        val registry = DaemonSessionRegistry(jvmProcessDiscovery = { processes })
+        val registry =
+            DaemonSessionRegistry(jvmProcessDiscovery = DaemonJvmProcessDiscovery { processes })
 
         assertEquals(
-            DaemonResponse.JvmProcesses(processes.reversed()),
-            registry.handle(DaemonRequest.ListJvmProcesses),
+            DaemonResponse.JvmProcesses(processes.takeLast(2).reversed()),
+            registry.handle(DaemonRequest.ListJvmProcesses(requesterPid = 30)),
         )
+    }
+
+    @Test
+    fun `maps JVM process discovery failures to protocol errors`() {
+        val registry =
+            DaemonSessionRegistry(
+                jvmProcessDiscovery =
+                    DaemonJvmProcessDiscovery { throw AttachUnsupportedException() }
+            )
+
+        val response =
+            assertIs<DaemonResponse.Error>(
+                registry.handle(DaemonRequest.ListJvmProcesses(requesterPid = 1234))
+            )
+
+        assertEquals(DaemonErrorCode.AttachFailed, response.code)
     }
 
     @OptIn(ExperimentalSpectreAgentApi::class)
