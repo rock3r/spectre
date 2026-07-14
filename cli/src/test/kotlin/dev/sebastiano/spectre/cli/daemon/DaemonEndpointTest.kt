@@ -9,7 +9,7 @@ class DaemonEndpointTest {
     @Test
     fun `uses a short deterministic per-user directory under the posix temp base`() {
         assertEquals(
-            Path.of("/tmp", "sp-d-2bd806c9", "daemon-v1-2.sock").toString(),
+            Path.of("/tmp", "sp-d-2bd806c9", "daemon-v1.sock").toString(),
             DaemonEndpoint.defaultSocketPath(
                     osName = "Mac OS X",
                     tempDirectory = "/var/folders/long",
@@ -28,5 +28,20 @@ class DaemonEndpointTest {
                 userName = "alice",
             )
         }
+    }
+
+    @Test
+    fun `discovers prior minor-version sockets during the stable endpoint migration`() {
+        assertEquals(
+            listOf(
+                Path.of("/tmp", "sp-d-2bd806c9", "daemon-v1-2.sock"),
+                Path.of("/tmp", "sp-d-2bd806c9", "daemon-v1-1.sock"),
+            ),
+            DaemonEndpoint.legacySocketPaths(
+                osName = "Mac OS X",
+                tempDirectory = "/var/folders/long",
+                userName = "alice",
+            ),
+        )
     }
 }

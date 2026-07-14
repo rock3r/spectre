@@ -13,6 +13,46 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalSpectreAgentApi::class)
 class DaemonSessionRegistryTest {
+    @Test
+    fun `lists JVM processes through the injected daemon discovery service`() {
+        val daemonPid = ProcessHandle.current().pid()
+        val processes =
+            listOf(
+                DaemonJvmProcessSummary(pid = daemonPid, displayName = "spectre daemon"),
+                DaemonJvmProcessSummary(
+                    pid = 40,
+                    displayName =
+                        "dev.sebastiano.spectre.cli.daemon.DaemonMainKt --socket daemon-v1-2.sock",
+                ),
+                DaemonJvmProcessSummary(pid = 30, displayName = "spectre cli"),
+                DaemonJvmProcessSummary(pid = 20, displayName = "second"),
+                DaemonJvmProcessSummary(pid = 10, displayName = "first"),
+            )
+        val registry =
+            DaemonSessionRegistry(jvmProcessDiscovery = DaemonJvmProcessDiscovery { processes })
+
+        assertEquals(
+            DaemonResponse.JvmProcesses(processes.takeLast(2).reversed()),
+            registry.handle(DaemonRequest.ListJvmProcesses(requesterPid = 30)),
+        )
+    }
+
+    @Test
+    fun `maps JVM process discovery failures to protocol errors`() {
+        val registry =
+            DaemonSessionRegistry(
+                jvmProcessDiscovery =
+                    DaemonJvmProcessDiscovery { throw AttachUnsupportedException() }
+            )
+
+        val response =
+            assertIs<DaemonResponse.Error>(
+                registry.handle(DaemonRequest.ListJvmProcesses(requesterPid = 1234))
+            )
+
+        assertEquals(DaemonErrorCode.AttachFailed, response.code)
+    }
+
     @OptIn(ExperimentalSpectreAgentApi::class)
     @Test
     fun `dispatches every automator operation through the attached session`() {

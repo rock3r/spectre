@@ -20,7 +20,7 @@ class DaemonHandshakeTest {
 
         val hello = assertIs<DaemonRequest.Hello>(decoded)
         assertEquals(1, hello.clientVersion.major)
-        assertEquals(2, hello.clientVersion.minor)
+        assertEquals(3, hello.clientVersion.minor)
     }
 
     @Test
@@ -45,6 +45,22 @@ class DaemonHandshakeTest {
                 client = DaemonProtocolVersion(major = 1, minor = 1),
                 daemon = DaemonProtocolVersion(major = 1, minor = 0),
             ),
+        )
+    }
+
+    @Test
+    fun `JVM process listing requires the daemon protocol minor that introduced it`() {
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 1),
+            DaemonProtocol.minimumDaemonVersion(DaemonRequest.ListSessions),
+        )
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 2),
+            DaemonProtocol.minimumDaemonVersion(DaemonRequest.Windows(sessionId = "session-1234")),
+        )
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 3),
+            DaemonProtocol.minimumDaemonVersion(DaemonRequest.ListJvmProcesses(requesterPid = 1234)),
         )
     }
 }
@@ -119,6 +135,7 @@ class DaemonSessionCommandProtocolTest {
                 DaemonRequest.Attach(targetPid = 1234),
                 DaemonRequest.Detach(sessionId = "session-1234"),
                 DaemonRequest.ListSessions,
+                DaemonRequest.ListJvmProcesses(requesterPid = 1234),
                 DaemonRequest.Shutdown,
             )
 
@@ -136,6 +153,9 @@ class DaemonSessionCommandProtocolTest {
                 DaemonResponse.Sessions(
                     sessions =
                         listOf(DaemonSessionSummary(sessionId = "session-1234", targetPid = 1234))
+                ),
+                DaemonResponse.JvmProcesses(
+                    processes = listOf(DaemonJvmProcessSummary(pid = 1234, displayName = "Fixture"))
                 ),
                 DaemonResponse.ShuttingDown,
                 DaemonResponse.Error(code = DaemonErrorCode.SessionNotFound, message = "missing"),

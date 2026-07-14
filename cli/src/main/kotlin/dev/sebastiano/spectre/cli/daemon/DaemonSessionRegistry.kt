@@ -9,9 +9,10 @@ import java.io.IOException
 @OptIn(ExperimentalSpectreAgentApi::class)
 public class DaemonSessionRegistry
 internal constructor(
+    private val jvmProcessDiscovery: DaemonJvmProcessDiscovery = DaemonJvmProcessDiscovery(),
     private val attachAutomator: (Long) -> DaemonSessionAutomator = { targetPid ->
         AttachedDaemonSession(AgentAttach.attach(targetPid))
-    }
+    },
 ) : AutoCloseable {
     private val sessionsByPid: MutableMap<Long, DaemonSession> = linkedMapOf()
 
@@ -31,6 +32,7 @@ internal constructor(
             is DaemonRequest.Attach -> attach(request.targetPid)
             is DaemonRequest.Detach -> detach(request.sessionId)
             DaemonRequest.ListSessions -> listSessions()
+            is DaemonRequest.ListJvmProcesses -> jvmProcessDiscovery.list(request.requesterPid)
             is DaemonRequest.Windows -> windows(request.sessionId)
             is DaemonRequest.AllNodes -> allNodes(request.sessionId)
             is DaemonRequest.FindByTestTag -> findByTestTag(request.sessionId, request.tag)

@@ -11,7 +11,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 2)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 3)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -27,6 +27,30 @@ public object DaemonProtocol {
             daemon.minor < client.minor -> VersionCompatibility.DaemonTooOld
             else -> VersionCompatibility.Compatible
         }
+
+    internal fun minimumDaemonVersion(request: DaemonRequest): DaemonProtocolVersion =
+        when (request) {
+            is DaemonRequest.Hello -> versionFor(MINIMUM_PROTOCOL_MINOR)
+            is DaemonRequest.Attach,
+            is DaemonRequest.Detach,
+            DaemonRequest.ListSessions,
+            DaemonRequest.Shutdown -> versionFor(SESSION_LIFECYCLE_INTRODUCED_MINOR)
+            is DaemonRequest.Windows,
+            is DaemonRequest.AllNodes,
+            is DaemonRequest.FindByTestTag,
+            is DaemonRequest.Click,
+            is DaemonRequest.TypeText,
+            is DaemonRequest.Screenshot -> versionFor(SESSION_COMMANDS_INTRODUCED_MINOR)
+            is DaemonRequest.ListJvmProcesses -> versionFor(LIST_JVM_PROCESSES_INTRODUCED_MINOR)
+        }
+
+    private fun versionFor(minor: Int): DaemonProtocolVersion =
+        DaemonProtocolVersion(major = CurrentVersion.major, minor = minor)
+
+    private const val MINIMUM_PROTOCOL_MINOR: Int = 0
+    private const val SESSION_LIFECYCLE_INTRODUCED_MINOR: Int = 1
+    private const val SESSION_COMMANDS_INTRODUCED_MINOR: Int = 2
+    private const val LIST_JVM_PROCESSES_INTRODUCED_MINOR: Int = 3
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)
@@ -52,6 +76,10 @@ public sealed interface DaemonRequest {
     public data class Detach(public val sessionId: String) : DaemonRequest
 
     @Serializable @SerialName("listSessions") public data object ListSessions : DaemonRequest
+
+    @Serializable
+    @SerialName("listJvmProcesses")
+    public data class ListJvmProcesses(public val requesterPid: Long) : DaemonRequest
 
     @Serializable
     @SerialName("windows")
@@ -103,6 +131,11 @@ public sealed interface DaemonResponse {
     public data class Sessions(public val sessions: List<DaemonSessionSummary>) : DaemonResponse
 
     @Serializable
+    @SerialName("jvmProcesses")
+    public data class JvmProcesses(public val processes: List<DaemonJvmProcessSummary>) :
+        DaemonResponse
+
+    @Serializable
     @SerialName("windows")
     public data class Windows(
         public val sessionId: String,
@@ -140,6 +173,10 @@ public sealed interface DaemonResponse {
 
 @Serializable
 public data class DaemonSessionSummary(public val sessionId: String, public val targetPid: Long)
+
+/** A JVM process that can be targeted through the local daemon. */
+@Serializable
+public data class DaemonJvmProcessSummary(public val pid: Long, public val displayName: String)
 
 public enum class DaemonErrorCode {
     SessionNotFound,

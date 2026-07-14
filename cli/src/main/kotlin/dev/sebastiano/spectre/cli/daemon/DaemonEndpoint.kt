@@ -15,9 +15,26 @@ public object DaemonEndpoint {
         Path.of(
                 baseDirectory(osName, tempDirectory),
                 "sp-d-${shortUserId(userName)}",
-                "daemon-v${DaemonProtocol.CurrentVersion.major}-${DaemonProtocol.CurrentVersion.minor}.sock",
+                "daemon-v${DaemonProtocol.CurrentVersion.major}.sock",
             )
             .also(::requireSocketPathFits)
+
+    /** Returns prior minor-version endpoints to probe while migrating to the stable major path. */
+    internal fun legacySocketPaths(
+        osName: String = System.getProperty("os.name").orEmpty(),
+        tempDirectory: String = System.getProperty("java.io.tmpdir").orEmpty(),
+        userName: String = System.getProperty("user.name").orEmpty(),
+    ): List<Path> =
+        (1 until DaemonProtocol.CurrentVersion.minor)
+            .reversed()
+            .map { minor ->
+                Path.of(
+                    baseDirectory(osName, tempDirectory),
+                    "sp-d-${shortUserId(userName)}",
+                    "daemon-v${DaemonProtocol.CurrentVersion.major}-$minor.sock",
+                )
+            }
+            .onEach(::requireSocketPathFits)
 
     /** Selects the platform-specific short base directory for daemon sockets. */
     internal fun baseDirectory(osName: String, tempDirectory: String): String =
