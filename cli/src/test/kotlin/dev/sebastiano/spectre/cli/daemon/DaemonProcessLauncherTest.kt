@@ -22,7 +22,7 @@ class DaemonProcessLauncherTest {
                 "spectre.jar",
                 "dev.sebastiano.spectre.cli.daemon.DaemonMainKt",
                 "--socket",
-                "/tmp/spectre/daemon.sock",
+                Path.of("/tmp", "spectre", "daemon.sock").toString(),
             ),
             command,
         )
