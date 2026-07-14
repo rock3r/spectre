@@ -29,7 +29,7 @@ public class SpectreCli(
     public constructor(
         output: Appendable = System.out,
         errorOutput: Appendable = System.err,
-        socketPath: Path = DaemonEndpoint.defaultSocketPath(),
+        socketPath: Path? = null,
     ) : this(request = daemonRequest(socketPath), output = output, errorOutput = errorOutput)
 
     /** Parses and executes one CLI invocation, returning zero when it succeeds. */
@@ -113,9 +113,10 @@ private fun DaemonSessionJson(summary: DaemonSessionSummary): DaemonSessionJson 
 private fun humanSession(summary: DaemonSessionSummary): String =
     "${summary.sessionId} (pid ${summary.targetPid})"
 
-private fun daemonRequest(socketPath: Path): (DaemonRequest) -> DaemonResponse = { request ->
-    DaemonClient(socketPath).use { client ->
-        client.requestOrStart(request) { DaemonProcessLauncher(socketPath).start() }
+private fun daemonRequest(socketPath: Path?): (DaemonRequest) -> DaemonResponse = { request ->
+    val resolvedSocketPath = socketPath ?: DaemonEndpoint.defaultSocketPath()
+    DaemonClient(resolvedSocketPath).use { client ->
+        client.requestOrStart(request) { DaemonProcessLauncher(resolvedSocketPath).start() }
     }
 }
 
