@@ -282,13 +282,13 @@ public constructor(
         private val staleSocketRecoveryLocks: ConcurrentHashMap<Path, Any> = ConcurrentHashMap()
 
         private fun daemonRecoveryLockPath(socketPath: Path): Path {
+            val canonicalSocketPath =
+                (socketPath.parent ?: Path.of("")).toRealPath().resolve(socketPath.fileName)
             val digest =
                 HexFormat.of()
                     .formatHex(
                         MessageDigest.getInstance("SHA-256")
-                            .digest(
-                                socketPath.toAbsolutePath().normalize().toString().toByteArray()
-                            )
+                            .digest(canonicalSocketPath.toString().toByteArray())
                     )
             return Path.of(System.getProperty("user.home"), ".spectre", "daemon-locks", digest)
         }
@@ -357,7 +357,7 @@ private sealed interface DaemonSocketProtection {
         rejectSymbolicLink(directory)
         if ("unix" in directory.fileSystem.supportedFileAttributeViews()) {
             val mode = Files.getAttribute(directory, "unix:mode", NOFOLLOW_LINKS) as Int
-            if (mode and STICKY_BIT != 0) return
+            if (mode and STICKY_BIT != 0 && isTrustedStickyDirectory(directory)) return
             if (mode and GROUP_OR_OTHER_WRITE_BITS == 0) return
             throw IOException(
                 "Daemon socket ancestor $directory must not be group or world writable"
@@ -375,6 +375,12 @@ private sealed interface DaemonSocketProtection {
         path == Path.of("/tmp") &&
             runCatching { Files.readSymbolicLink(path) == Path.of("private/tmp") }
                 .getOrDefault(false)
+
+    private fun isTrustedStickyDirectory(directory: Path): Boolean {
+        val owner = Files.getOwner(directory, NOFOLLOW_LINKS).name
+        val currentUser = Files.getOwner(Path.of(System.getProperty("user.home"))).name
+        return owner == "root" || owner == currentUser
+    }
 
     @Throws(IOException::class) fun protectSocket(socketPath: Path)
 
