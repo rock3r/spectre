@@ -12,6 +12,7 @@ import dev.sebastiano.spectre.cli.daemon.DaemonProcessLauncher
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import dev.sebastiano.spectre.cli.daemon.DaemonSessionSummary
+import java.io.IOException
 import java.nio.file.Path
 import kotlin.system.exitProcess
 import kotlinx.serialization.Serializable
@@ -42,6 +43,10 @@ public class SpectreCli(
             destination.append(command.getFormattedHelp(exception))
             destination.appendLine()
             exception.statusCode
+        } catch (exception: IOException) {
+            errorOutput.append("Spectre daemon error: ${exception.message ?: "I/O failure"}")
+            errorOutput.appendLine()
+            EXIT_FAILURE
         }
     }
 }
@@ -115,5 +120,6 @@ private fun daemonRequest(socketPath: Path): (DaemonRequest) -> DaemonResponse =
 }
 
 private const val EXIT_SUCCESS: Int = 0
+private const val EXIT_FAILURE: Int = 1
 private const val JSON_VERSION: Int = 1
 private val CLI_JSON: Json = Json { encodeDefaults = true }

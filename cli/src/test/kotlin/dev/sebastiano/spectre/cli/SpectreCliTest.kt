@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.cli
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import dev.sebastiano.spectre.cli.daemon.DaemonSessionSummary
+import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -52,5 +53,21 @@ class SpectreCliTest {
         assertEquals(1, cli.run(listOf("unknown")))
         assertEquals("", output.toString())
         assertTrue(errorOutput.contains("unknown"))
+    }
+
+    @Test
+    fun `daemon I O errors are reported without a stack trace`() {
+        val output = StringBuilder()
+        val errorOutput = StringBuilder()
+        val cli =
+            SpectreCli(
+                request = { throw IOException("Socket unavailable") },
+                output = output,
+                errorOutput = errorOutput,
+            )
+
+        assertEquals(1, cli.run(listOf("daemon", "status")))
+        assertEquals("", output.toString())
+        assertEquals("Spectre daemon error: Socket unavailable\n", errorOutput.toString())
     }
 }
