@@ -248,6 +248,7 @@ public constructor(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         running.set(false)
+        runCatching { registry.close() }
         runCatching { activeClient.getAndSet(null)?.close() }
         val removedSocket =
             runCatching {

@@ -17,6 +17,25 @@ import kotlin.test.assertTrue
 
 class DaemonServerTest {
     @Test
+    fun `close detaches all owned agent sessions`() {
+        val socketPath = temporarySocketPath()
+        var closes = 0
+        val registry = DaemonSessionRegistry { AutoCloseable { closes++ } }
+        val server = DaemonServer(socketPath, registry = registry)
+
+        try {
+            registry.handle(DaemonRequest.Attach(1234))
+
+            server.close()
+
+            assertEquals(1, closes)
+        } finally {
+            server.close()
+            deleteTemporarySocketPath(socketPath)
+        }
+    }
+
+    @Test
     fun `close unblocks an idle connected client`() {
         val socketPath = temporarySocketPath()
         val server = DaemonServer(socketPath)
@@ -322,7 +341,7 @@ class DaemonServerTest {
     @Test
     fun `serves lifecycle requests over a unix domain socket and removes it on shutdown`() {
         val socketPath = temporarySocketPath()
-        val server = DaemonServer(socketPath)
+        val server = DaemonServer(socketPath, registry = DaemonSessionRegistry { AutoCloseable {} })
 
         try {
             SocketChannel.open(java.net.StandardProtocolFamily.UNIX).use { channel ->

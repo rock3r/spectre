@@ -12,6 +12,7 @@ kotlin {
 
 dependencies {
     implementation(projects.agent)
+    runtimeOnly(projects.agentRuntime)
     implementation(libs.kotlinx.serialization.cbor)
 
     detektPlugins(libs.compose.rules.detekt)
