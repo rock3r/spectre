@@ -10,6 +10,7 @@ import dev.sebastiano.spectre.agent.fixture.TAG_LABEL
 import java.awt.GraphicsEnvironment
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -88,7 +89,14 @@ class DaemonFixtureIntegrationTest {
 }
 
 private fun temporaryDaemonFixtureSocketPath(): Path =
-    Path.of("/tmp", "sp-d-${UUID.randomUUID().toString().take(8)}", "daemon", "daemon.sock")
+    temporaryDaemonFixtureRoot().resolve("daemon").resolve("daemon.sock")
+
+private fun temporaryDaemonFixtureRoot(): Path =
+    Path.of(
+        if ("posix" in FileSystems.getDefault().supportedFileAttributeViews()) "/tmp"
+        else System.getProperty("java.io.tmpdir"),
+        "sp-d-${UUID.randomUUID().toString().take(8)}",
+    )
 
 private fun daemonFixtureRuntimeClassPath(): String =
     requireNotNull(System.getProperty("spectre.cli.testRuntimeClasspath")) {
