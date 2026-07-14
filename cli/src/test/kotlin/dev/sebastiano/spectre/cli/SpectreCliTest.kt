@@ -1,5 +1,7 @@
 package dev.sebastiano.spectre.cli
 
+import dev.sebastiano.spectre.agent.transport.RectDto
+import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import dev.sebastiano.spectre.cli.daemon.DaemonJvmProcessSummary
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
@@ -11,6 +13,38 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class SpectreCliTest {
+    @Test
+    fun `windows prints stable JSON output`() {
+        val output = StringBuilder()
+        val window = WindowSummaryDto(0, "main", "Fixture", false, RectDto(1, 2, 3, 4))
+        val cli =
+            SpectreCli(
+                request = { DaemonResponse.Windows("pid-42", listOf(window)) },
+                output = output,
+            )
+
+        assertEquals(0, cli.run(listOf("windows", "pid-42", "--json")))
+        assertEquals(
+            "{\"version\":1,\"windows\":[{\"index\":0,\"surfaceId\":\"main\",\"title\":\"Fixture\",\"isPopup\":false," +
+                "\"bounds\":{\"x\":1,\"y\":2,\"width\":3,\"height\":4}}]}\n",
+            output.toString(),
+        )
+    }
+
+    @Test
+    fun `windows uses a readable label for untitled windows`() {
+        val output = StringBuilder()
+        val window = WindowSummaryDto(0, "popup", null, true, RectDto(1, 2, 3, 4))
+        val cli =
+            SpectreCli(
+                request = { DaemonResponse.Windows("pid-42", listOf(window)) },
+                output = output,
+            )
+
+        assertEquals(0, cli.run(listOf("windows", "pid-42")))
+        assertEquals("0 (untitled)\n", output.toString())
+    }
+
     @Test
     fun `detach prints stable JSON session output`() {
         val output = StringBuilder()

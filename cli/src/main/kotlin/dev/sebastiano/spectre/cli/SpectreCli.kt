@@ -8,6 +8,8 @@ import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.long
+import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import dev.sebastiano.spectre.cli.daemon.DaemonClient
 import dev.sebastiano.spectre.cli.daemon.DaemonEndpoint
 import dev.sebastiano.spectre.cli.daemon.DaemonJvmProcessSummary
@@ -71,12 +73,40 @@ private class RootCommand(request: (DaemonRequest) -> DaemonResponse, output: Ap
         subcommands(
             AttachCommand(request, output),
             DetachCommand(request, output),
+            WindowsCommand(request, output),
             PsCommand(request, output),
             DaemonCommand(request, output),
         )
     }
 
     override fun run(): Unit = Unit
+}
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private class WindowsCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "windows") {
+    private val sessionId: String by argument()
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val windows =
+            when (val response = request(DaemonRequest.Windows(sessionId))) {
+                is DaemonResponse.Windows -> response.windows
+                is DaemonResponse.Error -> throw IOException(response.message)
+                else -> error("Daemon returned an unexpected response to windows")
+            }
+        if (json) {
+            output.append(CLI_JSON.encodeToString(WindowsJson(windows = windows.map(::WindowJson))))
+        } else
+            output.append(
+                windows.joinToString("\n") { window ->
+                    "${window.index} ${window.title ?: "(untitled)"}"
+                }
+            )
+        output.appendLine()
+    }
 }
 
 private class DetachCommand(
@@ -207,6 +237,20 @@ private data class AttachJson(val version: Int = JSON_VERSION, val id: String, v
 @Serializable private data class DetachJson(val version: Int = JSON_VERSION, val id: String)
 
 @Serializable
+private data class WindowsJson(val version: Int = JSON_VERSION, val windows: List<WindowJson>)
+
+@Serializable
+private data class WindowJson(
+    val index: Int,
+    val surfaceId: String,
+    val title: String?,
+    val isPopup: Boolean,
+    val bounds: RectJson,
+)
+
+@Serializable private data class RectJson(val x: Int, val y: Int, val width: Int, val height: Int)
+
+@Serializable
 private data class PsJson(val version: Int = JSON_VERSION, val processes: List<PsProcessJson>)
 
 @Serializable private data class PsProcessJson(val pid: Long, val displayName: String)
@@ -222,6 +266,17 @@ private fun PsProcessJson(summary: DaemonJvmProcessSummary): PsProcessJson =
 
 private fun humanProcess(summary: DaemonJvmProcessSummary): String =
     "${summary.pid} ${summary.displayName}"
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private fun WindowJson(window: WindowSummaryDto): WindowJson =
+    WindowJson(
+        index = window.index,
+        surfaceId = window.surfaceId,
+        title = window.title,
+        isPopup = window.isPopup,
+        bounds =
+            RectJson(window.bounds.x, window.bounds.y, window.bounds.width, window.bounds.height),
+    )
 
 private fun daemonRequest(socketPath: Path?): (DaemonRequest) -> DaemonResponse =
     daemonRequest@{ request ->
