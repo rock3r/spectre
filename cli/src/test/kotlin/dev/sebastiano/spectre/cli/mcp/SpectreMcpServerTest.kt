@@ -1,7 +1,9 @@
 package dev.sebastiano.spectre.cli.mcp
 
+import dev.sebastiano.spectre.cli.daemon.DaemonErrorCode
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import io.modelcontextprotocol.kotlin.sdk.types.ImageContent
+import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -50,5 +52,21 @@ class SpectreMcpServerTest {
         val image = result.content.single() as ImageContent
         assertEquals("image/png", image.mimeType)
         assertEquals("AQID", image.data)
+    }
+
+    @Test
+    fun `screenshot tool preserves daemon error messages`() {
+        val result =
+            DaemonResponse.Error(
+                    DaemonErrorCode.SessionNotFound,
+                    "session session-42 was not found",
+                )
+                .screenshotResult()
+
+        assertTrue(result.isError == true)
+        assertEquals(
+            "session session-42 was not found",
+            (result.content.single() as TextContent).text,
+        )
     }
 }

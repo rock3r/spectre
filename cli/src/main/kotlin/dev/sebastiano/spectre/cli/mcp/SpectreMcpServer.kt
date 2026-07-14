@@ -225,6 +225,7 @@ internal fun DaemonResponse.screenshotResult(): CallToolResult =
                         )
                     )
             )
+        is DaemonResponse.Error -> CallToolResult(listOf(TextContent(message)), isError = true)
         else ->
             CallToolResult(
                 listOf(TextContent("Spectre daemon did not return a screenshot.")),
