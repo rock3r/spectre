@@ -357,7 +357,10 @@ private sealed interface DaemonSocketProtection {
         rejectSymbolicLink(directory)
         if ("unix" in directory.fileSystem.supportedFileAttributeViews()) {
             val mode = Files.getAttribute(directory, "unix:mode", NOFOLLOW_LINKS) as Int
-            if (mode and STICKY_BIT != 0 && isTrustedStickyDirectory(directory)) return
+            if (!isTrustedOwner(directory)) {
+                throw IOException("Daemon socket ancestor $directory must be owned by root or user")
+            }
+            if (mode and STICKY_BIT != 0) return
             if (mode and GROUP_OR_OTHER_WRITE_BITS == 0) return
             throw IOException(
                 "Daemon socket ancestor $directory must not be group or world writable"
@@ -376,7 +379,7 @@ private sealed interface DaemonSocketProtection {
             runCatching { Files.readSymbolicLink(path) == Path.of("private/tmp") }
                 .getOrDefault(false)
 
-    private fun isTrustedStickyDirectory(directory: Path): Boolean {
+    private fun isTrustedOwner(directory: Path): Boolean {
         val owner = Files.getOwner(directory, NOFOLLOW_LINKS).name
         val currentUser = Files.getOwner(Path.of(System.getProperty("user.home"))).name
         return owner == "root" || owner == currentUser
