@@ -13,7 +13,7 @@ import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
-import java.nio.file.StandardOpenOption.CREATE_NEW
+import java.nio.file.StandardOpenOption.CREATE
 import java.nio.file.StandardOpenOption.WRITE
 import java.nio.file.attribute.AclEntry
 import java.nio.file.attribute.AclEntryPermission
@@ -21,7 +21,9 @@ import java.nio.file.attribute.AclEntryType
 import java.nio.file.attribute.AclFileAttributeView
 import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.PosixFilePermissions
+import java.security.MessageDigest
 import java.util.EnumSet
+import java.util.HexFormat
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -44,6 +46,13 @@ public constructor(
     private val socketProtection: DaemonSocketProtection =
         DaemonSocketProtection.forPath(socketPath)
     private val createdParents: List<Path> = socketProtection.createMissingParents(socketPath)
+    private val recoveryLockPath: Path = daemonRecoveryLockPath(socketPath)
+    private val recoveryLockProtection: DaemonSocketProtection =
+        DaemonSocketProtection.forPath(recoveryLockPath)
+
+    init {
+        recoveryLockProtection.createMissingParents(recoveryLockPath)
+    }
 
     private val serverChannel: ServerSocketChannel =
         ServerSocketChannel.open(StandardProtocolFamily.UNIX).also { channel ->
@@ -163,22 +172,10 @@ public constructor(
     }
 
     private inline fun withStaleSocketRecoveryLock(action: () -> Unit) {
-        val lockPath = socketPath.resolveSibling("${socketPath.fileName}.lock")
-        val jvmLock = staleSocketRecoveryLocks.computeIfAbsent(lockPath) { Any() }
+        val jvmLock = staleSocketRecoveryLocks.computeIfAbsent(recoveryLockPath) { Any() }
         synchronized(jvmLock) {
-            var createdLock = false
-            try {
-                val channel =
-                    try {
-                        FileChannel.open(lockPath, CREATE_NEW, WRITE).also { createdLock = true }
-                    } catch (_: FileAlreadyExistsException) {
-                        FileChannel.open(lockPath, WRITE)
-                    }
-                channel.use { channel -> channel.lock().use { action() } }
-            } finally {
-                // An existing lock may have been created by the user or another process. Remove
-                // only the lock atomically created by this server.
-                if (createdLock) Files.deleteIfExists(lockPath)
+            FileChannel.open(recoveryLockPath, CREATE, WRITE).use { channel ->
+                channel.lock().use { action() }
             }
         }
     }
@@ -250,6 +247,18 @@ public constructor(
             System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
 
         private val staleSocketRecoveryLocks: ConcurrentHashMap<Path, Any> = ConcurrentHashMap()
+
+        private fun daemonRecoveryLockPath(socketPath: Path): Path {
+            val digest =
+                HexFormat.of()
+                    .formatHex(
+                        MessageDigest.getInstance("SHA-256")
+                            .digest(
+                                socketPath.toAbsolutePath().normalize().toString().toByteArray()
+                            )
+                    )
+            return Path.of(System.getProperty("user.home"), ".spectre", "daemon-locks", digest)
+        }
     }
 }
 
