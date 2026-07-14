@@ -80,6 +80,11 @@ internal constructor(
                     code = DaemonErrorCode.AttachFailed,
                     message = exception.message ?: "Failed to attach to process $targetPid",
                 )
+            } catch (exception: IOException) {
+                return DaemonResponse.Error(
+                    code = DaemonErrorCode.AttachFailed,
+                    message = exception.message ?: "Failed to prepare the agent runtime",
+                )
             }
         val session = DaemonSession(summary = targetPid.toSessionSummary(), automator = attached)
         sessionsByPid[targetPid] = session
