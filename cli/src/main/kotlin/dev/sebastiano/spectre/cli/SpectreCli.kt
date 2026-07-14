@@ -90,8 +90,24 @@ public fun main(arguments: Array<String>): Unit =
         jdkPreflightError()?.let { message ->
             System.err.println(message)
             EXIT_DAEMON_FAILURE
-        } ?: SpectreCli().run(arguments.asList())
+        }
+            ?: run {
+                installEmbeddedAgentRuntime()
+                SpectreCli().run(arguments.asList())
+            }
     )
+
+private fun installEmbeddedAgentRuntime() {
+    if (System.getProperty(AGENT_RUNTIME_JAR_PROPERTY) != null) return
+    val resource =
+        SpectreCli::class.java.getResourceAsStream("/spectre/agent-runtime.jar") ?: return
+    val destination = Files.createTempFile("spectre-agent-runtime-", ".jar")
+    resource.use { input ->
+        Files.copy(input, destination, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+    }
+    destination.toFile().deleteOnExit()
+    System.setProperty(AGENT_RUNTIME_JAR_PROPERTY, destination.toString())
+}
 
 internal fun jdkPreflightError(
     featureVersion: Int = Runtime.version().feature(),
@@ -106,6 +122,7 @@ internal fun jdkPreflightError(
     }
 
 private const val MINIMUM_JDK_FEATURE_VERSION: Int = 21
+internal const val AGENT_RUNTIME_JAR_PROPERTY: String = "dev.sebastiano.spectre.agent.runtimeJar"
 
 private class RootCommand(
     request: (DaemonRequest) -> DaemonResponse,
