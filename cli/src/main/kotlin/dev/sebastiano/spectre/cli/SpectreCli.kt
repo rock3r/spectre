@@ -21,6 +21,7 @@ import dev.sebastiano.spectre.cli.daemon.DaemonProtocol
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import dev.sebastiano.spectre.cli.daemon.DaemonSessionSummary
+import dev.sebastiano.spectre.cli.mcp.SpectreMcpServer
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -104,10 +105,16 @@ private class RootCommand(
             RecordCommand(request, output),
             PsCommand(request, output),
             DaemonCommand(request, shutdownRequest, output),
+            McpCommand(request),
         )
     }
 
     override fun run(): Unit = Unit
+}
+
+private class McpCommand(private val request: (DaemonRequest) -> DaemonResponse) :
+    CliktCommand(name = "mcp") {
+    override fun run(): Unit = SpectreMcpServer.run(request)
 }
 
 @OptIn(ExperimentalSpectreAgentApi::class)

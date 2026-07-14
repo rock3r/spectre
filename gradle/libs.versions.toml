@@ -19,10 +19,11 @@ kotlin = "2.3.20"
 # POM defaults, sources + javadoc jars, signing, and the Central upload in one place. See
 # `docs/PUBLISHING.md` for the release flow.
 mavenPublish = "0.36.0"
+mcpKotlinSdk = "0.14.0"
 junit4 = "4.13.2"
 junit5 = "5.11.4"
 kotlinx-coroutines = "1.10.2"
-kotlinx-serialization = "1.7.3"
+kotlinx-serialization = "1.11.0"
 ktor = "3.0.3"
 material3 = "1.10.0-alpha05"
 # GradleUp Shadow — maintained successor to johnrengelman/shadow. Used by `:agent` to
@@ -57,6 +58,8 @@ junit5-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref
 junit5-vintageEngine = { module = "org.junit.vintage:junit-vintage-engine", version.ref = "junit5" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 kotlinx-serialization-cbor = { module = "org.jetbrains.kotlinx:kotlinx-serialization-cbor", version.ref = "kotlinx-serialization" }
+mcp-kotlin-sdk-server = { module = "io.modelcontextprotocol:kotlin-sdk-server", version.ref = "mcpKotlinSdk" }
+mcp-kotlin-sdk-client = { module = "io.modelcontextprotocol:kotlin-sdk-client", version.ref = "mcpKotlinSdk" }
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
 ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
 ktor-client-contentNegotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
