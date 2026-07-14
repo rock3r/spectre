@@ -20,10 +20,12 @@ dependencies {
     implementation(libs.clikt)
     implementation(libs.kotlinx.serialization.cbor)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.mcp.kotlin.sdk.server)
 
     detektPlugins(libs.compose.rules.detekt)
 
     testImplementation(libs.kotlin.testJunit5)
+    testImplementation(libs.mcp.kotlin.sdk.client)
     testImplementation(projects.agentTestFixture)
 }
 
