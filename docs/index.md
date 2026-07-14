@@ -63,6 +63,8 @@ familiar — Spectre brings the same "find a node, do a thing, assert" loop to C
   and Linux.
 - :material-server: **[Cross-JVM](guide/cross-jvm.md)** — Drive a UI hosted in another JVM
   process via the embedded HTTP transport (experimental; see [Security notes](SECURITY.md)).
+- :material-robot: **[MCP access](guide/mcp.md)** — Attach an MCP client to a live Compose
+  Desktop application for semantics, input, screenshots, and recordings.
 
 </div>
 
