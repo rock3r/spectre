@@ -8,15 +8,13 @@ public class DaemonProcessLauncher(
     private val socketPath: Path,
     private val javaExecutable: String = defaultJavaExecutable(),
     private val classPath: String = System.getProperty("java.class.path"),
-    private val outputRedirect: ProcessBuilder.Redirect = ProcessBuilder.Redirect.DISCARD,
-    private val errorRedirect: ProcessBuilder.Redirect = ProcessBuilder.Redirect.DISCARD,
 ) {
     /** Launches the daemon process without inheriting this client's standard streams. */
     @Throws(IOException::class)
     public fun start(): Process =
         ProcessBuilder(command())
-            .redirectOutput(outputRedirect)
-            .redirectError(errorRedirect)
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
             .start()
 
     /** Returns the isolated daemon command without starting a process. */

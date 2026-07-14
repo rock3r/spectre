@@ -26,7 +26,7 @@ class DaemonServerTest {
 
         try {
             client.connect(java.net.UnixDomainSocketAddress.of(socketPath))
-            Thread.sleep(10)
+            Thread.sleep(100)
 
             assertFalse(server.closeIfIdle(timeoutMillis = 1))
             assertTrue(Files.exists(socketPath))

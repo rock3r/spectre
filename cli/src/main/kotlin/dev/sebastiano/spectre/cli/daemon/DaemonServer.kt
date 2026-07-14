@@ -277,6 +277,8 @@ public constructor(
             }
         } catch (_: java.net.ConnectException) {
             false
+        } catch (_: java.net.SocketException) {
+            false
         } catch (_: NoSuchFileException) {
             false
         }
