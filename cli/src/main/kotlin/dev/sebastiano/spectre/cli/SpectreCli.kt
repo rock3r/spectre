@@ -507,10 +507,25 @@ private fun daemonRequest(socketPath: Path?): (DaemonRequest) -> DaemonResponse 
         }
     }
 
-private fun daemonShutdownRequest(socketPath: Path?): () -> DaemonResponse = {
-    DaemonClient(socketPath ?: DaemonEndpoint.defaultSocketPath()).use { client ->
-        client.request(DaemonRequest.Shutdown)
+private fun daemonShutdownRequest(socketPath: Path?): () -> DaemonResponse = daemonShutdownRequest@{
+    val resolvedSocketPath = socketPath ?: DaemonEndpoint.defaultSocketPath()
+    if (
+        socketPath == null &&
+            DaemonProtocol.minimumDaemonVersion(DaemonRequest.Shutdown).minor <
+                DaemonProtocol.CurrentVersion.minor
+    ) {
+        for (legacySocketPath in DaemonEndpoint.legacySocketPaths()) {
+            if (!Files.exists(legacySocketPath)) continue
+            try {
+                return@daemonShutdownRequest DaemonClient(legacySocketPath).use { client ->
+                    client.request(DaemonRequest.Shutdown)
+                }
+            } catch (_: IOException) {
+                // A stale legacy socket must not prevent probing another endpoint.
+            }
+        }
     }
+    DaemonClient(resolvedSocketPath).use { client -> client.request(DaemonRequest.Shutdown) }
 }
 
 private const val EXIT_SUCCESS: Int = 0
