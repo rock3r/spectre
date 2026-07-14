@@ -7,6 +7,7 @@ import java.nio.file.NoSuchFileException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class DaemonStartupCoordinatorTest {
     @Test
@@ -112,5 +113,48 @@ class DaemonStartupCoordinatorTest {
 
         assertEquals(2, attempts)
         assertEquals(1, starts)
+    }
+
+    @Test
+    fun `retries an absent endpoint while the started daemon becomes ready`() {
+        var attempts = 0
+        var starts = 0
+
+        DaemonStartupCoordinator(
+                connect = {
+                    attempts++
+                    if (attempts < 3) throw ConnectException("missing")
+                },
+                start = { starts++ },
+            )
+            .connectOrStart()
+
+        assertEquals(3, attempts)
+        assertEquals(1, starts)
+    }
+
+    @Test
+    fun `reports interruption when startup races with another client`() {
+        Thread.currentThread().interrupt()
+
+        try {
+            val failure =
+                assertFailsWith<IOException> {
+                    DaemonStartupCoordinator<Unit>(
+                            connect = { throw ConnectException("missing") },
+                            start = {
+                                throw DaemonAlreadyRunningException(
+                                    java.nio.file.Path.of("daemon.sock")
+                                )
+                            },
+                        )
+                        .connectOrStart()
+                }
+
+            assertTrue(failure.cause is InterruptedException)
+            assertTrue(Thread.currentThread().isInterrupted)
+        } finally {
+            Thread.interrupted()
+        }
     }
 }
