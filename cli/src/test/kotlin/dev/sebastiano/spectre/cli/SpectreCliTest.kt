@@ -282,7 +282,7 @@ class SpectreCliTest {
                 errorOutput = errorOutput,
             )
 
-        assertEquals(1, cli.run(listOf("ps")))
+        assertEquals(3, cli.run(listOf("ps")))
         assertEquals("", output.toString())
         assertEquals(
             "Spectre daemon error: The JDK Attach API is not available\n",
@@ -345,9 +345,55 @@ class SpectreCliTest {
                 errorOutput = errorOutput,
             )
 
-        assertEquals(1, cli.run(listOf("unknown")))
+        assertEquals(2, cli.run(listOf("unknown")))
         assertEquals("", output.toString())
         assertTrue(errorOutput.contains("unknown"))
+    }
+
+    @Test
+    fun `attach failures use the attach exit code`() {
+        val cli =
+            SpectreCli(
+                request = {
+                    DaemonResponse.Error(
+                        dev.sebastiano.spectre.cli.daemon.DaemonErrorCode.AttachFailed,
+                        "JDK Attach API is unavailable",
+                    )
+                },
+                output = StringBuilder(),
+                errorOutput = StringBuilder(),
+            )
+
+        assertEquals(3, cli.run(listOf("attach", "42")))
+    }
+
+    @Test
+    fun `missing targets use the target-not-found exit code`() {
+        val cli =
+            SpectreCli(
+                request = {
+                    DaemonResponse.Error(
+                        dev.sebastiano.spectre.cli.daemon.DaemonErrorCode.SessionNotFound,
+                        "session not found",
+                    )
+                },
+                output = StringBuilder(),
+                errorOutput = StringBuilder(),
+            )
+
+        assertEquals(4, cli.run(listOf("detach", "missing")))
+    }
+
+    @Test
+    fun `daemon transport failures use the daemon exit code`() {
+        val cli =
+            SpectreCli(
+                request = { throw IOException("Socket unavailable") },
+                output = StringBuilder(),
+                errorOutput = StringBuilder(),
+            )
+
+        assertEquals(5, cli.run(listOf("ps")))
     }
 
     @Test
@@ -361,7 +407,7 @@ class SpectreCliTest {
                 errorOutput = errorOutput,
             )
 
-        assertEquals(1, cli.run(listOf("daemon", "status")))
+        assertEquals(5, cli.run(listOf("daemon", "status")))
         assertEquals("", output.toString())
         assertEquals("Spectre daemon error: Socket unavailable\n", errorOutput.toString())
     }
