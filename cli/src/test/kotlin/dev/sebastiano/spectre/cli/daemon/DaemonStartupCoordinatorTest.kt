@@ -113,4 +113,22 @@ class DaemonStartupCoordinatorTest {
         assertEquals(2, attempts)
         assertEquals(1, starts)
     }
+
+    @Test
+    fun `retries an absent endpoint while the started daemon becomes ready`() {
+        var attempts = 0
+        var starts = 0
+
+        DaemonStartupCoordinator(
+                connect = {
+                    attempts++
+                    if (attempts < 3) throw ConnectException("missing")
+                },
+                start = { starts++ },
+            )
+            .connectOrStart()
+
+        assertEquals(3, attempts)
+        assertEquals(1, starts)
+    }
 }
