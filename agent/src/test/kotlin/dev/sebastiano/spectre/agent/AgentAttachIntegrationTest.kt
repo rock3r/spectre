@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.condition.EnabledOnOs
@@ -92,6 +93,34 @@ class AgentAttachIntegrationTest {
             repeat(REPEAT_CYCLES) { iteration ->
                 attachExerciseDetach(fixture, agentJar, iteration = iteration)
             }
+        }
+    }
+
+    @Test
+    fun `attach explains when the target JVM disables dynamic agent loading`() {
+        assumeFalse(
+            GraphicsEnvironment.isHeadless(),
+            "Requires non-headless JVM for the Compose Desktop fixture",
+        )
+        val agentJar = locateAgentJarOrSkip()
+
+        spawnComposeFixture(dynamicAgentLoadingEnabled = false).use { fixture ->
+            val udsPath = AttachOptions.defaultUdsPath(fixture.pid)
+            orphanUdsFiles.add(udsPath)
+
+            val exception =
+                assertFailsWith<SpectreAttachException> {
+                    AgentAttach.attach(
+                        fixture.pid,
+                        AttachOptions(agentJarPath = agentJar, udsPath = udsPath),
+                    )
+                }
+
+            assertEquals(
+                "The target JVM does not allow dynamic agent loading. Restart it with " +
+                    "`-XX:+EnableDynamicAgentLoading` and retry the attach.",
+                exception.message,
+            )
         }
     }
 
@@ -187,7 +216,7 @@ class AgentAttachIntegrationTest {
         )
     }
 
-    private fun spawnComposeFixture(): FixtureProcess {
+    private fun spawnComposeFixture(dynamicAgentLoadingEnabled: Boolean = true): FixtureProcess {
         // ProcessBuilder does not append `.exe` for an absolute path on Windows, so pick the
         // launcher name explicitly.
         val javaExe =
@@ -201,7 +230,7 @@ class AgentAttachIntegrationTest {
                     javaBin,
                     "-cp",
                     classpath,
-                    "-XX:+EnableDynamicAgentLoading",
+                    "-XX:${if (dynamicAgentLoadingEnabled) "+" else "-"}EnableDynamicAgentLoading",
                     "-Djava.awt.headless=false",
                     "-Dcompose.application.configure.swing.globals=true",
                     // This test exercises real Robot-backed focus and keyboard input. A macOS
