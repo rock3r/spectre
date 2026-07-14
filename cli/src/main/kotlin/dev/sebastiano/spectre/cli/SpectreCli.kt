@@ -182,9 +182,11 @@ private class RecordStartCommand(
     override fun run() {
         val destination =
             try {
-                outputPath
-                    ?: Files.createTempFile("spectre-recording-", ".mp4")
-                        .also(Files::deleteIfExists)
+                (outputPath
+                        ?: Files.createTempFile("spectre-recording-", ".mp4")
+                            .also(Files::deleteIfExists))
+                    .toAbsolutePath()
+                    .normalize()
             } catch (exception: IOException) {
                 throw CliOutputException(exception)
             }
