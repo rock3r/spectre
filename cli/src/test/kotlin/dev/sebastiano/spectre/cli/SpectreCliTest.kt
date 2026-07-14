@@ -15,6 +15,37 @@ import kotlin.test.assertTrue
 
 class SpectreCliTest {
     @Test
+    fun `find prints stable JSON node output`() {
+        val output = StringBuilder()
+        val node =
+            NodeSnapshotDto(
+                key = "main:0:1",
+                testTag = "submit",
+                texts = listOf("Submit"),
+                role = "Button",
+                contentDescription = null,
+                isVisible = true,
+                bounds = RectDto(1, 2, 3, 4),
+            )
+        val cli =
+            SpectreCli(
+                request = { request ->
+                    assertEquals(DaemonRequest.FindByTestTag("pid-42", "submit"), request)
+                    DaemonResponse.Nodes("pid-42", listOf(node))
+                },
+                output = output,
+            )
+
+        assertEquals(0, cli.run(listOf("find", "pid-42", "submit", "--json")))
+        assertEquals(
+            "{\"version\":1,\"nodes\":[{\"key\":\"main:0:1\",\"testTag\":\"submit\",\"texts\":[\"Submit\"]," +
+                "\"editableText\":null,\"role\":\"Button\",\"contentDescription\":null,\"isFocused\":false," +
+                "\"isVisible\":true,\"bounds\":{\"x\":1,\"y\":2,\"width\":3,\"height\":4}}]}\n",
+            output.toString(),
+        )
+    }
+
+    @Test
     fun `tree prints stable JSON node output`() {
         val output = StringBuilder()
         val node =
