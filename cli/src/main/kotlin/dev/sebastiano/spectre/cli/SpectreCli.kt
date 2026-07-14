@@ -101,11 +101,12 @@ private fun installEmbeddedAgentRuntime() {
     if (System.getProperty(AGENT_RUNTIME_JAR_PROPERTY) != null) return
     val resource =
         SpectreCli::class.java.getResourceAsStream("/spectre/agent-runtime.jar") ?: return
-    val destination = Files.createTempFile("spectre-agent-runtime-", ".jar")
+    val directory = Path.of(System.getProperty("user.home"), ".spectre", "runtime")
+    Files.createDirectories(directory)
+    val destination = directory.resolve("agent-runtime.jar")
     resource.use { input ->
         Files.copy(input, destination, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
     }
-    destination.toFile().deleteOnExit()
     System.setProperty(AGENT_RUNTIME_JAR_PROPERTY, destination.toString())
 }
 
