@@ -54,6 +54,46 @@ class DaemonClientTest {
     }
 
     @Test
+    fun `restarts a daemon after its process is killed`() {
+        val socketPath = temporaryDaemonClientSocketPath()
+        val processes = mutableListOf<Process>()
+        var shutdownConfirmed = false
+
+        try {
+            DaemonClient(socketPath).use { client ->
+                fun startDaemon() {
+                    processes +=
+                        DaemonProcessLauncher(
+                                socketPath = socketPath,
+                                classPath = testRuntimeClassPath(),
+                            )
+                            .start()
+                }
+
+                assertEquals(
+                    DaemonResponse.Sessions(emptyList()),
+                    client.requestOrStart(DaemonRequest.ListSessions, ::startDaemon),
+                )
+                processes.single().destroyForcibly().waitFor()
+
+                assertTrue(Files.exists(socketPath), "Killed daemon should leave a stale socket")
+                assertEquals(
+                    DaemonResponse.Sessions(emptyList()),
+                    client.requestOrStart(DaemonRequest.ListSessions, ::startDaemon),
+                )
+                assertEquals(2, processes.size)
+                assertEquals(DaemonResponse.ShuttingDown, client.request(DaemonRequest.Shutdown))
+                shutdownConfirmed = true
+            }
+
+            awaitDaemonClientSocketRemoval(socketPath)
+        } finally {
+            if (!shutdownConfirmed) processes.forEach { it.destroyForcibly().waitFor() }
+            deleteTemporaryDaemonClientSocketPath(socketPath)
+        }
+    }
+
+    @Test
     fun `starts the daemon then sends the first request when the socket is absent`() {
         val socketPath = temporaryDaemonClientSocketPath()
         var server: DaemonServer? = null
