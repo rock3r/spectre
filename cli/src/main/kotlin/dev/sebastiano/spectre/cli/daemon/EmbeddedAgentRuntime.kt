@@ -35,9 +35,11 @@ internal object EmbeddedAgentRuntime {
 
     private fun moveWithoutReplacing(source: Path, destination: Path) {
         try {
-            Files.move(source, destination, ATOMIC_MOVE)
-        } catch (_: AtomicMoveNotSupportedException) {
-            Files.move(source, destination)
+            try {
+                Files.move(source, destination, ATOMIC_MOVE)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(source, destination)
+            }
         } catch (_: FileAlreadyExistsException) {
             // Another daemon startup installed the same content while this one was writing it.
         }
