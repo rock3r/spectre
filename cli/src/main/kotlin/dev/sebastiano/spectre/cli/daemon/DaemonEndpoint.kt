@@ -15,7 +15,7 @@ public object DaemonEndpoint {
         Path.of(
                 baseDirectory(osName, tempDirectory),
                 "sp-d-${shortUserId(userName)}",
-                "daemon-v${DaemonProtocol.CurrentVersion.major}-${DaemonProtocol.CurrentVersion.minor}.sock",
+                "daemon-v${DaemonProtocol.CurrentVersion.major}.sock",
             )
             .also(::requireSocketPathFits)
 

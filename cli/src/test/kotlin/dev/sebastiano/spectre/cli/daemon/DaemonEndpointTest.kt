@@ -9,7 +9,7 @@ class DaemonEndpointTest {
     @Test
     fun `uses a short deterministic per-user directory under the posix temp base`() {
         assertEquals(
-            Path.of("/tmp", "sp-d-2bd806c9", "daemon-v1-3.sock").toString(),
+            Path.of("/tmp", "sp-d-2bd806c9", "daemon-v1.sock").toString(),
             DaemonEndpoint.defaultSocketPath(
                     osName = "Mac OS X",
                     tempDirectory = "/var/folders/long",
