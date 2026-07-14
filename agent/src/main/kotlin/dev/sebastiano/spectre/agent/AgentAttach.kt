@@ -156,7 +156,9 @@ public object AgentAttach {
         } catch (ex: ReflectiveOperationException) {
             val cause = ex.cause ?: ex
             throw SpectreAttachExceptionImpl(
-                "VirtualMachine.loadAgent($jarPath) failed: ${cause.javaClass.simpleName}: ${cause.message}",
+                dynamicAgentLoadingGuidance(cause.message)
+                    ?: "VirtualMachine.loadAgent($jarPath) failed: " +
+                        "${cause.javaClass.simpleName}: ${cause.message}",
                 cause,
             )
         }
@@ -195,3 +197,14 @@ public object AgentAttach {
 @OptIn(ExperimentalSpectreAgentApi::class)
 private class SpectreAttachExceptionImpl(message: String, cause: Throwable?) :
     SpectreAttachException(message, cause)
+
+internal fun dynamicAgentLoadingGuidance(message: String?): String? =
+    if (
+        message?.contains("Dynamic agent loading is not enabled") == true &&
+            message.contains("EnableDynamicAgentLoading")
+    ) {
+        "The target JVM does not allow dynamic agent loading. Restart it with " +
+            "`-XX:+EnableDynamicAgentLoading` and retry the attach."
+    } else {
+        null
+    }
