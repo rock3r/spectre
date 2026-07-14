@@ -11,20 +11,24 @@ class DaemonClientTest {
     @Test
     fun `starts a detached daemon process for the first request`() {
         val socketPath = temporaryDaemonClientSocketPath()
+        var process: Process? = null
+        var shutdownConfirmed = false
 
         try {
             DaemonClient(socketPath).use { client ->
                 assertEquals(
                     DaemonResponse.Sessions(emptyList()),
                     client.requestOrStart(DaemonRequest.ListSessions) {
-                        DaemonProcessLauncher(socketPath).start()
+                        process = DaemonProcessLauncher(socketPath).start()
                     },
                 )
                 assertEquals(DaemonResponse.ShuttingDown, client.request(DaemonRequest.Shutdown))
+                shutdownConfirmed = true
             }
 
             awaitDaemonClientSocketRemoval(socketPath)
         } finally {
+            if (!shutdownConfirmed) process?.destroyForcibly()?.waitFor()
             deleteTemporaryDaemonClientSocketPath(socketPath)
         }
     }
