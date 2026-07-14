@@ -26,6 +26,7 @@ import java.util.EnumSet
 import java.util.HexFormat
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -45,6 +46,7 @@ public constructor(
     }
     private val running: AtomicBoolean = AtomicBoolean(true)
     private val closed: AtomicBoolean = AtomicBoolean(false)
+    private val lastActivityNanos: AtomicLong = AtomicLong(System.nanoTime())
     private val activeClient: AtomicReference<SocketChannel?> = AtomicReference(null)
     private val socketProtection: DaemonSocketProtection =
         DaemonSocketProtection.forPath(socketPath)
@@ -96,6 +98,12 @@ public constructor(
         return !acceptThread.isAlive
     }
 
+    /** Milliseconds elapsed since the most recently received daemon request. */
+    public fun idleMillis(): Long =
+        java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(
+            System.nanoTime() - lastActivityNanos.get()
+        )
+
     private fun acceptLoop() {
         while (running.get()) {
             val client =
@@ -125,6 +133,7 @@ public constructor(
                 var handshakeComplete = false
                 while (running.get()) {
                     val request = DaemonWireCodec.readRequest(input) ?: return
+                    lastActivityNanos.set(System.nanoTime())
                     val response = handleRequest(request, handshakeComplete)
                     if (request is DaemonRequest.Hello) {
                         handshakeComplete = response is DaemonResponse.Hello

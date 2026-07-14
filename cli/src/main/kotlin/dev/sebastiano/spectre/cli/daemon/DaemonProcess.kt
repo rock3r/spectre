@@ -9,6 +9,7 @@ public class DaemonProcess
 public constructor(
     private val socketPath: Path,
     private val serverFactory: (Path) -> DaemonServer = ::DaemonServer,
+    private val idleTimeoutMillis: Long = DEFAULT_IDLE_TIMEOUT_MILLIS,
 ) : AutoCloseable {
     private val lifecycleLock: Any = Any()
     private var server: DaemonServer? = null
@@ -17,12 +18,17 @@ public constructor(
     /** Blocks until the daemon receives a shutdown request or [close] is called. */
     @Throws(IOException::class, InterruptedException::class)
     public fun runUntilShutdown() {
+        require(idleTimeoutMillis > 0) { "idleTimeoutMillis must be positive" }
         val activeServer =
             synchronized(lifecycleLock) {
                 check(!closed) { "Daemon process is closed" }
                 server ?: serverFactory(socketPath).also { server = it }
             }
-        activeServer.awaitTermination(TERMINATION_WAIT_MILLIS)
+        while (!activeServer.awaitTermination(IDLE_POLL_INTERVAL_MILLIS)) {
+            if (activeServer.idleMillis() >= idleTimeoutMillis) {
+                activeServer.close()
+            }
+        }
     }
 
     /** Stops the daemon when the hosting process is asked to exit. */
@@ -35,6 +41,7 @@ public constructor(
     }
 
     private companion object {
-        private const val TERMINATION_WAIT_MILLIS: Long = Long.MAX_VALUE
+        private const val DEFAULT_IDLE_TIMEOUT_MILLIS: Long = 5 * 60 * 1_000
+        private const val IDLE_POLL_INTERVAL_MILLIS: Long = 100
     }
 }
