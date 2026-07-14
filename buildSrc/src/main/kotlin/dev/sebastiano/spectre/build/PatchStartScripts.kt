@@ -1,0 +1,116 @@
+package dev.sebastiano.spectre.build
+
+import java.io.File
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.TaskAction
+
+/** Adds Spectre's JDK preflight to the generated application launchers. */
+abstract class PatchStartScripts : DefaultTask() {
+    @get:InputFile abstract val unixScript: RegularFileProperty
+
+    @get:InputFile abstract val windowsScript: RegularFileProperty
+
+    @TaskAction
+    fun patch() {
+        patchUnix(unixScript.get().asFile)
+        patchWindows(windowsScript.get().asFile)
+    }
+
+    private fun patchUnix(script: File) {
+        script.writeText(
+            script
+                .readText()
+                .replace("# Determine the Java command to use to start the JVM.", UNIX_JAVA_SEARCH)
+                .replace("# Increase the maximum file descriptors if we can.", UNIX_JDK_PREFLIGHT),
+        )
+    }
+
+    private fun patchWindows(script: File) {
+        script.writeText(
+            script
+                .readText()
+                .replace("@rem Find java.exe", WINDOWS_JAVA_SEARCH)
+                .replace(":execute\n@rem Setup the command line", WINDOWS_JDK_PREFLIGHT),
+        )
+    }
+
+    private companion object {
+        private val UNIX_JAVA_SEARCH =
+            """
+            # Find a locally installed JDK when JAVA_HOME and PATH are unset.
+            if [ -z "${'$'}{JAVA_HOME:-}" ] && ! command -v java >/dev/null 2>&1; then
+                if [ -x /usr/libexec/java_home ]; then
+                    JAVA_HOME=${'$'}(/usr/libexec/java_home -v 21+ 2>/dev/null || true)
+                fi
+                for spectre_java_home in "${'$'}{HOME:-}/.sdkman/candidates/java/current" /usr/lib/jvm/* /Library/Java/JavaVirtualMachines/*/Contents/Home; do
+                    if [ -z "${'$'}{JAVA_HOME:-}" ] && [ -x "${'$'}spectre_java_home/bin/java" ]; then
+                        JAVA_HOME=${'$'}spectre_java_home
+                    fi
+                done
+            fi
+
+            # Determine the Java command to use to start the JVM.
+            """
+                .trimIndent()
+
+        private val UNIX_JDK_PREFLIGHT =
+            """
+            # Spectre attaches an agent, so it requires a full JDK rather than a JRE.
+            spectre_java_version=${'$'}("${'$'}JAVACMD" -version 2>&1 | sed -n '1s/.*version "\([^" ]*\)".*/\1/p')
+            spectre_java_feature=${'$'}{spectre_java_version%%.*}
+            case "${'$'}spectre_java_feature" in
+                '' | *[!0-9]*) die "ERROR: Could not determine the Java version from ${'$'}JAVACMD." ;;
+            esac
+            if [ "${'$'}spectre_java_feature" -lt 21 ]; then
+                die "ERROR: Spectre requires JDK 21 or later; found Java ${'$'}spectre_java_version at ${'$'}JAVACMD."
+            fi
+            if ! "${'$'}JAVACMD" --list-modules 2>/dev/null | grep -q '^jdk.attach@'; then
+                die "ERROR: Spectre requires a full JDK with the jdk.attach module; found Java ${'$'}spectre_java_version at ${'$'}JAVACMD."
+            fi
+
+            # Increase the maximum file descriptors if we can.
+            """
+                .trimIndent()
+
+        private val WINDOWS_JAVA_SEARCH =
+            """
+            @rem Find a locally installed JDK when JAVA_HOME and PATH are unset.
+            if defined JAVA_HOME goto findJavaFromJavaHome
+            for %%d in ("%ProgramFiles%\\Java\\*" "%ProgramFiles%\\Eclipse Adoptium\\*" "%ProgramFiles%\\Microsoft\\jdk-*") do if not defined JAVA_HOME if exist "%%~fd\\bin\\java.exe" set JAVA_HOME=%%~fd
+
+            @rem Find java.exe
+            """
+                .trimIndent()
+
+        private val WINDOWS_JDK_PREFLIGHT =
+            """
+            :execute
+            @rem Spectre attaches an agent, so it requires a full JDK rather than a JRE.
+            for /f "tokens=2 delims=\"" %%v in ('"%JAVA_EXE%" -version 2^>^&1 ^| findstr /c:"version"') do set SPECTRE_JAVA_VERSION=%%v
+            for /f "tokens=1 delims=." %%v in ("%SPECTRE_JAVA_VERSION%") do set SPECTRE_JAVA_FEATURE=%%v
+            if not defined SPECTRE_JAVA_FEATURE goto invalidJavaVersion
+            if %SPECTRE_JAVA_FEATURE% LSS 21 goto oldJavaVersion
+            "%JAVA_EXE%" --list-modules 2^>NUL | findstr /r /c:"^jdk.attach@" >NUL
+            if %ERRORLEVEL% neq 0 goto missingAttachModule
+            goto setupCommandLine
+
+            :invalidJavaVersion
+            echo ERROR: Could not determine the Java version from %JAVA_EXE%. 1>&2
+            goto fail
+
+            :oldJavaVersion
+            echo ERROR: Spectre requires JDK 21 or later; found Java %SPECTRE_JAVA_VERSION% at %JAVA_EXE%. 1>&2
+            goto fail
+
+            :missingAttachModule
+            echo ERROR: Spectre requires a full JDK with the jdk.attach module; found Java %SPECTRE_JAVA_VERSION% at %JAVA_EXE%. 1>&2
+            goto fail
+
+            :setupCommandLine
+            @rem Setup the command line
+            """
+                .trimIndent()
+    }
+}
