@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.build
 
 import java.io.File
+import java.nio.file.Files
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
 import org.gradle.api.DefaultTask
@@ -29,20 +30,51 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
             check(zip.getEntry("$applicationRoot/app/spectre.json") != null) {
                 "${archive.name} does not contain Roast's application configuration"
             }
+            validateEntries(zip)
+            extract(archive, zip)
         }
-        extract(archive)
         verifyLauncher(File(temporaryDir, launcher))
     }
 
-    private fun extract(archive: File) {
+    private fun validateEntries(zip: ZipFile) {
+        val root = temporaryDir.toPath()
+        zip.entries().asSequence().forEach { entry ->
+            val destination = root.resolve(entry.name).normalize()
+            check(destination.startsWith(root)) { "ZIP entry escapes the verification directory: ${entry.name}" }
+        }
+    }
+
+    private fun extract(archive: File, zip: ZipFile) {
+        if (isWindows()) {
+            extractWindows(zip)
+        } else {
+            extractUnix(archive)
+        }
+    }
+
+    private fun extractUnix(archive: File) {
         val result =
             ProcessBuilder("unzip", "-o", "-q", archive.absolutePath, "-d", temporaryDir.absolutePath)
                 .redirectErrorStream(true)
                 .start()
         check(result.waitFor(EXTRACTION_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            result.destroyForcibly()
             "Timed out extracting ${archive.name}"
         }
         check(result.exitValue() == 0) { "Could not extract ${archive.name}" }
+    }
+
+    private fun extractWindows(zip: ZipFile) {
+        val root = temporaryDir.toPath()
+        zip.entries().asSequence().forEach { entry ->
+            val destination = root.resolve(entry.name).normalize()
+            if (entry.isDirectory) {
+                Files.createDirectories(destination)
+            } else {
+                Files.createDirectories(destination.parent)
+                zip.getInputStream(entry).use { input -> Files.newOutputStream(destination).use(input::copyTo) }
+            }
+        }
     }
 
     private fun verifyLauncher(launcher: File) {
@@ -52,6 +84,7 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
                 .redirectErrorStream(true)
                 .start()
         check(process.waitFor(LAUNCH_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            process.destroyForcibly()
             "Timed out running bundled launcher ${launcher.name}"
         }
         val output = process.inputStream.bufferedReader().readText()
@@ -63,4 +96,6 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
         const val EXTRACTION_TIMEOUT_SECONDS = 30L
         const val LAUNCH_TIMEOUT_SECONDS = 20L
     }
+
+    private fun isWindows(): Boolean = System.getProperty("os.name").startsWith("Windows")
 }
