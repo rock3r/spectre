@@ -306,7 +306,16 @@ private data class RoastTarget(
     fun launcherPath(version: String): String = "spectre-cli-$version/$launcherRelativePath"
 
     fun runtimeJavaPath(version: String): String =
-        "spectre-cli-$version/${launcherRelativePath.substringBeforeLast('/')}/runtime/bin/$javaExecutable"
+        listOfNotNull(
+                "spectre-cli-$version",
+                launcherRelativePath.substringBeforeLast('/', missingDelimiterValue = "").ifBlank {
+                    null
+                },
+                "runtime",
+                "bin",
+                javaExecutable,
+            )
+            .joinToString("/")
 }
 
 private fun hostRoastTarget(): RoastTarget =
