@@ -36,9 +36,15 @@ public class DaemonProcessLauncher(
                     .also { Files.deleteIfExists(errorLog) }
             }
 
-    /** Removes the empty startup diagnostic after the daemon accepts a request. */
+    /** Removes the startup diagnostic after a confirmed daemon exits. */
     public fun discardStartupError() {
-        startupErrorLog?.let(Files::deleteIfExists)
+        val errorLog = startupErrorLog ?: return
+        val process = daemonProcess
+        if (process?.isAlive == true) {
+            process.onExit().thenRun { Files.deleteIfExists(errorLog) }
+        } else {
+            Files.deleteIfExists(errorLog)
+        }
     }
 
     /** Returns the isolated daemon command without starting a process. */
