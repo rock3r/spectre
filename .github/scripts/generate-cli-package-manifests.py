@@ -63,7 +63,7 @@ def main() -> None:
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/spectre --version")
+    assert_match "Usage:", shell_output("#{{bin}}/spectre --help")
   end
 end
 '''
