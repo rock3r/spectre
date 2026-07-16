@@ -8,8 +8,8 @@ This is the right transport when:
 
 - Your test JVM and the UI JVM are different processes by design, but you don't want to
   modify the UI app's startup wiring.
-- You want to inspect a long-running Spectre-aware app interactively (the future
-  `spectre attach <pid>` CLI builds on this surface).
+- You want to inspect a long-running Spectre-aware app interactively through the
+  `spectre` CLI or an MCP client.
 - You're driving an IntelliJ-hosted Compose surface from a sister process. *Note: see the
   current limitations below — IntelliJ support is gated until further validation.*
 
@@ -281,3 +281,50 @@ jps -l | grep "dev.sebastiano.spectre.sample.MainKt"
 
 The `attachSpike` task is intentionally separate from `:check` — it exists for human
 verification and is not config-cache compatible.
+
+## CLI and MCP
+
+The `spectre` executable is a client for a per-user local daemon. It starts that daemon on
+demand, and `spectre mcp` shares the same daemon and its attached sessions with ordinary CLI
+commands. Keep the executable running only through the MCP client: MCP uses its standard input
+and output for protocol frames, so do not add a shell wrapper that prints banners to standard
+output.
+
+Start with the same target prerequisites described above, then find and attach it from a shell:
+
+```bash
+spectre ps --json
+spectre attach <pid> --json
+```
+
+The attach response contains an `id`. Pass it to commands such as `tree`, `find`, `click`, and
+`screenshot`. `screenshot` writes a PNG to `--output`; without that option it creates a temporary
+file and prints its path.
+
+### Claude Code recipe
+
+Install the `spectre` executable where Claude Code can invoke it, then add it to the project's
+`.mcp.json`. Use an absolute path so Claude Code does not depend on your interactive shell's
+`PATH`:
+
+```json
+{
+  "mcpServers": {
+    "spectre": {
+      "command": "/absolute/path/to/spectre",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Restart Claude Code after changing the configuration. It can then use these tools in order:
+
+1. `list_processes` to find the target PID.
+2. `attach` with that PID and retain the returned `session_id`.
+3. `tree` or `find` to retrieve current node keys, then `click` or `type` to interact.
+4. `screenshot` to receive a PNG directly as MCP image content, rather than a file path.
+
+Node keys are short-lived: get a fresh key with `tree` or `find` after an interaction changes the
+UI. Use `spectre daemon kill` to stop the shared daemon and discard its sessions when you are
+finished.
