@@ -41,6 +41,8 @@ on:
       - "agent/**"
       - "agent-runtime/**"
       - "agent-test-fixture/**"
+      - "cli/**"
+      - "buildSrc/**"
       - "recording/**"
       - "recording-linux/**"
       - "recording-macos/**"
@@ -63,6 +65,8 @@ on:
       - "agent/**"
       - "agent-runtime/**"
       - "agent-test-fixture/**"
+      - "cli/**"
+      - "buildSrc/**"
       - "recording/**"
       - "recording-linux/**"
       - "recording-macos/**"
@@ -254,6 +258,27 @@ jobs:
           echo "All required classes present; ${#all_xml[@]} discovered XML report(s) clean (Gradle exit ignored due to known executor-protocol flake)."
         shell: bash
 
+      - name: Smoke Roast MCP stdio through the unpacked Windows CLI bundle
+        # Windows does not yet support the daemon's Unix-domain-socket attach transport (the
+        # explicit #173 non-goal), so this validates the Windows-specific release boundary we
+        # can exercise today: the console-subsystem Roast launcher must preserve MCP stdio.
+        # It intentionally runs the existing official-MCP-client integration suite through the
+        # unpacked .exe rather than the test classpath.
+        if: always()
+        run: |
+          ./gradlew :cli:packageWindowsX64
+          archive="cli/build/construo/distributions/spectre-windowsX64.zip"
+          distribution="$RUNNER_TEMP/spectre-cli"
+          rm -rf "$distribution"
+          unzip -q "$archive" -d "$distribution"
+          launcher="$(find "$distribution" -name spectre.exe -type f -print -quit)"
+          test -n "$launcher"
+          ./gradlew :cli:test \
+            --tests "*SpectreMcpStdioIntegrationTest*" \
+            --rerun-tasks \
+            -Dspectre.cli.distributionExecutable="$launcher"
+        shell: bash
+
       - name: Upload validation artefacts
         # Always upload — useful both for diagnosing flakes and for confirming what ran on
         # green builds. The fail-tolerant Gradle step + XML-based verification means an absent
@@ -266,5 +291,8 @@ jobs:
             sample-desktop/build/reports/tests/
             sample-desktop/build/test-results/
             sample-desktop/hs_err_*.log
+            cli/build/reports/tests/
+            cli/build/test-results/
+            cli/hs_err_*.log
           if-no-files-found: ignore
           retention-days: 14
