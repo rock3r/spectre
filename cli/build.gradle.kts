@@ -6,6 +6,7 @@ import dev.sebastiano.spectre.build.VerifyCliShadowJar
 import dev.sebastiano.spectre.build.VerifyRoastCliDistribution
 import io.github.fourlastor.construo.Target
 import io.github.fourlastor.construo.task.jvm.CreateRuntimeImageTask as ConstruoCreateRuntimeImageTask
+import org.gradle.api.tasks.Copy
 import org.gradle.api.tasks.application.CreateStartScripts
 import org.gradle.api.tasks.bundling.Zip
 import org.gradle.jvm.toolchain.JavaLanguageVersion
@@ -99,6 +100,18 @@ tasks.named<ConstruoCreateRuntimeImageTask>("createRuntimeImageMacosArm64") {
 tasks.named<ConstruoCreateRuntimeImageTask>("createRuntimeImageWindowsX64") {
     targetJdkRoot.set(targetJdkHome("windowsX64"))
 }
+
+// Construo strips native commands from its jlink image. Spectre must retain the `java` launcher:
+// the foreground Roast process starts a separate daemon JVM for attach-capable commands.
+preserveRuntimeJavaLauncher("linuxX64")
+
+preserveRuntimeJavaLauncher("linuxArm64")
+
+preserveRuntimeJavaLauncher("macosX64", macBundle = true)
+
+preserveRuntimeJavaLauncher("macosArm64", macBundle = true)
+
+preserveRuntimeJavaLauncher("windowsX64")
 
 tasks.shadowJar {
     val agentRuntimeJar = project(":agent-runtime").tasks.named<Jar>("jar")
@@ -210,6 +223,7 @@ val verifyRoastCliDistribution =
             layout.buildDirectory.file("construo/distributions/spectre-${hostTarget.name}.zip")
         )
         launcherPath.set(hostTarget.launcherPath(project.version.toString()))
+        runtimeJavaPath.set(hostTarget.runtimeJavaPath(project.version.toString()))
     }
 
 tasks.assemble { dependsOn(verifyCliShadowJar, verifyCliRuntimeImage) }
@@ -268,12 +282,31 @@ private fun targetJdkHome(target: String, macBundle: Boolean = false) =
         "construo/jdk/$target/jdk-21.0.11+10" + if (macBundle) "/Contents/Home" else ""
     )
 
+private fun preserveRuntimeJavaLauncher(target: String, macBundle: Boolean = false) {
+    val taskSuffix = target.replaceFirstChar(Char::uppercase)
+    val javaExecutable = if (target.startsWith("windows")) "java.exe" else "java"
+    val createRuntimeImage =
+        tasks.named<ConstruoCreateRuntimeImageTask>("createRuntimeImage$taskSuffix")
+    val preserveLauncher =
+        tasks.register<Copy>("preserveRuntimeJavaLauncher$taskSuffix") {
+            dependsOn(createRuntimeImage)
+            from(targetJdkHome(target, macBundle).map { it.file("bin/$javaExecutable") })
+            into(layout.buildDirectory.dir("construo/runtime-image/cli-$target/bin"))
+            filePermissions { unix("rwxr-xr-x") }
+        }
+    tasks.named("roast$taskSuffix") { dependsOn(preserveLauncher) }
+}
+
 private data class RoastTarget(
     val name: String,
     val taskSuffix: String,
     val launcherRelativePath: String,
+    val javaExecutable: String = "java",
 ) {
     fun launcherPath(version: String): String = "spectre-cli-$version/$launcherRelativePath"
+
+    fun runtimeJavaPath(version: String): String =
+        "spectre-cli-$version/${launcherRelativePath.substringBeforeLast('/')}/runtime/bin/$javaExecutable"
 }
 
 private fun hostRoastTarget(): RoastTarget =
@@ -283,7 +316,7 @@ private fun hostRoastTarget(): RoastTarget =
         "macos-x86_64" -> RoastTarget("macosX64", "MacosX64", "Spectre.app/Contents/MacOS/spectre")
         "macos-aarch64" ->
             RoastTarget("macosArm64", "MacosArm64", "Spectre.app/Contents/MacOS/spectre")
-        "windows-x86_64" -> RoastTarget("windowsX64", "WindowsX64", "spectre.exe")
+        "windows-x86_64" -> RoastTarget("windowsX64", "WindowsX64", "spectre.exe", "java.exe")
         else -> error("Unsupported Roast target: ${runtimeArchivePlatform()}")
     }
 

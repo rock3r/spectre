@@ -17,6 +17,8 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
 
     @get:Input abstract val launcherPath: Property<String>
 
+    @get:Input abstract val runtimeJavaPath: Property<String>
+
     @TaskAction
     fun verify() {
         val archive = artifact.get().asFile
@@ -27,6 +29,9 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
             check(zip.getEntry("$applicationRoot/runtime/release") != null) {
                 "${archive.name} does not contain a bundled JVM release file"
             }
+            check(zip.getEntry(runtimeJavaPath.get()) != null) {
+                "${archive.name} does not contain the JVM launcher required to start the daemon"
+            }
             check(zip.getEntry("$applicationRoot/app/spectre.json") != null) {
                 "${archive.name} does not contain Roast's application configuration"
             }
@@ -34,6 +39,7 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
             extract(archive, zip)
         }
         verifyLauncher(File(temporaryDir, launcher))
+        verifyRuntimeJava(File(temporaryDir, runtimeJavaPath.get()))
     }
 
     private fun validateEntries(zip: ZipFile) {
@@ -90,6 +96,19 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
         val output = process.inputStream.bufferedReader().readText()
         check(process.exitValue() == 0) { "Bundled launcher failed: $output" }
         check("Usage: spectre" in output) { "Bundled launcher did not run the Spectre CLI: $output" }
+    }
+
+    private fun verifyRuntimeJava(java: File) {
+        // ZIP extraction does not reliably retain the executable bit on every host. The daemon
+        // launcher restores it before spawning this bundled JVM; mirror that contract here.
+        java.setExecutable(true, false)
+        val process = ProcessBuilder(java.absolutePath, "-version").redirectErrorStream(true).start()
+        check(process.waitFor(LAUNCH_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            process.destroyForcibly()
+            "Timed out running bundled JVM launcher ${java.name}"
+        }
+        val output = process.inputStream.bufferedReader().readText()
+        check(process.exitValue() == 0) { "Bundled JVM launcher failed: $output" }
     }
 
     private companion object {
