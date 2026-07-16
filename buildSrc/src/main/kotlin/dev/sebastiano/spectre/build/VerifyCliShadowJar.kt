@@ -2,6 +2,8 @@ package dev.sebastiano.spectre.build
 
 import java.io.File
 import java.util.jar.JarFile
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.tasks.InputFile
@@ -31,27 +33,58 @@ abstract class VerifyCliShadowJar : DefaultTask() {
     }
 
     private fun verifyHelp(jar: File) {
-        val process = ProcessBuilder(javaExecutable(), "-jar", jar.absolutePath, "--help").start()
-        val output = process.inputStream.bufferedReader().use { it.readText() }
-        val error = process.errorStream.bufferedReader().use { it.readText() }
-        check(process.waitFor() == 0) { "${jar.name} --help failed:\n$output$error" }
-        check("mcp" in output) { "${jar.name} --help did not expose the mcp command:\n$output" }
+        val process = ProcessBuilder(javaExecutable(), "-jar", jar.absolutePath, "--help").redirectErrorStream(true).start()
+        try {
+            val output = readUntil(process) { "mcp" in it }
+            check(process.waitFor(PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS) && process.exitValue() == 0) {
+                "${jar.name} --help failed:\n$output"
+            }
+            check("mcp" in output) { "${jar.name} --help did not expose the mcp command:\n$output" }
+        } finally {
+            process.destroyForcibly()
+        }
     }
 
     private fun verifyMcpToolDiscovery(jar: File) {
-        val process = ProcessBuilder(javaExecutable(), "-jar", jar.absolutePath, "mcp").start()
-        process.outputStream.bufferedWriter().use { writer ->
+        val process = ProcessBuilder(javaExecutable(), "-jar", jar.absolutePath, "mcp").redirectErrorStream(true).start()
+        try {
+            val writer = process.outputStream.bufferedWriter()
             writer.appendLine(INITIALIZE_REQUEST)
             writer.appendLine(INITIALIZED_NOTIFICATION)
             writer.appendLine(TOOLS_LIST_REQUEST)
-        }
-        val output = process.inputStream.bufferedReader().use { it.readText() }
-        val error = process.errorStream.bufferedReader().use { it.readText() }
-        check(process.waitFor() == 0) { "${jar.name} mcp failed:\n$output$error" }
-        check("\"id\":2" in output && "\"type_text\"" in output) {
-            "${jar.name} mcp did not return its tool list:\n$output"
+            writer.flush()
+            val output = readUntil(process) { "\"id\":2" in it && "\"type_text\"" in it }
+            check("\"id\":2" in output && "\"type_text\"" in output) {
+                "${jar.name} mcp did not return its tool list:\n$output"
+            }
+            process.outputStream.close()
+            check(process.waitFor(PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS) && process.exitValue() == 0) {
+                "${jar.name} mcp did not stop after its input closed:\n$output"
+            }
+        } finally {
+            process.destroyForcibly()
         }
     }
+
+    private fun readUntil(process: Process, complete: (String) -> Boolean): String =
+        Executors.newSingleThreadExecutor().use { executor ->
+            val output =
+                executor.submit<String> {
+                    buildString {
+                        process.inputStream.bufferedReader().useLines { lines ->
+                            for (line in lines) {
+                                appendLine(line)
+                                if (complete(toString())) return@useLines
+                            }
+                        }
+                    }
+                }
+            try {
+                output.get(PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            } finally {
+                if (!output.isDone) output.cancel(true)
+            }
+        }
 
     private fun javaExecutable(): String =
         File(System.getProperty("java.home"), "bin/java${if (isWindows()) ".exe" else ""}").path
@@ -62,6 +95,7 @@ abstract class VerifyCliShadowJar : DefaultTask() {
         private const val CLI_MAIN_CLASS = "dev.sebastiano.spectre.cli.SpectreCliKt"
         private const val AGENT_RUNTIME_ENTRY = "spectre/agent-runtime.jar"
         private const val KTOR_SERVICE_ENTRY = "META-INF/services/io.ktor.server.config.ConfigLoader"
+        private const val PROCESS_TIMEOUT_SECONDS: Long = 10
         private const val INITIALIZE_REQUEST =
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"spectre-r8-smoke\",\"version\":\"1\"}}}"
         private const val INITIALIZED_NOTIFICATION =

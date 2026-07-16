@@ -75,6 +75,8 @@ class SpectreMcpStdioIntegrationTest {
 
     private companion object {
         private const val CONNECTION_TIMEOUT_MILLIS: Long = 10_000
-        private const val PROCESS_EXIT_TIMEOUT_SECONDS: Long = 5
+        // Windows hosted runners can take longer than the usual process startup window to
+        // initialize the JVM before observing closed stdin.
+        private const val PROCESS_EXIT_TIMEOUT_SECONDS: Long = 15
     }
 }
