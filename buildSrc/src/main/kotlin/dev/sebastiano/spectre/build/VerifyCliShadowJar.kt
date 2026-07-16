@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.build
 
 import java.io.File
 import java.util.jar.JarFile
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.TimeUnit
@@ -83,7 +84,13 @@ abstract class VerifyCliShadowJar : DefaultTask() {
                 output.get(PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             } catch (exception: TimeoutException) {
                 process.destroyForcibly()
-                output.get(PROCESS_KILL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                try {
+                    output.get(PROCESS_KILL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                } catch (_: TimeoutException) {
+                    // The process did not stop promptly, but report the original read timeout.
+                } catch (_: ExecutionException) {
+                    // Teardown can close the stream; report the original read timeout instead.
+                }
                 error("Timed out after $PROCESS_TIMEOUT_SECONDS seconds while reading ${process.info().command().orElse("the CLI")}")
             } finally {
                 if (!output.isDone) output.cancel(true)
