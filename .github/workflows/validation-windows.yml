@@ -267,10 +267,10 @@ jobs:
         if: always()
         run: |
           ./gradlew :cli:packageWindowsX64
-          archive="$PWD/cli/build/construo/distributions/spectre-windowsX64.zip"
+          archive="cli/build/construo/distributions/spectre-windowsX64.zip"
           distribution="$RUNNER_TEMP/spectre-cli"
           rm -rf "$distribution"
-          powershell -NoProfile -Command "Expand-Archive -LiteralPath '$archive' -DestinationPath '$distribution'"
+          unzip -q "$archive" -d "$distribution"
           launcher="$(find "$distribution" -name spectre.exe -type f -print -quit)"
           test -n "$launcher"
           ./gradlew :cli:test \
