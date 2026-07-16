@@ -1,7 +1,11 @@
+import dev.sebastiano.spectre.build.CreateCliRuntimeImage
 import dev.sebastiano.spectre.build.PatchStartScripts
+import dev.sebastiano.spectre.build.VerifyCliRuntimeImage
 import dev.sebastiano.spectre.build.VerifyCliShadowJar
 import org.gradle.api.tasks.application.CreateStartScripts
 import org.gradle.api.tasks.bundling.Zip
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+import org.gradle.jvm.toolchain.JavaToolchainService
 
 plugins {
     application
@@ -70,9 +74,37 @@ val verifyCliShadowJar =
         artifact.set(tasks.shadowJar.flatMap { it.archiveFile })
     }
 
-tasks.assemble { dependsOn(verifyCliShadowJar) }
+val cliRuntimeImage = layout.buildDirectory.dir("runtime/cli")
+val javaToolchains = extensions.getByType<JavaToolchainService>()
+val jlinkBinary =
+    javaToolchains
+        .launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) }
+        .map { launcher ->
+            launcher.metadata.installationPath.file(
+                if (isWindows()) "bin/jlink.exe" else "bin/jlink"
+            )
+        }
 
-tasks.check { dependsOn(verifyCliShadowJar) }
+val createCliRuntimeImage =
+    tasks.register<CreateCliRuntimeImage>("createCliRuntimeImage") {
+        description = "Creates the host jlink runtime image for the Spectre CLI bundle."
+        group = "distribution"
+        jlinkExecutable.set(jlinkBinary)
+        runtimeImage.set(cliRuntimeImage)
+    }
+
+val verifyCliRuntimeImage =
+    tasks.register<VerifyCliRuntimeImage>("verifyCliRuntimeImage") {
+        dependsOn(createCliRuntimeImage)
+        runtimeImage.set(cliRuntimeImage)
+        artifact.set(tasks.shadowJar.flatMap { it.archiveFile })
+    }
+
+tasks.assemble { dependsOn(verifyCliShadowJar, verifyCliRuntimeImage) }
+
+tasks.check { dependsOn(verifyCliShadowJar, verifyCliRuntimeImage) }
+
+private fun isWindows(): Boolean = System.getProperty("os.name").startsWith("Windows")
 
 kotlin {
     jvmToolchain(21)
