@@ -38,8 +38,7 @@ name: Release
 #                            `-PprebuiltWindowsHelpersDir=...`, runs the publication-shape
 #                            verification, then `publish` against the Sonatype Central
 #                            Portal staging endpoint. Finally it uploads the Linux x86_64
-#                            self-contained CLI bundle to the draft GitHub release. Other
-#                            platform bundles are added by the cross-targeted runtime phase.
+#                            cross-targeted Roast CLI bundles to the draft GitHub release.
 #
 # Secrets used (all from repo settings):
 #   APPLE_DEVELOPER_ID_P12 / _PASSWORD                  → keychain import (mac-helper)
@@ -400,9 +399,14 @@ jobs:
             -PprebuiltLinuxHelpersDir="$RUNNER_TEMP/linux-helpers" \
             -PprebuiltWindowsHelpersDir="$RUNNER_TEMP/windows-helper"
 
-      - name: Build version-stamped Linux x86_64 CLI distribution
+      - name: Build version-stamped cross-targeted CLI distributions
         run: |
-          ./gradlew :cli:shadowDistZip \
+          ./gradlew \
+            :cli:packageLinuxX64 \
+            :cli:packageLinuxArm64 \
+            :cli:packageMacosX64 \
+            :cli:packageMacosArm64 \
+            :cli:packageWindowsX64 \
             -PVERSION_NAME="$RELEASE_VERSION" \
             -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/spectre-screencapture" \
             -PprebuiltLinuxHelpersDir="$RUNNER_TEMP/linux-helpers" \
@@ -441,5 +445,9 @@ jobs:
           gh release view "$GITHUB_REF_NAME" \
             || gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME"
           gh release upload "$GITHUB_REF_NAME" \
-            "cli/build/distributions/spectre-cli-$RELEASE_VERSION-linux-x86_64.zip" \
+            "cli/build/construo/distributions/spectre-linuxX64.zip" \
+            "cli/build/construo/distributions/spectre-linuxArm64.zip" \
+            "cli/build/construo/distributions/spectre-macosX64.zip" \
+            "cli/build/construo/distributions/spectre-macosArm64.zip" \
+            "cli/build/construo/distributions/spectre-windowsX64.zip" \
             --clobber
