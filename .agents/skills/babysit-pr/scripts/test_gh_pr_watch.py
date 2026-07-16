@@ -1232,6 +1232,17 @@ class SkippingChecksTests(unittest.TestCase):
         self.assertEqual(summary["skipping_count"], 2)
         self.assertTrue(summary["all_terminal"])
 
+    def test_summarize_checks_ignores_a_skipped_deploy_job(self):
+        checks = [
+            {"name": "deploy", "bucket": "skipping", "state": "SKIPPING"},
+            {"name": "other", "bucket": "skipping", "state": "SKIPPING"},
+            {"name": "deploy", "bucket": "neutral", "state": "NEUTRAL"},
+        ]
+
+        summary = watch.summarize_checks(checks)
+
+        self.assertEqual(summary["skipping_count"], 2)
+
     def test_should_stop_watching_on_skipping_checks(self):
         self.assertTrue(watch.should_stop_watching(["diagnose_skipping_checks"]))
 
