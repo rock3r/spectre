@@ -1,10 +1,12 @@
 package dev.sebastiano.spectre.build
 
 import javax.inject.Inject
+import java.nio.file.Files
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
 import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.Property
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
@@ -20,6 +22,10 @@ abstract class CreateCliRuntimeImage
         @get:InputFile abstract val jlinkExecutable: RegularFileProperty
 
         @get:OutputDirectory abstract val runtimeImage: DirectoryProperty
+
+        @get:org.gradle.api.tasks.Input abstract val targetOperatingSystem: Property<String>
+
+        @get:org.gradle.api.tasks.Input abstract val targetArchitecture: Property<String>
 
         @TaskAction
         fun create() {
@@ -38,5 +44,9 @@ abstract class CreateCliRuntimeImage
                     "--compress=zip-6",
                 )
             }
+            Files.writeString(
+                output.toPath().resolve("spectre-runtime.properties"),
+                "spectre.runtime.os=${targetOperatingSystem.get()}\nspectre.runtime.arch=${targetArchitecture.get()}\n",
+            )
         }
     }

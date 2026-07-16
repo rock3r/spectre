@@ -95,6 +95,8 @@ val createCliRuntimeImage =
         group = "distribution"
         jlinkExecutable.set(jlinkBinary)
         runtimeImage.set(cliRuntimeImage)
+        targetOperatingSystem.set(runtimeOperatingSystem())
+        targetArchitecture.set(runtimeArchitecture())
     }
 
 tasks.named<Zip>("shadowDistZip") {
@@ -120,6 +122,23 @@ tasks.assemble { dependsOn(verifyCliShadowJar, verifyCliRuntimeImage) }
 tasks.check { dependsOn(verifyCliShadowJar, verifyCliRuntimeImage, verifyCliDistributionZip) }
 
 private fun isWindows(): Boolean = System.getProperty("os.name").startsWith("Windows")
+
+private fun runtimeOperatingSystem(): String =
+    when {
+        isWindows() -> "Windows"
+        System.getProperty("os.name").startsWith("Mac") -> "Mac OS X"
+        System.getProperty("os.name").startsWith("Linux") -> "Linux"
+        else -> System.getProperty("os.name")
+    }
+
+private fun runtimeArchitecture(): String =
+    when (System.getProperty("os.arch")) {
+        "amd64",
+        "x86_64" -> "x86_64"
+        "aarch64",
+        "arm64" -> "aarch64"
+        else -> System.getProperty("os.arch")
+    }
 
 kotlin {
     jvmToolchain(21)

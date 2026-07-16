@@ -24,6 +24,9 @@ abstract class VerifyCliDistributionZip : DefaultTask() {
             check(zip.getEntry("$distributionRoot/bin/${launcherName()}") != null) {
                 "${archive.name} does not contain its launcher in $distributionRoot"
             }
+            check(zip.getEntry("$distributionRoot/runtime/spectre-runtime.properties") != null) {
+                "${archive.name} does not declare its bundled runtime platform"
+            }
             extract(zip)
             verifyLauncher(File(temporaryDir, distributionRoot))
         }
