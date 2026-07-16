@@ -49,6 +49,11 @@ abstract class PatchStartScripts : DefaultTask() {
     private companion object {
         private val UNIX_JAVA_SEARCH =
             """
+            # Prefer the jlink runtime packaged with this distribution.
+            if [ -x "${'$'}APP_HOME/runtime/bin/java" ]; then
+                JAVA_HOME=${'$'}APP_HOME/runtime
+            fi
+
             # Find a locally installed JDK when JAVA_HOME and PATH are unset.
             if [ -z "${'$'}{JAVA_HOME:-}" ] && ! command -v java >/dev/null 2>&1; then
                 spectre_java_fallback_home=
@@ -108,6 +113,10 @@ abstract class PatchStartScripts : DefaultTask() {
         private val WINDOWS_JAVA_SEARCH =
             """
             @rem Find java.exe
+            if exist "%APP_HOME%\runtime\bin\java.exe" (
+                set JAVA_HOME=%APP_HOME%\runtime
+                goto findJavaFromJavaHome
+            )
             """
                 .trimIndent()
 

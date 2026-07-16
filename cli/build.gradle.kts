@@ -67,6 +67,9 @@ tasks.named<CreateStartScripts>("startShadowScripts") {
 tasks.named<Zip>("shadowDistZip") {
     archiveFileName.set("spectre-cli-${project.version}.zip")
     dependsOn(patchShadowStartScripts)
+    // PatchStartScripts mutates the generated launcher after Shadow has assembled its copy spec.
+    // Recreate the archive so direct release builds cannot reuse an earlier unpatched ZIP.
+    outputs.upToDateWhen { false }
 }
 
 val verifyCliShadowJar =
