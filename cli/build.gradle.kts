@@ -1,5 +1,6 @@
 import dev.sebastiano.spectre.build.CreateCliRuntimeImage
 import dev.sebastiano.spectre.build.PatchStartScripts
+import dev.sebastiano.spectre.build.VerifyCliDistributionZip
 import dev.sebastiano.spectre.build.VerifyCliRuntimeImage
 import dev.sebastiano.spectre.build.VerifyCliShadowJar
 import org.gradle.api.tasks.application.CreateStartScripts
@@ -93,6 +94,11 @@ val createCliRuntimeImage =
         runtimeImage.set(cliRuntimeImage)
     }
 
+tasks.named<Zip>("shadowDistZip") {
+    dependsOn(createCliRuntimeImage)
+    from(cliRuntimeImage) { into("spectre-cli-${project.version}/runtime") }
+}
+
 val verifyCliRuntimeImage =
     tasks.register<VerifyCliRuntimeImage>("verifyCliRuntimeImage") {
         dependsOn(createCliRuntimeImage)
@@ -100,9 +106,15 @@ val verifyCliRuntimeImage =
         artifact.set(tasks.shadowJar.flatMap { it.archiveFile })
     }
 
+val verifyCliDistributionZip =
+    tasks.register<VerifyCliDistributionZip>("verifyCliDistributionZip") {
+        dependsOn(tasks.named("shadowDistZip"))
+        artifact.set(tasks.named<Zip>("shadowDistZip").flatMap { it.archiveFile })
+    }
+
 tasks.assemble { dependsOn(verifyCliShadowJar, verifyCliRuntimeImage) }
 
-tasks.check { dependsOn(verifyCliShadowJar, verifyCliRuntimeImage) }
+tasks.check { dependsOn(verifyCliShadowJar, verifyCliRuntimeImage, verifyCliDistributionZip) }
 
 private fun isWindows(): Boolean = System.getProperty("os.name").startsWith("Windows")
 
