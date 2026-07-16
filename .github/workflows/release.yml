@@ -37,9 +37,9 @@ name: Release
 #                            `-PprebuiltLinuxHelpersDir=...` and
 #                            `-PprebuiltWindowsHelpersDir=...`, runs the publication-shape
 #                            verification, then `publish` against the Sonatype Central
-#                            Portal staging endpoint. Finally creates the draft GitHub
-#                            release notes so the maintainer can sanity-check Central +
-#                            GitHub side-by-side before promoting.
+#                            Portal staging endpoint. Finally it uploads the Linux x86_64
+#                            self-contained CLI bundle to the draft GitHub release. Other
+#                            platform bundles are added by the cross-targeted runtime phase.
 #
 # Secrets used (all from repo settings):
 #   APPLE_DEVELOPER_ID_P12 / _PASSWORD                  → keychain import (mac-helper)
@@ -400,7 +400,7 @@ jobs:
             -PprebuiltLinuxHelpersDir="$RUNNER_TEMP/linux-helpers" \
             -PprebuiltWindowsHelpersDir="$RUNNER_TEMP/windows-helper"
 
-      - name: Build version-stamped CLI distribution
+      - name: Build version-stamped Linux x86_64 CLI distribution
         run: |
           ./gradlew :cli:shadowDistZip \
             -PVERSION_NAME="$RELEASE_VERSION" \
@@ -441,5 +441,5 @@ jobs:
           gh release view "$GITHUB_REF_NAME" \
             || gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME"
           gh release upload "$GITHUB_REF_NAME" \
-            "cli/build/distributions/spectre-cli-$RELEASE_VERSION.zip" \
+            "cli/build/distributions/spectre-cli-$RELEASE_VERSION-linux-x86_64.zip" \
             --clobber

@@ -1,7 +1,12 @@
+import dev.sebastiano.spectre.build.CreateCliRuntimeImage
 import dev.sebastiano.spectre.build.PatchStartScripts
+import dev.sebastiano.spectre.build.VerifyCliDistributionZip
+import dev.sebastiano.spectre.build.VerifyCliRuntimeImage
 import dev.sebastiano.spectre.build.VerifyCliShadowJar
 import org.gradle.api.tasks.application.CreateStartScripts
 import org.gradle.api.tasks.bundling.Zip
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+import org.gradle.jvm.toolchain.JavaToolchainService
 
 plugins {
     application
@@ -60,8 +65,11 @@ tasks.named<CreateStartScripts>("startShadowScripts") {
 }
 
 tasks.named<Zip>("shadowDistZip") {
-    archiveFileName.set("spectre-cli-${project.version}.zip")
+    archiveFileName.set("spectre-cli-${project.version}-${runtimeArchivePlatform()}.zip")
     dependsOn(patchShadowStartScripts)
+    // PatchStartScripts mutates the generated launcher after Shadow has assembled its copy spec.
+    // Recreate the archive so direct release builds cannot reuse an earlier unpatched ZIP.
+    outputs.upToDateWhen { false }
 }
 
 val verifyCliShadowJar =
@@ -70,9 +78,86 @@ val verifyCliShadowJar =
         artifact.set(tasks.shadowJar.flatMap { it.archiveFile })
     }
 
-tasks.assemble { dependsOn(verifyCliShadowJar) }
+val cliRuntimeImage = layout.buildDirectory.dir("runtime/cli")
+val javaToolchains = extensions.getByType<JavaToolchainService>()
+val jlinkBinary =
+    javaToolchains
+        .launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) }
+        .map { launcher ->
+            launcher.metadata.installationPath.file(
+                if (isWindows()) "bin/jlink.exe" else "bin/jlink"
+            )
+        }
 
-tasks.check { dependsOn(verifyCliShadowJar) }
+val createCliRuntimeImage =
+    tasks.register<CreateCliRuntimeImage>("createCliRuntimeImage") {
+        description = "Creates the host jlink runtime image for the Spectre CLI bundle."
+        group = "distribution"
+        jlinkExecutable.set(jlinkBinary)
+        runtimeImage.set(cliRuntimeImage)
+        targetOperatingSystem.set(runtimeOperatingSystem())
+        targetArchitecture.set(runtimeArchitecture())
+    }
+
+tasks.named<Zip>("shadowDistZip") {
+    dependsOn(createCliRuntimeImage)
+    from(cliRuntimeImage) {
+        include("bin/**", "lib/jspawnhelper")
+        into("spectre-cli-${project.version}-${runtimeArchivePlatform()}/runtime")
+        filePermissions { unix("rwxr-xr-x") }
+    }
+    from(cliRuntimeImage) {
+        exclude("bin/**", "lib/jspawnhelper")
+        into("spectre-cli-${project.version}-${runtimeArchivePlatform()}/runtime")
+    }
+}
+
+val verifyCliRuntimeImage =
+    tasks.register<VerifyCliRuntimeImage>("verifyCliRuntimeImage") {
+        dependsOn(createCliRuntimeImage)
+        runtimeImage.set(cliRuntimeImage)
+        artifact.set(tasks.shadowJar.flatMap { it.archiveFile })
+    }
+
+val verifyCliDistributionZip =
+    tasks.register<VerifyCliDistributionZip>("verifyCliDistributionZip") {
+        dependsOn(tasks.named("shadowDistZip"))
+        artifact.set(tasks.named<Zip>("shadowDistZip").flatMap { it.archiveFile })
+    }
+
+tasks.assemble { dependsOn(verifyCliShadowJar, verifyCliRuntimeImage) }
+
+tasks.check { dependsOn(verifyCliShadowJar, verifyCliRuntimeImage, verifyCliDistributionZip) }
+
+private fun isWindows(): Boolean = System.getProperty("os.name").startsWith("Windows")
+
+private fun runtimeOperatingSystem(): String =
+    when {
+        isWindows() -> "Windows"
+        System.getProperty("os.name").startsWith("Mac") -> "Mac OS X"
+        System.getProperty("os.name").startsWith("Linux") -> "Linux"
+        else -> System.getProperty("os.name")
+    }
+
+private fun runtimeArchitecture(): String =
+    when (System.getProperty("os.arch")) {
+        "amd64",
+        "x86_64" -> "x86_64"
+        "aarch64",
+        "arm64" -> "aarch64"
+        else -> System.getProperty("os.arch")
+    }
+
+private fun runtimeArchivePlatform(): String =
+    "${runtimeArchiveOperatingSystem()}-${runtimeArchitecture()}"
+
+private fun runtimeArchiveOperatingSystem(): String =
+    when (runtimeOperatingSystem()) {
+        "Mac OS X" -> "macos"
+        "Windows" -> "windows"
+        "Linux" -> "linux"
+        else -> error("Unsupported CLI runtime operating system: ${runtimeOperatingSystem()}")
+    }
 
 kotlin {
     jvmToolchain(21)
