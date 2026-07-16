@@ -87,12 +87,29 @@ jobs:
 
       - name: Smoke the unpacked CLI distribution against the Compose fixture
         run: |
-          ./gradlew :cli:shadowDistZip
-          archive="$(find cli/build/distributions -name 'spectre-cli-*.zip' -print -quit)"
+          case "$(uname -m)" in
+            arm64) target="MacosArm64"; archive="cli/build/construo/distributions/spectre-macosArm64.zip" ;;
+            x86_64) target="MacosX64"; archive="cli/build/construo/distributions/spectre-macosX64.zip" ;;
+            *) echo "Unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+          ./gradlew ":cli:package$target"
           distribution="$RUNNER_TEMP/spectre-cli"
           unzip -q "$archive" -d "$distribution"
-          launcher="$(find "$distribution" -path '*/bin/spectre' -type f -print -quit)"
+          launcher="$(find "$distribution" -path '*/Contents/MacOS/spectre' -type f -print -quit)"
           ./gradlew :cli:test \
             --tests "*DaemonFixtureIntegrationTest.CLI binary drives a Compose fixture through ps attach find click and screenshot" \
+            --tests "*SpectreMcpStdioIntegrationTest*" \
             --rerun-tasks \
             -Dspectre.cli.distributionExecutable="$launcher"
+
+      - name: Upload CLI smoke test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-cli-smoke-test-reports
+          path: |
+            cli/build/reports/tests/
+            cli/build/test-results/
+            cli/hs_err_*.log
+          if-no-files-found: ignore
+          retention-days: 14

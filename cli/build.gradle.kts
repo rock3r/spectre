@@ -47,6 +47,10 @@ construo {
 
     jlink { modules.addAll("jdk.attach", "jdk.unsupported") }
 
+    // Spectre's Roast bundle is a command-line tool, not a macOS UI application. Running its
+    // JVM on the first thread blocks command invocation before the CLI can process its args.
+    roast { runOnFirstThread.set(false) }
+
     targets {
         create<Target.Linux>("linuxX64") {
             architecture.set(Target.Architecture.X86_64)

@@ -65,13 +65,16 @@ class SpectreMcpStdioIntegrationTest {
     }
 
     private fun mcpCommand(): List<String> =
-        listOf(
-            Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-            "-cp",
-            System.getProperty("spectre.cli.testRuntimeClasspath"),
-            "dev.sebastiano.spectre.cli.SpectreCliKt",
-            "mcp",
-        )
+        System.getProperty("spectre.cli.distributionExecutable")?.let { executable ->
+            listOf(executable, "mcp")
+        }
+            ?: listOf(
+                Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-cp",
+                System.getProperty("spectre.cli.testRuntimeClasspath"),
+                "dev.sebastiano.spectre.cli.SpectreCliKt",
+                "mcp",
+            )
 
     private companion object {
         private const val CONNECTION_TIMEOUT_MILLIS: Long = 10_000

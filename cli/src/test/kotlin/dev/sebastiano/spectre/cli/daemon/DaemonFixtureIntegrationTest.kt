@@ -112,7 +112,7 @@ class DaemonFixtureIntegrationTest {
         try {
             spawnComposeFixture().use { fixture ->
                 val processes = runCliBinary(daemonUser, "ps", "--json")
-                assertEquals(0, processes.exitCode)
+                assertEquals(0, processes.exitCode, processes.output + processes.errorOutput)
                 assertTrue(
                     Json.parseToJsonElement(processes.output)
                         .jsonObject
@@ -320,14 +320,18 @@ private fun runCliBinary(daemonUser: String, vararg arguments: String): CliBinar
         ProcessBuilder(command)
             .apply {
                 if (distributionExecutable != null) {
-                    environment()["SPECTRE_OPTS"] =
-                        "-Duser.name=$daemonUser -Djava.awt.headless=false"
+                    // Roast launches the bundled JVM directly rather than through Gradle's
+                    // generated start script, so it cannot consume SPECTRE_OPTS. The JVM
+                    // itself consumes JAVA_TOOL_OPTIONS before application startup.
+                    val daemonHome = Path.of("/tmp", daemonUser)
+                    environment()["JAVA_TOOL_OPTIONS"] =
+                        "-Duser.name=$daemonUser -Duser.home=$daemonHome -Djava.awt.headless=false"
                 }
             }
-            .redirectErrorStream(true)
             .start()
     val output = StringBuilder()
-    val drainer =
+    val errorOutput = StringBuilder()
+    val outputDrainer =
         Thread({
                 process.inputStream.bufferedReader().use { reader ->
                     output.append(reader.readText())
@@ -337,17 +341,33 @@ private fun runCliBinary(daemonUser: String, vararg arguments: String): CliBinar
                 isDaemon = true
                 start()
             }
+    val errorDrainer =
+        Thread({
+                process.errorStream.bufferedReader().use { reader ->
+                    errorOutput.append(reader.readText())
+                }
+            })
+            .apply {
+                isDaemon = true
+                start()
+            }
     if (!process.waitFor(CLI_PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
         process.destroyForcibly()
         process.waitFor()
-        drainer.join()
+        outputDrainer.join()
+        errorDrainer.join()
         error(
             "CLI binary did not exit within $CLI_PROCESS_TIMEOUT_SECONDS seconds: " +
                 arguments.joinToString()
         )
     }
-    drainer.join()
-    return CliBinaryResult(exitCode = process.exitValue(), output = output.toString())
+    outputDrainer.join()
+    errorDrainer.join()
+    return CliBinaryResult(
+        exitCode = process.exitValue(),
+        output = output.toString(),
+        errorOutput = errorOutput.toString(),
+    )
 }
 
 private fun startMcpBinary(daemonUser: String): Process {
@@ -372,7 +392,7 @@ private suspend fun mcpText(client: Client, tool: String, arguments: Map<String,
     return (result.content.single() as TextContent).text
 }
 
-private data class CliBinaryResult(val exitCode: Int, val output: String)
+private data class CliBinaryResult(val exitCode: Int, val output: String, val errorOutput: String)
 
 private class FixtureProcess(
     private val process: Process,

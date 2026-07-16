@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.cli.daemon
 
 import java.io.IOException
+import java.nio.file.Files
 import java.nio.file.Path
 
 /** Starts a detached JVM hosting [DaemonMain] for one local socket endpoint. */
@@ -9,14 +10,42 @@ public class DaemonProcessLauncher(
     private val javaExecutable: String = defaultJavaExecutable(),
     private val classPath: String = System.getProperty("java.class.path"),
 ) {
+    private var startupErrorLog: Path? = null
+    private var daemonProcess: Process? = null
+
     /** Launches the daemon process without inheriting this client's standard streams. */
     @Throws(IOException::class)
-    public fun start(): Process =
-        ProcessBuilder(command())
-            .also { restoreBundledJavaExecutePermission() }
+    public fun start(): Process {
+        val errorLog = Files.createTempFile("spectre-daemon-startup-", ".log")
+        startupErrorLog = errorLog
+        return ProcessBuilder(command())
+            .also { restoreBundledRuntimeExecutePermissions() }
             .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .redirectError(errorLog.toFile())
             .start()
+            .also { daemonProcess = it }
+    }
+
+    /** Returns and removes any diagnostic emitted before the daemon reached its socket. */
+    public fun consumeStartupError(): String? =
+        startupErrorLog
+            ?.takeIf { daemonProcess?.isAlive != true }
+            ?.let { errorLog ->
+                runCatching { Files.readString(errorLog).trim().ifEmpty { null } }
+                    .getOrNull()
+                    .also { Files.deleteIfExists(errorLog) }
+            }
+
+    /** Removes the startup diagnostic after a confirmed daemon exits. */
+    public fun discardStartupError() {
+        val errorLog = startupErrorLog ?: return
+        val process = daemonProcess
+        if (process?.isAlive == true) {
+            process.onExit().thenRun { Files.deleteIfExists(errorLog) }
+        } else {
+            Files.deleteIfExists(errorLog)
+        }
+    }
 
     /** Returns the isolated daemon command without starting a process. */
     public fun command(): List<String> = buildList {
@@ -34,9 +63,15 @@ public class DaemonProcessLauncher(
             ?.let { listOf("-Ddev.sebastiano.spectre.agent.runtimeJar=$it") }
             .orEmpty()
 
-    private fun restoreBundledJavaExecutePermission() {
+    private fun restoreBundledRuntimeExecutePermissions() {
         if (javaExecutable != defaultJavaExecutable()) return
-        Path.of(javaExecutable).toFile().setExecutable(true, false)
+        val javaPath = Path.of(javaExecutable)
+        javaPath.toFile().setExecutable(true, false)
+        javaPath.parent.parent
+            .resolve("lib")
+            .resolve("jspawnhelper")
+            .toFile()
+            .setExecutable(true, false)
     }
 
     private companion object {
