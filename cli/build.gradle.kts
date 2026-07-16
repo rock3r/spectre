@@ -1,4 +1,5 @@
 import dev.sebastiano.spectre.build.PatchStartScripts
+import dev.sebastiano.spectre.build.VerifyCliShadowJar
 import org.gradle.api.tasks.application.CreateStartScripts
 import org.gradle.api.tasks.bundling.Zip
 
@@ -21,6 +22,23 @@ tasks.shadowJar {
     dependsOn(agentRuntimeJar)
     archiveClassifier = "all"
     manifest { attributes["Main-Class"] = application.mainClass.get() }
+    // Keep Spectre's entrypoints readable and callable by name while R8 removes dead code from
+    // the merged third-party runtime. The nested agent runtime is copied as an opaque resource
+    // below, so its reflection-based attach contract stays outside the shrinker's scope.
+    minimize {
+        r8 {
+            keepRules.addAll(
+                "-dontobfuscate",
+                "-dontoptimize",
+                // kotlin-logging ships adapters for optional logging backends. The CLI does not
+                // bundle Logback, so R8 must not treat those unused adapter references as an
+                // unresolved runtime dependency.
+                "-dontwarn ch.qos.logback.classic.**",
+                "-keepattributes SourceFile,LineNumberTable",
+                "-keep class dev.sebastiano.spectre.cli.** { *; }",
+            )
+        }
+    }
     from(agentRuntimeJar.flatMap { it.archiveFile }) {
         into("spectre")
         rename { "agent-runtime.jar" }
@@ -46,7 +64,15 @@ tasks.named<Zip>("shadowDistZip") {
     dependsOn(patchShadowStartScripts)
 }
 
-tasks.assemble { dependsOn(tasks.shadowJar) }
+val verifyCliShadowJar =
+    tasks.register<VerifyCliShadowJar>("verifyCliShadowJar") {
+        dependsOn(tasks.shadowJar)
+        artifact.set(tasks.shadowJar.flatMap { it.archiveFile })
+    }
+
+tasks.assemble { dependsOn(verifyCliShadowJar) }
+
+tasks.check { dependsOn(verifyCliShadowJar) }
 
 kotlin {
     jvmToolchain(21)
