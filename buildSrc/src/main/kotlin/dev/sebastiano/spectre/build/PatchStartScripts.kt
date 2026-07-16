@@ -120,12 +120,7 @@ abstract class PatchStartScripts : DefaultTask() {
             """
             @rem Find java.exe
             if exist "%APP_HOME%\runtime\bin\java.exe" if exist "%APP_HOME%\runtime\spectre-runtime.properties" (
-                for /f "tokens=1,* delims==" %%a in ('findstr /b "spectre.runtime.os=" "%APP_HOME%\runtime\spectre-runtime.properties"') do set SPECTRE_RUNTIME_OS=%%b
-                for /f "tokens=1,* delims==" %%a in ('findstr /b "spectre.runtime.arch=" "%APP_HOME%\runtime\spectre-runtime.properties"') do set SPECTRE_RUNTIME_ARCH=%%b
-                set SPECTRE_HOST_ARCH=%PROCESSOR_ARCHITECTURE%
-                if /I "%SPECTRE_HOST_ARCH%"=="AMD64" set SPECTRE_HOST_ARCH=x86_64
-                if /I "%SPECTRE_HOST_ARCH%"=="ARM64" set SPECTRE_HOST_ARCH=aarch64
-                if /I "%SPECTRE_RUNTIME_OS%"=="Windows" if /I "%SPECTRE_RUNTIME_ARCH%"=="%SPECTRE_HOST_ARCH%" set JAVA_HOME=%APP_HOME%\runtime
+                call :useBundledSpectreRuntime
                 if defined JAVA_HOME goto findJavaFromJavaHome
             )
             """
@@ -146,6 +141,17 @@ abstract class PatchStartScripts : DefaultTask() {
 
         private val WINDOWS_JDK_CANDIDATE_PROBE =
             """
+            :useBundledSpectreRuntime
+            set SPECTRE_RUNTIME_OS=
+            set SPECTRE_RUNTIME_ARCH=
+            for /f "tokens=1,* delims==" %%a in ('findstr /b "spectre.runtime.os=" "%APP_HOME%\runtime\spectre-runtime.properties"') do set SPECTRE_RUNTIME_OS=%%b
+            for /f "tokens=1,* delims==" %%a in ('findstr /b "spectre.runtime.arch=" "%APP_HOME%\runtime\spectre-runtime.properties"') do set SPECTRE_RUNTIME_ARCH=%%b
+            set SPECTRE_HOST_ARCH=%PROCESSOR_ARCHITECTURE%
+            if /I "%SPECTRE_HOST_ARCH%"=="AMD64" set SPECTRE_HOST_ARCH=x86_64
+            if /I "%SPECTRE_HOST_ARCH%"=="ARM64" set SPECTRE_HOST_ARCH=aarch64
+            if /I "%SPECTRE_RUNTIME_OS%"=="Windows" if /I "%SPECTRE_RUNTIME_ARCH%"=="%SPECTRE_HOST_ARCH%" set JAVA_HOME=%APP_HOME%\runtime
+            goto :eof
+
             :findCompatibleSpectreJdk
             if defined JAVA_HOME goto :eof
             if not exist "%~1\\bin\\java.exe" goto :eof
