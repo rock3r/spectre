@@ -101,3 +101,15 @@ jobs:
             --tests "*SpectreMcpStdioIntegrationTest*" \
             --rerun-tasks \
             -Dspectre.cli.distributionExecutable="$launcher"
+
+      - name: Upload CLI smoke test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-cli-smoke-test-reports
+          path: |
+            cli/build/reports/tests/
+            cli/build/test-results/
+            cli/hs_err_*.log
+          if-no-files-found: ignore
+          retention-days: 14
