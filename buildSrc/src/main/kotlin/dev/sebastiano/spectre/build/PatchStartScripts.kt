@@ -23,7 +23,7 @@ abstract class PatchStartScripts : DefaultTask() {
             script
                 .readText()
                 .replace("# Determine the Java command to use to start the JVM.", UNIX_JAVA_SEARCH)
-                .replace("# Increase the maximum file descriptors if we can.", UNIX_JDK_PREFLIGHT),
+                .replace("# Add default JVM options here.", UNIX_JDK_PREFLIGHT),
         )
     }
 
@@ -85,7 +85,7 @@ abstract class PatchStartScripts : DefaultTask() {
                 die "ERROR: Spectre requires a full JDK with the jdk.attach module; found Java ${'$'}spectre_java_version at ${'$'}JAVACMD."
             fi
 
-            # Increase the maximum file descriptors if we can.
+            # Add default JVM options here.
             """
                 .trimIndent()
 
@@ -111,6 +111,8 @@ abstract class PatchStartScripts : DefaultTask() {
             :findCompatibleSpectreJdk
             if defined JAVA_HOME goto :eof
             if not exist "%~1\\bin\\java.exe" goto :eof
+            set SPECTRE_JAVA_VERSION=
+            set SPECTRE_JAVA_FEATURE=
             for /f "tokens=3" %%v in ('"%~1\\bin\\java.exe" -version 2^>^&1 ^| findstr /c:"version"') do set SPECTRE_JAVA_VERSION=%%v
             set SPECTRE_JAVA_VERSION=%SPECTRE_JAVA_VERSION:"=%
             for /f "tokens=1 delims=." %%v in ("%SPECTRE_JAVA_VERSION%") do set SPECTRE_JAVA_FEATURE=%%v
