@@ -10,22 +10,36 @@ public class DaemonProcessLauncher(
     private val javaExecutable: String = defaultJavaExecutable(),
     private val classPath: String = System.getProperty("java.class.path"),
 ) {
-    private val startupErrorLog: Path = Files.createTempFile("spectre-daemon-startup-", ".log")
+    private var startupErrorLog: Path? = null
+    private var daemonProcess: Process? = null
 
     /** Launches the daemon process without inheriting this client's standard streams. */
     @Throws(IOException::class)
-    public fun start(): Process =
-        ProcessBuilder(command())
+    public fun start(): Process {
+        val errorLog = Files.createTempFile("spectre-daemon-startup-", ".log")
+        startupErrorLog = errorLog
+        return ProcessBuilder(command())
             .also { restoreBundledRuntimeExecutePermissions() }
             .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-            .redirectError(startupErrorLog.toFile())
+            .redirectError(errorLog.toFile())
             .start()
+            .also { daemonProcess = it }
+    }
 
     /** Returns and removes any diagnostic emitted before the daemon reached its socket. */
     public fun consumeStartupError(): String? =
-        runCatching { Files.readString(startupErrorLog).trim().ifEmpty { null } }
-            .getOrNull()
-            .also { Files.deleteIfExists(startupErrorLog) }
+        startupErrorLog
+            ?.takeIf { daemonProcess?.isAlive != true }
+            ?.let { errorLog ->
+                runCatching { Files.readString(errorLog).trim().ifEmpty { null } }
+                    .getOrNull()
+                    .also { Files.deleteIfExists(errorLog) }
+            }
+
+    /** Removes the empty startup diagnostic after the daemon accepts a request. */
+    public fun discardStartupError() {
+        startupErrorLog?.let(Files::deleteIfExists)
+    }
 
     /** Returns the isolated daemon command without starting a process. */
     public fun command(): List<String> = buildList {

@@ -631,24 +631,35 @@ internal fun daemonRequest(
                 DaemonResponse.Sessions(emptyList())
             }
         } else {
-            val launcher = DaemonProcessLauncher(resolvedSocketPath)
-            try {
-                client.requestOrStart(
-                    request = request,
-                    start = { launcher.start() },
-                    onAbsent = {
-                        attachPreflight(request)?.let { message ->
-                            DaemonResponse.Error(DaemonErrorCode.AttachFailed, message)
-                        }
-                    },
-                )
-            } catch (exception: IOException) {
-                launcher.consumeStartupError()?.let { diagnostic ->
-                    throw IOException("Daemon startup failed: $diagnostic", exception)
-                }
-                throw exception
-            }
+            daemonRequestWithLifecycle(client, resolvedSocketPath, request, attachPreflight)
         }
+    }
+}
+
+private fun daemonRequestWithLifecycle(
+    client: DaemonClient,
+    socketPath: Path,
+    request: DaemonRequest,
+    attachPreflight: (DaemonRequest) -> String?,
+): DaemonResponse {
+    val launcher = DaemonProcessLauncher(socketPath)
+    try {
+        return client
+            .requestOrStart(
+                request = request,
+                start = { launcher.start() },
+                onAbsent = {
+                    attachPreflight(request)?.let { message ->
+                        DaemonResponse.Error(DaemonErrorCode.AttachFailed, message)
+                    }
+                },
+            )
+            .also { launcher.discardStartupError() }
+    } catch (exception: IOException) {
+        launcher.consumeStartupError()?.let { diagnostic ->
+            throw IOException("Daemon startup failed: $diagnostic", exception)
+        }
+        throw exception
     }
 }
 
