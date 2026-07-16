@@ -23,14 +23,16 @@ abstract class PatchStartScripts : DefaultTask() {
             script
                 .readText()
                 .replace("# Determine the Java command to use to start the JVM.", UNIX_JAVA_SEARCH)
-                .replace("# Add default JVM options here.", UNIX_JDK_PREFLIGHT),
+                .replace(UNIX_DEFAULT_JVM_OPTIONS_COMMENT, UNIX_JDK_PREFLIGHT),
         )
     }
 
     private fun patchWindows(script: File) {
-        script.writeText(
-            script
-                .readText()
+        val originalScript = script.readText()
+        val lineSeparator = if ("\r\n" in originalScript) "\r\n" else "\n"
+        val patchedScript =
+            originalScript
+                .replace("\r\n", "\n")
                 .replace("@rem Find java.exe", WINDOWS_JAVA_SEARCH)
                 .replace(
                     WINDOWS_PATH_PROBE,
@@ -40,8 +42,8 @@ abstract class PatchStartScripts : DefaultTask() {
                     ":findJavaFromJavaHome",
                     "$WINDOWS_JDK_CANDIDATE_PROBE\n\n:findJavaFromJavaHome",
                 )
-                .replace(":execute\n@rem Setup the command line", WINDOWS_JDK_PREFLIGHT),
-        )
+                .replace(":execute\n@rem Setup the command line", WINDOWS_JDK_PREFLIGHT)
+        script.writeText(patchedScript.replace("\n", lineSeparator))
     }
 
     private companion object {
@@ -85,9 +87,12 @@ abstract class PatchStartScripts : DefaultTask() {
                 die "ERROR: Spectre requires a full JDK with the jdk.attach module; found Java ${'$'}spectre_java_version at ${'$'}JAVACMD."
             fi
 
-            # Add default JVM options here.
+            $UNIX_DEFAULT_JVM_OPTIONS_COMMENT
             """
                 .trimIndent()
+
+        private const val UNIX_DEFAULT_JVM_OPTIONS_COMMENT =
+            "# Add default JVM options here. You can also use JAVA_OPTS and SPECTRE_OPTS to pass JVM options to this script."
 
         private val WINDOWS_JAVA_SEARCH =
             """
@@ -116,7 +121,7 @@ abstract class PatchStartScripts : DefaultTask() {
             for /f "tokens=3" %%v in ('"%~1\\bin\\java.exe" -version 2^>^&1 ^| findstr /c:"version"') do set SPECTRE_JAVA_VERSION=%%v
             set SPECTRE_JAVA_VERSION=%SPECTRE_JAVA_VERSION:"=%
             for /f "tokens=1 delims=." %%v in ("%SPECTRE_JAVA_VERSION%") do set SPECTRE_JAVA_FEATURE=%%v
-            if not defined SPECTRE_JAVA_FEATURE goto :eof
+            if "%SPECTRE_JAVA_FEATURE%"=="" goto :eof
             if %SPECTRE_JAVA_FEATURE% LSS 21 goto :eof
             "%~1\\bin\\java.exe" --list-modules 2^>NUL | findstr /r /c:"^jdk.attach@" >NUL
             if %ERRORLEVEL% neq 0 goto :eof
@@ -129,10 +134,12 @@ abstract class PatchStartScripts : DefaultTask() {
             """
             :execute
             @rem Spectre attaches an agent, so it requires a full JDK rather than a JRE.
+            set SPECTRE_JAVA_VERSION=
+            set SPECTRE_JAVA_FEATURE=
             for /f "tokens=3" %%v in ('"%JAVA_EXE%" -version 2^>^&1 ^| findstr /c:"version"') do set SPECTRE_JAVA_VERSION=%%v
             set SPECTRE_JAVA_VERSION=%SPECTRE_JAVA_VERSION:"=%
             for /f "tokens=1 delims=." %%v in ("%SPECTRE_JAVA_VERSION%") do set SPECTRE_JAVA_FEATURE=%%v
-            if not defined SPECTRE_JAVA_FEATURE goto invalidJavaVersion
+            if "%SPECTRE_JAVA_FEATURE%"=="" goto invalidJavaVersion
             if %SPECTRE_JAVA_FEATURE% LSS 21 goto oldJavaVersion
             "%JAVA_EXE%" --list-modules 2^>NUL | findstr /r /c:"^jdk.attach@" >NUL
             if %ERRORLEVEL% neq 0 goto missingAttachModule
