@@ -44,6 +44,8 @@ on:
       - "agent/**"
       - "agent-runtime/**"
       - "agent-test-fixture/**"
+      - "cli/**"
+      - "buildSrc/**"
       - "recording/**"
       - "recording-linux/**"
       - "recording-macos/**"
@@ -65,6 +67,8 @@ on:
       - "agent/**"
       - "agent-runtime/**"
       - "agent-test-fixture/**"
+      - "cli/**"
+      - "buildSrc/**"
       - "recording/**"
       - "recording-linux/**"
       - "recording-macos/**"
@@ -204,6 +208,23 @@ jobs:
         if: always()
         run: |
           xvfb-run -a ./gradlew :agent:test --tests "*AgentAttachIntegrationTest*" --rerun-tasks
+        shell: bash
+
+      - name: Smoke the unpacked CLI distribution against the Compose fixture
+        # This is deliberately separate from the classpath-based integration test above: it
+        # proves the archive's generated launcher, embedded agent runtime, and fat JAR work
+        # together after a user unpacks the published artifact.
+        if: always()
+        run: |
+          ./gradlew :cli:shadowDistZip
+          archive="$(find cli/build/distributions -name 'spectre-cli-*.zip' -print -quit)"
+          distribution="$RUNNER_TEMP/spectre-cli"
+          unzip -q "$archive" -d "$distribution"
+          launcher="$(find "$distribution" -path '*/bin/spectre' -type f -print -quit)"
+          xvfb-run -a ./gradlew :cli:test \
+            --tests "*DaemonFixtureIntegrationTest.CLI binary drives a Compose fixture through ps attach find click and screenshot" \
+            --rerun-tasks \
+            -Dspectre.cli.distributionExecutable="$launcher"
         shell: bash
 
       - name: Verify validation tests passed via JUnit XML
