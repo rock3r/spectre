@@ -55,8 +55,9 @@ Five jobs run on tag push:
 ## CLI package channels
 
 The Spectre repository also hosts its release manifests: `Formula/spectre.rb` is the Homebrew
-tap formula and `bucket/spectre.json` is the Scoop bucket manifest. The tag workflow regenerates
-both from the uploaded release archives and their SHA-256 values, then commits them to `main`.
+tap formula and `bucket/spectre.json` is the Scoop bucket manifest. Publishing the draft GitHub
+release regenerates both from its public CLI archives and their SHA-256 values, then commits them
+to `main`.
 
 On macOS, use the repository as an explicit tap because its name is `spectre`, not Homebrew's
 `homebrew-*` shorthand:
@@ -105,6 +106,8 @@ Manual promotion checklist:
   of attaching a partial library jar set, and that it includes the Linux x64/Linux arm64,
   macOS x64/macOS arm64 (signed and stapled), and Windows x64 CLI bundles.
 - Undraft the GitHub release with `gh release edit <tag> --draft=false`.
+- Confirm the **Publish CLI package channels** workflow committed the refreshed Homebrew and Scoop
+  manifests to `main`.
 
 ## Required secrets
 

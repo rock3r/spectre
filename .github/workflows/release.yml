@@ -610,26 +610,3 @@ jobs:
             "cli/build/construo/distributions/spectre-macosArm64.zip" \
             "cli/build/construo/distributions/spectre-windowsX64.zip" \
             --clobber
-
-      - name: Update self-hosted Homebrew tap and Scoop bucket
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          output="$RUNNER_TEMP/package-manifests"
-          python3 .github/scripts/generate-cli-package-manifests.py \
-            --version "$RELEASE_VERSION" \
-            --macos-arm64 cli/build/construo/distributions/spectre-macosArm64.zip \
-            --macos-x64 cli/build/construo/distributions/spectre-macosX64.zip \
-            --windows-x64 cli/build/construo/distributions/spectre-windowsX64.zip \
-            --output-dir "$output"
-          git fetch origin main
-          git worktree add "$RUNNER_TEMP/spectre-package-channels" origin/main
-          cp -R "$output/Formula" "$output/bucket" "$RUNNER_TEMP/spectre-package-channels/"
-          git -C "$RUNNER_TEMP/spectre-package-channels" config user.name "github-actions[bot]"
-          git -C "$RUNNER_TEMP/spectre-package-channels" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$RUNNER_TEMP/spectre-package-channels" add Formula/spectre.rb bucket/spectre.json
-          git -C "$RUNNER_TEMP/spectre-package-channels" diff --cached --quiet \
-            || git -C "$RUNNER_TEMP/spectre-package-channels" commit \
-              -m "Publish Spectre CLI $RELEASE_VERSION package manifests"
-          git -C "$RUNNER_TEMP/spectre-package-channels" push origin HEAD:main
