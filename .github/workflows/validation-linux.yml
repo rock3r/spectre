@@ -374,5 +374,8 @@ jobs:
             agent/build/reports/tests/
             agent/build/test-results/
             agent/hs_err_*.log
+            cli/build/reports/tests/
+            cli/build/test-results/
+            cli/hs_err_*.log
           if-no-files-found: ignore
           retention-days: 14

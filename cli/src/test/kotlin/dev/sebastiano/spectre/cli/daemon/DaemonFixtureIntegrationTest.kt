@@ -112,7 +112,7 @@ class DaemonFixtureIntegrationTest {
         try {
             spawnComposeFixture().use { fixture ->
                 val processes = runCliBinary(daemonUser, "ps", "--json")
-                assertEquals(0, processes.exitCode)
+                assertEquals(0, processes.exitCode, processes.output)
                 assertTrue(
                     Json.parseToJsonElement(processes.output)
                         .jsonObject
