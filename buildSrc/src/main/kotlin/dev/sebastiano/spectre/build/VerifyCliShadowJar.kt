@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.build
 import java.io.File
 import java.util.jar.JarFile
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.TimeUnit
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.RegularFileProperty
@@ -67,22 +68,26 @@ abstract class VerifyCliShadowJar : DefaultTask() {
     }
 
     private fun readUntil(process: Process, complete: (String) -> Boolean): String =
-        Executors.newSingleThreadExecutor().use { executor ->
-            val output =
-                executor.submit<String> {
-                    buildString {
-                        process.inputStream.bufferedReader().useLines { lines ->
-                            for (line in lines) {
-                                appendLine(line)
-                                if (complete(toString())) return@useLines
-                            }
+        Executors.newSingleThreadExecutor().let { executor ->
+            val output = executor.submit<String> {
+                buildString {
+                    process.inputStream.bufferedReader().useLines { lines ->
+                        for (line in lines) {
+                            appendLine(line)
+                            if (complete(toString())) return@useLines
                         }
                     }
                 }
+            }
             try {
                 output.get(PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            } catch (exception: TimeoutException) {
+                process.destroyForcibly()
+                output.get(PROCESS_KILL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                error("Timed out after $PROCESS_TIMEOUT_SECONDS seconds while reading ${process.info().command().orElse("the CLI")}")
             } finally {
                 if (!output.isDone) output.cancel(true)
+                executor.shutdownNow()
             }
         }
 
@@ -96,6 +101,7 @@ abstract class VerifyCliShadowJar : DefaultTask() {
         private const val AGENT_RUNTIME_ENTRY = "spectre/agent-runtime.jar"
         private const val KTOR_SERVICE_ENTRY = "META-INF/services/io.ktor.server.config.ConfigLoader"
         private const val PROCESS_TIMEOUT_SECONDS: Long = 10
+        private const val PROCESS_KILL_TIMEOUT_SECONDS: Long = 1
         private const val INITIALIZE_REQUEST =
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"spectre-r8-smoke\",\"version\":\"1\"}}}"
         private const val INITIALIZED_NOTIFICATION =
