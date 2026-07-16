@@ -40,9 +40,10 @@ Five jobs run on tag push:
    per-arch helper directories as a GitHub Actions artefact.
 5. **`mac-cli-bundles`** (macOS runner, depends on the gate and `mac-helper`) — builds the
    x64 and arm64 Roast `.app` CLI bundles with the notarised screen-capture helper, signs every
-   Mach-O component in their jlink runtimes with the Developer ID, submits each archive to
-   `notarytool`, staples the resulting ticket, verifies the signature, and uploads the finished
-   archives as workflow artefacts.
+   Mach-O component in their jlink runtimes with the Developer ID and JVM hardened-runtime
+   entitlements, submits each archive to `notarytool` with a 30-minute bound, staples the
+   resulting ticket, verifies the signature, and uploads the finished archives as workflow
+   artefacts.
 6. **`publish`** (Linux runner, depends on the gate and all helper/bundle jobs) — downloads the
    helper and signed macOS CLI artefacts, runs `:verifyMavenLocalPublication` to assert the
    publication shape, builds the Linux x64/Linux arm64/Windows x64 Roast CLI bundles, and runs

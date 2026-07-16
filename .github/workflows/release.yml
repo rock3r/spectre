@@ -314,20 +314,25 @@ jobs:
             workspace="$RUNNER_TEMP/spectre-${target}"
             root="$workspace/spectre-cli-$RELEASE_VERSION"
             app="$root/Spectre.app"
+            entitlements="cli/packaging/macos/jvm-entitlements.plist"
             rm -rf "$workspace"
             mkdir -p "$workspace"
             ditto -x -k "$archive" "$workspace"
             test -d "$app"
 
-            # jlink carries its own Java launchers and dylibs. Sign all nested Mach-O files
-            # first, then the outer app bundle, so Gatekeeper sees one coherent signature.
+            # jlink carries its own Java launchers and dylibs. The JVM needs these hardened
+            # runtime entitlements for JIT code, native-library loading, and jdk.attach. Sign
+            # all nested Mach-O files first, then the outer app bundle, so Gatekeeper sees one
+            # coherent signature.
             while IFS= read -r -d '' file; do
               if file -b "$file" | grep -q 'Mach-O'; then
                 codesign --force --options runtime --timestamp \
+                  --entitlements "$entitlements" \
                   --sign "$APPLE_DEVELOPER_IDENTITY" "$file"
               fi
             done < <(find "$app" -type f -print0)
             codesign --force --deep --options runtime --timestamp \
+              --entitlements "$entitlements" \
               --sign "$APPLE_DEVELOPER_IDENTITY" "$app"
             codesign --verify --deep --strict --verbose=4 "$app"
 
@@ -340,6 +345,7 @@ jobs:
               --key "$API_KEY_PATH" \
               --key-id "$APPLE_NOTARY_API_KEY_ID" \
               --issuer "$APPLE_NOTARY_API_ISSUER" \
+              --timeout 30m \
               --wait
             xcrun stapler staple "$app"
             xcrun stapler validate "$app"
