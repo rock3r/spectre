@@ -55,23 +55,31 @@ abstract class PatchStartScripts : DefaultTask() {
                 if [ -x /usr/libexec/java_home ]; then
                     JAVA_HOME=${'$'}(/usr/libexec/java_home -v 21+ 2>/dev/null || true)
                 fi
-                for spectre_java_home in "${'$'}{HOME:-}/.sdkman/candidates/java/current" /usr/lib/jvm/* /Library/Java/JavaVirtualMachines/*/Contents/Home; do
-                    if [ -x "${'$'}spectre_java_home/bin/java" ]; then
-                        spectre_java_version=${'$'}("${'$'}spectre_java_home/bin/java" -version 2>&1 | sed -n '1s/.*version "\([^" ]*\)".*/\1/p')
-                        spectre_java_feature=${'$'}{spectre_java_version%%.*}
-                        case "${'$'}spectre_java_feature" in
-                            '' | *[!0-9]*) continue ;;
-                        esac
-                        if [ "${'$'}spectre_java_feature" -ge 21 ] && "${'$'}spectre_java_home/bin/java" --list-modules 2>/dev/null | grep -q '^jdk.attach@'; then
-                            JAVA_HOME=${'$'}spectre_java_home
-                            break
-                        elif [ -z "${'$'}spectre_java_fallback_home" ] && [ "${'$'}spectre_java_feature" -ge 21 ]; then
-                            spectre_java_fallback_home=${'$'}spectre_java_home
-                        fi
+                if [ -n "${'$'}{JAVA_HOME:-}" ] && "${'$'}JAVA_HOME/bin/java" --list-modules 2>/dev/null | grep -q '^jdk.attach@'; then
+                    : # Preserve the OS-selected JDK.
+                else
+                    if [ -n "${'$'}{JAVA_HOME:-}" ]; then
+                        spectre_java_fallback_home=${'$'}JAVA_HOME
+                        JAVA_HOME=
                     fi
-                done
-                if [ -z "${'$'}{JAVA_HOME:-}" ]; then
-                    JAVA_HOME=${'$'}spectre_java_fallback_home
+                    for spectre_java_home in "${'$'}{HOME:-}/.sdkman/candidates/java/current" /usr/lib/jvm/* /Library/Java/JavaVirtualMachines/*/Contents/Home; do
+                        if [ -x "${'$'}spectre_java_home/bin/java" ]; then
+                            spectre_java_version=${'$'}("${'$'}spectre_java_home/bin/java" -version 2>&1 | sed -n '1s/.*version "\([^" ]*\)".*/\1/p')
+                            spectre_java_feature=${'$'}{spectre_java_version%%.*}
+                            case "${'$'}spectre_java_feature" in
+                                '' | *[!0-9]*) continue ;;
+                            esac
+                            if [ "${'$'}spectre_java_feature" -ge 21 ] && "${'$'}spectre_java_home/bin/java" --list-modules 2>/dev/null | grep -q '^jdk.attach@'; then
+                                JAVA_HOME=${'$'}spectre_java_home
+                                break
+                            elif [ -z "${'$'}spectre_java_fallback_home" ] && [ "${'$'}spectre_java_feature" -ge 21 ]; then
+                                spectre_java_fallback_home=${'$'}spectre_java_home
+                            fi
+                        fi
+                    done
+                    if [ -z "${'$'}{JAVA_HOME:-}" ]; then
+                        JAVA_HOME=${'$'}spectre_java_fallback_home
+                    fi
                 fi
             fi
 
