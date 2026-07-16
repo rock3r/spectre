@@ -95,7 +95,9 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
         }
         val output = process.inputStream.bufferedReader().readText()
         check(process.exitValue() == 0) { "Bundled launcher failed: $output" }
-        check("Usage: spectre" in output) { "Bundled launcher did not run the Spectre CLI: $output" }
+        check("Usage: spectre" in output.withoutAnsiSequences()) {
+            "Bundled launcher did not run the Spectre CLI: $output"
+        }
     }
 
     private fun verifyRuntimeJava(java: File) {
@@ -114,7 +116,10 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
     private companion object {
         const val EXTRACTION_TIMEOUT_SECONDS = 30L
         const val LAUNCH_TIMEOUT_SECONDS = 20L
+        val ANSI_ESCAPE_SEQUENCE = Regex("\\u001B\\[[0-?]*[ -/]*[@-~]")
     }
 
     private fun isWindows(): Boolean = System.getProperty("os.name").startsWith("Windows")
+
+    private fun String.withoutAnsiSequences(): String = replace(ANSI_ESCAPE_SEQUENCE, "")
 }
