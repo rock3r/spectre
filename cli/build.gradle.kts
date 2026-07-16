@@ -65,7 +65,7 @@ tasks.named<CreateStartScripts>("startShadowScripts") {
 }
 
 tasks.named<Zip>("shadowDistZip") {
-    archiveFileName.set("spectre-cli-${project.version}.zip")
+    archiveFileName.set("spectre-cli-${project.version}-${runtimeArchivePlatform()}.zip")
     dependsOn(patchShadowStartScripts)
     // PatchStartScripts mutates the generated launcher after Shadow has assembled its copy spec.
     // Recreate the archive so direct release builds cannot reuse an earlier unpatched ZIP.
@@ -103,12 +103,12 @@ tasks.named<Zip>("shadowDistZip") {
     dependsOn(createCliRuntimeImage)
     from(cliRuntimeImage) {
         include("bin/**", "lib/jspawnhelper")
-        into("spectre-cli-${project.version}/runtime")
+        into("spectre-cli-${project.version}-${runtimeArchivePlatform()}/runtime")
         filePermissions { unix("rwxr-xr-x") }
     }
     from(cliRuntimeImage) {
         exclude("bin/**", "lib/jspawnhelper")
-        into("spectre-cli-${project.version}/runtime")
+        into("spectre-cli-${project.version}-${runtimeArchivePlatform()}/runtime")
     }
 }
 
@@ -146,6 +146,17 @@ private fun runtimeArchitecture(): String =
         "aarch64",
         "arm64" -> "aarch64"
         else -> System.getProperty("os.arch")
+    }
+
+private fun runtimeArchivePlatform(): String =
+    "${runtimeArchiveOperatingSystem()}-${runtimeArchitecture()}"
+
+private fun runtimeArchiveOperatingSystem(): String =
+    when (runtimeOperatingSystem()) {
+        "Mac OS X" -> "macos"
+        "Windows" -> "windows"
+        "Linux" -> "linux"
+        else -> error("Unsupported CLI runtime operating system: ${runtimeOperatingSystem()}")
     }
 
 kotlin {

@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.build
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.TimeUnit
+import java.util.Properties
 import java.util.zip.ZipFile
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.RegularFileProperty
@@ -26,6 +27,18 @@ abstract class VerifyCliDistributionZip : DefaultTask() {
             }
             check(zip.getEntry("$distributionRoot/runtime/spectre-runtime.properties") != null) {
                 "${archive.name} does not declare its bundled runtime platform"
+            }
+            val runtimePlatform =
+                zip
+                    .getInputStream(zip.getEntry("$distributionRoot/runtime/spectre-runtime.properties"))
+                    .use { input ->
+                        Properties().apply { load(input) }.let { properties ->
+                            "${archiveOperatingSystem(properties.getProperty("spectre.runtime.os"))}-" +
+                                properties.getProperty("spectre.runtime.arch")
+                        }
+                    }
+            check(archive.name.endsWith("-$runtimePlatform.zip")) {
+                "${archive.name} must name the platform of its bundled runtime ($runtimePlatform)"
             }
             validateEntries(zip)
             extract(archive, zip)
@@ -97,6 +110,14 @@ abstract class VerifyCliDistributionZip : DefaultTask() {
     private fun launcherName(): String = if (isWindows()) "spectre.bat" else "spectre"
 
     private fun isWindows(): Boolean = System.getProperty("os.name").startsWith("Windows")
+
+    private fun archiveOperatingSystem(value: String): String =
+        when (value) {
+            "Mac OS X" -> "macos"
+            "Windows" -> "windows"
+            "Linux" -> "linux"
+            else -> error("Unsupported bundled runtime operating system: $value")
+        }
 
     private companion object {
         private const val COMMAND_TIMEOUT_SECONDS: Long = 30

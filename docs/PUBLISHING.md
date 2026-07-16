@@ -40,11 +40,12 @@ Five jobs run on tag push:
    per-arch helper directories as a GitHub Actions artefact.
 5. **`publish`** (Linux runner, depends on the gate and all helper jobs) — downloads the
    helper artefacts, runs `:verifyMavenLocalPublication` to assert the publication shape, then
-   builds the version-stamped `spectre-cli-<version>.zip` Shadow distribution and runs
-   `publishToMavenCentral` against the [Sonatype Central Portal][central-portal]. Finally it
-   creates a draft GitHub release and uploads that self-contained CLI archive. Maven Central
-   remains the canonical host for library modules; do not attach a partial library jar set to
-   the GitHub release.
+   builds the version-stamped `spectre-cli-<version>-linux-x86_64.zip` Shadow distribution and
+   runs `publishToMavenCentral` against the [Sonatype Central Portal][central-portal]. Finally it
+   creates a draft GitHub release and uploads that self-contained Linux x86_64 CLI archive.
+   Maven Central remains the canonical host for library modules; do not attach a partial library
+   jar set to the GitHub release. Cross-targeted macOS, Windows, and Linux arm64 bundles remain
+   part of [#178](https://github.com/rock3r/spectre/issues/178).
 
 [ci-yml]: https://github.com/rock3r/spectre/blob/main/.github/workflows/ci.yml
 [central-portal]: https://central.sonatype.com/
@@ -76,7 +77,7 @@ Manual promotion checklist:
 - Promote the Central staging deployment from the Central Portal UI.
 - Confirm the GitHub release notes link to Maven Central for artifacts instead
   of attaching a partial library jar set, and that it includes
-  `spectre-cli-<version>.zip`.
+  `spectre-cli-<version>-linux-x86_64.zip`.
 - Undraft the GitHub release with `gh release edit <tag> --draft=false`.
 
 ## Required secrets
