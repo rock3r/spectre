@@ -321,8 +321,8 @@ Install the `spectre` executable where Claude Code can invoke it, then add it to
 Restart Claude Code after changing the configuration. It can then use these tools in order:
 
 1. `list_processes` to find the target PID.
-2. `attach` with that PID and retain the returned `session_id`.
-3. `tree` or `find` to retrieve current node keys, then `click` or `type` to interact.
+2. `attach` with that PID and retain the returned `sessionId`.
+3. `tree` or `find` to retrieve current node keys, then `click` or `type_text` to interact.
 4. `screenshot` to receive a PNG directly as MCP image content, rather than a file path.
 
 Node keys are short-lived: get a fresh key with `tree` or `find` after an interaction changes the
