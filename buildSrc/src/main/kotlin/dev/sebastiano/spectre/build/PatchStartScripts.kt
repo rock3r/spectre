@@ -51,21 +51,28 @@ abstract class PatchStartScripts : DefaultTask() {
             """
             # Find a locally installed JDK when JAVA_HOME and PATH are unset.
             if [ -z "${'$'}{JAVA_HOME:-}" ] && ! command -v java >/dev/null 2>&1; then
+                spectre_java_fallback_home=
                 if [ -x /usr/libexec/java_home ]; then
                     JAVA_HOME=${'$'}(/usr/libexec/java_home -v 21+ 2>/dev/null || true)
                 fi
                 for spectre_java_home in "${'$'}{HOME:-}/.sdkman/candidates/java/current" /usr/lib/jvm/* /Library/Java/JavaVirtualMachines/*/Contents/Home; do
-                    if [ -z "${'$'}{JAVA_HOME:-}" ] && [ -x "${'$'}spectre_java_home/bin/java" ]; then
+                    if [ -x "${'$'}spectre_java_home/bin/java" ]; then
                         spectre_java_version=${'$'}("${'$'}spectre_java_home/bin/java" -version 2>&1 | sed -n '1s/.*version "\([^" ]*\)".*/\1/p')
                         spectre_java_feature=${'$'}{spectre_java_version%%.*}
                         case "${'$'}spectre_java_feature" in
                             '' | *[!0-9]*) continue ;;
                         esac
-                        if [ "${'$'}spectre_java_feature" -ge 21 ]; then
+                        if [ "${'$'}spectre_java_feature" -ge 21 ] && "${'$'}spectre_java_home/bin/java" --list-modules 2>/dev/null | grep -q '^jdk.attach@'; then
                             JAVA_HOME=${'$'}spectre_java_home
+                            break
+                        elif [ -z "${'$'}spectre_java_fallback_home" ] && [ "${'$'}spectre_java_feature" -ge 21 ]; then
+                            spectre_java_fallback_home=${'$'}spectre_java_home
                         fi
                     fi
                 done
+                if [ -z "${'$'}{JAVA_HOME:-}" ]; then
+                    JAVA_HOME=${'$'}spectre_java_fallback_home
+                fi
             fi
 
             # Determine the Java command to use to start the JVM.
@@ -102,7 +109,9 @@ abstract class PatchStartScripts : DefaultTask() {
         private val WINDOWS_JDK_FALLBACK =
             """
             @rem PATH did not provide Java; now try common local JDK installations.
+            set SPECTRE_JRE_HOME=
             for %%d in ("%ProgramFiles%\\Java\\*" "%ProgramFiles%\\Eclipse Adoptium\\*" "%ProgramFiles%\\Microsoft\\jdk-*") do call :findCompatibleSpectreJdk "%%~fd"
+            if not defined JAVA_HOME if defined SPECTRE_JRE_HOME set JAVA_HOME=%SPECTRE_JRE_HOME%
             if defined JAVA_HOME goto findJavaFromJavaHome
             """
                 .trimIndent()
@@ -119,7 +128,9 @@ abstract class PatchStartScripts : DefaultTask() {
             for /f "tokens=1 delims=." %%v in ("%SPECTRE_JAVA_VERSION%") do set SPECTRE_JAVA_FEATURE=%%v
             if "%SPECTRE_JAVA_FEATURE%"=="" goto :eof
             if %SPECTRE_JAVA_FEATURE% LSS 21 goto :eof
-            set JAVA_HOME=%~1
+            "%~1\\bin\\java.exe" --list-modules 2^>NUL | findstr /r /c:"^jdk.attach@" >NUL
+            if %ERRORLEVEL% equ 0 set JAVA_HOME=%~1
+            if not defined JAVA_HOME if not defined SPECTRE_JRE_HOME set SPECTRE_JRE_HOME=%~1
             goto :eof
             """
                 .trimIndent()
