@@ -38,14 +38,18 @@ Five jobs run on tag push:
 4. **`windows-helper`** (Windows runner, depends on `release-gate`) — builds the
    .NET Windows Graphics Capture helper for `x64` and `arm64`, then uploads the
    per-arch helper directories as a GitHub Actions artefact.
-5. **`publish`** (Linux runner, depends on the gate and all helper jobs) — downloads the
-   helper artefacts, runs `:verifyMavenLocalPublication` to assert the publication shape, then
-   builds the version-stamped `spectre-cli-<version>-linux-x86_64.zip` Shadow distribution and
-   runs `publishToMavenCentral` against the [Sonatype Central Portal][central-portal]. Finally it
-   creates a draft GitHub release and uploads that self-contained Linux x86_64 CLI archive.
-   Maven Central remains the canonical host for library modules; do not attach a partial library
-   jar set to the GitHub release. Cross-targeted macOS, Windows, and Linux arm64 bundles remain
-   part of [#178](https://github.com/rock3r/spectre/issues/178).
+5. **`mac-cli-bundles`** (macOS runner, depends on the gate and `mac-helper`) — builds the
+   x64 and arm64 Roast `.app` CLI bundles with the notarised screen-capture helper, signs every
+   Mach-O component in their jlink runtimes with the Developer ID, submits each archive to
+   `notarytool`, staples the resulting ticket, verifies the signature, and uploads the finished
+   archives as workflow artefacts.
+6. **`publish`** (Linux runner, depends on the gate and all helper/bundle jobs) — downloads the
+   helper and signed macOS CLI artefacts, runs `:verifyMavenLocalPublication` to assert the
+   publication shape, builds the Linux x64/Linux arm64/Windows x64 Roast CLI bundles, and runs
+   `publishToMavenCentral` against the [Sonatype Central Portal][central-portal]. Finally it
+   creates a draft GitHub release and uploads all five self-contained CLI bundles. Maven Central
+   remains the canonical host for library modules; do not attach a partial library jar set to the
+   GitHub release.
 
 [ci-yml]: https://github.com/rock3r/spectre/blob/main/.github/workflows/ci.yml
 [central-portal]: https://central.sonatype.com/
@@ -76,8 +80,8 @@ Manual promotion checklist:
   `scripts/central_portal_check.py validate --deployment-id <id> --version <version>`.
 - Promote the Central staging deployment from the Central Portal UI.
 - Confirm the GitHub release notes link to Maven Central for artifacts instead
-  of attaching a partial library jar set, and that it includes
-  `spectre-cli-<version>-linux-x86_64.zip`.
+  of attaching a partial library jar set, and that it includes the Linux x64/Linux arm64,
+  macOS x64/macOS arm64 (signed and stapled), and Windows x64 CLI bundles.
 - Undraft the GitHub release with `gh release edit <tag> --draft=false`.
 
 ## Required secrets

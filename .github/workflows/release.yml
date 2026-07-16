@@ -9,7 +9,7 @@ name: Release
 # `-PVERSION_NAME=...`, and `vanniktech-maven-publish`'s POMs pick up the override
 # automatically.
 #
-# Four-stage fan-out:
+# Release job graph:
 #
 #   1. `release-gate`     — Linux runner. Rejects non-SemVer `v*` tags, runs the
 #                            full Gradle `check`, and runs `mkdocs build --strict`
@@ -21,17 +21,22 @@ name: Release
 #                            Uploads the notarised binary as a GitHub Actions
 #                            artifact.
 #
-#   3. `linux-helpers`    — Linux runner. Cross-builds the Wayland Rust helper for
+#   3. `mac-cli-bundles`  — macOS runner. Packages both Roast `.app` bundles,
+#                            signs every Mach-O nested in their jlink runtimes,
+#                            notarizes the archives, staples the tickets, and uploads
+#                            the resulting release-ready archives.
+#
+#   4. `linux-helpers`    — Linux runner. Cross-builds the Wayland Rust helper for
 #                            both x86_64 and aarch64 using the same toolchain dance
 #                            `ci.yml` documents (dpkg multi-arch + per-arch libdbus
 #                            sysroot + cross-linker). Uploads the per-arch binaries
 #                            as a GitHub Actions artifact.
 #
-#   4. `windows-helper`   — Windows runner. Builds the .NET Graphics Capture helper for
+#   5. `windows-helper`   — Windows runner. Builds the .NET Graphics Capture helper for
 #                            x64 and arm64 and uploads both helper directories as a
 #                            GitHub Actions artifact.
 #
-#   5. `publish`          — Linux runner. Depends on the gate and all helper jobs. Downloads
+#   6. `publish`          — Linux runner. Depends on the gate and all helper jobs. Downloads
 #                            the artefacts, stages them into the platform helper
 #                            resource jars via `-PprebuiltMacHelperPath=...` and
 #                            `-PprebuiltLinuxHelpersDir=...` and
@@ -223,6 +228,149 @@ jobs:
             rm -f "$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_API_KEY_ID}.p8"
           fi
 
+  mac-cli-bundles:
+    name: Build, sign, and notarise macOS CLI bundles
+    runs-on: macos-latest
+    needs:
+      - release-gate
+      - mac-helper
+    env:
+      RELEASE_VERSION: ${{ needs.release-gate.outputs.version }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Download notarised mac helper artefact
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-helper
+          path: ${{ runner.temp }}/mac-helper
+
+      - name: Import Developer ID certificate
+        env:
+          APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.APPLE_SIGNING_KEYCHAIN_PASSWORD }}
+        run: |
+          test -n "$APPLE_DEVELOPER_ID_P12"
+          test -n "$APPLE_DEVELOPER_ID_P12_PASSWORD"
+          test -n "$KEYCHAIN_PASSWORD"
+
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/spectre-signing.keychain-db"
+
+          echo "$APPLE_DEVELOPER_ID_P12" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" \
+            -P "$APPLE_DEVELOPER_ID_P12_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Build, sign, and notarise macOS CLI bundles
+        env:
+          APPLE_DEVELOPER_IDENTITY: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}
+          APPLE_NOTARY_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY }}
+          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_NOTARY_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          test -n "$APPLE_DEVELOPER_IDENTITY"
+          test -n "$APPLE_NOTARY_API_KEY"
+          test -n "$APPLE_NOTARY_API_KEY_ID"
+          test -n "$APPLE_NOTARY_API_ISSUER"
+
+          API_KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_API_KEY_ID}.p8"
+          echo "$APPLE_NOTARY_API_KEY" | base64 --decode > "$API_KEY_PATH"
+
+          ./gradlew \
+            :cli:packageMacosX64 \
+            :cli:packageMacosArm64 \
+            -PVERSION_NAME="$RELEASE_VERSION" \
+            -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/spectre-screencapture"
+
+          for target in macosX64 macosArm64; do
+            archive="cli/build/construo/distributions/spectre-${target}.zip"
+            workspace="$RUNNER_TEMP/spectre-${target}"
+            root="$workspace/spectre-cli-$RELEASE_VERSION"
+            app="$root/Spectre.app"
+            rm -rf "$workspace"
+            mkdir -p "$workspace"
+            ditto -x -k "$archive" "$workspace"
+            test -d "$app"
+
+            # jlink carries its own Java launchers and dylibs. Sign all nested Mach-O files
+            # first, then the outer app bundle, so Gatekeeper sees one coherent signature.
+            while IFS= read -r -d '' file; do
+              if file -b "$file" | grep -q 'Mach-O'; then
+                codesign --force --options runtime --timestamp \
+                  --sign "$APPLE_DEVELOPER_IDENTITY" "$file"
+              fi
+            done < <(find "$app" -type f -print0)
+            codesign --force --deep --options runtime --timestamp \
+              --sign "$APPLE_DEVELOPER_IDENTITY" "$app"
+            codesign --verify --deep --strict --verbose=4 "$app"
+
+            # Notarytool receives an app-root archive; the published archive keeps the outer
+            # version directory that the other platform bundles use. Staple first, then rebuild
+            # that published archive so users receive an offline-verifiable ticket.
+            notarization_archive="$workspace/Spectre.app.zip"
+            ditto -c -k --sequesterRsrc --keepParent "$app" "$notarization_archive"
+            xcrun notarytool submit "$notarization_archive" \
+              --key "$API_KEY_PATH" \
+              --key-id "$APPLE_NOTARY_API_KEY_ID" \
+              --issuer "$APPLE_NOTARY_API_ISSUER" \
+              --wait
+            xcrun stapler staple "$app"
+            xcrun stapler validate "$app"
+            codesign --verify --deep --strict --verbose=4 "$app"
+            ditto -c -k --sequesterRsrc --keepParent "$root" "$archive"
+          done
+
+      - name: Upload signed and notarised macOS CLI bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-cli-bundles
+          path: |
+            cli/build/construo/distributions/spectre-macosX64.zip
+            cli/build/construo/distributions/spectre-macosArm64.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Clean up Apple credentials + signing keychain
+        if: always()
+        env:
+          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/spectre-signing.keychain-db"
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+          if [ -n "${APPLE_NOTARY_API_KEY_ID:-}" ]; then
+            rm -f "$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_API_KEY_ID}.p8"
+          fi
+
   linux-helpers:
     name: Build cross-arch Linux helpers
     runs-on: ubuntu-latest
@@ -339,6 +487,7 @@ jobs:
     needs:
       - release-gate
       - mac-helper
+      - mac-cli-bundles
       - linux-helpers
       - windows-helper
     # `contents: write` needed for `gh release create / upload`; nothing else opted up.
@@ -373,6 +522,12 @@ jobs:
           name: mac-helper
           path: ${{ runner.temp }}/mac-helper
 
+      - name: Download signed and notarised macOS CLI bundles
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-cli-bundles
+          path: cli/build/construo/distributions
+
       - name: Download cross-arch Linux helpers artefact
         uses: actions/download-artifact@v4
         with:
@@ -404,8 +559,6 @@ jobs:
           ./gradlew \
             :cli:packageLinuxX64 \
             :cli:packageLinuxArm64 \
-            :cli:packageMacosX64 \
-            :cli:packageMacosArm64 \
             :cli:packageWindowsX64 \
             -PVERSION_NAME="$RELEASE_VERSION" \
             -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/spectre-screencapture" \
