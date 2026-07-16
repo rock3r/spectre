@@ -1,0 +1,53 @@
+name: Publish CLI package channels
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  publish-manifests:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Download published CLI bundles
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/cli-bundles"
+          gh release download "$RELEASE_TAG" \
+            --dir "$RUNNER_TEMP/cli-bundles" \
+            --pattern 'spectre-macosArm64.zip' \
+            --pattern 'spectre-macosX64.zip' \
+            --pattern 'spectre-windowsX64.zip'
+
+      - name: Generate and publish manifests
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/package-manifests"
+          python3 .github/scripts/generate-cli-package-manifests.py \
+            --version "${RELEASE_TAG#v}" \
+            --macos-arm64 "$RUNNER_TEMP/cli-bundles/spectre-macosArm64.zip" \
+            --macos-x64 "$RUNNER_TEMP/cli-bundles/spectre-macosX64.zip" \
+            --windows-x64 "$RUNNER_TEMP/cli-bundles/spectre-windowsX64.zip" \
+            --output-dir "$output"
+          git fetch origin main
+          git rebase origin/main
+          cp -R "$output/Formula" "$output/bucket" .
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/spectre.rb bucket/spectre.json
+          git diff --cached --quiet || git commit -m "Publish Spectre CLI ${RELEASE_TAG#v} package manifests"
+          for attempt in 1 2 3; do
+            git push origin HEAD:main && exit 0
+            git fetch origin main
+            git rebase origin/main
+          done
+          exit 1
