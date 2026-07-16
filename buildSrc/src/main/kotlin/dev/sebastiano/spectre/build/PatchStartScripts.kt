@@ -61,7 +61,7 @@ abstract class PatchStartScripts : DefaultTask() {
                         case "${'$'}spectre_java_feature" in
                             '' | *[!0-9]*) continue ;;
                         esac
-                        if [ "${'$'}spectre_java_feature" -ge 21 ] && "${'$'}spectre_java_home/bin/java" --list-modules 2>/dev/null | grep -q '^jdk.attach@'; then
+                        if [ "${'$'}spectre_java_feature" -ge 21 ]; then
                             JAVA_HOME=${'$'}spectre_java_home
                         fi
                     fi
@@ -74,7 +74,7 @@ abstract class PatchStartScripts : DefaultTask() {
 
         private val UNIX_JDK_PREFLIGHT =
             """
-            # Spectre attaches an agent, so it requires a full JDK rather than a JRE.
+            # Spectre requires Java 21 or later. Attach operations validate jdk.attach themselves.
             spectre_java_version=${'$'}("${'$'}JAVACMD" -version 2>&1 | sed -n '1s/.*version "\([^" ]*\)".*/\1/p')
             spectre_java_feature=${'$'}{spectre_java_version%%.*}
             case "${'$'}spectre_java_feature" in
@@ -83,10 +83,6 @@ abstract class PatchStartScripts : DefaultTask() {
             if [ "${'$'}spectre_java_feature" -lt 21 ]; then
                 die "ERROR: Spectre requires JDK 21 or later; found Java ${'$'}spectre_java_version at ${'$'}JAVACMD."
             fi
-            if ! "${'$'}JAVACMD" --list-modules 2>/dev/null | grep -q '^jdk.attach@'; then
-                die "ERROR: Spectre requires a full JDK with the jdk.attach module; found Java ${'$'}spectre_java_version at ${'$'}JAVACMD."
-            fi
-
             $UNIX_DEFAULT_JVM_OPTIONS_COMMENT
             """
                 .trimIndent()
@@ -123,8 +119,6 @@ abstract class PatchStartScripts : DefaultTask() {
             for /f "tokens=1 delims=." %%v in ("%SPECTRE_JAVA_VERSION%") do set SPECTRE_JAVA_FEATURE=%%v
             if "%SPECTRE_JAVA_FEATURE%"=="" goto :eof
             if %SPECTRE_JAVA_FEATURE% LSS 21 goto :eof
-            "%~1\\bin\\java.exe" --list-modules 2^>NUL | findstr /r /c:"^jdk.attach@" >NUL
-            if %ERRORLEVEL% neq 0 goto :eof
             set JAVA_HOME=%~1
             goto :eof
             """
@@ -133,7 +127,7 @@ abstract class PatchStartScripts : DefaultTask() {
         private val WINDOWS_JDK_PREFLIGHT =
             """
             :execute
-            @rem Spectre attaches an agent, so it requires a full JDK rather than a JRE.
+            @rem Spectre requires Java 21 or later. Attach operations validate jdk.attach themselves.
             set SPECTRE_JAVA_VERSION=
             set SPECTRE_JAVA_FEATURE=
             for /f "tokens=3" %%v in ('"%JAVA_EXE%" -version 2^>^&1 ^| findstr /c:"version"') do set SPECTRE_JAVA_VERSION=%%v
@@ -141,8 +135,6 @@ abstract class PatchStartScripts : DefaultTask() {
             for /f "tokens=1 delims=." %%v in ("%SPECTRE_JAVA_VERSION%") do set SPECTRE_JAVA_FEATURE=%%v
             if "%SPECTRE_JAVA_FEATURE%"=="" goto invalidJavaVersion
             if %SPECTRE_JAVA_FEATURE% LSS 21 goto oldJavaVersion
-            "%JAVA_EXE%" --list-modules 2^>NUL | findstr /r /c:"^jdk.attach@" >NUL
-            if %ERRORLEVEL% neq 0 goto missingAttachModule
             goto setupCommandLine
 
             :invalidJavaVersion
@@ -151,10 +143,6 @@ abstract class PatchStartScripts : DefaultTask() {
 
             :oldJavaVersion
             echo ERROR: Spectre requires JDK 21 or later; found Java %SPECTRE_JAVA_VERSION% at %JAVA_EXE%. 1>&2
-            goto fail
-
-            :missingAttachModule
-            echo ERROR: Spectre requires a full JDK with the jdk.attach module; found Java %SPECTRE_JAVA_VERSION% at %JAVA_EXE%. 1>&2
             goto fail
 
             :setupCommandLine
