@@ -13,6 +13,7 @@ public class DaemonProcessLauncher(
     @Throws(IOException::class)
     public fun start(): Process =
         ProcessBuilder(command())
+            .also { restoreBundledJavaExecutePermission() }
             .redirectOutput(ProcessBuilder.Redirect.DISCARD)
             .redirectError(ProcessBuilder.Redirect.DISCARD)
             .start()
@@ -32,6 +33,11 @@ public class DaemonProcessLauncher(
         System.getProperty("dev.sebastiano.spectre.agent.runtimeJar")
             ?.let { listOf("-Ddev.sebastiano.spectre.agent.runtimeJar=$it") }
             .orEmpty()
+
+    private fun restoreBundledJavaExecutePermission() {
+        if (javaExecutable != defaultJavaExecutable()) return
+        Path.of(javaExecutable).toFile().setExecutable(true, false)
+    }
 
     private companion object {
         private const val DAEMON_MAIN_CLASS: String =
