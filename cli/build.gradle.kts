@@ -101,7 +101,15 @@ val createCliRuntimeImage =
 
 tasks.named<Zip>("shadowDistZip") {
     dependsOn(createCliRuntimeImage)
-    from(cliRuntimeImage) { into("spectre-cli-${project.version}/runtime") }
+    from(cliRuntimeImage) {
+        include("bin/**", "lib/jspawnhelper")
+        into("spectre-cli-${project.version}/runtime")
+        filePermissions { unix("rwxr-xr-x") }
+    }
+    from(cliRuntimeImage) {
+        exclude("bin/**", "lib/jspawnhelper")
+        into("spectre-cli-${project.version}/runtime")
+    }
 }
 
 val verifyCliRuntimeImage =

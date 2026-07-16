@@ -27,16 +27,41 @@ abstract class VerifyCliDistributionZip : DefaultTask() {
             check(zip.getEntry("$distributionRoot/runtime/spectre-runtime.properties") != null) {
                 "${archive.name} does not declare its bundled runtime platform"
             }
-            extract(zip)
+            validateEntries(zip)
+            extract(archive, zip)
             verifyLauncher(File(temporaryDir, distributionRoot))
         }
     }
 
-    private fun extract(zip: ZipFile) {
+    private fun validateEntries(zip: ZipFile) {
         val root = temporaryDir.toPath()
         zip.entries().asSequence().forEach { entry ->
             val destination = root.resolve(entry.name).normalize()
             check(destination.startsWith(root)) { "ZIP entry escapes the verification directory: ${entry.name}" }
+        }
+    }
+
+    private fun extract(archive: File, zip: ZipFile) {
+        if (isWindows()) {
+            extractWindows(zip)
+        } else {
+            extractUnix(archive)
+        }
+    }
+
+    private fun extractUnix(archive: File) {
+        val process = ProcessBuilder("unzip", "-o", "-q", archive.path, "-d", temporaryDir.path).start()
+        check(process.waitFor(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            process.destroyForcibly()
+            "unzip did not finish within $COMMAND_TIMEOUT_SECONDS seconds"
+        }
+        check(process.exitValue() == 0) { "unzip failed: ${process.errorStream.bufferedReader().readText()}" }
+    }
+
+    private fun extractWindows(zip: ZipFile) {
+        val root = temporaryDir.toPath()
+        zip.entries().asSequence().forEach { entry ->
+            val destination = root.resolve(entry.name).normalize()
             if (entry.isDirectory) {
                 Files.createDirectories(destination)
             } else {
@@ -48,9 +73,6 @@ abstract class VerifyCliDistributionZip : DefaultTask() {
 
     private fun verifyLauncher(distributionRoot: File) {
         val launcher = File(distributionRoot, "bin/${launcherName()}")
-        val runtimeJava = File(distributionRoot, "runtime/${javaPath()}")
-        launcher.setExecutable(true)
-        runtimeJava.setExecutable(true)
         val command =
             if (isWindows()) {
                 listOf("cmd", "/c", launcher.path, "--help")
