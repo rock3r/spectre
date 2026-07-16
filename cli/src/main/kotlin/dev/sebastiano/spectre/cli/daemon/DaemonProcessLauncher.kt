@@ -15,9 +15,7 @@ public class DaemonProcessLauncher(
         ProcessBuilder(command())
             .also { restoreBundledRuntimeExecutePermissions() }
             .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-            // Surface a daemon startup failure to the invoking CLI instead of reporting only
-            // the missing socket after its connection retry window expires.
-            .redirectError(ProcessBuilder.Redirect.INHERIT)
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
             .start()
 
     /** Returns the isolated daemon command without starting a process. */
