@@ -26,13 +26,31 @@ abstract class VerifyCliShadowJar : DefaultTask() {
             }
         }
 
-        val process =
-            ProcessBuilder(javaExecutable(), "-jar", jar.absolutePath, "--help")
-                .redirectErrorStream(true)
-                .start()
+        verifyHelp(jar)
+        verifyMcpToolDiscovery(jar)
+    }
+
+    private fun verifyHelp(jar: File) {
+        val process = ProcessBuilder(javaExecutable(), "-jar", jar.absolutePath, "--help").start()
         val output = process.inputStream.bufferedReader().use { it.readText() }
-        check(process.waitFor() == 0) { "${jar.name} --help failed:\n$output" }
+        val error = process.errorStream.bufferedReader().use { it.readText() }
+        check(process.waitFor() == 0) { "${jar.name} --help failed:\n$output$error" }
         check("mcp" in output) { "${jar.name} --help did not expose the mcp command:\n$output" }
+    }
+
+    private fun verifyMcpToolDiscovery(jar: File) {
+        val process = ProcessBuilder(javaExecutable(), "-jar", jar.absolutePath, "mcp").start()
+        process.outputStream.bufferedWriter().use { writer ->
+            writer.appendLine(INITIALIZE_REQUEST)
+            writer.appendLine(INITIALIZED_NOTIFICATION)
+            writer.appendLine(TOOLS_LIST_REQUEST)
+        }
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        val error = process.errorStream.bufferedReader().use { it.readText() }
+        check(process.waitFor() == 0) { "${jar.name} mcp failed:\n$output$error" }
+        check("\"id\":2" in output && "\"type_text\"" in output) {
+            "${jar.name} mcp did not return its tool list:\n$output"
+        }
     }
 
     private fun javaExecutable(): String =
@@ -44,5 +62,11 @@ abstract class VerifyCliShadowJar : DefaultTask() {
         private const val CLI_MAIN_CLASS = "dev.sebastiano.spectre.cli.SpectreCliKt"
         private const val AGENT_RUNTIME_ENTRY = "spectre/agent-runtime.jar"
         private const val KTOR_SERVICE_ENTRY = "META-INF/services/io.ktor.server.config.ConfigLoader"
+        private const val INITIALIZE_REQUEST =
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"spectre-r8-smoke\",\"version\":\"1\"}}}"
+        private const val INITIALIZED_NOTIFICATION =
+            "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}"
+        private const val TOOLS_LIST_REQUEST =
+            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}"
     }
 }
