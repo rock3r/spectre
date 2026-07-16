@@ -417,13 +417,16 @@ def summarize_checks(checks):
     skipping_count = 0
     for check in checks:
         bucket = str(check.get("bucket") or "").lower()
+        name = str(check.get("name") or "").lower()
         if is_pending_check(check):
             pending_count += 1
         elif bucket == "fail":
             failed_count += 1
         elif bucket == "pass":
             passed_count += 1
-        elif bucket in ("neutral", "skipping"):
+        elif bucket in ("neutral", "skipping") and not (
+            bucket == "skipping" and name == "deploy"
+        ):
             skipping_count += 1
     return {
         "pending_count": pending_count,
