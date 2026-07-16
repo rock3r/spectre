@@ -52,6 +52,27 @@ Five jobs run on tag push:
    remains the canonical host for library modules; do not attach a partial library jar set to the
    GitHub release.
 
+## CLI package channels
+
+The Spectre repository also hosts its release manifests: `Formula/spectre.rb` is the Homebrew
+tap formula and `bucket/spectre.json` is the Scoop bucket manifest. The tag workflow regenerates
+both from the uploaded release archives and their SHA-256 values, then commits them to `main`.
+
+On macOS, use the repository as an explicit tap because its name is `spectre`, not Homebrew's
+`homebrew-*` shorthand:
+
+```shell
+brew tap rock3r/spectre https://github.com/rock3r/spectre
+brew install rock3r/spectre/spectre
+```
+
+On Windows:
+
+```powershell
+scoop bucket add spectre https://github.com/rock3r/spectre
+scoop install spectre
+```
+
 [ci-yml]: https://github.com/rock3r/spectre/blob/main/.github/workflows/ci.yml
 [central-portal]: https://central.sonatype.com/
 
