@@ -320,7 +320,10 @@ private fun runCliBinary(daemonUser: String, vararg arguments: String): CliBinar
         ProcessBuilder(command)
             .apply {
                 if (distributionExecutable != null) {
-                    environment()["SPECTRE_OPTS"] =
+                    // Roast launches the bundled JVM directly rather than through Gradle's
+                    // generated start script, so it cannot consume SPECTRE_OPTS. The JVM
+                    // itself consumes JAVA_TOOL_OPTIONS before application startup.
+                    environment()["JAVA_TOOL_OPTIONS"] =
                         "-Duser.name=$daemonUser -Djava.awt.headless=false"
                 }
             }
