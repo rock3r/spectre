@@ -80,7 +80,7 @@ end
             "hash": "sha256:{sha256(args.windows_x64)}"
         }}
     }},
-    "bin": "spectre-cli-$version/spectre.exe"
+    "bin": "spectre-cli-{args.version}/spectre.exe"
 }}
 '''
     )

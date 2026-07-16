@@ -38,9 +38,16 @@ jobs:
             --macos-x64 "$RUNNER_TEMP/cli-bundles/spectre-macosX64.zip" \
             --windows-x64 "$RUNNER_TEMP/cli-bundles/spectre-windowsX64.zip" \
             --output-dir "$output"
+          git fetch origin main
+          git rebase origin/main
           cp -R "$output/Formula" "$output/bucket" .
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/spectre.rb bucket/spectre.json
           git diff --cached --quiet || git commit -m "Publish Spectre CLI ${RELEASE_TAG#v} package manifests"
-          git push origin HEAD:main
+          for attempt in 1 2 3; do
+            git push origin HEAD:main && exit 0
+            git fetch origin main
+            git rebase origin/main
+          done
+          exit 1
