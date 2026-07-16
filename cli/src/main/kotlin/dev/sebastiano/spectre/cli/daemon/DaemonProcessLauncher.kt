@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.cli.daemon
 
 import java.io.IOException
+import java.nio.file.Files
 import java.nio.file.Path
 
 /** Starts a detached JVM hosting [DaemonMain] for one local socket endpoint. */
@@ -9,14 +10,22 @@ public class DaemonProcessLauncher(
     private val javaExecutable: String = defaultJavaExecutable(),
     private val classPath: String = System.getProperty("java.class.path"),
 ) {
+    private val startupErrorLog: Path = Files.createTempFile("spectre-daemon-startup-", ".log")
+
     /** Launches the daemon process without inheriting this client's standard streams. */
     @Throws(IOException::class)
     public fun start(): Process =
         ProcessBuilder(command())
             .also { restoreBundledRuntimeExecutePermissions() }
             .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .redirectError(startupErrorLog.toFile())
             .start()
+
+    /** Returns and removes any diagnostic emitted before the daemon reached its socket. */
+    public fun consumeStartupError(): String? =
+        runCatching { Files.readString(startupErrorLog).trim().ifEmpty { null } }
+            .getOrNull()
+            .also { Files.deleteIfExists(startupErrorLog) }
 
     /** Returns the isolated daemon command without starting a process. */
     public fun command(): List<String> = buildList {
