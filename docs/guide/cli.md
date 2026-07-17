@@ -93,7 +93,8 @@ writes banners or logs to standard output.
 
 ## Requirements and limits
 
-- `ps` and `attach` require a full JDK 21 or newer with `jdk.attach`; a JRE is not enough.
+- `ps` and `attach` require JDK 21 or newer in both the CLI and target JVM. The CLI needs a full
+  JDK with `jdk.attach`; a JRE is not enough.
 - The target app must already use Spectre `core`, and it must run as the same OS user as the CLI.
   Start the target JVM with `-XX:+EnableDynamicAgentLoading` to avoid JDK attach warnings and
   future incompatibility.
