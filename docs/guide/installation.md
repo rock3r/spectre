@@ -21,8 +21,8 @@ Spectre publishes these library modules to Maven Central:
 
 ## Install the CLI
 
-The `spectre` CLI provides the daemon-backed shell and MCP entrypoints described in
-[Agent attach](agent.md#cli-and-mcp). On macOS, install it from this repository's Homebrew tap:
+The `spectre` CLI provides daemon-backed shell and MCP entrypoints. See [CLI](cli.md) for its
+main workflows and operational limits. On macOS, install it from this repository's Homebrew tap:
 
 ```shell
 brew tap rock3r/spectre https://github.com/rock3r/spectre
