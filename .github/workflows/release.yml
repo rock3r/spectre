@@ -333,6 +333,9 @@ jobs:
             done < <(find "$app" -type f -print0)
             codesign --force --options runtime --timestamp \
               --entitlements "$entitlements" \
+              --sign "$APPLE_DEVELOPER_IDENTITY" "$app/Contents/MacOS/runtime"
+            codesign --force --options runtime --timestamp \
+              --entitlements "$entitlements" \
               --sign "$APPLE_DEVELOPER_IDENTITY" "$app"
             codesign --verify --strict --verbose=4 "$app"
 
