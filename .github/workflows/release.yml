@@ -571,7 +571,9 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: mac-cli-bundles
-          path: cli/build/construo/distributions
+          # Construo's package tasks clean their shared distribution directory. Keep the
+          # notarised macOS archives outside it while packaging Linux and Windows below.
+          path: ${{ runner.temp }}/mac-cli-bundles
 
       - name: Download cross-arch Linux helpers artefact
         uses: actions/download-artifact@v4
@@ -645,7 +647,7 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" \
             "cli/build/construo/distributions/spectre-linuxX64.zip" \
             "cli/build/construo/distributions/spectre-linuxArm64.zip" \
-            "cli/build/construo/distributions/spectre-macosX64.zip" \
-            "cli/build/construo/distributions/spectre-macosArm64.zip" \
+            "$RUNNER_TEMP/mac-cli-bundles/spectre-macosX64.zip" \
+            "$RUNNER_TEMP/mac-cli-bundles/spectre-macosArm64.zip" \
             "cli/build/construo/distributions/spectre-windowsX64.zip" \
             --clobber
