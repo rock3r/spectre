@@ -332,6 +332,22 @@ jobs:
               ln -s "../Resources/$payload" "$app/Contents/MacOS/$payload"
             done
 
+            # The shaded CLI jar contains Jansi and JNA native libraries. They are scanned by
+            # Apple's notary service even though they live inside a zip, so sign them in place
+            # before repacking the jar and sealing the app.
+            cli_jar="$resources/cli-$RELEASE_VERSION-all.jar"
+            jar_workspace="$workspace/cli-jar"
+            mkdir -p "$jar_workspace"
+            ditto -x -k "$cli_jar" "$jar_workspace"
+            while IFS= read -r -d '' file; do
+              if file -b "$file" | grep -q 'Mach-O'; then
+                codesign --force --options runtime --timestamp \
+                  --entitlements "$entitlements" \
+                  --sign "$APPLE_DEVELOPER_IDENTITY" "$file"
+              fi
+            done < <(find "$jar_workspace" -type f -print0)
+            (cd "$jar_workspace" && zip -qry "$cli_jar" .)
+
             # jlink carries its own Java launchers and dylibs. The JVM needs these hardened
             # runtime entitlements for JIT code, native-library loading, and jdk.attach. Sign
             # all nested Mach-O files first, then seal the outer app bundle.
