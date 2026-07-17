@@ -352,12 +352,23 @@ jobs:
             # that published archive so users receive an offline-verifiable ticket.
             notarization_archive="$workspace/Spectre.app.zip"
             ditto -c -k --sequesterRsrc --keepParent "$app" "$notarization_archive"
-            xcrun notarytool submit "$notarization_archive" \
+            if ! notarization_output=$(xcrun notarytool submit "$notarization_archive" \
               --key "$API_KEY_PATH" \
               --key-id "$APPLE_NOTARY_API_KEY_ID" \
               --issuer "$APPLE_NOTARY_API_ISSUER" \
               --timeout 30m \
-              --wait
+              --wait 2>&1); then
+              printf '%s\n' "$notarization_output"
+              submission_id=$(printf '%s\n' "$notarization_output" | awk '/^[[:space:]]*id:/ { print $2; exit }')
+              if [ -n "$submission_id" ]; then
+                echo "Apple notarization rejection report for $submission_id:"
+                xcrun notarytool log "$submission_id" \
+                  --key "$API_KEY_PATH" \
+                  --key-id "$APPLE_NOTARY_API_KEY_ID" \
+                  --issuer "$APPLE_NOTARY_API_ISSUER" || true
+              fi
+              exit 1
+            fi
             xcrun stapler staple "$app"
             xcrun stapler validate "$app"
             codesign --verify --strict --verbose=4 "$app"
