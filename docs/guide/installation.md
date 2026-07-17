@@ -14,10 +14,31 @@ Spectre publishes these library modules to Maven Central:
 | `agent` | `dev.sebastiano.spectre:spectre-agent:<version>` |
 | `agent-runtime` | `dev.sebastiano.spectre:spectre-agent-runtime:<version>` |
 
-!!! note "Before a release tag is published"
-    The `main` branch declares `0.1.0-SNAPSHOT`. Until a tagged release has been published
-    to Maven Central, consume the checkout as a Gradle composite build (`includeBuild`) or
-    publish locally with `./gradlew publishToMavenLocal`.
+!!! note "Using unreleased changes"
+    The `main` branch declares `0.1.0-SNAPSHOT`. Use a published release version from Maven
+    Central for released builds. To consume unreleased changes, use the checkout as a Gradle
+    composite build (`includeBuild`) or publish it locally with `./gradlew publishToMavenLocal`.
+
+## Install the CLI
+
+The `spectre` CLI provides the daemon-backed shell and MCP entrypoints described in
+[Agent attach](agent.md#cli-and-mcp). On macOS, install it from this repository's Homebrew tap:
+
+```shell
+brew tap rock3r/spectre https://github.com/rock3r/spectre
+brew install rock3r/spectre/spectre
+```
+
+On Windows, install it from the repository's Scoop bucket:
+
+```powershell
+scoop bucket add spectre https://github.com/rock3r/spectre
+scoop install spectre
+```
+
+For Linux and other supported package-manager setups, download the matching CLI archive from the
+[GitHub release](https://github.com/rock3r/spectre/releases) and place its `spectre` executable
+on `PATH`.
 
 ## Requirements
 
