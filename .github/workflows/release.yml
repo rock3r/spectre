@@ -331,10 +331,10 @@ jobs:
                   --sign "$APPLE_DEVELOPER_IDENTITY" "$file"
               fi
             done < <(find "$app" -type f -print0)
-            codesign --force --deep --options runtime --timestamp \
+            codesign --force --options runtime --timestamp \
               --entitlements "$entitlements" \
               --sign "$APPLE_DEVELOPER_IDENTITY" "$app"
-            codesign --verify --deep --strict --verbose=4 "$app"
+            codesign --verify --strict --verbose=4 "$app"
 
             # Notarytool receives an app-root archive; the published archive keeps the outer
             # version directory that the other platform bundles use. Staple first, then rebuild
@@ -349,7 +349,7 @@ jobs:
               --wait
             xcrun stapler staple "$app"
             xcrun stapler validate "$app"
-            codesign --verify --deep --strict --verbose=4 "$app"
+            codesign --verify --strict --verbose=4 "$app"
             ditto -c -k --sequesterRsrc --keepParent "$root" "$archive"
           done
 
