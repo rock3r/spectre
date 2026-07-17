@@ -320,10 +320,21 @@ jobs:
             ditto -x -k "$archive" "$workspace"
             test -d "$app"
 
+            # Roast places its JVM, launcher configuration, and application jar beside the
+            # executable in Contents/MacOS. That location is reserved for code, so codesign
+            # treats every JVM metadata file as a nested code object. Keep Roast's relative
+            # paths intact through symlinks while putting the payload in the standard Resources
+            # location, where the outer bundle can seal it as resources.
+            resources="$app/Contents/Resources"
+            mkdir -p "$resources"
+            for payload in runtime app "cli-$RELEASE_VERSION-all.jar"; do
+              mv "$app/Contents/MacOS/$payload" "$resources/$payload"
+              ln -s "../Resources/$payload" "$app/Contents/MacOS/$payload"
+            done
+
             # jlink carries its own Java launchers and dylibs. The JVM needs these hardened
             # runtime entitlements for JIT code, native-library loading, and jdk.attach. Sign
-            # all nested Mach-O files first, then the outer app bundle, so Gatekeeper sees one
-            # coherent signature.
+            # all nested Mach-O files first, then seal the outer app bundle.
             while IFS= read -r -d '' file; do
               if file -b "$file" | grep -q 'Mach-O'; then
                 codesign --force --options runtime --timestamp \
@@ -331,9 +342,6 @@ jobs:
                   --sign "$APPLE_DEVELOPER_IDENTITY" "$file"
               fi
             done < <(find "$app" -type f -print0)
-            codesign --force --options runtime --timestamp \
-              --entitlements "$entitlements" \
-              --sign "$APPLE_DEVELOPER_IDENTITY" "$app/Contents/MacOS/runtime"
             codesign --force --options runtime --timestamp \
               --entitlements "$entitlements" \
               --sign "$APPLE_DEVELOPER_IDENTITY" "$app"
