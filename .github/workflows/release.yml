@@ -320,6 +320,13 @@ jobs:
             ditto -x -k "$archive" "$workspace"
             test -d "$app"
 
+            # Construo's ZIP extraction can leave executable mode bits platform-dependent. Restore
+            # the launchers before signing, then verify the final published ZIP below so a release
+            # cannot contain an app that extracts but will not launch.
+            chmod 755 "$app/Contents/MacOS/spectre"
+            find "$app/Contents/MacOS/runtime/bin" -type f -exec chmod 755 {} +
+            chmod 755 "$app/Contents/MacOS/runtime/lib/jspawnhelper"
+
             # Roast places its JVM, launcher configuration, and application jar beside the
             # executable in Contents/MacOS. That location is reserved for code, so codesign
             # treats every JVM metadata file as a nested code object. Keep Roast's relative
@@ -390,6 +397,12 @@ jobs:
             xcrun stapler validate "$app"
             codesign --verify --strict --verbose=4 "$app"
             ditto -c -k --sequesterRsrc --keepParent "$root" "$archive"
+
+            extracted="$workspace/published"
+            ditto -x -k "$archive" "$extracted"
+            published_launcher="$extracted/spectre-cli-$RELEASE_VERSION/Spectre.app/Contents/MacOS/spectre"
+            test -x "$published_launcher"
+            "$published_launcher" --help | grep -q 'Usage: spectre'
           done
 
       - name: Upload signed and notarised macOS CLI bundles
