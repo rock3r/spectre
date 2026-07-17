@@ -5,6 +5,9 @@ Spectre's library modules (`:core`, `:server`, `:recording`, `:recording-macos`,
 [`com.vanniktech.maven.publish`][vanniktech] plugin.
 The sample modules (`:sample-desktop`, `:sample-intellij-plugin`) never apply
 the plugin — they're deliverables, not libraries.
+The `:cli` module is also intentionally excluded from Maven Central: it is a
+self-contained application distributed through GitHub release archives and the
+Homebrew and Scoop package channels.
 
 [vanniktech]: https://github.com/vanniktech/gradle-maven-publish-plugin
 
@@ -49,8 +52,8 @@ Five jobs run on tag push:
    publication shape, builds the Linux x64/Linux arm64/Windows x64 Roast CLI bundles, and runs
    `publishToMavenCentral` against the [Sonatype Central Portal][central-portal]. Finally it
    creates a draft GitHub release and uploads all five self-contained CLI bundles. Maven Central
-   remains the canonical host for library modules; do not attach a partial library jar set to the
-   GitHub release.
+   remains the canonical host for library modules only; the CLI is never uploaded there. Do not
+   attach a partial library jar set to the GitHub release.
 
 ## CLI package channels
 
