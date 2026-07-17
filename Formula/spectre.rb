@@ -6,10 +6,10 @@ class Spectre < Formula
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/rock3r/spectre/releases/download/v0.3.0/spectre-macosArm64.zip"
-      sha256 "b798e2d85d051b7b80b7a49a6e89cc102ad79754878f48bc2ed22f9180d9607b"
+      sha256 "2ae6de95f0981a14dacfb95f05196af1ea691f49b4a4404cef7d278cf2f64af2"
     else
       url "https://github.com/rock3r/spectre/releases/download/v0.3.0/spectre-macosX64.zip"
-      sha256 "342d2a64abc2c2f42770becf69fd3d0e96d1958cb7cb45e563fd6b097643ce1a"
+      sha256 "f22de6e7d6725aa46d8fe9d0f367b580128776d8987339257318860128f188ad"
     end
   end
 
