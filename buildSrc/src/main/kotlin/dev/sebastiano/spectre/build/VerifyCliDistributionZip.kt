@@ -86,28 +86,16 @@ abstract class VerifyCliDistributionZip : DefaultTask() {
 
     private fun verifyLauncher(distributionRoot: File) {
         val launcher = File(distributionRoot, "bin/${launcherName()}")
-        val processBuilder =
+        val command =
             if (isWindows()) {
-                // Run from bin/ so APP_HOME resolution is stable; "call" keeps the bat in-process
-                // of cmd so path quoting is less fragile than `cmd /c D:\...\spectre.bat`.
-                ProcessBuilder("cmd.exe", "/c", "call", launcher.name, "--help")
-                    .directory(launcher.parentFile)
+                listOf("cmd", "/c", launcher.path, "--help")
             } else {
-                ProcessBuilder(launcher.absolutePath, "--help")
+                listOf(launcher.path, "--help")
             }
-        processBuilder.redirectErrorStream(true)
-        // Force the launcher to prefer the ZIP's jlink runtime. Setting JAVA_HOME to a
-        // non-existent path made Windows spectre.bat take the invalid-home branch and fail
-        // before the bundled-runtime probe could override it — clear JAVA_HOME instead.
-        processBuilder.environment().remove("JAVA_HOME")
-        if (isWindows()) {
-            // Keep System32 (findstr, etc.) but drop host Java from PATH so only the bundled
-            // runtime can provide java.exe.
-            val systemRoot = processBuilder.environment()["SystemRoot"] ?: "C:\\Windows"
-            val system32 = File(systemRoot, "System32").path
-            processBuilder.environment()["PATH"] = system32
-            processBuilder.environment()["Path"] = system32
-        }
+        val processBuilder = ProcessBuilder(command).redirectErrorStream(true)
+        // Point JAVA_HOME at a non-existent path so the launcher must use the ZIP's jlink
+        // runtime (or fail). The Windows bat probes APP_HOME\\runtime before honouring this.
+        processBuilder.environment()["JAVA_HOME"] = File(temporaryDir, "missing-java-home").path
         val process = processBuilder.start()
         check(process.waitFor(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
             process.destroyForcibly()
