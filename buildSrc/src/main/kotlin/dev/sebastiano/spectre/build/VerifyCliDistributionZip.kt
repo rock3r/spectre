@@ -86,18 +86,19 @@ abstract class VerifyCliDistributionZip : DefaultTask() {
 
     private fun verifyLauncher(distributionRoot: File) {
         val launcher = File(distributionRoot, "bin/${launcherName()}")
-        val command =
+        val processBuilder =
             if (isWindows()) {
-                listOf("cmd", "/c", launcher.path, "--help")
+                // Run from bin/ so APP_HOME resolution is stable; "call" keeps the bat in-process
+                // of cmd so path quoting is less fragile than `cmd /c D:\...\spectre.bat`.
+                ProcessBuilder("cmd.exe", "/c", "call", launcher.name, "--help")
+                    .directory(launcher.parentFile)
             } else {
-                listOf(launcher.path, "--help")
+                ProcessBuilder(launcher.absolutePath, "--help")
             }
-        val processBuilder = ProcessBuilder(command).redirectErrorStream(true)
+        processBuilder.redirectErrorStream(true)
         // Force the launcher to prefer the ZIP's jlink runtime. Setting JAVA_HOME to a
         // non-existent path made Windows spectre.bat take the invalid-home branch and fail
         // before the bundled-runtime probe could override it — clear JAVA_HOME instead.
-        // On Windows, also drop PATH so a host java.exe cannot mask a broken bundle. Unix
-        // scripts still need a real PATH (uname/sed/etc.).
         processBuilder.environment().remove("JAVA_HOME")
         if (isWindows()) {
             // Keep System32 (findstr, etc.) but drop host Java from PATH so only the bundled
