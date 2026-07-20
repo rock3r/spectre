@@ -60,6 +60,10 @@ spectre type <session-id> "A short note"
 spectre screenshot <session-id> --output ./after-save.png
 # Atomic capture: window PNG + full semantics tree on disk (summary only on stdout).
 spectre capture <session-id> --json
+# List leftover capture dirs (sizes + live/closed status).
+spectre captures list
+# Prune closed-session captures on the default root (never touches live sessions without --force).
+spectre captures prune --keep 20
 spectre record start <session-id> --output ./interaction.mp4
 spectre record stop <session-id>
 ```
@@ -67,12 +71,22 @@ spectre record stop <session-id>
 `tree` lists the current semantics nodes. `find` performs an exact match on a Compose test tag.
 `windows` includes top-level windows and popup roots. `screenshot` writes a PNG to `--output`, or
 creates a temporary PNG and prints its path. `capture` takes a window screenshot and the semantics
-tree under the same tick, writes `capture.json` + `screenshot.png` under a capture directory
-(default `$TMPDIR/spectre/captures/…`, or `--out-dir`), and returns only a decision-grade summary
-(paths, node counts, image size). `record start` behaves similarly for an MP4.
+tree under the same tick, writes `capture.json` + `screenshot.png` under a sequenced capture
+directory (`NNNN-<timestamp>/` under `$TMPDIR/spectre/captures` by default, mode `0700`, or under
+`--out-dir`), appends a crash-proof ledger entry, and returns only a decision-grade summary
+(paths, node counts, image size). Default-root captures are lazily capped (keep last 50 closed
+sessions' captures); client `--out-dir` captures are never auto-deleted. `record start` behaves
+similarly for an MP4.
 
-Use `spectre detach <session-id>` when the session is no longer useful. `spectre daemon status`
-lists the daemon's sessions, and `spectre daemon kill` stops the daemon and discards all of them.
+`spectre captures list [--all] [--json]` lists ledger-backed capture directories with size and
+live/closed status. `spectre captures prune` supports `--keep N`, `--older-than 7d`, `--all`,
+`--session <id>`, and `--force` (override the live-session guard). Out-dir captures are skipped
+unless you pass `--include-out-dir`.
+
+Use `spectre detach <session-id>` when the session is no longer useful; the detach report lists
+that session's leftover captures and the exact `captures prune --session` command. `spectre daemon
+status` lists the daemon's sessions, and `spectre daemon kill` stops the daemon and discards all of
+them.
 
 ## MCP
 

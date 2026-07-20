@@ -4,15 +4,12 @@ import dev.sebastiano.spectre.agent.AtomicCaptureResult
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import java.nio.file.Files
 import java.nio.file.Path
-import java.time.Instant
-import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
+import java.time.Clock
 
 /**
- * Writes atomic-capture artifacts for the #180 thin surface.
+ * Writes atomic-capture artifacts and records them in the append-only ledger.
  *
- * Full sequencing, retention, and ledger ownership land in #181; this store only guarantees a
- * unique writable directory and dumps `capture.json` + `screenshot.png`.
+ * Sequencing, retention, and session-aware lifecycle ownership for #181 live here.
  */
 @OptIn(ExperimentalSpectreAgentApi::class)
 internal object CaptureArtifactStore {
@@ -21,12 +18,36 @@ internal object CaptureArtifactStore {
         sessionId: String,
         result: AtomicCaptureResult,
         outDir: String?,
+        liveSessionIds: Set<String> = emptySet(),
+        clock: Clock = Clock.systemUTC(),
+        ledger: CaptureLedger = CaptureLifecycle.ledger(),
+        defaultRoot: Path = CaptureLifecycle.defaultCapturesRoot(),
+        retentionKeep: Int = CaptureRetention.DEFAULT_KEEP,
     ): DaemonResponse.Capture {
-        val directory = allocateDirectory(outDir)
+        val explicitOutDir = outDir != null
+        val directory = CaptureLifecycle.allocateDirectory(outDir, clock)
         val captureJsonPath = directory.resolve("capture.json")
         val screenshotPngPath = directory.resolve("screenshot.png")
         Files.writeString(captureJsonPath, result.captureJson)
         Files.write(screenshotPngPath, result.pngBytes)
+        val sizeBytes = CaptureLifecycle.directorySizeBytes(directory)
+        ledger.append(
+            CaptureLedgerEntry(
+                sessionId = sessionId,
+                path = directory.toAbsolutePath().normalize().toString(),
+                createdAtEpochMs = clock.millis(),
+                sizeBytes = sizeBytes,
+                explicitOutDir = explicitOutDir,
+            )
+        )
+        if (!explicitOutDir) {
+            CaptureRetention.enforce(
+                defaultRoot = defaultRoot,
+                ledger = ledger,
+                keep = retentionKeep,
+                liveSessionIds = liveSessionIds + sessionId,
+            )
+        }
         return DaemonResponse.Capture(
             sessionId = sessionId,
             directory = directory.toString(),
@@ -41,20 +62,5 @@ internal object CaptureArtifactStore {
             imageHeight = result.imageHeight,
             captureDurationMs = result.captureDurationMs,
         )
-    }
-
-    private fun allocateDirectory(outDir: String?): Path {
-        val root =
-            if (outDir != null) {
-                Path.of(outDir)
-            } else {
-                Path.of(System.getProperty("java.io.tmpdir"), "spectre", "captures")
-            }
-        Files.createDirectories(root)
-        val stamp =
-            DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS")
-                .withZone(ZoneOffset.UTC)
-                .format(Instant.now())
-        return Files.createTempDirectory(root, "0000-$stamp-")
     }
 }

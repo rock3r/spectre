@@ -146,7 +146,15 @@ public sealed interface DaemonResponse {
 
     @Serializable
     @SerialName("detached")
-    public data class Detached(public val sessionId: String) : DaemonResponse
+    public data class Detached(
+        public val sessionId: String,
+        /** Captures this session left on disk (existing directories only). */
+        public val captureCount: Int = 0,
+        public val captureBytes: Long = 0L,
+        public val capturePaths: List<String> = emptyList(),
+        /** Exact CLI command to prune only this session's leftover captures. */
+        public val pruneCommand: String? = null,
+    ) : DaemonResponse
 
     @Serializable
     @SerialName("sessions")
