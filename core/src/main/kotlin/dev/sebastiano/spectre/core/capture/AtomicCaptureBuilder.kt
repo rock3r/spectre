@@ -87,7 +87,8 @@ public object AtomicCaptureBuilder {
             CaptureSummary(
                 nodeCount = captureNodes.size,
                 taggedNodeCount = captureNodes.count { it.testTag != null },
-                textedNodeCount = captureNodes.count { it.texts.isNotEmpty() },
+                textedNodeCount =
+                    captureNodes.count { it.texts.isNotEmpty() || it.editableText != null },
                 imageWidth = image.width,
                 imageHeight = image.height,
                 captureDurationMs = startedAt.elapsedNow().inWholeMilliseconds,
