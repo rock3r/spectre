@@ -57,6 +57,7 @@ public object CaptureJson {
             if (index < node.texts.lastIndex) appendLine("$line,") else appendLine(line)
         }
         appendLine("""$inner],""")
+        appendLine("""$inner"editableText": ${jsonStringOrNull(node.editableText)},""")
         appendLine("""$inner"contentDescription": ${jsonStringOrNull(node.contentDescription)},""")
         appendLine("""$inner"role": ${jsonStringOrNull(node.role)},""")
         appendLine("""$inner"enabled": ${node.enabled},""")

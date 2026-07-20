@@ -25,6 +25,7 @@
       "texts": [
         "Save"
       ],
+      "editableText": null,
       "contentDescription": null,
       "role": "Button",
       "enabled": true,

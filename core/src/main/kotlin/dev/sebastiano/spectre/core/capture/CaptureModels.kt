@@ -45,6 +45,7 @@ public data class CaptureNode(
     public val testTag: String?,
     public val text: String?,
     public val texts: List<String>,
+    public val editableText: String?,
     public val contentDescription: String?,
     public val role: String?,
     public val enabled: Boolean,

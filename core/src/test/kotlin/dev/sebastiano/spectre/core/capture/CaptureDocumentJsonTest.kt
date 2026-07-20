@@ -89,6 +89,7 @@ class CaptureDocumentJsonTest {
                         testTag = "submit",
                         text = "Save",
                         texts = listOf("Save"),
+                        editableText = null,
                         contentDescription = null,
                         role = "Button",
                         enabled = true,

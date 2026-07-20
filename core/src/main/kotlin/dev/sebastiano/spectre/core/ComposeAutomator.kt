@@ -261,39 +261,49 @@ private constructor(
         val trackedWindow =
             windows.getOrNull(windowIndex)
                 ?: error("No tracked window at index $windowIndex (have ${windows.size})")
-        val captureRegion = trackedWindow.composeSurfaceBoundsOnScreen
-        val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
-        val densityScaleX = transform.scaleX
-        val densityScaleY = transform.scaleY
-        // Freeze tree properties + screen geometry in a single EDT pass *before* taking the PNG
-        // so the JSON cannot drift mid-capture while Robot samples the framebuffer. Nested
-        // readOnEdt / bothBounds() calls run inline once we are already on the EDT.
-        val nodeSnapshots = readOnEdt {
-            semanticsReader.readAllNodes(listOf(trackedWindow)).map { node ->
-                CaptureNodeSnapshot(
-                    key = node.key.toString(),
-                    testTag = node.testTag,
-                    text = node.text,
-                    texts = node.texts,
-                    contentDescription = node.contentDescription,
-                    role = node.role?.toString(),
-                    enabled = !node.isDisabled,
-                    clickable = node.isClickable,
-                    focused = node.isFocused,
-                    selected = node.isSelected,
-                    boundsScreen = node.bothBounds().onScreen,
-                )
-            }
+        // Freeze capture region, density, node properties, and screen geometry in one EDT pass
+        // *before* taking the PNG so JSON and pixels cannot describe different window layouts.
+        data class PreCaptureSnapshot(
+            val captureRegion: Rectangle,
+            val densityScaleX: Double,
+            val densityScaleY: Double,
+            val nodeSnapshots: List<CaptureNodeSnapshot>,
+        )
+        val pre = readOnEdt {
+            val region = trackedWindow.composeSurfaceBoundsOnScreen
+            val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
+            PreCaptureSnapshot(
+                captureRegion = region,
+                densityScaleX = transform.scaleX,
+                densityScaleY = transform.scaleY,
+                nodeSnapshots =
+                    semanticsReader.readAllNodes(listOf(trackedWindow)).map { node ->
+                        CaptureNodeSnapshot(
+                            key = node.key.toString(),
+                            testTag = node.testTag,
+                            text = node.text,
+                            texts = node.texts,
+                            editableText = node.editableText,
+                            contentDescription = node.contentDescription,
+                            role = node.role?.toString(),
+                            enabled = !node.isDisabled,
+                            clickable = node.isClickable,
+                            focused = node.isFocused,
+                            selected = node.isSelected,
+                            boundsScreen = node.bothBounds().onScreen,
+                        )
+                    },
+            )
         }
-        val image = robotDriver.screenshot(captureRegion)
+        val image = robotDriver.screenshot(pre.captureRegion)
         return AtomicCaptureBuilder.build(
             windowIndex = windowIndex,
             trackedWindow = trackedWindow,
-            nodeSnapshots = nodeSnapshots,
+            nodeSnapshots = pre.nodeSnapshots,
             image = image,
-            captureRegion = captureRegion,
-            densityScaleX = densityScaleX,
-            densityScaleY = densityScaleY,
+            captureRegion = pre.captureRegion,
+            densityScaleX = pre.densityScaleX,
+            densityScaleY = pre.densityScaleY,
             startedAt = startedAt,
         )
     }

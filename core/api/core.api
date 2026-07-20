@@ -347,26 +347,28 @@ public final class dev/sebastiano/spectre/core/capture/CaptureJson {
 }
 
 public final class dev/sebastiano/spectre/core/capture/CaptureNode {
-	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;ZZZZLdev/sebastiano/spectre/core/capture/CaptureRect;Ldev/sebastiano/spectre/core/capture/CaptureRect;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZZZLdev/sebastiano/spectre/core/capture/CaptureRect;Ldev/sebastiano/spectre/core/capture/CaptureRect;)V
 	public final fun component1 ()Ljava/lang/String;
 	public final fun component10 ()Z
-	public final fun component11 ()Ldev/sebastiano/spectre/core/capture/CaptureRect;
+	public final fun component11 ()Z
 	public final fun component12 ()Ldev/sebastiano/spectre/core/capture/CaptureRect;
+	public final fun component13 ()Ldev/sebastiano/spectre/core/capture/CaptureRect;
 	public final fun component2 ()Ljava/lang/String;
 	public final fun component3 ()Ljava/lang/String;
 	public final fun component4 ()Ljava/util/List;
 	public final fun component5 ()Ljava/lang/String;
 	public final fun component6 ()Ljava/lang/String;
-	public final fun component7 ()Z
+	public final fun component7 ()Ljava/lang/String;
 	public final fun component8 ()Z
 	public final fun component9 ()Z
-	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;ZZZZLdev/sebastiano/spectre/core/capture/CaptureRect;Ldev/sebastiano/spectre/core/capture/CaptureRect;)Ldev/sebastiano/spectre/core/capture/CaptureNode;
-	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/capture/CaptureNode;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;ZZZZLdev/sebastiano/spectre/core/capture/CaptureRect;Ldev/sebastiano/spectre/core/capture/CaptureRect;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/capture/CaptureNode;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZZZLdev/sebastiano/spectre/core/capture/CaptureRect;Ldev/sebastiano/spectre/core/capture/CaptureRect;)Ldev/sebastiano/spectre/core/capture/CaptureNode;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/capture/CaptureNode;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZZZLdev/sebastiano/spectre/core/capture/CaptureRect;Ldev/sebastiano/spectre/core/capture/CaptureRect;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/capture/CaptureNode;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getBoundsImage ()Ldev/sebastiano/spectre/core/capture/CaptureRect;
 	public final fun getBoundsScreen ()Ldev/sebastiano/spectre/core/capture/CaptureRect;
 	public final fun getClickable ()Z
 	public final fun getContentDescription ()Ljava/lang/String;
+	public final fun getEditableText ()Ljava/lang/String;
 	public final fun getEnabled ()Z
 	public final fun getFocused ()Z
 	public final fun getKey ()Ljava/lang/String;
@@ -380,24 +382,26 @@ public final class dev/sebastiano/spectre/core/capture/CaptureNode {
 }
 
 public final class dev/sebastiano/spectre/core/capture/CaptureNodeSnapshot {
-	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;ZZZZLjava/awt/Rectangle;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZZZLjava/awt/Rectangle;)V
 	public final fun component1 ()Ljava/lang/String;
 	public final fun component10 ()Z
-	public final fun component11 ()Ljava/awt/Rectangle;
+	public final fun component11 ()Z
+	public final fun component12 ()Ljava/awt/Rectangle;
 	public final fun component2 ()Ljava/lang/String;
 	public final fun component3 ()Ljava/lang/String;
 	public final fun component4 ()Ljava/util/List;
 	public final fun component5 ()Ljava/lang/String;
 	public final fun component6 ()Ljava/lang/String;
-	public final fun component7 ()Z
+	public final fun component7 ()Ljava/lang/String;
 	public final fun component8 ()Z
 	public final fun component9 ()Z
-	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;ZZZZLjava/awt/Rectangle;)Ldev/sebastiano/spectre/core/capture/CaptureNodeSnapshot;
-	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/capture/CaptureNodeSnapshot;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;ZZZZLjava/awt/Rectangle;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/capture/CaptureNodeSnapshot;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZZZLjava/awt/Rectangle;)Ldev/sebastiano/spectre/core/capture/CaptureNodeSnapshot;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/capture/CaptureNodeSnapshot;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZZZLjava/awt/Rectangle;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/capture/CaptureNodeSnapshot;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getBoundsScreen ()Ljava/awt/Rectangle;
 	public final fun getClickable ()Z
 	public final fun getContentDescription ()Ljava/lang/String;
+	public final fun getEditableText ()Ljava/lang/String;
 	public final fun getEnabled ()Z
 	public final fun getFocused ()Z
 	public final fun getKey ()Ljava/lang/String;
