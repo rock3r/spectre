@@ -10,12 +10,13 @@ class CaptureDocumentJsonTest {
     @Test
     fun `schema golden matches versioned capture envelope`() {
         val document = sampleDocument()
-        val actual = CaptureJson.encode(document).trim()
+        // Normalize newlines so the golden comparison is stable on Windows checkout CRLF.
+        val actual = CaptureJson.encode(document).trim().replace("\r\n", "\n")
         val expected =
             javaClass
                 .getResourceAsStream("/capture/capture-schema-v1.golden.json")!!
                 .bufferedReader()
-                .use { it.readText().trim() }
+                .use { it.readText().trim().replace("\r\n", "\n") }
         assertEquals(expected, actual)
     }
 
