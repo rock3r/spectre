@@ -93,12 +93,16 @@ abstract class VerifyCliDistributionZip : DefaultTask() {
                 listOf(launcher.path, "--help")
             }
         val processBuilder = ProcessBuilder(command).redirectErrorStream(true)
-        // Force the launcher to use the ZIP's jlink runtime: remove JAVA_HOME entirely and
-        // empty PATH so a host JDK cannot mask a broken bundle. Setting JAVA_HOME to a
+        // Force the launcher to prefer the ZIP's jlink runtime. Setting JAVA_HOME to a
         // non-existent path made Windows spectre.bat take the invalid-home branch and fail
-        // before the bundled-runtime probe could override it.
+        // before the bundled-runtime probe could override it — clear JAVA_HOME instead.
+        // On Windows, also drop PATH so a host java.exe cannot mask a broken bundle. Unix
+        // scripts still need a real PATH (uname/sed/etc.).
         processBuilder.environment().remove("JAVA_HOME")
-        processBuilder.environment()["PATH"] = File(temporaryDir, "empty-path").path
+        if (isWindows()) {
+            processBuilder.environment()["PATH"] = File(temporaryDir, "empty-path").path
+            processBuilder.environment()["Path"] = File(temporaryDir, "empty-path").path
+        }
         val process = processBuilder.start()
         check(process.waitFor(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
             process.destroyForcibly()
