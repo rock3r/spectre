@@ -35,6 +35,7 @@ class SpectreMcpServerTest {
                 "click",
                 "type_text",
                 "screenshot",
+                "capture",
                 "record_start",
                 "record_stop",
             ),

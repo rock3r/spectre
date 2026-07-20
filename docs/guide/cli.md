@@ -58,13 +58,18 @@ spectre type <session-id> "A short note"
 
 # Keep visual evidence.
 spectre screenshot <session-id> --output ./after-save.png
+# Atomic capture: window PNG + full semantics tree on disk (summary only on stdout).
+spectre capture <session-id> --json
 spectre record start <session-id> --output ./interaction.mp4
 spectre record stop <session-id>
 ```
 
 `tree` lists the current semantics nodes. `find` performs an exact match on a Compose test tag.
 `windows` includes top-level windows and popup roots. `screenshot` writes a PNG to `--output`, or
-creates a temporary PNG and prints its path. `record start` behaves similarly for an MP4.
+creates a temporary PNG and prints its path. `capture` takes a window screenshot and the semantics
+tree under the same tick, writes `capture.json` + `screenshot.png` under a capture directory
+(default `$TMPDIR/spectre/captures/…`, or `--out-dir`), and returns only a decision-grade summary
+(paths, node counts, image size). `record start` behaves similarly for an MP4.
 
 Use `spectre detach <session-id>` when the session is no longer useful. `spectre daemon status`
 lists the daemon's sessions, and `spectre daemon kill` stops the daemon and discards all of them.

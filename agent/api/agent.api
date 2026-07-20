@@ -12,6 +12,35 @@ public final class dev/sebastiano/spectre/agent/AgentJarNotFoundException : dev/
 	public fun <init> (Ljava/util/List;)V
 }
 
+public final class dev/sebastiano/spectre/agent/AtomicCaptureResult {
+	public fun <init> (IILjava/lang/String;[BIIIIIJ)V
+	public final fun component1 ()I
+	public final fun component10 ()J
+	public final fun component2 ()I
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()[B
+	public final fun component5 ()I
+	public final fun component6 ()I
+	public final fun component7 ()I
+	public final fun component8 ()I
+	public final fun component9 ()I
+	public final fun copy (IILjava/lang/String;[BIIIIIJ)Ldev/sebastiano/spectre/agent/AtomicCaptureResult;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/agent/AtomicCaptureResult;IILjava/lang/String;[BIIIIIJILjava/lang/Object;)Ldev/sebastiano/spectre/agent/AtomicCaptureResult;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCaptureDurationMs ()J
+	public final fun getCaptureJson ()Ljava/lang/String;
+	public final fun getImageHeight ()I
+	public final fun getImageWidth ()I
+	public final fun getNodeCount ()I
+	public final fun getPngBytes ()[B
+	public final fun getSchemaVersion ()I
+	public final fun getTaggedNodeCount ()I
+	public final fun getTextedNodeCount ()I
+	public final fun getWindowIndex ()I
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class dev/sebastiano/spectre/agent/AttachInterruptedException : dev/sebastiano/spectre/agent/SpectreAttachException {
 	public fun <init> (Ljava/nio/file/Path;Ljava/lang/InterruptedException;)V
 }
@@ -56,6 +85,8 @@ public final class dev/sebastiano/spectre/agent/AttachUnsupportedException : dev
 
 public final class dev/sebastiano/spectre/agent/AttachedAutomator : java/lang/AutoCloseable {
 	public final fun allNodes ()Ljava/util/List;
+	public final fun capture (I)Ldev/sebastiano/spectre/agent/AtomicCaptureResult;
+	public static synthetic fun capture$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;IILjava/lang/Object;)Ldev/sebastiano/spectre/agent/AtomicCaptureResult;
 	public final fun click (Ljava/lang/String;)V
 	public fun close ()V
 	public final fun findByTestTag (Ljava/lang/String;)Ljava/util/List;

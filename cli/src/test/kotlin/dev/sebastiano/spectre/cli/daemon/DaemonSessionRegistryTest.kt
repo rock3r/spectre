@@ -1,11 +1,14 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import dev.sebastiano.spectre.agent.AtomicCaptureResult
 import dev.sebastiano.spectre.agent.AttachUnsupportedException
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.RectDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -115,6 +118,64 @@ class DaemonSessionRegistryTest {
             DaemonResponse.Screenshot(sessionId, byteArrayOf(1, 2, 3)),
             registry.handle(DaemonRequest.Screenshot(sessionId)),
         )
+    }
+
+    @OptIn(ExperimentalSpectreAgentApi::class)
+    @Test
+    fun `capture writes artifacts under out dir and returns summary paths`() {
+        val outRoot = Files.createTempDirectory("spectre-capture-registry-")
+        try {
+            val registry = DaemonSessionRegistry {
+                TestDaemonSessionAutomator(
+                    captureResult = { windowIndex ->
+                        AtomicCaptureResult(
+                            windowIndex = windowIndex,
+                            schemaVersion = 1,
+                            captureJson = """{"schemaVersion":1,"nodes":[]}""",
+                            pngBytes = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47),
+                            nodeCount = 2,
+                            taggedNodeCount = 1,
+                            textedNodeCount = 1,
+                            imageWidth = 100,
+                            imageHeight = 50,
+                            captureDurationMs = 9,
+                        )
+                    }
+                )
+            }
+            val sessionId =
+                assertIs<DaemonResponse.Attached>(registry.handle(DaemonRequest.Attach(99)))
+                    .sessionId
+
+            val response =
+                assertIs<DaemonResponse.Capture>(
+                    registry.handle(
+                        DaemonRequest.Capture(
+                            sessionId = sessionId,
+                            windowIndex = 0,
+                            outDir = outRoot.toString(),
+                        )
+                    )
+                )
+
+            assertEquals(sessionId, response.sessionId)
+            assertEquals(1, response.schemaVersion)
+            assertEquals(2, response.nodeCount)
+            assertEquals(1, response.taggedNodeCount)
+            assertEquals(1, response.textedNodeCount)
+            assertEquals(100, response.imageWidth)
+            assertEquals(50, response.imageHeight)
+            assertEquals(9, response.captureDurationMs)
+            assertTrue(Files.isRegularFile(Path.of(response.captureJsonPath)))
+            assertTrue(Files.isRegularFile(Path.of(response.screenshotPngPath)))
+            assertTrue(Path.of(response.directory).startsWith(outRoot))
+            assertEquals(
+                """{"schemaVersion":1,"nodes":[]}""",
+                Files.readString(Path.of(response.captureJsonPath)),
+            )
+        } finally {
+            outRoot.toFile().deleteRecursively()
+        }
     }
 
     @Test

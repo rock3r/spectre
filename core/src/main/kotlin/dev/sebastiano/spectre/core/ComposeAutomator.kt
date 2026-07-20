@@ -5,6 +5,9 @@ package dev.sebastiano.spectre.core
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
+import dev.sebastiano.spectre.core.capture.AtomicCapture
+import dev.sebastiano.spectre.core.capture.AtomicCaptureBuilder
+import dev.sebastiano.spectre.core.capture.CaptureNodeSnapshot
 import dev.sebastiano.spectre.core.perf.ExperimentalSpectreApi
 import dev.sebastiano.spectre.core.perf.RecompositionMonitor
 import java.awt.Rectangle
@@ -20,6 +23,7 @@ import javax.swing.SwingUtilities
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /**
  * Single user-facing entry point for driving live Compose Desktop UIs: tracked-window discovery,
@@ -234,6 +238,74 @@ private constructor(
             windows.getOrNull(windowIndex)
                 ?: error("No tracked window at index $windowIndex (have ${windows.size})")
         return robotDriver.screenshot(trackedWindow.composeSurfaceBoundsOnScreen)
+    }
+
+    /**
+     * Atomic capture of one window: semantics tree snapshot + window PNG taken back-to-back.
+     *
+     * The tree (including node geometry) is read first; the window screenshot follows immediately
+     * without returning control to the caller between the two. True single-frame Robot capture is
+     * not available on the EDT; this method is the best-effort same-tick pair agents should use
+     * instead of separate `allNodes()` + `screenshot()` calls that can straddle a recomposition.
+     *
+     * Node bounds in the returned document use **image-pixel space of the PNG as primary** and
+     * screen space as secondary. Callers that want files on disk should pass the result through
+     * [dev.sebastiano.spectre.core.capture.CaptureArtifactsWriter].
+     *
+     * Does **not** auto-call [waitForVisualIdle] or [waitForIdle] — settle the UI first when that
+     * matters, matching [screenshot].
+     */
+    public fun capture(windowIndex: Int = 0): AtomicCapture {
+        val startedAt = TimeSource.Monotonic.markNow()
+        refreshWindows()
+        val trackedWindow =
+            windows.getOrNull(windowIndex)
+                ?: error("No tracked window at index $windowIndex (have ${windows.size})")
+        // Freeze capture region, density, node properties, and screen geometry in one EDT pass
+        // *before* taking the PNG so JSON and pixels cannot describe different window layouts.
+        data class PreCaptureSnapshot(
+            val captureRegion: Rectangle,
+            val densityScaleX: Double,
+            val densityScaleY: Double,
+            val nodeSnapshots: List<CaptureNodeSnapshot>,
+        )
+        val pre = readOnEdt {
+            val region = trackedWindow.composeSurfaceBoundsOnScreen
+            val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
+            PreCaptureSnapshot(
+                captureRegion = region,
+                densityScaleX = transform.scaleX,
+                densityScaleY = transform.scaleY,
+                nodeSnapshots =
+                    semanticsReader.readAllNodes(listOf(trackedWindow)).map { node ->
+                        CaptureNodeSnapshot(
+                            key = node.key.toString(),
+                            testTag = node.testTag,
+                            text = node.text,
+                            texts = node.texts,
+                            editableText = node.editableText,
+                            contentDescription = node.contentDescription,
+                            role = node.role?.toString(),
+                            enabled = !node.isDisabled,
+                            clickable = node.isClickable,
+                            focused = node.isFocused,
+                            selected = node.isSelected,
+                            boundsScreen = node.bothBounds().onScreen,
+                        )
+                    },
+            )
+        }
+        val image = robotDriver.screenshot(pre.captureRegion)
+        return AtomicCaptureBuilder.build(
+            windowIndex = windowIndex,
+            trackedWindow = trackedWindow,
+            nodeSnapshots = pre.nodeSnapshots,
+            image = image,
+            captureRegion = pre.captureRegion,
+            densityScaleX = pre.densityScaleX,
+            densityScaleY = pre.densityScaleY,
+            startedAt = startedAt,
+        )
     }
 
     // Queries and actions do not auto-wait. Callers must invoke waitForIdle() /

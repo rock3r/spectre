@@ -4,6 +4,7 @@ package dev.sebastiano.spectre.core
 
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
@@ -92,6 +93,9 @@ internal constructor(
         semanticsNode.config.getOrNull(SemanticsProperties.Focused) == true
     public val isSelected: Boolean =
         semanticsNode.config.getOrNull(SemanticsProperties.Selected) == true
+    /** True when the node declares a Compose `OnClick` semantics action. */
+    public val isClickable: Boolean =
+        semanticsNode.config.getOrNull(SemanticsActions.OnClick) != null
     public val isVisible: Boolean = true
 
     // Geometry is always read live: layout can change between node lookup and action,

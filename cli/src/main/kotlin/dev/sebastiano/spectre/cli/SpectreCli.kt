@@ -5,8 +5,10 @@ import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.clikt.core.parse
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.parameters.arguments.argument
+import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
+import com.github.ajalt.clikt.parameters.types.int
 import com.github.ajalt.clikt.parameters.types.long
 import com.github.ajalt.clikt.parameters.types.path
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
@@ -130,6 +132,7 @@ private class RootCommand(
             ClickCommand(request, output),
             TypeCommand(request, output),
             ScreenshotCommand(request, output),
+            CaptureCommand(request, output),
             RecordCommand(request, output),
             PsCommand(request, output),
             DaemonCommand(request, shutdownRequest, output),
@@ -193,6 +196,56 @@ private class ScreenshotCommand(
             }
         if (json) output.append(CLI_JSON.encodeToString(ScreenshotJson(path = path.toString())))
         else output.append(path.toString())
+        output.appendLine()
+    }
+}
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private class CaptureCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "capture") {
+    private val sessionId: String by argument()
+    private val windowIndex: Int by option("--window").int().default(0)
+    private val outDir: Path? by option("--out-dir").path()
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val response =
+            request(
+                DaemonRequest.Capture(
+                    sessionId = sessionId,
+                    windowIndex = windowIndex,
+                    outDir = outDir?.toAbsolutePath()?.normalize()?.toString(),
+                )
+            )
+        val capture =
+            when (response) {
+                is DaemonResponse.Capture -> response
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
+                else -> error("Daemon returned an unexpected response to capture")
+            }
+        if (json) {
+            output.append(
+                CLI_JSON.encodeToString(
+                    CaptureJson(
+                        directory = capture.directory,
+                        captureJson = capture.captureJsonPath,
+                        screenshotPng = capture.screenshotPngPath,
+                        schemaVersion = capture.schemaVersion,
+                        windowIndex = capture.windowIndex,
+                        nodeCount = capture.nodeCount,
+                        taggedNodeCount = capture.taggedNodeCount,
+                        textedNodeCount = capture.textedNodeCount,
+                        imageWidth = capture.imageWidth,
+                        imageHeight = capture.imageHeight,
+                        captureDurationMs = capture.captureDurationMs,
+                    )
+                )
+            )
+        } else {
+            output.append("Captured ${capture.nodeCount} nodes → ${capture.directory}")
+        }
         output.appendLine()
     }
 }
@@ -513,6 +566,22 @@ private data class AttachJson(val version: Int = JSON_VERSION, val id: String, v
 @Serializable private data class CompletionJson(val version: Int = JSON_VERSION, val id: String)
 
 @Serializable private data class ScreenshotJson(val version: Int = JSON_VERSION, val path: String)
+
+@Serializable
+private data class CaptureJson(
+    val version: Int = JSON_VERSION,
+    val directory: String,
+    val captureJson: String,
+    val screenshotPng: String,
+    val schemaVersion: Int,
+    val windowIndex: Int,
+    val nodeCount: Int,
+    val taggedNodeCount: Int,
+    val textedNodeCount: Int,
+    val imageWidth: Int,
+    val imageHeight: Int,
+    val captureDurationMs: Long,
+)
 
 @Serializable
 private data class RecordingJson(val version: Int = JSON_VERSION, val id: String, val path: String)

@@ -1,0 +1,4 @@
+
+# Capture golden fixtures must stay LF for schema contract tests
+core/src/test/resources/** linguist-generated=false
+core/src/test/resources/** text eol=lf

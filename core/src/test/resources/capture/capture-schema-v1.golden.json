@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-07-20T12:00:00.000Z",
+  "window": {
+    "index": 0,
+    "surfaceId": "surface-main",
+    "title": "Fixture",
+    "isPopup": false,
+    "boundsScreen": {
+      "x": 10,
+      "y": 20,
+      "width": 400,
+      "height": 300
+    },
+    "densityScaleX": 2.0,
+    "densityScaleY": 2.0,
+    "imageWidth": 800,
+    "imageHeight": 600
+  },
+  "nodes": [
+    {
+      "key": "surface-main:0:42",
+      "testTag": "submit",
+      "text": "Save",
+      "texts": [
+        "Save"
+      ],
+      "editableText": null,
+      "contentDescription": null,
+      "role": "Button",
+      "enabled": true,
+      "clickable": true,
+      "focused": false,
+      "selected": false,
+      "boundsImage": {
+        "x": 20,
+        "y": 40,
+        "width": 100,
+        "height": 48
+      },
+      "boundsScreen": {
+        "x": 20,
+        "y": 40,
+        "width": 50,
+        "height": 24
+      }
+    }
+  ],
+  "summary": {
+    "nodeCount": 1,
+    "taggedNodeCount": 1,
+    "textedNodeCount": 1,
+    "imageWidth": 800,
+    "imageHeight": 600,
+    "captureDurationMs": 12
+  }
+}

@@ -36,12 +36,54 @@ internal constructor(
             DaemonRequest.ListSessions -> listSessions()
             is DaemonRequest.ListJvmProcesses ->
                 listJvmProcesses(jvmProcessDiscovery, request.requesterPid)
-            is DaemonRequest.Windows -> windows(request.sessionId)
-            is DaemonRequest.AllNodes -> allNodes(request.sessionId)
-            is DaemonRequest.FindByTestTag -> findByTestTag(request.sessionId, request.tag)
-            is DaemonRequest.Click -> click(request.sessionId, request.nodeKey)
-            is DaemonRequest.TypeText -> typeText(request.sessionId, request.text)
-            is DaemonRequest.Screenshot -> screenshot(request.sessionId)
+            is DaemonRequest.Windows,
+            is DaemonRequest.AllNodes,
+            is DaemonRequest.FindByTestTag,
+            is DaemonRequest.Click,
+            is DaemonRequest.TypeText,
+            is DaemonRequest.Screenshot,
+            is DaemonRequest.Capture,
+            is DaemonRequest.StartRecording,
+            is DaemonRequest.StopRecording -> handleSessionCommand(request)
+            DaemonRequest.Shutdown -> shutdown()
+        }
+
+    private fun handleSessionCommand(request: DaemonRequest): DaemonResponse =
+        when (request) {
+            is DaemonRequest.Windows ->
+                invoke(request.sessionId) { automator ->
+                    DaemonResponse.Windows(request.sessionId, automator.windows())
+                }
+            is DaemonRequest.AllNodes ->
+                invoke(request.sessionId) { automator ->
+                    DaemonResponse.Nodes(request.sessionId, automator.allNodes())
+                }
+            is DaemonRequest.FindByTestTag ->
+                invoke(request.sessionId) { automator ->
+                    DaemonResponse.Nodes(request.sessionId, automator.findByTestTag(request.tag))
+                }
+            is DaemonRequest.Click ->
+                invoke(request.sessionId) { automator ->
+                    automator.click(request.nodeKey)
+                    DaemonResponse.Completed(request.sessionId)
+                }
+            is DaemonRequest.TypeText ->
+                invoke(request.sessionId) { automator ->
+                    automator.typeText(request.text)
+                    DaemonResponse.Completed(request.sessionId)
+                }
+            is DaemonRequest.Screenshot ->
+                invoke(request.sessionId) { automator ->
+                    DaemonResponse.Screenshot(request.sessionId, automator.screenshot())
+                }
+            is DaemonRequest.Capture ->
+                invoke(request.sessionId) { automator ->
+                    CaptureArtifactStore.write(
+                        request.sessionId,
+                        automator.capture(request.windowIndex),
+                        request.outDir,
+                    )
+                }
             is DaemonRequest.StartRecording ->
                 invoke(request.sessionId) { automator ->
                     DaemonResponse.RecordingStarted(
@@ -53,7 +95,10 @@ internal constructor(
                 invoke(request.sessionId) { automator ->
                     DaemonResponse.RecordingStopped(request.sessionId, automator.stopRecording())
                 }
-            DaemonRequest.Shutdown -> shutdown()
+            else ->
+                error(
+                    "handleSessionCommand received a non-session request: ${request::class.simpleName}"
+                )
         }
 
     private fun attach(targetPid: Long): DaemonResponse {
@@ -109,38 +154,6 @@ internal constructor(
         DaemonResponse.Sessions(
             sessions = sessionsByPid.values.map { it.summary }.sortedBy { it.targetPid }
         )
-
-    private fun windows(sessionId: String): DaemonResponse =
-        invoke(sessionId) { automator ->
-            DaemonResponse.Windows(sessionId = sessionId, windows = automator.windows())
-        }
-
-    private fun allNodes(sessionId: String): DaemonResponse =
-        invoke(sessionId) { automator ->
-            DaemonResponse.Nodes(sessionId = sessionId, nodes = automator.allNodes())
-        }
-
-    private fun findByTestTag(sessionId: String, tag: String): DaemonResponse =
-        invoke(sessionId) { automator ->
-            DaemonResponse.Nodes(sessionId = sessionId, nodes = automator.findByTestTag(tag))
-        }
-
-    private fun click(sessionId: String, nodeKey: String): DaemonResponse =
-        invoke(sessionId) { automator ->
-            automator.click(nodeKey)
-            DaemonResponse.Completed(sessionId)
-        }
-
-    private fun typeText(sessionId: String, text: String): DaemonResponse =
-        invoke(sessionId) { automator ->
-            automator.typeText(text)
-            DaemonResponse.Completed(sessionId)
-        }
-
-    private fun screenshot(sessionId: String): DaemonResponse =
-        invoke(sessionId) { automator ->
-            DaemonResponse.Screenshot(sessionId = sessionId, pngBytes = automator.screenshot())
-        }
 
     private fun invoke(
         sessionId: String,

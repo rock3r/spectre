@@ -91,6 +91,8 @@ internal class ReflectiveAutomatorHandler(
                 is AgentRequest.Click -> handleClick(request.nodeKey)
                 is AgentRequest.TypeText -> handleTypeText(request.text)
                 AgentRequest.Screenshot -> handleScreenshot()
+                is AgentRequest.Capture ->
+                    AtomicCaptureReflectiveMapper.invoke(automator, request.windowIndex)
                 AgentRequest.Detach -> AgentResponse.Detached
             }
         } catch (ex: ReflectiveOperationException) {

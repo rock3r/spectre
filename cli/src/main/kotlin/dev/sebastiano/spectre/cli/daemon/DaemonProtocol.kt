@@ -11,7 +11,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 4)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 5)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -44,6 +44,7 @@ public object DaemonProtocol {
             is DaemonRequest.ListJvmProcesses -> versionFor(LIST_JVM_PROCESSES_INTRODUCED_MINOR)
             is DaemonRequest.StartRecording,
             is DaemonRequest.StopRecording -> versionFor(RECORDING_INTRODUCED_MINOR)
+            is DaemonRequest.Capture -> versionFor(CAPTURE_INTRODUCED_MINOR)
         }
 
     private fun versionFor(minor: Int): DaemonProtocolVersion =
@@ -54,6 +55,7 @@ public object DaemonProtocol {
     private const val SESSION_COMMANDS_INTRODUCED_MINOR: Int = 2
     private const val LIST_JVM_PROCESSES_INTRODUCED_MINOR: Int = 3
     private const val RECORDING_INTRODUCED_MINOR: Int = 4
+    private const val CAPTURE_INTRODUCED_MINOR: Int = 5
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)
@@ -110,6 +112,14 @@ public sealed interface DaemonRequest {
     @Serializable
     @SerialName("screenshot")
     public data class Screenshot(public val sessionId: String) : DaemonRequest
+
+    @Serializable
+    @SerialName("capture")
+    public data class Capture(
+        public val sessionId: String,
+        public val windowIndex: Int = 0,
+        public val outDir: String? = null,
+    ) : DaemonRequest
 
     @Serializable
     @SerialName("startRecording")
@@ -174,6 +184,27 @@ public sealed interface DaemonResponse {
 
         override fun hashCode(): Int = 31 * sessionId.hashCode() + pngBytes.contentHashCode()
     }
+
+    /**
+     * Atomic capture completed: artifacts written under [directory], with decision-grade summary
+     * fields for inline agent responses.
+     */
+    @Serializable
+    @SerialName("capture")
+    public data class Capture(
+        public val sessionId: String,
+        public val directory: String,
+        public val captureJsonPath: String,
+        public val screenshotPngPath: String,
+        public val schemaVersion: Int,
+        public val windowIndex: Int,
+        public val nodeCount: Int,
+        public val taggedNodeCount: Int,
+        public val textedNodeCount: Int,
+        public val imageWidth: Int,
+        public val imageHeight: Int,
+        public val captureDurationMs: Long,
+    ) : DaemonResponse
 
     @Serializable
     @SerialName("recordingStarted")

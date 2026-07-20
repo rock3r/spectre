@@ -29,7 +29,8 @@ abstract class PatchStartScripts : DefaultTask() {
 
     private fun patchWindows(script: File) {
         val originalScript = script.readText()
-        val lineSeparator = if ("\r\n" in originalScript) "\r\n" else "\n"
+        // Always emit CRLF for Windows launchers. LF-only .bat files are parsed unreliably by
+        // cmd.exe on some hosts (including GitHub Actions windows-latest).
         val patchedScript =
             originalScript
                 .replace("\r\n", "\n")
@@ -42,8 +43,12 @@ abstract class PatchStartScripts : DefaultTask() {
                     ":findJavaFromJavaHome",
                     "$WINDOWS_JDK_CANDIDATE_PROBE\n\n:findJavaFromJavaHome",
                 )
+                .replace(
+                    "set JAVA_EXE=%JAVA_HOME%/bin/java.exe",
+                    "set \"JAVA_EXE=%JAVA_HOME%\\bin\\java.exe\"",
+                )
                 .replace(":execute\n@rem Setup the command line", WINDOWS_JDK_PREFLIGHT)
-        script.writeText(patchedScript.replace("\n", lineSeparator))
+        script.writeText(patchedScript.replace("\n", "\r\n"))
     }
 
     private companion object {
@@ -119,10 +124,13 @@ abstract class PatchStartScripts : DefaultTask() {
         private val WINDOWS_JAVA_SEARCH =
             """
             @rem Find java.exe
-            if exist "%APP_HOME%\runtime\bin\java.exe" if exist "%APP_HOME%\runtime\spectre-runtime.properties" (
-                call :useBundledSpectreRuntime
-                if defined JAVA_HOME goto findJavaFromJavaHome
-            )
+            @rem Prefer the jlink runtime shipped next to this launcher when present and compatible.
+            @rem Avoid parenthesized multi-line if blocks: goto inside them is fragile on cmd.exe.
+            if not exist "%APP_HOME%\runtime\bin\java.exe" goto spectreAfterBundledProbe
+            if not exist "%APP_HOME%\runtime\spectre-runtime.properties" goto spectreAfterBundledProbe
+            call :useBundledSpectreRuntime
+            if defined JAVA_HOME goto findJavaFromJavaHome
+            :spectreAfterBundledProbe
             """
                 .trimIndent()
 
@@ -133,8 +141,8 @@ abstract class PatchStartScripts : DefaultTask() {
             """
             @rem PATH did not provide Java; now try common local JDK installations.
             set SPECTRE_JRE_HOME=
-            for %%d in ("%ProgramFiles%\\Java\\*" "%ProgramFiles%\\Eclipse Adoptium\\*" "%ProgramFiles%\\Microsoft\\jdk-*") do call :findCompatibleSpectreJdk "%%~fd"
-            if not defined JAVA_HOME if defined SPECTRE_JRE_HOME set JAVA_HOME=%SPECTRE_JRE_HOME%
+            for %%d in ("%ProgramFiles%\Java\*" "%ProgramFiles%\Eclipse Adoptium\*" "%ProgramFiles%\Microsoft\jdk-*") do call :findCompatibleSpectreJdk "%%~fd"
+            if not defined JAVA_HOME if defined SPECTRE_JRE_HOME set "JAVA_HOME=%SPECTRE_JRE_HOME%"
             if defined JAVA_HOME goto findJavaFromJavaHome
             """
                 .trimIndent()
@@ -142,29 +150,35 @@ abstract class PatchStartScripts : DefaultTask() {
         private val WINDOWS_JDK_CANDIDATE_PROBE =
             """
             :useBundledSpectreRuntime
-            set SPECTRE_RUNTIME_OS=
-            set SPECTRE_RUNTIME_ARCH=
-            for /f "tokens=1,* delims==" %%a in ('findstr /b "spectre.runtime.os=" "%APP_HOME%\runtime\spectre-runtime.properties"') do set SPECTRE_RUNTIME_OS=%%b
-            for /f "tokens=1,* delims==" %%a in ('findstr /b "spectre.runtime.arch=" "%APP_HOME%\runtime\spectre-runtime.properties"') do set SPECTRE_RUNTIME_ARCH=%%b
-            set SPECTRE_HOST_ARCH=%PROCESSOR_ARCHITECTURE%
-            if /I "%SPECTRE_HOST_ARCH%"=="AMD64" set SPECTRE_HOST_ARCH=x86_64
-            if /I "%SPECTRE_HOST_ARCH%"=="ARM64" set SPECTRE_HOST_ARCH=aarch64
-            if /I "%SPECTRE_RUNTIME_OS%"=="Windows" if /I "%SPECTRE_RUNTIME_ARCH%"=="%SPECTRE_HOST_ARCH%" set JAVA_HOME=%APP_HOME%\runtime
+            set "SPECTRE_RUNTIME_OS="
+            set "SPECTRE_RUNTIME_ARCH="
+            for /f "tokens=1,* delims==" %%a in ('findstr /b "spectre.runtime.os=" "%APP_HOME%\runtime\spectre-runtime.properties"') do set "SPECTRE_RUNTIME_OS=%%b"
+            for /f "tokens=1,* delims==" %%a in ('findstr /b "spectre.runtime.arch=" "%APP_HOME%\runtime\spectre-runtime.properties"') do set "SPECTRE_RUNTIME_ARCH=%%b"
+            @rem findstr over CRLF (or mixed) properties can leave a trailing CR that breaks compares.
+            for /f "delims=" %%i in ("%SPECTRE_RUNTIME_OS%") do set "SPECTRE_RUNTIME_OS=%%i"
+            for /f "delims=" %%i in ("%SPECTRE_RUNTIME_ARCH%") do set "SPECTRE_RUNTIME_ARCH=%%i"
+            set "SPECTRE_HOST_ARCH=%PROCESSOR_ARCHITECTURE%"
+            if /I "%SPECTRE_HOST_ARCH%"=="AMD64" set "SPECTRE_HOST_ARCH=x86_64"
+            if /I "%SPECTRE_HOST_ARCH%"=="ARM64" set "SPECTRE_HOST_ARCH=aarch64"
+            if /I "%SPECTRE_RUNTIME_OS%"=="Windows" if /I "%SPECTRE_RUNTIME_ARCH%"=="%SPECTRE_HOST_ARCH%" set "JAVA_HOME=%APP_HOME%\runtime"
             goto :eof
 
             :findCompatibleSpectreJdk
             if defined JAVA_HOME goto :eof
-            if not exist "%~1\\bin\\java.exe" goto :eof
-            set SPECTRE_JAVA_VERSION=
-            set SPECTRE_JAVA_FEATURE=
-            for /f "tokens=3" %%v in ('"%~1\\bin\\java.exe" -version 2^>^&1 ^| findstr /c:"version"') do set SPECTRE_JAVA_VERSION=%%v
-            set SPECTRE_JAVA_VERSION=%SPECTRE_JAVA_VERSION:"=%
-            for /f "tokens=1 delims=." %%v in ("%SPECTRE_JAVA_VERSION%") do set SPECTRE_JAVA_FEATURE=%%v
+            if not exist "%~1\bin\java.exe" goto :eof
+            set "SPECTRE_JAVA_VERSION="
+            set "SPECTRE_JAVA_FEATURE="
+            set "SPECTRE_VER_FILE=%TEMP%\spectre-java-ver-%RANDOM%.txt"
+            "%~1\bin\java.exe" -version >"%SPECTRE_VER_FILE%" 2>&1
+            for /f "tokens=3" %%v in ('findstr /i /c:"version" "%SPECTRE_VER_FILE%"') do set "SPECTRE_JAVA_VERSION=%%v"
+            del "%SPECTRE_VER_FILE%" >NUL 2>&1
+            set "SPECTRE_JAVA_VERSION=%SPECTRE_JAVA_VERSION:"=%"
+            for /f "tokens=1 delims=." %%v in ("%SPECTRE_JAVA_VERSION%") do set "SPECTRE_JAVA_FEATURE=%%v"
             if "%SPECTRE_JAVA_FEATURE%"=="" goto :eof
             if %SPECTRE_JAVA_FEATURE% LSS 21 goto :eof
-            "%~1\\bin\\java.exe" --list-modules 2^>NUL | findstr /r /c:"^jdk.attach@" >NUL
-            if %ERRORLEVEL% equ 0 set JAVA_HOME=%~1
-            if not defined JAVA_HOME if not defined SPECTRE_JRE_HOME set SPECTRE_JRE_HOME=%~1
+            "%~1\bin\java.exe" --list-modules 2>NUL | findstr /r /c:"^jdk.attach@" >NUL
+            if %ERRORLEVEL% equ 0 set "JAVA_HOME=%~1"
+            if not defined JAVA_HOME if not defined SPECTRE_JRE_HOME set "SPECTRE_JRE_HOME=%~1"
             goto :eof
             """
                 .trimIndent()
@@ -173,21 +187,27 @@ abstract class PatchStartScripts : DefaultTask() {
             """
             :execute
             @rem Spectre requires Java 21 or later. Attach operations validate jdk.attach themselves.
-            set SPECTRE_JAVA_VERSION=
-            set SPECTRE_JAVA_FEATURE=
-            for /f "tokens=3" %%v in ('"%JAVA_EXE%" -version 2^>^&1 ^| findstr /c:"version"') do set SPECTRE_JAVA_VERSION=%%v
-            set SPECTRE_JAVA_VERSION=%SPECTRE_JAVA_VERSION:"=%
-            for /f "tokens=1 delims=." %%v in ("%SPECTRE_JAVA_VERSION%") do set SPECTRE_JAVA_FEATURE=%%v
+            @rem Capture -version to a temp file instead of for /f with a piped command: the latter
+            @rem fails with "The filename, directory name, or volume label syntax is incorrect" on
+            @rem some Windows hosts when JAVA_EXE is an absolute path under the Gradle temp dir.
+            set "SPECTRE_JAVA_VERSION="
+            set "SPECTRE_JAVA_FEATURE="
+            set "SPECTRE_VER_FILE=%TEMP%\spectre-java-ver-%RANDOM%.txt"
+            "%JAVA_EXE%" -version >"%SPECTRE_VER_FILE%" 2>&1
+            for /f "tokens=3" %%v in ('findstr /i /c:"version" "%SPECTRE_VER_FILE%"') do set "SPECTRE_JAVA_VERSION=%%v"
+            del "%SPECTRE_VER_FILE%" >NUL 2>&1
+            set "SPECTRE_JAVA_VERSION=%SPECTRE_JAVA_VERSION:"=%"
+            for /f "tokens=1 delims=." %%v in ("%SPECTRE_JAVA_VERSION%") do set "SPECTRE_JAVA_FEATURE=%%v"
             if "%SPECTRE_JAVA_FEATURE%"=="" goto invalidJavaVersion
             if %SPECTRE_JAVA_FEATURE% LSS 21 goto oldJavaVersion
             goto setupCommandLine
 
             :invalidJavaVersion
-            echo ERROR: Could not determine the Java version from %JAVA_EXE%. 1>&2
+            echo ERROR: Could not determine the Java version from %JAVA_EXE%.
             goto fail
 
             :oldJavaVersion
-            echo ERROR: Spectre requires JDK 21 or later; found Java %SPECTRE_JAVA_VERSION% at %JAVA_EXE%. 1>&2
+            echo ERROR: Spectre requires JDK 21 or later; found Java %SPECTRE_JAVA_VERSION% at %JAVA_EXE%.
             goto fail
 
             :setupCommandLine
