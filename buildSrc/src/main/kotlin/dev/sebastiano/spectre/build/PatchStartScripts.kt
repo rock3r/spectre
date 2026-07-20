@@ -146,13 +146,10 @@ abstract class PatchStartScripts : DefaultTask() {
             set SPECTRE_RUNTIME_ARCH=
             for /f "tokens=1,* delims==" %%a in ('findstr /b "spectre.runtime.os=" "%APP_HOME%\runtime\spectre-runtime.properties"') do set SPECTRE_RUNTIME_OS=%%b
             for /f "tokens=1,* delims==" %%a in ('findstr /b "spectre.runtime.arch=" "%APP_HOME%\runtime\spectre-runtime.properties"') do set SPECTRE_RUNTIME_ARCH=%%b
-            @rem findstr over CRLF properties can leave a trailing CR that breaks string compares.
-            for /f "delims=" %%i in ("%SPECTRE_RUNTIME_OS%") do set "SPECTRE_RUNTIME_OS=%%i"
-            for /f "delims=" %%i in ("%SPECTRE_RUNTIME_ARCH%") do set "SPECTRE_RUNTIME_ARCH=%%i"
             set SPECTRE_HOST_ARCH=%PROCESSOR_ARCHITECTURE%
             if /I "%SPECTRE_HOST_ARCH%"=="AMD64" set SPECTRE_HOST_ARCH=x86_64
             if /I "%SPECTRE_HOST_ARCH%"=="ARM64" set SPECTRE_HOST_ARCH=aarch64
-            if /I "%SPECTRE_RUNTIME_OS%"=="Windows" if /I "%SPECTRE_RUNTIME_ARCH%"=="%SPECTRE_HOST_ARCH%" set "JAVA_HOME=%APP_HOME%\runtime"
+            if /I "%SPECTRE_RUNTIME_OS%"=="Windows" if /I "%SPECTRE_RUNTIME_ARCH%"=="%SPECTRE_HOST_ARCH%" set JAVA_HOME=%APP_HOME%\runtime
             goto :eof
 
             :findCompatibleSpectreJdk
@@ -186,11 +183,11 @@ abstract class PatchStartScripts : DefaultTask() {
             goto setupCommandLine
 
             :invalidJavaVersion
-            echo ERROR: Could not determine the Java version from %JAVA_EXE%.
+            echo ERROR: Could not determine the Java version from %JAVA_EXE%. 1>&2
             goto fail
 
             :oldJavaVersion
-            echo ERROR: Spectre requires JDK 21 or later; found Java %SPECTRE_JAVA_VERSION% at %JAVA_EXE%.
+            echo ERROR: Spectre requires JDK 21 or later; found Java %SPECTRE_JAVA_VERSION% at %JAVA_EXE%. 1>&2
             goto fail
 
             :setupCommandLine

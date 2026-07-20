@@ -93,8 +93,6 @@ abstract class VerifyCliDistributionZip : DefaultTask() {
                 listOf(launcher.path, "--help")
             }
         val processBuilder = ProcessBuilder(command).redirectErrorStream(true)
-        // Point JAVA_HOME at a non-existent path so the launcher must use the ZIP's jlink
-        // runtime (or fail). The Windows bat probes APP_HOME\\runtime before honouring this.
         processBuilder.environment()["JAVA_HOME"] = File(temporaryDir, "missing-java-home").path
         val process = processBuilder.start()
         check(process.waitFor(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
