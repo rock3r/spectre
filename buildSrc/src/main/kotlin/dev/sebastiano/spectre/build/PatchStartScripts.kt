@@ -186,13 +186,11 @@ abstract class PatchStartScripts : DefaultTask() {
             goto setupCommandLine
 
             :invalidJavaVersion
-            @rem Use ">&2 echo" rather than trailing "1>&2" — cmd can treat the latter as a
-            @rem syntax error when JAVA_EXE expansion leaves a path-like parse failure.
-            >&2 echo ERROR: Could not determine the Java version from %JAVA_EXE%.
+            echo ERROR: Could not determine the Java version from %JAVA_EXE%.
             goto fail
 
             :oldJavaVersion
-            >&2 echo ERROR: Spectre requires JDK 21 or later; found Java %SPECTRE_JAVA_VERSION% at %JAVA_EXE%.
+            echo ERROR: Spectre requires JDK 21 or later; found Java %SPECTRE_JAVA_VERSION% at %JAVA_EXE%.
             goto fail
 
             :setupCommandLine
