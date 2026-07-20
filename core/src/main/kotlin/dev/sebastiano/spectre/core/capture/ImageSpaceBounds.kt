@@ -25,9 +25,17 @@ public fun screenRectToImageRect(
     }
     val scaleX = imageWidth.toDouble() / captureAwtWidth.toDouble()
     val scaleY = imageHeight.toDouble() / captureAwtHeight.toDouble()
-    val x = ((screen.x - captureOriginX) * scaleX).roundToInt()
-    val y = ((screen.y - captureOriginY) * scaleY).roundToInt()
-    val width = (screen.width * scaleX).roundToInt().coerceAtLeast(0)
-    val height = (screen.height * scaleY).roundToInt().coerceAtLeast(0)
-    return CaptureRect(x = x, y = y, width = width, height = height)
+    // Transform both edges, then derive size. Rounding origin and size independently can make
+    // the image-space right/bottom disagree with the transformed screen-space edge on fractional
+    // densities (for example 150% where PNG is 1.5× the AWT region).
+    val left = ((screen.x - captureOriginX) * scaleX).roundToInt()
+    val top = ((screen.y - captureOriginY) * scaleY).roundToInt()
+    val right = ((screen.x - captureOriginX + screen.width) * scaleX).roundToInt()
+    val bottom = ((screen.y - captureOriginY + screen.height) * scaleY).roundToInt()
+    return CaptureRect(
+        x = left,
+        y = top,
+        width = (right - left).coerceAtLeast(0),
+        height = (bottom - top).coerceAtLeast(0),
+    )
 }

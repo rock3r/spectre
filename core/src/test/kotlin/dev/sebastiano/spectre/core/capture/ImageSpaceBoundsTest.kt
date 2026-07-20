@@ -51,4 +51,21 @@ class ImageSpaceBoundsTest {
             )
         assertEquals(CaptureRect(x = 0, y = 0, width = 0, height = 0), image)
     }
+
+    @Test
+    fun `fractional scale derives size from transformed edges`() {
+        // 150% density: 1 AWT unit → 1.5 image pixels. Independent rounding of origin and size
+        // would map offset=1,width=1 to x=2,width=2 (right edge 4) instead of right edge 3.
+        val image =
+            screenRectToImageRect(
+                screen = Rectangle(/* x= */ 101, /* y= */ 200, /* w= */ 1, /* h= */ 1),
+                captureOriginX = 100,
+                captureOriginY = 200,
+                captureAwtWidth = 100,
+                captureAwtHeight = 100,
+                imageWidth = 150,
+                imageHeight = 150,
+            )
+        assertEquals(CaptureRect(x = 2, y = 0, width = 1, height = 2), image)
+    }
 }
