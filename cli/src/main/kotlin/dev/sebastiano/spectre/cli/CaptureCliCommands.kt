@@ -33,6 +33,7 @@ private class CapturesListCommand(
     private val json: Boolean by option("--json").flag(default = false)
 
     override fun run() {
+        // Listing is best-effort for live status; a down daemon marks everything closed.
         val liveIds = liveSessionIdsOrEmpty(request)
         val entries = CaptureLifecycle.ledger().listExisting()
         val rows =
@@ -89,6 +90,13 @@ private class CapturesPruneCommand(
             parseOlderThan(raw)
                 ?: throw CliktError("Invalid --older-than value: $raw (use e.g. 7d, 24h, 30m)")
         }
+        val keepValue = keep
+        if (keepValue != null && keepValue < 0) {
+            throw CliktError("--keep must be zero or a positive integer")
+        }
+        // Fail closed: if we cannot learn live sessions, refuse to prune so we never delete
+        // attached sessions' captures by treating the live set as empty.
+        val liveIds = requireLiveSessionIds(request)
         val result =
             CapturePruner.prune(
                 request =
@@ -100,7 +108,7 @@ private class CapturesPruneCommand(
                         force = force,
                         allowExplicitOutDir = includeOutDir,
                     ),
-                liveSessionIds = liveSessionIdsOrEmpty(request),
+                liveSessionIds = liveIds,
             )
         if (json) {
             output.append(
@@ -140,6 +148,21 @@ internal fun liveSessionIdsOrEmpty(request: (DaemonRequest) -> DaemonResponse): 
             }
         }
         .getOrDefault(emptySet())
+
+internal fun requireLiveSessionIds(request: (DaemonRequest) -> DaemonResponse): Set<String> =
+    when (val response = request(DaemonRequest.ListSessions)) {
+        is DaemonResponse.Sessions -> response.sessions.map { it.sessionId }.toSet()
+        is DaemonResponse.Error ->
+            throw CliktError(
+                "Cannot determine live sessions (${response.message}); " +
+                    "refusing to prune without a live-session list"
+            )
+        else ->
+            throw CliktError(
+                "Cannot determine live sessions from the daemon; " +
+                    "refusing to prune without a live-session list"
+            )
+    }
 
 internal fun parseOlderThan(raw: String): Duration? {
     val match = Regex("^(\\d+)([smhd])$").matchEntire(raw.trim()) ?: return null

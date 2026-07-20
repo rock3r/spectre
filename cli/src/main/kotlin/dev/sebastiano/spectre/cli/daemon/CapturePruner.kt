@@ -35,6 +35,9 @@ internal object CapturePruner {
         ) {
             "prune requires --keep, --older-than, --all, or --session"
         }
+        require(request.keep == null || request.keep >= 0) {
+            "--keep must be zero or a positive integer"
+        }
         val candidates = candidatesFor(request, ledger)
         val classified = classify(candidates, request, liveSessionIds)
         val toDelete = selectForDeletion(classified.selected, request, clock.millis())

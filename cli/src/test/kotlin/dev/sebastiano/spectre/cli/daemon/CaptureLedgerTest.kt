@@ -67,4 +67,41 @@ class CaptureLedgerTest {
         assertEquals(listOf(keep.toString()), ledger.listExisting().map { it.path })
         assertTrue(Files.exists(keep))
     }
+
+    @Test
+    fun `concurrent append and removePaths does not drop surviving entries`() {
+        val root = Files.createTempDirectory("spectre-ledger-race")
+        val ledger = CaptureLedger(root.resolve("ledger.jsonl"))
+        val keepers =
+            (1..20).map { index ->
+                val dir = Files.createDirectory(root.resolve("k$index"))
+                ledger.append(CaptureLedgerEntry("s", dir.toString(), index.toLong(), 1, false))
+                dir
+            }
+        val doomed = Files.createDirectory(root.resolve("doomed"))
+        ledger.append(CaptureLedgerEntry("s", doomed.toString(), 100, 1, false))
+
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
+        try {
+            val appends =
+                (1..30).map { index ->
+                    pool.submit {
+                        val dir = Files.createDirectory(root.resolve("a$index"))
+                        ledger.append(
+                            CaptureLedgerEntry("s", dir.toString(), 200L + index, 1, false)
+                        )
+                    }
+                }
+            val removals =
+                (1..10).map { pool.submit { ledger.removePaths(setOf(doomed.toString())) } }
+            (appends + removals).forEach { it.get(10, java.util.concurrent.TimeUnit.SECONDS) }
+        } finally {
+            pool.shutdownNow()
+        }
+
+        val paths = ledger.listExisting().map { it.path }.toSet()
+        keepers.forEach { assertTrue(paths.contains(it.toString()), "missing ${it.fileName}") }
+        assertTrue(paths.none { it.endsWith("doomed") })
+        assertTrue(paths.size >= keepers.size + 20)
+    }
 }
