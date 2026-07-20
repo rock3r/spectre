@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import dev.sebastiano.spectre.agent.AtomicCaptureResult
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
@@ -12,6 +13,20 @@ internal class TestDaemonSessionAutomator(
     private val clickAction: (String) -> Unit = {},
     private val typeTextAction: (String) -> Unit = {},
     private val screenshotResult: () -> ByteArray = { ByteArray(0) },
+    private val captureResult: (Int) -> AtomicCaptureResult = { windowIndex ->
+        AtomicCaptureResult(
+            windowIndex = windowIndex,
+            schemaVersion = 1,
+            captureJson = """{"schemaVersion":1}""",
+            pngBytes = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47),
+            nodeCount = 0,
+            taggedNodeCount = 0,
+            textedNodeCount = 0,
+            imageWidth = 1,
+            imageHeight = 1,
+            captureDurationMs = 0,
+        )
+    },
     private val startRecordingAction: (String) -> String = { it },
     private val stopRecordingResult: () -> String = { error("no recording is in progress") },
     private val closeAction: () -> Unit = {},
@@ -27,6 +42,8 @@ internal class TestDaemonSessionAutomator(
     override fun typeText(text: String): Unit = typeTextAction(text)
 
     override fun screenshot(): ByteArray = screenshotResult()
+
+    override fun capture(windowIndex: Int): AtomicCaptureResult = captureResult(windowIndex)
 
     override fun startRecording(outputPath: String): String = startRecordingAction(outputPath)
 

@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import dev.sebastiano.spectre.agent.AtomicCaptureResult
 import dev.sebastiano.spectre.agent.AttachedAutomator
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
@@ -25,6 +26,8 @@ internal interface DaemonSessionAutomator : AutoCloseable {
 
     @Throws(IOException::class) fun screenshot(): ByteArray
 
+    @Throws(IOException::class) fun capture(windowIndex: Int = 0): AtomicCaptureResult
+
     @Throws(IOException::class) fun startRecording(outputPath: String): String
 
     @Throws(IOException::class) fun stopRecording(): String
@@ -46,6 +49,8 @@ internal class AttachedDaemonSession(private val delegate: AttachedAutomator) :
     override fun typeText(text: String): Unit = delegate.typeText(text)
 
     override fun screenshot(): ByteArray = delegate.screenshot()
+
+    override fun capture(windowIndex: Int): AtomicCaptureResult = delegate.capture(windowIndex)
 
     override fun startRecording(outputPath: String): String {
         if (recording != null)

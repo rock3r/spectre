@@ -150,6 +150,83 @@ public object SpectreMcpServer {
             val response = request(DaemonRequest.Screenshot(call.requiredString("session_id")))
             response.screenshotResult()
         }
+        registerCaptureTool(server, request)
+    }
+
+    private fun registerCaptureTool(server: Server, request: (DaemonRequest) -> DaemonResponse) {
+        val captureSchema =
+            schema(
+                    "session_id" to "string",
+                    "window_index" to "integer",
+                    "out_dir" to "string",
+                    "include_image" to "boolean",
+                )
+                .let { base ->
+                    // session_id is required; other params are optional overrides.
+                    ToolSchema(properties = base.properties, required = listOf("session_id"))
+                }
+        server.addTool(
+            name = "capture",
+            description =
+                "Atomic capture: window PNG + full semantics tree written to disk. Returns a " +
+                    "decision-grade summary with artifact paths (tree is never inlined). Optional " +
+                    "inline PNG preview is available via include_image=true. See the " +
+                    "spectre-capture skill for jq recipes over capture.json.",
+            inputSchema = captureSchema,
+        ) { call ->
+            handleCaptureTool(call, request)
+        }
+    }
+
+    private fun handleCaptureTool(
+        call: CallToolRequest,
+        request: (DaemonRequest) -> DaemonResponse,
+    ): CallToolResult {
+        val sessionId = call.requiredString("session_id")
+        val windowIndex =
+            call.arguments?.get("window_index")?.jsonPrimitive?.content?.toIntOrNull() ?: 0
+        val outDir = call.arguments?.get("out_dir")?.jsonPrimitive?.content
+        val includeImage =
+            call.arguments?.get("include_image")?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+                ?: false
+        return when (
+            val response =
+                request(
+                    DaemonRequest.Capture(
+                        sessionId = sessionId,
+                        windowIndex = windowIndex,
+                        outDir = outDir,
+                    )
+                )
+        ) {
+            is DaemonResponse.Capture -> captureToolResult(response, includeImage)
+            is DaemonResponse.Error ->
+                CallToolResult(listOf(TextContent(response.message)), isError = true)
+            else ->
+                CallToolResult(
+                    listOf(TextContent("Spectre daemon returned an unexpected response.")),
+                    isError = true,
+                )
+        }
+    }
+
+    private fun captureToolResult(
+        response: DaemonResponse.Capture,
+        includeImage: Boolean,
+    ): CallToolResult {
+        val summaryText = MCP_JSON.encodeToString(response)
+        if (!includeImage) return CallToolResult(listOf(TextContent(summaryText)))
+        val pngBytes =
+            java.nio.file.Files.readAllBytes(java.nio.file.Path.of(response.screenshotPngPath))
+        return CallToolResult(
+            listOf(
+                TextContent(summaryText),
+                ImageContent(
+                    data = Base64.getEncoder().encodeToString(pngBytes),
+                    mimeType = "image/png",
+                ),
+            )
+        )
     }
 
     private fun registerRecordingTools(server: Server, request: (DaemonRequest) -> DaemonResponse) {

@@ -61,6 +61,13 @@ internal sealed interface AgentRequest {
     @Serializable @SerialName("screenshot") data object Screenshot : AgentRequest
 
     /**
+     * Atomic capture of one window: semantics tree + window PNG taken back-to-back. Server replies
+     * with [AgentResponse.Capture] carrying the versioned capture JSON, PNG bytes, and summary
+     * counters. Default [windowIndex] is the first tracked window.
+     */
+    @Serializable @SerialName("capture") data class Capture(val windowIndex: Int = 0) : AgentRequest
+
+    /**
      * Signal the agent runtime to drain in-flight requests, stop accepting new ones, release the
      * in-target `ComposeAutomator`, unlink the UDS path, and remove its shutdown hook. Server
      * replies with [AgentResponse.Detached] and then closes the channel.
@@ -79,6 +86,7 @@ internal val AgentRequest.logLabel: String
             is AgentRequest.Click -> "click"
             is AgentRequest.TypeText -> "typeText"
             AgentRequest.Screenshot -> "screenshot"
+            is AgentRequest.Capture -> "capture"
             AgentRequest.Detach -> "detach"
         }
 
@@ -111,6 +119,53 @@ internal sealed interface AgentResponse {
             other is Screenshot && pngBytes.contentEquals(other.pngBytes)
 
         override fun hashCode(): Int = pngBytes.contentHashCode()
+    }
+
+    /**
+     * Reply to [AgentRequest.Capture] — versioned capture JSON UTF-8 bytes, PNG bytes, and summary
+     * counters. CLI/MCP front-ends write these to disk and return only the summary + paths to
+     * agents.
+     */
+    @Serializable
+    @SerialName("capture")
+    data class Capture(
+        val windowIndex: Int,
+        val schemaVersion: Int,
+        val captureJsonUtf8: ByteArray,
+        val pngBytes: ByteArray,
+        val nodeCount: Int,
+        val taggedNodeCount: Int,
+        val textedNodeCount: Int,
+        val imageWidth: Int,
+        val imageHeight: Int,
+        val captureDurationMs: Long,
+    ) : AgentResponse {
+        override fun equals(other: Any?): Boolean =
+            other is Capture &&
+                windowIndex == other.windowIndex &&
+                schemaVersion == other.schemaVersion &&
+                captureJsonUtf8.contentEquals(other.captureJsonUtf8) &&
+                pngBytes.contentEquals(other.pngBytes) &&
+                nodeCount == other.nodeCount &&
+                taggedNodeCount == other.taggedNodeCount &&
+                textedNodeCount == other.textedNodeCount &&
+                imageWidth == other.imageWidth &&
+                imageHeight == other.imageHeight &&
+                captureDurationMs == other.captureDurationMs
+
+        override fun hashCode(): Int {
+            var result = windowIndex
+            result = 31 * result + schemaVersion
+            result = 31 * result + captureJsonUtf8.contentHashCode()
+            result = 31 * result + pngBytes.contentHashCode()
+            result = 31 * result + nodeCount
+            result = 31 * result + taggedNodeCount
+            result = 31 * result + textedNodeCount
+            result = 31 * result + imageWidth
+            result = 31 * result + imageHeight
+            result = 31 * result + captureDurationMs.hashCode()
+            return result
+        }
     }
 
     /** Reply to [AgentRequest.Detach] — sent just before the agent closes the channel. */

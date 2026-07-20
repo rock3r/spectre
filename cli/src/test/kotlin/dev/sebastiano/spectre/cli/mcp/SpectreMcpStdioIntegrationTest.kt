@@ -44,6 +44,7 @@ class SpectreMcpStdioIntegrationTest {
                 assertEquals(
                     setOf(
                         "attach",
+                        "capture",
                         "click",
                         "find",
                         "list_processes",

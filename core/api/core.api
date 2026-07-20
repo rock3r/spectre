@@ -72,6 +72,8 @@ public final class dev/sebastiano/spectre/core/ComposeAutomator {
 	public static final field Companion Ldev/sebastiano/spectre/core/ComposeAutomator$Companion;
 	public synthetic fun <init> (Ldev/sebastiano/spectre/core/WindowTracker;Ldev/sebastiano/spectre/core/SemanticsReader;Ldev/sebastiano/spectre/core/RobotDriver;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun allNodes ()Ljava/util/List;
+	public final fun capture (I)Ldev/sebastiano/spectre/core/capture/AtomicCapture;
+	public static synthetic fun capture$default (Ldev/sebastiano/spectre/core/ComposeAutomator;IILjava/lang/Object;)Ldev/sebastiano/spectre/core/capture/AtomicCapture;
 	public final fun clearAndTypeText (Ldev/sebastiano/spectre/core/AutomatorNode;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun click (Ldev/sebastiano/spectre/core/AutomatorNode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun doubleClick (Ldev/sebastiano/spectre/core/AutomatorNode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -265,6 +267,184 @@ public final class dev/sebastiano/spectre/core/WindowTracker {
 	public fun <init> ()V
 	public final fun getTrackedWindows ()Lkotlinx/coroutines/flow/StateFlow;
 	public final fun refresh ()V
+}
+
+public final class dev/sebastiano/spectre/core/capture/AtomicCapture {
+	public fun <init> (Ljava/awt/image/BufferedImage;[BLdev/sebastiano/spectre/core/capture/CaptureDocument;Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/awt/image/BufferedImage;[BLdev/sebastiano/spectre/core/capture/CaptureDocument;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/awt/image/BufferedImage;
+	public final fun component2 ()[B
+	public final fun component3 ()Ldev/sebastiano/spectre/core/capture/CaptureDocument;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun copy (Ljava/awt/image/BufferedImage;[BLdev/sebastiano/spectre/core/capture/CaptureDocument;Ljava/lang/String;)Ldev/sebastiano/spectre/core/capture/AtomicCapture;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/capture/AtomicCapture;Ljava/awt/image/BufferedImage;[BLdev/sebastiano/spectre/core/capture/CaptureDocument;Ljava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/capture/AtomicCapture;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCaptureJson ()Ljava/lang/String;
+	public final fun getDocument ()Ldev/sebastiano/spectre/core/capture/CaptureDocument;
+	public final fun getImage ()Ljava/awt/image/BufferedImage;
+	public final fun getPngBytes ()[B
+	public final fun getSummary ()Ldev/sebastiano/spectre/core/capture/CaptureSummary;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/core/capture/AtomicCaptureBuilder {
+	public static final field INSTANCE Ldev/sebastiano/spectre/core/capture/AtomicCaptureBuilder;
+	public final fun build-WhTBSHQ (ILdev/sebastiano/spectre/core/TrackedWindow;Ljava/util/List;Ljava/awt/image/BufferedImage;Ljava/awt/Rectangle;DDJLjava/time/Instant;)Ldev/sebastiano/spectre/core/capture/AtomicCapture;
+	public static synthetic fun build-WhTBSHQ$default (Ldev/sebastiano/spectre/core/capture/AtomicCaptureBuilder;ILdev/sebastiano/spectre/core/TrackedWindow;Ljava/util/List;Ljava/awt/image/BufferedImage;Ljava/awt/Rectangle;DDJLjava/time/Instant;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/capture/AtomicCapture;
+}
+
+public final class dev/sebastiano/spectre/core/capture/CaptureArtifactPaths {
+	public fun <init> (Ljava/nio/file/Path;Ljava/nio/file/Path;Ljava/nio/file/Path;)V
+	public final fun component1 ()Ljava/nio/file/Path;
+	public final fun component2 ()Ljava/nio/file/Path;
+	public final fun component3 ()Ljava/nio/file/Path;
+	public final fun copy (Ljava/nio/file/Path;Ljava/nio/file/Path;Ljava/nio/file/Path;)Ldev/sebastiano/spectre/core/capture/CaptureArtifactPaths;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/capture/CaptureArtifactPaths;Ljava/nio/file/Path;Ljava/nio/file/Path;Ljava/nio/file/Path;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/capture/CaptureArtifactPaths;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCaptureJsonPath ()Ljava/nio/file/Path;
+	public final fun getDirectory ()Ljava/nio/file/Path;
+	public final fun getScreenshotPngPath ()Ljava/nio/file/Path;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/core/capture/CaptureArtifactsWriter {
+	public static final field CAPTURE_JSON_NAME Ljava/lang/String;
+	public static final field INSTANCE Ldev/sebastiano/spectre/core/capture/CaptureArtifactsWriter;
+	public static final field SCREENSHOT_PNG_NAME Ljava/lang/String;
+	public final fun write (Ljava/nio/file/Path;Ldev/sebastiano/spectre/core/capture/CaptureDocument;[B)Ldev/sebastiano/spectre/core/capture/CaptureArtifactPaths;
+}
+
+public final class dev/sebastiano/spectre/core/capture/CaptureDocument {
+	public static final field Companion Ldev/sebastiano/spectre/core/capture/CaptureDocument$Companion;
+	public static final field SCHEMA_VERSION I
+	public fun <init> (ILjava/lang/String;Ldev/sebastiano/spectre/core/capture/CaptureWindow;Ljava/util/List;Ldev/sebastiano/spectre/core/capture/CaptureSummary;)V
+	public final fun component1 ()I
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ldev/sebastiano/spectre/core/capture/CaptureWindow;
+	public final fun component4 ()Ljava/util/List;
+	public final fun component5 ()Ldev/sebastiano/spectre/core/capture/CaptureSummary;
+	public final fun copy (ILjava/lang/String;Ldev/sebastiano/spectre/core/capture/CaptureWindow;Ljava/util/List;Ldev/sebastiano/spectre/core/capture/CaptureSummary;)Ldev/sebastiano/spectre/core/capture/CaptureDocument;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/capture/CaptureDocument;ILjava/lang/String;Ldev/sebastiano/spectre/core/capture/CaptureWindow;Ljava/util/List;Ldev/sebastiano/spectre/core/capture/CaptureSummary;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/capture/CaptureDocument;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCapturedAt ()Ljava/lang/String;
+	public final fun getNodes ()Ljava/util/List;
+	public final fun getSchemaVersion ()I
+	public final fun getSummary ()Ldev/sebastiano/spectre/core/capture/CaptureSummary;
+	public final fun getWindow ()Ldev/sebastiano/spectre/core/capture/CaptureWindow;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/core/capture/CaptureDocument$Companion {
+}
+
+public final class dev/sebastiano/spectre/core/capture/CaptureJson {
+	public static final field INSTANCE Ldev/sebastiano/spectre/core/capture/CaptureJson;
+	public final fun encode (Ldev/sebastiano/spectre/core/capture/CaptureDocument;)Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/core/capture/CaptureNode {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;ZZZZLdev/sebastiano/spectre/core/capture/CaptureRect;Ldev/sebastiano/spectre/core/capture/CaptureRect;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component10 ()Z
+	public final fun component11 ()Ldev/sebastiano/spectre/core/capture/CaptureRect;
+	public final fun component12 ()Ldev/sebastiano/spectre/core/capture/CaptureRect;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/util/List;
+	public final fun component5 ()Ljava/lang/String;
+	public final fun component6 ()Ljava/lang/String;
+	public final fun component7 ()Z
+	public final fun component8 ()Z
+	public final fun component9 ()Z
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;ZZZZLdev/sebastiano/spectre/core/capture/CaptureRect;Ldev/sebastiano/spectre/core/capture/CaptureRect;)Ldev/sebastiano/spectre/core/capture/CaptureNode;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/capture/CaptureNode;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;ZZZZLdev/sebastiano/spectre/core/capture/CaptureRect;Ldev/sebastiano/spectre/core/capture/CaptureRect;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/capture/CaptureNode;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBoundsImage ()Ldev/sebastiano/spectre/core/capture/CaptureRect;
+	public final fun getBoundsScreen ()Ldev/sebastiano/spectre/core/capture/CaptureRect;
+	public final fun getClickable ()Z
+	public final fun getContentDescription ()Ljava/lang/String;
+	public final fun getEnabled ()Z
+	public final fun getFocused ()Z
+	public final fun getKey ()Ljava/lang/String;
+	public final fun getRole ()Ljava/lang/String;
+	public final fun getSelected ()Z
+	public final fun getTestTag ()Ljava/lang/String;
+	public final fun getText ()Ljava/lang/String;
+	public final fun getTexts ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/core/capture/CaptureRect {
+	public fun <init> (IIII)V
+	public final fun component1 ()I
+	public final fun component2 ()I
+	public final fun component3 ()I
+	public final fun component4 ()I
+	public final fun copy (IIII)Ldev/sebastiano/spectre/core/capture/CaptureRect;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/capture/CaptureRect;IIIIILjava/lang/Object;)Ldev/sebastiano/spectre/core/capture/CaptureRect;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getHeight ()I
+	public final fun getWidth ()I
+	public final fun getX ()I
+	public final fun getY ()I
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/core/capture/CaptureSummary {
+	public fun <init> (IIIIIJ)V
+	public final fun component1 ()I
+	public final fun component2 ()I
+	public final fun component3 ()I
+	public final fun component4 ()I
+	public final fun component5 ()I
+	public final fun component6 ()J
+	public final fun copy (IIIIIJ)Ldev/sebastiano/spectre/core/capture/CaptureSummary;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/capture/CaptureSummary;IIIIIJILjava/lang/Object;)Ldev/sebastiano/spectre/core/capture/CaptureSummary;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCaptureDurationMs ()J
+	public final fun getImageHeight ()I
+	public final fun getImageWidth ()I
+	public final fun getNodeCount ()I
+	public final fun getTaggedNodeCount ()I
+	public final fun getTextedNodeCount ()I
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/core/capture/CaptureWindow {
+	public fun <init> (ILjava/lang/String;Ljava/lang/String;ZLdev/sebastiano/spectre/core/capture/CaptureRect;DDII)V
+	public final fun component1 ()I
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Z
+	public final fun component5 ()Ldev/sebastiano/spectre/core/capture/CaptureRect;
+	public final fun component6 ()D
+	public final fun component7 ()D
+	public final fun component8 ()I
+	public final fun component9 ()I
+	public final fun copy (ILjava/lang/String;Ljava/lang/String;ZLdev/sebastiano/spectre/core/capture/CaptureRect;DDII)Ldev/sebastiano/spectre/core/capture/CaptureWindow;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/capture/CaptureWindow;ILjava/lang/String;Ljava/lang/String;ZLdev/sebastiano/spectre/core/capture/CaptureRect;DDIIILjava/lang/Object;)Ldev/sebastiano/spectre/core/capture/CaptureWindow;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBoundsScreen ()Ldev/sebastiano/spectre/core/capture/CaptureRect;
+	public final fun getDensityScaleX ()D
+	public final fun getDensityScaleY ()D
+	public final fun getImageHeight ()I
+	public final fun getImageWidth ()I
+	public final fun getIndex ()I
+	public final fun getSurfaceId ()Ljava/lang/String;
+	public final fun getTitle ()Ljava/lang/String;
+	public fun hashCode ()I
+	public final fun isPopup ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/core/capture/ImageSpaceBoundsKt {
+	public static final fun screenRectToImageRect (Ljava/awt/Rectangle;IIIIII)Ldev/sebastiano/spectre/core/capture/CaptureRect;
 }
 
 public abstract interface annotation class dev/sebastiano/spectre/core/perf/ExperimentalSpectreApi : java/lang/annotation/Annotation {

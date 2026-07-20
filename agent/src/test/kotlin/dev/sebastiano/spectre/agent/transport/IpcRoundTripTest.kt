@@ -441,6 +441,19 @@ class IpcRoundTripTest {
             is AgentRequest.Click -> AgentResponse.Ok
             is AgentRequest.TypeText -> AgentResponse.Ok
             AgentRequest.Screenshot -> AgentResponse.Screenshot(ByteArray(0))
+            is AgentRequest.Capture ->
+                AgentResponse.Capture(
+                    windowIndex = request.windowIndex,
+                    schemaVersion = 1,
+                    captureJsonUtf8 = "{}".toByteArray(),
+                    pngBytes = ByteArray(0),
+                    nodeCount = 0,
+                    taggedNodeCount = 0,
+                    textedNodeCount = 0,
+                    imageWidth = 0,
+                    imageHeight = 0,
+                    captureDurationMs = 0,
+                )
             AgentRequest.Detach -> AgentResponse.Detached
         }
     }

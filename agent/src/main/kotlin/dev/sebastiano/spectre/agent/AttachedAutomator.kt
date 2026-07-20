@@ -16,8 +16,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * [AgentRequest.Detach] over the wire (Path A of the plan's D-7) before tearing down the underlying
  * socket. The target JVM's shutdown hook (Path B) covers crash cleanup.
  *
- * Current wire surface (D-4): windows, allNodes, findByTestTag, click, typeText, screenshot, plus
- * detach. Streaming/long-poll ops are deferred follow-ups (Q-3).
+ * Current wire surface: windows, allNodes, findByTestTag, click, typeText, screenshot, capture,
+ * plus detach. Streaming/long-poll ops are deferred follow-ups (Q-3).
  *
  * Not thread-safe. Callers needing concurrent automator access must serialise externally.
  *
@@ -77,6 +77,30 @@ internal constructor(
         val resp = exchange(AgentRequest.Screenshot)
         return (resp as? AgentResponse.Screenshot)?.pngBytes
             ?: throw wireMismatch("Screenshot", resp)
+    }
+
+    /**
+     * Atomic capture of one tracked window: semantics tree + window PNG taken back-to-back.
+     *
+     * Returns the versioned capture JSON, PNG bytes, and summary counters. Prefer writing the
+     * artifacts to disk and keeping only the summary in agent context.
+     */
+    @Throws(IOException::class)
+    public fun capture(windowIndex: Int = 0): AtomicCaptureResult {
+        val resp = exchange(AgentRequest.Capture(windowIndex))
+        val capture = resp as? AgentResponse.Capture ?: throw wireMismatch("Capture", resp)
+        return AtomicCaptureResult(
+            windowIndex = capture.windowIndex,
+            schemaVersion = capture.schemaVersion,
+            captureJson = capture.captureJsonUtf8.toString(Charsets.UTF_8),
+            pngBytes = capture.pngBytes,
+            nodeCount = capture.nodeCount,
+            taggedNodeCount = capture.taggedNodeCount,
+            textedNodeCount = capture.textedNodeCount,
+            imageWidth = capture.imageWidth,
+            imageHeight = capture.imageHeight,
+            captureDurationMs = capture.captureDurationMs,
+        )
     }
 
     /**

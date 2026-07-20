@@ -199,6 +199,51 @@ class ReflectiveAutomatorHandlerMappingTest {
     }
 
     @Test
+    fun `Capture op calls capture(int) and maps AtomicCapture fields`() {
+        var receivedWindowIndex: Int? = null
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47)
+        val automator =
+            FakeAutomator(
+                captureImpl = { windowIndex ->
+                    receivedWindowIndex = windowIndex
+                    FakeAtomicCapture(
+                        document =
+                            FakeCaptureDocument(
+                                schemaVersion = 1,
+                                summary =
+                                    FakeCaptureSummary(
+                                        nodeCount = 3,
+                                        taggedNodeCount = 2,
+                                        textedNodeCount = 1,
+                                        imageWidth = 10,
+                                        imageHeight = 20,
+                                        captureDurationMs = 7,
+                                    ),
+                            ),
+                        pngBytes = png,
+                    )
+                }
+            )
+        val handler = ReflectiveAutomatorHandler(automator)
+
+        val response = handler.handle(AgentRequest.Capture(windowIndex = 2))
+        check(response is AgentResponse.Capture) {
+            "expected Capture, got ${response::class.simpleName}: $response"
+        }
+        assertEquals(2, receivedWindowIndex)
+        assertEquals(2, response.windowIndex)
+        assertEquals(1, response.schemaVersion)
+        assertEquals(3, response.nodeCount)
+        assertEquals(2, response.taggedNodeCount)
+        assertEquals(1, response.textedNodeCount)
+        assertEquals(10, response.imageWidth)
+        assertEquals(20, response.imageHeight)
+        assertEquals(7, response.captureDurationMs)
+        assertTrue(response.pngBytes.contentEquals(png))
+        assertTrue(response.captureJsonUtf8.isNotEmpty())
+    }
+
+    @Test
     fun `Detach op returns Detached without touching the automator`() {
         val automator = FakeAutomator(screenshotImpl = { error("should not be called for Detach") })
         val handler = ReflectiveAutomatorHandler(automator)
@@ -367,6 +412,7 @@ private class FakeAutomator(
     private val screenshotImpl: (java.awt.Rectangle?) -> java.awt.image.BufferedImage = { _ ->
         java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB)
     },
+    private val captureImpl: (Int) -> Any = { error("capture not stubbed") },
 ) {
     /**
      * Tracks how many times the handler called [refreshWindows]. Real `ComposeAutomator.windows` is
@@ -390,6 +436,49 @@ private class FakeAutomator(
     @Suppress("unused")
     fun screenshot(region: java.awt.Rectangle?): java.awt.image.BufferedImage =
         screenshotImpl(region)
+
+    @Suppress("unused") fun capture(windowIndex: Int): Any = captureImpl(windowIndex)
+}
+
+/** Mirrors `AtomicCapture` getters the reflective capture mapper reads. */
+private class FakeAtomicCapture(
+    private val document: Any,
+    private val pngBytes: ByteArray,
+    private val captureJson: String = """{"schemaVersion":1}""",
+) {
+    @Suppress("unused") fun getDocument(): Any = document
+
+    @Suppress("unused") fun getPngBytes(): ByteArray = pngBytes
+
+    @Suppress("unused") fun getCaptureJson(): String = captureJson
+}
+
+private class FakeCaptureDocument(private val schemaVersion: Int, private val summary: Any) {
+    @Suppress("unused") fun getSchemaVersion(): Int = schemaVersion
+
+    @Suppress("unused") fun getSummary(): Any = summary
+}
+
+@Suppress("LongParameterList")
+private class FakeCaptureSummary(
+    private val nodeCount: Int,
+    private val taggedNodeCount: Int,
+    private val textedNodeCount: Int,
+    private val imageWidth: Int,
+    private val imageHeight: Int,
+    private val captureDurationMs: Long,
+) {
+    @Suppress("unused") fun getNodeCount(): Int = nodeCount
+
+    @Suppress("unused") fun getTaggedNodeCount(): Int = taggedNodeCount
+
+    @Suppress("unused") fun getTextedNodeCount(): Int = textedNodeCount
+
+    @Suppress("unused") fun getImageWidth(): Int = imageWidth
+
+    @Suppress("unused") fun getImageHeight(): Int = imageHeight
+
+    @Suppress("unused") fun getCaptureDurationMs(): Long = captureDurationMs
 }
 
 private class FakeTrackedWindow(
