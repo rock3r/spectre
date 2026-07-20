@@ -183,8 +183,21 @@ public object SpectreMcpServer {
         request: (DaemonRequest) -> DaemonResponse,
     ): CallToolResult {
         val sessionId = call.requiredString("session_id")
+        val windowIndexArg = call.arguments?.get("window_index")?.jsonPrimitive?.content
         val windowIndex =
-            call.arguments?.get("window_index")?.jsonPrimitive?.content?.toIntOrNull() ?: 0
+            if (windowIndexArg == null) {
+                0
+            } else {
+                windowIndexArg.toIntOrNull()
+                    ?: return CallToolResult(
+                        listOf(
+                            TextContent(
+                                "MCP tool argument 'window_index' must be an integer, got '$windowIndexArg'."
+                            )
+                        ),
+                        isError = true,
+                    )
+            }
         val outDir =
             call.arguments
                 ?.get("out_dir")
