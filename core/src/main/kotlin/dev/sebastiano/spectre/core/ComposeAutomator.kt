@@ -265,11 +265,11 @@ private constructor(
         val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
         val densityScaleX = transform.scaleX
         val densityScaleY = transform.scaleY
-        // Freeze tree properties + screen geometry on the EDT *before* taking the PNG so the
-        // JSON cannot drift mid-capture while Robot samples the framebuffer.
-        val nodeSnapshots =
+        // Freeze tree properties + screen geometry in a single EDT pass *before* taking the PNG
+        // so the JSON cannot drift mid-capture while Robot samples the framebuffer. Nested
+        // readOnEdt / bothBounds() calls run inline once we are already on the EDT.
+        val nodeSnapshots = readOnEdt {
             semanticsReader.readAllNodes(listOf(trackedWindow)).map { node ->
-                val screenBounds = node.bothBounds().onScreen
                 CaptureNodeSnapshot(
                     key = node.key.toString(),
                     testTag = node.testTag,
@@ -281,9 +281,10 @@ private constructor(
                     clickable = node.isClickable,
                     focused = node.isFocused,
                     selected = node.isSelected,
-                    boundsScreen = screenBounds,
+                    boundsScreen = node.bothBounds().onScreen,
                 )
             }
+        }
         val image = robotDriver.screenshot(captureRegion)
         return AtomicCaptureBuilder.build(
             windowIndex = windowIndex,
