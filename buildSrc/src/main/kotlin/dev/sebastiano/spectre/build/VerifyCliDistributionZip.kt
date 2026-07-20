@@ -100,8 +100,12 @@ abstract class VerifyCliDistributionZip : DefaultTask() {
         // scripts still need a real PATH (uname/sed/etc.).
         processBuilder.environment().remove("JAVA_HOME")
         if (isWindows()) {
-            processBuilder.environment()["PATH"] = File(temporaryDir, "empty-path").path
-            processBuilder.environment()["Path"] = File(temporaryDir, "empty-path").path
+            // Keep System32 (findstr, etc.) but drop host Java from PATH so only the bundled
+            // runtime can provide java.exe.
+            val systemRoot = processBuilder.environment()["SystemRoot"] ?: "C:\\Windows"
+            val system32 = File(systemRoot, "System32").path
+            processBuilder.environment()["PATH"] = system32
+            processBuilder.environment()["Path"] = system32
         }
         val process = processBuilder.start()
         check(process.waitFor(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
