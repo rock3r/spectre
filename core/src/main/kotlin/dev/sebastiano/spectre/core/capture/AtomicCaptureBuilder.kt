@@ -1,8 +1,5 @@
 package dev.sebastiano.spectre.core.capture
 
-import androidx.compose.ui.semantics.SemanticsActions
-import androidx.compose.ui.semantics.getOrNull
-import dev.sebastiano.spectre.core.AutomatorNode
 import dev.sebastiano.spectre.core.InternalSpectreApi
 import dev.sebastiano.spectre.core.TrackedWindow
 import java.awt.Frame
@@ -14,7 +11,27 @@ import javax.imageio.ImageIO
 import kotlin.time.TimeSource
 
 /**
- * Builds an [AtomicCapture] from an already-snapshotted node list, window metadata, and PNG image.
+ * Eagerly snapshotted node data for [AtomicCaptureBuilder].
+ *
+ * Geometry and clickability must be frozen **before** the window PNG is taken so the JSON describes
+ * the same UI moment as the pixels.
+ */
+public data class CaptureNodeSnapshot(
+    public val key: String,
+    public val testTag: String?,
+    public val text: String?,
+    public val texts: List<String>,
+    public val contentDescription: String?,
+    public val role: String?,
+    public val enabled: Boolean,
+    public val clickable: Boolean,
+    public val focused: Boolean,
+    public val selected: Boolean,
+    public val boundsScreen: Rectangle,
+)
+
+/**
+ * Builds an [AtomicCapture] from pre-snapshotted nodes, window metadata, and a PNG image.
  *
  * Kept separate from [dev.sebastiano.spectre.core.ComposeAutomator] so the pure mapping (screen →
  * image space, summary counts, JSON-ready model) is unit-testable without a live window.
@@ -25,7 +42,7 @@ public object AtomicCaptureBuilder {
     public fun build(
         windowIndex: Int,
         trackedWindow: TrackedWindow,
-        nodes: List<AutomatorNode>,
+        nodeSnapshots: List<CaptureNodeSnapshot>,
         image: BufferedImage,
         captureRegion: Rectangle,
         densityScaleX: Double,
@@ -33,22 +50,21 @@ public object AtomicCaptureBuilder {
         startedAt: TimeSource.Monotonic.ValueTimeMark,
         capturedAt: Instant = Instant.now(),
     ): AtomicCapture {
-        val captureNodes = nodes.map { node ->
-            val screenBounds = node.boundsOnScreen
+        val captureNodes = nodeSnapshots.map { snap ->
             CaptureNode(
-                key = node.key.toString(),
-                testTag = node.testTag,
-                text = node.text,
-                texts = node.texts,
-                contentDescription = node.contentDescription,
-                role = node.role?.toString(),
-                enabled = !node.isDisabled,
-                clickable = nodeIsClickable(node),
-                focused = node.isFocused,
-                selected = node.isSelected,
+                key = snap.key,
+                testTag = snap.testTag,
+                text = snap.text,
+                texts = snap.texts,
+                contentDescription = snap.contentDescription,
+                role = snap.role,
+                enabled = snap.enabled,
+                clickable = snap.clickable,
+                focused = snap.focused,
+                selected = snap.selected,
                 boundsImage =
                     screenRectToImageRect(
-                        screen = screenBounds,
+                        screen = snap.boundsScreen,
                         captureOriginX = captureRegion.x,
                         captureOriginY = captureRegion.y,
                         captureAwtWidth = captureRegion.width,
@@ -58,10 +74,10 @@ public object AtomicCaptureBuilder {
                     ),
                 boundsScreen =
                     CaptureRect(
-                        x = screenBounds.x,
-                        y = screenBounds.y,
-                        width = screenBounds.width,
-                        height = screenBounds.height,
+                        x = snap.boundsScreen.x,
+                        y = snap.boundsScreen.y,
+                        width = snap.boundsScreen.width,
+                        height = snap.boundsScreen.height,
                     ),
             )
         }
@@ -101,9 +117,6 @@ public object AtomicCaptureBuilder {
             )
         return AtomicCapture(image = image, pngBytes = encodePng(image), document = document)
     }
-
-    private fun nodeIsClickable(node: AutomatorNode): Boolean =
-        node.semanticsNode.config.getOrNull(SemanticsActions.OnClick) != null
 
     private fun encodePng(image: BufferedImage): ByteArray {
         val out = ByteArrayOutputStream()

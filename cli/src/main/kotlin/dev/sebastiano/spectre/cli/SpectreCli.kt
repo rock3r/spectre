@@ -216,7 +216,7 @@ private class CaptureCommand(
                 DaemonRequest.Capture(
                     sessionId = sessionId,
                     windowIndex = windowIndex,
-                    outDir = outDir?.toString(),
+                    outDir = outDir?.toAbsolutePath()?.normalize()?.toString(),
                 )
             )
         val capture =

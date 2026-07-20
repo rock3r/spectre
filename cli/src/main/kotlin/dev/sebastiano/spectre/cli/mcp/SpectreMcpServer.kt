@@ -185,7 +185,12 @@ public object SpectreMcpServer {
         val sessionId = call.requiredString("session_id")
         val windowIndex =
             call.arguments?.get("window_index")?.jsonPrimitive?.content?.toIntOrNull() ?: 0
-        val outDir = call.arguments?.get("out_dir")?.jsonPrimitive?.content
+        val outDir =
+            call.arguments
+                ?.get("out_dir")
+                ?.jsonPrimitive
+                ?.content
+                ?.let(::normalizeRecordingOutputPath)
         val includeImage =
             call.arguments?.get("include_image")?.jsonPrimitive?.content?.toBooleanStrictOrNull()
                 ?: false

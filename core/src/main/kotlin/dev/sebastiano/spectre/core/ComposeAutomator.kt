@@ -7,6 +7,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
 import dev.sebastiano.spectre.core.capture.AtomicCapture
 import dev.sebastiano.spectre.core.capture.AtomicCaptureBuilder
+import dev.sebastiano.spectre.core.capture.CaptureNodeSnapshot
 import dev.sebastiano.spectre.core.perf.ExperimentalSpectreApi
 import dev.sebastiano.spectre.core.perf.RecompositionMonitor
 import java.awt.Rectangle
@@ -264,13 +265,30 @@ private constructor(
         val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
         val densityScaleX = transform.scaleX
         val densityScaleY = transform.scaleY
-        // Snapshot the tree for this window only, then take pixels immediately.
-        val nodes = semanticsReader.readAllNodes(listOf(trackedWindow))
+        // Freeze tree properties + screen geometry on the EDT *before* taking the PNG so the
+        // JSON cannot drift mid-capture while Robot samples the framebuffer.
+        val nodeSnapshots =
+            semanticsReader.readAllNodes(listOf(trackedWindow)).map { node ->
+                val screenBounds = node.bothBounds().onScreen
+                CaptureNodeSnapshot(
+                    key = node.key.toString(),
+                    testTag = node.testTag,
+                    text = node.text,
+                    texts = node.texts,
+                    contentDescription = node.contentDescription,
+                    role = node.role?.toString(),
+                    enabled = !node.isDisabled,
+                    clickable = node.isClickable,
+                    focused = node.isFocused,
+                    selected = node.isSelected,
+                    boundsScreen = screenBounds,
+                )
+            }
         val image = robotDriver.screenshot(captureRegion)
         return AtomicCaptureBuilder.build(
             windowIndex = windowIndex,
             trackedWindow = trackedWindow,
-            nodes = nodes,
+            nodeSnapshots = nodeSnapshots,
             image = image,
             captureRegion = captureRegion,
             densityScaleX = densityScaleX,

@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.agent.runtime
 
 import dev.sebastiano.spectre.agent.transport.AgentResponse
+import dev.sebastiano.spectre.agent.transport.MAX_FRAME_BYTES
 
 /**
  * Invokes `ComposeAutomator.capture` reflectively and maps the result onto the agent wire
@@ -38,10 +39,22 @@ internal object AtomicCaptureReflectiveMapper {
         val summaryClass = summary.javaClass
         val pngBytes = resultClass.getMethod("getPngBytes").invoke(result) as ByteArray
         val captureJson = resultClass.getMethod("getCaptureJson").invoke(result) as String
+        val captureJsonUtf8 = captureJson.toByteArray(Charsets.UTF_8)
+        // CBOR envelope is larger than raw bytes; leave headroom so Framing.writeFrame does not
+        // kill the connection after a successful capture.
+        val rawBytes = pngBytes.size.toLong() + captureJsonUtf8.size.toLong()
+        val maxRawPayload = (MAX_FRAME_BYTES * 3L) / 4L
+        if (rawBytes > maxRawPayload) {
+            return AgentResponse.Error(
+                "Atomic capture is too large for the agent IPC frame limit " +
+                    "(png+json=${rawBytes}B, max≈${maxRawPayload}B). Capture a smaller window " +
+                    "or reduce UI density; a path-based transfer is tracked with payload limits."
+            )
+        }
         return AgentResponse.Capture(
             windowIndex = windowIndex,
             schemaVersion = documentClass.getMethod("getSchemaVersion").invoke(document) as Int,
-            captureJsonUtf8 = captureJson.toByteArray(Charsets.UTF_8),
+            captureJsonUtf8 = captureJsonUtf8,
             pngBytes = pngBytes,
             nodeCount = summaryClass.getMethod("getNodeCount").invoke(summary) as Int,
             taggedNodeCount = summaryClass.getMethod("getTaggedNodeCount").invoke(summary) as Int,
