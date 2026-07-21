@@ -169,6 +169,10 @@ class AgentAttachIntegrationTest {
                 buttonKey.isNotBlank(),
                 "iteration $iteration: button node key should be non-blank; got '$buttonKey'",
             )
+            // #184 window-identity: assert before keyboard focus work so OS-focus flakes do not
+            // mask identity regressions (identity does not need keyboard focus).
+            assertWindowIdentityMatchesWindows(automator, windows, iteration = iteration)
+
             // Click bare-throws on failure (no runCatching) so a broken suspend bridge or a
             // wire-level error fails the test loudly.
             automator.click(buttonKey)
@@ -209,8 +213,6 @@ class AgentAttachIntegrationTest {
                 screenshotBytes.startsWith(PNG_MAGIC),
                 "iteration $iteration: screenshot bytes do not start with PNG magic header",
             )
-
-            assertWindowIdentityMatchesWindows(automator, windows, iteration = iteration)
         }
 
         assertFalse(
@@ -272,6 +274,13 @@ class AgentAttachIntegrationTest {
         assertTrue(
             mainIdentity.scaleX > 0.0 && mainIdentity.scaleY > 0.0,
             "iteration $iteration: scale must be positive (HiDPI reports >1 when applicable)",
+        )
+        // Agent bootstrap opens java.desktop peer packages so host handle is resolvable for the
+        // fixture's JFrame+ComposePanel path (Compose windowHandle is 0 for Swing-hosted panels).
+        assertTrue(
+            mainIdentity.nativeHandle != null && mainIdentity.nativeHandle != 0L,
+            "iteration $iteration: expected non-null host nativeHandle after agent AWT module opens; " +
+                "got ${mainIdentity.nativeHandle}",
         )
     }
 

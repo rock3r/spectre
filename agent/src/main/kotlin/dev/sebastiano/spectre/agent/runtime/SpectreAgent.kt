@@ -86,6 +86,11 @@ public object SpectreAgent {
         val loader = AgentBootstrap.findSpectreClassLoader(instrumentation)
         System.err.println("[spectre-agent] found Spectre via $loader")
 
+        // Open AWT peer packages so core window-identity can resolve host HWND/NSWindow*/XID for
+        // embedded ComposePanel surfaces (Compose windowHandle is 0 there). Best-effort: failures
+        // are logged and identity falls back to null handles.
+        AwtPeerModuleOpener.openFor(loader, instrumentation)
+
         val automator = createAutomatorReflectively(loader)
         System.err.println("[spectre-agent] ComposeAutomator ready: $automator")
 

@@ -12,6 +12,11 @@ import java.lang.reflect.Method
  * AWT peer (HWND / NSWindow* / X11 Window) the same way IntelliJ Platform does. Returns `null` when
  * the peer is missing or the platform path is unknown — callers must treat null as "no handle" and
  * fall back (title+pid window match, or region capture).
+ *
+ * **Module opens:** peer reflection needs `java.desktop` packages opened to Spectre core
+ * (`sun.awt`, `sun.lwawt`, `sun.awt.X11`, …). The agent runtime opens them via
+ * `Instrumentation.redefineModule` at attach bootstrap. In-process callers without those opens (or
+ * without `--add-opens`) will see `null` for handle-less embedded surfaces.
  */
 internal object NativeWindowHandle {
 
@@ -84,12 +89,23 @@ internal object NativeWindowHandle {
                         it.name == "getPlatformWindow" && it.parameterCount == 0
                     } ?: return null
                 val platformWindow = getPlatformWindow.invoke(peer) ?: return null
-                val ptrField: Field =
-                    platformWindow.javaClass.superclass?.getDeclaredField("ptr") ?: return null
+                // CFRetainedResource.ptr on current macOS LW AWT; walk superclasses for resilience.
+                val ptrField = findDeclaredField(platformWindow.javaClass, "ptr") ?: return null
                 ptrField.isAccessible = true
                 ptrField.getLong(platformWindow).takeIf { it != 0L }
             }
             .getOrNull()
+
+    private fun findDeclaredField(start: Class<*>, name: String): Field? {
+        var current: Class<*>? = start
+        while (current != null && current != Any::class.java) {
+            val klass = current
+            val field = runCatching { klass.getDeclaredField(name) }.getOrNull()
+            if (field != null) return field
+            current = klass.superclass
+        }
+        return null
+    }
 
     private fun x11Window(peer: Any): Long? =
         runCatching {
