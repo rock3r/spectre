@@ -4,6 +4,7 @@ import dev.sebastiano.spectre.agent.transport.AgentRequest
 import dev.sebastiano.spectre.agent.transport.AgentResponse
 import dev.sebastiano.spectre.agent.transport.IpcClient
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
+import dev.sebastiano.spectre.agent.transport.WindowIdentityDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import dev.sebastiano.spectre.agent.transport.logLabel
 import java.io.IOException
@@ -17,7 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * socket. The target JVM's shutdown hook (Path B) covers crash cleanup.
  *
  * Current wire surface: windows, allNodes, findByTestTag, click, typeText, screenshot, capture,
- * plus detach. Streaming/long-poll ops are deferred follow-ups (Q-3).
+ * windowIdentity, plus detach. Streaming/long-poll ops are deferred follow-ups (Q-3).
  *
  * Not thread-safe. Callers needing concurrent automator access must serialise externally.
  *
@@ -101,6 +102,19 @@ internal constructor(
             imageHeight = capture.imageHeight,
             captureDurationMs = capture.captureDurationMs,
         )
+    }
+
+    /**
+     * Describe native window identity for daemon-side recording.
+     *
+     * @param windowIndex when null, every tracked window; when set, only that index (empty if out
+     *   of range).
+     */
+    @Throws(IOException::class)
+    public fun windowIdentities(windowIndex: Int? = null): List<WindowIdentityDto> {
+        val resp = exchange(AgentRequest.WindowIdentity(windowIndex))
+        return (resp as? AgentResponse.WindowIdentities)?.windows
+            ?: throw wireMismatch("WindowIdentities", resp)
     }
 
     /**

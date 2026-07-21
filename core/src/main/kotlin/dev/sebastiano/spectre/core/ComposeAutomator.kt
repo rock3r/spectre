@@ -58,6 +58,34 @@ private constructor(
         windowTracker.refresh()
     }
 
+    /**
+     * Native identity + geometry for every tracked window, for out-of-process recorders.
+     *
+     * See [WindowIdentitySnapshot] for coordinate spaces and the crop-required flag (spike
+     * constraint #5). Always refreshes the window list first so results match the live UI.
+     */
+    @InternalSpectreApi
+    public fun windowIdentities(): List<WindowIdentitySnapshot> {
+        refreshWindows()
+        return windows.mapIndexed { index, tracked ->
+            WindowIdentityResolver.resolve(index, tracked)
+        }
+    }
+
+    /**
+     * Native identity + geometry for a single tracked window by index.
+     *
+     * @throws IllegalArgumentException if [windowIndex] is out of range after refresh.
+     */
+    @InternalSpectreApi
+    public fun windowIdentity(windowIndex: Int): WindowIdentitySnapshot {
+        val all = windowIdentities()
+        return all.getOrNull(windowIndex)
+            ?: throw IllegalArgumentException(
+                "No tracked window at index $windowIndex (have ${all.size})"
+            )
+    }
+
     public fun tree(): AutomatorTree {
         refreshWindows()
         val windowScopes = windows.mapIndexed { index, trackedWindow ->

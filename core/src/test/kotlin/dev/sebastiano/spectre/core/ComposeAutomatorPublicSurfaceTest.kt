@@ -263,6 +263,8 @@ class ComposeAutomatorPublicSurfaceTest {
                 "dev.sebastiano.spectre.core.TextQuery",
                 "dev.sebastiano.spectre.core.TrackedWindow",
                 "dev.sebastiano.spectre.core.Tracer",
+                "dev.sebastiano.spectre.core.WindowIdentityResolver",
+                "dev.sebastiano.spectre.core.WindowIdentitySnapshot",
                 "dev.sebastiano.spectre.core.WindowTracker",
                 "dev.sebastiano.spectre.core.capture.AtomicCapture",
                 "dev.sebastiano.spectre.core.capture.AtomicCaptureBuilder",
@@ -323,6 +325,8 @@ class ComposeAutomatorPublicSurfaceTest {
             setOf(
                 "dev.sebastiano.spectre.core.SurfaceIdAssigner",
                 "dev.sebastiano.spectre.core.TrackedWindow",
+                "dev.sebastiano.spectre.core.WindowIdentityResolver",
+                "dev.sebastiano.spectre.core.WindowIdentitySnapshot",
                 "dev.sebastiano.spectre.core.WindowTracker",
                 "dev.sebastiano.spectre.core.perf.RecomposerInspector",
             )
@@ -364,10 +368,12 @@ class ComposeAutomatorPublicSurfaceTest {
                 "monitorRecompositions",
             )
 
-        // Members on ComposeAutomator that ship under @InternalSpectreApi — currently just the
-        // `windows: List<TrackedWindow>` accessor for the experimental server transport.
-        // Property getters are emitted as `getWindows`.
-        val COMPOSE_AUTOMATOR_ESCAPE_HATCH_MEMBERS: Set<String> = setOf("getWindows")
+        // Members on ComposeAutomator that ship under @InternalSpectreApi:
+        // - `windows: List<TrackedWindow>` (property getter `getWindows`) for the experimental
+        //   server transport
+        // - `windowIdentities` / `windowIdentity` for daemon-owned recording (#184)
+        val COMPOSE_AUTOMATOR_ESCAPE_HATCH_MEMBERS: Set<String> =
+            setOf("getWindows", "windowIdentities", "windowIdentity")
 
         // Public factory methods on ComposeAutomator.Companion. R1 narrowed `inProcess(...)`
         // to a single `robotDriver` parameter; restoring `windowTracker` / `semanticsReader`

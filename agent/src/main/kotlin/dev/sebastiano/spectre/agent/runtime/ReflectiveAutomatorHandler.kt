@@ -93,6 +93,8 @@ internal class ReflectiveAutomatorHandler(
                 AgentRequest.Screenshot -> handleScreenshot()
                 is AgentRequest.Capture ->
                     AtomicCaptureReflectiveMapper.invoke(automator, request.windowIndex)
+                is AgentRequest.WindowIdentity ->
+                    WindowIdentityReflectiveMapper.invoke(automator, request.windowIndex)
                 AgentRequest.Detach -> AgentResponse.Detached
             }
         } catch (ex: ReflectiveOperationException) {

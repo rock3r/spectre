@@ -68,6 +68,16 @@ internal sealed interface AgentRequest {
     @Serializable @SerialName("capture") data class Capture(val windowIndex: Int = 0) : AgentRequest
 
     /**
+     * Describe native window identity so an out-of-process (daemon) recorder can target capture.
+     *
+     * When [windowIndex] is null, every tracked window is described. When set, only that index is
+     * returned (empty list if out of range). Replies with [AgentResponse.WindowIdentities].
+     */
+    @Serializable
+    @SerialName("windowIdentity")
+    data class WindowIdentity(val windowIndex: Int? = null) : AgentRequest
+
+    /**
      * Signal the agent runtime to drain in-flight requests, stop accepting new ones, release the
      * in-target `ComposeAutomator`, unlink the UDS path, and remove its shutdown hook. Server
      * replies with [AgentResponse.Detached] and then closes the channel.
@@ -87,6 +97,7 @@ internal val AgentRequest.logLabel: String
             is AgentRequest.TypeText -> "typeText"
             AgentRequest.Screenshot -> "screenshot"
             is AgentRequest.Capture -> "capture"
+            is AgentRequest.WindowIdentity -> "windowIdentity"
             AgentRequest.Detach -> "detach"
         }
 
@@ -172,6 +183,14 @@ internal sealed interface AgentResponse {
     @Serializable @SerialName("detached") data object Detached : AgentResponse
 
     /**
+     * Reply to [AgentRequest.WindowIdentity] — native handles and geometry for out-of-process
+     * recording.
+     */
+    @Serializable
+    @SerialName("windowIdentities")
+    data class WindowIdentities(val windows: List<WindowIdentityDto>) : AgentResponse
+
+    /**
      * Server-side failure. Carries a human-readable [message]; the structured failure type isn't
      * exposed across the wire yet to keep the protocol small. This response goes back to the
      * same-UID client that sent the request, so messages may include caller-controlled selectors or
@@ -223,4 +242,39 @@ public data class RectDto(
     public val y: Int,
     public val width: Int,
     public val height: Int,
+)
+
+/**
+ * Wire projection of a tracked window's native identity for daemon-side recording.
+ *
+ * Coordinate spaces (must match core `WindowIdentitySnapshot` KDoc):
+ * - [windowBoundsOnScreen] / [surfaceBoundsOnScreen]: AWT user-space screen coordinates
+ *   (`locationOnScreen` / Robot / same as [WindowSummaryDto.bounds]). On HiDPI this is logical
+ *   space; multiply by [scaleX]/[scaleY] for device pixels.
+ * - [surfaceBoundsInWindow]: surface origin/size relative to [windowBoundsOnScreen] top-left in the
+ *   same AWT units (crop rect; scale if the backend crops in device pixels).
+ * - [scaleX] / [scaleY] / [translateX] / [translateY]: `GraphicsConfiguration.defaultTransform`
+ *   affine components. Device-pixel conversion: point `(x, y) → (x * scaleX + translateX, y *
+ *   scaleY + translateY)`; scale widths/heights by [scaleX]/[scaleY] only (no translation).
+ *
+ * When [cropRequired] is true, [nativeHandle] is the host top-level window and capture must crop to
+ * the surface rect.
+ */
+@ExperimentalSpectreAgentApi
+@Serializable
+public data class WindowIdentityDto(
+    public val index: Int,
+    public val surfaceId: String,
+    public val title: String?,
+    public val isPopup: Boolean,
+    /** Platform-native window id (HWND / NSWindow* / X11 XID bits), or null if unknown. */
+    public val nativeHandle: Long?,
+    public val cropRequired: Boolean,
+    public val windowBoundsOnScreen: RectDto,
+    public val surfaceBoundsOnScreen: RectDto,
+    public val surfaceBoundsInWindow: RectDto,
+    public val scaleX: Double,
+    public val scaleY: Double,
+    public val translateX: Double = 0.0,
+    public val translateY: Double = 0.0,
 )
