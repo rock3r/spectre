@@ -8,6 +8,7 @@ import dev.detekt.gradle.extensions.DetektExtension
 import java.util.jar.JarFile
 import java.util.zip.ZipFile
 import javax.xml.parsers.DocumentBuilderFactory
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.SourceTask
 import org.w3c.dom.Element
 
@@ -44,7 +45,47 @@ configure<DetektExtension> {
     basePath.set(rootProject.layout.projectDirectory)
 }
 
-tasks.named("check") { dependsOn("detekt", "ktfmtCheck") }
+// Homebrew/Scoop package-manifest contracts + install semantics (#283/#284).
+// Cheap (python + ruby), no JDK; keep on the default check graph so formula
+// regressions fail PRs the same way as unit tests.
+val verifyCliPackageManifests by
+    tasks.registering(Exec::class) {
+        description =
+            "Generates CLI package manifests and asserts Homebrew install contracts " +
+                "(dual-layout Spectre.app discovery, wrapper bin entry, install-body sync)."
+        group = "verification"
+        workingDir = rootProject.layout.projectDirectory.asFile
+        commandLine("bash", ".github/scripts/test-generate-cli-package-manifests.sh")
+        inputs
+            .files(
+                ".github/scripts/generate-cli-package-manifests.py",
+                ".github/scripts/test-generate-cli-package-manifests.sh",
+                ".github/scripts/test-homebrew-formula-install-semantics.rb",
+                "Formula/spectre.rb",
+            )
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+        // Always re-run: generator is pure but failures are cheap to catch on every check.
+        outputs.upToDateWhen { false }
+    }
+
+val verifyReleaseVersionScript by
+    tasks.registering(Exec::class) {
+        description = "Runs contract tests for .github/scripts/derive-release-version.sh."
+        group = "verification"
+        workingDir = rootProject.layout.projectDirectory.asFile
+        commandLine("bash", ".github/scripts/test-derive-release-version.sh")
+        inputs
+            .files(
+                ".github/scripts/derive-release-version.sh",
+                ".github/scripts/test-derive-release-version.sh",
+            )
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+        outputs.upToDateWhen { false }
+    }
+
+tasks.named("check") {
+    dependsOn("detekt", "ktfmtCheck", verifyCliPackageManifests, verifyReleaseVersionScript)
+}
 
 tasks.withType<Detekt>().configureEach {
     jvmTarget = "21"

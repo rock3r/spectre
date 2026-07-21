@@ -62,6 +62,12 @@ tap formula and `bucket/spectre.json` is the Scoop bucket manifest. Publishing t
 release regenerates both from its public CLI archives and their SHA-256 values, then commits them
 to `main`.
 
+Package-manifest generation and Homebrew install contracts are gated by
+`./gradlew verifyCliPackageManifests` (part of `./gradlew check`): the generator is exercised with
+fixture archives, the committed formula's `install` body must stay aligned with the generator, and
+behavioral tests cover dual-layout `Spectre.app` discovery (Homebrew strip) plus the wrapper bin
+entry (Roast is argv[0]-sensitive and cannot be exposed via `bin.install_symlink`).
+
 On macOS, use the repository as an explicit tap because its name is `spectre`, not Homebrew's
 `homebrew-*` shorthand:
 
