@@ -70,20 +70,20 @@ internal class DaemonSessionRecording(
         return try {
             active.stop()
             val path = active.output.toString()
-            if (directory != null) {
+            // Only ledger Spectre-allocated capture directories. Never ledger a user --output
+            // parent (e.g. /tmp) — prune would recursively delete unrelated files (#185 review).
+            if (directory != null && !ledgerExplicitOutDir) {
                 appendLedger(
                     directory,
                     sizeBytes = CaptureLifecycle.directorySizeBytes(directory),
-                    explicit = ledgerExplicitOutDir,
+                    explicit = false,
                 )
-                if (!ledgerExplicitOutDir) {
-                    CaptureRetention.enforce(
-                        defaultRoot = CaptureLifecycle.defaultCapturesRoot(),
-                        ledger = ledger,
-                        // Protect every still-attached session's capture dirs (#185 review).
-                        liveSessionIds = liveSessionIds + sessionId,
-                    )
-                }
+                CaptureRetention.enforce(
+                    defaultRoot = CaptureLifecycle.defaultCapturesRoot(),
+                    ledger = ledger,
+                    // Protect every still-attached session's capture dirs.
+                    liveSessionIds = liveSessionIds + sessionId,
+                )
             }
             path
         } catch (exception: IllegalStateException) {
