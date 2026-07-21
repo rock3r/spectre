@@ -25,7 +25,11 @@ use dbus::arg::{OwnedFd, PropMap, RefArg, Variant};
 use dbus::blocking::Connection;
 use dbus::Path as DBusPath;
 use std::collections::HashMap;
+use std::fs;
+use std::io::Write;
 use std::os::fd::IntoRawFd;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -73,14 +77,80 @@ pub struct ScreenCastSession {
 /// Run the full portal handshake and return an active [`ScreenCastSession`]. Blocks until
 /// either the four-call flow completes (returning `Ok`) or any step fails / times out.
 ///
-/// First call within a login session pops the user's "share your screen" dialog. Subsequent
-/// calls within the same session reuse the granted permission silently if `persist_mode`
-/// is `transient` or `persistent` (we use `transient` by default — scoped to the running
-/// helper instance, no cross-login storage).
+/// First human-consented call with `persist_mode=persistent` stores a `restore_token` under
+/// the Spectre state dir (#188). Later sessions reuse that token so agent CLI runs skip the
+/// compositor picker. If the compositor rejects a stale token we clear storage and retry once
+/// interactively with a clear, relay-able message.
 pub fn open_screen_cast_session(
     source_types: &[SourceType],
     cursor_mode: CursorMode,
     timeout: Duration,
+) -> Result<ScreenCastSession> {
+    let token_key = restore_token_key(source_types, cursor_mode);
+    let stored = load_restore_token(&token_key).ok().flatten();
+    match open_screen_cast_session_inner(
+        source_types,
+        cursor_mode,
+        timeout,
+        stored.as_deref(),
+        &token_key,
+    ) {
+        Ok(session) => Ok(session),
+        Err(first) if stored.is_some() && is_restore_token_rejection(&first) => {
+            // Only clear when SelectSources/Start likely rejected the token — not on D-Bus
+            // or CreateSession failures that leave a still-valid grant (#188 review).
+            let _ = clear_restore_token(&token_key);
+            eprintln!(
+                "spectre-wayland-helper: stored ScreenCast restore_token was rejected \
+                 ({first:#}). Cleared token and retrying interactively — a human must \
+                 accept the portal dialog once. Subsequent agent runs will reuse the new \
+                 token without a prompt (GNOME/mutter validated; other compositors \
+                 best-effort)."
+            );
+            open_screen_cast_session_inner(source_types, cursor_mode, timeout, None, &token_key)
+                .with_context(|| {
+                    format!(
+                        "interactive ScreenCast retry after invalid restore_token also failed \
+                         (original: {first:#})"
+                    )
+                })
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn is_restore_token_rejection(err: &anyhow::Error) -> bool {
+    let msg = format!("{err:#}");
+    // Only explicit SelectSources/Start rejections when a token was supplied — not timeouts
+    // or CreateSession / OpenPipeWireRemote failures (those leave a still-valid grant).
+    (msg.contains("SelectSources rejected") || msg.contains("Start rejected"))
+        && (msg.contains("restore_token")
+            || msg.contains("stored restore_token")
+            || msg.contains("no longer valid")
+            || msg.contains("response code"))
+}
+
+fn restore_token_key(source_types: &[SourceType], cursor_mode: CursorMode) -> String {
+    let mask = source_types_to_bitmask(source_types);
+    let source = if mask & SOURCE_TYPE_WINDOW != 0 {
+        "window"
+    } else {
+        "monitor"
+    };
+    let cursor = match cursor_mode {
+        CursorMode::Hidden => "hidden",
+        CursorMode::Embedded => "embedded",
+        CursorMode::Metadata => "metadata",
+    };
+    format!("{source}-{cursor}")
+}
+
+fn open_screen_cast_session_inner(
+    source_types: &[SourceType],
+    cursor_mode: CursorMode,
+    timeout: Duration,
+    restore_token: Option<&str>,
+    token_key: &str, // source+cursor key for persist path
 ) -> Result<ScreenCastSession> {
     let conn = Connection::new_session().context("opening session bus")?;
     let sender = sender_token(&conn).context("computing sender token")?;
@@ -129,15 +199,18 @@ pub fn open_screen_cast_session(
         })?;
     let session_path = DBusPath::from(session_handle.clone());
 
-    // 2. SelectSources
+    // 2. SelectSources — persist_mode=persistent (#188) for cross-session restore_token.
     let select_token = next_token("select");
-    let select_options = make_options([
+    let mut select_options = make_options([
         ("handle_token", variant(select_token.clone())),
         ("types", variant(source_types_to_bitmask(source_types))),
         ("multiple", variant(false)),
         ("cursor_mode", variant(cursor_mode_flag(cursor_mode))),
-        ("persist_mode", variant(1u32)), // TRANSIENT
+        ("persist_mode", variant(PERSIST_MODE_PERSISTENT)),
     ]);
+    if let Some(token) = restore_token {
+        select_options.insert("restore_token".to_string(), variant(token.to_string()));
+    }
     let select_response = call_with_response(
         &conn,
         &sender,
@@ -150,9 +223,14 @@ pub fn open_screen_cast_session(
     if select_response.response_code != 0 {
         bail!(
             "SelectSources rejected (response code {}). Sources requested: {:?}; the portal \
-             might lack support for those.",
+             might lack support for those{}.",
             select_response.response_code,
-            source_types
+            source_types,
+            if restore_token.is_some() {
+                " (or the stored restore_token was refused)"
+            } else {
+                ""
+            }
         );
     }
 
@@ -171,9 +249,22 @@ pub fn open_screen_cast_session(
     if start_response.response_code != 0 {
         bail!(
             "Start rejected (response code {}). User likely cancelled the screen-cast \
-             permission dialog.",
-            start_response.response_code
+             permission dialog{}.",
+            start_response.response_code,
+            if restore_token.is_some() {
+                ", or the stored restore_token is no longer valid"
+            } else {
+                ""
+            }
         );
+    }
+    if let Some(token) = extract_restore_token(&start_response.results) {
+        if let Err(e) = save_restore_token(token_key, &token) {
+            eprintln!(
+                "spectre-wayland-helper: failed to persist ScreenCast restore_token: {e:#} \
+                 (next session will prompt again)"
+            );
+        }
     }
     let stream = parse_first_stream(&start_response.results).with_context(|| {
         format!(
@@ -200,6 +291,118 @@ pub fn open_screen_cast_session(
         pipewire_fd: raw_fd,
         _connection: conn,
     })
+}
+
+/// `persist_mode` value: keep the grant until the user revokes it (cross-session restore).
+const PERSIST_MODE_PERSISTENT: u32 = 2;
+
+fn extract_restore_token(results: &PropMap) -> Option<String> {
+    results
+        .get("restore_token")
+        .and_then(|v| v.0.as_str())
+        .map(str::to_string)
+}
+
+/// Directory for the persisted ScreenCast restore token (mode 0700).
+pub fn restore_token_state_dir() -> PathBuf {
+    if let Ok(override_path) = std::env::var("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR") {
+        return PathBuf::from(override_path);
+    }
+    if let Ok(state_home) = std::env::var("XDG_STATE_HOME") {
+        if !state_home.is_empty() {
+            return PathBuf::from(state_home).join("spectre");
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.is_empty() {
+            return PathBuf::from(home).join(".local").join("state").join("spectre");
+        }
+    }
+    // Fail closed: never store a bearer restore_token under a shared /tmp path.
+    PathBuf::from("/var/empty/spectre-no-home")
+}
+
+fn restore_token_file(token_key: &str) -> PathBuf {
+    if let Ok(override_path) = std::env::var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH") {
+        // Always a file base path (not a directory). Append -{token_key} so keys stay separate.
+        // Use SPECTRE_WAYLAND_RESTORE_TOKEN_DIR for directory-only overrides.
+        let base = PathBuf::from(override_path);
+        let parent = base.parent().unwrap_or_else(|| Path::new("."));
+        let name = base
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("wayland-screencast-restore-token");
+        return parent.join(format!("{name}-{token_key}"));
+    }
+    restore_token_state_dir().join(format!("wayland-screencast-restore-token-{token_key}"))
+}
+
+pub fn load_restore_token(token_key: &str) -> Result<Option<String>> {
+    let path = restore_token_file(token_key);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path)
+        .with_context(|| format!("reading restore_token from {}", path.display()))?;
+    let token = raw.trim().to_string();
+    if token.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(token))
+    }
+}
+
+pub fn save_restore_token(token_key: &str, token: &str) -> Result<()> {
+    let path = restore_token_file(token_key);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("creating restore_token dir {}", parent.display()))?;
+        // Only chmod Spectre-owned state dirs, never an operator PATH override's parent
+        // (e.g. /tmp or a shared secrets mount).
+        if std::env::var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH").is_err() {
+            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+        }
+    }
+    write_private_file(&path, token.as_bytes())
+        .with_context(|| format!("writing restore_token to {}", path.display()))?;
+    Ok(())
+}
+
+pub fn clear_restore_token(token_key: &str) -> Result<()> {
+    let path = restore_token_file(token_key);
+    if path.is_file() {
+        fs::remove_file(&path)
+            .with_context(|| format!("removing restore_token at {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let tmp = parent.join(format!(
+        ".{}.tmp.{}",
+        path.file_name().and_then(|s| s.to_str()).unwrap_or("token"),
+        std::process::id()
+    ));
+    {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600));
+    fs::rename(&tmp, path).with_context(|| {
+        format!(
+            "atomically renaming {} -> {}",
+            tmp.display(),
+            path.display()
+        )
+    })?;
+    Ok(())
 }
 
 /// One Response payload, captured by [`call_with_response`] from the matching `Request.Response`
@@ -544,4 +747,54 @@ fn parse_int_pair(arg: &dyn RefArg) -> Option<(i64, i64)> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod restore_token_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    // Serialise env mutations across tests.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn save_load_clear_round_trip() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("spectre-restore-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR", &dir);
+        std::env::remove_var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH");
+
+        assert!(load_restore_token("monitor-embedded").unwrap().is_none());
+        save_restore_token("monitor-embedded", "token-abc").unwrap();
+        assert_eq!(
+            load_restore_token("monitor-embedded").unwrap().as_deref(),
+            Some("token-abc")
+        );
+        let meta = fs::metadata(restore_token_file("monitor-embedded")).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        // Window key is independent of monitor.
+        assert!(load_restore_token("window-hidden").unwrap().is_none());
+        clear_restore_token("monitor-embedded").unwrap();
+        assert!(load_restore_token("monitor-embedded").unwrap().is_none());
+
+        std::env::remove_var("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn path_override_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let file = std::env::temp_dir().join(format!("spectre-token-file-{}", std::process::id()));
+        let _ = fs::remove_file(&file);
+        std::env::set_var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH", &file);
+        save_restore_token("monitor-embedded", "xyz").unwrap();
+        assert_eq!(
+            load_restore_token("monitor-embedded").unwrap().as_deref(),
+            Some("xyz")
+        );
+        clear_restore_token("monitor-embedded").unwrap();
+        std::env::remove_var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH");
+    }
 }
