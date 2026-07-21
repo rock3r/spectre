@@ -90,8 +90,9 @@ internal static class Program
         bool captureCursor,
         CaptureRect? crop)
     {
-        // Reuse the recording frame path so --crop-* applies identically (issue #186).
-        using var frameSource = WgcFrameSource.StartWindow(hwnd, captureCursor, crop);
+        // Same crop clamp as recording, but padToEven:false so PNGs keep true pixel size
+        // (H.264 even-padding is recording-only).
+        using var frameSource = WgcFrameSource.StartWindow(hwnd, captureCursor, crop, padToEven: false);
         if (frameSource.Width <= 0 || frameSource.Height <= 0)
         {
             throw new InvalidOperationException(
@@ -429,13 +430,21 @@ internal static class Program
 
         public int Height { get; }
 
-        public static WgcFrameSource StartWindow(IntPtr hwnd, bool captureCursor, CaptureRect? cropInWindow = null)
+        public static WgcFrameSource StartWindow(
+            IntPtr hwnd,
+            bool captureCursor,
+            CaptureRect? cropInWindow = null,
+            bool padToEven = true)
         {
             var canvasDevice = new CanvasDevice();
             var item = GraphicsCaptureItemInterop.CreateForWindow(hwnd);
             var full = new CaptureRect(0, 0, item.Size.Width, item.Size.Height);
             var crop = cropInWindow is null ? full : ClampCropToItem(cropInWindow, full);
-            var outputSize = (Even(crop.Width), Even(crop.Height));
+            // Recording needs even dimensions for H.264; screenshots keep exact crop size.
+            var outputSize =
+                padToEven
+                    ? (Even(crop.Width), Even(crop.Height))
+                    : (crop.Width, crop.Height);
             return Start(canvasDevice, item, captureCursor, crop, outputSize);
         }
 
