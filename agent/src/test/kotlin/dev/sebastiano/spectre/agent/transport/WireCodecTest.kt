@@ -57,9 +57,19 @@ class WireCodecTest {
     }
 
     @Test
-    fun `Screenshot request round-trips`() {
-        val encoded = WireCodec.encode(AgentRequest.Screenshot)
-        assertEquals(AgentRequest.Screenshot, WireCodec.decodeRequest(encoded))
+    fun `Screenshot request round-trips with defaults`() {
+        val encoded = WireCodec.encode(AgentRequest.Screenshot())
+        assertEquals(AgentRequest.Screenshot(), WireCodec.decodeRequest(encoded))
+    }
+
+    @Test
+    fun `Screenshot request with window surface and fullscreen round-trips`() {
+        val req =
+            AgentRequest.Screenshot(windowIndex = 2, surfaceId = "window:2", fullscreen = false)
+        assertEquals(req, WireCodec.decodeRequest(WireCodec.encode(req)))
+
+        val fullscreen = AgentRequest.Screenshot(fullscreen = true)
+        assertEquals(fullscreen, WireCodec.decodeRequest(WireCodec.encode(fullscreen)))
     }
 
     @Test

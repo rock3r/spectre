@@ -185,11 +185,34 @@ private class ScreenshotCommand(
 ) : CliktCommand(name = "screenshot") {
     private val sessionId: String by argument()
     private val outputPath: Path? by option("--output").path()
+    private val windowIndex: Int? by option("--window").int()
+    private val surfaceId: String? by option("--surface")
+    private val fullscreen: Boolean by
+        option(
+                "--fullscreen",
+                help = "Capture the full virtual desktop instead of a tracked window",
+            )
+            .flag(default = false)
     private val json: Boolean by option("--json").flag(default = false)
 
     override fun run() {
+        if (fullscreen && (windowIndex != null || surfaceId != null)) {
+            throw CliktError(
+                "screenshot: --fullscreen cannot be combined with --window or --surface"
+            )
+        }
         val pngBytes =
-            when (val response = request(DaemonRequest.Screenshot(sessionId))) {
+            when (
+                val response =
+                    request(
+                        DaemonRequest.Screenshot(
+                            sessionId = sessionId,
+                            windowIndex = windowIndex,
+                            surfaceId = surfaceId,
+                            fullscreen = fullscreen,
+                        )
+                    )
+            ) {
                 is DaemonResponse.Screenshot -> response.pngBytes
                 is DaemonResponse.Error -> throw DaemonCommandException(response)
                 else -> error("Daemon returned an unexpected response to screenshot")

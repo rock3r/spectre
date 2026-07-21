@@ -2,6 +2,8 @@
 
 package dev.sebastiano.spectre.agent.runtime
 
+import dev.sebastiano.spectre.agent.ScreenshotTarget
+import dev.sebastiano.spectre.agent.resolveScreenshotTarget
 import dev.sebastiano.spectre.agent.transport.AgentRequest
 import dev.sebastiano.spectre.agent.transport.AgentRequestHandler
 import dev.sebastiano.spectre.agent.transport.AgentResponse
@@ -90,7 +92,7 @@ internal class ReflectiveAutomatorHandler(
                 is AgentRequest.FindByTestTag -> handleFindByTestTag(request.tag)
                 is AgentRequest.Click -> handleClick(request.nodeKey)
                 is AgentRequest.TypeText -> handleTypeText(request.text)
-                AgentRequest.Screenshot -> handleScreenshot()
+                is AgentRequest.Screenshot -> handleScreenshot(request)
                 is AgentRequest.Capture ->
                     AtomicCaptureReflectiveMapper.invoke(automator, request.windowIndex)
                 is AgentRequest.WindowIdentity ->
@@ -175,23 +177,56 @@ internal class ReflectiveAutomatorHandler(
         return AgentResponse.Ok
     }
 
-    private fun handleScreenshot(): AgentResponse {
-        // `ComposeAutomator.screenshot(region: Rectangle? = null)` is a single Kotlin method with
-        // a default param. Without `@JvmOverloads`, the JVM-level signature is
-        // `screenshot(Rectangle)` — there is no zero-arg overload. We pass `null` for full-screen
-        // capture.
-        val screenshotMethod =
-            automatorClass.methods.firstOrNull {
-                it.name == "screenshot" &&
-                    it.parameterTypes.size == 1 &&
-                    it.parameterTypes[0].name == AWT_RECTANGLE_FQN
-            }
-                ?: return AgentResponse.Error(
-                    "ComposeAutomator does not expose screenshot(Rectangle?) on this build"
+    private fun handleScreenshot(request: AgentRequest.Screenshot): AgentResponse {
+        refreshWindowsMethod.invoke(automator)
+        val windows = getWindowsMethod.invoke(automator) as List<*>
+        val windowSummaries = windows.mapIndexedNotNull { index, tracked ->
+            val surfaceId =
+                tracked?.javaClass?.getMethod("getSurfaceId")?.invoke(tracked) as? String
+                    ?: return@mapIndexedNotNull null
+            index to surfaceId
+        }
+        val target =
+            resolveScreenshotTarget(
+                    fullscreen = request.fullscreen,
+                    windowIndex = request.windowIndex,
+                    surfaceId = request.surfaceId,
+                    windows = windowSummaries,
                 )
-        val image = screenshotMethod.invoke(automator, null) as BufferedImage
-        val pngBytes = imageToPng(image)
-        return AgentResponse.Screenshot(pngBytes)
+                .getOrElse {
+                    return AgentResponse.Error(it.message ?: "Invalid screenshot request")
+                }
+
+        val image =
+            when (target) {
+                is ScreenshotTarget.Fullscreen -> {
+                    // `ComposeAutomator.screenshot(region: Rectangle? = null)` — null = full
+                    // virtual desktop. Explicit opt-in only (#289).
+                    val screenshotMethod =
+                        automatorClass.methods.firstOrNull {
+                            it.name == "screenshot" &&
+                                it.parameterTypes.size == 1 &&
+                                it.parameterTypes[0].name == AWT_RECTANGLE_FQN
+                        }
+                            ?: return AgentResponse.Error(
+                                "ComposeAutomator does not expose screenshot(Rectangle?) on this build"
+                            )
+                    screenshotMethod.invoke(automator, null) as BufferedImage
+                }
+                is ScreenshotTarget.Window -> {
+                    val screenshotMethod =
+                        automatorClass.methods.firstOrNull {
+                            it.name == "screenshot" &&
+                                it.parameterTypes.size == 1 &&
+                                it.parameterTypes[0] == Int::class.javaPrimitiveType
+                        }
+                            ?: return AgentResponse.Error(
+                                "ComposeAutomator does not expose screenshot(windowIndex: Int) on this build"
+                            )
+                    screenshotMethod.invoke(automator, target.windowIndex) as BufferedImage
+                }
+            }
+        return AgentResponse.Screenshot(imageToPng(image))
     }
 
     private fun imageToPng(image: BufferedImage): ByteArray {

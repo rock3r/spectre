@@ -12,7 +12,11 @@ internal class TestDaemonSessionAutomator(
     private val findByTestTagResult: (String) -> List<NodeSnapshotDto> = { emptyList() },
     private val clickAction: (String) -> Unit = {},
     private val typeTextAction: (String) -> Unit = {},
-    private val screenshotResult: () -> ByteArray = { ByteArray(0) },
+    private val screenshotResult:
+        (windowIndex: Int?, surfaceId: String?, fullscreen: Boolean) -> ByteArray =
+        { _, _, _ ->
+            ByteArray(0)
+        },
     private val captureResult: (Int) -> AtomicCaptureResult = { windowIndex ->
         AtomicCaptureResult(
             windowIndex = windowIndex,
@@ -46,7 +50,8 @@ internal class TestDaemonSessionAutomator(
 
     override fun typeText(text: String): Unit = typeTextAction(text)
 
-    override fun screenshot(): ByteArray = screenshotResult()
+    override fun screenshot(windowIndex: Int?, surfaceId: String?, fullscreen: Boolean): ByteArray =
+        screenshotResult(windowIndex, surfaceId, fullscreen)
 
     override fun capture(windowIndex: Int): AtomicCaptureResult = captureResult(windowIndex)
 

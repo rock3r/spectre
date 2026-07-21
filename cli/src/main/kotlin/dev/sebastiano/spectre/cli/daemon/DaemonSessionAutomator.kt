@@ -21,7 +21,12 @@ internal interface DaemonSessionAutomator : AutoCloseable {
 
     @Throws(IOException::class) fun typeText(text: String)
 
-    @Throws(IOException::class) fun screenshot(): ByteArray
+    @Throws(IOException::class)
+    fun screenshot(
+        windowIndex: Int? = null,
+        surfaceId: String? = null,
+        fullscreen: Boolean = false,
+    ): ByteArray
 
     @Throws(IOException::class) fun capture(windowIndex: Int = 0): AtomicCaptureResult
 
@@ -71,7 +76,12 @@ internal class AttachedDaemonSession(
 
     override fun typeText(text: String): Unit = delegate.typeText(text)
 
-    override fun screenshot(): ByteArray = delegate.screenshot()
+    override fun screenshot(windowIndex: Int?, surfaceId: String?, fullscreen: Boolean): ByteArray =
+        delegate.screenshot(
+            windowIndex = windowIndex,
+            surfaceId = surfaceId,
+            fullscreen = fullscreen,
+        )
 
     override fun capture(windowIndex: Int): AtomicCaptureResult = delegate.capture(windowIndex)
 

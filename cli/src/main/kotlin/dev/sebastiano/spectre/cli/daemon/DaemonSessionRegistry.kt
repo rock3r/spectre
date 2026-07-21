@@ -76,7 +76,14 @@ internal constructor(
                 }
             is DaemonRequest.Screenshot ->
                 invoke(request.sessionId) { automator ->
-                    DaemonResponse.Screenshot(request.sessionId, automator.screenshot())
+                    DaemonResponse.Screenshot(
+                        request.sessionId,
+                        automator.screenshot(
+                            windowIndex = request.windowIndex,
+                            surfaceId = request.surfaceId,
+                            fullscreen = request.fullscreen,
+                        ),
+                    )
                 }
             is DaemonRequest.Capture ->
                 invoke(request.sessionId) { automator ->

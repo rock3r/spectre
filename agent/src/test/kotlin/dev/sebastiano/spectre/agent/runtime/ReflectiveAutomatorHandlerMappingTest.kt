@@ -233,7 +233,50 @@ class ReflectiveAutomatorHandlerMappingTest {
     }
 
     @Test
-    fun `Screenshot op calls screenshot(Rectangle) with null and returns the PNG bytes`() {
+    fun `Screenshot op defaults to window index 0 not full desktop`() {
+        var receivedWindowIndex: Int? = null
+        var receivedRegion: Any? = "<not invoked>"
+        val image = java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+        val automator =
+            FakeAutomator(
+                windowsValue =
+                    listOf(
+                        FakeTrackedWindow(
+                            surfaceIdValue = "window:0",
+                            isPopupValue = false,
+                            composeSurfaceBoundsOnScreenValue = Rectangle(10, 20, 800, 600),
+                            windowValue = null,
+                        )
+                    ),
+                screenshotWindowImpl = { windowIndex ->
+                    receivedWindowIndex = windowIndex
+                    image
+                },
+                screenshotImpl = { region ->
+                    receivedRegion = region
+                    image
+                },
+            )
+        val handler = ReflectiveAutomatorHandler(automator)
+
+        val response = handler.handle(AgentRequest.Screenshot())
+        check(response is AgentResponse.Screenshot) {
+            "expected Screenshot, got ${response::class.simpleName}: $response"
+        }
+        assertEquals(0, receivedWindowIndex, "default screenshot must target window index 0")
+        assertEquals(
+            "<not invoked>",
+            receivedRegion,
+            "default screenshot must not call region/full-desktop capture",
+        )
+
+        val decoded = ImageIO.read(response.pngBytes.inputStream())
+        assertEquals(2, decoded.width)
+        assertEquals(2, decoded.height)
+    }
+
+    @Test
+    fun `Screenshot op with fullscreen true calls screenshot(Rectangle) with null`() {
         var receivedArg: Any? = "<not invoked>"
         val image = java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_ARGB)
         val automator =
@@ -245,19 +288,102 @@ class ReflectiveAutomatorHandlerMappingTest {
             )
         val handler = ReflectiveAutomatorHandler(automator)
 
-        val response = handler.handle(AgentRequest.Screenshot)
+        val response = handler.handle(AgentRequest.Screenshot(fullscreen = true))
         check(response is AgentResponse.Screenshot) {
             "expected Screenshot, got ${response::class.simpleName}: $response"
         }
         assertEquals(
             null,
             receivedArg,
-            "handler must call screenshot(null) for full-screen capture",
+            "handler must call screenshot(null) only for explicit fullscreen",
         )
+    }
 
-        val decoded = ImageIO.read(response.pngBytes.inputStream())
-        assertEquals(2, decoded.width)
-        assertEquals(2, decoded.height)
+    @Test
+    fun `Screenshot op with explicit window index targets that window`() {
+        var receivedWindowIndex: Int? = null
+        val image = java.awt.image.BufferedImage(3, 3, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+        val automator =
+            FakeAutomator(
+                windowsValue =
+                    listOf(
+                        FakeTrackedWindow(
+                            surfaceIdValue = "window:0",
+                            isPopupValue = false,
+                            composeSurfaceBoundsOnScreenValue = Rectangle(0, 0, 100, 100),
+                            windowValue = null,
+                        ),
+                        FakeTrackedWindow(
+                            surfaceIdValue = "window:1",
+                            isPopupValue = false,
+                            composeSurfaceBoundsOnScreenValue = Rectangle(0, 0, 200, 200),
+                            windowValue = null,
+                        ),
+                    ),
+                screenshotWindowImpl = { windowIndex ->
+                    receivedWindowIndex = windowIndex
+                    image
+                },
+            )
+        val handler = ReflectiveAutomatorHandler(automator)
+
+        val response = handler.handle(AgentRequest.Screenshot(windowIndex = 1))
+        check(response is AgentResponse.Screenshot)
+        assertEquals(1, receivedWindowIndex)
+    }
+
+    @Test
+    fun `Screenshot op with surface id resolves to matching window index`() {
+        var receivedWindowIndex: Int? = null
+        val image = java.awt.image.BufferedImage(3, 3, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+        val automator =
+            FakeAutomator(
+                windowsValue =
+                    listOf(
+                        FakeTrackedWindow(
+                            surfaceIdValue = "window:0",
+                            isPopupValue = false,
+                            composeSurfaceBoundsOnScreenValue = Rectangle(0, 0, 100, 100),
+                            windowValue = null,
+                        ),
+                        FakeTrackedWindow(
+                            surfaceIdValue = "window:1",
+                            isPopupValue = false,
+                            composeSurfaceBoundsOnScreenValue = Rectangle(0, 0, 200, 200),
+                            windowValue = null,
+                        ),
+                    ),
+                screenshotWindowImpl = { windowIndex ->
+                    receivedWindowIndex = windowIndex
+                    image
+                },
+            )
+        val handler = ReflectiveAutomatorHandler(automator)
+
+        val response = handler.handle(AgentRequest.Screenshot(surfaceId = "window:1"))
+        check(response is AgentResponse.Screenshot)
+        assertEquals(1, receivedWindowIndex)
+    }
+
+    @Test
+    fun `Screenshot op without windows fails loudly rather than full desktop`() {
+        val automator =
+            FakeAutomator(
+                windowsValue = emptyList(),
+                screenshotImpl = { error("must not fall back to full-desktop capture") },
+                screenshotWindowImpl = { error("must not call window screenshot without windows") },
+            )
+        val handler = ReflectiveAutomatorHandler(automator)
+
+        val response = handler.handle(AgentRequest.Screenshot())
+        check(response is AgentResponse.Error) {
+            "expected Error, got ${response::class.simpleName}: $response"
+        }
+        assertTrue(
+            response.message.contains("window", ignoreCase = true) ||
+                response.message.contains("full-desktop", ignoreCase = true),
+            response.message,
+        )
     }
 
     @Test
@@ -474,6 +600,9 @@ private class FakeAutomator(
     private val screenshotImpl: (java.awt.Rectangle?) -> java.awt.image.BufferedImage = { _ ->
         java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB)
     },
+    private val screenshotWindowImpl: (Int) -> java.awt.image.BufferedImage = { _ ->
+        java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+    },
     private val captureImpl: (Int) -> Any = { error("capture not stubbed") },
     private val windowIdentitiesValue: List<Any> = emptyList(),
 ) {
@@ -499,6 +628,11 @@ private class FakeAutomator(
     @Suppress("unused")
     fun screenshot(region: java.awt.Rectangle?): java.awt.image.BufferedImage =
         screenshotImpl(region)
+
+    /** Overload matching `ComposeAutomator.screenshot(windowIndex: Int)`. */
+    @Suppress("unused")
+    fun screenshot(windowIndex: Int): java.awt.image.BufferedImage =
+        screenshotWindowImpl(windowIndex)
 
     @Suppress("unused") fun capture(windowIndex: Int): Any = captureImpl(windowIndex)
 

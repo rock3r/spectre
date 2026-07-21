@@ -11,7 +11,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 6)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 7)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -39,13 +39,13 @@ public object DaemonProtocol {
             is DaemonRequest.AllNodes,
             is DaemonRequest.FindByTestTag,
             is DaemonRequest.Click,
-            is DaemonRequest.TypeText,
-            is DaemonRequest.Screenshot -> versionFor(SESSION_COMMANDS_INTRODUCED_MINOR)
+            is DaemonRequest.TypeText -> versionFor(SESSION_COMMANDS_INTRODUCED_MINOR)
             is DaemonRequest.ListJvmProcesses -> versionFor(LIST_JVM_PROCESSES_INTRODUCED_MINOR)
             is DaemonRequest.StartRecording,
             is DaemonRequest.StopRecording,
             is DaemonRequest.RecordingStatus -> versionFor(RECORDING_SESSION_INTRODUCED_MINOR)
             is DaemonRequest.Capture -> versionFor(CAPTURE_INTRODUCED_MINOR)
+            is DaemonRequest.Screenshot -> versionFor(SCREENSHOT_TARGETING_INTRODUCED_MINOR)
         }
 
     private fun versionFor(minor: Int): DaemonProtocolVersion =
@@ -58,6 +58,8 @@ public object DaemonProtocol {
     private const val CAPTURE_INTRODUCED_MINOR: Int = 5
     /** Optional outputPath, windowIndex, and recordingStatus (#185). */
     private const val RECORDING_SESSION_INTRODUCED_MINOR: Int = 6
+    /** Window/surface/fullscreen screenshot targeting (#289). */
+    private const val SCREENSHOT_TARGETING_INTRODUCED_MINOR: Int = 7
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)
@@ -113,7 +115,12 @@ public sealed interface DaemonRequest {
 
     @Serializable
     @SerialName("screenshot")
-    public data class Screenshot(public val sessionId: String) : DaemonRequest
+    public data class Screenshot(
+        public val sessionId: String,
+        public val windowIndex: Int? = null,
+        public val surfaceId: String? = null,
+        public val fullscreen: Boolean = false,
+    ) : DaemonRequest
 
     @Serializable
     @SerialName("capture")

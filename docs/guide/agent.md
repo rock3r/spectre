@@ -234,7 +234,7 @@ can add a reliable preflight via `HotSpotDiagnosticMXBean`.
 | `findByTestTag(tag)`  | `AgentRequest.FindByTestTag`     | `List<NodeSnapshotDto>`  |
 | `click(nodeKey)`      | `AgentRequest.Click`             | `Unit`            |
 | `typeText(text)`      | `AgentRequest.TypeText`          | `Unit`            |
-| `screenshot()`        | `AgentRequest.Screenshot`        | `ByteArray` (PNG) |
+| `screenshot(windowIndex?, surfaceId?, fullscreen?)` | `AgentRequest.Screenshot` | `ByteArray` (PNG); default window index 0, not full desktop |
 | `capture(windowIndex)`| `AgentRequest.Capture`           | `AtomicCaptureResult` |
 | `windowIdentities(windowIndex?)` | `AgentRequest.WindowIdentity` | `List<WindowIdentityDto>` |
 | `close()` (auto)      | `AgentRequest.Detach`            | tear-down         |
@@ -310,8 +310,9 @@ spectre attach <pid> --json
 ```
 
 The attach response contains an `id`. Pass it to commands such as `tree`, `find`, `click`, and
-`screenshot`. `screenshot` writes a PNG to `--output`; without that option it creates a temporary
-file and prints its path.
+`screenshot`. `screenshot` writes a PNG of the attached session's tracked window (default index
+`0`) to `--output`; without that option it creates a temporary file and prints its path. Use
+`--window`, `--surface`, or opt-in `--fullscreen` as described in [CLI](cli.md).
 
 ### Claude Code recipe
 
@@ -335,7 +336,8 @@ Restart Claude Code after changing the configuration. It can then use these tool
 1. `list_processes` to find the target PID.
 2. `attach` with that PID and retain the returned `sessionId`.
 3. `tree` or `find` to retrieve current node keys, then `click` or `type_text` to interact.
-4. `screenshot` to receive a PNG directly as MCP image content, rather than a file path.
+4. `screenshot` to receive a window-scoped PNG as MCP image content (optional `window_index` /
+   `surface_id` / `fullscreen`), rather than a file path.
 
 Node keys are short-lived: get a fresh key with `tree` or `find` after an interaction changes the
 UI. Use `spectre daemon kill` to stop the shared daemon and discard its sessions when you are
