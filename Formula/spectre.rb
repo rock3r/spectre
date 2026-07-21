@@ -19,7 +19,13 @@ class Spectre < Formula
     app = Dir["spectre-cli-*/Spectre.app"].first || Dir["Spectre.app"].first
     odie "missing Spectre.app in release archive" if app.nil?
     libexec.install app
-    bin.install_symlink libexec/"Spectre.app/Contents/MacOS/spectre"
+    # Roast derives config paths from argv[0]; a bin symlink makes those paths
+    # nonsense. Install a wrapper that execs the real bundle binary instead.
+    (bin/"spectre").write <<~SH
+      #!/bin/sh
+      exec "#{libexec}/Spectre.app/Contents/MacOS/spectre" "$@"
+    SH
+    (bin/"spectre").chmod 0755
   end
 
   test do
