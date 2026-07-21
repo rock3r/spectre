@@ -84,6 +84,16 @@ class DaemonHandshakeTest {
                 DaemonRequest.Screenshot(sessionId = "session-1234")
             ),
         )
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 8),
+            DaemonProtocol.minimumDaemonVersion(
+                DaemonRequest.StartRecording(
+                    sessionId = "session-1234",
+                    outputPath = "/tmp/capture.mp4",
+                    fullscreen = true,
+                )
+            ),
+        )
     }
 }
 

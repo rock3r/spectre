@@ -11,7 +11,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 7)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 8)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -41,7 +41,12 @@ public object DaemonProtocol {
             is DaemonRequest.Click,
             is DaemonRequest.TypeText -> versionFor(SESSION_COMMANDS_INTRODUCED_MINOR)
             is DaemonRequest.ListJvmProcesses -> versionFor(LIST_JVM_PROCESSES_INTRODUCED_MINOR)
-            is DaemonRequest.StartRecording,
+            is DaemonRequest.StartRecording ->
+                if (request.fullscreen) {
+                    versionFor(RECORDING_FULLSCREEN_INTRODUCED_MINOR)
+                } else {
+                    versionFor(RECORDING_SESSION_INTRODUCED_MINOR)
+                }
             is DaemonRequest.StopRecording,
             is DaemonRequest.RecordingStatus -> versionFor(RECORDING_SESSION_INTRODUCED_MINOR)
             is DaemonRequest.Capture -> versionFor(CAPTURE_INTRODUCED_MINOR)
@@ -60,6 +65,8 @@ public object DaemonProtocol {
     private const val RECORDING_SESSION_INTRODUCED_MINOR: Int = 6
     /** Window/surface/fullscreen screenshot targeting (#289). */
     private const val SCREENSHOT_TARGETING_INTRODUCED_MINOR: Int = 7
+    /** Full-desktop recording opt-in (`StartRecording.fullscreen`). */
+    private const val RECORDING_FULLSCREEN_INTRODUCED_MINOR: Int = 8
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)
@@ -136,7 +143,14 @@ public sealed interface DaemonRequest {
         public val sessionId: String,
         /** Absolute path to the .mp4, or null to allocate under the capture root. */
         public val outputPath: String? = null,
+        /** Tracked window index when [fullscreen] is false. Ignored when [fullscreen] is true. */
         public val windowIndex: Int = 0,
+        /**
+         * When true, record the full primary display via region capture instead of a window.
+         * Multi-monitor desktops are rejected (backends are single-display). Must not be combined
+         * with a non-default window target at the CLI/MCP layer.
+         */
+        public val fullscreen: Boolean = false,
     ) : DaemonRequest
 
     @Serializable

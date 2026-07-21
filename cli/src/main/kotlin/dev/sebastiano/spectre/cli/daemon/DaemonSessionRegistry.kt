@@ -98,7 +98,11 @@ internal constructor(
                 invoke(request.sessionId) { automator ->
                     DaemonResponse.RecordingStarted(
                         request.sessionId,
-                        automator.startRecording(request.outputPath, request.windowIndex),
+                        automator.startRecording(
+                            request.outputPath,
+                            request.windowIndex,
+                            request.fullscreen,
+                        ),
                     )
                 }
             is DaemonRequest.StopRecording ->

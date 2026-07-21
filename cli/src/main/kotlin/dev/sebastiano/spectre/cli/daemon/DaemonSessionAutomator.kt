@@ -31,13 +31,20 @@ internal interface DaemonSessionAutomator : AutoCloseable {
     @Throws(IOException::class) fun capture(windowIndex: Int = 0): AtomicCaptureResult
 
     /**
-     * Start daemon-owned window recording for this attach session.
+     * Start daemon-owned recording for this attach session.
      *
      * @param outputPath absolute path to the .mp4, or null to allocate under the capture root
      *   (`NNNN-timestamp/recording.mp4`) and ledger the directory (#181 / #185).
+     * @param windowIndex tracked non-popup window when [fullscreen] is false.
+     * @param fullscreen when true, record the full virtual desktop (region capture) instead of a
+     *   window.
      */
     @Throws(IOException::class)
-    fun startRecording(outputPath: String?, windowIndex: Int = 0): String
+    fun startRecording(
+        outputPath: String?,
+        windowIndex: Int = 0,
+        fullscreen: Boolean = false,
+    ): String
 
     @Throws(IOException::class) fun stopRecording(liveSessionIds: Set<String>): String
 
@@ -85,8 +92,11 @@ internal class AttachedDaemonSession(
 
     override fun capture(windowIndex: Int): AtomicCaptureResult = delegate.capture(windowIndex)
 
-    override fun startRecording(outputPath: String?, windowIndex: Int): String =
-        recording.start(outputPath, windowIndex)
+    override fun startRecording(
+        outputPath: String?,
+        windowIndex: Int,
+        fullscreen: Boolean,
+    ): String = recording.start(outputPath, windowIndex, fullscreen)
 
     override fun stopRecording(liveSessionIds: Set<String>): String = recording.stop(liveSessionIds)
 

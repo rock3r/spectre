@@ -243,9 +243,10 @@ public object SpectreMcpServer {
         server.addTool(
             name = "record_start",
             description =
-                "Start daemon-owned window recording for an attached session. " +
-                    "output_path is optional — omit to allocate under the Spectre capture root. " +
-                    "Returns the output path only (no video bytes).",
+                "Start daemon-owned recording for an attached session. Default is window index 0. " +
+                    "Pass fullscreen=true for a full primary-display region capture (not multi-monitor; " +
+                    "do not combine with window_index). output_path is optional — omit to allocate under " +
+                    "the Spectre capture root. Returns the output path only (no video bytes).",
             inputSchema =
                 ToolSchema(
                     properties =
@@ -253,6 +254,7 @@ public object SpectreMcpServer {
                             put("session_id", buildJsonObject { put("type", "string") })
                             put("output_path", buildJsonObject { put("type", "string") })
                             put("window_index", buildJsonObject { put("type", "integer") })
+                            put("fullscreen", buildJsonObject { put("type", "boolean") })
                         },
                     required = listOf("session_id"),
                 ),
@@ -264,7 +266,7 @@ public object SpectreMcpServer {
             val windowIndexArg = call.arguments?.get("window_index")?.jsonPrimitive?.content
             val windowIndex =
                 if (windowIndexArg == null) {
-                    0
+                    null
                 } else {
                     windowIndexArg.toIntOrNull()
                         ?: return@addTool CallToolResult(
@@ -277,11 +279,31 @@ public object SpectreMcpServer {
                             isError = true,
                         )
                 }
+            val fullscreenRaw = call.arguments?.get("fullscreen")?.jsonPrimitive?.content
+            val fullscreen =
+                parseOptionalBooleanArg(fullscreenRaw)
+                    ?: return@addTool CallToolResult(
+                        listOf(
+                            TextContent(
+                                "MCP tool argument 'fullscreen' must be a boolean, got '$fullscreenRaw'."
+                            )
+                        ),
+                        isError = true,
+                    )
+            if (fullscreen && windowIndex != null) {
+                return@addTool CallToolResult(
+                    listOf(
+                        TextContent("record_start: fullscreen cannot be combined with window_index")
+                    ),
+                    isError = true,
+                )
+            }
             request(
                     DaemonRequest.StartRecording(
                         sessionId = call.requiredString("session_id"),
                         outputPath = outputRaw?.let(::normalizeRecordingOutputPath),
-                        windowIndex = windowIndex,
+                        windowIndex = windowIndex ?: 0,
+                        fullscreen = fullscreen,
                     )
                 )
                 .asResult { it is DaemonResponse.RecordingStarted }

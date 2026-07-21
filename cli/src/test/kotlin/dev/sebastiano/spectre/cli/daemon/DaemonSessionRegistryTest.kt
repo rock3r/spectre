@@ -240,7 +240,7 @@ class DaemonSessionRegistryTest {
         var startedWindowIndex: Int? = null
         val registry = DaemonSessionRegistry {
             TestDaemonSessionAutomator(
-                startRecordingAction = { path, windowIndex ->
+                startRecordingAction = { path, windowIndex, _ ->
                     startedAt = path
                     startedWindowIndex = windowIndex
                     path ?: outputPath
@@ -271,10 +271,35 @@ class DaemonSessionRegistryTest {
     }
 
     @Test
+    fun `forwards fullscreen recording flag to session automator`() {
+        var startedFullscreen: Boolean? = null
+        val registry = DaemonSessionRegistry {
+            TestDaemonSessionAutomator(
+                startRecordingAction = { path, _, fullscreen ->
+                    startedFullscreen = fullscreen
+                    path ?: "/tmp/full.mp4"
+                }
+            )
+        }
+        val sessionId =
+            assertIs<DaemonResponse.Attached>(registry.handle(DaemonRequest.Attach(9))).sessionId
+
+        registry.handle(
+            DaemonRequest.StartRecording(
+                sessionId = sessionId,
+                outputPath = "/tmp/full.mp4",
+                windowIndex = 0,
+                fullscreen = true,
+            )
+        )
+        assertEquals(true, startedFullscreen)
+    }
+
+    @Test
     fun `maps recording lifecycle failures to operation errors`() {
         val registry = DaemonSessionRegistry {
             TestDaemonSessionAutomator(
-                startRecordingAction = { _, _ -> throw IOException("recording already started") }
+                startRecordingAction = { _, _, _ -> throw IOException("recording already started") }
             )
         }
         val sessionId =

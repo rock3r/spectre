@@ -305,10 +305,24 @@ private class RecordStartCommand(
 ) : CliktCommand(name = "start") {
     private val sessionId: String by argument()
     private val outputPath: Path? by option("--output").path()
-    private val windowIndex: Int by option("--window-index").int().default(0)
+    /** Prefer `--window`; `--window-index` is kept as a compatibility alias. */
+    private val windowIndex: Int? by option("--window", "--window-index").int()
+    private val fullscreen: Boolean by
+        option(
+                "--fullscreen",
+                help =
+                    "Record the full primary display instead of a tracked window " +
+                        "(multi-monitor desktops are not supported yet)",
+            )
+            .flag(default = false)
     private val json: Boolean by option("--json").flag(default = false)
 
     override fun run() {
+        if (fullscreen && windowIndex != null) {
+            throw CliktError(
+                "record start: --fullscreen cannot be combined with --window / --window-index"
+            )
+        }
         // Null --output: daemon allocates under the capture root (ledger + live prune).
         val destination =
             try {
@@ -323,7 +337,8 @@ private class RecordStartCommand(
                         DaemonRequest.StartRecording(
                             sessionId = sessionId,
                             outputPath = destination,
-                            windowIndex = windowIndex,
+                            windowIndex = windowIndex ?: 0,
+                            fullscreen = fullscreen,
                         )
                     )
             ) {

@@ -69,6 +69,9 @@ spectre captures list
 # Prune closed-session captures on the default root (never touches live sessions without --force).
 spectre captures prune --keep 20
 spectre record start <session-id> --output ./interaction.mp4
+# Window is default (index 0); --fullscreen is opt-in full primary display.
+spectre record start <session-id> --window 0 --output ./window.mp4
+spectre record start <session-id> --fullscreen --output ./desktop.mp4
 spectre record stop <session-id>
 ```
 
@@ -85,7 +88,9 @@ directory (`NNNN-<timestamp>/` under `$TMPDIR/spectre/captures` by default, mode
 (paths, node counts, image size). Default-root captures are lazily capped (keep last 50 closed
 sessions' captures); client `--out-dir` captures are never auto-deleted. Summaries and detach
 reports point agents at the **`spectre-capture`** skill for `jq` recipes — see
-[Atomic capture](capture.md). `record start` behaves similarly for an MP4.
+[Atomic capture](capture.md). `record start` records a tracked window by default (index `0`;
+`--window` / `--window-index`). Full-display recording is opt-in via `--fullscreen` (primary
+display only; multi-monitor desktops are rejected until multi-display capture is supported).
 
 `spectre captures list [--all] [--json]` lists ledger-backed capture directories with size and
 live/closed status. `spectre captures prune` supports `--keep N`, `--older-than 7d`, `--all`,
