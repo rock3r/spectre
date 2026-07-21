@@ -80,30 +80,35 @@ internal class DaemonSessionRecording(
     fun stop(liveSessionIds: Set<String>): String {
         val active = recording ?: throw IOException("no recording is in progress for this session")
         val directory = captureDirectory
-        return try {
+        val explicit = ledgerExplicitOutDir
+        val knownOutput = recordingOutput?.toString()
+        var result: String? = null
+        var error: IOException? = null
+        try {
             active.stop()
-            val path = active.output.toString()
-            // Only ledger Spectre-allocated capture directories. Never ledger a user --output
-            // parent (e.g. /tmp) — prune would recursively delete unrelated files (#185 review).
-            if (directory != null && !ledgerExplicitOutDir) {
-                appendLedger(
-                    directory,
-                    sizeBytes = CaptureLifecycle.directorySizeBytes(directory),
-                    explicit = false,
-                )
+            result = active.output.toString()
+        } catch (exception: IllegalStateException) {
+            error = IOException(exception.message ?: "failed to stop recording", exception)
+        }
+        // Always ledger Spectre-allocated dirs (including partial files after a failed stop)
+        // so prune/retention can clean them up. Never ledger user --output parents.
+        if (directory != null && !explicit) {
+            appendLedger(
+                directory,
+                sizeBytes = CaptureLifecycle.directorySizeBytes(directory),
+                explicit = false,
+            )
+            runCatching {
                 CaptureRetention.enforce(
                     defaultRoot = CaptureLifecycle.defaultCapturesRoot(),
                     ledger = ledger,
-                    // Protect every still-attached session's capture dirs.
                     liveSessionIds = liveSessionIds + sessionId,
                 )
             }
-            path
-        } catch (exception: IllegalStateException) {
-            throw IOException(exception.message ?: "failed to stop recording", exception)
-        } finally {
-            clear()
         }
+        clear()
+        if (error != null) throw error
+        return result ?: knownOutput ?: error("recording stopped without an output path")
     }
 
     fun status(): RecordingStatus {
