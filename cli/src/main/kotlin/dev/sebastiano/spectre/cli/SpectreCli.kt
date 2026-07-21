@@ -266,7 +266,11 @@ private class CaptureCommand(
 private class RecordCommand(request: (DaemonRequest) -> DaemonResponse, output: Appendable) :
     CliktCommand(name = "record") {
     init {
-        subcommands(RecordStartCommand(request, output), RecordStopCommand(request, output))
+        subcommands(
+            RecordStartCommand(request, output),
+            RecordStopCommand(request, output),
+            RecordStatusCommand(request, output),
+        )
     }
 
     override fun run(): Unit = Unit
@@ -278,23 +282,27 @@ private class RecordStartCommand(
 ) : CliktCommand(name = "start") {
     private val sessionId: String by argument()
     private val outputPath: Path? by option("--output").path()
+    private val windowIndex: Int by option("--window-index").int().default(0)
     private val json: Boolean by option("--json").flag(default = false)
 
     override fun run() {
+        // Null --output: daemon allocates under the capture root (ledger + live prune).
         val destination =
             try {
-                (outputPath
-                        ?: Files.createTempFile("spectre-recording-", ".mp4")
-                            .also(Files::deleteIfExists))
-                    .toAbsolutePath()
-                    .normalize()
+                outputPath?.toAbsolutePath()?.normalize()?.toString()
             } catch (exception: IOException) {
                 throw CliOutputException(exception)
             }
         val recording =
             when (
                 val response =
-                    request(DaemonRequest.StartRecording(sessionId, destination.toString()))
+                    request(
+                        DaemonRequest.StartRecording(
+                            sessionId = sessionId,
+                            outputPath = destination,
+                            windowIndex = windowIndex,
+                        )
+                    )
             ) {
                 is DaemonResponse.RecordingStarted -> response
                 is DaemonResponse.Error -> throw DaemonCommandException(response)
@@ -327,6 +335,53 @@ private class RecordStopCommand(
         )
     }
 }
+
+private class RecordStatusCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "status") {
+    private val sessionId: String by argument()
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val status =
+            when (val response = request(DaemonRequest.RecordingStatus(sessionId))) {
+                is DaemonResponse.RecordingStatus -> response
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
+                else -> error("Daemon returned an unexpected response to record status")
+            }
+        if (json) {
+            output.append(
+                CLI_JSON.encodeToString(
+                    RecordingStatusJson(
+                        sessionId = status.sessionId,
+                        active = status.active,
+                        path = status.outputPath,
+                        captureDirectory = status.captureDirectory,
+                    )
+                )
+            )
+            output.appendLine()
+            return
+        }
+        if (!status.active) {
+            output.append("No active recording for session ${status.sessionId}")
+            output.appendLine()
+            return
+        }
+        output.append("Recording active: ${status.outputPath}")
+        status.captureDirectory?.let { output.append(" (capture dir $it)") }
+        output.appendLine()
+    }
+}
+
+@Serializable
+private data class RecordingStatusJson(
+    val sessionId: String,
+    val active: Boolean,
+    val path: String? = null,
+    val captureDirectory: String? = null,
+)
 
 @OptIn(ExperimentalSpectreAgentApi::class)
 private class ClickCommand(

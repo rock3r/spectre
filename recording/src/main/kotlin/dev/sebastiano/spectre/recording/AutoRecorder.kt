@@ -166,6 +166,79 @@ internal constructor(
         throw unsupportedWindowCapture()
     }
 
+    /**
+     * Window-targeted capture for an out-of-process window identified by title + owner pid (daemon
+     * attach / #185). Does not stamp a local AWT title discriminator — the [title] must already
+     * uniquely identify the target among windows of [windowOwnerPid].
+     *
+     * When [cropInWindow] is set, applies window+crop (#186). Prefer this over [startRegion] for
+     * attached targets.
+     */
+    public fun startWindowByTitle(
+        title: String,
+        windowOwnerPid: Long,
+        output: Path,
+        options: RecordingOptions = RecordingOptions(),
+        cropInWindow: Rectangle? = null,
+        scaleX: Double = 1.0,
+        scaleY: Double = 1.0,
+    ): RecordingHandle {
+        require(title.isNotBlank()) { "startWindowByTitle requires a non-blank title" }
+        if (isMacOs()) {
+            val sck =
+                sckRecorder as? ScreenCaptureKitRecorder
+                    ?: throw unavailable(
+                        "macOS remote window capture",
+                        IllegalStateException(
+                            "SCK recorder is not ScreenCaptureKitRecorder; cannot match by title alone"
+                        ),
+                    )
+            return try {
+                sck.startMatchingTitle(
+                    titleContains = title,
+                    windowOwnerPid = windowOwnerPid,
+                    output = output,
+                    options = options,
+                    crop = cropInWindow,
+                )
+            } catch (e: HelperNotBundledException) {
+                throw unavailable("macOS remote window capture", e)
+            }
+        }
+        if (isWindows()) {
+            val recorder =
+                windowsWindowRecorder ?: throw unavailable("Windows remote window capture", null)
+            val remoteWindow =
+                object : TitledWindow {
+                    override var title: String? = title
+                    override val bounds: Rectangle = cropInWindow ?: Rectangle(0, 0, 1, 1)
+                }
+            return if (cropInWindow != null) {
+                recorder.startCropped(
+                    window = remoteWindow,
+                    cropInWindow = cropInWindow,
+                    windowOwnerPid = windowOwnerPid,
+                    output = output,
+                    options = options,
+                    scaleX = scaleX,
+                    scaleY = scaleY,
+                )
+            } else {
+                recorder.start(remoteWindow, windowOwnerPid, output, options)
+            }
+        }
+        if (isLinux() || isWayland()) {
+            // Remote attach path cannot invent portal/X11 crop geometry. Use startWindow with a
+            // real local TitledWindow, or startRegion with real screen bounds.
+            error(
+                "startWindowByTitle is not supported on Linux/Wayland for out-of-process " +
+                    "targets (no remote window bounds/handle path). Use startRegion with " +
+                    "explicit screen bounds, or run recording in-process with startWindow."
+            )
+        }
+        throw unsupportedWindowCapture()
+    }
+
     private fun startWindowCropped(
         window: TitledWindow,
         cropInWindow: Rectangle,

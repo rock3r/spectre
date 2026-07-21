@@ -13,7 +13,8 @@ internal constructor(
     private val jvmProcessDiscovery: DaemonJvmProcessDiscovery = DaemonJvmProcessDiscovery(),
     private val attachAutomator: (Long) -> DaemonSessionAutomator = { targetPid ->
         installEmbeddedAgentRuntimeIfNeeded()
-        AttachedDaemonSession(AgentAttach.attach(targetPid))
+        val automator = AgentAttach.attach(targetPid)
+        AttachedDaemonSession(delegate = automator, sessionId = "pid-$targetPid")
     },
 ) : AutoCloseable {
     private val sessionsByPid: MutableMap<Long, DaemonSession> = linkedMapOf()
@@ -44,7 +45,8 @@ internal constructor(
             is DaemonRequest.Screenshot,
             is DaemonRequest.Capture,
             is DaemonRequest.StartRecording,
-            is DaemonRequest.StopRecording -> handleSessionCommand(request)
+            is DaemonRequest.StopRecording,
+            is DaemonRequest.RecordingStatus -> handleSessionCommand(request)
             DaemonRequest.Shutdown -> shutdown()
         }
 
@@ -89,12 +91,25 @@ internal constructor(
                 invoke(request.sessionId) { automator ->
                     DaemonResponse.RecordingStarted(
                         request.sessionId,
-                        automator.startRecording(request.outputPath),
+                        automator.startRecording(request.outputPath, request.windowIndex),
                     )
                 }
             is DaemonRequest.StopRecording ->
                 invoke(request.sessionId) { automator ->
-                    DaemonResponse.RecordingStopped(request.sessionId, automator.stopRecording())
+                    DaemonResponse.RecordingStopped(
+                        request.sessionId,
+                        automator.stopRecording(liveSessionIds()),
+                    )
+                }
+            is DaemonRequest.RecordingStatus ->
+                invoke(request.sessionId) { automator ->
+                    val status = automator.recordingStatus()
+                    DaemonResponse.RecordingStatus(
+                        sessionId = request.sessionId,
+                        active = status.active,
+                        outputPath = status.outputPath,
+                        captureDirectory = status.captureDirectory,
+                    )
                 }
             else ->
                 error(
@@ -147,7 +162,11 @@ internal constructor(
                     code = DaemonErrorCode.SessionNotFound,
                     message = "session not found: $sessionId",
                 )
-        sessionsByPid.remove(removed.key)?.automator?.close()
+        val remainingLive = liveSessionIds() - sessionId
+        val automator = sessionsByPid.remove(removed.key)?.automator
+        // Finalize recording while other sessions are still known live (#185 review).
+        automator?.finalizeRecording(remainingLive)
+        automator?.close()
         return CaptureSessionReport.forDetach(sessionId)
     }
 

@@ -196,13 +196,18 @@ class DaemonSessionRegistryTest {
     fun `starts and stops a recording through the attached session`() {
         val outputPath = "/tmp/spectre-recording.mp4"
         var startedAt: String? = null
+        var startedWindowIndex: Int? = null
         val registry = DaemonSessionRegistry {
             TestDaemonSessionAutomator(
-                startRecordingAction = { path ->
+                startRecordingAction = { path, windowIndex ->
                     startedAt = path
-                    path
+                    startedWindowIndex = windowIndex
+                    path ?: outputPath
                 },
                 stopRecordingResult = { outputPath },
+                recordingStatusResult = {
+                    RecordingStatus(active = startedAt != null, outputPath = startedAt)
+                },
             )
         }
         val sessionId =
@@ -210,9 +215,14 @@ class DaemonSessionRegistryTest {
 
         assertEquals(
             DaemonResponse.RecordingStarted(sessionId, outputPath),
-            registry.handle(DaemonRequest.StartRecording(sessionId, outputPath)),
+            registry.handle(DaemonRequest.StartRecording(sessionId, outputPath, windowIndex = 0)),
         )
         assertEquals(outputPath, startedAt)
+        assertEquals(0, startedWindowIndex)
+        assertEquals(
+            DaemonResponse.RecordingStatus(sessionId, active = true, outputPath = outputPath),
+            registry.handle(DaemonRequest.RecordingStatus(sessionId)),
+        )
         assertEquals(
             DaemonResponse.RecordingStopped(sessionId, outputPath),
             registry.handle(DaemonRequest.StopRecording(sessionId)),
@@ -223,7 +233,7 @@ class DaemonSessionRegistryTest {
     fun `maps recording lifecycle failures to operation errors`() {
         val registry = DaemonSessionRegistry {
             TestDaemonSessionAutomator(
-                startRecordingAction = { throw IOException("recording already started") }
+                startRecordingAction = { _, _ -> throw IOException("recording already started") }
             )
         }
         val sessionId =

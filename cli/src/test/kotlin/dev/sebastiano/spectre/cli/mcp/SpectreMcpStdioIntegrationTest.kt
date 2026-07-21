@@ -50,6 +50,7 @@ class SpectreMcpStdioIntegrationTest {
                         "list_processes",
                         "record_start",
                         "record_stop",
+                        "record_status",
                         "screenshot",
                         "tree",
                         "type_text",

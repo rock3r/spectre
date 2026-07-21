@@ -251,13 +251,45 @@ public object SpectreMcpServer {
         server.addTool(
             name = "record_start",
             description =
-                "Start recording an attached session to the supplied absolute output path.",
-            inputSchema = schema("session_id" to "string", "output_path" to "string"),
+                "Start daemon-owned window recording for an attached session. " +
+                    "output_path is optional — omit to allocate under the Spectre capture root. " +
+                    "Returns the output path only (no video bytes).",
+            inputSchema =
+                ToolSchema(
+                    properties =
+                        buildJsonObject {
+                            put("session_id", buildJsonObject { put("type", "string") })
+                            put("output_path", buildJsonObject { put("type", "string") })
+                            put("window_index", buildJsonObject { put("type", "integer") })
+                        },
+                    required = listOf("session_id"),
+                ),
         ) { call ->
+            val outputRaw =
+                call.arguments?.get("output_path")?.jsonPrimitive?.content?.takeIf {
+                    it.isNotBlank()
+                }
+            val windowIndexArg = call.arguments?.get("window_index")?.jsonPrimitive?.content
+            val windowIndex =
+                if (windowIndexArg == null) {
+                    0
+                } else {
+                    windowIndexArg.toIntOrNull()
+                        ?: return@addTool CallToolResult(
+                            listOf(
+                                TextContent(
+                                    "MCP tool argument 'window_index' must be an integer, " +
+                                        "got '$windowIndexArg'."
+                                )
+                            ),
+                            isError = true,
+                        )
+                }
             request(
                     DaemonRequest.StartRecording(
-                        call.requiredString("session_id"),
-                        normalizeRecordingOutputPath(call.requiredString("output_path")),
+                        sessionId = call.requiredString("session_id"),
+                        outputPath = outputRaw?.let(::normalizeRecordingOutputPath),
+                        windowIndex = windowIndex,
                     )
                 )
                 .asResult { it is DaemonResponse.RecordingStarted }
@@ -269,6 +301,15 @@ public object SpectreMcpServer {
         ) { call ->
             request(DaemonRequest.StopRecording(call.requiredString("session_id"))).asResult {
                 it is DaemonResponse.RecordingStopped
+            }
+        }
+        server.addTool(
+            name = "record_status",
+            description = "Report whether a session has an active recording and its output path.",
+            inputSchema = sessionSchema(),
+        ) { call ->
+            request(DaemonRequest.RecordingStatus(call.requiredString("session_id"))).asResult {
+                it is DaemonResponse.RecordingStatus
             }
         }
     }
