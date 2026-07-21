@@ -40,7 +40,7 @@ pub fn run(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
 
 fn run_wayland(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
     // 1. Portal handshake — first call within a session pops the user's "share your screen"
-    // dialog. Subsequent calls reuse the grant (transient persist mode).
+    // dialog. Subsequent calls reuse the grant (persistent restore_token (#188)).
     let session = portal::open_screen_cast_session(
         &start.source_types,
         start.cursor_mode,

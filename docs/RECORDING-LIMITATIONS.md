@@ -45,6 +45,23 @@ where the failure modes are. The window-targeted backends exist to sidestep thos
 failure modes, and the section below
 ([Window-targeted capture](#window-targeted-capture)) explains how they do it.
 
+
+## Wayland restore_token (agent non-interactive runs)
+
+On Linux Wayland, the ScreenCast portal consent dialog is the analogue of macOS TCC:
+interactive and not automatable. Spectre's `spectre-wayland-helper` uses portal
+`persist_mode=persistent` and stores a `restore_token` under
+`$XDG_STATE_HOME/spectre/wayland-screencast-restore-token` (mode `0600`, directory
+`0700`; override with `SPECTRE_WAYLAND_RESTORE_TOKEN_PATH` or
+`SPECTRE_WAYLAND_RESTORE_TOKEN_DIR`).
+
+- **First run** (no token, or compositor rejects a stale token): the portal dialog is
+  shown. A human must accept once.
+- **Later CLI/agent sessions**: the helper reuses the stored token so no dialog appears
+  (validated on GNOME/mutter; other compositors are best-effort).
+- **Invalidation**: if Start/SelectSources rejects the token, Spectre clears the file and
+  retries interactively once, printing a clear message on stderr.
+
 ## Platform
 
 - **macOS** — ScreenCaptureKit region and window capture through the
