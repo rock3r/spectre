@@ -20,7 +20,7 @@ class DaemonHandshakeTest {
 
         val hello = assertIs<DaemonRequest.Hello>(decoded)
         assertEquals(1, hello.clientVersion.major)
-        assertEquals(5, hello.clientVersion.minor)
+        assertEquals(6, hello.clientVersion.minor)
     }
 
     @Test
@@ -63,10 +63,14 @@ class DaemonHandshakeTest {
             DaemonProtocol.minimumDaemonVersion(DaemonRequest.ListJvmProcesses(requesterPid = 1234)),
         )
         assertEquals(
-            DaemonProtocolVersion(major = 1, minor = 4),
+            DaemonProtocolVersion(major = 1, minor = 6),
             DaemonProtocol.minimumDaemonVersion(
                 DaemonRequest.StartRecording("session-1234", "/tmp/capture.mp4")
             ),
+        )
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 6),
+            DaemonProtocol.minimumDaemonVersion(DaemonRequest.RecordingStatus("session-1234")),
         )
         assertEquals(
             DaemonProtocolVersion(major = 1, minor = 5),
