@@ -68,8 +68,9 @@ extract_install_body() {
     # Method ends at the first line that is exactly "  end" after the def (formula style).
     body = rest[/\A  def install\n.*?\n  end\n/m]
     abort "could not extract install method from #{ARGV[0]}" unless body
-    # Drop comment lines so comment-only drift does not fail the gate.
-    puts body.lines.reject { |l| l.match?(/^\s*#/) }.join
+    # Drop Ruby comment lines (indent + "#" + space/end) so comment-only drift
+    # does not fail the gate. Keep shebangs inside the wrapper heredoc (#!/bin/sh).
+    puts body.lines.reject { |l| l.match?(/^\s+#(\s|$)/) }.join
   ' "$1"
 }
 

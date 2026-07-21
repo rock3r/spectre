@@ -24,6 +24,7 @@ module SpectreHomebrewInstallSemantics
 
   REQUIRED_SNIPPETS = [
     '(bin/"spectre").write',
+    "#!/bin/sh",
     'exec "#{libexec}/Spectre.app/Contents/MacOS/spectre" "$@"',
     '(bin/"spectre").chmod 0755',
     'assert_match "Usage:", shell_output("#{bin}/spectre --help")',
@@ -65,6 +66,7 @@ module SpectreHomebrewInstallSemantics
   end
 
   # Roast-like stub: succeeds only when argv[0] is the real MacOS binary path.
+  # Echoes args so tests can prove the wrapper forwards "$@" (formula test uses --help).
   def write_argv0_sensitive_binary(path)
     FileUtils.mkdir_p(File.dirname(path))
     File.write(
@@ -74,6 +76,7 @@ module SpectreHomebrewInstallSemantics
         case "$0" in
           */Contents/MacOS/spectre)
             echo "Usage: spectre [<options>] <command>"
+            echo "args:$*"
             exit 0
             ;;
           *)
@@ -228,12 +231,14 @@ formula_paths.each do |path|
         "wrapper must exec the real bundle binary path"
       )
 
-      out1, status1 = run_cmd(result[:wrapper].inspect)
-      out2, status2 = run_cmd(result[:wrapper].inspect)
+      # Match formula test do: shell_output("#{bin}/spectre --help") — twice.
+      out1, status1 = run_cmd("#{result[:wrapper].inspect} --help")
+      out2, status2 = run_cmd("#{result[:wrapper].inspect} --help")
       assert!(status1.zero?, "wrapper --help run1 exit #{status1}: #{out1}")
       assert!(status2.zero?, "wrapper --help run2 exit #{status2}: #{out2}")
       assert!(out1.include?("Usage:"), "run1 stdout must match formula test: #{out1.inspect}")
       assert!(out2.include?("Usage:"), "run2 stdout must match formula test: #{out2.inspect}")
+      assert!(out1.include?("args:--help"), "wrapper must forward --help via \"$@\": #{out1.inspect}")
     end
   end
 
@@ -246,8 +251,9 @@ formula_paths.each do |path|
       result =
         SpectreHomebrewInstallSemantics.simulate_wrapper_install(stage, cellar, formula_text)
       assert!(result[:app] == "spectre-cli-0.3.0/Spectre.app", "unexpected app path #{result[:app]}")
-      out, status = run_cmd(result[:wrapper].inspect)
+      out, status = run_cmd("#{result[:wrapper].inspect} --help")
       assert!(status.zero? && out.include?("Usage:"), "nested install wrapper failed: #{out}")
+      assert!(out.include?("args:--help"), "wrapper must forward --help: #{out.inspect}")
     end
   end
 end
