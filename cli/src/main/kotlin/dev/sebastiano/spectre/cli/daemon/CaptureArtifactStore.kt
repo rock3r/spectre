@@ -25,7 +25,12 @@ internal object CaptureArtifactStore {
         retentionKeep: Int = CaptureRetention.DEFAULT_KEEP,
     ): DaemonResponse.Capture {
         val explicitOutDir = outDir != null
-        val directory = CaptureLifecycle.allocateDirectory(outDir, clock)
+        val directory =
+            CaptureLifecycle.allocateDirectory(
+                outDir = outDir,
+                clock = clock,
+                defaultRoot = defaultRoot,
+            )
         val captureJsonPath = directory.resolve("capture.json")
         val screenshotPngPath = directory.resolve("screenshot.png")
         Files.writeString(captureJsonPath, result.captureJson)
