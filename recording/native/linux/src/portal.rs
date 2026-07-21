@@ -121,11 +121,17 @@ pub fn open_screen_cast_session(
 
 fn is_restore_token_rejection(err: &anyhow::Error) -> bool {
     let msg = format!("{err:#}");
-    // Only the portal steps that consume restore_token — not CreateSession / OpenPipeWireRemote.
-    (msg.contains("SelectSources rejected") || msg.contains("Start rejected"))
-        && (msg.contains("restore_token")
+    // Steps that consume restore_token. Include Response timeouts: a stale token often
+    // surfaces as an interactive dialog that never receives a human answer under agents.
+    if msg.contains("SelectSources rejected") || msg.contains("Start rejected") {
+        return msg.contains("restore_token")
             || msg.contains("stored restore_token")
-            || msg.contains("no longer valid"))
+            || msg.contains("no longer valid")
+            // response_code non-zero without those strings still indicates grant failure
+            // when we supplied a token (caller only invokes this when stored.is_some()).
+            || msg.contains("response code");
+    }
+    msg.contains("Timed out after") && msg.contains("Response signal")
 }
 
 fn restore_token_key(source_types: &[SourceType], cursor_mode: CursorMode) -> String {
@@ -319,8 +325,18 @@ pub fn restore_token_state_dir() -> PathBuf {
 
 fn restore_token_file(token_key: &str) -> PathBuf {
     if let Ok(override_path) = std::env::var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH") {
-        // Single-file override still wins for tests / operators who set an explicit path.
-        return PathBuf::from(override_path);
+        // Directory (or file path treated as directory prefix) so keys stay separate.
+        let base = PathBuf::from(override_path);
+        if base.extension().is_some() {
+            // File-shaped path: insert key before extension.
+            let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or("token");
+            let ext = base.extension().and_then(|s| s.to_str()).unwrap_or("token");
+            return base
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join(format!("{stem}-{token_key}.{ext}"));
+        }
+        return base.join(format!("wayland-screencast-restore-token-{token_key}"));
     }
     restore_token_state_dir().join(format!("wayland-screencast-restore-token-{token_key}"))
 }
