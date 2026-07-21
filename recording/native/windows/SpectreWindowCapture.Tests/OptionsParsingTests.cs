@@ -61,6 +61,60 @@ public sealed class OptionsParsingTests
         Assert.True(options.CaptureCursor);
     }
 
+    [Fact]
+    public void ParseAcceptsWindowCropFlags()
+    {
+        var options =
+            Options.Parse([
+                "--mode",
+                "recording",
+                "--source",
+                "window",
+                "--title",
+                "Spectre",
+                "--owner-pid",
+                "99",
+                "--crop-x",
+                "8",
+                "--crop-y",
+                "40",
+                "--crop-width",
+                "640",
+                "--crop-height",
+                "480",
+                "--output",
+                "out.mp4",
+            ]);
+
+        Assert.Equal(new CaptureRect(8, 40, 640, 480), options.Crop);
+        Assert.Null(options.Region);
+    }
+
+    [Fact]
+    public void ParseRejectsCropOnRegionSource()
+    {
+        var ex = Assert.Throws<ArgumentException>(() =>
+            Options.Parse([
+                "--mode",
+                "recording",
+                "--source",
+                "region",
+                "--x",
+                "0",
+                "--y",
+                "0",
+                "--width",
+                "100",
+                "--height",
+                "100",
+                "--crop-x",
+                "0",
+                "--output",
+                "out.mp4",
+            ]));
+        Assert.Contains("--crop-", ex.Message);
+    }
+
     public static IEnumerable<object[]> InvalidArgumentCases()
     {
         yield return new object[] { "--output is required", Array.Empty<string>() };

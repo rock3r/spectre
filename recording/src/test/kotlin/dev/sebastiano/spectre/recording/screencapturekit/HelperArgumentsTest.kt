@@ -87,6 +87,56 @@ class HelperArgumentsTest {
     }
 
     @Test
+    fun `toArgv emits optional window crop flag`() {
+        val helper = Path.of("/tmp/spectre-screencapture")
+        val args =
+            HelperArguments(
+                source = HelperSource.Window,
+                pid = 9,
+                titleContains = "Spectre/crop",
+                crop = Rectangle(12, 34, 200, 100),
+                output = Path.of("/tmp/out.mp4"),
+                fps = 30,
+                captureCursor = false,
+                discoveryTimeoutMs = 1000,
+            )
+        val argv = args.toArgv(helper)
+        assertEquals("12,34,200,100", argv[argv.indexOf("--crop") + 1])
+        assertTrue("--crop" in argv)
+    }
+
+    @Test
+    fun `window crop rejects non-positive dimensions`() {
+        assertFailsWith<IllegalArgumentException> {
+            HelperArguments(
+                source = HelperSource.Window,
+                pid = 1,
+                titleContains = "x",
+                crop = Rectangle(0, 0, 0, 10),
+                output = Path.of("/tmp/o.mp4"),
+                fps = 30,
+                captureCursor = true,
+                discoveryTimeoutMs = 0,
+            )
+        }
+    }
+
+    @Test
+    fun `region source rejects crop`() {
+        assertFailsWith<IllegalArgumentException> {
+            HelperArguments(
+                source = HelperSource.Region,
+                region = Rectangle(0, 0, 10, 10),
+                crop = Rectangle(0, 0, 5, 5),
+                output = Path.of("/tmp/o.mp4"),
+                fps = 30,
+                captureCursor = true,
+                discoveryTimeoutMs = 0,
+            )
+        }
+    }
+
+    @Test
     fun `toArgv encodes captureCursor as the literal true or false expected by the helper`() {
         val helper = Path.of("/tmp/spectre-screencapture")
         val baseline =

@@ -7,10 +7,10 @@ import java.nio.file.Path
  * Strongly-typed inputs to the `spectre-screencapture` Swift helper.
  *
  * The helper's CLI contract lives at the top of
- * `recording/native/macos/Sources/SpectreScreenCapture/main.swift`. This data class is the single
- * place that translates JVM-side recording intent into the exact argv shape the helper accepts.
- * Keep it in lockstep with the Swift `Arguments.parse` body — adding a flag here without updating
- * the helper (or vice versa) will surface as `exit=2` on first use.
+ * `recording/native/macos/Sources/SpectreScreenCaptureCore/SpectreScreenCapture.swift`. This data
+ * class is the single place that translates JVM-side recording intent into the exact argv shape the
+ * helper accepts. Keep it in lockstep with the Swift `Arguments.parse` body — adding a flag here
+ * without updating the helper (or vice versa) will surface as `exit=2` on first use.
  *
  * Construction-time preconditions mirror the helper's own validation so callers see typed Kotlin
  * failures instead of opaque `exit=2` from the subprocess.
@@ -21,6 +21,11 @@ internal data class HelperArguments(
     val pid: Long? = null,
     val titleContains: String? = null,
     val region: Rectangle? = null,
+    /**
+     * Optional window-relative crop in AWT / SCK point space (top-left origin). Only valid for
+     * [HelperSource.Window]. Fixed for the recording lifetime (#186).
+     */
+    val crop: Rectangle? = null,
     val displayIndex: Int = 0,
     val output: Path,
     val fps: Int,
@@ -40,6 +45,7 @@ internal data class HelperArguments(
                 require(discriminator.isNotBlank()) {
                     "titleContains must be a non-blank substring; the helper rejects empty discriminators"
                 }
+                crop?.let { validateCrop(it) }
             }
             HelperSource.Region -> {
                 val captureRegion =
@@ -52,6 +58,9 @@ internal data class HelperArguments(
                 }
                 require(displayIndex >= 0) {
                     "displayIndex must be non-negative (got $displayIndex)"
+                }
+                require(crop == null) {
+                    "crop is only valid for window source; region uses --region"
                 }
             }
         }
@@ -78,6 +87,10 @@ internal data class HelperArguments(
                 add(pid.toString())
                 add("--title-contains")
                 add(titleContains.orEmpty())
+                crop?.let { c ->
+                    add("--crop")
+                    add(listOf(c.x, c.y, c.width, c.height).joinToString(","))
+                }
             }
             HelperSource.Region -> {
                 val captureRegion = requireNotNull(region)
@@ -123,6 +136,13 @@ internal data class HelperArguments(
                 "mp4" -> RecordingFileType.Mp4
                 else -> RecordingFileType.Mov
             }
+
+        fun validateCrop(crop: Rectangle) {
+            require(crop.x >= 0 && crop.y >= 0) { "crop origin must be non-negative; got $crop" }
+            require(crop.width > 0 && crop.height > 0) {
+                "crop dimensions must be positive; got $crop"
+            }
+        }
     }
 }
 

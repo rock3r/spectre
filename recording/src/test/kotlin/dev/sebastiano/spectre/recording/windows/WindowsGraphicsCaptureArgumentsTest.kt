@@ -107,6 +107,28 @@ class WindowsGraphicsCaptureArgumentsTest {
     }
 
     @Test
+    fun `window argv includes crop flags when crop is set`() {
+        val helper = Path.of("helper.exe")
+        val output = Path.of("out.mp4")
+        val argv =
+            WindowsGraphicsCaptureArguments(
+                    mode = WindowsGraphicsCaptureMode.Recording,
+                    source = WindowsGraphicsCaptureSource.Window,
+                    title = "Spectre",
+                    ownerPid = 9,
+                    crop = Rectangle(8, 40, 640, 480),
+                    output = output,
+                    fps = 30,
+                    captureCursor = true,
+                )
+                .toArgv(helper)
+        assertEquals("8", argv[argv.indexOf("--crop-x") + 1])
+        assertEquals("40", argv[argv.indexOf("--crop-y") + 1])
+        assertEquals("640", argv[argv.indexOf("--crop-width") + 1])
+        assertEquals("480", argv[argv.indexOf("--crop-height") + 1])
+    }
+
+    @Test
     fun `arguments reject invalid values`() {
         assertFailsWith<IllegalArgumentException> {
             WindowsGraphicsCaptureArguments(

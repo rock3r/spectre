@@ -71,8 +71,10 @@ ImageIO.write(image, "png", File("build/reports/window.png"))
 | Linux Xorg/Xvfb | Linux helper + GStreamer `ximagesrc` | Captures visible screen pixels | The target window must be visible/frontmost, same limitation as `ComposeAutomator.screenshot(...)`; window mode needs a non-blank exact title |
 | Linux Wayland | Linux helper + portal/PipeWire one-frame capture | Portal-scoped; region mode captures the selected monitor stream, window mode captures the selected window stream | Requires the compositor portal dialog to be accepted. Window mode needs `xprop` and `_GTK_FRAME_EXTENTS`, same as `WaylandPortalWindowRecorder` |
 
-Embedded `ComposePanel` surfaces without a top-level OS window still need region
-screenshots, because native window APIs need a real top-level window to bind to.
+Embedded `ComposePanel` surfaces without their own top-level OS window still need the
+**host** top-level window for still screenshots and video. Prefer capturing that host
+window (optionally cropped to the panel) over framebuffer region shots when the host
+exposes a titled `Frame`.
 
 ### Still Screenshot Smoke Tests
 
@@ -150,9 +152,9 @@ view for when you want to know what each backend can and cannot do.
 | Recorder | Capture shape | Follows window resize? | Captures occluding windows / popups? | Prerequisites | Platforms |
 | --- | --- | --- | --- | --- | --- |
 | `FfmpegRecorder` (deprecated) | Screen region (fixed `Rectangle`) | No — region fixed at `start()` | Yes — anything visible inside the region lands in the frame, including occluding apps and overlapping Compose `OnWindow` popups | `ffmpeg` on `PATH`; macOS Screen Recording TCC for the launching app | macOS · Windows legacy/explicit · Linux X11 legacy/explicit |
-| `WindowsGraphicsCaptureRecorder` | Named window (exact title + owner pid) or screen region | Window mode follows the target window across moves; region mode is fixed at `start()` | Window mode captures only the target window's pixels, so occluders are excluded and separate `OnWindow` popups are not captured. Region/fullscreen mode captures the visible monitor pixels inside the requested rectangle, including overlapping windows and popups | `spectre-recording-windows` runtime helper (`spectre-window-capture.exe`); Windows 10 version 1903 or newer; .NET 8 Desktop Runtime; Windows App Runtime 1.8 | Windows |
+| `WindowsGraphicsCaptureRecorder` | Named window (exact title + owner pid), optional pre-encode crop, or screen region | Window mode follows the target window across moves; optional crop is **fixed at start** (v1). Region mode is fixed at `start()` | Window mode (with or without crop) captures only the target window's pixels — occluders excluded. Region/fullscreen mode captures visible monitor pixels including overlapping windows and popups | `spectre-recording-windows` runtime helper (`spectre-window-capture.exe`); Windows 10 version 1903 or newer; .NET 8 Desktop Runtime; Windows App Runtime 1.8 | Windows |
 | `FfmpegWindowRecorder` (deprecated) | Legacy named window (`gdigrab title=`) | Yes — `gdigrab` retracks the window across moves and resizes | No — only the window's pixels are captured. Compose `OnWindow` popups land in a separate OS window with a different title, so they are **not** captured. `OnSameCanvas` / `OnComponent` popups are part of the window surface and are captured | `ffmpeg` on `PATH`; visible window with a non-blank exact title | Windows |
-| `ScreenCaptureKitRecorder` | Named window (pid + title substring) or screen region | Window mode reads the window backing store directly and follows moves/resizes; region mode is fixed at `start()` | Window mode has the same window-source semantics as WGC: occluders and `OnWindow` popups are not captured. Region mode captures visible display pixels in the requested rectangle, including overlapping windows and popups | `spectre-recording-macos` runtime helper (`spectre-screencapture`); macOS Screen Recording TCC for the launching app | macOS |
+| `ScreenCaptureKitRecorder` | Named window (pid + title substring), optional window-relative crop, or screen region | Window mode follows moves/resizes of the host window; optional `sourceRect` crop is **fixed at start** (v1). Region mode is fixed at `start()` | Window mode (with or without crop) captures only the window's pixels — occluders excluded. Region mode captures visible display pixels including overlapping apps | `spectre-recording-macos` runtime helper (`spectre-screencapture`); macOS Screen Recording TCC for the launching app | macOS |
 | `LinuxX11Recorder` | Screen region or named X11 window (`ximagesrc`) | Region mode is fixed at `start()`; window mode uses GStreamer's `xname` source selection | Captures visible X server pixels for the selected source; occluding apps can appear in region capture | `spectre-recording-linux` runtime helper; `gst-launch-1.0` with `ximagesrc`, `videorate`, `x264enc`, and `mp4mux`; `DISPLAY` | Linux Xorg/Xvfb; named XWayland windows only when the process is deliberately forced onto the X11 backend |
 | `WaylandPortalRecorder` | Monitor region (portal `SourceType.MONITOR`, cropped) | No — monitor-level source | Depends on the compositor. Validated on GNOME/Mutter to include the user's overlays but exclude apps occluding the recorded region | `spectre-recording-linux` runtime helper (`spectre-wayland-helper`); `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`. First call pops the compositor's "share screen" dialog | Linux Wayland |
 | `WaylandPortalWindowRecorder` | Named window (portal `SourceType.WINDOW` + fixed crop) | **No.** The crop is computed once from `_GTK_FRAME_EXTENTS` at `start()` and stays at those pixel coordinates for the rest of the recording. If the user moves or resizes the window during the recording, the crop no longer aligns with the window's pixels (typically the recording shows blank / black for the unrendered area of the original rectangle) — see `WaylandPortalWindowRecorder`'s KDoc for the detailed rationale | No — only the picked window's pixels are in the stream. `OnWindow` popups not captured | `spectre-recording-linux` runtime helper; `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`; `xprop` on `PATH`; compositor must publish `_GTK_FRAME_EXTENTS` (GNOME/Mutter verified; older Mutter / KDE / sway may not — the recorder throws rather than producing misaligned video) | Linux Wayland |
@@ -162,15 +164,16 @@ what makes window-targeted Wayland capture different from ffmpeg-on-X11 region c
 crop is fixed at `start()`, so the recording is robust against occluders but not against the
 user moving or resizing the window mid-recording.
 
-Embedded-host implications: `ComposePanel`s without a top-level OS window — including
-Jewel-hosted Compose inside an IntelliJ plugin tool window — have no exact window title for
-the native Windows helper to bind to and no top-level window for the SCK helper to discover.
-`AutoRecorder` falls through to region capture (`ScreenCaptureKitRecorder` on macOS,
-`WindowsGraphicsCaptureRecorder` on Windows, `LinuxX11Recorder` on Linux Xorg/Xvfb,
-and `WaylandPortalRecorder` on Linux Wayland)
-for those surfaces. Linux support is
-best-effort: portal capture is exercised against GNOME/Mutter on Ubuntu 22.04 and 24.04;
-KDE / sway / wlroots may behave differently and are not validated.
+Embedded-host implications: a `ComposePanel` inside a host top-level window (including
+Jewel-hosted Compose in an IntelliJ tool window) should use **window capture + crop**, not
+region capture. Pass the host window as a `TitledWindow` and the panel's bounds relative to
+that window (AWT user space — same as window-identity `surfaceBoundsInWindow`) via
+`AutoRecorder.startWindow(..., cropInWindow = ..., scaleX = ..., scaleY = ...)`. macOS uses
+`SCStreamConfiguration.sourceRect`; Windows crops pre-encode in the WGC helper. The crop is
+**fixed at start** in v1 — surface move/resize mid-recording is not followed (a stderr
+warning is emitted). Linux X11/Wayland window+crop is not implemented yet; those platforms
+fail loudly rather than silently falling back. Use `startRegion(...)` only as an
+**explicit last resort** (occlusion-sensitive, fixed screen rectangle).
 
 ## `AutoRecorder` — pick a backend per call
 
@@ -185,6 +188,7 @@ import java.awt.Rectangle
 import java.nio.file.Path
 
 val recorder = AutoRecorder()
+// Full window (occlusion-immune):
 val handle = recorder.startWindow(
     window = composeWindow.asTitledWindow(), // any java.awt.Frame works
     output = Path.of("build/recordings/my-test.mp4"),

@@ -152,21 +152,23 @@ failure modes, and the section below
 
 ## Region capture
 
-- **Region capture, not window capture**. Region capture records a fixed `Rectangle` of
-  the virtual desktop — whatever pixels the screen happens to be showing inside that
-  region land in the file. The region is bound at `Recorder.start(...)` time and does
-  not follow a window. Use `ScreenCaptureKitRecorder` (macOS) or
-  `WindowsGraphicsCaptureRecorder` (Windows) when you have a top-level window to target — the next section covers what
-  the window-targeted backends do differently.
-- **Embedded `ComposePanel` surfaces without an adaptable top-level `Frame` need explicit
-  region capture.**
-  `AutoRecorder.startWindow(...)` uses window-targeted capture only and fails loudly when
-  no true window target is available. The `Frame.asTitledWindow()` adapter exposes the
-  title and bounds for any top-level `Frame`, including `ComposeWindow` and `JFrame`
-  hosts. A panel embedded inside an IntelliJ tool window or a `SwingPanel` host inside
-  Compose has no separate titled `Frame` to adapt — callers use
-  `AutoRecorder.startRegion(...)`. Practical
-  consequences:
+- **Region capture is the last resort, not the default for embedded surfaces.** Region capture
+  records a fixed `Rectangle` of the virtual desktop — whatever pixels the screen happens to
+  be showing inside that region land in the file. The region is bound at `Recorder.start(...)`
+  time and does not follow a window. Prefer window-targeted capture
+  (`ScreenCaptureKitRecorder` / `WindowsGraphicsCaptureRecorder`) when you have a top-level
+  window, and window+crop when only an embedded surface lacks its own native handle.
+- **Embedded `ComposePanel` surfaces: prefer host window + crop over region capture.**
+  When the panel lives inside a top-level host `Frame`/`JFrame` (IntelliJ tool window, Swing
+  host, etc.), use `AutoRecorder.startWindow(window, output, cropInWindow = surfaceBoundsInWindow,
+  scaleX = …, scaleY = …)`. That captures the host window's pixels and crops to the panel
+  (macOS `sourceRect`, Windows pre-encode crop). Benefits: occlusion-immune (overlapping
+  apps are not recorded) and the host window still moves with the OS compositor.
+  **v1 crop is fixed at start** — if the panel is moved/resized mid-recording, frames may
+  misalign until you stop and restart. A stderr warning is printed when crop is used.
+  Linux X11/Wayland do not implement window+crop yet (evaluated for parity; not wired).
+  `startRegion(...)` remains the **explicit last resort** when no host window handle exists.
+  Practical consequences of region fallback:
   - Anything that visually overlaps the panel — other windows, the menu bar, OS notifications, a
     floating popup that escapes the panel's bounds — appears in the recording.
   - The captured region is the panel's screen-space bounds at start. If the host window moves or

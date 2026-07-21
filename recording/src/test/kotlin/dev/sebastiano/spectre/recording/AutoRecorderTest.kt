@@ -252,6 +252,91 @@ class AutoRecorderTest {
     }
 
     @Test
+    fun `startWindow with crop routes to startCropped on macOS and not region`() {
+        val sck = StubWindowRecorder(name = "sck")
+        val ffmpeg = StubRegionRecorder()
+        val recorder = autoRecorder(sckRecorder = sck, isMacOs = { true })
+        val output = tempMov()
+        val crop = Rectangle(10, 40, 200, 150)
+        try {
+            recorder.startWindow(
+                window = StubTitledWindow(title = "Host"),
+                output = output,
+                cropInWindow = crop,
+                scaleX = 2.0,
+                scaleY = 2.0,
+            )
+            assertEquals(0, sck.startCallCount)
+            assertEquals(1, sck.startCroppedCallCount)
+            assertEquals(crop, sck.lastCrop)
+            assertEquals(2.0, sck.lastScaleX)
+            assertEquals(2.0, sck.lastScaleY)
+            assertFalse(ffmpeg.startCalled, "window+crop must not degrade to region")
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `startWindow with crop routes to startCropped on Windows`() {
+        val windowRecorder = StubWindowRecorder(name = "wgc")
+        val ffmpeg = StubRegionRecorder()
+        val recorder =
+            autoRecorder(
+                windowsWindowRecorder = windowRecorder,
+                isMacOs = { false },
+                isWindows = { true },
+            )
+        val output = tempMov()
+        val crop = Rectangle(8, 32, 640, 480)
+        try {
+            recorder.startWindow(
+                window = StubTitledWindow(title = "Host"),
+                output = output,
+                cropInWindow = crop,
+                scaleX = 1.25,
+                scaleY = 1.25,
+            )
+            assertEquals(1, windowRecorder.startCroppedCallCount)
+            assertEquals(crop, windowRecorder.lastCrop)
+            assertFalse(ffmpeg.startCalled)
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `startWindow with crop fails loudly on Linux instead of region fallback`() {
+        val ffmpeg = StubRegionRecorder()
+        val linuxWindow = StubWindowRecorder(name = "linux")
+        val recorder =
+            autoRecorder(
+                linuxWindowRecorder = linuxWindow,
+                isMacOs = { false },
+                isWindows = { false },
+                isLinux = { true },
+                isWayland = { false },
+            )
+        val output = tempMov()
+        try {
+            val error =
+                assertFailsWith<IllegalStateException> {
+                    recorder.startWindow(
+                        window = StubTitledWindow(title = "Host"),
+                        output = output,
+                        cropInWindow = Rectangle(0, 0, 100, 100),
+                    )
+                }
+            assertTrue(error.message.orEmpty().contains("not available on this Linux"))
+            assertEquals(0, linuxWindow.startCallCount)
+            assertEquals(0, linuxWindow.startCroppedCallCount)
+            assertFalse(ffmpeg.startCalled)
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
     fun `startWindow propagates missing SCK helper as loud window-capture failure`() {
         val sck = StubWindowRecorder(name = "sck", behavior = StubBehavior.HelperNotBundled)
         val ffmpeg = StubRegionRecorder()
@@ -474,6 +559,18 @@ private class StubWindowRecorder(
     var startCallCount: Int = 0
         private set
 
+    var startCroppedCallCount: Int = 0
+        private set
+
+    var lastCrop: Rectangle? = null
+        private set
+
+    var lastScaleX: Double? = null
+        private set
+
+    var lastScaleY: Double? = null
+        private set
+
     override fun start(
         window: TitledWindow,
         windowOwnerPid: Long,
@@ -488,6 +585,29 @@ private class StubWindowRecorder(
             StubBehavior.RuntimeFailure -> error("test [$name]: runtime failure")
             StubBehavior.ShouldNeverBeCalled ->
                 error("StubWindowRecorder[$name] was not supposed to be invoked in this test")
+        }
+    }
+
+    override fun startCropped(
+        window: TitledWindow,
+        cropInWindow: Rectangle,
+        windowOwnerPid: Long,
+        output: Path,
+        options: RecordingOptions,
+        scaleX: Double,
+        scaleY: Double,
+    ): RecordingHandle {
+        startCroppedCallCount += 1
+        lastCrop = Rectangle(cropInWindow)
+        lastScaleX = scaleX
+        lastScaleY = scaleY
+        return when (behavior) {
+            StubBehavior.Succeeds -> NoopHandle(output)
+            StubBehavior.HelperNotBundled ->
+                throw HelperNotBundledException("test [$name]: helper not bundled")
+            StubBehavior.RuntimeFailure -> error("test [$name]: runtime failure")
+            StubBehavior.ShouldNeverBeCalled ->
+                error("StubWindowRecorder[$name] startCropped was not supposed to be invoked")
         }
     }
 }

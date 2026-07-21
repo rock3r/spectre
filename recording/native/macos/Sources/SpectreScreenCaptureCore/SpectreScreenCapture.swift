@@ -23,6 +23,9 @@ import UniformTypeIdentifiers
 //                              title for the recording's lifetime so this is unique.
 //   --region <x,y,w,h>         Required for region source. Coordinates use the selected
 //                              display's top-left ScreenCaptureKit sourceRect space.
+//   --crop <x,y,w,h>           Optional for window source. Crop rect relative to the window's
+//                              top-left in the same point space as SCWindow.frame / AWT user
+//                              space. Fixed for the recording lifetime (issue #186).
 //   --display-index <int>      Optional for region source. Default 0; primary display first.
 //   --output <path>            Required for recording/screenshot. Destination .mov/.mp4/.png.
 //   --fps <int>                Optional. Default 30.
@@ -162,6 +165,8 @@ struct Arguments {
     let pid: pid_t?
     let titleContains: String?
     let region: CaptureRegion?
+    /// Optional window-relative crop (points). Only valid for window source.
+    let crop: CaptureRegion?
     let displayIndex: Int
     let output: URL
     let fps: Int
@@ -175,6 +180,7 @@ struct Arguments {
         var pid: pid_t?
         var titleContains: String?
         var region: CaptureRegion?
+        var crop: CaptureRegion?
         var displayIndex = 0
         var output: String?
         var fps = 30
@@ -221,7 +227,9 @@ struct Arguments {
             case "--title-contains":
                 titleContains = value
             case "--region":
-                region = try CaptureRegion.parse(value)
+                region = try CaptureRegion.parse(value, flag: "--region")
+            case "--crop":
+                crop = try CaptureRegion.parse(value, flag: "--crop")
             case "--display-index":
                 guard let parsed = Int(value), parsed >= 0 else {
                     throw CLIError(code: 2, message: "--display-index must be >= 0")
@@ -264,6 +272,7 @@ struct Arguments {
                 pid: pid,
                 titleContains: titleContains,
                 region: region,
+                crop: crop,
                 displayIndex: displayIndex,
                 output: dummy,
                 fps: fps,
@@ -284,6 +293,11 @@ struct Arguments {
             guard mode == .recording else {
                 throw CLIError(code: 2, message: "region source only supports --mode recording")
             }
+            if crop != nil {
+                throw CLIError(
+                    code: 2,
+                    message: "--crop is only valid with --source window (region uses --region)")
+            }
         }
         guard let output, !output.isEmpty else {
             throw CLIError(code: 2, message: "--output is required")
@@ -296,6 +310,7 @@ struct Arguments {
             pid: pid,
             titleContains: titleContains,
             region: region,
+            crop: crop,
             displayIndex: displayIndex,
             output: outputUrl,
             fps: fps,
@@ -345,18 +360,18 @@ struct CaptureRegion {
     let width: Int
     let height: Int
 
-    static func parse(_ value: String) throws -> CaptureRegion {
+    static func parse(_ value: String, flag: String = "--region") throws -> CaptureRegion {
         let parts = value.split(separator: ",", omittingEmptySubsequences: false)
         guard parts.count == 4, let x = Int(parts[0]), let y = Int(parts[1]),
             let width = Int(parts[2]), let height = Int(parts[3])
         else {
-            throw CLIError(code: 2, message: "--region must be x,y,width,height")
+            throw CLIError(code: 2, message: "\(flag) must be x,y,width,height")
         }
         guard x >= 0, y >= 0, width > 0, height > 0 else {
             throw CLIError(
                 code: 2,
                 message:
-                    "--region x/y must be non-negative and width/height must be positive")
+                    "\(flag) x/y must be non-negative and width/height must be positive")
         }
         return CaptureRegion(x: x, y: y, width: width, height: height)
     }
@@ -601,21 +616,22 @@ final class Recorder {
             // off the main screen. Falls back to NSScreen.main and finally a hardcoded 2.0 if
             // neither lookup succeeds — neither degrades worse than the previous behaviour.
             let scale = backingScaleFactor(for: targetWindow.frame)
-            width = max(2, Int((targetWindow.frame.width * scale).rounded()))
-            height = max(2, Int((targetWindow.frame.height * scale).rounded()))
 
-            // Window-attached filter — output is exactly the target window's pixels, sized to
-            // `config.width` × `config.height`, with no display-coordinate masking. Display-mode
-            // filters (`SCContentFilter(display:including:)`) deliver frames just as well but
-            // place the window inside the display's coordinate space, leaving large black areas
-            // outside the window in the output buffer.
-            //
-            // Earlier diagnostic runs suggested this filter dropped frames; that was actually the
-            // FrameOutput being released right after `startCapture` returned (we hadn't retained
-            // it as a member). With the strong reference in place SCStream delivers frames at the
-            // configured rate even for window-attached filters.
+            // Window-attached filter — output is the target window's pixels (optionally cropped
+            // via sourceRect for embedded Compose surfaces / handle-less panels, issue #186).
+            // Display-mode filters leave large black areas outside the window in the buffer.
             filter = SCContentFilter(desktopIndependentWindow: targetWindow)
-            sourceRect = nil
+            if let crop = args.crop {
+                // Crop is window-relative points (same space as SCWindow.frame / AWT user space).
+                // Fixed at start for v1 — mid-recording resize/move of the surface is not followed.
+                sourceRect = crop.sourceRect()
+                width = max(2, Int((CGFloat(crop.width) * scale).rounded()))
+                height = max(2, Int((CGFloat(crop.height) * scale).rounded()))
+            } else {
+                sourceRect = nil
+                width = max(2, Int((targetWindow.frame.width * scale).rounded()))
+                height = max(2, Int((targetWindow.frame.height * scale).rounded()))
+            }
         case .region(let display, let region):
             width = max(2, region.width)
             height = max(2, region.height)

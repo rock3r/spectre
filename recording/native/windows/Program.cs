@@ -167,7 +167,7 @@ internal static class Program
 
     private static async Task<int> RecordWindowAsync(Options options, IntPtr hwnd)
     {
-        using var frameSource = WgcFrameSource.StartWindow(hwnd, options.CaptureCursor);
+        using var frameSource = WgcFrameSource.StartWindow(hwnd, options.CaptureCursor, options.Crop);
         if (frameSource.Width <= 0 || frameSource.Height <= 0)
         {
             throw new InvalidOperationException(
@@ -477,13 +477,40 @@ internal static class Program
 
         public int Height { get; }
 
-        public static WgcFrameSource StartWindow(IntPtr hwnd, bool captureCursor)
+        public static WgcFrameSource StartWindow(IntPtr hwnd, bool captureCursor, CaptureRect? cropInWindow = null)
         {
             var canvasDevice = new CanvasDevice();
             var item = GraphicsCaptureItemInterop.CreateForWindow(hwnd);
-            var crop = new CaptureRect(0, 0, item.Size.Width, item.Size.Height);
-            var outputSize = (Even(item.Size.Width), Even(item.Size.Height));
+            var full = new CaptureRect(0, 0, item.Size.Width, item.Size.Height);
+            var crop = cropInWindow is null ? full : ClampCropToItem(cropInWindow, full);
+            var outputSize = (Even(crop.Width), Even(crop.Height));
             return Start(canvasDevice, item, captureCursor, crop, outputSize);
+        }
+
+        private static CaptureRect ClampCropToItem(CaptureRect crop, CaptureRect itemBounds)
+        {
+            if (crop.X < 0 || crop.Y < 0 || crop.Width <= 0 || crop.Height <= 0)
+            {
+                throw new ArgumentException(
+                    $"Window crop must be non-negative with positive size; got {crop.X},{crop.Y} {crop.Width}x{crop.Height}.");
+            }
+
+            if (crop.Right > itemBounds.Width || crop.Bottom > itemBounds.Height)
+            {
+                // Soft clamp rather than fail hard: HiDPI rounding can overshoot by a pixel.
+                var width = Math.Min(crop.Width, itemBounds.Width - crop.X);
+                var height = Math.Min(crop.Height, itemBounds.Height - crop.Y);
+                if (width <= 0 || height <= 0)
+                {
+                    throw new ArgumentException(
+                        $"Window crop {crop.X},{crop.Y} {crop.Width}x{crop.Height} is outside the capture item " +
+                        $"{itemBounds.Width}x{itemBounds.Height}.");
+                }
+
+                return new CaptureRect(crop.X, crop.Y, width, height);
+            }
+
+            return crop;
         }
 
         public static WgcFrameSource StartRegion(CaptureRect region, bool captureCursor)
