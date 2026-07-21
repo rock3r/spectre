@@ -14,12 +14,16 @@ internal object CaptureLifecycle {
 
     fun ledger(ledgerFile: Path = defaultLedgerFile()): CaptureLedger = CaptureLedger(ledgerFile)
 
-    fun allocateDirectory(outDir: String?, clock: Clock = Clock.systemUTC()): Path {
+    fun allocateDirectory(
+        outDir: String?,
+        clock: Clock = Clock.systemUTC(),
+        defaultRoot: Path = defaultCapturesRoot(),
+    ): Path {
         val root =
             if (outDir != null) {
                 Path.of(outDir)
             } else {
-                defaultCapturesRoot()
+                defaultRoot
             }
         return CaptureDirectoryAllocator.allocate(root, clock)
     }
