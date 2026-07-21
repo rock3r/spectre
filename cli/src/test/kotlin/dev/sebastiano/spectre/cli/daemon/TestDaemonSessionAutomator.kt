@@ -58,5 +58,7 @@ internal class TestDaemonSessionAutomator(
 
     override fun recordingStatus(): RecordingStatus = recordingStatusResult()
 
+    override fun finalizeRecording(remainingLiveSessionIds: Set<String>): Unit = Unit
+
     override fun close(): Unit = closeAction()
 }

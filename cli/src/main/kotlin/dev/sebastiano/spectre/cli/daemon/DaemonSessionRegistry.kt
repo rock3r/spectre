@@ -162,7 +162,11 @@ internal constructor(
                     code = DaemonErrorCode.SessionNotFound,
                     message = "session not found: $sessionId",
                 )
-        sessionsByPid.remove(removed.key)?.automator?.close()
+        val remainingLive = liveSessionIds() - sessionId
+        val automator = sessionsByPid.remove(removed.key)?.automator
+        // Finalize recording while other sessions are still known live (#185 review).
+        automator?.finalizeRecording(remainingLive)
+        automator?.close()
         return CaptureSessionReport.forDetach(sessionId)
     }
 

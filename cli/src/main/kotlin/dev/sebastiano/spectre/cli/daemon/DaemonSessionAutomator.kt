@@ -38,6 +38,12 @@ internal interface DaemonSessionAutomator : AutoCloseable {
 
     /** Active recording path, or null when idle. */
     fun recordingStatus(): RecordingStatus
+
+    /**
+     * Finalize any active recording before the session is dropped. [remainingLiveSessionIds] must
+     * be every other still-attached session so retention does not delete their capture dirs.
+     */
+    fun finalizeRecording(remainingLiveSessionIds: Set<String>)
 }
 
 @OptIn(ExperimentalSpectreAgentApi::class)
@@ -76,10 +82,14 @@ internal class AttachedDaemonSession(
 
     override fun recordingStatus(): RecordingStatus = recording.status()
 
+    override fun finalizeRecording(remainingLiveSessionIds: Set<String>) {
+        recording.finalizeIfActive(remainingLiveSessionIds)
+    }
+
     override fun close() {
         try {
-            // Finalize recording on detach even if the target JVM is already dead (#185).
-            // liveSessionIds is empty here because this session is leaving the table.
+            // Prefer finalizeRecording from the registry with remaining live IDs. Fallback if
+            // close is called without that (e.g. daemon shutdown of last session).
             recording.finalizeIfActive(liveSessionIds = emptySet())
         } finally {
             delegate.close()

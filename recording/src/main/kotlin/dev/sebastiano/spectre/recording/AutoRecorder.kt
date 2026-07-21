@@ -228,20 +228,13 @@ internal constructor(
             }
         }
         if (isLinux() || isWayland()) {
-            // Linux window match still needs a titled window for ximagesrc/portal; crop
-            // unsupported.
-            if (cropInWindow != null) {
-                error(
-                    "Window capture + crop is not available on this Linux session. " +
-                        "Use startRegion(...) only as an explicit last resort."
-                )
-            }
-            val remoteWindow =
-                object : TitledWindow {
-                    override var title: String? = title
-                    override val bounds: Rectangle = Rectangle(0, 0, 1, 1)
-                }
-            return startWindow(remoteWindow, output, options, windowOwnerPid)
+            // Remote attach path cannot invent portal/X11 crop geometry. Use startWindow with a
+            // real local TitledWindow, or startRegion with real screen bounds.
+            error(
+                "startWindowByTitle is not supported on Linux/Wayland for out-of-process " +
+                    "targets (no remote window bounds/handle path). Use startRegion with " +
+                    "explicit screen bounds, or run recording in-process with startWindow."
+            )
         }
         throw unsupportedWindowCapture()
     }
