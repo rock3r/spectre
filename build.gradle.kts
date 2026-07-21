@@ -46,8 +46,11 @@ configure<DetektExtension> {
 }
 
 // Homebrew/Scoop package-manifest contracts + install semantics (#283/#284).
-// Cheap (python + ruby), no JDK; keep on the default check graph so formula
-// regressions fail PRs the same way as unit tests.
+// Cheap (python + ruby + bash). Wired into check on Unix only: Windows CI has no
+// bash/WSL, and Homebrew install semantics are not a Windows concern (Linux CI
+// already runs ./gradlew check with bash).
+val hostIsWindows = System.getProperty("os.name").orEmpty().startsWith("Windows")
+
 val verifyCliPackageManifests by
     tasks.registering(Exec::class) {
         description =
@@ -56,6 +59,7 @@ val verifyCliPackageManifests by
         group = "verification"
         workingDir = rootProject.layout.projectDirectory.asFile
         commandLine("bash", ".github/scripts/test-generate-cli-package-manifests.sh")
+        onlyIf { !hostIsWindows }
         inputs
             .files(
                 ".github/scripts/generate-cli-package-manifests.py",
@@ -74,6 +78,7 @@ val verifyReleaseVersionScript by
         group = "verification"
         workingDir = rootProject.layout.projectDirectory.asFile
         commandLine("bash", ".github/scripts/test-derive-release-version.sh")
+        onlyIf { !hostIsWindows }
         inputs
             .files(
                 ".github/scripts/derive-release-version.sh",
