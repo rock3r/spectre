@@ -61,9 +61,13 @@ internal sealed interface AgentRequest {
      * to select a specific surface from `windows`. Full-desktop capture is opt-in only via
      * [fullscreen]; the server must not silently fall back to the full desktop when window capture
      * fails (#289).
+     *
+     * Serial name is `screenshot_v2` (not the pre-#289 payload-free `screenshot`) so an older
+     * agent-runtime JAR that still maps `screenshot` → full-desktop `screenshot(null)` rejects this
+     * request instead of ignoring new fields and silently grabbing the whole desktop.
      */
     @Serializable
-    @SerialName("screenshot")
+    @SerialName("screenshot_v2")
     data class Screenshot(
         val windowIndex: Int? = null,
         val surfaceId: String? = null,

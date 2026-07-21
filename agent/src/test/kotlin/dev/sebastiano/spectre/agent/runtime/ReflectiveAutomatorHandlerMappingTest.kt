@@ -233,10 +233,10 @@ class ReflectiveAutomatorHandlerMappingTest {
     }
 
     @Test
-    fun `Screenshot op defaults to window index 0 not full desktop`() {
-        var receivedWindowIndex: Int? = null
+    fun `Screenshot op defaults to window surface bounds not full desktop`() {
         var receivedRegion: Any? = "<not invoked>"
         val image = java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+        val surfaceBounds = Rectangle(10, 20, 800, 600)
         val automator =
             FakeAutomator(
                 windowsValue =
@@ -244,14 +244,11 @@ class ReflectiveAutomatorHandlerMappingTest {
                         FakeTrackedWindow(
                             surfaceIdValue = "window:0",
                             isPopupValue = false,
-                            composeSurfaceBoundsOnScreenValue = Rectangle(10, 20, 800, 600),
+                            composeSurfaceBoundsOnScreenValue = surfaceBounds,
                             windowValue = null,
                         )
                     ),
-                screenshotWindowImpl = { windowIndex ->
-                    receivedWindowIndex = windowIndex
-                    image
-                },
+                screenshotWindowImpl = { error("must not call screenshot(windowIndex)") },
                 screenshotImpl = { region ->
                     receivedRegion = region
                     image
@@ -263,11 +260,10 @@ class ReflectiveAutomatorHandlerMappingTest {
         check(response is AgentResponse.Screenshot) {
             "expected Screenshot, got ${response::class.simpleName}: $response"
         }
-        assertEquals(0, receivedWindowIndex, "default screenshot must target window index 0")
         assertEquals(
-            "<not invoked>",
+            surfaceBounds,
             receivedRegion,
-            "default screenshot must not call region/full-desktop capture",
+            "default screenshot must crop to window surface bounds, not full desktop",
         )
 
         val decoded = ImageIO.read(response.pngBytes.inputStream())
@@ -300,9 +296,10 @@ class ReflectiveAutomatorHandlerMappingTest {
     }
 
     @Test
-    fun `Screenshot op with explicit window index targets that window`() {
-        var receivedWindowIndex: Int? = null
+    fun `Screenshot op with explicit window index captures that surface bounds`() {
+        var receivedRegion: Any? = null
         val image = java.awt.image.BufferedImage(3, 3, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+        val targetBounds = Rectangle(5, 6, 200, 200)
         val automator =
             FakeAutomator(
                 windowsValue =
@@ -316,12 +313,12 @@ class ReflectiveAutomatorHandlerMappingTest {
                         FakeTrackedWindow(
                             surfaceIdValue = "window:1",
                             isPopupValue = false,
-                            composeSurfaceBoundsOnScreenValue = Rectangle(0, 0, 200, 200),
+                            composeSurfaceBoundsOnScreenValue = targetBounds,
                             windowValue = null,
                         ),
                     ),
-                screenshotWindowImpl = { windowIndex ->
-                    receivedWindowIndex = windowIndex
+                screenshotImpl = { region ->
+                    receivedRegion = region
                     image
                 },
             )
@@ -329,13 +326,14 @@ class ReflectiveAutomatorHandlerMappingTest {
 
         val response = handler.handle(AgentRequest.Screenshot(windowIndex = 1))
         check(response is AgentResponse.Screenshot)
-        assertEquals(1, receivedWindowIndex)
+        assertEquals(targetBounds, receivedRegion)
     }
 
     @Test
-    fun `Screenshot op with surface id resolves to matching window index`() {
-        var receivedWindowIndex: Int? = null
+    fun `Screenshot op with surface id captures matching surface bounds without reindex race`() {
+        var receivedRegion: Any? = null
         val image = java.awt.image.BufferedImage(3, 3, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+        val targetBounds = Rectangle(9, 10, 200, 200)
         val automator =
             FakeAutomator(
                 windowsValue =
@@ -349,12 +347,13 @@ class ReflectiveAutomatorHandlerMappingTest {
                         FakeTrackedWindow(
                             surfaceIdValue = "window:1",
                             isPopupValue = false,
-                            composeSurfaceBoundsOnScreenValue = Rectangle(0, 0, 200, 200),
+                            composeSurfaceBoundsOnScreenValue = targetBounds,
                             windowValue = null,
                         ),
                     ),
-                screenshotWindowImpl = { windowIndex ->
-                    receivedWindowIndex = windowIndex
+                screenshotWindowImpl = { error("must not re-resolve via screenshot(windowIndex)") },
+                screenshotImpl = { region ->
+                    receivedRegion = region
                     image
                 },
             )
@@ -362,7 +361,7 @@ class ReflectiveAutomatorHandlerMappingTest {
 
         val response = handler.handle(AgentRequest.Screenshot(surfaceId = "window:1"))
         check(response is AgentResponse.Screenshot)
-        assertEquals(1, receivedWindowIndex)
+        assertEquals(targetBounds, receivedRegion)
     }
 
     @Test

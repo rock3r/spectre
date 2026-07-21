@@ -197,33 +197,36 @@ internal class ReflectiveAutomatorHandler(
                     return AgentResponse.Error(it.message ?: "Invalid screenshot request")
                 }
 
+        val regionScreenshotMethod =
+            automatorClass.methods.firstOrNull {
+                it.name == "screenshot" &&
+                    it.parameterTypes.size == 1 &&
+                    it.parameterTypes[0].name == AWT_RECTANGLE_FQN
+            }
+                ?: return AgentResponse.Error(
+                    "ComposeAutomator does not expose screenshot(Rectangle?) on this build"
+                )
+
         val image =
             when (target) {
                 is ScreenshotTarget.Fullscreen -> {
-                    // `ComposeAutomator.screenshot(region: Rectangle? = null)` — null = full
-                    // virtual desktop. Explicit opt-in only (#289).
-                    val screenshotMethod =
-                        automatorClass.methods.firstOrNull {
-                            it.name == "screenshot" &&
-                                it.parameterTypes.size == 1 &&
-                                it.parameterTypes[0].name == AWT_RECTANGLE_FQN
-                        }
-                            ?: return AgentResponse.Error(
-                                "ComposeAutomator does not expose screenshot(Rectangle?) on this build"
-                            )
-                    screenshotMethod.invoke(automator, null) as BufferedImage
+                    // null region = full virtual desktop. Explicit opt-in only (#289).
+                    regionScreenshotMethod.invoke(automator, null) as BufferedImage
                 }
                 is ScreenshotTarget.Window -> {
-                    val screenshotMethod =
-                        automatorClass.methods.firstOrNull {
-                            it.name == "screenshot" &&
-                                it.parameterTypes.size == 1 &&
-                                it.parameterTypes[0] == Int::class.javaPrimitiveType
-                        }
+                    // Capture bounds from the window list we just resolved against. Do not call
+                    // screenshot(windowIndex): that path refreshes windows again and can bind a
+                    // different surface at the same index after a popup open/close (#289 P2).
+                    val tracked =
+                        windows.getOrNull(target.windowIndex)
                             ?: return AgentResponse.Error(
-                                "ComposeAutomator does not expose screenshot(windowIndex: Int) on this build"
+                                "No tracked window at index ${target.windowIndex} (have ${windows.size})"
                             )
-                    screenshotMethod.invoke(automator, target.windowIndex) as BufferedImage
+                    val bounds =
+                        tracked.javaClass
+                            .getMethod("getComposeSurfaceBoundsOnScreen")
+                            .invoke(tracked)
+                    regionScreenshotMethod.invoke(automator, bounds) as BufferedImage
                 }
             }
         return AgentResponse.Screenshot(imageToPng(image))

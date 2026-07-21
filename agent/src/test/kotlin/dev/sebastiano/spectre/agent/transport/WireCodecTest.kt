@@ -5,6 +5,7 @@ package dev.sebastiano.spectre.agent.transport
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * Round-trip tests for [WireCodec]. Each variant of [AgentRequest] / [AgentResponse] gets a
@@ -60,6 +61,18 @@ class WireCodecTest {
     fun `Screenshot request round-trips with defaults`() {
         val encoded = WireCodec.encode(AgentRequest.Screenshot())
         assertEquals(AgentRequest.Screenshot(), WireCodec.decodeRequest(encoded))
+    }
+
+    @Test
+    fun `Screenshot request uses screenshot_v2 discriminator so pre-289 agents cannot silently fullscreen`() {
+        // Old agent runtimes mapped SerialName("screenshot") to a payload-free object that always
+        // called screenshot(null). The new request must not share that discriminator.
+        val encoded = WireCodec.encode(AgentRequest.Screenshot())
+        val asText = encoded.toString(Charsets.ISO_8859_1)
+        assertTrue(
+            asText.contains("screenshot_v2"),
+            "encoded request must use screenshot_v2 discriminator",
+        )
     }
 
     @Test
