@@ -86,20 +86,20 @@ pub fn open_screen_cast_session(
     cursor_mode: CursorMode,
     timeout: Duration,
 ) -> Result<ScreenCastSession> {
-    let token_key = source_types_token_key(source_types);
-    let stored = load_restore_token(token_key).ok().flatten();
+    let token_key = restore_token_key(source_types, cursor_mode);
+    let stored = load_restore_token(&token_key).ok().flatten();
     match open_screen_cast_session_inner(
         source_types,
         cursor_mode,
         timeout,
         stored.as_deref(),
-        token_key,
+        &token_key,
     ) {
         Ok(session) => Ok(session),
         Err(first) if stored.is_some() && is_restore_token_rejection(&first) => {
             // Only clear when SelectSources/Start likely rejected the token — not on D-Bus
             // or CreateSession failures that leave a still-valid grant (#188 review).
-            let _ = clear_restore_token(token_key);
+            let _ = clear_restore_token(&token_key);
             eprintln!(
                 "spectre-wayland-helper: stored ScreenCast restore_token was rejected \
                  ({first:#}). Cleared token and retrying interactively — a human must \
@@ -107,7 +107,7 @@ pub fn open_screen_cast_session(
                  token without a prompt (GNOME/mutter validated; other compositors \
                  best-effort)."
             );
-            open_screen_cast_session_inner(source_types, cursor_mode, timeout, None, token_key)
+            open_screen_cast_session_inner(source_types, cursor_mode, timeout, None, &token_key)
                 .with_context(|| {
                     format!(
                         "interactive ScreenCast retry after invalid restore_token also failed \
@@ -121,19 +121,26 @@ pub fn open_screen_cast_session(
 
 fn is_restore_token_rejection(err: &anyhow::Error) -> bool {
     let msg = format!("{err:#}");
-    msg.contains("SelectSources rejected")
-        || msg.contains("Start rejected")
-        || msg.contains("restore_token")
+    // Only the portal steps that consume restore_token — not CreateSession / OpenPipeWireRemote.
+    (msg.contains("SelectSources rejected") || msg.contains("Start rejected"))
+        && (msg.contains("restore_token")
+            || msg.contains("stored restore_token")
+            || msg.contains("no longer valid"))
 }
 
-fn source_types_token_key(source_types: &[SourceType]) -> &'static str {
+fn restore_token_key(source_types: &[SourceType], cursor_mode: CursorMode) -> String {
     let mask = source_types_to_bitmask(source_types);
-    // Keep monitor and window grants separate so mixed recorder use does not clobber tokens.
-    if mask & SOURCE_TYPE_WINDOW != 0 {
+    let source = if mask & SOURCE_TYPE_WINDOW != 0 {
         "window"
     } else {
         "monitor"
-    }
+    };
+    let cursor = match cursor_mode {
+        CursorMode::Hidden => "hidden",
+        CursorMode::Embedded => "embedded",
+        CursorMode::Metadata => "metadata",
+    };
+    format!("{source}-{cursor}")
 }
 
 fn open_screen_cast_session_inner(
@@ -141,7 +148,7 @@ fn open_screen_cast_session_inner(
     cursor_mode: CursorMode,
     timeout: Duration,
     restore_token: Option<&str>,
-    token_key: &str,
+    token_key: &str, // source+cursor key for persist path
 ) -> Result<ScreenCastSession> {
     let conn = Connection::new_session().context("opening session bus")?;
     let sender = sender_token(&conn).context("computing sender token")?;
@@ -728,18 +735,18 @@ mod restore_token_tests {
         std::env::set_var("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR", &dir);
         std::env::remove_var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH");
 
-        assert!(load_restore_token("monitor").unwrap().is_none());
-        save_restore_token("monitor", "token-abc").unwrap();
+        assert!(load_restore_token("monitor-embedded").unwrap().is_none());
+        save_restore_token("monitor-embedded", "token-abc").unwrap();
         assert_eq!(
-            load_restore_token("monitor").unwrap().as_deref(),
+            load_restore_token("monitor-embedded").unwrap().as_deref(),
             Some("token-abc")
         );
-        let meta = fs::metadata(restore_token_file("monitor")).unwrap();
+        let meta = fs::metadata(restore_token_file("monitor-embedded")).unwrap();
         assert_eq!(meta.permissions().mode() & 0o777, 0o600);
         // Window key is independent of monitor.
-        assert!(load_restore_token("window").unwrap().is_none());
-        clear_restore_token("monitor").unwrap();
-        assert!(load_restore_token("monitor").unwrap().is_none());
+        assert!(load_restore_token("window-hidden").unwrap().is_none());
+        clear_restore_token("monitor-embedded").unwrap();
+        assert!(load_restore_token("monitor-embedded").unwrap().is_none());
 
         std::env::remove_var("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR");
         let _ = fs::remove_dir_all(&dir);
@@ -751,7 +758,12 @@ mod restore_token_tests {
         let file = std::env::temp_dir().join(format!("spectre-token-file-{}", std::process::id()));
         let _ = fs::remove_file(&file);
         std::env::set_var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH", &file);
-        save_restore_token("monitor", "xyz").unwrap();
-        assert_eq!(load_restore_token("monitor").unwrap().as_deref(), Some("xyz"));
-        clear_restore_token("monitor").unwrap();
-        std::env::remove_var("SPECTRE_WAYLAND_R
+        save_restore_token("monitor-embedded", "xyz").unwrap();
+        assert_eq!(
+            load_restore_token("monitor-embedded").unwrap().as_deref(),
+            Some("xyz")
+        );
+        clear_restore_token("monitor-embedded").unwrap();
+        std::env::remove_var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH");
+    }
+}
