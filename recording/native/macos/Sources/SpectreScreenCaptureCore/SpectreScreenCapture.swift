@@ -11,8 +11,11 @@ import UniformTypeIdentifiers
 // MARK: - CLI contract
 //
 // spectre-screencapture
-//   --mode <recording|screenshot>  Optional. Default recording.
-//   --source <window|region>   Optional. Default window.
+//   --mode <recording|screenshot|preflight|request>
+//                              Optional. Default recording.
+//                              preflight: CGPreflightScreenCaptureAccess only (never prompts).
+//                              request:   CGRequestScreenCaptureAccess (human-invoked only).
+//   --source <window|region>   Optional. Default window. Ignored for preflight/request.
 //   --pid <jvm pid>            Required for window source. Filters CGWindowList by owner PID so we never
 //                              capture another process's window matching the discriminator.
 //   --title-contains <suffix>  Required for window source. Substring match on the target window's kCGWindowName.
@@ -21,13 +24,13 @@ import UniformTypeIdentifiers
 //   --region <x,y,w,h>         Required for region source. Coordinates use the selected
 //                              display's top-left ScreenCaptureKit sourceRect space.
 //   --display-index <int>      Optional for region source. Default 0; primary display first.
-//   --output <path>            Required. Destination .mov/.mp4 file. Overwritten if it exists.
+//   --output <path>            Required for recording/screenshot. Destination .mov/.mp4/.png.
 //   --fps <int>                Optional. Default 30.
 //   --cursor <true|false>      Optional. Default true.
 //   --file-type <mov|mp4>      Optional. AVAssetWriter container type. Defaults from output path.
 //   --discovery-timeout-ms <int>  Optional. Default 2000.
 //
-// Lifecycle:
+// Lifecycle (recording/screenshot):
 //   - On start, scans CGWindowListCopyWindowInfo until a window matching (pid, title-contains)
 //     appears or the discovery timeout elapses.
 //   - Streams frames via SCStream into AVAssetWriter (H.264) until either:
@@ -36,20 +39,36 @@ import UniformTypeIdentifiers
 //       * SIGTERM
 //   - Always finalises the writer before exit so the requested movie file is playable.
 //
+// Preflight / request:
+//   - Emit one JSON object on stdout (see ScreenCaptureAccessResult).
+//   - Never start ScreenCaptureKit capture.
+//
 // Exit codes:
-//   0  clean shutdown, file finalised
+//   0  clean shutdown / access granted (preflight/request)
 //   2  bad arguments
 //   3  window not found within the discovery timeout
-//   4  permission denied (Screen Recording TCC)
+//   4  permission denied mid-capture (Screen Recording TCC during SCStream)
 //   5  capture pipeline error after start
+//   6  preflight/request: Screen Recording not granted (structured JSON on stdout)
 
 public enum SpectreScreenCaptureCommand {
     public static func main(_ argv: [String] = CommandLine.arguments) async -> Never {
         do {
             let args = try Arguments.parse(argv)
-            let recorder = Recorder(arguments: args)
-            try await recorder.run()
-            exit(0)
+            switch args.mode {
+            case .preflight:
+                let result = ScreenCaptureAccess.preflight(binaryPath: argv.first ?? "spectre-screencapture")
+                FileHandle.standardOutput.write(Data(result.jsonLine.utf8))
+                exit(result.granted ? 0 : 6)
+            case .request:
+                let result = ScreenCaptureAccess.request(binaryPath: argv.first ?? "spectre-screencapture")
+                FileHandle.standardOutput.write(Data(result.jsonLine.utf8))
+                exit(result.granted ? 0 : 6)
+            case .recording, .screenshot:
+                let recorder = Recorder(arguments: args)
+                try await recorder.run()
+                exit(0)
+            }
         } catch let error as CLIError {
             FileHandle.standardError.write(Data("spectre-screencapture: \(error.message)\n".utf8))
             exit(error.code)
@@ -58,6 +77,77 @@ public enum SpectreScreenCaptureCommand {
                 Data("spectre-screencapture: unexpected error: \(error)\n".utf8))
             exit(5)
         }
+    }
+}
+
+/// Structured TCC preflight / request result. One JSON object per line on stdout.
+struct ScreenCaptureAccessResult {
+    let granted: Bool
+    let binaryPath: String
+    let settingsPath: String
+    let deepLink: String
+    let guidance: String
+
+    var jsonLine: String {
+        // Manual JSON — keep the helper free of extra dependencies.
+        let esc: (String) -> String = { raw in
+            raw
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+                .replacingOccurrences(of: "\n", with: "\\n")
+        }
+        return
+            "{"
+            + "\"granted\":\(granted ? "true" : "false"),"
+            + "\"api\":\"CGPreflightScreenCaptureAccess\","
+            + "\"binary\":\"\(esc(binaryPath))\","
+            + "\"settings_path\":\"\(esc(settingsPath))\","
+            + "\"deep_link\":\"\(esc(deepLink))\","
+            + "\"guidance\":\"\(esc(guidance))\""
+            + "}\n"
+    }
+}
+
+enum ScreenCaptureAccess {
+    static let settingsPath =
+        "System Settings → Privacy & Security → Screen & System Audio Recording"
+    static let deepLink =
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+
+    /// Never prompts. Uses CGPreflightScreenCaptureAccess only.
+    static func preflight(binaryPath: String) -> ScreenCaptureAccessResult {
+        let granted = CGPreflightScreenCaptureAccess()
+        return result(granted: granted, binaryPath: binaryPath)
+    }
+
+    /// May prompt / create a System Settings row. Human-invoked only.
+    static func request(binaryPath: String) -> ScreenCaptureAccessResult {
+        _ = CGRequestScreenCaptureAccess()
+        // Re-check; the user may still deny.
+        let granted = CGPreflightScreenCaptureAccess()
+        return result(granted: granted, binaryPath: binaryPath)
+    }
+
+    private static func result(granted: Bool, binaryPath: String) -> ScreenCaptureAccessResult {
+        let guidance: String
+        if granted {
+            guidance =
+                "Screen Recording is granted for \(binaryPath). Capture may proceed."
+        } else {
+            guidance =
+                "Screen Recording is NOT granted for \(binaryPath). "
+                + "An agent cannot click the TCC prompt (SecurityAgent is not automatable). "
+                + "A human must open \(settingsPath) (deep link: \(deepLink)), enable "
+                + "\(binaryPath) (or the host JVM that launches it), then restart that process. "
+                + "Run `spectre permissions request` only when a human is present to approve."
+        }
+        return ScreenCaptureAccessResult(
+            granted: granted,
+            binaryPath: binaryPath,
+            settingsPath: settingsPath,
+            deepLink: deepLink,
+            guidance: guidance
+        )
     }
 }
 
@@ -95,6 +185,17 @@ struct Arguments {
         var i = 1
         while i < argv.count {
             let key = argv[i]
+            // Boolean flag form for preflight (issue #187): --preflight with no value.
+            if key == "--preflight" {
+                mode = .preflight
+                i += 1
+                continue
+            }
+            if key == "--request-access" {
+                mode = .request
+                i += 1
+                continue
+            }
             guard i + 1 < argv.count else {
                 throw CLIError(code: 2, message: "missing value for \(key)")
             }
@@ -102,7 +203,9 @@ struct Arguments {
             switch key {
             case "--mode":
                 guard let parsed = CaptureMode(rawValue: value) else {
-                    throw CLIError(code: 2, message: "--mode must be recording or screenshot")
+                    throw CLIError(
+                        code: 2,
+                        message: "--mode must be recording, screenshot, preflight, or request")
                 }
                 mode = parsed
             case "--source":
@@ -152,6 +255,24 @@ struct Arguments {
             i += 2
         }
 
+        if mode == .preflight || mode == .request {
+            // Dummy output — preflight/request never open the file.
+            let dummy = URL(fileURLWithPath: "/dev/null")
+            return Arguments(
+                mode: mode,
+                source: source,
+                pid: pid,
+                titleContains: titleContains,
+                region: region,
+                displayIndex: displayIndex,
+                output: dummy,
+                fps: fps,
+                captureCursor: cursor,
+                fileType: fileType ?? .mp4,
+                discoveryTimeoutMs: discoveryTimeoutMs
+            )
+        }
+
         switch source {
         case .window:
             guard pid != nil else { throw CLIError(code: 2, message: "--pid is required") }
@@ -188,6 +309,8 @@ struct Arguments {
 enum CaptureMode: String {
     case recording
     case screenshot
+    case preflight
+    case request
 }
 
 enum CaptureSource: String {

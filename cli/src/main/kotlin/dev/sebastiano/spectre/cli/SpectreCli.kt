@@ -136,6 +136,7 @@ private class RootCommand(
             CaptureCommand(request, output),
             CapturesCommand(request, output),
             RecordCommand(request, output),
+            PermissionsCommand(output),
             PsCommand(request, output),
             DaemonCommand(request, shutdownRequest, output),
             McpCommand(request),
@@ -817,7 +818,7 @@ private const val EXIT_DAEMON_FAILURE: Int = 5
 private const val JSON_VERSION: Int = 1
 private val CLI_JSON: Json = Json { encodeDefaults = true }
 
-private class CliOutputException(cause: IOException) : IOException(cause.message, cause)
+internal class CliOutputException(cause: IOException) : IOException(cause.message, cause)
 
 private class DaemonCommandException(response: DaemonResponse.Error) :
     IOException(response.message) {

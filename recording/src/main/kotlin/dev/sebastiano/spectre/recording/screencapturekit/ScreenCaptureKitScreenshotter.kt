@@ -11,12 +11,17 @@ public class ScreenCaptureKitScreenshotter
 internal constructor(
     private val helperExtractor: HelperBinaryExtractor,
     private val processFactory: ScreenCaptureKitRecorder.ProcessFactory,
+    private val requireScreenCaptureAccess: () -> Unit = {
+        MacOsScreenCaptureAccess.requireGranted(helperExtractor)
+    },
 ) : WindowScreenshotter {
 
     public constructor() :
         this(HelperBinaryExtractor(), ScreenCaptureKitRecorder.SystemProcessFactory)
 
     override fun captureWindow(window: TitledWindow, windowOwnerPid: Long): BufferedImage {
+        // Fail fast before SCStream so agents never hang on an implicit TCC prompt (#187).
+        requireScreenCaptureAccess()
         val helperPath = helperExtractor.extract()
         val output = Files.createTempFile("spectre-sck-window-screenshot-", ".png")
         val discriminator = TitleDiscriminator(window)

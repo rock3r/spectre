@@ -38,6 +38,9 @@ public class ScreenCaptureKitRecorder
 internal constructor(
     private val helperExtractor: HelperBinaryExtractor,
     private val processFactory: ProcessFactory,
+    private val requireScreenCaptureAccess: () -> Unit = {
+        MacOsScreenCaptureAccess.requireGranted()
+    },
 ) : WindowRecorder, Recorder {
 
     public constructor() : this(HelperBinaryExtractor(), SystemProcessFactory)
@@ -123,6 +126,8 @@ internal constructor(
         argv: List<String>,
         cleanup: () -> Unit,
     ): RecordingHandle {
+        // Fail fast before any SCStream work that could pop a TCC prompt mid-run (#187).
+        requireScreenCaptureAccess()
         val process = processFactory.start(argv)
 
         // Wait for the helper to either:

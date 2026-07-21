@@ -7,6 +7,8 @@ import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import dev.sebastiano.spectre.recording.AutoRecorder
 import dev.sebastiano.spectre.recording.RecordingHandle
+import dev.sebastiano.spectre.recording.screencapturekit.MacOsScreenCaptureAccess
+import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureAccessDeniedException
 import java.awt.Rectangle
 import java.io.IOException
 import java.nio.file.Path
@@ -55,6 +57,12 @@ internal class AttachedDaemonSession(private val delegate: AttachedAutomator) :
     override fun startRecording(outputPath: String): String {
         if (recording != null)
             throw IOException("a recording is already in progress for this session")
+        // Fail fast on macOS before any capture path that could pop a TCC prompt (#187).
+        try {
+            MacOsScreenCaptureAccess.requireGranted()
+        } catch (exception: ScreenCaptureAccessDeniedException) {
+            throw IOException(exception.message ?: "Screen Recording not granted", exception)
+        }
         val window =
             windows().firstOrNull { !it.isPopup }
                 ?: throw IOException("the target has no non-popup window to record")
@@ -72,6 +80,8 @@ internal class AttachedDaemonSession(private val delegate: AttachedAutomator) :
                         destination,
                     )
             outputPath
+        } catch (exception: ScreenCaptureAccessDeniedException) {
+            throw IOException(exception.message ?: "Screen Recording not granted", exception)
         } catch (exception: IllegalStateException) {
             throw IOException(exception.message ?: "failed to start recording", exception)
         } catch (exception: IllegalArgumentException) {
