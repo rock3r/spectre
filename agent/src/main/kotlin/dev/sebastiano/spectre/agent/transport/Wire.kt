@@ -248,10 +248,11 @@ public data class RectDto(
  * Wire projection of a tracked window's native identity for daemon-side recording.
  *
  * Coordinate spaces (must match core `WindowIdentitySnapshot` KDoc):
- * - [windowBoundsOnScreen] / [surfaceBoundsOnScreen]: screen AWT pixels (`locationOnScreen` / Robot
- *   space).
- * - [surfaceBoundsInWindow]: surface origin/size relative to [windowBoundsOnScreen] top-left, still
- *   AWT pixels (crop rect for window+crop capture).
+ * - [windowBoundsOnScreen] / [surfaceBoundsOnScreen]: AWT user-space screen coordinates
+ *   (`locationOnScreen` / Robot / same as [WindowSummaryDto.bounds]). On HiDPI this is logical
+ *   space; multiply by [scaleX]/[scaleY] for device pixels.
+ * - [surfaceBoundsInWindow]: surface origin/size relative to [windowBoundsOnScreen] top-left in the
+ *   same AWT units (crop rect; scale if the backend crops in device pixels).
  * - [scaleX] / [scaleY]: `GraphicsConfiguration.defaultTransform` scales.
  *
  * When [cropRequired] is true, [nativeHandle] is the host top-level window and capture must crop to
