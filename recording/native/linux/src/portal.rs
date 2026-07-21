@@ -121,17 +121,13 @@ pub fn open_screen_cast_session(
 
 fn is_restore_token_rejection(err: &anyhow::Error) -> bool {
     let msg = format!("{err:#}");
-    // Steps that consume restore_token. Include Response timeouts: a stale token often
-    // surfaces as an interactive dialog that never receives a human answer under agents.
-    if msg.contains("SelectSources rejected") || msg.contains("Start rejected") {
-        return msg.contains("restore_token")
+    // Only explicit SelectSources/Start rejections when a token was supplied — not timeouts
+    // or CreateSession / OpenPipeWireRemote failures (those leave a still-valid grant).
+    (msg.contains("SelectSources rejected") || msg.contains("Start rejected"))
+        && (msg.contains("restore_token")
             || msg.contains("stored restore_token")
             || msg.contains("no longer valid")
-            // response_code non-zero without those strings still indicates grant failure
-            // when we supplied a token (caller only invokes this when stored.is_some()).
-            || msg.contains("response code");
-    }
-    msg.contains("Timed out after") && msg.contains("Response signal")
+            || msg.contains("response code"))
 }
 
 fn restore_token_key(source_types: &[SourceType], cursor_mode: CursorMode) -> String {
@@ -318,9 +314,12 @@ pub fn restore_token_state_dir() -> PathBuf {
         }
     }
     if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home).join(".local").join("state").join("spectre");
+        if !home.is_empty() {
+            return PathBuf::from(home).join(".local").join("state").join("spectre");
+        }
     }
-    PathBuf::from("/tmp").join("spectre-state")
+    // Fail closed: never store a bearer restore_token under a shared /tmp path.
+    PathBuf::from("/var/empty/spectre-no-home")
 }
 
 fn restore_token_file(token_key: &str) -> PathBuf {
@@ -375,15 +374,30 @@ pub fn clear_restore_token(token_key: &str) -> Result<()> {
 }
 
 fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let tmp = parent.join(format!(
+        ".{}.tmp.{}",
+        path.file_name().and_then(|s| s.to_str()).unwrap_or("token"),
+        std::process::id()
+    ));
+    {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600));
+    fs::rename(&tmp, path).with_context(|| {
+        format!(
+            "atomically renaming {} -> {}",
+            tmp.display(),
+            path.display()
+        )
+    })?;
     Ok(())
 }
 
