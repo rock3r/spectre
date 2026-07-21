@@ -102,6 +102,7 @@ nav:
       - Cross-JVM access: guide/cross-jvm.md
       - Agent attach: guide/agent.md
       - CLI: guide/cli.md
+      - Atomic capture: guide/capture.md
       - IntelliJ-hosted Compose: guide/intellij.md
       - Troubleshooting: guide/troubleshooting.md
   - Reference:

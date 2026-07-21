@@ -88,6 +88,11 @@ sanity-checked the artefacts side-by-side.
 
 Manual promotion checklist:
 
+- If this release changes the atomic capture schema (`CaptureDocument.SCHEMA_VERSION` /
+  `capture.json`), bump the **`spectre-capture`** agent skill
+  (`skills/spectre-capture/SKILL.md` + `package.json`) and the capture user-guide page in the
+  same release.
+
 - Confirm the tag points at the intended, already-reviewed `main` SHA.
 - Inspect the Central Portal staging deployment for all nine modules, including
   POM metadata, sources jars, javadoc jars, and Gradle module metadata.

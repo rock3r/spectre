@@ -14,6 +14,7 @@ import com.github.ajalt.clikt.parameters.types.path
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
+import dev.sebastiano.spectre.cli.daemon.CaptureSessionReport
 import dev.sebastiano.spectre.cli.daemon.DaemonClient
 import dev.sebastiano.spectre.cli.daemon.DaemonEndpoint
 import dev.sebastiano.spectre.cli.daemon.DaemonErrorCode
@@ -241,11 +242,16 @@ private class CaptureCommand(
                         imageWidth = capture.imageWidth,
                         imageHeight = capture.imageHeight,
                         captureDurationMs = capture.captureDurationMs,
+                        skillHint = CaptureSessionReport.CAPTURE_SKILL_NAME,
                     )
                 )
             )
         } else {
             output.append("Captured ${capture.nodeCount} nodes → ${capture.directory}")
+            output.appendLine()
+            output.append(
+                "See agent skill `${CaptureSessionReport.CAPTURE_SKILL_NAME}` for capture.json / jq workflows."
+            )
         }
         output.appendLine()
     }
@@ -433,6 +439,7 @@ private class DetachCommand(
                         captureBytes = detached.captureBytes,
                         capturePaths = detached.capturePaths,
                         pruneCommand = detached.pruneCommand,
+                        skillHint = detached.skillHint,
                     )
                 )
             )
@@ -452,6 +459,10 @@ private class DetachCommand(
                 detached.pruneCommand?.let { command ->
                     output.appendLine()
                     output.append("Prune with: $command")
+                }
+                detached.skillHint?.let { skill ->
+                    output.appendLine()
+                    output.append("See agent skill `$skill` for capture.json / jq workflows.")
                 }
             }
         }
@@ -596,6 +607,7 @@ private data class DetachJson(
     val captureBytes: Long = 0L,
     val capturePaths: List<String> = emptyList(),
     val pruneCommand: String? = null,
+    val skillHint: String? = null,
 )
 
 @Serializable private data class CompletionJson(val version: Int = JSON_VERSION, val id: String)
@@ -616,6 +628,7 @@ private data class CaptureJson(
     val imageWidth: Int,
     val imageHeight: Int,
     val captureDurationMs: Long,
+    val skillHint: String = CaptureSessionReport.CAPTURE_SKILL_NAME,
 )
 
 @Serializable

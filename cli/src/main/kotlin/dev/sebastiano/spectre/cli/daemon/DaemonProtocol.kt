@@ -154,6 +154,8 @@ public sealed interface DaemonResponse {
         public val capturePaths: List<String> = emptyList(),
         /** Exact CLI command to prune only this session's leftover captures. */
         public val pruneCommand: String? = null,
+        /** Agent skill name that documents capture.json + jq workflows. */
+        public val skillHint: String? = null,
     ) : DaemonResponse
 
     @Serializable
