@@ -10,9 +10,9 @@ import java.lang.instrument.Instrumentation
  * these grants, embedded `ComposePanel` surfaces (Compose `windowHandle == 0`) report `nativeHandle
  * = null` and daemon window+crop recording cannot bind to the host frame.
  *
- * Called once from [SpectreAgent] bootstrap. Opens to **every** module that has already loaded a
- * Spectre class (and the target classloader's unnamed module), because each classloader has its own
- * unnamed module and peer reflection runs in the target's core classloader — not the agent's.
+ * Called once from [SpectreAgent] bootstrap with the target's Spectre classloader so opens target
+ * the module that actually runs peer resolution in `:core`. Intentionally avoids scanning
+ * [Instrumentation.allLoadedClasses] (can be huge and risk attach timeouts).
  */
 internal object AwtPeerModuleOpener {
 
@@ -25,7 +25,7 @@ internal object AwtPeerModuleOpener {
                     )
                     return
                 }
-        val consumers = collectConsumerModules(targetClassLoader, instrumentation)
+        val consumers = collectConsumerModules(targetClassLoader)
         if (consumers.isEmpty()) {
             System.err.println("[spectre-agent] no consumer modules for AWT peer opens; skipping")
             return
@@ -72,25 +72,14 @@ internal object AwtPeerModuleOpener {
         )
     }
 
-    private fun collectConsumerModules(
-        targetClassLoader: ClassLoader,
-        instrumentation: Instrumentation,
-    ): Set<Module> {
+    private fun collectConsumerModules(targetClassLoader: ClassLoader): Set<Module> {
         val consumers = linkedSetOf<Module>()
-        // Prefer modules that already loaded Spectre types (same classloaders that run core).
-        for (loaded in instrumentation.allLoadedClasses) {
-            val name = loaded.name
-            if (name.startsWith(SPECTRE_PACKAGE_PREFIX)) {
-                consumers += loaded.module
-            }
-        }
         for (fqn in CONSUMER_CLASS_NAMES) {
             runCatching { Class.forName(fqn, false, targetClassLoader).module }
                 .getOrNull()
                 ?.let { consumers += it }
         }
         consumers += targetClassLoader.unnamedModule
-        ClassLoader.getSystemClassLoader()?.unnamedModule?.let { consumers += it }
         return consumers
     }
 
@@ -98,7 +87,6 @@ internal object AwtPeerModuleOpener {
         if (module.isNamed) module.name else "unnamed(${module.classLoader})"
 
     private const val JAVA_DESKTOP: String = "java.desktop"
-    private const val SPECTRE_PACKAGE_PREFIX: String = "dev.sebastiano.spectre."
 
     private val CONSUMER_CLASS_NAMES: List<String> =
         listOf(
