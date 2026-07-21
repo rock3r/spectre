@@ -34,6 +34,18 @@ Before marking testing work complete:
 - confirm each one has a corresponding test or a deliberate manual-validation note
 - fill the gaps before moving on
 
+## Package-channel (Homebrew / Scoop) contracts
+
+CLI package manifests are not optional docs — they are install paths. Keep them on the
+`./gradlew check` graph via `verifyCliPackageManifests`:
+
+- generator smoke: `.github/scripts/test-generate-cli-package-manifests.sh`
+- install semantics: `.github/scripts/test-homebrew-formula-install-semantics.rb`
+
+Those tests evaluate the formula's real `app = Dir[...]` expression against nested and
+Homebrew-stripped layouts, require a wrapper (not a Roast `bin.install_symlink`), and
+assert the committed `Formula/spectre.rb` `install` body stays aligned with the generator.
+
 ## Cross-Boundary Contract Tests
 
 When a feature spans a boundary, add at least one test that exercises the real boundary shape.
