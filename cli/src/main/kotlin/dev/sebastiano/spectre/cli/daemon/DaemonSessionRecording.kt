@@ -54,13 +54,26 @@ internal class DaemonSessionRecording(
             // Ledger only after stop with final size — avoids double-counting (#185 review).
             destination.toString()
         } catch (exception: ScreenCaptureAccessDeniedException) {
+            discardAllocatedDirectory(directory, explicit)
             throw IOException(exception.message ?: "Screen Recording not granted", exception)
         } catch (exception: IllegalStateException) {
+            discardAllocatedDirectory(directory, explicit)
             throw IOException(exception.message ?: "failed to start recording", exception)
         } catch (exception: IllegalArgumentException) {
+            discardAllocatedDirectory(directory, explicit)
             throw IOException(exception.message ?: "failed to start recording", exception)
         } catch (exception: UnsupportedOperationException) {
+            discardAllocatedDirectory(directory, explicit)
             throw IOException(exception.message ?: "failed to start recording", exception)
+        } catch (exception: IOException) {
+            discardAllocatedDirectory(directory, explicit)
+            throw exception
+        }
+    }
+
+    private fun discardAllocatedDirectory(directory: Path, explicit: Boolean) {
+        if (!explicit) {
+            runCatching { directory.toFile().deleteRecursively() }
         }
     }
 
@@ -146,15 +159,14 @@ internal class DaemonSessionRecording(
                     exception,
                 )
             }
-        val collisions = all.filter { identity ->
-            !identity.isPopup && identity.title.orEmpty().contains(title)
-        }
+        // Include popups: helpers match by title among all same-PID windows (#185 review).
+        val collisions = all.filter { identity -> identity.title.orEmpty().contains(title) }
         if (collisions.size > 1) {
             val indexes = collisions.map { it.index }.joinToString(", ")
             throw IOException(
-                "window title \"$title\" is ambiguous among non-popup windows " +
-                    "[$indexes] (selected index $selectedIndex). Use a unique title so " +
-                    "remote capture can match the intended window."
+                "window title \"$title\" is ambiguous among windows " +
+                    "[$indexes] (selected index $selectedIndex; includes popups). " +
+                    "Use a unique title so remote capture can match the intended window."
             )
         }
     }
