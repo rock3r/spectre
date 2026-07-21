@@ -241,11 +241,13 @@ can add a reliable preflight via `HotSpotDiagnosticMXBean`.
 
 `windowIdentities` returns native handle/id (when resolvable), window and Compose-surface
 bounds in **AWT user-space screen coordinates** (same space as `windows()` /
-`locationOnScreen` / Robot; on HiDPI multiply by the reported scale for device pixels),
-surface bounds **relative to the window** (crop rect), per-window DPI scale, and a
+`locationOnScreen` / Robot), surface bounds **relative to the window** (crop rect),
+per-window affine transform (`scaleX`/`scaleY`/`translateX`/`translateY`), and a
 `cropRequired` flag when the surface is a subset of the top-level window (title bar or
-embedded panel). Daemon-owned recording (#183) uses this so capture stays on the daemon
-host rather than over the transport.
+embedded panel). For device pixels: point `(x, y) → (x * scaleX + translateX, y * scaleY +
+translateY)`; scale widths/heights by `scaleX`/`scaleY` only (no translation). Daemon-owned
+recording (#183) uses this so capture stays on the daemon host rather than over the
+transport.
 
 Streaming / long-poll ops (`waitForVisualIdle`, idling resources, `withTracing`) are
 deferred to a follow-up.
