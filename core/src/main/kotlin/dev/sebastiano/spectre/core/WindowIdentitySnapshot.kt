@@ -11,12 +11,12 @@ import java.awt.Rectangle
  * - **Screen AWT user space** — [windowBoundsOnScreen] and [surfaceBoundsOnScreen] use the same
  *   space as `Component.locationOnScreen` / `java.awt.Robot` and as `WindowSummaryDto.bounds` from
  *   the agent `windows` op. On HiDPI this is the AWT *logical* / user coordinate system, not raw
- *   device pixels; multiply by [scaleX]/[scaleY] when a backend requires device pixels.
+ *   device pixels.
  * - **Window-relative AWT user space** — [surfaceBoundsInWindow] is the Compose surface origin/size
- *   relative to [windowBoundsOnScreen]'s top-left in the same AWT units (crop rect for window+crop
- *   when the backend crops in AWT space; scale if the backend crops in device pixels).
- * - **Scale** — [scaleX]/[scaleY] from `GraphicsConfiguration.defaultTransform` (1.0 non-HiDPI, 2.0
- *   on a typical Retina display).
+ *   relative to [windowBoundsOnScreen]'s top-left in the same AWT units.
+ * - **Affine transform** — [scaleX]/[scaleY]/[translateX]/[translateY] from
+ *   `GraphicsConfiguration.defaultTransform`. Device-pixel conversion of an AWT screen point `(x,
+ *   y)` is approximately `(x * scaleX + translateX, y * scaleY + translateY)`.
  *
  * When [cropRequired] is true, [nativeHandle] identifies the **host top-level** window (spike
  * constraint #5): capture that window and crop to [surfaceBoundsInWindow] (or the screen-space
@@ -42,17 +42,21 @@ public data class WindowIdentitySnapshot(
      * needed because surface fills the window).
      */
     public val cropRequired: Boolean,
-    /** Outer top-level window bounds in screen AWT pixels. */
+    /** Outer top-level window bounds in screen AWT user space. */
     public val windowBoundsOnScreen: Rectangle,
-    /** Compose surface bounds in screen AWT pixels. */
+    /** Compose surface bounds in screen AWT user space. */
     public val surfaceBoundsOnScreen: Rectangle,
     /**
-     * Compose surface origin and size relative to [windowBoundsOnScreen]'s top-left, in AWT pixels.
-     * The natural crop rectangle for window+crop backends.
+     * Compose surface origin and size relative to [windowBoundsOnScreen]'s top-left, in AWT user
+     * space. The natural crop rectangle for window+crop backends.
      */
     public val surfaceBoundsInWindow: Rectangle,
     /** `GraphicsConfiguration.defaultTransform.scaleX`. */
     public val scaleX: Double,
     /** `GraphicsConfiguration.defaultTransform.scaleY`. */
     public val scaleY: Double,
+    /** `GraphicsConfiguration.defaultTransform.translateX` (device-pixel conversion). */
+    public val translateX: Double = 0.0,
+    /** `GraphicsConfiguration.defaultTransform.translateY` (device-pixel conversion). */
+    public val translateY: Double = 0.0,
 )

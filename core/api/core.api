@@ -272,10 +272,13 @@ public final class dev/sebastiano/spectre/core/WindowIdentityResolver {
 }
 
 public final class dev/sebastiano/spectre/core/WindowIdentitySnapshot {
-	public fun <init> (ILjava/lang/String;Ljava/lang/String;ZLjava/lang/Long;ZLjava/awt/Rectangle;Ljava/awt/Rectangle;Ljava/awt/Rectangle;DD)V
+	public fun <init> (ILjava/lang/String;Ljava/lang/String;ZLjava/lang/Long;ZLjava/awt/Rectangle;Ljava/awt/Rectangle;Ljava/awt/Rectangle;DDDD)V
+	public synthetic fun <init> (ILjava/lang/String;Ljava/lang/String;ZLjava/lang/Long;ZLjava/awt/Rectangle;Ljava/awt/Rectangle;Ljava/awt/Rectangle;DDDDILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()I
 	public final fun component10 ()D
 	public final fun component11 ()D
+	public final fun component12 ()D
+	public final fun component13 ()D
 	public final fun component2 ()Ljava/lang/String;
 	public final fun component3 ()Ljava/lang/String;
 	public final fun component4 ()Z
@@ -284,8 +287,8 @@ public final class dev/sebastiano/spectre/core/WindowIdentitySnapshot {
 	public final fun component7 ()Ljava/awt/Rectangle;
 	public final fun component8 ()Ljava/awt/Rectangle;
 	public final fun component9 ()Ljava/awt/Rectangle;
-	public final fun copy (ILjava/lang/String;Ljava/lang/String;ZLjava/lang/Long;ZLjava/awt/Rectangle;Ljava/awt/Rectangle;Ljava/awt/Rectangle;DD)Ldev/sebastiano/spectre/core/WindowIdentitySnapshot;
-	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/WindowIdentitySnapshot;ILjava/lang/String;Ljava/lang/String;ZLjava/lang/Long;ZLjava/awt/Rectangle;Ljava/awt/Rectangle;Ljava/awt/Rectangle;DDILjava/lang/Object;)Ldev/sebastiano/spectre/core/WindowIdentitySnapshot;
+	public final fun copy (ILjava/lang/String;Ljava/lang/String;ZLjava/lang/Long;ZLjava/awt/Rectangle;Ljava/awt/Rectangle;Ljava/awt/Rectangle;DDDD)Ldev/sebastiano/spectre/core/WindowIdentitySnapshot;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/WindowIdentitySnapshot;ILjava/lang/String;Ljava/lang/String;ZLjava/lang/Long;ZLjava/awt/Rectangle;Ljava/awt/Rectangle;Ljava/awt/Rectangle;DDDDILjava/lang/Object;)Ldev/sebastiano/spectre/core/WindowIdentitySnapshot;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getCropRequired ()Z
 	public final fun getIndex ()I
@@ -296,6 +299,8 @@ public final class dev/sebastiano/spectre/core/WindowIdentitySnapshot {
 	public final fun getSurfaceBoundsOnScreen ()Ljava/awt/Rectangle;
 	public final fun getSurfaceId ()Ljava/lang/String;
 	public final fun getTitle ()Ljava/lang/String;
+	public final fun getTranslateX ()D
+	public final fun getTranslateY ()D
 	public final fun getWindowBoundsOnScreen ()Ljava/awt/Rectangle;
 	public fun hashCode ()I
 	public final fun isPopup ()Z

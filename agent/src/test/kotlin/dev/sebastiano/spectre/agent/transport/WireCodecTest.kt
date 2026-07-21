@@ -180,6 +180,8 @@ class WireCodecTest {
                         surfaceBoundsInWindow = RectDto(8, 28, 784, 552),
                         scaleX = 2.0,
                         scaleY = 2.0,
+                        translateX = 12.0,
+                        translateY = 34.0,
                     ),
                     WindowIdentityDto(
                         index = 1,
@@ -193,6 +195,8 @@ class WireCodecTest {
                         surfaceBoundsInWindow = RectDto(0, 0, 100, 100),
                         scaleX = 1.0,
                         scaleY = 1.0,
+                        translateX = 0.0,
+                        translateY = 0.0,
                     ),
                 )
             )

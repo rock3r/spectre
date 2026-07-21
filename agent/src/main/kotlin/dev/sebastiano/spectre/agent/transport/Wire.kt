@@ -253,7 +253,8 @@ public data class RectDto(
  *   space; multiply by [scaleX]/[scaleY] for device pixels.
  * - [surfaceBoundsInWindow]: surface origin/size relative to [windowBoundsOnScreen] top-left in the
  *   same AWT units (crop rect; scale if the backend crops in device pixels).
- * - [scaleX] / [scaleY]: `GraphicsConfiguration.defaultTransform` scales.
+ * - [scaleX] / [scaleY] / [translateX] / [translateY]: `GraphicsConfiguration.defaultTransform`
+ *   affine components for converting AWT user space to device pixels.
  *
  * When [cropRequired] is true, [nativeHandle] is the host top-level window and capture must crop to
  * the surface rect.
@@ -273,4 +274,6 @@ public data class WindowIdentityDto(
     public val surfaceBoundsInWindow: RectDto,
     public val scaleX: Double,
     public val scaleY: Double,
+    public val translateX: Double = 0.0,
+    public val translateY: Double = 0.0,
 )

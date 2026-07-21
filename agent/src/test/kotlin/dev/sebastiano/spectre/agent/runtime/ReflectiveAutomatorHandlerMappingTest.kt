@@ -114,6 +114,8 @@ class ReflectiveAutomatorHandlerMappingTest {
                 surfaceBoundsInWindowValue = Rectangle(8, 28, 784, 552),
                 scaleXValue = 2.0,
                 scaleYValue = 2.0,
+                translateXValue = 10.0,
+                translateYValue = 20.0,
             )
         val automator = FakeAutomator(windowIdentitiesValue = listOf(snapshot))
         val handler = ReflectiveAutomatorHandler(automator)
@@ -139,6 +141,8 @@ class ReflectiveAutomatorHandlerMappingTest {
         assertEquals(28, dto.surfaceBoundsInWindow.y)
         assertEquals(2.0, dto.scaleX)
         assertEquals(2.0, dto.scaleY)
+        assertEquals(10.0, dto.translateX)
+        assertEquals(20.0, dto.translateY)
     }
 
     @Test
@@ -514,6 +518,8 @@ private class FakeWindowIdentitySnapshot(
     private val surfaceBoundsInWindowValue: Rectangle = Rectangle(0, 0, 100, 100),
     private val scaleXValue: Double = 1.0,
     private val scaleYValue: Double = 1.0,
+    private val translateXValue: Double = 0.0,
+    private val translateYValue: Double = 0.0,
 ) {
     @Suppress("unused") fun getIndex(): Int = indexValue
 
@@ -536,6 +542,10 @@ private class FakeWindowIdentitySnapshot(
     @Suppress("unused") fun getScaleX(): Double = scaleXValue
 
     @Suppress("unused") fun getScaleY(): Double = scaleYValue
+
+    @Suppress("unused") fun getTranslateX(): Double = translateXValue
+
+    @Suppress("unused") fun getTranslateY(): Double = translateYValue
 }
 
 /** Mirrors `AtomicCapture` getters the reflective capture mapper reads. */

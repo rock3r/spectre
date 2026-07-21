@@ -50,8 +50,19 @@ internal object WindowIdentityReflectiveMapper {
                 boundsToRect(invokeAny(klass, snapshot, "getSurfaceBoundsInWindow")),
             scaleX = invokeDouble(klass, snapshot, "getScaleX"),
             scaleY = invokeDouble(klass, snapshot, "getScaleY"),
+            translateX = invokeDoubleOrDefault(klass, snapshot, "getTranslateX", 0.0),
+            translateY = invokeDoubleOrDefault(klass, snapshot, "getTranslateY", 0.0),
         )
     }
+
+    private fun invokeDoubleOrDefault(
+        klass: Class<*>,
+        target: Any,
+        name: String,
+        default: Double,
+    ): Double =
+        runCatching { (klass.getMethod(name).invoke(target) as Number).toDouble() }
+            .getOrDefault(default)
 
     private fun invokeInt(klass: Class<*>, target: Any, name: String): Int =
         (klass.getMethod(name).invoke(target) as Number).toInt()

@@ -43,6 +43,8 @@ public object WindowIdentityResolver {
             surfaceBoundsInWindow = surfaceInWindow,
             scaleX = transform.scaleX,
             scaleY = transform.scaleY,
+            translateX = transform.translateX,
+            translateY = transform.translateY,
         )
     }
 
