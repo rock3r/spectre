@@ -254,7 +254,8 @@ public data class RectDto(
  * - [surfaceBoundsInWindow]: surface origin/size relative to [windowBoundsOnScreen] top-left in the
  *   same AWT units (crop rect; scale if the backend crops in device pixels).
  * - [scaleX] / [scaleY] / [translateX] / [translateY]: `GraphicsConfiguration.defaultTransform`
- *   affine components for converting AWT user space to device pixels.
+ *   affine components. Device-pixel conversion: point `(x, y) → (x * scaleX + translateX, y *
+ *   scaleY + translateY)`; scale widths/heights by [scaleX]/[scaleY] only (no translation).
  *
  * When [cropRequired] is true, [nativeHandle] is the host top-level window and capture must crop to
  * the surface rect.
