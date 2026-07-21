@@ -75,8 +75,9 @@ tree under the same tick, writes `capture.json` + `screenshot.png` under a seque
 directory (`NNNN-<timestamp>/` under `$TMPDIR/spectre/captures` by default, mode `0700`, or under
 `--out-dir`), appends a crash-proof ledger entry, and returns only a decision-grade summary
 (paths, node counts, image size). Default-root captures are lazily capped (keep last 50 closed
-sessions' captures); client `--out-dir` captures are never auto-deleted. `record start` behaves
-similarly for an MP4.
+sessions' captures); client `--out-dir` captures are never auto-deleted. Summaries and detach
+reports point agents at the **`spectre-capture`** skill for `jq` recipes — see
+[Atomic capture](capture.md). `record start` behaves similarly for an MP4.
 
 `spectre captures list [--all] [--json]` lists ledger-backed capture directories with size and
 live/closed status. `spectre captures prune` supports `--keep N`, `--older-than 7d`, `--all`,

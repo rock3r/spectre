@@ -20,6 +20,14 @@ internal object CaptureSessionReport {
                 } else {
                     "spectre captures prune --session $sessionId"
                 },
+            skillHint =
+                if (entries.isEmpty()) {
+                    null
+                } else {
+                    CAPTURE_SKILL_NAME
+                },
         )
     }
+
+    internal const val CAPTURE_SKILL_NAME: String = "spectre-capture"
 }

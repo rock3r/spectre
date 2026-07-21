@@ -58,6 +58,12 @@ publish <deployment-id> <version>
 Do not pass `--yes` unless the user explicitly asks for non-interactive publishing in the
 current task.
 
+## Capture schema skill
+
+If the release changes `CaptureDocument.SCHEMA_VERSION` / `capture.json`, bump the
+**`spectre-capture`** skill (`skills/spectre-capture/SKILL.md` + `package.json`) and the
+user-guide page `docs/guide/capture.md` in the same release.
+
 ## Finish
 
 After Central reports `PUBLISHED`, undraft the GitHub release:
