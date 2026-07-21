@@ -26,6 +26,7 @@ class MacOsScreenCaptureAccessTest {
             MacOsScreenCaptureAccess.preflight(
                 helperExtractor = extractor,
                 processFactory = factory,
+                isMacOs = { true },
             )
         assertTrue(result.granted)
         assertEquals("/tmp/h", result.binaryPath)
@@ -45,6 +46,7 @@ class MacOsScreenCaptureAccessTest {
                 MacOsScreenCaptureAccess.requireGranted(
                     helperExtractor = extractor,
                     processFactory = factory,
+                    isMacOs = { true },
                 )
             }
         assertFalse(denied.result.granted)
@@ -65,8 +67,24 @@ class MacOsScreenCaptureAccessTest {
         MacOsScreenCaptureAccess.request(
             helperExtractor = stubExtractor(),
             processFactory = factory,
+            isMacOs = { true },
         )
         assertEquals("request", argv[argv.indexOf("--mode") + 1])
+    }
+
+    @Test
+    fun `preflight returns notApplicable when not macOS`() {
+        val factory = MacOsScreenCaptureAccess.ProcessFactory {
+            error("helper must not start off macOS")
+        }
+        val result =
+            MacOsScreenCaptureAccess.preflight(
+                helperExtractor = stubExtractor(),
+                processFactory = factory,
+                isMacOs = { false },
+            )
+        assertTrue(result.granted)
+        assertEquals("n/a", result.api)
     }
 
     private fun stubExtractor(): HelperBinaryExtractor {

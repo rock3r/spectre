@@ -51,4 +51,36 @@ class PermissionsCliTest {
         assertEquals(0, code)
         assertTrue(out.toString().contains("deepLink") || out.toString().contains("\"granted\""))
     }
+
+    @Test
+    fun `permissions check never remaps a clean run to usage failure exit 2`() {
+        // Regression: SpectreCli used to map ProgramResult(1) (denied) → EXIT_USAGE_FAILURE(2).
+        // A clean permissions check must exit 0 (granted/n/a) or 1 (denied), never 2.
+        val out = StringBuilder()
+        val err = StringBuilder()
+        val code =
+            SpectreCli(request = { error("no daemon") }, output = out, errorOutput = err)
+                .run(listOf("permissions", "check"))
+        assertTrue(
+            code == 0 || code == 1,
+            "permissions check exit must be 0 or 1, got $code out=$out err=$err",
+        )
+        assertTrue(
+            !err.toString().contains("Usage:"),
+            "ProgramResult/denied path must not print Clikt help; err=$err",
+        )
+    }
+
+    @Test
+    fun `usage errors still exit with usage failure code 2`() {
+        val err = StringBuilder()
+        val code =
+            SpectreCli(
+                    request = { error("no daemon") },
+                    output = StringBuilder(),
+                    errorOutput = err,
+                )
+                .run(listOf("permissions", "not-a-subcommand"))
+        assertEquals(2, code, "err=$err")
+    }
 }

@@ -47,37 +47,46 @@ public object MacOsScreenCaptureAccess {
         if (!result.granted) throw ScreenCaptureAccessDeniedException(result)
     }
 
-    /** Test-visible overload that injects helper extraction and process spawning. */
+    /**
+     * Test-visible overload that injects helper extraction, process spawning, and the OS gate. Pass
+     * [isMacOs] = `{ true }` so fake-helper tests exercise the process path on Linux CI.
+     */
     internal fun preflight(
         helperExtractor: HelperBinaryExtractor,
         processFactory: ProcessFactory,
+        isMacOs: () -> Boolean = ::isMacOs,
     ): ScreenCaptureAccessResult {
         if (!isMacOs()) return ScreenCaptureAccessResult.notApplicable()
         return runHelper(
             mode = "preflight",
             helperPath = helperExtractor.extract(),
             processFactory = processFactory,
+            timeoutSeconds = PREFLIGHT_TIMEOUT_SECONDS,
         )
     }
 
     internal fun request(
         helperExtractor: HelperBinaryExtractor,
         processFactory: ProcessFactory,
+        isMacOs: () -> Boolean = ::isMacOs,
     ): ScreenCaptureAccessResult {
         if (!isMacOs()) return ScreenCaptureAccessResult.notApplicable()
         return runHelper(
             mode = "request",
             helperPath = helperExtractor.extract(),
             processFactory = processFactory,
+            // CGRequestScreenCaptureAccess blocks on the system dialog until a human responds.
+            timeoutSeconds = REQUEST_TIMEOUT_SECONDS,
         )
     }
 
     internal fun requireGranted(
         helperExtractor: HelperBinaryExtractor,
         processFactory: ProcessFactory = DefaultProcessFactory,
+        isMacOs: () -> Boolean = ::isMacOs,
     ) {
         if (!isMacOs()) return
-        val result = preflight(helperExtractor, processFactory)
+        val result = preflight(helperExtractor, processFactory, isMacOs)
         if (!result.granted) throw ScreenCaptureAccessDeniedException(result)
     }
 
@@ -85,6 +94,7 @@ public object MacOsScreenCaptureAccess {
         mode: String,
         helperPath: Path,
         processFactory: ProcessFactory,
+        timeoutSeconds: Long,
     ): ScreenCaptureAccessResult {
         val argv = listOf(helperPath.toString(), "--mode", mode)
         val process =
@@ -96,7 +106,7 @@ public object MacOsScreenCaptureAccess {
                     ex,
                 )
             }
-        val (stdout, exitCode) = awaitHelper(process, mode)
+        val (stdout, exitCode) = awaitHelper(process, mode, timeoutSeconds)
         val line =
             stdout.lineSequence().firstOrNull { it.isNotBlank() }
                 ?: error("spectre-screencapture $mode produced no JSON (exit=$exitCode)")
@@ -112,11 +122,15 @@ public object MacOsScreenCaptureAccess {
         }
     }
 
-    private fun awaitHelper(process: Process, mode: String): Pair<String, Int> {
+    private fun awaitHelper(
+        process: Process,
+        mode: String,
+        timeoutSeconds: Long,
+    ): Pair<String, Int> {
         try {
-            if (!process.waitFor(HELPER_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
                 process.destroyForcibly()
-                error("spectre-screencapture $mode timed out after ${HELPER_TIMEOUT_SECONDS}s")
+                error("spectre-screencapture $mode timed out after ${timeoutSeconds}s")
             }
             val stdout = process.inputStream.bufferedReader().use { it.readText() }
             return stdout to process.exitValue()
@@ -154,7 +168,14 @@ public object MacOsScreenCaptureAccess {
             ProcessBuilder(argv).redirectErrorStream(true).start()
     }
 
-    private const val HELPER_TIMEOUT_SECONDS: Long = 15
+    /** Non-interactive preflight must stay snappy. */
+    private const val PREFLIGHT_TIMEOUT_SECONDS: Long = 15
+
+    /**
+     * Request may block on the TCC system dialog until a human responds. Five minutes is long
+     * enough for a deliberate grant without hanging CI forever if a fake process never exits.
+     */
+    private const val REQUEST_TIMEOUT_SECONDS: Long = 300
 }
 
 /** Result of a Screen Recording TCC preflight or request. */

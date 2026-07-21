@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.cli
 
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.CliktError
+import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.clikt.core.parse
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.parameters.arguments.argument
@@ -59,6 +60,10 @@ public class SpectreCli(
         return try {
             command.parse(arguments)
             EXIT_SUCCESS
+        } catch (exception: ProgramResult) {
+            // Intentional early exit with a custom status (e.g. permissions denied → 1). Do not
+            // treat as a usage error or print Clikt help — the command already wrote its output.
+            exception.statusCode
         } catch (exception: CliktError) {
             val destination = if (exception.statusCode == EXIT_SUCCESS) output else errorOutput
             destination.append(command.getFormattedHelp(exception))
