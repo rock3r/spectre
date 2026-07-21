@@ -235,7 +235,15 @@ can add a reliable preflight via `HotSpotDiagnosticMXBean`.
 | `click(nodeKey)`      | `AgentRequest.Click`             | `Unit`            |
 | `typeText(text)`      | `AgentRequest.TypeText`          | `Unit`            |
 | `screenshot()`        | `AgentRequest.Screenshot`        | `ByteArray` (PNG) |
+| `capture(windowIndex)`| `AgentRequest.Capture`           | `AtomicCaptureResult` |
+| `windowIdentities(windowIndex?)` | `AgentRequest.WindowIdentity` | `List<WindowIdentityDto>` |
 | `close()` (auto)      | `AgentRequest.Detach`            | tear-down         |
+
+`windowIdentities` returns native handle/id (when resolvable), window and Compose-surface
+bounds in **screen AWT pixels**, surface bounds **relative to the window** (crop rect),
+per-window DPI scale, and a `cropRequired` flag for handle-less embedded surfaces (host
+window handle + crop). Daemon-owned recording (#183) uses this so capture stays on the
+daemon host rather than over the transport.
 
 Streaming / long-poll ops (`waitForVisualIdle`, idling resources, `withTracing`) are
 deferred to a follow-up.

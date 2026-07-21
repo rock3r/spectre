@@ -8,6 +8,7 @@ import dev.sebastiano.spectre.agent.fixture.TAG_BUTTON
 import dev.sebastiano.spectre.agent.fixture.TAG_LABEL
 import dev.sebastiano.spectre.agent.fixture.TAG_TEXT_FIELD
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
+import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import java.awt.GraphicsEnvironment
 import java.io.BufferedReader
 import java.io.IOException
@@ -208,11 +209,69 @@ class AgentAttachIntegrationTest {
                 screenshotBytes.startsWith(PNG_MAGIC),
                 "iteration $iteration: screenshot bytes do not start with PNG magic header",
             )
+
+            assertWindowIdentityMatchesWindows(automator, windows, iteration = iteration)
         }
 
         assertFalse(
             Files.exists(udsPath),
             "iteration $iteration: UDS path $udsPath should not exist after detach",
+        )
+    }
+
+    /**
+     * #184 acceptance: window-identity bounds match `windows()` for the same surface; the fixture's
+     * JFrame+ComposePanel path flags cropRequired (host handle + surface crop).
+     */
+    private fun assertWindowIdentityMatchesWindows(
+        automator: AttachedAutomator,
+        windows: List<WindowSummaryDto>,
+        iteration: Int,
+    ) {
+        val identities = automator.windowIdentities()
+        assertTrue(
+            identities.isNotEmpty(),
+            "iteration $iteration: windowIdentities() empty for the fixture",
+        )
+        val mainIdentity =
+            identities.firstOrNull { it.title == SPECTRE_FIXTURE_WINDOW_TITLE }
+                ?: identities.first { !it.isPopup }
+        val matchingWindow =
+            windows.firstOrNull { it.surfaceId == mainIdentity.surfaceId }
+                ?: windows.first { !it.isPopup }
+        assertEquals(matchingWindow.surfaceId, mainIdentity.surfaceId)
+        assertEquals(
+            matchingWindow.bounds,
+            mainIdentity.surfaceBoundsOnScreen,
+            "iteration $iteration: surfaceBoundsOnScreen must match windows() bounds",
+        )
+        assertTrue(
+            mainIdentity.windowBoundsOnScreen.width > 0 &&
+                mainIdentity.windowBoundsOnScreen.height > 0,
+            "iteration $iteration: windowBoundsOnScreen must be non-empty",
+        )
+        assertTrue(
+            mainIdentity.surfaceBoundsInWindow.width > 0 &&
+                mainIdentity.surfaceBoundsInWindow.height > 0,
+            "iteration $iteration: surfaceBoundsInWindow must be non-empty",
+        )
+        assertEquals(
+            mainIdentity.windowBoundsOnScreen.x + mainIdentity.surfaceBoundsInWindow.x,
+            mainIdentity.surfaceBoundsOnScreen.x,
+            "iteration $iteration: surface x must equal window origin + relative crop",
+        )
+        assertEquals(
+            mainIdentity.windowBoundsOnScreen.y + mainIdentity.surfaceBoundsInWindow.y,
+            mainIdentity.surfaceBoundsOnScreen.y,
+            "iteration $iteration: surface y must equal window origin + relative crop",
+        )
+        assertTrue(
+            mainIdentity.cropRequired,
+            "iteration $iteration: JFrame+ComposePanel fixture should require crop",
+        )
+        assertTrue(
+            mainIdentity.scaleX > 0.0 && mainIdentity.scaleY > 0.0,
+            "iteration $iteration: scale must be positive (HiDPI reports >1 when applicable)",
         )
     }
 

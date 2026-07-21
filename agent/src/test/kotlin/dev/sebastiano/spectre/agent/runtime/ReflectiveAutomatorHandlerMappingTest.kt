@@ -5,6 +5,7 @@ package dev.sebastiano.spectre.agent.runtime
 import dev.sebastiano.spectre.agent.transport.AgentRequest
 import dev.sebastiano.spectre.agent.transport.AgentResponse
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
+import dev.sebastiano.spectre.agent.transport.WindowIdentityDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import java.awt.Frame
 import java.awt.GraphicsEnvironment
@@ -96,6 +97,63 @@ class ReflectiveAutomatorHandlerMappingTest {
         } finally {
             testFrame.dispose()
         }
+    }
+
+    @Test
+    fun `WindowIdentity op maps snapshot fields including cropRequired and null handle`() {
+        val snapshot =
+            FakeWindowIdentitySnapshot(
+                indexValue = 0,
+                surfaceIdValue = "surface-42",
+                titleValue = "Main",
+                isPopupValue = false,
+                nativeHandleValue = null,
+                cropRequiredValue = true,
+                windowBoundsOnScreenValue = Rectangle(10, 20, 800, 600),
+                surfaceBoundsOnScreenValue = Rectangle(18, 48, 784, 552),
+                surfaceBoundsInWindowValue = Rectangle(8, 28, 784, 552),
+                scaleXValue = 2.0,
+                scaleYValue = 2.0,
+            )
+        val automator = FakeAutomator(windowIdentitiesValue = listOf(snapshot))
+        val handler = ReflectiveAutomatorHandler(automator)
+
+        val response = handler.handle(AgentRequest.WindowIdentity(windowIndex = null))
+        check(response is AgentResponse.WindowIdentities) {
+            "expected WindowIdentities, got ${response::class.simpleName}: $response"
+        }
+        assertEquals(1, response.windows.size)
+        val dto: WindowIdentityDto = response.windows.single()
+        assertEquals(0, dto.index)
+        assertEquals("surface-42", dto.surfaceId)
+        assertEquals("Main", dto.title)
+        assertEquals(false, dto.isPopup)
+        assertNull(dto.nativeHandle)
+        assertEquals(true, dto.cropRequired)
+        assertEquals(10, dto.windowBoundsOnScreen.x)
+        assertEquals(20, dto.windowBoundsOnScreen.y)
+        assertEquals(800, dto.windowBoundsOnScreen.width)
+        assertEquals(600, dto.windowBoundsOnScreen.height)
+        assertEquals(18, dto.surfaceBoundsOnScreen.x)
+        assertEquals(8, dto.surfaceBoundsInWindow.x)
+        assertEquals(28, dto.surfaceBoundsInWindow.y)
+        assertEquals(2.0, dto.scaleX)
+        assertEquals(2.0, dto.scaleY)
+    }
+
+    @Test
+    fun `WindowIdentity op with index selects a single snapshot`() {
+        val snapshots =
+            listOf(
+                FakeWindowIdentitySnapshot(indexValue = 0, surfaceIdValue = "a"),
+                FakeWindowIdentitySnapshot(indexValue = 1, surfaceIdValue = "b"),
+            )
+        val automator = FakeAutomator(windowIdentitiesValue = snapshots)
+        val handler = ReflectiveAutomatorHandler(automator)
+
+        val response = handler.handle(AgentRequest.WindowIdentity(windowIndex = 1))
+        check(response is AgentResponse.WindowIdentities)
+        assertEquals(listOf("b"), response.windows.map { it.surfaceId })
     }
 
     @Test
@@ -413,6 +471,7 @@ private class FakeAutomator(
         java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB)
     },
     private val captureImpl: (Int) -> Any = { error("capture not stubbed") },
+    private val windowIdentitiesValue: List<Any> = emptyList(),
 ) {
     /**
      * Tracks how many times the handler called [refreshWindows]. Real `ComposeAutomator.windows` is
@@ -438,6 +497,45 @@ private class FakeAutomator(
         screenshotImpl(region)
 
     @Suppress("unused") fun capture(windowIndex: Int): Any = captureImpl(windowIndex)
+
+    @Suppress("unused") fun windowIdentities(): List<Any> = windowIdentitiesValue
+}
+
+@Suppress("LongParameterList")
+private class FakeWindowIdentitySnapshot(
+    private val indexValue: Int = 0,
+    private val surfaceIdValue: String = "surface",
+    private val titleValue: String? = null,
+    private val isPopupValue: Boolean = false,
+    private val nativeHandleValue: Long? = null,
+    private val cropRequiredValue: Boolean = false,
+    private val windowBoundsOnScreenValue: Rectangle = Rectangle(0, 0, 100, 100),
+    private val surfaceBoundsOnScreenValue: Rectangle = Rectangle(0, 0, 100, 100),
+    private val surfaceBoundsInWindowValue: Rectangle = Rectangle(0, 0, 100, 100),
+    private val scaleXValue: Double = 1.0,
+    private val scaleYValue: Double = 1.0,
+) {
+    @Suppress("unused") fun getIndex(): Int = indexValue
+
+    @Suppress("unused") fun getSurfaceId(): String = surfaceIdValue
+
+    @Suppress("unused") fun getTitle(): String? = titleValue
+
+    @Suppress("unused") fun isPopup(): Boolean = isPopupValue
+
+    @Suppress("unused") fun getNativeHandle(): Long? = nativeHandleValue
+
+    @Suppress("unused") fun getCropRequired(): Boolean = cropRequiredValue
+
+    @Suppress("unused") fun getWindowBoundsOnScreen(): Rectangle = windowBoundsOnScreenValue
+
+    @Suppress("unused") fun getSurfaceBoundsOnScreen(): Rectangle = surfaceBoundsOnScreenValue
+
+    @Suppress("unused") fun getSurfaceBoundsInWindow(): Rectangle = surfaceBoundsInWindowValue
+
+    @Suppress("unused") fun getScaleX(): Double = scaleXValue
+
+    @Suppress("unused") fun getScaleY(): Double = scaleYValue
 }
 
 /** Mirrors `AtomicCapture` getters the reflective capture mapper reads. */

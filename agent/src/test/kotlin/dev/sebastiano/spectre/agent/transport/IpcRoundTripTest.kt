@@ -454,6 +454,7 @@ class IpcRoundTripTest {
                     imageHeight = 0,
                     captureDurationMs = 0,
                 )
+            is AgentRequest.WindowIdentity -> AgentResponse.WindowIdentities(emptyList())
             AgentRequest.Detach -> AgentResponse.Detached
         }
     }

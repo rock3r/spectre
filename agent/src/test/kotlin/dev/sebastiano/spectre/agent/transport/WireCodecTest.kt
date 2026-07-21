@@ -149,4 +149,53 @@ class WireCodecTest {
             WireCodec.decodeResponse(WireCodec.encode(AgentResponse.Detached)),
         )
     }
+
+    @Test
+    fun `WindowIdentity request round-trips with null and concrete index`() {
+        val all = AgentRequest.WindowIdentity(windowIndex = null)
+        assertEquals(all, WireCodec.decodeRequest(WireCodec.encode(all)))
+        val one = AgentRequest.WindowIdentity(windowIndex = 2)
+        assertEquals(one, WireCodec.decodeRequest(WireCodec.encode(one)))
+    }
+
+    @Test
+    fun `request log label for WindowIdentity does not embed index`() {
+        assertEquals("windowIdentity", AgentRequest.WindowIdentity(windowIndex = 7).logLabel)
+    }
+
+    @Test
+    fun `WindowIdentities response round-trips including null handle and crop flag`() {
+        val resp =
+            AgentResponse.WindowIdentities(
+                listOf(
+                    WindowIdentityDto(
+                        index = 0,
+                        surfaceId = "surface-0",
+                        title = "Main",
+                        isPopup = false,
+                        nativeHandle = 0x1A2B3C4DL,
+                        cropRequired = true,
+                        windowBoundsOnScreen = RectDto(10, 20, 800, 600),
+                        surfaceBoundsOnScreen = RectDto(18, 48, 784, 552),
+                        surfaceBoundsInWindow = RectDto(8, 28, 784, 552),
+                        scaleX = 2.0,
+                        scaleY = 2.0,
+                    ),
+                    WindowIdentityDto(
+                        index = 1,
+                        surfaceId = "popup-1",
+                        title = null,
+                        isPopup = true,
+                        nativeHandle = null,
+                        cropRequired = false,
+                        windowBoundsOnScreen = RectDto(0, 0, 100, 100),
+                        surfaceBoundsOnScreen = RectDto(0, 0, 100, 100),
+                        surfaceBoundsInWindow = RectDto(0, 0, 100, 100),
+                        scaleX = 1.0,
+                        scaleY = 1.0,
+                    ),
+                )
+            )
+        assertEquals(resp, WireCodec.decodeResponse(WireCodec.encode(resp)))
+    }
 }

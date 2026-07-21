@@ -93,6 +93,8 @@ public final class dev/sebastiano/spectre/agent/AttachedAutomator : java/lang/Au
 	public final fun getPid ()J
 	public final fun screenshot ()[B
 	public final fun typeText (Ljava/lang/String;)V
+	public final fun windowIdentities (Ljava/lang/Integer;)Ljava/util/List;
+	public static synthetic fun windowIdentities$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/Integer;ILjava/lang/Object;)Ljava/util/List;
 	public final fun windows ()Ljava/util/List;
 }
 
@@ -217,6 +219,53 @@ public final synthetic class dev/sebastiano/spectre/agent/transport/RectDto$$ser
 }
 
 public final class dev/sebastiano/spectre/agent/transport/RectDto$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/agent/transport/WindowIdentityDto {
+	public static final field Companion Ldev/sebastiano/spectre/agent/transport/WindowIdentityDto$Companion;
+	public fun <init> (ILjava/lang/String;Ljava/lang/String;ZLjava/lang/Long;ZLdev/sebastiano/spectre/agent/transport/RectDto;Ldev/sebastiano/spectre/agent/transport/RectDto;Ldev/sebastiano/spectre/agent/transport/RectDto;DD)V
+	public final fun component1 ()I
+	public final fun component10 ()D
+	public final fun component11 ()D
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Z
+	public final fun component5 ()Ljava/lang/Long;
+	public final fun component6 ()Z
+	public final fun component7 ()Ldev/sebastiano/spectre/agent/transport/RectDto;
+	public final fun component8 ()Ldev/sebastiano/spectre/agent/transport/RectDto;
+	public final fun component9 ()Ldev/sebastiano/spectre/agent/transport/RectDto;
+	public final fun copy (ILjava/lang/String;Ljava/lang/String;ZLjava/lang/Long;ZLdev/sebastiano/spectre/agent/transport/RectDto;Ldev/sebastiano/spectre/agent/transport/RectDto;Ldev/sebastiano/spectre/agent/transport/RectDto;DD)Ldev/sebastiano/spectre/agent/transport/WindowIdentityDto;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/agent/transport/WindowIdentityDto;ILjava/lang/String;Ljava/lang/String;ZLjava/lang/Long;ZLdev/sebastiano/spectre/agent/transport/RectDto;Ldev/sebastiano/spectre/agent/transport/RectDto;Ldev/sebastiano/spectre/agent/transport/RectDto;DDILjava/lang/Object;)Ldev/sebastiano/spectre/agent/transport/WindowIdentityDto;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCropRequired ()Z
+	public final fun getIndex ()I
+	public final fun getNativeHandle ()Ljava/lang/Long;
+	public final fun getScaleX ()D
+	public final fun getScaleY ()D
+	public final fun getSurfaceBoundsInWindow ()Ldev/sebastiano/spectre/agent/transport/RectDto;
+	public final fun getSurfaceBoundsOnScreen ()Ldev/sebastiano/spectre/agent/transport/RectDto;
+	public final fun getSurfaceId ()Ljava/lang/String;
+	public final fun getTitle ()Ljava/lang/String;
+	public final fun getWindowBoundsOnScreen ()Ldev/sebastiano/spectre/agent/transport/RectDto;
+	public fun hashCode ()I
+	public final fun isPopup ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final synthetic class dev/sebastiano/spectre/agent/transport/WindowIdentityDto$$serializer : kotlinx/serialization/internal/GeneratedSerializer {
+	public static final field INSTANCE Ldev/sebastiano/spectre/agent/transport/WindowIdentityDto$$serializer;
+	public final fun childSerializers ()[Lkotlinx/serialization/KSerializer;
+	public final fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ldev/sebastiano/spectre/agent/transport/WindowIdentityDto;
+	public synthetic fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ljava/lang/Object;
+	public final fun getDescriptor ()Lkotlinx/serialization/descriptors/SerialDescriptor;
+	public final fun serialize (Lkotlinx/serialization/encoding/Encoder;Ldev/sebastiano/spectre/agent/transport/WindowIdentityDto;)V
+	public synthetic fun serialize (Lkotlinx/serialization/encoding/Encoder;Ljava/lang/Object;)V
+	public fun typeParametersSerializers ()[Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/agent/transport/WindowIdentityDto$Companion {
 	public final fun serializer ()Lkotlinx/serialization/KSerializer;
 }
 
