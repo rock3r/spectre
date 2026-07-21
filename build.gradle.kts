@@ -49,8 +49,7 @@ configure<DetektExtension> {
 // Cheap (python + ruby + bash). Wired into check on Unix only: Windows CI has no
 // bash/WSL, and Homebrew install semantics are not a Windows concern (Linux CI
 // already runs ./gradlew check with bash).
-val hostIsWindows = System.getProperty("os.name").orEmpty().startsWith("Windows")
-
+// onlyIf lambdas must not close over the Gradle script object (configuration cache).
 val verifyCliPackageManifests by
     tasks.registering(Exec::class) {
         description =
@@ -59,7 +58,9 @@ val verifyCliPackageManifests by
         group = "verification"
         workingDir = rootProject.layout.projectDirectory.asFile
         commandLine("bash", ".github/scripts/test-generate-cli-package-manifests.sh")
-        onlyIf { !hostIsWindows }
+        onlyIf("Unix host with bash") {
+            !System.getProperty("os.name").orEmpty().startsWith("Windows")
+        }
         inputs
             .files(
                 ".github/scripts/generate-cli-package-manifests.py",
@@ -78,7 +79,9 @@ val verifyReleaseVersionScript by
         group = "verification"
         workingDir = rootProject.layout.projectDirectory.asFile
         commandLine("bash", ".github/scripts/test-derive-release-version.sh")
-        onlyIf { !hostIsWindows }
+        onlyIf("Unix host with bash") {
+            !System.getProperty("os.name").orEmpty().startsWith("Windows")
+        }
         inputs
             .files(
                 ".github/scripts/derive-release-version.sh",
