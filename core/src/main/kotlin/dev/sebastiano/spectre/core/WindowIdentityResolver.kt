@@ -24,18 +24,12 @@ public object WindowIdentityResolver {
             )
         val transform =
             window.graphicsConfiguration?.defaultTransform ?: java.awt.geom.AffineTransform()
-        val composeHandle = composeWindowHandleOrZero(window)
-        val hostHandle = NativeWindowHandle.resolve(window)
-        val (nativeHandle, cropRequired) =
-            when {
-                composeHandle != 0L ->
-                    composeHandle to !surfaceFillsWindow(windowBounds, surfaceBounds)
-                hostHandle != null ->
-                    hostHandle to
-                        (tracked.composePanel != null ||
-                            !surfaceFillsWindow(windowBounds, surfaceBounds))
-                else -> null to true
-            }
+        val nativeHandle = NativeWindowHandle.resolve(window)
+        // Native window handles always target the top-level OS window. Decorated Compose windows
+        // expose a content-pane surface below the title bar, so crop is required whenever surface
+        // and window rects differ — not only for embedded ComposePanel (spike #5).
+        val cropRequired =
+            nativeHandle == null || !rectsEqualWithin(windowBounds, surfaceBounds, PIXEL_TOLERANCE)
         WindowIdentitySnapshot(
             index = index,
             surfaceId = tracked.surfaceId,
@@ -57,38 +51,12 @@ public object WindowIdentityResolver {
         return Rectangle(location.x, location.y, size.width, size.height)
     }
 
-    private fun surfaceFillsWindow(windowBounds: Rectangle, surfaceBounds: Rectangle): Boolean {
-        // Title bars / insets mean surface rarely equals the full window; treat "fills content"
-        // as surface covering at least 90% of window area and sharing the same origin within a
-        // small inset tolerance on the top (title bar).
-        if (windowBounds.width <= 0 || windowBounds.height <= 0) return false
-        val areaRatio =
-            (surfaceBounds.width.toLong() * surfaceBounds.height) /
-                (windowBounds.width.toLong() * windowBounds.height).toDouble()
-        if (areaRatio < SURFACE_FILLS_WINDOW_AREA_RATIO) return false
-        val leftOk = abs(surfaceBounds.x - windowBounds.x) <= INSET_TOLERANCE_PX
-        val topOk = (surfaceBounds.y - windowBounds.y) in 0..MAX_TITLE_BAR_PX
-        val rightOk =
-            abs((surfaceBounds.x + surfaceBounds.width) - (windowBounds.x + windowBounds.width)) <=
-                INSET_TOLERANCE_PX
-        val bottomOk =
-            abs(
-                (surfaceBounds.y + surfaceBounds.height) - (windowBounds.y + windowBounds.height)
-            ) <= INSET_TOLERANCE_PX
-        return leftOk && topOk && rightOk && bottomOk
-    }
+    private fun rectsEqualWithin(a: Rectangle, b: Rectangle, tolerancePx: Int): Boolean =
+        abs(a.x - b.x) <= tolerancePx &&
+            abs(a.y - b.y) <= tolerancePx &&
+            abs(a.width - b.width) <= tolerancePx &&
+            abs(a.height - b.height) <= tolerancePx
 
-    private fun composeWindowHandleOrZero(window: Window): Long =
-        runCatching {
-                val method =
-                    window.javaClass.methods.firstOrNull {
-                        it.name == "getWindowHandle" && it.parameterCount == 0
-                    } ?: return 0L
-                (method.invoke(window) as Number).toLong()
-            }
-            .getOrDefault(0L)
-
-    private const val INSET_TOLERANCE_PX: Int = 4
-    private const val MAX_TITLE_BAR_PX: Int = 80
-    private const val SURFACE_FILLS_WINDOW_AREA_RATIO: Double = 0.9
+    /** Rounding / sub-pixel placement only — not title-bar height. */
+    private const val PIXEL_TOLERANCE: Int = 1
 }
