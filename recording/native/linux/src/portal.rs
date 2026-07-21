@@ -357,7 +357,11 @@ pub fn save_restore_token(token_key: &str, token: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("creating restore_token dir {}", parent.display()))?;
-        let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+        // Only chmod Spectre-owned state dirs, never an operator PATH override's parent
+        // (e.g. /tmp or a shared secrets mount).
+        if std::env::var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH").is_err() {
+            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+        }
     }
     write_private_file(&path, token.as_bytes())
         .with_context(|| format!("writing restore_token to {}", path.display()))?;
