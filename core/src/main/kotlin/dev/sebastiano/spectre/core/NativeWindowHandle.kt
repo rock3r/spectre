@@ -109,25 +109,25 @@ internal object NativeWindowHandle {
 
     private fun x11Window(peer: Any): Long? =
         runCatching {
-                // Prefer walking to XBaseWindow.getWindow when peer is an XComponentPeer.
-                var current: Any? = peer
+                // XFramePeer / XWindow / XBaseWindow expose getWindow() as a long XID. Walk the
+                // class hierarchy with setAccessible so package-private methods resolve after
+                // module opens.
+                var type: Class<*>? = peer.javaClass
                 var depth = 0
-                while (current != null && depth < MAX_X11_PEER_WALK_DEPTH) {
+                while (type != null && type != Any::class.java && depth < MAX_X11_PEER_WALK_DEPTH) {
                     val getWindow =
-                        current.javaClass.methods.firstOrNull {
+                        type.declaredMethods.firstOrNull {
                             it.name == "getWindow" &&
                                 it.parameterCount == 0 &&
                                 (it.returnType == Long::class.javaPrimitiveType ||
                                     it.returnType == Long::class.javaObjectType)
                         }
                     if (getWindow != null) {
-                        val value = (getWindow.invoke(current) as Number).toLong()
+                        getWindow.isAccessible = true
+                        val value = (getWindow.invoke(peer) as Number).toLong()
                         if (value != 0L) return value
                     }
-                    current =
-                        current.javaClass.methods
-                            .firstOrNull { it.name == "getContentWindow" && it.parameterCount == 0 }
-                            ?.invoke(current)
+                    type = type.superclass
                     depth++
                 }
                 null
