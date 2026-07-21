@@ -8,12 +8,15 @@ import java.awt.Rectangle
  * Native identity and geometry of one tracked Compose surface, for out-of-process recorders.
  *
  * Coordinate spaces (constraint #4):
- * - **Screen AWT pixels** — [windowBoundsOnScreen] and [surfaceBoundsOnScreen] use the same space
- *   as `Component.locationOnScreen` / `Robot` (physical AWT pixels after the platform transform).
- * - **Window-relative AWT pixels** — [surfaceBoundsInWindow] is the Compose surface origin/size
- *   relative to [windowBoundsOnScreen]'s top-left (still AWT pixels, not Compose logical units).
- * - **Scale** — [scaleX]/[scaleY] come from `GraphicsConfiguration.defaultTransform` (1.0 on
- *   non-HiDPI, 2.0 on a typical Retina display).
+ * - **Screen AWT user space** — [windowBoundsOnScreen] and [surfaceBoundsOnScreen] use the same
+ *   space as `Component.locationOnScreen` / `java.awt.Robot` and as `WindowSummaryDto.bounds` from
+ *   the agent `windows` op. On HiDPI this is the AWT *logical* / user coordinate system, not raw
+ *   device pixels; multiply by [scaleX]/[scaleY] when a backend requires device pixels.
+ * - **Window-relative AWT user space** — [surfaceBoundsInWindow] is the Compose surface origin/size
+ *   relative to [windowBoundsOnScreen]'s top-left in the same AWT units (crop rect for window+crop
+ *   when the backend crops in AWT space; scale if the backend crops in device pixels).
+ * - **Scale** — [scaleX]/[scaleY] from `GraphicsConfiguration.defaultTransform` (1.0 non-HiDPI, 2.0
+ *   on a typical Retina display).
  *
  * When [cropRequired] is true, [nativeHandle] identifies the **host top-level** window (spike
  * constraint #5): capture that window and crop to [surfaceBoundsInWindow] (or the screen-space
