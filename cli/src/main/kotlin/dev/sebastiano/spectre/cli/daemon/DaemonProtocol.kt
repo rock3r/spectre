@@ -43,7 +43,8 @@ public object DaemonProtocol {
             is DaemonRequest.Screenshot -> versionFor(SESSION_COMMANDS_INTRODUCED_MINOR)
             is DaemonRequest.ListJvmProcesses -> versionFor(LIST_JVM_PROCESSES_INTRODUCED_MINOR)
             is DaemonRequest.StartRecording,
-            is DaemonRequest.StopRecording -> versionFor(RECORDING_INTRODUCED_MINOR)
+            is DaemonRequest.StopRecording,
+            is DaemonRequest.RecordingStatus -> versionFor(RECORDING_INTRODUCED_MINOR)
             is DaemonRequest.Capture -> versionFor(CAPTURE_INTRODUCED_MINOR)
         }
 
@@ -123,12 +124,20 @@ public sealed interface DaemonRequest {
 
     @Serializable
     @SerialName("startRecording")
-    public data class StartRecording(public val sessionId: String, public val outputPath: String) :
-        DaemonRequest
+    public data class StartRecording(
+        public val sessionId: String,
+        /** Absolute path to the .mp4, or null to allocate under the capture root. */
+        public val outputPath: String? = null,
+        public val windowIndex: Int = 0,
+    ) : DaemonRequest
 
     @Serializable
     @SerialName("stopRecording")
     public data class StopRecording(public val sessionId: String) : DaemonRequest
+
+    @Serializable
+    @SerialName("recordingStatus")
+    public data class RecordingStatus(public val sessionId: String) : DaemonRequest
 
     @Serializable @SerialName("shutdown") public data object Shutdown : DaemonRequest
 }
@@ -228,6 +237,15 @@ public sealed interface DaemonResponse {
     public data class RecordingStopped(
         public val sessionId: String,
         public val outputPath: String,
+    ) : DaemonResponse
+
+    @Serializable
+    @SerialName("recordingStatus")
+    public data class RecordingStatus(
+        public val sessionId: String,
+        public val active: Boolean,
+        public val outputPath: String? = null,
+        public val captureDirectory: String? = null,
     ) : DaemonResponse
 
     @Serializable @SerialName("shuttingDown") public data object ShuttingDown : DaemonResponse

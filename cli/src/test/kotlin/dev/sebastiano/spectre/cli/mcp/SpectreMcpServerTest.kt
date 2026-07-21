@@ -38,6 +38,7 @@ class SpectreMcpServerTest {
                 "capture",
                 "record_start",
                 "record_stop",
+                "record_status",
             ),
             server.tools.keys,
         )

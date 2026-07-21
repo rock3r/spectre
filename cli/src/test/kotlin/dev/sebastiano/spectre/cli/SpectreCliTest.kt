@@ -117,7 +117,11 @@ class SpectreCliTest {
             SpectreCli(
                 request = { request ->
                     assertEquals(
-                        DaemonRequest.StartRecording("pid-42", recordingPath.toString()),
+                        DaemonRequest.StartRecording(
+                            sessionId = "pid-42",
+                            outputPath = recordingPath.toString(),
+                            windowIndex = 0,
+                        ),
                         request,
                     )
                     DaemonResponse.RecordingStarted("pid-42", recordingPath.toString())
@@ -163,7 +167,14 @@ class SpectreCliTest {
         val cli =
             SpectreCli(
                 request = { request ->
-                    assertEquals(DaemonRequest.StartRecording("pid-42", expectedPath), request)
+                    assertEquals(
+                        DaemonRequest.StartRecording(
+                            sessionId = "pid-42",
+                            outputPath = expectedPath,
+                            windowIndex = 0,
+                        ),
+                        request,
+                    )
                     DaemonResponse.RecordingStarted("pid-42", expectedPath)
                 },
                 output = output,
@@ -171,6 +182,46 @@ class SpectreCliTest {
 
         assertEquals(0, cli.run(listOf("record", "start", "pid-42", "--output", "capture.mp4")))
         assertEquals("Recording to $expectedPath.\n", output.toString())
+    }
+
+    @Test
+    fun `record start without output sends null path for daemon allocation`() {
+        val output = StringBuilder()
+        val cli =
+            SpectreCli(
+                request = { request ->
+                    assertEquals(
+                        DaemonRequest.StartRecording(
+                            sessionId = "pid-42",
+                            outputPath = null,
+                            windowIndex = 0,
+                        ),
+                        request,
+                    )
+                    DaemonResponse.RecordingStarted(
+                        "pid-42",
+                        "/tmp/spectre/captures/0001/recording.mp4",
+                    )
+                },
+                output = output,
+            )
+        assertEquals(0, cli.run(listOf("record", "start", "pid-42")))
+        assertTrue(output.toString().contains("Recording to"))
+    }
+
+    @Test
+    fun `record status prints idle when not recording`() {
+        val output = StringBuilder()
+        val cli =
+            SpectreCli(
+                request = { request ->
+                    assertEquals(DaemonRequest.RecordingStatus("pid-42"), request)
+                    DaemonResponse.RecordingStatus("pid-42", active = false)
+                },
+                output = output,
+            )
+        assertEquals(0, cli.run(listOf("record", "status", "pid-42")))
+        assertTrue(output.toString().contains("No active recording"))
     }
 
     @Test

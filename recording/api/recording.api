@@ -13,6 +13,8 @@ public final class dev/sebastiano/spectre/recording/AutoRecorder {
 	public final fun startWindow (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;JLjava/awt/Rectangle;DD)Ldev/sebastiano/spectre/recording/RecordingHandle;
 	public static synthetic fun startWindow$default (Ldev/sebastiano/spectre/recording/AutoRecorder;Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;JILjava/lang/Object;)Ldev/sebastiano/spectre/recording/RecordingHandle;
 	public static synthetic fun startWindow$default (Ldev/sebastiano/spectre/recording/AutoRecorder;Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;JLjava/awt/Rectangle;DDILjava/lang/Object;)Ldev/sebastiano/spectre/recording/RecordingHandle;
+	public final fun startWindowByTitle (Ljava/lang/String;JLjava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;Ljava/awt/Rectangle;DD)Ldev/sebastiano/spectre/recording/RecordingHandle;
+	public static synthetic fun startWindowByTitle$default (Ldev/sebastiano/spectre/recording/AutoRecorder;Ljava/lang/String;JLjava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;Ljava/awt/Rectangle;DDILjava/lang/Object;)Ldev/sebastiano/spectre/recording/RecordingHandle;
 }
 
 public final class dev/sebastiano/spectre/recording/AutoScreenshotter {
@@ -242,6 +244,8 @@ public final class dev/sebastiano/spectre/recording/screencapturekit/ScreenCaptu
 	public fun start (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;JLjava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;)Ldev/sebastiano/spectre/recording/RecordingHandle;
 	public fun start (Ljava/awt/Rectangle;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;)Ldev/sebastiano/spectre/recording/RecordingHandle;
 	public fun startCropped (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;Ljava/awt/Rectangle;JLjava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;DD)Ldev/sebastiano/spectre/recording/RecordingHandle;
+	public final fun startMatchingTitle (Ljava/lang/String;JLjava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;Ljava/awt/Rectangle;)Ldev/sebastiano/spectre/recording/RecordingHandle;
+	public static synthetic fun startMatchingTitle$default (Ldev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureKitRecorder;Ljava/lang/String;JLjava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;Ljava/awt/Rectangle;ILjava/lang/Object;)Ldev/sebastiano/spectre/recording/RecordingHandle;
 }
 
 public abstract interface class dev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureKitRecorder$ProcessFactory {

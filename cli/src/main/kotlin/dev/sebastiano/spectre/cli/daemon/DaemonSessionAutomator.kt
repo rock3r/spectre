@@ -5,13 +5,8 @@ import dev.sebastiano.spectre.agent.AttachedAutomator
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
-import dev.sebastiano.spectre.recording.AutoRecorder
-import dev.sebastiano.spectre.recording.RecordingHandle
-import dev.sebastiano.spectre.recording.screencapturekit.MacOsScreenCaptureAccess
-import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureAccessDeniedException
-import java.awt.Rectangle
 import java.io.IOException
-import java.nio.file.Path
+import java.time.Clock
 
 /** Operation surface retained by one daemon session. */
 @OptIn(ExperimentalSpectreAgentApi::class)
@@ -30,15 +25,37 @@ internal interface DaemonSessionAutomator : AutoCloseable {
 
     @Throws(IOException::class) fun capture(windowIndex: Int = 0): AtomicCaptureResult
 
-    @Throws(IOException::class) fun startRecording(outputPath: String): String
+    /**
+     * Start daemon-owned window recording for this attach session.
+     *
+     * @param outputPath absolute path to the .mp4, or null to allocate under the capture root
+     *   (`NNNN-timestamp/recording.mp4`) and ledger the directory (#181 / #185).
+     */
+    @Throws(IOException::class)
+    fun startRecording(outputPath: String?, windowIndex: Int = 0): String
 
     @Throws(IOException::class) fun stopRecording(): String
+
+    /** Active recording path, or null when idle. */
+    fun recordingStatus(): RecordingStatus
 }
 
 @OptIn(ExperimentalSpectreAgentApi::class)
-internal class AttachedDaemonSession(private val delegate: AttachedAutomator) :
-    DaemonSessionAutomator {
-    private var recording: RecordingHandle? = null
+internal class AttachedDaemonSession(
+    private val delegate: AttachedAutomator,
+    sessionId: String,
+    clock: Clock = Clock.systemUTC(),
+    ledger: CaptureLedger = CaptureLifecycle.ledger(),
+    liveSessionIds: () -> Set<String> = { setOf(sessionId) },
+) : DaemonSessionAutomator {
+    private val recording =
+        DaemonSessionRecording(
+            delegate = delegate,
+            sessionId = sessionId,
+            clock = clock,
+            ledger = ledger,
+            liveSessionIds = liveSessionIds,
+        )
 
     override fun windows(): List<WindowSummaryDto> = delegate.windows()
 
@@ -54,58 +71,18 @@ internal class AttachedDaemonSession(private val delegate: AttachedAutomator) :
 
     override fun capture(windowIndex: Int): AtomicCaptureResult = delegate.capture(windowIndex)
 
-    override fun startRecording(outputPath: String): String {
-        if (recording != null)
-            throw IOException("a recording is already in progress for this session")
-        // Fail fast on macOS before any capture path that could pop a TCC prompt (#187).
-        try {
-            MacOsScreenCaptureAccess.requireGranted()
-        } catch (exception: ScreenCaptureAccessDeniedException) {
-            throw IOException(exception.message ?: "Screen Recording not granted", exception)
-        }
-        val window =
-            windows().firstOrNull { !it.isPopup }
-                ?: throw IOException("the target has no non-popup window to record")
-        val destination = Path.of(outputPath)
-        return try {
-            recording =
-                AutoRecorder()
-                    .startRegion(
-                        Rectangle(
-                            window.bounds.x,
-                            window.bounds.y,
-                            window.bounds.width,
-                            window.bounds.height,
-                        ),
-                        destination,
-                    )
-            outputPath
-        } catch (exception: ScreenCaptureAccessDeniedException) {
-            throw IOException(exception.message ?: "Screen Recording not granted", exception)
-        } catch (exception: IllegalStateException) {
-            throw IOException(exception.message ?: "failed to start recording", exception)
-        } catch (exception: IllegalArgumentException) {
-            throw IOException(exception.message ?: "failed to start recording", exception)
-        }
-    }
+    override fun startRecording(outputPath: String?, windowIndex: Int): String =
+        recording.start(outputPath, windowIndex)
 
-    override fun stopRecording(): String {
-        val active = recording ?: throw IOException("no recording is in progress for this session")
-        return try {
-            active.stop()
-            active.output.toString()
-        } catch (exception: IllegalStateException) {
-            throw IOException(exception.message ?: "failed to stop recording", exception)
-        } finally {
-            recording = null
-        }
-    }
+    override fun stopRecording(): String = recording.stop()
+
+    override fun recordingStatus(): RecordingStatus = recording.status()
 
     override fun close() {
         try {
-            runCatching { recording?.stop() }
+            // Finalize recording on detach even if the target JVM is already dead (#185).
+            recording.finalizeIfActive()
         } finally {
-            recording = null
             delegate.close()
         }
     }

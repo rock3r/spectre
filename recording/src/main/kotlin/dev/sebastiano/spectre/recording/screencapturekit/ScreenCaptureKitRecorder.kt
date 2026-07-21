@@ -70,6 +70,46 @@ internal constructor(
         return startWindow(window, windowOwnerPid, output, options, crop = cropInWindow)
     }
 
+    /**
+     * Window-targeted capture by existing title substring + owner pid, without stamping a
+     * [TitleDiscriminator] on a local AWT window. For daemon/attach scenarios where the target
+     * window lives in another JVM (#185).
+     */
+    public fun startMatchingTitle(
+        titleContains: String,
+        windowOwnerPid: Long,
+        output: Path,
+        options: RecordingOptions = RecordingOptions(),
+        crop: Rectangle? = null,
+    ): RecordingHandle {
+        require(titleContains.isNotBlank()) {
+            "titleContains must be non-blank for remote window matching"
+        }
+        validateOptions(options)
+        val helperPath = helperExtractor.extract()
+        output.toAbsolutePath().parent?.let(Files::createDirectories)
+        if (crop != null) {
+            System.err.println(
+                "spectre: window+crop is fixed at start " +
+                    "(${crop.x},${crop.y} ${crop.width}x${crop.height}); " +
+                    "surface move/resize mid-recording is not followed in v1."
+            )
+        }
+        val argv =
+            HelperArguments(
+                    source = HelperSource.Window,
+                    pid = windowOwnerPid,
+                    titleContains = titleContains,
+                    crop = crop,
+                    output = output,
+                    fps = options.frameRate,
+                    captureCursor = options.captureCursor,
+                    discoveryTimeoutMs = DEFAULT_DISCOVERY_TIMEOUT_MS,
+                )
+                .toArgv(helperPath)
+        return startHelper(output, argv) {}
+    }
+
     private fun startWindow(
         window: TitledWindow,
         windowOwnerPid: Long,
