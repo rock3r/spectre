@@ -82,33 +82,37 @@ internal class DaemonSessionRecording(
         val directory = captureDirectory
         val explicit = ledgerExplicitOutDir
         val knownOutput = recordingOutput?.toString()
-        var result: String? = null
-        var error: IOException? = null
-        try {
-            active.stop()
-            result = active.output.toString()
-        } catch (exception: IllegalStateException) {
-            error = IOException(exception.message ?: "failed to stop recording", exception)
-        }
-        // Always ledger Spectre-allocated dirs (including partial files after a failed stop)
-        // so prune/retention can clean them up. Never ledger user --output parents.
-        if (directory != null && !explicit) {
-            appendLedger(
-                directory,
-                sizeBytes = CaptureLifecycle.directorySizeBytes(directory),
-                explicit = false,
-            )
-            runCatching {
-                CaptureRetention.enforce(
-                    defaultRoot = CaptureLifecycle.defaultCapturesRoot(),
-                    ledger = ledger,
-                    liveSessionIds = liveSessionIds + sessionId,
-                )
+        return try {
+            var result: String? = null
+            var error: IOException? = null
+            try {
+                active.stop()
+                result = active.output.toString()
+            } catch (exception: IllegalStateException) {
+                error = IOException(exception.message ?: "failed to stop recording", exception)
             }
+            // Always ledger Spectre-allocated dirs (including partial files after a failed stop)
+            // so prune/retention can clean them up. Never ledger user --output parents.
+            if (directory != null && !explicit) {
+                runCatching {
+                    appendLedger(
+                        directory,
+                        sizeBytes = CaptureLifecycle.directorySizeBytes(directory),
+                        explicit = false,
+                    )
+                    CaptureRetention.enforce(
+                        defaultRoot = CaptureLifecycle.defaultCapturesRoot(),
+                        ledger = ledger,
+                        liveSessionIds = liveSessionIds + sessionId,
+                    )
+                }
+            }
+            if (error != null) throw error
+            result ?: knownOutput ?: error("recording stopped without an output path")
+        } finally {
+            // Always clear in-memory state so a failed stop cannot leave start() blocked.
+            clear()
         }
-        clear()
-        if (error != null) throw error
-        return result ?: knownOutput ?: error("recording stopped without an output path")
     }
 
     fun status(): RecordingStatus {
