@@ -308,7 +308,12 @@ private class RecordStartCommand(
     /** Prefer `--window`; `--window-index` is kept as a compatibility alias. */
     private val windowIndex: Int? by option("--window", "--window-index").int()
     private val fullscreen: Boolean by
-        option("--fullscreen", help = "Record the full virtual desktop instead of a tracked window")
+        option(
+                "--fullscreen",
+                help =
+                    "Record the full primary display instead of a tracked window " +
+                        "(multi-monitor desktops are not supported yet)",
+            )
             .flag(default = false)
     private val json: Boolean by option("--json").flag(default = false)
 

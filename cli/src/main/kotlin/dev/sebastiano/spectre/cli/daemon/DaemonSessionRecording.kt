@@ -30,7 +30,7 @@ internal class DaemonSessionRecording(
     private val sessionId: String,
     private val clock: Clock = Clock.systemUTC(),
     private val ledger: CaptureLedger = CaptureLifecycle.ledger(),
-    private val virtualDesktopBounds: () -> Rectangle = ::defaultVirtualDesktopBounds,
+    private val fullscreenRegionBounds: () -> Rectangle = ::requireFullscreenRegionBounds,
     private val autoRecorderFactory: () -> AutoRecorder = { AutoRecorder() },
 ) {
     private var recording: RecordingHandle? = null
@@ -80,10 +80,13 @@ internal class DaemonSessionRecording(
     }
 
     private fun startFullscreenRecorder(destination: Path): RecordingHandle {
-        val bounds = virtualDesktopBounds()
+        // Region backends capture a single display (macOS display 0 / Wayland portal stream).
+        // Multi-monitor virtual-desktop unions are not supported — fail loudly rather than
+        // cropping a partial or invalid region.
+        val bounds = fullscreenRegionBounds()
         if (bounds.width <= 0 || bounds.height <= 0) {
             throw IOException(
-                "cannot start fullscreen recording: virtual desktop bounds are empty " + "($bounds)"
+                "cannot start fullscreen recording: display bounds are empty ($bounds)"
             )
         }
         return autoRecorderFactory().startRegion(region = bounds, output = destination)
@@ -283,14 +286,25 @@ internal class DaemonSessionRecording(
     }
 }
 
-/** Union of all local screen device bounds (virtual desktop), for full-desktop region capture. */
-internal fun defaultVirtualDesktopBounds(): Rectangle {
-    val environment = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
-    var union: Rectangle? = null
-    for (device in environment.screenDevices) {
-        val bounds = device.defaultConfiguration.bounds
-        union = if (union == null) Rectangle(bounds) else union.union(bounds)
+/**
+ * Screen region for CLI/MCP `--fullscreen` recording.
+ *
+ * Region capture backends record a **single** display (macOS primary display / display index 0,
+ * Windows graphics capture, Linux Xorg/Wayland portal one monitor). Multi-monitor “virtual desktop”
+ * unions are not supported; callers get a clear error instead of a silently wrong crop.
+ */
+internal fun requireFullscreenRegionBounds(
+    environment: java.awt.GraphicsEnvironment =
+        java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
+): Rectangle {
+    val devices = environment.screenDevices
+    if (devices.size > 1) {
+        throw IOException(
+            "fullscreen recording is not supported on multi-monitor desktops yet " +
+                "(capture backends only record a single display; detected ${devices.size} " +
+                "screens). Use window mode, or record with one display only."
+        )
     }
-    return union
-        ?: environment.defaultScreenDevice.defaultConfiguration.bounds.let { Rectangle(it) }
+    val bounds = environment.defaultScreenDevice.defaultConfiguration.bounds
+    return Rectangle(bounds)
 }

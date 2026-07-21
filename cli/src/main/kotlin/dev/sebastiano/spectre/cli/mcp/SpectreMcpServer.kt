@@ -244,9 +244,9 @@ public object SpectreMcpServer {
             name = "record_start",
             description =
                 "Start daemon-owned recording for an attached session. Default is window index 0. " +
-                    "Pass fullscreen=true for a full virtual-desktop region capture (do not combine " +
-                    "with window_index). output_path is optional — omit to allocate under the " +
-                    "Spectre capture root. Returns the output path only (no video bytes).",
+                    "Pass fullscreen=true for a full primary-display region capture (not multi-monitor; " +
+                    "do not combine with window_index). output_path is optional — omit to allocate under " +
+                    "the Spectre capture root. Returns the output path only (no video bytes).",
             inputSchema =
                 ToolSchema(
                     properties =

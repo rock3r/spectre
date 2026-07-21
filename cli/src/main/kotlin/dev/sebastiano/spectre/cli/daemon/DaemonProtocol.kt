@@ -146,8 +146,9 @@ public sealed interface DaemonRequest {
         /** Tracked window index when [fullscreen] is false. Ignored when [fullscreen] is true. */
         public val windowIndex: Int = 0,
         /**
-         * When true, record the full virtual desktop via region capture instead of a window. Must
-         * not be combined with a non-default window target at the CLI/MCP layer.
+         * When true, record the full primary display via region capture instead of a window.
+         * Multi-monitor desktops are rejected (backends are single-display). Must not be combined
+         * with a non-default window target at the CLI/MCP layer.
          */
         public val fullscreen: Boolean = false,
     ) : DaemonRequest
