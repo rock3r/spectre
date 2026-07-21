@@ -66,7 +66,8 @@ internal static class Program
 
         return options.Mode switch
         {
-            CaptureMode.Screenshot => await CaptureScreenshotAsync(hwnd, options.Output, options.CaptureCursor),
+            CaptureMode.Screenshot =>
+                await CaptureScreenshotAsync(hwnd, options.Output, options.CaptureCursor, options.Crop),
             CaptureMode.Recording => await RecordWindowAsync(options, hwnd),
             _ => ExitArgumentsRejected,
         };
@@ -83,85 +84,36 @@ internal static class Program
         return 0;
     }
 
-    private static async Task<int> CaptureScreenshotAsync(IntPtr hwnd, string output, bool captureCursor)
+    private static async Task<int> CaptureScreenshotAsync(
+        IntPtr hwnd,
+        string output,
+        bool captureCursor,
+        CaptureRect? crop)
     {
-        var item = GraphicsCaptureItemInterop.CreateForWindow(hwnd);
-        if (item.Size.Width <= 0 || item.Size.Height <= 0)
+        // Reuse the recording frame path so --crop-* applies identically (issue #186).
+        using var frameSource = WgcFrameSource.StartWindow(hwnd, captureCursor, crop);
+        if (frameSource.Width <= 0 || frameSource.Height <= 0)
         {
             throw new InvalidOperationException(
-                $"Window has invalid dimensions: {item.Size.Width}x{item.Size.Height}.");
+                $"Window has invalid dimensions: {frameSource.Width}x{frameSource.Height}.");
+        }
+
+        using var stop = new CancellationTokenSource(FrameTimeout);
+        var bytes = frameSource.WaitForFrameBytes(stop.Token);
+        if (bytes is null)
+        {
+            throw new TimeoutException("Timed out waiting for a Windows Graphics Capture frame.");
         }
 
         using var canvasDevice = new CanvasDevice();
-        using var framePool =
-            Direct3D11CaptureFramePool.CreateFreeThreaded(
+        using var bitmap =
+            CanvasBitmap.CreateFromBytes(
                 canvasDevice,
-                DirectXPixelFormat.B8G8R8A8UIntNormalized,
-                numberOfBuffers: 1,
-                item.Size);
-        using var session = framePool.CreateCaptureSession(item);
-        session.IsCursorCaptureEnabled = captureCursor;
-        WgcFrameSource.TryDisableCaptureBorder(session);
-        using var frameReady = new ManualResetEventSlim();
-        Direct3D11CaptureFrame? capturedFrame = null;
-        var frameLock = new object();
-
-        void OnFrameArrived(Direct3D11CaptureFramePool sender, object args)
-        {
-            lock (frameLock)
-            {
-                if (capturedFrame is not null)
-                {
-                    return;
-                }
-
-                var frame = sender.TryGetNextFrame();
-                if (frame is null)
-                {
-                    return;
-                }
-
-                capturedFrame = frame;
-                sender.FrameArrived -= OnFrameArrived;
-                frameReady.Set();
-            }
-        }
-
-        framePool.FrameArrived += OnFrameArrived;
-        try
-        {
-            session.StartCapture();
-            if (!frameReady.Wait(FrameTimeout))
-            {
-                throw new TimeoutException("Timed out waiting for a Windows Graphics Capture frame.");
-            }
-
-            Direct3D11CaptureFrame? frameToSave;
-            lock (frameLock)
-            {
-                frameToSave = capturedFrame;
-                capturedFrame = null;
-            }
-
-            using (frameToSave)
-            {
-                if (frameToSave is null)
-                {
-                    throw new InvalidOperationException(
-                        "Windows Graphics Capture did not return a frame.");
-                }
-
-                using var bitmap =
-                    CanvasBitmap.CreateFromDirect3D11Surface(canvasDevice, frameToSave.Surface);
-                await bitmap.SaveAsync(Path.GetFullPath(output), CanvasBitmapFileFormat.Png);
-            }
-        }
-        finally
-        {
-            framePool.FrameArrived -= OnFrameArrived;
-            capturedFrame?.Dispose();
-        }
-
+                bytes,
+                frameSource.Width,
+                frameSource.Height,
+                DirectXPixelFormat.B8G8R8A8UIntNormalized);
+        await bitmap.SaveAsync(Path.GetFullPath(output), CanvasBitmapFileFormat.Png);
         return 0;
     }
 

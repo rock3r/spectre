@@ -13,6 +13,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+import kotlin.math.roundToInt
 
 /** Windows MP4 recorder backed by Windows Graphics Capture. */
 public class WindowsGraphicsCaptureRecorder
@@ -44,13 +45,14 @@ internal constructor(
         require(scaleX > 0.0 && scaleY > 0.0) {
             "scaleX/scaleY must be positive; got scaleX=$scaleX scaleY=$scaleY"
         }
-        // WGC capture-item space is device pixels; convert from AWT user space.
+        // WGC capture-item space is device pixels; convert from AWT user space with rounding
+        // (matches macOS .rounded() for HiDPI 125%/150% scales).
         val cropDevice =
             Rectangle(
-                (cropInWindow.x * scaleX).toInt(),
-                (cropInWindow.y * scaleY).toInt(),
-                (cropInWindow.width * scaleX).toInt().coerceAtLeast(1),
-                (cropInWindow.height * scaleY).toInt().coerceAtLeast(1),
+                (cropInWindow.x * scaleX).roundToInt().coerceAtLeast(0),
+                (cropInWindow.y * scaleY).roundToInt().coerceAtLeast(0),
+                (cropInWindow.width * scaleX).roundToInt().coerceAtLeast(1),
+                (cropInWindow.height * scaleY).roundToInt().coerceAtLeast(1),
             )
         return startWindow(window, windowOwnerPid, output, options, cropDevicePixels = cropDevice)
     }
