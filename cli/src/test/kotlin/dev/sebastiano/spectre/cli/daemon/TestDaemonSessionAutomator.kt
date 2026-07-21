@@ -30,7 +30,9 @@ internal class TestDaemonSessionAutomator(
     private val startRecordingAction: (String?, Int) -> String = { path, _ ->
         path ?: "/tmp/spectre-recording.mp4"
     },
-    private val stopRecordingResult: () -> String = { error("no recording is in progress") },
+    private val stopRecordingResult: (Set<String>) -> String = {
+        error("no recording is in progress")
+    },
     private val recordingStatusResult: () -> RecordingStatus = { RecordingStatus(active = false) },
     private val closeAction: () -> Unit = {},
 ) : DaemonSessionAutomator {
@@ -51,7 +53,8 @@ internal class TestDaemonSessionAutomator(
     override fun startRecording(outputPath: String?, windowIndex: Int): String =
         startRecordingAction(outputPath, windowIndex)
 
-    override fun stopRecording(): String = stopRecordingResult()
+    override fun stopRecording(liveSessionIds: Set<String>): String =
+        stopRecordingResult(liveSessionIds)
 
     override fun recordingStatus(): RecordingStatus = recordingStatusResult()
 

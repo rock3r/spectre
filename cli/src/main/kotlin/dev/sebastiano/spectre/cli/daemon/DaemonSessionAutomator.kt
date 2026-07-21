@@ -34,7 +34,7 @@ internal interface DaemonSessionAutomator : AutoCloseable {
     @Throws(IOException::class)
     fun startRecording(outputPath: String?, windowIndex: Int = 0): String
 
-    @Throws(IOException::class) fun stopRecording(): String
+    @Throws(IOException::class) fun stopRecording(liveSessionIds: Set<String>): String
 
     /** Active recording path, or null when idle. */
     fun recordingStatus(): RecordingStatus
@@ -46,7 +46,6 @@ internal class AttachedDaemonSession(
     sessionId: String,
     clock: Clock = Clock.systemUTC(),
     ledger: CaptureLedger = CaptureLifecycle.ledger(),
-    liveSessionIds: () -> Set<String> = { setOf(sessionId) },
 ) : DaemonSessionAutomator {
     private val recording =
         DaemonSessionRecording(
@@ -54,7 +53,6 @@ internal class AttachedDaemonSession(
             sessionId = sessionId,
             clock = clock,
             ledger = ledger,
-            liveSessionIds = liveSessionIds,
         )
 
     override fun windows(): List<WindowSummaryDto> = delegate.windows()
@@ -74,14 +72,15 @@ internal class AttachedDaemonSession(
     override fun startRecording(outputPath: String?, windowIndex: Int): String =
         recording.start(outputPath, windowIndex)
 
-    override fun stopRecording(): String = recording.stop()
+    override fun stopRecording(liveSessionIds: Set<String>): String = recording.stop(liveSessionIds)
 
     override fun recordingStatus(): RecordingStatus = recording.status()
 
     override fun close() {
         try {
             // Finalize recording on detach even if the target JVM is already dead (#185).
-            recording.finalizeIfActive()
+            // liveSessionIds is empty here because this session is leaving the table.
+            recording.finalizeIfActive(liveSessionIds = emptySet())
         } finally {
             delegate.close()
         }

@@ -29,7 +29,6 @@ internal class DaemonSessionRecording(
     private val sessionId: String,
     private val clock: Clock = Clock.systemUTC(),
     private val ledger: CaptureLedger = CaptureLifecycle.ledger(),
-    private val liveSessionIds: () -> Set<String> = { setOf(sessionId) },
 ) {
     private var recording: RecordingHandle? = null
     private var recordingOutput: Path? = null
@@ -64,7 +63,7 @@ internal class DaemonSessionRecording(
         }
     }
 
-    fun stop(): String {
+    fun stop(liveSessionIds: Set<String>): String {
         val active = recording ?: throw IOException("no recording is in progress for this session")
         val directory = captureDirectory
         return try {
@@ -80,7 +79,8 @@ internal class DaemonSessionRecording(
                     CaptureRetention.enforce(
                         defaultRoot = CaptureLifecycle.defaultCapturesRoot(),
                         ledger = ledger,
-                        liveSessionIds = liveSessionIds(),
+                        // Protect every still-attached session's capture dirs (#185 review).
+                        liveSessionIds = liveSessionIds + sessionId,
                     )
                 }
             }
@@ -102,8 +102,8 @@ internal class DaemonSessionRecording(
     }
 
     /** Finalize any active recording (detach / close). Safe if idle. */
-    fun finalizeIfActive() {
-        if (recording != null) runCatching { stop() }
+    fun finalizeIfActive(liveSessionIds: Set<String>) {
+        if (recording != null) runCatching { stop(liveSessionIds) }
         clear()
     }
 
@@ -175,27 +175,28 @@ internal class DaemonSessionRecording(
     }
 
     private fun selectIdentity(windowIndex: Int): WindowIdentityDto? {
-        val byIndex =
+        val identities =
             try {
-                if (windowIndex >= 0) {
-                    delegate.windowIdentities(windowIndex).firstOrNull()
-                } else {
-                    null
-                }
-            } catch (_: IOException) {
-                null
-            }
-        if (byIndex != null && !byIndex.isPopup) return byIndex
-        val all =
-            try {
-                delegate.windowIdentities(null)
+                delegate.windowIdentities(windowIndex)
             } catch (exception: IOException) {
                 throw IOException(
                     "failed to read window identity for recording: ${exception.message}",
                     exception,
                 )
             }
-        return all.firstOrNull { !it.isPopup }
+        val match = identities.firstOrNull()
+        if (match == null) {
+            throw IOException(
+                "no window identity at windowIndex=$windowIndex " +
+                    "(out of range or no tracked windows)"
+            )
+        }
+        if (match.isPopup) {
+            throw IOException(
+                "windowIndex=$windowIndex is a popup; pass a non-popup window index for recording"
+            )
+        }
+        return match
     }
 
     private data class ResolvedOutput(

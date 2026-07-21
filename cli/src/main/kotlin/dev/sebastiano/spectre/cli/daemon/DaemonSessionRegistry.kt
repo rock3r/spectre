@@ -96,7 +96,10 @@ internal constructor(
                 }
             is DaemonRequest.StopRecording ->
                 invoke(request.sessionId) { automator ->
-                    DaemonResponse.RecordingStopped(request.sessionId, automator.stopRecording())
+                    DaemonResponse.RecordingStopped(
+                        request.sessionId,
+                        automator.stopRecording(liveSessionIds()),
+                    )
                 }
             is DaemonRequest.RecordingStatus ->
                 invoke(request.sessionId) { automator ->
