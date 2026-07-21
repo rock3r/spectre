@@ -31,7 +31,7 @@ internal class TestDaemonSessionAutomator(
             captureDurationMs = 0,
         )
     },
-    private val startRecordingAction: (String?, Int) -> String = { path, _ ->
+    private val startRecordingAction: (String?, Int, Boolean) -> String = { path, _, _ ->
         path ?: "/tmp/spectre-recording.mp4"
     },
     private val stopRecordingResult: (Set<String>) -> String = {
@@ -55,8 +55,11 @@ internal class TestDaemonSessionAutomator(
 
     override fun capture(windowIndex: Int): AtomicCaptureResult = captureResult(windowIndex)
 
-    override fun startRecording(outputPath: String?, windowIndex: Int): String =
-        startRecordingAction(outputPath, windowIndex)
+    override fun startRecording(
+        outputPath: String?,
+        windowIndex: Int,
+        fullscreen: Boolean,
+    ): String = startRecordingAction(outputPath, windowIndex, fullscreen)
 
     override fun stopRecording(liveSessionIds: Set<String>): String =
         stopRecordingResult(liveSessionIds)

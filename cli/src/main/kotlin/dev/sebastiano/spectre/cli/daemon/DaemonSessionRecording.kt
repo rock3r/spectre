@@ -20,8 +20,9 @@ internal data class RecordingStatus(
 )
 
 /**
- * Daemon-owned window recording for one attach session (#185): window identity → AutoRecorder
- * window(+crop), capture-dir allocation, ledger, and finalize-on-close.
+ * Daemon-owned recording for one attach session (#185): window identity → AutoRecorder
+ * window(+crop), optional full-desktop region capture, capture-dir allocation, ledger, and
+ * finalize-on-close.
  */
 @OptIn(ExperimentalSpectreAgentApi::class)
 internal class DaemonSessionRecording(
@@ -29,24 +30,31 @@ internal class DaemonSessionRecording(
     private val sessionId: String,
     private val clock: Clock = Clock.systemUTC(),
     private val ledger: CaptureLedger = CaptureLifecycle.ledger(),
+    private val virtualDesktopBounds: () -> Rectangle = ::defaultVirtualDesktopBounds,
+    private val autoRecorderFactory: () -> AutoRecorder = { AutoRecorder() },
 ) {
     private var recording: RecordingHandle? = null
     private var recordingOutput: Path? = null
     private var captureDirectory: Path? = null
     private var ledgerExplicitOutDir: Boolean = false
 
-    fun start(outputPath: String?, windowIndex: Int): String {
+    fun start(outputPath: String?, windowIndex: Int, fullscreen: Boolean = false): String {
         if (recording != null) {
             throw IOException("a recording is already in progress for this session")
         }
         requireScreenCaptureAccess()
-        val identity = requireRecordableIdentity(windowIndex)
-        val title = requireNonBlankTitle(identity)
-        requireUniqueTitle(title, identity.index)
         val (destination, directory, explicit) = resolveOutput(outputPath)
         destination.parent?.let { Files.createDirectories(it) }
         return try {
-            val handle = startWindowRecorder(identity, title, destination)
+            val handle =
+                if (fullscreen) {
+                    startFullscreenRecorder(destination)
+                } else {
+                    val identity = requireRecordableIdentity(windowIndex)
+                    val title = requireNonBlankTitle(identity)
+                    requireUniqueTitle(title, identity.index)
+                    startWindowRecorder(identity, title, destination)
+                }
             recording = handle
             recordingOutput = destination
             captureDirectory = directory
@@ -69,6 +77,16 @@ internal class DaemonSessionRecording(
             discardAllocatedDirectory(directory, explicit)
             throw exception
         }
+    }
+
+    private fun startFullscreenRecorder(destination: Path): RecordingHandle {
+        val bounds = virtualDesktopBounds()
+        if (bounds.width <= 0 || bounds.height <= 0) {
+            throw IOException(
+                "cannot start fullscreen recording: virtual desktop bounds are empty " + "($bounds)"
+            )
+        }
+        return autoRecorderFactory().startRegion(region = bounds, output = destination)
     }
 
     private fun discardAllocatedDirectory(directory: Path, explicit: Boolean) {
@@ -196,7 +214,7 @@ internal class DaemonSessionRecording(
             } else {
                 null
             }
-        return AutoRecorder()
+        return autoRecorderFactory()
             .startWindowByTitle(
                 title = title,
                 windowOwnerPid = delegate.pid,
@@ -263,4 +281,16 @@ internal class DaemonSessionRecording(
         val directory = file.parent ?: Path.of(".")
         return ResolvedOutput(file = file, directory = directory, explicitOutDir = true)
     }
+}
+
+/** Union of all local screen device bounds (virtual desktop), for full-desktop region capture. */
+internal fun defaultVirtualDesktopBounds(): Rectangle {
+    val environment = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
+    var union: Rectangle? = null
+    for (device in environment.screenDevices) {
+        val bounds = device.defaultConfiguration.bounds
+        union = if (union == null) Rectangle(bounds) else union.union(bounds)
+    }
+    return union
+        ?: environment.defaultScreenDevice.defaultConfiguration.bounds.let { Rectangle(it) }
 }
