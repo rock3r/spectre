@@ -2,6 +2,7 @@
 
 package dev.sebastiano.spectre.core
 
+import java.awt.Dialog
 import java.awt.Frame
 import java.awt.Rectangle
 import java.awt.Window
@@ -33,7 +34,7 @@ public object WindowIdentityResolver {
         WindowIdentitySnapshot(
             index = index,
             surfaceId = tracked.surfaceId,
-            title = (window as? Frame)?.title,
+            title = windowTitle(window),
             isPopup = tracked.isPopup,
             nativeHandle = nativeHandle,
             cropRequired = cropRequired,
@@ -50,6 +51,14 @@ public object WindowIdentityResolver {
         val size = window.size
         return Rectangle(location.x, location.y, size.width, size.height)
     }
+
+    /** Title from [Frame] or [Dialog] (ComposeDialog / JDialog); null for bare [Window]. */
+    private fun windowTitle(window: Window): String? =
+        when (window) {
+            is Frame -> window.title
+            is Dialog -> window.title
+            else -> null
+        }
 
     private fun rectsEqualWithin(a: Rectangle, b: Rectangle, tolerancePx: Int): Boolean =
         abs(a.x - b.x) <= tolerancePx &&
