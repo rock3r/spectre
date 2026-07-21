@@ -325,18 +325,15 @@ pub fn restore_token_state_dir() -> PathBuf {
 
 fn restore_token_file(token_key: &str) -> PathBuf {
     if let Ok(override_path) = std::env::var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH") {
-        // Directory (or file path treated as directory prefix) so keys stay separate.
+        // Always a file base path (not a directory). Append -{token_key} so keys stay separate.
+        // Use SPECTRE_WAYLAND_RESTORE_TOKEN_DIR for directory-only overrides.
         let base = PathBuf::from(override_path);
-        if base.extension().is_some() {
-            // File-shaped path: insert key before extension.
-            let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or("token");
-            let ext = base.extension().and_then(|s| s.to_str()).unwrap_or("token");
-            return base
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .join(format!("{stem}-{token_key}.{ext}"));
-        }
-        return base.join(format!("wayland-screencast-restore-token-{token_key}"));
+        let parent = base.parent().unwrap_or_else(|| Path::new("."));
+        let name = base
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("wayland-screencast-restore-token");
+        return parent.join(format!("{name}-{token_key}"));
     }
     restore_token_state_dir().join(format!("wayland-screencast-restore-token-{token_key}"))
 }
