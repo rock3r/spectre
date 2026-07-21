@@ -11,7 +11,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 5)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 6)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -44,7 +44,7 @@ public object DaemonProtocol {
             is DaemonRequest.ListJvmProcesses -> versionFor(LIST_JVM_PROCESSES_INTRODUCED_MINOR)
             is DaemonRequest.StartRecording,
             is DaemonRequest.StopRecording,
-            is DaemonRequest.RecordingStatus -> versionFor(RECORDING_INTRODUCED_MINOR)
+            is DaemonRequest.RecordingStatus -> versionFor(RECORDING_SESSION_INTRODUCED_MINOR)
             is DaemonRequest.Capture -> versionFor(CAPTURE_INTRODUCED_MINOR)
         }
 
@@ -55,8 +55,9 @@ public object DaemonProtocol {
     private const val SESSION_LIFECYCLE_INTRODUCED_MINOR: Int = 1
     private const val SESSION_COMMANDS_INTRODUCED_MINOR: Int = 2
     private const val LIST_JVM_PROCESSES_INTRODUCED_MINOR: Int = 3
-    private const val RECORDING_INTRODUCED_MINOR: Int = 4
     private const val CAPTURE_INTRODUCED_MINOR: Int = 5
+    /** Optional outputPath, windowIndex, and recordingStatus (#185). */
+    private const val RECORDING_SESSION_INTRODUCED_MINOR: Int = 6
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)

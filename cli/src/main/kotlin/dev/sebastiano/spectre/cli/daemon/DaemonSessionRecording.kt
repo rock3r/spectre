@@ -42,6 +42,7 @@ internal class DaemonSessionRecording(
         requireScreenCaptureAccess()
         val identity = requireRecordableIdentity(windowIndex)
         val title = requireNonBlankTitle(identity)
+        requireUniqueTitle(title, identity.index)
         val (destination, directory, explicit) = resolveOutput(outputPath)
         destination.parent?.let { Files.createDirectories(it) }
         return try {
@@ -50,7 +51,7 @@ internal class DaemonSessionRecording(
             recordingOutput = destination
             captureDirectory = directory
             ledgerExplicitOutDir = explicit
-            appendLedger(directory, sizeBytes = 0L, explicit = explicit)
+            // Ledger only after stop with final size — avoids double-counting (#185 review).
             destination.toString()
         } catch (exception: ScreenCaptureAccessDeniedException) {
             throw IOException(exception.message ?: "Screen Recording not granted", exception)
@@ -134,6 +135,29 @@ internal class DaemonSessionRecording(
                 "window ${identity.index} has a blank title; cannot target for window " +
                     "capture. Set a unique window title or pass region mode later."
             )
+
+    private fun requireUniqueTitle(title: String, selectedIndex: Int) {
+        val all =
+            try {
+                delegate.windowIdentities(null)
+            } catch (exception: IOException) {
+                throw IOException(
+                    "failed to enumerate windows for title uniqueness: ${exception.message}",
+                    exception,
+                )
+            }
+        val collisions = all.filter { identity ->
+            !identity.isPopup && identity.title.orEmpty().contains(title)
+        }
+        if (collisions.size > 1) {
+            val indexes = collisions.map { it.index }.joinToString(", ")
+            throw IOException(
+                "window title \"$title\" is ambiguous among non-popup windows " +
+                    "[$indexes] (selected index $selectedIndex). Use a unique title so " +
+                    "remote capture can match the intended window."
+            )
+        }
+    }
 
     private fun startWindowRecorder(
         identity: WindowIdentityDto,
