@@ -56,7 +56,9 @@ def main() -> None:
   end
 
   def install
-    app = Dir["spectre-cli-*/Spectre.app"].first
+    # Homebrew strips a single top-level directory when staging, so accept both
+    # nested (archive as shipped) and top-level (post-strip) layouts.
+    app = Dir["spectre-cli-*/Spectre.app"].first || Dir["Spectre.app"].first
     odie "missing Spectre.app in release archive" if app.nil?
     libexec.install app
     bin.install_symlink libexec/"Spectre.app/Contents/MacOS/spectre"

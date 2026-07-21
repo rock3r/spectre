@@ -18,4 +18,6 @@ python3 -m json.tool "$tmp/out/bucket/spectre.json" >/dev/null
 grep -q 'version "1.2.3"' "$tmp/out/Formula/spectre.rb"
 grep -q 'sha256 "ddf7ff5ebd9d66ce161466c1c0262430fa04de32b0e420ee3f489e2e2112e386"' "$tmp/out/Formula/spectre.rb"
 grep -q 'shell_output("#{bin}/spectre --help")' "$tmp/out/Formula/spectre.rb"
+# Dual-layout app discovery: Homebrew may leave spectre-cli-*/ or strip it to top-level Spectre.app
+grep -q 'Dir\["spectre-cli-\*/Spectre.app"\]\.first || Dir\["Spectre.app"\]\.first' "$tmp/out/Formula/spectre.rb"
 grep -q '"bin": "spectre-cli-1.2.3/spectre.exe"' "$tmp/out/bucket/spectre.json"
