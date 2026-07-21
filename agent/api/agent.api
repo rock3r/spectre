@@ -91,7 +91,8 @@ public final class dev/sebastiano/spectre/agent/AttachedAutomator : java/lang/Au
 	public fun close ()V
 	public final fun findByTestTag (Ljava/lang/String;)Ljava/util/List;
 	public final fun getPid ()J
-	public final fun screenshot ()[B
+	public final fun screenshot (Ljava/lang/Integer;Ljava/lang/String;Z)[B
+	public static synthetic fun screenshot$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/Integer;Ljava/lang/String;ZILjava/lang/Object;)[B
 	public final fun typeText (Ljava/lang/String;)V
 	public final fun windowIdentities (Ljava/lang/Integer;)Ljava/util/List;
 	public static synthetic fun windowIdentities$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/Integer;ILjava/lang/Object;)Ljava/util/List;
@@ -116,6 +117,31 @@ public final class dev/sebastiano/spectre/agent/JvmProcessInfo {
 	public final fun getPid ()J
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class dev/sebastiano/spectre/agent/ScreenshotTarget {
+}
+
+public final class dev/sebastiano/spectre/agent/ScreenshotTarget$Fullscreen : dev/sebastiano/spectre/agent/ScreenshotTarget {
+	public static final field INSTANCE Ldev/sebastiano/spectre/agent/ScreenshotTarget$Fullscreen;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/agent/ScreenshotTarget$Window : dev/sebastiano/spectre/agent/ScreenshotTarget {
+	public fun <init> (I)V
+	public final fun component1 ()I
+	public final fun copy (I)Ldev/sebastiano/spectre/agent/ScreenshotTarget$Window;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/agent/ScreenshotTarget$Window;IILjava/lang/Object;)Ldev/sebastiano/spectre/agent/ScreenshotTarget$Window;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getWindowIndex ()I
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/agent/ScreenshotTargetKt {
+	public static final fun resolveScreenshotTarget (ZLjava/lang/Integer;Ljava/lang/String;Ljava/util/List;)Ljava/lang/Object;
 }
 
 public abstract class dev/sebastiano/spectre/agent/SpectreAttachException : java/lang/RuntimeException {

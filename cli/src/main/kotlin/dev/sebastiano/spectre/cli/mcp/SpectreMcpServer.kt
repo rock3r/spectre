@@ -141,15 +141,7 @@ public object SpectreMcpServer {
                 )
                 .asResult { it is DaemonResponse.Completed }
         }
-        server.addTool(
-            name = "screenshot",
-            description =
-                "Capture the attached UI and return a PNG inline as MCP image content, never as a file path.",
-            inputSchema = sessionSchema(),
-        ) { call ->
-            val response = request(DaemonRequest.Screenshot(call.requiredString("session_id")))
-            response.screenshotResult()
-        }
+        registerScreenshotTool(server, request)
         registerCaptureTool(server, request)
     }
 
@@ -374,4 +366,99 @@ internal fun DaemonResponse.screenshotResult(): CallToolResult =
                 listOf(TextContent("Spectre daemon did not return a screenshot.")),
                 isError = true,
             )
+    }
+
+private fun registerScreenshotTool(server: Server, request: (DaemonRequest) -> DaemonResponse) {
+    val properties = buildJsonObject {
+        put("session_id", buildJsonObject { put("type", "string") })
+        put("window_index", buildJsonObject { put("type", "integer") })
+        put("surface_id", buildJsonObject { put("type", "string") })
+        put("fullscreen", buildJsonObject { put("type", "boolean") })
+    }
+    server.addTool(
+        name = "screenshot",
+        description =
+            "Capture a tracked window of the attached UI (default: window index 0) and return " +
+                "a PNG inline as MCP image content, never as a file path. Pass fullscreen=true " +
+                "only when a full virtual-desktop grab is intentional; do not combine fullscreen " +
+                "with window_index or surface_id.",
+        inputSchema = ToolSchema(properties = properties, required = listOf("session_id")),
+    ) { call ->
+        handleScreenshotTool(call, request)
+    }
+}
+
+private fun handleScreenshotTool(
+    call: CallToolRequest,
+    request: (DaemonRequest) -> DaemonResponse,
+): CallToolResult {
+    val sessionId =
+        call.arguments?.get("session_id")?.jsonPrimitive?.content
+            ?: return CallToolResult(
+                content =
+                    listOf(TextContent("MCP tool requires a non-empty 'session_id' argument")),
+                isError = true,
+            )
+    val windowIndexArg = call.arguments?.get("window_index")?.jsonPrimitive?.content
+    val windowIndex =
+        if (windowIndexArg == null) {
+            null
+        } else {
+            windowIndexArg.toIntOrNull()
+                ?: return CallToolResult(
+                    content =
+                        listOf(
+                            TextContent(
+                                "MCP tool argument 'window_index' must be an integer, got '$windowIndexArg'."
+                            )
+                        ),
+                    isError = true,
+                )
+        }
+    val surfaceId = call.arguments?.get("surface_id")?.jsonPrimitive?.content
+    val fullscreenRaw = call.arguments?.get("fullscreen")?.jsonPrimitive?.content
+    val fullscreen =
+        parseOptionalBooleanArg(fullscreenRaw)
+            ?: return CallToolResult(
+                content =
+                    listOf(
+                        TextContent(
+                            "MCP tool argument 'fullscreen' must be a boolean, got '$fullscreenRaw'."
+                        )
+                    ),
+                isError = true,
+            )
+    if (fullscreen && (windowIndex != null || surfaceId != null)) {
+        return CallToolResult(
+            content =
+                listOf(
+                    TextContent(
+                        "screenshot: fullscreen cannot be combined with window_index or surface_id"
+                    )
+                ),
+            isError = true,
+        )
+    }
+    return request(
+            DaemonRequest.Screenshot(
+                sessionId = sessionId,
+                windowIndex = windowIndex,
+                surfaceId = surfaceId,
+                fullscreen = fullscreen,
+            )
+        )
+        .screenshotResult()
+}
+
+/** Returns false when [raw] is null; null when present but not a recognized boolean token. */
+private fun parseOptionalBooleanArg(raw: String?): Boolean? =
+    when (raw) {
+        null -> false
+        "true",
+        "True",
+        "1" -> true
+        "false",
+        "False",
+        "0" -> false
+        else -> null
     }

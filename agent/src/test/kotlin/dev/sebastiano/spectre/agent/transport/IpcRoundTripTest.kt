@@ -440,7 +440,7 @@ class IpcRoundTripTest {
             is AgentRequest.FindByTestTag -> AgentResponse.Nodes(emptyList())
             is AgentRequest.Click -> AgentResponse.Ok
             is AgentRequest.TypeText -> AgentResponse.Ok
-            AgentRequest.Screenshot -> AgentResponse.Screenshot(ByteArray(0))
+            is AgentRequest.Screenshot -> AgentResponse.Screenshot(ByteArray(0))
             is AgentRequest.Capture ->
                 AgentResponse.Capture(
                     windowIndex = request.windowIndex,

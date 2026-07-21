@@ -2,6 +2,8 @@
 
 package dev.sebastiano.spectre.agent.runtime
 
+import dev.sebastiano.spectre.agent.ScreenshotTarget
+import dev.sebastiano.spectre.agent.resolveScreenshotTarget
 import dev.sebastiano.spectre.agent.transport.AgentRequest
 import dev.sebastiano.spectre.agent.transport.AgentRequestHandler
 import dev.sebastiano.spectre.agent.transport.AgentResponse
@@ -90,7 +92,7 @@ internal class ReflectiveAutomatorHandler(
                 is AgentRequest.FindByTestTag -> handleFindByTestTag(request.tag)
                 is AgentRequest.Click -> handleClick(request.nodeKey)
                 is AgentRequest.TypeText -> handleTypeText(request.text)
-                AgentRequest.Screenshot -> handleScreenshot()
+                is AgentRequest.Screenshot -> handleScreenshot(request)
                 is AgentRequest.Capture ->
                     AtomicCaptureReflectiveMapper.invoke(automator, request.windowIndex)
                 is AgentRequest.WindowIdentity ->
@@ -175,12 +177,27 @@ internal class ReflectiveAutomatorHandler(
         return AgentResponse.Ok
     }
 
-    private fun handleScreenshot(): AgentResponse {
-        // `ComposeAutomator.screenshot(region: Rectangle? = null)` is a single Kotlin method with
-        // a default param. Without `@JvmOverloads`, the JVM-level signature is
-        // `screenshot(Rectangle)` — there is no zero-arg overload. We pass `null` for full-screen
-        // capture.
-        val screenshotMethod =
+    private fun handleScreenshot(request: AgentRequest.Screenshot): AgentResponse {
+        refreshWindowsMethod.invoke(automator)
+        val windows = getWindowsMethod.invoke(automator) as List<*>
+        val windowSummaries = windows.mapIndexedNotNull { index, tracked ->
+            val surfaceId =
+                tracked?.javaClass?.getMethod("getSurfaceId")?.invoke(tracked) as? String
+                    ?: return@mapIndexedNotNull null
+            index to surfaceId
+        }
+        val target =
+            resolveScreenshotTarget(
+                    fullscreen = request.fullscreen,
+                    windowIndex = request.windowIndex,
+                    surfaceId = request.surfaceId,
+                    windows = windowSummaries,
+                )
+                .getOrElse {
+                    return AgentResponse.Error(it.message ?: "Invalid screenshot request")
+                }
+
+        val regionScreenshotMethod =
             automatorClass.methods.firstOrNull {
                 it.name == "screenshot" &&
                     it.parameterTypes.size == 1 &&
@@ -189,9 +206,30 @@ internal class ReflectiveAutomatorHandler(
                 ?: return AgentResponse.Error(
                     "ComposeAutomator does not expose screenshot(Rectangle?) on this build"
                 )
-        val image = screenshotMethod.invoke(automator, null) as BufferedImage
-        val pngBytes = imageToPng(image)
-        return AgentResponse.Screenshot(pngBytes)
+
+        val image =
+            when (target) {
+                is ScreenshotTarget.Fullscreen -> {
+                    // null region = full virtual desktop. Explicit opt-in only (#289).
+                    regionScreenshotMethod.invoke(automator, null) as BufferedImage
+                }
+                is ScreenshotTarget.Window -> {
+                    // Capture bounds from the window list we just resolved against. Do not call
+                    // screenshot(windowIndex): that path refreshes windows again and can bind a
+                    // different surface at the same index after a popup open/close (#289 P2).
+                    val tracked =
+                        windows.getOrNull(target.windowIndex)
+                            ?: return AgentResponse.Error(
+                                "No tracked window at index ${target.windowIndex} (have ${windows.size})"
+                            )
+                    val bounds =
+                        tracked.javaClass
+                            .getMethod("getComposeSurfaceBoundsOnScreen")
+                            .invoke(tracked)
+                    regionScreenshotMethod.invoke(automator, bounds) as BufferedImage
+                }
+            }
+        return AgentResponse.Screenshot(imageToPng(image))
     }
 
     private fun imageToPng(image: BufferedImage): ByteArray {

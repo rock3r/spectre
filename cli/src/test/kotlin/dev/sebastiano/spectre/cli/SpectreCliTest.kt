@@ -68,7 +68,16 @@ class SpectreCliTest {
         val cli =
             SpectreCli(
                 request = { request ->
-                    assertEquals(DaemonRequest.Screenshot("pid-42"), request)
+                    // Default is window-scoped (no silent full-desktop grab) — #289.
+                    assertEquals(
+                        DaemonRequest.Screenshot(
+                            sessionId = "pid-42",
+                            windowIndex = null,
+                            surfaceId = null,
+                            fullscreen = false,
+                        ),
+                        request,
+                    )
                     DaemonResponse.Screenshot("pid-42", byteArrayOf(1, 2, 3))
                 },
                 output = output,
@@ -89,6 +98,72 @@ class SpectreCliTest {
         } finally {
             Files.deleteIfExists(imagePath)
         }
+    }
+
+    @Test
+    fun `screenshot forwards explicit window surface and fullscreen targeting`() {
+        val seen = mutableListOf<DaemonRequest>()
+        val cli =
+            SpectreCli(
+                request = { request ->
+                    seen += request
+                    DaemonResponse.Screenshot("pid-42", byteArrayOf(9))
+                },
+                output = StringBuilder(),
+            )
+
+        assertEquals(0, cli.run(listOf("screenshot", "pid-42", "--window", "2")))
+        assertEquals(
+            DaemonRequest.Screenshot(
+                sessionId = "pid-42",
+                windowIndex = 2,
+                surfaceId = null,
+                fullscreen = false,
+            ),
+            seen.single(),
+        )
+
+        seen.clear()
+        assertEquals(0, cli.run(listOf("screenshot", "pid-42", "--surface", "window:0")))
+        assertEquals(
+            DaemonRequest.Screenshot(
+                sessionId = "pid-42",
+                windowIndex = null,
+                surfaceId = "window:0",
+                fullscreen = false,
+            ),
+            seen.single(),
+        )
+
+        seen.clear()
+        assertEquals(0, cli.run(listOf("screenshot", "pid-42", "--fullscreen")))
+        assertEquals(
+            DaemonRequest.Screenshot(
+                sessionId = "pid-42",
+                windowIndex = null,
+                surfaceId = null,
+                fullscreen = true,
+            ),
+            seen.single(),
+        )
+    }
+
+    @Test
+    fun `screenshot rejects fullscreen combined with window targeting`() {
+        val errorOutput = StringBuilder()
+        val cli =
+            SpectreCli(
+                request = { error("daemon must not be called for invalid screenshot options") },
+                output = StringBuilder(),
+                errorOutput = errorOutput,
+            )
+
+        // Clikt usage failures exit with EXIT_USAGE_FAILURE (2).
+        assertEquals(2, cli.run(listOf("screenshot", "pid-42", "--fullscreen", "--window", "0")))
+        assertTrue(
+            errorOutput.toString().contains("fullscreen", ignoreCase = true),
+            errorOutput.toString(),
+        )
     }
 
     @Test

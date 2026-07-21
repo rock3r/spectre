@@ -5,6 +5,7 @@ package dev.sebastiano.spectre.agent.transport
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * Round-trip tests for [WireCodec]. Each variant of [AgentRequest] / [AgentResponse] gets a
@@ -57,9 +58,31 @@ class WireCodecTest {
     }
 
     @Test
-    fun `Screenshot request round-trips`() {
-        val encoded = WireCodec.encode(AgentRequest.Screenshot)
-        assertEquals(AgentRequest.Screenshot, WireCodec.decodeRequest(encoded))
+    fun `Screenshot request round-trips with defaults`() {
+        val encoded = WireCodec.encode(AgentRequest.Screenshot())
+        assertEquals(AgentRequest.Screenshot(), WireCodec.decodeRequest(encoded))
+    }
+
+    @Test
+    fun `Screenshot request uses screenshot_v2 discriminator so pre-289 agents cannot silently fullscreen`() {
+        // Old agent runtimes mapped SerialName("screenshot") to a payload-free object that always
+        // called screenshot(null). The new request must not share that discriminator.
+        val encoded = WireCodec.encode(AgentRequest.Screenshot())
+        val asText = encoded.toString(Charsets.ISO_8859_1)
+        assertTrue(
+            asText.contains("screenshot_v2"),
+            "encoded request must use screenshot_v2 discriminator",
+        )
+    }
+
+    @Test
+    fun `Screenshot request with window surface and fullscreen round-trips`() {
+        val req =
+            AgentRequest.Screenshot(windowIndex = 2, surfaceId = "window:2", fullscreen = false)
+        assertEquals(req, WireCodec.decodeRequest(WireCodec.encode(req)))
+
+        val fullscreen = AgentRequest.Screenshot(fullscreen = true)
+        assertEquals(fullscreen, WireCodec.decodeRequest(WireCodec.encode(fullscreen)))
     }
 
     @Test

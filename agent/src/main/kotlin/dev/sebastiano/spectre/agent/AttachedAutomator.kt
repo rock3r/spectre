@@ -72,10 +72,28 @@ internal constructor(
         if (resp !is AgentResponse.Ok) throw wireMismatch("Ok", resp)
     }
 
-    /** Capture a PNG of the target JVM's screen. Returns the raw PNG bytes. */
+    /**
+     * Capture a PNG of a tracked window (default) or the full desktop when [fullscreen] is true.
+     *
+     * Without [windowIndex], [surfaceId], or [fullscreen], targets window index 0. Window capture
+     * failures surface as [IOException] rather than silently returning a full-desktop grab (#289).
+     *
+     * @return raw PNG bytes
+     */
     @Throws(IOException::class)
-    public fun screenshot(): ByteArray {
-        val resp = exchange(AgentRequest.Screenshot)
+    public fun screenshot(
+        windowIndex: Int? = null,
+        surfaceId: String? = null,
+        fullscreen: Boolean = false,
+    ): ByteArray {
+        val resp =
+            exchange(
+                AgentRequest.Screenshot(
+                    windowIndex = windowIndex,
+                    surfaceId = surfaceId,
+                    fullscreen = fullscreen,
+                )
+            )
         return (resp as? AgentResponse.Screenshot)?.pngBytes
             ?: throw wireMismatch("Screenshot", resp)
     }

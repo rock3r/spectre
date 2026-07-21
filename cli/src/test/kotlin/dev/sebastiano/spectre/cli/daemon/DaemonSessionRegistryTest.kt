@@ -79,6 +79,7 @@ class DaemonSessionRegistryTest {
             )
         var clicked: String? = null
         var typed: String? = null
+        var screenshotArgs: Triple<Int?, String?, Boolean>? = null
         val registry = DaemonSessionRegistry {
             TestDaemonSessionAutomator(
                 windowsResult = { listOf(window) },
@@ -86,7 +87,10 @@ class DaemonSessionRegistryTest {
                 findByTestTagResult = { tag -> if (tag == "submit") listOf(node) else emptyList() },
                 clickAction = { nodeKey -> clicked = nodeKey },
                 typeTextAction = { text -> typed = text },
-                screenshotResult = { byteArrayOf(1, 2, 3) },
+                screenshotResult = { windowIndex, surfaceId, fullscreen ->
+                    screenshotArgs = Triple(windowIndex, surfaceId, fullscreen)
+                    byteArrayOf(1, 2, 3)
+                },
             )
         }
         val sessionId =
@@ -118,6 +122,43 @@ class DaemonSessionRegistryTest {
             DaemonResponse.Screenshot(sessionId, byteArrayOf(1, 2, 3)),
             registry.handle(DaemonRequest.Screenshot(sessionId)),
         )
+        assertEquals(Triple(null, null, false), screenshotArgs)
+    }
+
+    @OptIn(ExperimentalSpectreAgentApi::class)
+    @Test
+    fun `screenshot forwards window surface and fullscreen targeting to session automator`() {
+        var screenshotArgs: Triple<Int?, String?, Boolean>? = null
+        val registry = DaemonSessionRegistry {
+            TestDaemonSessionAutomator(
+                screenshotResult = { windowIndex, surfaceId, fullscreen ->
+                    screenshotArgs = Triple(windowIndex, surfaceId, fullscreen)
+                    byteArrayOf(7)
+                }
+            )
+        }
+        val sessionId =
+            assertIs<DaemonResponse.Attached>(registry.handle(DaemonRequest.Attach(55))).sessionId
+
+        registry.handle(
+            DaemonRequest.Screenshot(
+                sessionId = sessionId,
+                windowIndex = 2,
+                surfaceId = "window:2",
+                fullscreen = false,
+            )
+        )
+        assertEquals(Triple(2, "window:2", false), screenshotArgs)
+
+        registry.handle(
+            DaemonRequest.Screenshot(
+                sessionId = sessionId,
+                windowIndex = null,
+                surfaceId = null,
+                fullscreen = true,
+            )
+        )
+        assertEquals(Triple(null, null, true), screenshotArgs)
     }
 
     @OptIn(ExperimentalSpectreAgentApi::class)

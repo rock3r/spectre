@@ -55,10 +55,24 @@ internal sealed interface AgentRequest {
     @Serializable @SerialName("typeText") data class TypeText(val text: String) : AgentRequest
 
     /**
-     * Capture a PNG of the current target JVM's screen content. Server replies with
-     * [AgentResponse.Screenshot] containing the PNG bytes.
+     * Capture a PNG of a tracked window (default) or the full desktop when [fullscreen] is true.
+     *
+     * Default targets window index 0 of the attached session. Pass [windowIndex] and/or [surfaceId]
+     * to select a specific surface from `windows`. Full-desktop capture is opt-in only via
+     * [fullscreen]; the server must not silently fall back to the full desktop when window capture
+     * fails (#289).
+     *
+     * Serial name is `screenshot_v2` (not the pre-#289 payload-free `screenshot`) so an older
+     * agent-runtime JAR that still maps `screenshot` → full-desktop `screenshot(null)` rejects this
+     * request instead of ignoring new fields and silently grabbing the whole desktop.
      */
-    @Serializable @SerialName("screenshot") data object Screenshot : AgentRequest
+    @Serializable
+    @SerialName("screenshot_v2")
+    data class Screenshot(
+        val windowIndex: Int? = null,
+        val surfaceId: String? = null,
+        val fullscreen: Boolean = false,
+    ) : AgentRequest
 
     /**
      * Atomic capture of one window: semantics tree + window PNG taken back-to-back. Server replies
@@ -95,7 +109,7 @@ internal val AgentRequest.logLabel: String
             is AgentRequest.FindByTestTag -> "findByTestTag"
             is AgentRequest.Click -> "click"
             is AgentRequest.TypeText -> "typeText"
-            AgentRequest.Screenshot -> "screenshot"
+            is AgentRequest.Screenshot -> "screenshot"
             is AgentRequest.Capture -> "capture"
             is AgentRequest.WindowIdentity -> "windowIdentity"
             AgentRequest.Detach -> "detach"
