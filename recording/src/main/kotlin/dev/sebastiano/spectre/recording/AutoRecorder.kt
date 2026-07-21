@@ -77,7 +77,53 @@ internal constructor(
         output: Path,
         options: RecordingOptions = RecordingOptions(),
         windowOwnerPid: Long = ProcessHandle.current().pid(),
+    ): RecordingHandle =
+        startWindow(
+            window = window,
+            output = output,
+            options = options,
+            windowOwnerPid = windowOwnerPid,
+            cropInWindow = null,
+            scaleX = 1.0,
+            scaleY = 1.0,
+        )
+
+    /**
+     * Window-targeted capture, optionally cropped to an embedded surface.
+     *
+     * When [cropInWindow] is non-null, captures the host top-level [window] and crops to that
+     * rectangle (AWT user space relative to the window top-left — same as window-identity
+     * `surfaceBoundsInWindow`). This is the preferred path for handle-less Compose surfaces (spike
+     * constraint #5 / #186). Prefer this over [startRegion], which is occlusion-sensitive and does
+     * not follow the window.
+     *
+     * [scaleX]/[scaleY] come from `GraphicsConfiguration.defaultTransform` (window-identity
+     * snapshot). They convert AWT user-space crop to device pixels on Windows; macOS uses points
+     * and applies the window's backing scale inside the helper.
+     *
+     * **v1:** crop is fixed at start. Linux Wayland/X11 do not yet implement window+crop; callers
+     * get an actionable error rather than a silent region fallback.
+     */
+    public fun startWindow(
+        window: TitledWindow,
+        output: Path,
+        options: RecordingOptions = RecordingOptions(),
+        windowOwnerPid: Long = ProcessHandle.current().pid(),
+        cropInWindow: Rectangle?,
+        scaleX: Double = 1.0,
+        scaleY: Double = 1.0,
     ): RecordingHandle {
+        if (cropInWindow != null) {
+            return startWindowCropped(
+                window,
+                cropInWindow,
+                output,
+                options,
+                windowOwnerPid,
+                scaleX,
+                scaleY,
+            )
+        }
         if (isWayland()) {
             val recorder =
                 waylandPortalWindowRecorder
@@ -118,6 +164,65 @@ internal constructor(
                 ?: throw unavailable("Linux X11 window capture", null)
         }
         throw unsupportedWindowCapture()
+    }
+
+    private fun startWindowCropped(
+        window: TitledWindow,
+        cropInWindow: Rectangle,
+        output: Path,
+        options: RecordingOptions,
+        windowOwnerPid: Long,
+        scaleX: Double,
+        scaleY: Double,
+    ): RecordingHandle {
+        require(cropInWindow.width > 0 && cropInWindow.height > 0) {
+            "cropInWindow must be non-empty; got $cropInWindow"
+        }
+        require(cropInWindow.x >= 0 && cropInWindow.y >= 0) {
+            "cropInWindow origin must be non-negative; got $cropInWindow"
+        }
+        if (isMacOs()) {
+            return try {
+                sckRecorder.startCropped(
+                    window = window,
+                    cropInWindow = cropInWindow,
+                    windowOwnerPid = windowOwnerPid,
+                    output = output,
+                    options = options,
+                    scaleX = scaleX,
+                    scaleY = scaleY,
+                )
+            } catch (e: HelperNotBundledException) {
+                throw unavailable("macOS window+crop capture", e)
+            }
+        }
+        if (isWindows()) {
+            val title = window.title
+            require(!title.isNullOrBlank()) {
+                "AutoRecorder.startWindow (cropped) requires a non-blank window title on Windows."
+            }
+            val recorder =
+                windowsWindowRecorder ?: throw unavailable("Windows window+crop capture", null)
+            return recorder.startCropped(
+                window = window,
+                cropInWindow = cropInWindow,
+                windowOwnerPid = windowOwnerPid,
+                output = output,
+                options = options,
+                scaleX = scaleX,
+                scaleY = scaleY,
+            )
+        }
+        // Linux parity evaluation (#186): X11 ximagesrc can grab a named window but has no
+        // capture-side surface crop that keeps occlusion immunity; Wayland portal window streams
+        // could videocrop stream-relative rects but that path is not wired yet. Fail loud rather
+        // than silently degrading to region capture (region is the explicit last resort).
+        error(
+            "Window capture + crop is not available on this Linux session. " +
+                "macOS (ScreenCaptureKit sourceRect) and Windows (WGC pre-encode crop) support " +
+                "it; Linux X11/Wayland parity is not implemented in v1. Use startRegion(...) " +
+                "only as an explicit last resort (occlusion-sensitive, fixed screen rect)."
+        )
     }
 
     public fun startRegion(

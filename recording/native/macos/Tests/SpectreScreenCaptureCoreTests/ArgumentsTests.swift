@@ -73,4 +73,38 @@ final class ArgumentsTests: XCTestCase {
         ])
         XCTAssertEqual(args.mode, .request)
     }
+
+    func testArgumentsAcceptWindowCrop() throws {
+        let args = try Arguments.parse([
+            "spectre-screencapture",
+            "--pid",
+            "123",
+            "--title-contains",
+            "Spectre/crop",
+            "--crop",
+            "10,20,300,200",
+            "--output",
+            "/tmp/spectre-crop.mp4",
+        ])
+        XCTAssertEqual(args.crop?.x, 10)
+        XCTAssertEqual(args.crop?.y, 20)
+        XCTAssertEqual(args.crop?.width, 300)
+        XCTAssertEqual(args.crop?.height, 200)
+    }
+
+    func testArgumentsRejectCropOnRegionSource() {
+        XCTAssertThrowsError(
+            try Arguments.parse([
+                "spectre-screencapture",
+                "--source",
+                "region",
+                "--region",
+                "0,0,100,100",
+                "--crop",
+                "0,0,50,50",
+                "--output",
+                "/tmp/out.mp4",
+            ])
+        )
+    }
 }

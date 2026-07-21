@@ -50,6 +50,32 @@ internal constructor(
         windowOwnerPid: Long,
         output: Path,
         options: RecordingOptions,
+    ): RecordingHandle = startWindow(window, windowOwnerPid, output, options, crop = null)
+
+    override fun startCropped(
+        window: TitledWindow,
+        cropInWindow: Rectangle,
+        windowOwnerPid: Long,
+        output: Path,
+        options: RecordingOptions,
+        scaleX: Double,
+        scaleY: Double,
+    ): RecordingHandle {
+        // SCK window sourceRect uses the same point space as SCWindow.frame / AWT user space.
+        // scaleX/scaleY are accepted for API parity with Windows but not applied on macOS —
+        // the helper multiplies crop size by the window's backing scale for pixel output.
+        require(scaleX > 0.0 && scaleY > 0.0) {
+            "scaleX/scaleY must be positive; got scaleX=$scaleX scaleY=$scaleY"
+        }
+        return startWindow(window, windowOwnerPid, output, options, crop = cropInWindow)
+    }
+
+    private fun startWindow(
+        window: TitledWindow,
+        windowOwnerPid: Long,
+        output: Path,
+        options: RecordingOptions,
+        crop: Rectangle?,
     ): RecordingHandle {
         validateOptions(options)
         // Resolve everything that can fail without touching window state first. Anything we do
@@ -58,6 +84,14 @@ internal constructor(
         // discriminator and would otherwise stay dirty across a failed start).
         val helperPath = helperExtractor.extract()
         output.toAbsolutePath().parent?.let(Files::createDirectories)
+
+        if (crop != null) {
+            System.err.println(
+                "spectre: window+crop is fixed at start " +
+                    "(${crop.x},${crop.y} ${crop.width}x${crop.height}); " +
+                    "surface move/resize mid-recording is not followed in v1."
+            )
+        }
 
         val discriminator = TitleDiscriminator(window)
         discriminator.apply()
@@ -71,6 +105,7 @@ internal constructor(
                         source = HelperSource.Window,
                         pid = windowOwnerPid,
                         titleContains = discriminator.value,
+                        crop = crop,
                         output = output,
                         fps = options.frameRate,
                         captureCursor = options.captureCursor,

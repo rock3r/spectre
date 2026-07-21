@@ -13,6 +13,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+import kotlin.math.roundToInt
 
 /** Windows MP4 recorder backed by Windows Graphics Capture. */
 public class WindowsGraphicsCaptureRecorder
@@ -29,6 +30,39 @@ internal constructor(
         windowOwnerPid: Long,
         output: Path,
         options: RecordingOptions,
+    ): RecordingHandle =
+        startWindow(window, windowOwnerPid, output, options, cropDevicePixels = null)
+
+    override fun startCropped(
+        window: TitledWindow,
+        cropInWindow: Rectangle,
+        windowOwnerPid: Long,
+        output: Path,
+        options: RecordingOptions,
+        scaleX: Double,
+        scaleY: Double,
+    ): RecordingHandle {
+        require(scaleX > 0.0 && scaleY > 0.0) {
+            "scaleX/scaleY must be positive; got scaleX=$scaleX scaleY=$scaleY"
+        }
+        // WGC capture-item space is device pixels; convert from AWT user space with rounding
+        // (matches macOS .rounded() for HiDPI 125%/150% scales).
+        val cropDevice =
+            Rectangle(
+                (cropInWindow.x * scaleX).roundToInt().coerceAtLeast(0),
+                (cropInWindow.y * scaleY).roundToInt().coerceAtLeast(0),
+                (cropInWindow.width * scaleX).roundToInt().coerceAtLeast(1),
+                (cropInWindow.height * scaleY).roundToInt().coerceAtLeast(1),
+            )
+        return startWindow(window, windowOwnerPid, output, options, cropDevicePixels = cropDevice)
+    }
+
+    private fun startWindow(
+        window: TitledWindow,
+        windowOwnerPid: Long,
+        output: Path,
+        options: RecordingOptions,
+        cropDevicePixels: Rectangle?,
     ): RecordingHandle {
         val title = window.title
         require(!title.isNullOrBlank()) {
@@ -36,6 +70,14 @@ internal constructor(
         }
         validateOptions(options)
         output.toAbsolutePath().parent?.let(Files::createDirectories)
+        if (cropDevicePixels != null) {
+            System.err.println(
+                "spectre: window+crop is fixed at start " +
+                    "(${cropDevicePixels.x},${cropDevicePixels.y} " +
+                    "${cropDevicePixels.width}x${cropDevicePixels.height} device px); " +
+                    "surface move/resize mid-recording is not followed in v1."
+            )
+        }
         val helperPath = helperExtractor.extract()
         val argv =
             WindowsGraphicsCaptureArguments(
@@ -43,6 +85,7 @@ internal constructor(
                     source = WindowsGraphicsCaptureSource.Window,
                     title = title,
                     ownerPid = windowOwnerPid,
+                    crop = cropDevicePixels,
                     output = output,
                     fps = options.frameRate,
                     captureCursor = options.captureCursor,
