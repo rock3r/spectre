@@ -79,9 +79,10 @@ internal constructor(
             is DaemonRequest.Capture ->
                 invoke(request.sessionId) { automator ->
                     CaptureArtifactStore.write(
-                        request.sessionId,
-                        automator.capture(request.windowIndex),
-                        request.outDir,
+                        sessionId = request.sessionId,
+                        result = automator.capture(request.windowIndex),
+                        outDir = request.outDir,
+                        liveSessionIds = liveSessionIds(),
                     )
                 }
             is DaemonRequest.StartRecording ->
@@ -147,8 +148,10 @@ internal constructor(
                     message = "session not found: $sessionId",
                 )
         sessionsByPid.remove(removed.key)?.automator?.close()
-        return DaemonResponse.Detached(sessionId = sessionId)
+        return CaptureSessionReport.forDetach(sessionId)
     }
+
+    private fun liveSessionIds(): Set<String> = sessionsByPid.values.map { it.sessionId }.toSet()
 
     private fun listSessions(): DaemonResponse =
         DaemonResponse.Sessions(

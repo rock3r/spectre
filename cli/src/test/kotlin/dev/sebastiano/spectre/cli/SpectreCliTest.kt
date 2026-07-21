@@ -290,7 +290,8 @@ class SpectreCliTest {
             )
 
         assertEquals(0, cli.run(listOf("detach", "pid-42", "--json")))
-        assertEquals("{\"version\":1,\"id\":\"pid-42\"}\n", output.toString())
+        assertTrue(output.toString().contains("\"id\":\"pid-42\""))
+        assertTrue(output.toString().contains("\"captureCount\":0"))
     }
 
     @Test

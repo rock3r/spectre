@@ -309,10 +309,10 @@ class DaemonSessionRegistryTest {
         val registry = testRegistry()
         registry.handle(DaemonRequest.Attach(1234))
 
-        assertEquals(
-            DaemonResponse.Detached("pid-1234"),
-            registry.handle(DaemonRequest.Detach("pid-1234")),
-        )
+        val detached =
+            assertIs<DaemonResponse.Detached>(registry.handle(DaemonRequest.Detach("pid-1234")))
+        assertEquals("pid-1234", detached.sessionId)
+        assertEquals(0, detached.captureCount)
         assertEquals(
             DaemonResponse.Sessions(emptyList()),
             registry.handle(DaemonRequest.ListSessions),

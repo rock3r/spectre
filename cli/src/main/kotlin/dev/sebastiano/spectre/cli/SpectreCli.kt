@@ -133,6 +133,7 @@ private class RootCommand(
             TypeCommand(request, output),
             ScreenshotCommand(request, output),
             CaptureCommand(request, output),
+            CapturesCommand(request, output),
             RecordCommand(request, output),
             PsCommand(request, output),
             DaemonCommand(request, shutdownRequest, output),
@@ -417,16 +418,42 @@ private class DetachCommand(
     private val json: Boolean by option("--json").flag(default = false)
 
     override fun run() {
-        val detachedSessionId =
+        val detached =
             when (val response = request(DaemonRequest.Detach(sessionId))) {
-                is DaemonResponse.Detached -> response.sessionId
+                is DaemonResponse.Detached -> response
                 is DaemonResponse.Error -> throw DaemonCommandException(response)
                 else -> error("Daemon returned an unexpected response to detach")
             }
         if (json) {
-            output.append(CLI_JSON.encodeToString(DetachJson(id = detachedSessionId)))
+            output.append(
+                CLI_JSON.encodeToString(
+                    DetachJson(
+                        id = detached.sessionId,
+                        captureCount = detached.captureCount,
+                        captureBytes = detached.captureBytes,
+                        capturePaths = detached.capturePaths,
+                        pruneCommand = detached.pruneCommand,
+                    )
+                )
+            )
         } else {
-            output.append("Detached $detachedSessionId.")
+            output.append("Detached ${detached.sessionId}.")
+            if (detached.captureCount > 0) {
+                output.appendLine()
+                output.append(
+                    "This session wrote ${detached.captureCount} captures, " +
+                        formatCaptureMegabytes(detached.captureBytes) +
+                        " MB:"
+                )
+                detached.capturePaths.forEach { path ->
+                    output.appendLine()
+                    output.append("  $path")
+                }
+                detached.pruneCommand?.let { command ->
+                    output.appendLine()
+                    output.append("Prune with: $command")
+                }
+            }
         }
         output.appendLine()
     }
@@ -561,7 +588,15 @@ private data class DaemonKillJson(val version: Int = JSON_VERSION, val stopped: 
 @Serializable
 private data class AttachJson(val version: Int = JSON_VERSION, val id: String, val pid: Long)
 
-@Serializable private data class DetachJson(val version: Int = JSON_VERSION, val id: String)
+@Serializable
+private data class DetachJson(
+    val version: Int = JSON_VERSION,
+    val id: String,
+    val captureCount: Int = 0,
+    val captureBytes: Long = 0L,
+    val capturePaths: List<String> = emptyList(),
+    val pruneCommand: String? = null,
+)
 
 @Serializable private data class CompletionJson(val version: Int = JSON_VERSION, val id: String)
 
