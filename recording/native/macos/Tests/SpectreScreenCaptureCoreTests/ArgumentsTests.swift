@@ -47,4 +47,30 @@ final class ArgumentsTests: XCTestCase {
             ])
         )
     }
+
+    func testArgumentsAcceptPreflightModeWithoutOutput() throws {
+        let args = try Arguments.parse([
+            "spectre-screencapture",
+            "--mode",
+            "preflight",
+        ])
+        XCTAssertEqual(args.mode, .preflight)
+    }
+
+    func testArgumentsAcceptPreflightFlag() throws {
+        let args = try Arguments.parse([
+            "spectre-screencapture",
+            "--preflight",
+        ])
+        XCTAssertEqual(args.mode, .preflight)
+    }
+
+    func testArgumentsAcceptRequestMode() throws {
+        let args = try Arguments.parse([
+            "spectre-screencapture",
+            "--mode",
+            "request",
+        ])
+        XCTAssertEqual(args.mode, .request)
+    }
 }

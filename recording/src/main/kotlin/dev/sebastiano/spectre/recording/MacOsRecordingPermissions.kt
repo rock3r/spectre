@@ -1,33 +1,22 @@
 package dev.sebastiano.spectre.recording
 
+import dev.sebastiano.spectre.recording.screencapturekit.MacOsScreenCaptureAccess
+import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureAccessResult
 import java.util.concurrent.TimeUnit
 
 /**
- * Best-effort startup diagnostics for the macOS permissions Spectre needs.
+ * Startup diagnostics for the macOS permissions Spectre needs.
  *
- * The Spectre automator interacts with the OS in two ways that gated by macOS TCC permissions:
- * - **Screen Recording** — required for [FfmpegRecorder]'s avfoundation device and for AWT
- *   `Robot.createScreenCapture` (which is what the core RobotDriver's screenshot path uses on
- *   macOS).
- * - **Accessibility (input control)** — required for AWT `Robot` to actually move the mouse and
- *   synthesize key events. Without it, mouse/key calls silently no-op.
- *
- * Detecting these without JNI is awkward — the canonical native APIs
- * (`CGPreflightScreenCaptureAccess`, `AXIsProcessTrusted`) live in CoreGraphics /
- * ApplicationServices and aren't reachable from pure JVM. Spectre currently ships the diagnostic
- * surface as documentation plus a probe-style heuristic via the `tccutil` / `osascript` CLIs where
- * available. Full native detection (calling into CoreGraphics / ApplicationServices via JNI or
- * Panama) is a future improvement; in the meantime callers see the actual permission outcome at
- * recording start because
- * [ScreenCaptureKitRecorder][dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitRecorder]
- * detects TCC denial via the helper's exit code.
+ * - **Screen Recording** — [MacOsScreenCaptureAccess.preflight] via the ScreenCaptureKit helper
+ *   (`CGPreflightScreenCaptureAccess`). Never prompts.
+ * - **Accessibility** — best-effort probe via `osascript` / System Events (Automation is a separate
+ *   TCC entry and may leave Accessibility unknown).
  */
 public object MacOsRecordingPermissions {
 
     /**
      * Returns a human-readable diagnostic that downstream tooling can dump at startup. On non-macOS
-     * platforms returns [PermissionStatus.NotApplicable]. On macOS, runs a best-effort probe via
-     * `osascript` if available, otherwise returns [PermissionStatus.Unknown] with guidance text.
+     * platforms returns [PermissionStatus.NotApplicable].
      */
     public fun diagnose(): PermissionDiagnostic {
         if (!isMacOs()) return PermissionDiagnostic(NOT_MAC_MESSAGE, PermissionStatus.NotApplicable)
@@ -46,22 +35,23 @@ public object MacOsRecordingPermissions {
         )
     }
 
+    /**
+     * Screen Recording only — structured result for agents/CLI. Never prompts. Prefer this over
+     * [diagnose] when only capture access matters.
+     */
+    public fun preflightScreenRecording(): ScreenCaptureAccessResult =
+        MacOsScreenCaptureAccess.preflight()
+
     private fun probeScreenRecordingPermission(): PermissionStatus {
-        // CGPreflightScreenCaptureAccess lives in CoreGraphics and isn't reachable from pure
-        // JVM. There's no AppleScript proxy for the Screen Recording TCC entry either, so we
-        // honestly report Unknown rather than pretending we know — callers see the actual
-        // outcome at recording start when the SCK helper exits with a TCC-denied code.
-        return PermissionStatus.Unknown
+        return try {
+            val result = MacOsScreenCaptureAccess.preflight()
+            if (result.granted) PermissionStatus.Granted else PermissionStatus.Denied
+        } catch (_: Exception) {
+            PermissionStatus.Unknown
+        }
     }
 
     private fun probeAccessibilityPermission(): PermissionStatus {
-        // The probe asks System Events for a process name. Three outcomes:
-        //   - exit 0 with non-blank output: Accessibility is granted.
-        //   - exit non-zero with the explicit Accessibility denial string: Denied.
-        //   - exit non-zero with anything else (including the AppleEvents/Automation
-        //     authorisation error -1743 / "Not authorized to send Apple events to System
-        //     Events"): Unknown — Automation and Accessibility are separate macOS TCC
-        //     entries, so an Automation refusal does NOT prove Accessibility is denied.
         val result =
             runOsascript("tell application \"System Events\" to return name of first process")
         return when {
@@ -78,7 +68,6 @@ public object MacOsRecordingPermissions {
         }
     }
 
-    /** Combine multiple statuses into a single rollup using the worst-known value. */
     private fun combine(vararg statuses: PermissionStatus): PermissionStatus =
         when {
             statuses.any { it == PermissionStatus.Denied } -> PermissionStatus.Denied
@@ -106,8 +95,6 @@ public object MacOsRecordingPermissions {
                 )
             }
         } catch (_: InterruptedException) {
-            // Cancellation is meaningful upstream — surface the interrupt so callers'
-            // timeout/cancellation logic can react instead of silently swallowing it.
             process.destroyForcibly()
             Thread.currentThread().interrupt()
             null
@@ -127,11 +114,11 @@ public object MacOsRecordingPermissions {
         "Spectre macOS permission diagnostics: not applicable on this platform."
 
     private const val GUIDANCE: String =
-        "If a status is Denied or Unknown, grant the JVM (your IDE / your test runner / java)\n" +
-            "the relevant permission under System Settings → Privacy & Security:\n" +
-            "  - Screen Recording: required for ffmpeg avfoundation capture and for Robot screenshots.\n" +
-            "  - Accessibility:    required for Robot mouse/keyboard control.\n" +
-            "Restart the JVM after granting; macOS does not refresh TCC entitlements live."
+        "If Screen Recording is Denied, run `spectre permissions request` with a human present,\n" +
+            "or open ${MacOsScreenCaptureAccess.SETTINGS_PATH}\n" +
+            "(${MacOsScreenCaptureAccess.DEEP_LINK}) and enable the spectre-screencapture helper\n" +
+            "and/or the host JVM. Restart the process after granting.\n" +
+            "Accessibility is required for Robot mouse/keyboard control."
 }
 
 /** Coarse permission status we can detect without JNI. */

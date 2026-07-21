@@ -31,8 +31,11 @@ class ScreenCaptureKitRecorderTest {
                 resourceLocator = { ByteArrayInputStream(byteArrayOf(0x01)) },
                 targetDirProvider = { helperPath.parent ?: Path.of("/tmp") },
             )
-        return ScreenCaptureKitRecorder(helperExtractor = extractor, processFactory = factory) to
-            factory
+        return ScreenCaptureKitRecorder(
+            helperExtractor = extractor,
+            processFactory = factory,
+            requireScreenCaptureAccess = {},
+        ) to factory
     }
 
     @Test

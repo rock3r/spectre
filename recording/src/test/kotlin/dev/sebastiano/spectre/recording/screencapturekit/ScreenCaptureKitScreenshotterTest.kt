@@ -26,7 +26,11 @@ class ScreenCaptureKitScreenshotterTest {
                 targetDirProvider = { Path.of("/tmp") },
             )
         val screenshotter =
-            ScreenCaptureKitScreenshotter(helperExtractor = extractor, processFactory = factory)
+            ScreenCaptureKitScreenshotter(
+                helperExtractor = extractor,
+                processFactory = factory,
+                requireScreenCaptureAccess = {},
+            )
         val window = ScreenshotFakeTitledWindow(initialTitle = "MyApp")
 
         val image = screenshotter.captureWindow(window = window, windowOwnerPid = 4242L)
@@ -55,7 +59,11 @@ class ScreenCaptureKitScreenshotterTest {
                 targetDirProvider = { Path.of("/tmp") },
             )
         val screenshotter =
-            ScreenCaptureKitScreenshotter(helperExtractor = extractor, processFactory = factory)
+            ScreenCaptureKitScreenshotter(
+                helperExtractor = extractor,
+                processFactory = factory,
+                requireScreenCaptureAccess = {},
+            )
         val window = ScreenshotFakeTitledWindow(initialTitle = "MyApp")
 
         try {

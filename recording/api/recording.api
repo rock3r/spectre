@@ -68,6 +68,7 @@ public final class dev/sebastiano/spectre/recording/LinuxX11Recorder : dev/sebas
 public final class dev/sebastiano/spectre/recording/MacOsRecordingPermissions {
 	public static final field INSTANCE Ldev/sebastiano/spectre/recording/MacOsRecordingPermissions;
 	public final fun diagnose ()Ldev/sebastiano/spectre/recording/PermissionDiagnostic;
+	public final fun preflightScreenRecording ()Ldev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureAccessResult;
 }
 
 public final class dev/sebastiano/spectre/recording/PermissionDiagnostic {
@@ -175,6 +176,61 @@ public final class dev/sebastiano/spectre/recording/portal/WaylandWindowSourceRe
 }
 
 public final class dev/sebastiano/spectre/recording/screencapturekit/HelperNotBundledException : java/lang/IllegalStateException {
+}
+
+public final class dev/sebastiano/spectre/recording/screencapturekit/MacOsScreenCaptureAccess {
+	public static final field DEEP_LINK Ljava/lang/String;
+	public static final field HELPER_EXIT_NOT_GRANTED I
+	public static final field INSTANCE Ldev/sebastiano/spectre/recording/screencapturekit/MacOsScreenCaptureAccess;
+	public static final field SETTINGS_PATH Ljava/lang/String;
+	public final fun preflight ()Ldev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureAccessResult;
+	public final fun request ()Ldev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureAccessResult;
+	public final fun requireGranted ()V
+}
+
+public final class dev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureAccessDeniedException : java/lang/IllegalStateException {
+	public fun <init> (Ldev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureAccessResult;)V
+	public final fun getResult ()Ldev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureAccessResult;
+}
+
+public final class dev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureAccessResult {
+	public static final field Companion Ldev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureAccessResult$Companion;
+	public fun <init> (ZLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public synthetic fun <init> (ZLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Z
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5 ()Ljava/lang/String;
+	public final fun component6 ()Ljava/lang/String;
+	public final fun copy (ZLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ldev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureAccessResult;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureAccessResult;ZLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureAccessResult;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getApi ()Ljava/lang/String;
+	public final fun getBinaryPath ()Ljava/lang/String;
+	public final fun getDeepLink ()Ljava/lang/String;
+	public final fun getGranted ()Z
+	public final fun getGuidance ()Ljava/lang/String;
+	public final fun getSettingsPath ()Ljava/lang/String;
+	public fun hashCode ()I
+	public final fun relayMessage ()Ljava/lang/String;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final synthetic class dev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureAccessResult$$serializer : kotlinx/serialization/internal/GeneratedSerializer {
+	public static final field INSTANCE Ldev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureAccessResult$$serializer;
+	public final fun childSerializers ()[Lkotlinx/serialization/KSerializer;
+	public final fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ldev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureAccessResult;
+	public synthetic fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ljava/lang/Object;
+	public final fun getDescriptor ()Lkotlinx/serialization/descriptors/SerialDescriptor;
+	public final fun serialize (Lkotlinx/serialization/encoding/Encoder;Ldev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureAccessResult;)V
+	public synthetic fun serialize (Lkotlinx/serialization/encoding/Encoder;Ljava/lang/Object;)V
+	public fun typeParametersSerializers ()[Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureAccessResult$Companion {
+	public final fun notApplicable ()Ldev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureAccessResult;
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
 }
 
 public final class dev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureKitRecorder : dev/sebastiano/spectre/recording/Recorder, dev/sebastiano/spectre/recording/screencapturekit/WindowRecorder {
