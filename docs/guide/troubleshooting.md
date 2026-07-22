@@ -122,17 +122,18 @@ clipboard, so none of the paste-specific caveats apply.
 
 ### "`wait --reload-settled` says hotReloadUnavailable"
 
-The attached session is not reload-aware. Common causes:
+The attached session is **not** reload-aware: attach did not find HR orchestration properties on
+the process, so no Hot Reload client was created. Common causes:
 
 1. **The target is not running under Compose Hot Reload** — ordinary `run` / packaged launches
-   are fine for Spectre; reload wait only activates when HR orchestration is discoverable.
-2. **Port discovery failed** — Spectre reads `compose.reload.orchestration.port` and/or
+   are fine for Spectre; reload wait only activates when HR properties are discoverable.
+2. **Port discovery found nothing** — Spectre reads `compose.reload.orchestration.port` and/or
    `compose.reload.pidFile` from the **target process’s JVM arguments**, then the pid file’s
    `orchestration.port` field. Confirm the app was started by an HR-aware run configuration that
    still exposes those properties.
-3. **Orchestration never connected within the wait budget** — a very short `--timeout-ms` right
-   after attach can report timeout rather than “unavailable”; give the Tooling client a moment
-   after attach, or increase the timeout.
+
+If properties **are** present but the orchestration server is down or the port is stale, wait
+returns **`timeout`**, not `hotReloadUnavailable` (the session is still treated as reload-aware).
 
 See [Compose Hot Reload awareness](hot-reload.md).
 
@@ -142,9 +143,9 @@ See [Compose Hot Reload awareness](hot-reload.md).
   example a redefine error). Fix the reload in the app/IDE; Spectre is only reporting HR’s
   outcome.
 - **`timeout`** — the settle chain (`Request` → `Result` → `UIRendered` → `Ping`/`Ack`) did not
-  finish in time. The reload may still be running, UI may not have rendered, or the connection
-  dropped mid-wait. Retry with a larger `--timeout-ms`, confirm HR is healthy, then re-query the
-  tree.
+  finish in time, **or** a reload-aware session never connected to orchestration (stale port,
+  HR not listening yet). Retry with a larger `--timeout-ms`, confirm HR is healthy and still
+  advertising a live port, then re-query the tree.
 
 ### "Clicks fail with nodeNotFound after a hot reload"
 

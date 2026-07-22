@@ -97,9 +97,9 @@ Tool name: **`wait_for_reload_settled`**
 
 | Category | Meaning |
 |---|---|
-| `hotReloadUnavailable` | Session is not reload-aware (no HR orchestration for this process), or HR was never connectable for this attach |
+| `hotReloadUnavailable` | Session is **not** reload-aware: attach found no HR orchestration port/pid-file properties, so no Hot Reload client was created |
 | `reloadFailed` | HR reported an unsuccessful class reload (`ReloadClassesResult` with failure) |
-| `timeout` | Settle chain did not complete within `--timeout-ms` / `timeout_ms` |
+| `timeout` | Settle chain did not complete within `--timeout-ms` / `timeout_ms`. Also returned when the session is reload-aware (properties present) but the Tooling client never connects or the settle events never arrive — including stale/unreachable advertised ports |
 | `cancelled` | Session closed or the orchestration connection dropped while waiting |
 
 ## Node keys after reload
