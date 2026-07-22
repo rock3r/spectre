@@ -42,6 +42,25 @@ internal sealed interface AgentRequest {
     data class FindByTestTag(val tag: String) : AgentRequest
 
     /**
+     * Find nodes by text (#202). [exact] true = case-sensitive equality; false = substring,
+     * case-insensitive (matches in-process `findByText`).
+     */
+    @Serializable
+    @SerialName("findByText")
+    data class FindByText(val text: String, val exact: Boolean = true) : AgentRequest
+
+    /** Find nodes by content description (#202). */
+    @Serializable
+    @SerialName("findByContentDescription")
+    data class FindByContentDescription(val description: String) : AgentRequest
+
+    /**
+     * Find nodes by role name (#202). [role] is the `Role` enum name as string (e.g. `Button`).
+     * Unknown role names yield [AgentErrorCategory.InvalidSelector].
+     */
+    @Serializable @SerialName("findByRole") data class FindByRole(val role: String) : AgentRequest
+
+    /**
      * Synthesize a click on the node identified by [nodeKey] (the canonical
      * `surfaceId:ownerIndex:nodeId` string). Server replies with [AgentResponse.Ok] on success or
      * [AgentResponse.Error] otherwise.
@@ -156,6 +175,9 @@ internal val AgentRequest.logLabel: String
             AgentRequest.Windows -> "windows"
             AgentRequest.AllNodes -> "allNodes"
             is AgentRequest.FindByTestTag -> "findByTestTag"
+            is AgentRequest.FindByText -> "findByText"
+            is AgentRequest.FindByContentDescription -> "findByContentDescription"
+            is AgentRequest.FindByRole -> "findByRole"
             is AgentRequest.Click -> "click"
             is AgentRequest.TypeText -> "typeText"
             is AgentRequest.Screenshot -> "screenshot"
@@ -302,8 +324,12 @@ public data class WindowSummaryDto(
 )
 
 /**
- * Read-only projection of an `AutomatorNode`. The [key] follows the canonical
- * `surfaceId:ownerIndex:nodeId` form used by Spectre's selector contract.
+ * Read-only projection of an `AutomatorNode` (#202 DTO convergence). The [key] is
+ * `surfaceId:ownerIndex:nodeId`.
+ *
+ * Field set aligns with HTTP `NodeSnapshotDto` where practical: [contentDescriptions], state flags.
+ * [contentDescription] is the first description (legacy singular). [bounds] is on-screen integer
+ * AWT coords (agent/Robot); HTTP keeps window+screen double rects — intentional divergence.
  */
 @ExperimentalSpectreAgentApi
 @Serializable
@@ -313,8 +339,15 @@ public data class NodeSnapshotDto(
     public val texts: List<String>,
     public val editableText: String? = null,
     public val role: String?,
+    // Required nullable (no default): encodeDefaults=false would omit a defaulted null and break
+    // older v2 clients whose decoder still requires contentDescription on every node snapshot.
     public val contentDescription: String?,
+    public val contentDescriptions: List<String> = emptyList(),
     public val isFocused: Boolean = false,
+    public val isDisabled: Boolean = false,
+    public val isSelected: Boolean = false,
+    // Required (no default): encodeDefaults=false would omit a defaulted true and break older
+    // v2 clients whose NodeSnapshotDto decoder still requires this field on the wire.
     public val isVisible: Boolean,
     public val bounds: RectDto,
 )

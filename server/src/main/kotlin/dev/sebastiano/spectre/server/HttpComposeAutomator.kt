@@ -56,6 +56,24 @@ public class HttpComposeAutomator internal constructor(private val baseUrl: Stri
         client.get("$baseUrl/nodes").body<NodesResponse>().nodes
 
     /** Fetches semantics nodes carrying the given `testTag` from the remote automator. */
+    public suspend fun findByText(text: String, exact: Boolean = true): List<NodeSnapshotDto> =
+        client
+            .get("$baseUrl/nodes") {
+                parameter("text", text)
+                parameter("exact", exact.toString())
+            }
+            .body<NodesResponse>()
+            .nodes
+
+    public suspend fun findByContentDescription(description: String): List<NodeSnapshotDto> =
+        client
+            .get("$baseUrl/nodes") { parameter("contentDescription", description) }
+            .body<NodesResponse>()
+            .nodes
+
+    public suspend fun findByRole(role: String): List<NodeSnapshotDto> =
+        client.get("$baseUrl/nodes") { parameter("role", role) }.body<NodesResponse>().nodes
+
     public suspend fun findByTestTag(tag: String): List<NodeSnapshotDto> =
         client.get("$baseUrl/nodes") { parameter("testTag", tag) }.body<NodesResponse>().nodes
 

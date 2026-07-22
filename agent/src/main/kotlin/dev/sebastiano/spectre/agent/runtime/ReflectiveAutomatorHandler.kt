@@ -48,6 +48,19 @@ internal class ReflectiveAutomatorHandler(
     private val getWindowsMethod = automatorClass.getMethod("getWindows")
     private val allNodesMethod = automatorClass.getMethod("allNodes")
     private val findByTestTagMethod = automatorClass.getMethod("findByTestTag", String::class.java)
+    private val findByTextMethod =
+        automatorClass.methods.firstOrNull {
+            it.name == "findByText" &&
+                it.parameterTypes.size == 2 &&
+                it.parameterTypes[0] == String::class.java &&
+                it.parameterTypes[1] == Boolean::class.javaPrimitiveType
+        }
+    private val findByContentDescriptionMethod =
+        automatorClass.methods.firstOrNull {
+            it.name == "findByContentDescription" &&
+                it.parameterTypes.size == 1 &&
+                it.parameterTypes[0] == String::class.java
+        }
     private val nodeBooleanMethods = ConcurrentHashMap<Pair<Class<*>, String>, Method>()
     private val nodeEditableTextMethods = ConcurrentHashMap<Class<*>, Method>()
 
@@ -107,12 +120,17 @@ internal class ReflectiveAutomatorHandler(
             )
         }
 
+    @Suppress("CyclomaticComplexMethod") // Exhaustive wire dispatch table.
     private fun dispatch(request: AgentRequest): AgentResponse =
         when (request) {
             AgentRequest.Ping -> AgentResponse.Pong
             AgentRequest.Windows -> handleWindows()
             AgentRequest.AllNodes -> handleAllNodes()
             is AgentRequest.FindByTestTag -> handleFindByTestTag(request.tag)
+            is AgentRequest.FindByText -> handleFindByText(request)
+            is AgentRequest.FindByContentDescription ->
+                handleFindByContentDescription(request.description)
+            is AgentRequest.FindByRole -> handleFindByRole(request.role)
             is AgentRequest.Click -> handleClick(request.nodeKey)
             is AgentRequest.TypeText -> handleTypeText(request.text)
             is AgentRequest.Screenshot -> handleScreenshot(request)
@@ -153,6 +171,75 @@ internal class ReflectiveAutomatorHandler(
         refreshWindowsMethod.invoke(automator)
         val nodes = findByTestTagMethod.invoke(automator, tag) as List<*>
         return AgentResponse.Nodes(nodes.mapNotNull { it?.let(::mapAutomatorNode) })
+    }
+
+    private fun handleFindByText(request: AgentRequest.FindByText): AgentResponse {
+        val method =
+            findByTextMethod
+                ?: return AgentResponse.Error(
+                    message = "ComposeAutomator does not expose findByText(text, exact)",
+                    category =
+                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory
+                            .UnsupportedOperation
+                            .wireName,
+                )
+        // Empty text is valid in-process (exact match on empty EditableText). Whitespace-only is
+        // almost never intentional and diverges from useful substring semantics — reject it.
+        if (request.text.isNotEmpty() && request.text.isBlank()) {
+            return AgentResponse.Error(
+                message = "text must not be whitespace-only",
+                category =
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InvalidSelector
+                        .wireName,
+            )
+        }
+        refreshWindowsMethod.invoke(automator)
+        val nodes = method.invoke(automator, request.text, request.exact) as List<*>
+        return AgentResponse.Nodes(nodes.mapNotNull { it?.let(::mapAutomatorNode) })
+    }
+
+    private fun handleFindByContentDescription(description: String): AgentResponse {
+        if (description.isBlank()) {
+            return AgentResponse.Error(
+                message = "description must be non-blank",
+                category =
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InvalidSelector
+                        .wireName,
+            )
+        }
+        val method =
+            findByContentDescriptionMethod
+                ?: return AgentResponse.Error(
+                    message = "ComposeAutomator does not expose findByContentDescription",
+                    category =
+                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory
+                            .UnsupportedOperation
+                            .wireName,
+                )
+        refreshWindowsMethod.invoke(automator)
+        val nodes = method.invoke(automator, description) as List<*>
+        return AgentResponse.Nodes(nodes.mapNotNull { it?.let(::mapAutomatorNode) })
+    }
+
+    private fun handleFindByRole(roleName: String): AgentResponse {
+        if (roleName.isBlank() || roleName !in KNOWN_ROLE_WIRE_NAMES) {
+            return AgentResponse.Error(
+                message =
+                    if (roleName.isBlank()) "role must be non-blank"
+                    else "unknown role name: $roleName",
+                category =
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InvalidSelector
+                        .wireName,
+            )
+        }
+        // Role is a Compose value class; match by role.toString() on the snapshot to avoid
+        // packing Role constants reflectively. Names match Role.toString() (ValuePicker →
+        // "Picker").
+        refreshWindowsMethod.invoke(automator)
+        val nodes = allNodesMethod.invoke(automator) as List<*>
+        val matches =
+            nodes.mapNotNull { it?.let(::mapAutomatorNode) }.filter { it.role == roleName }
+        return AgentResponse.Nodes(matches)
     }
 
     private fun handleClick(nodeKey: String): AgentResponse {
@@ -328,6 +415,17 @@ internal class ReflectiveAutomatorHandler(
 
     private fun mapAutomatorNode(node: Any): NodeSnapshotDto {
         val klass = node.javaClass
+        val descriptions =
+            (klass.methods
+                    .firstOrNull { it.name == "getContentDescriptions" && it.parameterCount == 0 }
+                    ?.invoke(node) as? List<*>)
+                ?.filterIsInstance<String>()
+                .orEmpty()
+        val singularDescription =
+            descriptions.firstOrNull()
+                ?: klass.methods
+                    .firstOrNull { it.name == "getContentDescription" && it.parameterCount == 0 }
+                    ?.invoke(node) as? String
         return NodeSnapshotDto(
             key = extractKey(node),
             testTag =
@@ -346,17 +444,17 @@ internal class ReflectiveAutomatorHandler(
                     .firstOrNull { it.name == "getRole" && it.parameterCount == 0 }
                     ?.invoke(node)
                     ?.toString(),
-            contentDescription =
-                klass.methods
-                    .firstOrNull { it.name == "getContentDescription" && it.parameterCount == 0 }
-                    ?.invoke(node) as? String,
-            isFocused = nodeBooleanProperty(node, methodName = "isFocused"),
-            isVisible = nodeBooleanProperty(node, methodName = "isVisible"),
+            contentDescription = singularDescription,
+            contentDescriptions = descriptions.ifEmpty { listOfNotNull(singularDescription) },
+            isFocused = nodeBooleanProperty(node, methodName = "isFocused", default = false),
+            isDisabled = nodeBooleanProperty(node, methodName = "isDisabled", default = false),
+            isSelected = nodeBooleanProperty(node, methodName = "isSelected", default = false),
+            // isVisible is part of the long-standing AutomatorNode contract — fail loudly if
+            // absent.
+            isVisible = requireNodeBoolean(node, methodName = "isVisible"),
             bounds =
                 boundsToRect(
-                    // `AutomatorNode.boundsOnScreen: Rectangle` → getBoundsOnScreen(). The
-                    // earlier draft used `getBoundsInScreen` which doesn't exist and silently
-                    // produced RectDto(0,0,0,0).
+                    // `AutomatorNode.boundsOnScreen: Rectangle` → getBoundsOnScreen().
                     klass.methods
                         .firstOrNull { it.name == "getBoundsOnScreen" && it.parameterCount == 0 }
                         ?.invoke(node)
@@ -370,13 +468,37 @@ internal class ReflectiveAutomatorHandler(
             ?.invoke(node)
             ?.toString() ?: node.toString()
 
-    private fun nodeBooleanProperty(node: Any, methodName: String): Boolean =
-        nodeBooleanMethods
-            .computeIfAbsent(node.javaClass to methodName) { (klass, name) ->
-                klass.methods.firstOrNull { it.name == name && it.parameterCount == 0 }
-                    ?: error("AutomatorNode API mismatch: ${klass.name} does not expose $name()")
-            }
-            .invoke(node) as Boolean
+    /**
+     * Soft boolean lookup: missing accessors return [default]. Used for optional snapshot fields
+     * (`isDisabled` / `isSelected` / `isFocused`) so older fakes and partial test doubles still map
+     * cleanly.
+     */
+    private fun nodeBooleanProperty(
+        node: Any,
+        methodName: String,
+        default: Boolean = false,
+    ): Boolean {
+        val method = resolveBooleanMethod(node, methodName)
+        if (method === MISSING_BOOLEAN_METHOD) return default
+        return method.invoke(node) as Boolean
+    }
+
+    /** Hard boolean lookup: missing accessor is an AutomatorNode API mismatch. */
+    private fun requireNodeBoolean(node: Any, methodName: String): Boolean {
+        val method = resolveBooleanMethod(node, methodName)
+        if (method === MISSING_BOOLEAN_METHOD) {
+            error(
+                "AutomatorNode API mismatch: ${node.javaClass.name} does not expose $methodName()"
+            )
+        }
+        return method.invoke(node) as Boolean
+    }
+
+    private fun resolveBooleanMethod(node: Any, methodName: String): Method =
+        nodeBooleanMethods.computeIfAbsent(node.javaClass to methodName) { (klass, name) ->
+            klass.methods.firstOrNull { it.name == name && it.parameterCount == 0 }
+                ?: MISSING_BOOLEAN_METHOD
+        }
 
     private fun nodeEditableText(node: Any): String? =
         nodeEditableTextMethods
@@ -426,6 +548,26 @@ internal class ReflectiveAutomatorHandler(
         const val CONTINUATION_FQN: String = "kotlin.coroutines.Continuation"
         const val AWT_RECTANGLE_FQN: String = "java.awt.Rectangle"
         const val NO_MESSAGE_PLACEHOLDER: String = "<no message>"
+        /** Sentinel when a fake/partial AutomatorNode lacks an optional boolean getter. */
+        val MISSING_BOOLEAN_METHOD: Method = Object::class.java.getMethod("hashCode")
+
+        /**
+         * Compose [androidx.compose.ui.semantics.Role] wire names — the strings [Role.toString]
+         * returns. Agent has no compile-time Compose dependency, so the set is duplicated here.
+         * Note [Role.ValuePicker] stringifies as `"Picker"`, not `"ValuePicker"`.
+         */
+        val KNOWN_ROLE_WIRE_NAMES: Set<String> =
+            setOf(
+                "Button",
+                "Checkbox",
+                "Switch",
+                "RadioButton",
+                "Tab",
+                "Image",
+                "DropdownList",
+                "Picker",
+                "Carousel",
+            )
 
         fun targetJvmHasKeyboardFocus(): Boolean {
             val focusManager = KeyboardFocusManager.getCurrentKeyboardFocusManager()

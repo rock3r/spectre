@@ -233,6 +233,59 @@ class ReflectiveAutomatorHandlerMappingTest {
     }
 
     @Test
+    fun `FindByText empty exact is forwarded for empty editableText parity`() {
+        val emptyField =
+            FakeAutomatorNode(
+                keyValue = "empty-field",
+                editableTextValue = "",
+                textsValue = emptyList(),
+            )
+        var received: Pair<String, Boolean>? = null
+        val automator =
+            FakeAutomator(
+                allNodesValue = listOf(emptyField),
+                findByTextImpl = { text, exact ->
+                    received = text to exact
+                    if (text.isEmpty() && exact) listOf(emptyField) else emptyList()
+                },
+            )
+        val handler = ReflectiveAutomatorHandler(automator)
+
+        val response = handler.handle(AgentRequest.FindByText(text = "", exact = true))
+        assertEquals("" to true, received)
+        check(response is AgentResponse.Nodes)
+        assertEquals(listOf("empty-field"), response.nodes.map { it.key })
+    }
+
+    @Test
+    fun `FindByRole unknown name is invalidSelector`() {
+        val automator =
+            FakeAutomator(
+                allNodesValue = listOf(FakeAutomatorNode(keyValue = "k", roleValue = "Button"))
+            )
+        val handler = ReflectiveAutomatorHandler(automator)
+
+        val response = handler.handle(AgentRequest.FindByRole("not-a-role"))
+        check(response is AgentResponse.Error)
+        assertEquals(
+            dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InvalidSelector.wireName,
+            response.category,
+        )
+    }
+
+    @Test
+    fun `FindByRole Button returns nodes whose mapped role matches`() {
+        val button = FakeAutomatorNode(keyValue = "btn", roleValue = "Button")
+        val other = FakeAutomatorNode(keyValue = "img", roleValue = "Image")
+        val automator = FakeAutomator(allNodesValue = listOf(button, other))
+        val handler = ReflectiveAutomatorHandler(automator)
+
+        val response = handler.handle(AgentRequest.FindByRole("Button"))
+        check(response is AgentResponse.Nodes)
+        assertEquals(listOf("btn"), response.nodes.map { it.key })
+    }
+
+    @Test
     fun `Screenshot op defaults to window surface bounds not full desktop`() {
         var receivedRegion: Any? = "<not invoked>"
         val image = java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_ARGB)
@@ -596,6 +649,8 @@ private class FakeAutomator(
     private val allNodesValue: List<Any> = emptyList(),
     private val allNodesImpl: (() -> List<Any>)? = null,
     private val findByTestTagImpl: (String) -> List<Any> = { allNodesValue },
+    private val findByTextImpl: (String, Boolean) -> List<Any> = { _, _ -> emptyList() },
+    private val findByContentDescriptionImpl: (String) -> List<Any> = { emptyList() },
     private val screenshotImpl: (java.awt.Rectangle?) -> java.awt.image.BufferedImage = { _ ->
         java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB)
     },
@@ -623,6 +678,13 @@ private class FakeAutomator(
     @Suppress("unused") fun allNodes(): List<Any> = allNodesImpl?.invoke() ?: allNodesValue
 
     @Suppress("unused") fun findByTestTag(tag: String): List<Any> = findByTestTagImpl(tag)
+
+    @Suppress("unused")
+    fun findByText(text: String, exact: Boolean): List<Any> = findByTextImpl(text, exact)
+
+    @Suppress("unused")
+    fun findByContentDescription(description: String): List<Any> =
+        findByContentDescriptionImpl(description)
 
     @Suppress("unused")
     fun screenshot(region: java.awt.Rectangle?): java.awt.image.BufferedImage =

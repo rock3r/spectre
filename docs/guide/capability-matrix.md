@@ -69,7 +69,8 @@ boundary without a different design:
 | `withTracing` | Live tracer hooks |
 | `waitForIdle` (idling-resource variant) | Same as idling resources |
 
-Remote **waits** (`waitForNode`, `waitForVisualIdle` over agent — #201), richer **selectors**, and **input verbs**
+Remote **waits** (`waitForNode`, `waitForVisualIdle` over agent — #201), richer **selectors**
+(`findByText` / content-description / role — #202), and **input verbs**
 (drag / scroll / chords) are tracked as **Not yet CI-executed** on HTTP/agent until epic
 #197 sub-issues #201–#203 land. Do not document them as supported on remote transports until
 the matrix says so.

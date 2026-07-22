@@ -93,16 +93,15 @@ private fun Route.spectreRoutes(automator: ComposeAutomator) {
     }
 
     get("/nodes") {
-        // Query handlers always refresh first: in-process callers control when to refresh, but
-        // remote callers expect a request to reflect current state without an explicit prelude.
         automator.refreshWindows()
-        val testTag = call.request.queryParameters["testTag"]
-        val nodes =
-            if (testTag != null) {
-                automator.findByTestTag(testTag)
-            } else {
-                automator.allNodes()
-            }
+        val nodes = selectNodes(automator, call.request.queryParameters)
+        if (nodes == null) {
+            call.respond(
+                SpectreErrorCategory.httpStatus(SpectreErrorCategory.InvalidSelector),
+                SpectreErrorCategory.InvalidSelector.wireName,
+            )
+            return@get
+        }
         call.respond(NodesResponse(nodes = nodes.map { it.toDto() }))
     }
 
@@ -192,6 +191,70 @@ internal fun BufferedImage.toScreenshotResponse(): ScreenshotResponse {
         height = height,
     )
 }
+
+/**
+ * Resolves `/nodes` selectors (#202). Returns null for invalidSelector cases: more than one
+ * selector query param, whitespace-only text, blank contentDescription/role, or an unknown role
+ * name.
+ *
+ * Empty text (`text=`) is allowed so exact match can target empty [editableText] fields, matching
+ * in-process `findByText("")`.
+ */
+private fun selectNodes(
+    automator: ComposeAutomator,
+    params: io.ktor.http.Parameters,
+): List<dev.sebastiano.spectre.core.AutomatorNode>? {
+    val testTag = params["testTag"]
+    val text = params["text"]
+    val contentDescription = params["contentDescription"]
+    val role = params["role"]
+    if (listOfNotNull(testTag, text, contentDescription, role).size > 1) return null
+    return when {
+        testTag != null -> automator.findByTestTag(testTag)
+        text != null -> {
+            // Whitespace-only (but not empty) is almost never intentional.
+            if (text.isNotEmpty() && text.isBlank()) return null
+            // Absent `exact` defaults to true; present-but-non-boolean is invalidSelector
+            // (do not silently coerce `FALSE` / `yes` into the default).
+            val exactParam = params["exact"]
+            val exact =
+                if (exactParam == null) {
+                    true
+                } else {
+                    exactParam.toBooleanStrictOrNull() ?: return null
+                }
+            automator.findByText(text, exact = exact)
+        }
+        contentDescription != null -> {
+            if (contentDescription.isBlank()) return null
+            automator.findByContentDescription(contentDescription)
+        }
+        // Role is a Compose value class; match by toString() name ("Button", …).
+        role != null -> {
+            if (role.isBlank() || role !in KNOWN_ROLE_WIRE_NAMES) return null
+            automator.allNodes().filter { it.role?.toString() == role }
+        }
+        else -> automator.allNodes()
+    }
+}
+
+/**
+ * Compose [androidx.compose.ui.semantics.Role.toString] names. Kept local to the server module so
+ * HTTP and agent agree without a shared compile-time Role dependency in agent. [Role.ValuePicker]
+ * stringifies as `"Picker"`.
+ */
+private val KNOWN_ROLE_WIRE_NAMES: Set<String> =
+    setOf(
+        "Button",
+        "Checkbox",
+        "Switch",
+        "RadioButton",
+        "Tab",
+        "Image",
+        "DropdownList",
+        "Picker",
+        "Carousel",
+    )
 
 /**
  * Narrow decode-error mapping for `call.receive<T>()` (R4): Ktor's default response when
