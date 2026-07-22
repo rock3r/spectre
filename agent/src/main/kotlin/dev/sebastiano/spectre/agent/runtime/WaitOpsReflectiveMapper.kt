@@ -7,14 +7,15 @@ import dev.sebastiano.spectre.agent.transport.AgentRequest
 import dev.sebastiano.spectre.agent.transport.AgentResponse
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import java.lang.reflect.Method
-import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Reflective bridge for [AgentRequest.WaitForNode] / [AgentRequest.WaitForVisualIdle] (#201). Lives
  * outside [ReflectiveAutomatorHandler] to keep that class under detekt complexity limits.
  *
- * Kotlin mangles `Duration` parameters into primitive `long` (nanoseconds) and renames methods
- * (e.g. `waitForNode-ck1zr5g`). Lookups use parameter types, not the unmangled source name.
+ * Kotlin mangles `Duration` parameters into primitive `long` carrying [kotlin.time.Duration]'s
+ * packed `rawValue` (not plain nanoseconds) and renames methods (e.g. `waitForNode-ck1zr5g`).
+ * Lookups use parameter types, not the unmangled source name; invocations use
+ * [durationStorageFromMs].
  */
 internal class WaitOpsReflectiveMapper(
     private val automator: Any,
@@ -70,9 +71,9 @@ internal class WaitOpsReflectiveMapper(
                     automator,
                     request.tag,
                     request.text,
-                    // Duration is a value class: JVM surface is primitive long nanoseconds.
-                    timeoutMs.milliseconds.inWholeNanoseconds,
-                    pollMs.milliseconds.inWholeNanoseconds,
+                    // Duration is a value class: JVM surface is packed rawValue, not plain nanos.
+                    durationStorageFromMs(timeoutMs),
+                    durationStorageFromMs(pollMs),
                     timeoutMsOverride = timeoutMs + SUSPEND_BRIDGE_SLACK_MS,
                 )
             if (node == null) {
@@ -100,9 +101,9 @@ internal class WaitOpsReflectiveMapper(
             suspendInvoker.invoke(
                 method,
                 automator,
-                timeoutMs.milliseconds.inWholeNanoseconds,
+                durationStorageFromMs(timeoutMs),
                 stableFrames,
-                pollMs.milliseconds.inWholeNanoseconds,
+                durationStorageFromMs(pollMs),
                 timeoutMsOverride = timeoutMs + SUSPEND_BRIDGE_SLACK_MS,
             )
             AgentResponse.Ok
@@ -112,22 +113,27 @@ internal class WaitOpsReflectiveMapper(
     /**
      * Maps wait-loop timeouts (stdlib [TimeoutException], IdleTimeoutException,
      * TimeoutCancellationException) to taxonomy `timeout`; rethrows everything else.
+     *
+     * Reflective [java.lang.reflect.Method.invoke] wraps checked/runtime failures in
+     * [java.lang.reflect.InvocationTargetException]; unwrap so taxonomy matching sees the
+     * automator's real exception type/message.
      */
     @Suppress("TooGenericExceptionCaught", "InstanceOfCheckForException")
     private fun runWait(block: () -> AgentResponse): AgentResponse =
         try {
             block()
         } catch (ex: Exception) {
+            val root = unwrapReflective(ex)
             // IdleTimeoutException / TimeoutCancellationException are not on the classpath of
             // :agent; match by type name so wait timeouts become taxonomy `timeout`.
-            if (ex is java.util.concurrent.TimeoutException || isWaitTimeout(ex)) {
-                timeoutError(ex)
+            if (root is java.util.concurrent.TimeoutException || isWaitTimeout(root)) {
+                timeoutError(root)
             } else {
                 throw ex
             }
         }
 
-    private fun timeoutError(ex: Exception): AgentResponse.Error =
+    private fun timeoutError(ex: Throwable): AgentResponse.Error =
         AgentResponse.Error(
             message = "${ex.javaClass.simpleName}: ${ex.message ?: "<no message>"}",
             category = AgentErrorCategory.Timeout.wireName,
@@ -141,13 +147,35 @@ internal class WaitOpsReflectiveMapper(
         const val DEFAULT_STABLE_FRAMES: Int = 3
         const val SUSPEND_BRIDGE_SLACK_MS: Long = 2_000
 
-        fun isWaitTimeout(ex: Exception): Boolean {
+        fun unwrapReflective(ex: Exception): Throwable {
+            var current: Throwable = ex
+            while (current is java.lang.reflect.InvocationTargetException) {
+                current = current.cause ?: return current
+            }
+            return current
+        }
+
+        fun isWaitTimeout(ex: Throwable): Boolean {
             val name = ex.javaClass.name
             val msg = ex.message.orEmpty().lowercase()
             return name.endsWith("IdleTimeoutException") ||
                 name.endsWith("TimeoutCancellationException") ||
                 "timed out" in msg ||
                 "timeout" in name.lowercase()
+        }
+
+        /**
+         * Packs milliseconds into the `long` storage used by Kotlin [kotlin.time.Duration] on the
+         * JVM (nanos << 1 for small values; millis << 1 | 1 when nanos would overflow).
+         *
+         * Must match [InputOpsReflectiveMapper]'s packing — plain
+         * [kotlin.time.Duration.inWholeNanoseconds] is half the intended length once Duration
+         * reinterprets the low unit bit.
+         */
+        fun durationStorageFromMs(ms: Long): Long {
+            require(ms >= 0L) { "duration ms must be non-negative" }
+            val nanos = ms * 1_000_000L
+            return if (nanos <= Long.MAX_VALUE / 2) nanos shl 1 else (ms shl 1) + 1
         }
     }
 }

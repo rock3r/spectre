@@ -65,7 +65,8 @@ public abstract interface class dev/sebastiano/spectre/testing/contract/Automato
 	public fun findByText (Ljava/lang/String;Z)Ljava/util/List;
 	public static synthetic fun findByText$default (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;ZILjava/lang/Object;)Ljava/util/List;
 	public fun getExpectsFixtureSemantics ()Z
-	public fun getSupportsExtendedParity ()Z
+	public fun getSupportsFixtureParity ()Z
+	public fun getSupportsWaitTaxonomy ()Z
 	public abstract fun getTransport ()Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;
 	public fun pressKey (II)V
 	public static synthetic fun pressKey$default (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;IIILjava/lang/Object;)V
@@ -74,6 +75,7 @@ public abstract interface class dev/sebastiano/spectre/testing/contract/Automato
 	public fun swipe (Ljava/lang/String;Ljava/lang/String;)V
 	public abstract fun typeText (Ljava/lang/String;)V
 	public fun waitForNode (Ljava/lang/String;Ljava/lang/String;J)Ljava/lang/String;
+	public fun waitForNodeFailureCategory (Ljava/lang/String;Ljava/lang/String;J)Ljava/lang/String;
 	public abstract fun windows ()Ljava/util/List;
 }
 
@@ -85,13 +87,15 @@ public final class dev/sebastiano/spectre/testing/contract/AutomatorContractDriv
 	public static fun findByText (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;Z)Ljava/util/List;
 	public static synthetic fun findByText$default (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;ZILjava/lang/Object;)Ljava/util/List;
 	public static fun getExpectsFixtureSemantics (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;)Z
-	public static fun getSupportsExtendedParity (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;)Z
+	public static fun getSupportsFixtureParity (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;)Z
+	public static fun getSupportsWaitTaxonomy (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;)Z
 	public static fun pressKey (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;II)V
 	public static synthetic fun pressKey$default (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;IIILjava/lang/Object;)V
 	public static fun screenshotProbe (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;)Ldev/sebastiano/spectre/testing/contract/ScreenshotProbe;
 	public static fun scrollWheel (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;I)V
 	public static fun swipe (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;Ljava/lang/String;)V
 	public static fun waitForNode (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;Ljava/lang/String;J)Ljava/lang/String;
+	public static fun waitForNodeFailureCategory (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;Ljava/lang/String;J)Ljava/lang/String;
 }
 
 public final class dev/sebastiano/spectre/testing/contract/AutomatorOperation : java/lang/Enum {

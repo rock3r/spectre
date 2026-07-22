@@ -25,7 +25,12 @@ public data class ContractNode(
  *
  * Methods must hit the **real** client entry point for that transport (no mocks of the unit under
  * test). Empty results are allowed when the matrix cell does not require a live fixture.
+ *
+ * Function count is intentionally above the default detekt budget: the corpus needs one method per
+ * tracked public entry (selectors, input verbs, waits + timeout taxonomy) so Supported matrix cells
+ * cannot soft-skip.
  */
+@Suppress("TooManyFunctions")
 public interface AutomatorContractDriver : AutoCloseable {
     public val transport: AutomatorTransport
 
@@ -76,11 +81,18 @@ public interface AutomatorContractDriver : AutoCloseable {
     }
 
     /**
-     * Optional wait (#201). [waitForNodeTimeoutMs] is the budget. Should throw on timeout when
-     * waiting for a never-present selector. Returns the matched node key on success.
+     * Optional wait (#201). Should throw on timeout when waiting for a never-present selector.
+     * Returns the matched node key on success.
      */
     public fun waitForNode(tag: String?, text: String?, timeoutMs: Long): String =
         error("waitForNode not implemented for $transport")
+
+    /**
+     * Stable error taxonomy name for a failed [waitForNode] (e.g. `"timeout"`). Implementations
+     * that cannot surface a category should throw rather than invent one.
+     */
+    public fun waitForNodeFailureCategory(tag: String?, text: String?, timeoutMs: Long): String =
+        error("waitForNodeFailureCategory not implemented for $transport")
 
     /**
      * Optional screenshot probe. Return `null` if the transport/driver does not exercise screenshot
@@ -88,9 +100,19 @@ public interface AutomatorContractDriver : AutoCloseable {
      */
     public fun screenshotProbe(): ScreenshotProbe? = null
 
-    /** When true, corpus runs #201–#203 extended scenarios (selectors/waits/input). */
-    public val supportsExtendedParity: Boolean
+    /**
+     * When true, corpus runs fixture-backed match/input scenarios that need a live Compose UI
+     * (agent Xvfb/macOS). Selector entry-point scenarios always run on all transports.
+     */
+    public val supportsFixtureParity: Boolean
         get() = expectsFixtureSemantics
+
+    /**
+     * When true, [waitForNodeFailureCategory] is implemented (agent + in-process). HTTP has no wait
+     * routes (#201 is agent-scoped).
+     */
+    public val supportsWaitTaxonomy: Boolean
+        get() = false
 
     override fun close() {}
 }
@@ -211,8 +233,8 @@ public object AutomatorContractCorpus {
                     check(probe.byteCount > 0) { "screenshot empty" }
                     "bytes=${probe.byteCount} format=${probe.formatHint}"
                 }
-            if (driver.supportsExtendedParity) {
-                results += extendedParityScenarios(driver)
+            if (driver.supportsFixtureParity) {
+                results += fixtureParityScenarios(driver)
             }
         } else {
             results +=
@@ -247,13 +269,63 @@ public object AutomatorContractCorpus {
                 )
         }
 
+        // Selector entry points + wait timeout taxonomy run on every transport (including
+        // headless).
+        results += crossTransportParityScenarios(driver)
+
         return RunResult(transport = driver.transport, results = results)
     }
 
-    /** #201–#203 scenarios against a live fixture-backed driver (agent Xvfb/macOS). */
-    private fun extendedParityScenarios(driver: AutomatorContractDriver): List<ScenarioResult> {
+    /**
+     * #201–#202 scenarios that run on **all three** transports. Headless trees may be empty; the
+     * contract is that entry points do not hang and wait timeout surfaces taxonomy `timeout`.
+     */
+    private fun crossTransportParityScenarios(
+        driver: AutomatorContractDriver
+    ): List<ScenarioResult> {
         val out = mutableListOf<ScenarioResult>()
-        // #202 selectors
+        out +=
+            scenario("find-by-text-entry", driver.transport) {
+                val nodes = driver.findByText("no-such-label-xyz", exact = true)
+                "matched=${nodes.size}"
+            }
+        out +=
+            scenario("find-by-role-entry", driver.transport) {
+                // Unknown role must fail closed as invalidSelector on agent/HTTP; in-process may
+                // return empty for a non-matching role name when filtering by string.
+                val result = runCatching { driver.findByRole("not-a-compose-role") }
+                when {
+                    result.isFailure -> "failed-as-expected"
+                    result.getOrNull().orEmpty().isEmpty() -> "empty-as-expected"
+                    else -> error("unknown role must not match nodes")
+                }
+            }
+        out +=
+            scenario("find-by-content-description-entry", driver.transport) {
+                val nodes = driver.findByContentDescription("no-such-description-xyz")
+                "matched=${nodes.size}"
+            }
+        if (driver.supportsWaitTaxonomy) {
+            out +=
+                scenario("wait-for-node-timeout-taxonomy", driver.transport) {
+                    val category =
+                        driver.waitForNodeFailureCategory(
+                            tag = "agent-fixture-never-appears",
+                            text = null,
+                            timeoutMs = 400,
+                        )
+                    check(category == "timeout") {
+                        "expected timeout taxonomy, got category=$category"
+                    }
+                    "category=$category"
+                }
+        }
+        return out
+    }
+
+    /** Fixture-backed match + input scenarios (agent Xvfb/macOS). */
+    private fun fixtureParityScenarios(driver: AutomatorContractDriver): List<ScenarioResult> {
+        val out = mutableListOf<ScenarioResult>()
         out +=
             scenario("find-by-text-fixture-label", driver.transport) {
                 val nodes = driver.findByText("Spectre agent fixture", exact = true)
@@ -278,7 +350,6 @@ public object AutomatorContractCorpus {
                 check(nodes.isNotEmpty()) { "findByContentDescription empty" }
                 "matched=${nodes.size}"
             }
-        // #201 waits
         out +=
             scenario("wait-for-node-present-tag", driver.transport) {
                 val key =
@@ -290,21 +361,7 @@ public object AutomatorContractCorpus {
                 check(key.isNotBlank()) { "waitForNode returned blank key" }
                 "key=$key"
             }
-        out +=
-            scenario("wait-for-node-timeout", driver.transport) {
-                val failed =
-                    runCatching {
-                            driver.waitForNode(
-                                tag = "agent-fixture-never-appears",
-                                text = null,
-                                timeoutMs = 400,
-                            )
-                        }
-                        .isFailure
-                check(failed) { "waitForNode for missing tag must fail/timeout" }
-                "timed-out-as-expected"
-            }
-        // #203 input verbs (real Robot on fixture)
+        // #203 input verbs (real Robot on fixture) — no soft-skip: failures fail the scenario.
         out +=
             scenario("double-click-fixture-button", driver.transport) {
                 val button =
@@ -333,16 +390,14 @@ public object AutomatorContractCorpus {
                 "scrolled=${label.key}"
             }
         out +=
-            scenario("press-key-tab", driver.transport) {
-                // VK_TAB = 9. Agent may refuse when the target lacks OS keyboard focus (CI).
-                val result = runCatching { driver.pressKey(keyCode = 9, modifiers = 0) }
-                val msg = result.exceptionOrNull()?.message.orEmpty()
-                if (result.isFailure && "keyboard focus" in msg) {
-                    "skipped:os-focus"
-                } else {
-                    result.getOrThrow()
-                    "pressKey=VK_TAB"
-                }
+            scenario("press-key-tab-after-focus", driver.transport) {
+                // Focus the text field first so OS keyboard focus is on the target JVM.
+                val field =
+                    driver.findByTestTag(ContractFixtureTags.TEXT_FIELD).firstOrNull()
+                        ?: error("fixture text field missing")
+                driver.click(field.key)
+                driver.pressKey(keyCode = 9, modifiers = 0) // VK_TAB
+                "pressKey=VK_TAB"
             }
         return out
     }
