@@ -48,8 +48,8 @@ class SpectreDoesNotRedefineClassesContractTest {
     }
 
     /**
-     * Walks the repo for `**/src/main` directories that look like production modules (skip
-     * `build/`, `.git/`, worktrees under nested `.worktrees` if present).
+     * Walks the repo for production `src/main` directories (skip `build/`, `.git/`, nested
+     * `.worktrees` if present).
      */
     private fun discoverProductionMainSourceRoots(repoRoot: Path): List<Path> {
         val found = mutableListOf<Path>()
