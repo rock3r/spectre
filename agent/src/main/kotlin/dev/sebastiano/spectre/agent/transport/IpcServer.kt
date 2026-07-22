@@ -196,22 +196,26 @@ constructor(
                 return true
             }
             setHandshakeComplete(false)
-            Framing.writeFrame(
-                output,
-                WireCodec.encode(
-                    AgentResponse.Error(
-                        message =
-                            "Protocol version mismatch: client=${request.protocolVersion}, " +
-                                "runtime=${ProtocolVersion.CURRENT} (exact-match required " +
-                                "while agent API is experimental)",
-                        category = AgentErrorCategory.ProtocolMismatch.wireName,
-                    )
-                ),
-            )
-            // #199 P1: rejected handshake must release SpectreAgent singleton state so a
-            // subsequent attach with a matching runtime can bootstrap again.
-            running.set(false)
-            onDetach()
+            try {
+                Framing.writeFrame(
+                    output,
+                    WireCodec.encode(
+                        AgentResponse.Error(
+                            message =
+                                "Protocol version mismatch: client=${request.protocolVersion}, " +
+                                    "runtime=${ProtocolVersion.CURRENT} (exact-match required " +
+                                    "while agent API is experimental)",
+                            category = AgentErrorCategory.ProtocolMismatch.wireName,
+                        )
+                    ),
+                )
+            } finally {
+                // #199 P1: rejected handshake must release SpectreAgent singleton state so a
+                // subsequent attach with a matching runtime can bootstrap again — even if the
+                // client dropped before the error frame was written.
+                running.set(false)
+                onDetach()
+            }
             return false
         }
 
