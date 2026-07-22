@@ -35,6 +35,14 @@ public interface HotReloadCapability : AutoCloseable {
     public fun waitForReloadSettled(
         timeoutMs: Long = HotReloadSession.DEFAULT_SETTLE_TIMEOUT_MS
     ): ReloadSettleOutcome
+
+    /**
+     * Registers a listener invoked after a successful reload settles (matching `UIRendered` after a
+     * successful `ReloadClassesResult`). Used for tree/node-key invalidation (#212).
+     *
+     * Replaces any previous listener. Passing `null` clears the listener.
+     */
+    public fun setReloadSettledListener(listener: (() -> Unit)?)
 }
 
 /**
@@ -56,6 +64,7 @@ internal constructor(
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val handleRef = AtomicReference<OrchestrationHandle?>(null)
     private val closed = AtomicBoolean(false)
+    private val reloadSettledListener = AtomicReference<(() -> Unit)?>(null)
     private var reconnectJob: Job? = null
 
     /** True when a live orchestration handle is connected. */
@@ -66,6 +75,10 @@ internal constructor(
     public fun start() {
         if (closed.get()) return
         reconnectJob = scope.launch { runReconnectLoop() }
+    }
+
+    override fun setReloadSettledListener(listener: (() -> Unit)?) {
+        reloadSettledListener.set(listener)
     }
 
     private suspend fun runReconnectLoop() {
@@ -82,14 +95,47 @@ internal constructor(
 
     private suspend fun awaitConnectedHandle(handle: OrchestrationHandle) {
         handleRef.set(handle)
+        val observer = scope.launch { observeReloadsForInvalidation(handle) }
         try {
             // Suspend until the handle finishes (app exit / disconnect).
             handle.await()
         } catch (_: Exception) {
             // fall through to reconnect
         } finally {
+            observer.cancel()
             handleRef.compareAndSet(handle, null)
             runCatching { handle.close() }
+        }
+    }
+
+    /**
+     * Background observation: after a successful class reload is rendered (`ReloadClassesResult`
+     * success + matching `UIRendered`), notify the invalidation listener so node keys are flushed
+     * (#212). Does not send Ping (avoids racing [waitForReloadSettled]).
+     */
+    private suspend fun observeReloadsForInvalidation(handle: OrchestrationHandle) {
+        val channel = handle.asChannel()
+        var pendingSuccessfulRequestId: String? = null
+        try {
+            while (scope.isActive && !closed.get()) {
+                val message = channel.receiveCatching().getOrNull() ?: break
+                when (val event = message.toLifecycleEvent()) {
+                    is ReloadLifecycleEvent.ReloadClassesResult -> {
+                        pendingSuccessfulRequestId =
+                            if (event.isSuccess) event.reloadRequestId else null
+                    }
+                    is ReloadLifecycleEvent.UIRendered -> {
+                        val requestId = event.reloadRequestId
+                        if (requestId != null && requestId == pendingSuccessfulRequestId) {
+                            pendingSuccessfulRequestId = null
+                            reloadSettledListener.get()?.invoke()
+                        }
+                    }
+                    else -> Unit
+                }
+            }
+        } finally {
+            channel.cancel()
         }
     }
 

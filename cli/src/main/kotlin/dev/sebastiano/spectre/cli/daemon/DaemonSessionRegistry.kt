@@ -6,6 +6,7 @@ import dev.sebastiano.spectre.agent.SpectreAttachException
 import dev.sebastiano.spectre.cli.hotreload.HotReloadCapability
 import dev.sebastiano.spectre.cli.hotreload.HotReloadPortDiscovery
 import dev.sebastiano.spectre.cli.hotreload.HotReloadSession
+import dev.sebastiano.spectre.cli.hotreload.ReloadAwareKeyGuard
 import dev.sebastiano.spectre.cli.hotreload.ReloadSettleErrorCategory
 import dev.sebastiano.spectre.cli.hotreload.mapReloadSettleOutcome
 import dev.sebastiano.spectre.cli.jdkPreflightError
@@ -130,18 +131,17 @@ internal constructor(
 
     private fun runWaitRequest(session: DaemonSession, request: DaemonRequest): DaemonResponse =
         when (request) {
-            is DaemonRequest.WaitForNode ->
-                DaemonResponse.Nodes(
-                    request.sessionId,
-                    listOf(
-                        session.automator.waitForNode(
-                            tag = request.tag,
-                            text = request.text,
-                            timeoutMs = request.timeoutMs,
-                            pollIntervalMs = request.pollIntervalMs,
-                        )
-                    ),
-                )
+            is DaemonRequest.WaitForNode -> {
+                val node =
+                    session.automator.waitForNode(
+                        tag = request.tag,
+                        text = request.text,
+                        timeoutMs = request.timeoutMs,
+                        pollIntervalMs = request.pollIntervalMs,
+                    )
+                rememberNodeKeys(session.keyGuard, listOf(node))
+                DaemonResponse.Nodes(request.sessionId, listOf(node))
+            }
             is DaemonRequest.WaitForVisualIdle -> {
                 session.automator.waitForVisualIdle(
                     timeoutMs = request.timeoutMs,
@@ -180,8 +180,10 @@ internal constructor(
                     DaemonResponse.Windows(request.sessionId, automator.windows())
                 }
             is DaemonRequest.AllNodes ->
-                invoke(request.sessionId) { automator ->
-                    DaemonResponse.Nodes(request.sessionId, automator.allNodes())
+                invokeWithSession(request.sessionId) { session, automator ->
+                    val nodes = automator.allNodes()
+                    rememberNodeKeys(session.keyGuard, nodes)
+                    DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByTestTag,
             is DaemonRequest.FindByText,
@@ -211,7 +213,7 @@ internal constructor(
                         sessionId = request.sessionId,
                         result = automator.capture(request.windowIndex),
                         outDir = request.outDir,
-                        liveSessionIds = liveSessionIds(),
+                        liveSessionIds = sessionsByPid.values.map { it.sessionId }.toSet(),
                     )
                 }
             is DaemonRequest.StartRecording ->
@@ -229,7 +231,7 @@ internal constructor(
                 invoke(request.sessionId) { automator ->
                     DaemonResponse.RecordingStopped(
                         request.sessionId,
-                        automator.stopRecording(liveSessionIds()),
+                        automator.stopRecording(sessionsByPid.values.map { it.sessionId }.toSet()),
                     )
                 }
             is DaemonRequest.RecordingStatus ->
@@ -284,11 +286,14 @@ internal constructor(
             } catch (_: Exception) {
                 null
             }
+        val keyGuard = if (hotReload != null) ReloadAwareKeyGuard() else null
+        hotReload?.setReloadSettledListener { keyGuard?.onReload() }
         val session =
             DaemonSession(
                 summary = sessionSummaryFor(targetPid),
                 automator = attached,
                 hotReloadSession = hotReload,
+                keyGuard = keyGuard,
             )
         sessionsByPid[targetPid] = session
         return DaemonResponse.Attached(
@@ -315,31 +320,31 @@ internal constructor(
         return CaptureSessionReport.forDetach(sessionId)
     }
 
-    private fun liveSessionIds(): Set<String> = sessionsByPid.values.map { it.sessionId }.toSet()
-
     private fun handleQuerySessionCommand(request: DaemonRequest): DaemonResponse =
         when (request) {
             is DaemonRequest.FindByTestTag ->
-                invoke(request.sessionId) { automator ->
-                    DaemonResponse.Nodes(request.sessionId, automator.findByTestTag(request.tag))
+                invokeWithSession(request.sessionId) { session, automator ->
+                    val nodes = automator.findByTestTag(request.tag)
+                    rememberNodeKeys(session.keyGuard, nodes)
+                    DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByText ->
-                invoke(request.sessionId) { automator ->
-                    DaemonResponse.Nodes(
-                        request.sessionId,
-                        automator.findByText(request.text, request.exact),
-                    )
+                invokeWithSession(request.sessionId) { session, automator ->
+                    val nodes = automator.findByText(request.text, request.exact)
+                    rememberNodeKeys(session.keyGuard, nodes)
+                    DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByContentDescription ->
-                invoke(request.sessionId) { automator ->
-                    DaemonResponse.Nodes(
-                        request.sessionId,
-                        automator.findByContentDescription(request.description),
-                    )
+                invokeWithSession(request.sessionId) { session, automator ->
+                    val nodes = automator.findByContentDescription(request.description)
+                    rememberNodeKeys(session.keyGuard, nodes)
+                    DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByRole ->
-                invoke(request.sessionId) { automator ->
-                    DaemonResponse.Nodes(request.sessionId, automator.findByRole(request.role))
+                invokeWithSession(request.sessionId) { session, automator ->
+                    val nodes = automator.findByRole(request.role)
+                    rememberNodeKeys(session.keyGuard, nodes)
+                    DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             else -> error("Not a query session command: ${request::class.simpleName}")
         }
@@ -347,22 +352,37 @@ internal constructor(
     private fun handleInputSessionCommand(request: DaemonRequest): DaemonResponse =
         when (request) {
             is DaemonRequest.Click ->
-                invoke(request.sessionId) { automator ->
+                invokeWithSession(request.sessionId) { session, automator ->
+                    rejectStaleNodeKey(session.keyGuard, request.nodeKey)?.let {
+                        return@invokeWithSession it
+                    }
                     automator.click(request.nodeKey)
                     DaemonResponse.Completed(request.sessionId)
                 }
             is DaemonRequest.DoubleClick ->
-                invoke(request.sessionId) { automator ->
+                invokeWithSession(request.sessionId) { session, automator ->
+                    rejectStaleNodeKey(session.keyGuard, request.nodeKey)?.let {
+                        return@invokeWithSession it
+                    }
                     automator.doubleClick(request.nodeKey)
                     DaemonResponse.Completed(request.sessionId)
                 }
             is DaemonRequest.LongClick ->
-                invoke(request.sessionId) { automator ->
+                invokeWithSession(request.sessionId) { session, automator ->
+                    rejectStaleNodeKey(session.keyGuard, request.nodeKey)?.let {
+                        return@invokeWithSession it
+                    }
                     automator.longClick(request.nodeKey, request.holdForMs)
                     DaemonResponse.Completed(request.sessionId)
                 }
             is DaemonRequest.Swipe ->
-                invoke(request.sessionId) { automator ->
+                invokeWithSession(request.sessionId) { session, automator ->
+                    rejectStaleNodeKey(session.keyGuard, request.fromNodeKey)?.let {
+                        return@invokeWithSession it
+                    }
+                    rejectStaleNodeKey(session.keyGuard, request.toNodeKey)?.let {
+                        return@invokeWithSession it
+                    }
                     automator.swipe(
                         fromNodeKey = request.fromNodeKey,
                         toNodeKey = request.toNodeKey,
@@ -376,7 +396,10 @@ internal constructor(
                     DaemonResponse.Completed(request.sessionId)
                 }
             is DaemonRequest.ScrollWheel ->
-                invoke(request.sessionId) { automator ->
+                invokeWithSession(request.sessionId) { session, automator ->
+                    rejectStaleNodeKey(session.keyGuard, request.nodeKey)?.let {
+                        return@invokeWithSession it
+                    }
                     automator.scrollWheel(request.nodeKey, request.wheelClicks)
                     DaemonResponse.Completed(request.sessionId)
                 }
@@ -401,12 +424,17 @@ internal constructor(
     private fun invoke(
         sessionId: String,
         operation: (DaemonSessionAutomator) -> DaemonResponse,
+    ): DaemonResponse = invokeWithSession(sessionId) { _, automator -> operation(automator) }
+
+    private fun invokeWithSession(
+        sessionId: String,
+        operation: (DaemonSession, DaemonSessionAutomator) -> DaemonResponse,
     ): DaemonResponse {
         val session =
             sessionsByPid.values.firstOrNull { it.sessionId == sessionId }
                 ?: return sessionNotFound(sessionId)
         return try {
-            operation(session.automator)
+            operation(session, session.automator)
         } catch (exception: IOException) {
             DaemonResponse.Error(
                 code = DaemonErrorCode.OperationFailed,
@@ -437,6 +465,7 @@ internal constructor(
         val summary: DaemonSessionSummary,
         val automator: DaemonSessionAutomator,
         val hotReloadSession: HotReloadCapability? = null,
+        val keyGuard: ReloadAwareKeyGuard? = null,
         val activeWaits: java.util.concurrent.atomic.AtomicInteger =
             java.util.concurrent.atomic.AtomicInteger(0),
         /** Absolute nanoTime deadline for the longest currently tracked outside-lock wait. */
