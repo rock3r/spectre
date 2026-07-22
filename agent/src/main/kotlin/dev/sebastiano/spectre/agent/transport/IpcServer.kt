@@ -133,8 +133,11 @@ constructor(
             val input = Channels.newInputStream(socket)
             val output = Channels.newOutputStream(socket)
             var keepReading = true
+            // #199: each connection must complete Hello/HelloAck before any other op.
+            var handshakeComplete = false
             while (running.get() && keepReading) {
-                keepReading = handleOneRequest(input, output)
+                keepReading =
+                    handleOneRequest(input, output, handshakeComplete) { handshakeComplete = it }
             }
         }
     }
@@ -143,11 +146,16 @@ constructor(
      * Reads one request frame, dispatches it to the handler, writes the response. Returns `false`
      * on clean EOF or after processing an [AgentRequest.Detach] — the caller uses the return value
      * as the single loop-exit signal.
+     *
+     * [handshakeComplete] tracks whether this connection has accepted [AgentRequest.Hello]; non-
+     * Hello ops before that get [AgentErrorCategory.ProtocolMismatch].
      */
     @Suppress("TooGenericExceptionCaught")
     private fun handleOneRequest(
         input: java.io.InputStream,
         output: java.io.OutputStream,
+        handshakeComplete: Boolean,
+        setHandshakeComplete: (Boolean) -> Unit,
     ): Boolean {
         val requestBytes = Framing.readFrame(input) ?: return false
         val request =
@@ -179,8 +187,10 @@ constructor(
         if (request is AgentRequest.Hello) {
             val response =
                 if (request.protocolVersion == ProtocolVersion.CURRENT) {
+                    setHandshakeComplete(true)
                     AgentResponse.HelloAck(protocolVersion = ProtocolVersion.CURRENT)
                 } else {
+                    setHandshakeComplete(false)
                     AgentResponse.Error(
                         message =
                             "Protocol version mismatch: client=${request.protocolVersion}, " +
@@ -190,6 +200,20 @@ constructor(
                     )
                 }
             Framing.writeFrame(output, WireCodec.encode(response))
+            return true
+        }
+
+        if (!handshakeComplete) {
+            Framing.writeFrame(
+                output,
+                WireCodec.encode(
+                    AgentResponse.Error(
+                        message =
+                            "Protocol handshake required: send Hello before ${request.logLabel}",
+                        category = AgentErrorCategory.ProtocolMismatch.wireName,
+                    )
+                ),
+            )
             return true
         }
 

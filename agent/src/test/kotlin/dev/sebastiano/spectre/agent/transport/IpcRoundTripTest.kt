@@ -357,6 +357,16 @@ class IpcRoundTripTest {
 
             java.nio.channels.SocketChannel.open(java.net.UnixDomainSocketAddress.of(udsPath))
                 .use { rawClient ->
+                    val output = java.nio.channels.Channels.newOutputStream(rawClient)
+                    val input = java.nio.channels.Channels.newInputStream(rawClient)
+                    // #199 handshake required before Detach is dispatched.
+                    Framing.writeFrame(
+                        output,
+                        WireCodec.encode(
+                            AgentRequest.Hello(protocolVersion = ProtocolVersion.CURRENT)
+                        ),
+                    )
+                    Framing.readFrame(input) // HelloAck
                     val detachBytes = WireCodec.encode(AgentRequest.Detach)
                     val frame =
                         java.nio.ByteBuffer.allocate(Int.SIZE_BYTES + detachBytes.size).apply {

@@ -169,19 +169,27 @@ internal class ReflectiveAutomatorHandler(
             allNodes.filterNotNull().filter { nodeBooleanProperty(it, methodName = "isFocused") }
         if (focusedNodes.isEmpty()) {
             return AgentResponse.Error(
-                "Refusing typeText because no focused Spectre node was found in the " +
-                    "target JVM. Focus a target node before sending real keyboard events."
+                message =
+                    "Refusing typeText because no focused Spectre node was found in the " +
+                        "target JVM. Focus a target node before sending real keyboard events.",
+                category =
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InputRejected.wireName,
             )
         }
         if (focusedNodes.none { extractKey(it).isNotBlank() }) {
             return AgentResponse.Error(
-                "Refusing typeText because every focused Spectre node has a blank key."
+                message = "Refusing typeText because every focused Spectre node has a blank key.",
+                category =
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InputRejected.wireName,
             )
         }
         if (!isTargetJvmFocused()) {
             return AgentResponse.Error(
-                "Refusing typeText because the target JVM does not currently own OS keyboard " +
-                    "focus. Activate the target window before sending real keyboard events."
+                message =
+                    "Refusing typeText because the target JVM does not currently own OS keyboard " +
+                        "focus. Activate the target window before sending real keyboard events.",
+                category =
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InputRejected.wireName,
             )
         }
         suspendInvoker.invoke(method, automator, text)

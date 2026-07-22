@@ -110,6 +110,23 @@ class ProtocolCompatTest {
     }
 
     @Test
+    fun `non-Hello first frame is rejected with protocolMismatch`() {
+        IpcServer(udsPath, stubHandler()).use {
+            awaitSocket(udsPath)
+            SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
+                channel.connect(UnixDomainSocketAddress.of(udsPath))
+                val input = Channels.newInputStream(channel)
+                val output = Channels.newOutputStream(channel)
+                Framing.writeFrame(output, WireCodec.encode(AgentRequest.Ping))
+                val bytes = Framing.readFrame(input) ?: error("no response")
+                val err = assertIs<AgentResponse.Error>(WireCodec.decodeResponse(bytes))
+                assertEquals(AgentErrorCategory.ProtocolMismatch.wireName, err.category)
+                assertTrue(err.message.contains("handshake", ignoreCase = true))
+            }
+        }
+    }
+
+    @Test
     fun `isUnknownDiscriminator detects polymorphic serializer failures`() {
         val bytes = futureOpRequestBytes()
         val ex =
