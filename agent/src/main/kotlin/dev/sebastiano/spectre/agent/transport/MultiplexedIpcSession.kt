@@ -161,9 +161,10 @@ internal class MultiplexedIpcSession(
             }
         }
         // Replace placeholder with the real Future so cancel interrupts the worker.
+        // On failure: cancel already removed the slot (and called cancel(true)), or the worker
+        // already claimed ownership and may be mid-write — do NOT cancel again (Bugbot: that
+        // interrupted Framing.writeFrame on fast ops).
         if (!inFlight.replace(op.opId, placeholder, future)) {
-            // Cancel already claimed ownership (and wrote cancelled) — interrupt the work.
-            future.cancel(true)
             return
         }
         scheduleDeadline(op, deadlineScheduler, inFlight, output, writeLock)
@@ -183,7 +184,21 @@ internal class MultiplexedIpcSession(
     ) {
         val deadline = op.deadlineEpochMs ?: return
         val delayMs = deadline - System.currentTimeMillis()
-        if (delayMs <= 0L) return // executeOp already handles already-elapsed deadlines
+        if (delayMs <= 0L) {
+            // Deadline hit between worker start and registration — claim timeout now.
+            val f = inFlight.remove(op.opId) ?: return
+            f.cancel(/* mayInterruptIfRunning= */ true)
+            writeOpResponse(
+                output,
+                writeLock,
+                op.opId,
+                AgentResponse.Error(
+                    message = "Deadline elapsed during op",
+                    category = AgentErrorCategory.Timeout.wireName,
+                ),
+            )
+            return
+        }
         deadlineScheduler.schedule(
             {
                 val f = inFlight.remove(op.opId) ?: return@schedule
@@ -205,7 +220,7 @@ internal class MultiplexedIpcSession(
 
     @Suppress("TooGenericExceptionCaught")
     private fun executeOp(request: AgentRequest, deadlineEpochMs: Long?): AgentResponse {
-        if (deadlineEpochMs != null && System.currentTimeMillis() > deadlineEpochMs) {
+        if (deadlineEpochMs != null && System.currentTimeMillis() >= deadlineEpochMs) {
             return AgentResponse.Error(
                 message = "Deadline already elapsed before op started",
                 category = AgentErrorCategory.Timeout.wireName,
@@ -213,7 +228,7 @@ internal class MultiplexedIpcSession(
         }
         return try {
             val response = handler.handle(request)
-            if (deadlineEpochMs != null && System.currentTimeMillis() > deadlineEpochMs) {
+            if (deadlineEpochMs != null && System.currentTimeMillis() >= deadlineEpochMs) {
                 AgentResponse.Error(
                     message = "Deadline elapsed during op",
                     category = AgentErrorCategory.Timeout.wireName,
