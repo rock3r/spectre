@@ -116,6 +116,36 @@ internal sealed interface AgentRequest {
      * cancel was accepted).
      */
     @Serializable @SerialName("cancel") data class Cancel(val opId: Long) : AgentRequest
+
+    /**
+     * Wait until a semantics node matches [tag] and/or [text] (AND when both set), same semantics
+     * as in-process `ComposeAutomator.waitForNode` (#201).
+     *
+     * Timeouts are milliseconds; null uses the automator defaults (5s timeout, 100ms poll). Replies
+     * with [AgentResponse.Nodes] (single match) or [AgentResponse.Error] (`timeout` /
+     * `invalidSelector`).
+     */
+    @Serializable
+    @SerialName("waitForNode")
+    data class WaitForNode(
+        val tag: String? = null,
+        val text: String? = null,
+        val timeoutMs: Long? = null,
+        val pollIntervalMs: Long? = null,
+    ) : AgentRequest
+
+    /**
+     * Wait until consecutive visual frames are stable (#201). Same semantics as in-process
+     * `ComposeAutomator.waitForVisualIdle`. Null durations use automator defaults. Replies with
+     * [AgentResponse.Ok] or [AgentResponse.Error] category `timeout`.
+     */
+    @Serializable
+    @SerialName("waitForVisualIdle")
+    data class WaitForVisualIdle(
+        val timeoutMs: Long? = null,
+        val stableFrames: Int? = null,
+        val pollIntervalMs: Long? = null,
+    ) : AgentRequest
 }
 
 /** Payload-free operation label for diagnostics. Never include caller-controlled request data. */
@@ -134,6 +164,8 @@ internal val AgentRequest.logLabel: String
             AgentRequest.Detach -> "detach"
             is AgentRequest.Hello -> "hello"
             is AgentRequest.Cancel -> "cancel"
+            is AgentRequest.WaitForNode -> "waitForNode"
+            is AgentRequest.WaitForVisualIdle -> "waitForVisualIdle"
         }
 
 /** Server-to-client response envelope. */

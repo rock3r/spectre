@@ -35,6 +35,10 @@ internal class BlockingSuspendInvoker(private val timeoutMs: Long = DEFAULT_TIME
      * Invokes [method] on [target] with [args] plus an appended [LatchingContinuation]. Returns the
      * suspend function's eventual result, or throws the exception that resumed the continuation
      * with failure.
+     *
+     * @param timeoutMsOverride when set, overrides the constructor default (used for long waits
+     *   such as `waitForNode` / `waitForVisualIdle` so the suspend bridge outlives the wait budget
+     *   slightly and the automator's own timeout wins).
      */
     // Both spreads below (`*args` into `arrayOf`, `*argsWithCont` into the Java reflection
     // call) are unavoidable: we need to append `cont` to the caller-supplied vararg array,
@@ -42,11 +46,17 @@ internal class BlockingSuspendInvoker(private val timeoutMs: Long = DEFAULT_TIME
     // Kotlin doesn't pass the array as a single argument. The array is small (caller-supplied
     // suspend-function args + 1 continuation), so the per-call copy is not material.
     @Suppress("SpreadOperator")
-    fun invoke(method: Method, target: Any, vararg args: Any?): Any? {
+    fun invoke(
+        method: Method,
+        target: Any,
+        vararg args: Any?,
+        timeoutMsOverride: Long? = null,
+    ): Any? {
         val cont = LatchingContinuation()
         val argsWithCont: Array<Any?> = arrayOf(*args, cont)
         val raw = method.invoke(target, *argsWithCont)
-        return if (raw === COROUTINE_SUSPENDED) cont.await(timeoutMs) else raw
+        val waitMs = timeoutMsOverride ?: timeoutMs
+        return if (raw === COROUTINE_SUSPENDED) cont.await(waitMs) else raw
     }
 
     private class LatchingContinuation : Continuation<Any?> {
