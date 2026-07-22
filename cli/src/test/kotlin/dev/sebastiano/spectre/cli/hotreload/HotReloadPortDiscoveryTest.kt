@@ -34,6 +34,18 @@ class HotReloadPortDiscoveryTest {
     }
 
     @Test
+    fun `pid file port is rejected when pid does not match the target`() {
+        val content = "pid=111\norchestration.port=2222\n"
+        assertNull(
+            HotReloadPortDiscovery.parsePortFromPidFileProperties(content, expectedPid = 999L)
+        )
+        assertEquals(
+            2222,
+            HotReloadPortDiscovery.parsePortFromPidFileProperties(content, expectedPid = 111L),
+        )
+    }
+
+    @Test
     fun `jvm args dashD port property is discovered`() {
         val found =
             HotReloadPortDiscovery.parsePortFromJvmArgs(

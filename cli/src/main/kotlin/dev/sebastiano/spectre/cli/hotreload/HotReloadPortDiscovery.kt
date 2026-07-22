@@ -30,7 +30,7 @@ public object HotReloadPortDiscovery {
         explicitPidFile: Path? = null,
     ): HotReloadPort? {
         explicitPidFile?.let { path ->
-            readPortFromPidFile(path)?.let { port ->
+            readPortFromPidFile(path, expectedPid = targetPid)?.let { port ->
                 return HotReloadPort(port = port, source = HotReloadPortSource.PidFile(path))
             }
         }
@@ -41,7 +41,7 @@ public object HotReloadPortDiscovery {
         }
 
         parsePidFilePathFromJvmArgs(args)?.let { path ->
-            readPortFromPidFile(path)?.let { port ->
+            readPortFromPidFile(path, expectedPid = targetPid)?.let { port ->
                 return HotReloadPort(port = port, source = HotReloadPortSource.PidFile(path))
             }
         }
@@ -49,18 +49,31 @@ public object HotReloadPortDiscovery {
         return null
     }
 
-    /** Parses a pid-file body (Java Properties format) for `orchestration.port`. */
-    public fun parsePortFromPidFileProperties(content: String): Int? {
+    /**
+     * Parses a pid-file body (Java Properties format) for `orchestration.port`.
+     *
+     * When [expectedPid] is non-null and the file carries a `pid` field, that field must match or
+     * the port is rejected (avoids treating another HR JVM's stale pid file as this target's).
+     */
+    public fun parsePortFromPidFileProperties(content: String, expectedPid: Long? = null): Int? {
         val properties = Properties()
         properties.load(StringReader(content))
+        val filePid = properties.getProperty(HotReloadVersions.PID_FILE_PID_KEY)?.toLongOrNull()
+        if (expectedPid != null && filePid != null && filePid != expectedPid) return null
         val port = properties.getProperty(HotReloadVersions.PID_FILE_PORT_KEY)?.toIntOrNull()
         return port?.takeIf { it in 1..MAX_TCP_PORT }
     }
 
-    /** Reads [path] if it is a regular file and returns the orchestration port, if present. */
-    public fun readPortFromPidFile(path: Path): Int? {
+    /**
+     * Reads [path] if it is a regular file and returns the orchestration port, if present and (when
+     * [expectedPid] is set) owned by that pid.
+     */
+    public fun readPortFromPidFile(path: Path, expectedPid: Long? = null): Int? {
         if (!path.isRegularFile()) return null
-        return runCatching { parsePortFromPidFileProperties(Files.readString(path)) }.getOrNull()
+        return runCatching {
+                parsePortFromPidFileProperties(Files.readString(path), expectedPid = expectedPid)
+            }
+            .getOrNull()
     }
 
     /**
