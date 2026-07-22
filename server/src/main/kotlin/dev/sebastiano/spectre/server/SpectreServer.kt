@@ -134,14 +134,29 @@ private fun Route.spectreRoutes(automator: ComposeAutomator) {
             )
             return@post
         }
-        automator.click(node)
-        call.respond(HttpStatusCode.NoContent)
+        try {
+            automator.click(node)
+            call.respond(HttpStatusCode.NoContent)
+        } catch (_: IllegalStateException) {
+            call.respond(
+                SpectreErrorCategory.httpStatus(SpectreErrorCategory.InputRejected),
+                SpectreErrorCategory.InputRejected.wireName,
+            )
+        }
     }
 
     post("/typeText") {
         val request = receiveOrRespond400<TypeTextRequest>(call, "TypeTextRequest") ?: return@post
-        automator.typeText(request.text)
-        call.respond(HttpStatusCode.NoContent)
+        try {
+            automator.typeText(request.text)
+            call.respond(HttpStatusCode.NoContent)
+        } catch (_: IllegalStateException) {
+            // #199: Robot/TCC/focus refusals → inputRejected (409), not an opaque 500.
+            call.respond(
+                SpectreErrorCategory.httpStatus(SpectreErrorCategory.InputRejected),
+                SpectreErrorCategory.InputRejected.wireName,
+            )
+        }
     }
 
     get("/screenshot") {
