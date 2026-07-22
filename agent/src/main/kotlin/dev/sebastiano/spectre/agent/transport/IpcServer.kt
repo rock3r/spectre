@@ -162,92 +162,17 @@ constructor(
             try {
                 WireCodec.decodeRequest(requestBytes)
             } catch (ex: kotlinx.serialization.SerializationException) {
-                // Unknown sealed discriminators (newer attacher ops) must not hang or look like a
-                // decode crash — return taxonomy unsupportedOperation (#199).
-                val category =
-                    if (WireCodec.isUnknownDiscriminator(ex)) {
-                        AgentErrorCategory.UnsupportedOperation
-                    } else {
-                        AgentErrorCategory.ProtocolMismatch
-                    }
-                val tearDown = !handshakeComplete
-                try {
-                    Framing.writeFrame(
-                        output,
-                        WireCodec.encode(
-                            AgentResponse.Error(
-                                message = "Malformed or unsupported request: ${ex.message}",
-                                category = category.wireName,
-                            )
-                        ),
-                    )
-                } finally {
-                    // Pre-handshake decode failure: always release agent state even if the
-                    // error write races a dropped client.
-                    if (tearDown) {
-                        running.set(false)
-                        onDetach()
-                    }
-                }
-                return !tearDown
+                return respondDecodeFailure(output, ex, handshakeComplete)
             }
 
         // Hello is handled here (not in ReflectiveAutomatorHandler) so the handshake does not
         // require a live ComposeAutomator (#199).
         if (request is AgentRequest.Hello) {
-            if (request.protocolVersion == ProtocolVersion.CURRENT) {
-                setHandshakeComplete(true)
-                Framing.writeFrame(
-                    output,
-                    WireCodec.encode(
-                        AgentResponse.HelloAck(protocolVersion = ProtocolVersion.CURRENT)
-                    ),
-                )
-                return true
-            }
-            setHandshakeComplete(false)
-            try {
-                Framing.writeFrame(
-                    output,
-                    WireCodec.encode(
-                        AgentResponse.Error(
-                            message =
-                                "Protocol version mismatch: client=${request.protocolVersion}, " +
-                                    "runtime=${ProtocolVersion.CURRENT} (exact-match required " +
-                                    "while agent API is experimental)",
-                            category = AgentErrorCategory.ProtocolMismatch.wireName,
-                        )
-                    ),
-                )
-            } finally {
-                // #199 P1: rejected handshake must release SpectreAgent singleton state so a
-                // subsequent attach with a matching runtime can bootstrap again — even if the
-                // client dropped before the error frame was written.
-                running.set(false)
-                onDetach()
-            }
-            return false
+            return respondHello(output, request, setHandshakeComplete)
         }
 
         if (!handshakeComplete) {
-            try {
-                Framing.writeFrame(
-                    output,
-                    WireCodec.encode(
-                        AgentResponse.Error(
-                            message =
-                                "Protocol handshake required: send Hello before ${request.logLabel}",
-                            category = AgentErrorCategory.ProtocolMismatch.wireName,
-                        )
-                    ),
-                )
-            } finally {
-                // Pre-#199 attachers send ops without Hello; tear down so a current attacher
-                // can re-bootstrap on a new UDS path.
-                running.set(false)
-                onDetach()
-            }
-            return false
+            return rejectPreHandshake(output, request)
         }
 
         // Generic Exception catch: an automator handler may throw NPE / CCE / ISE (unchecked)
@@ -296,6 +221,93 @@ constructor(
             }
         }
         return !isDetach
+    }
+
+    /** Decode failure response; pre-handshake failures tear down agent state (#199). */
+    private fun respondDecodeFailure(
+        output: java.io.OutputStream,
+        ex: kotlinx.serialization.SerializationException,
+        handshakeComplete: Boolean,
+    ): Boolean {
+        val category =
+            if (WireCodec.isUnknownDiscriminator(ex)) {
+                AgentErrorCategory.UnsupportedOperation
+            } else {
+                AgentErrorCategory.ProtocolMismatch
+            }
+        val tearDown = !handshakeComplete
+        try {
+            Framing.writeFrame(
+                output,
+                WireCodec.encode(
+                    AgentResponse.Error(
+                        message = "Malformed or unsupported request: ${ex.message}",
+                        category = category.wireName,
+                    )
+                ),
+            )
+        } finally {
+            if (tearDown) {
+                running.set(false)
+                onDetach()
+            }
+        }
+        return !tearDown
+    }
+
+    /** Hello handshake; mismatch tears down agent state so re-attach can re-bootstrap (#199). */
+    private fun respondHello(
+        output: java.io.OutputStream,
+        request: AgentRequest.Hello,
+        setHandshakeComplete: (Boolean) -> Unit,
+    ): Boolean {
+        if (request.protocolVersion == ProtocolVersion.CURRENT) {
+            setHandshakeComplete(true)
+            Framing.writeFrame(
+                output,
+                WireCodec.encode(AgentResponse.HelloAck(protocolVersion = ProtocolVersion.CURRENT)),
+            )
+            return true
+        }
+        setHandshakeComplete(false)
+        try {
+            Framing.writeFrame(
+                output,
+                WireCodec.encode(
+                    AgentResponse.Error(
+                        message =
+                            "Protocol version mismatch: client=${request.protocolVersion}, " +
+                                "runtime=${ProtocolVersion.CURRENT} (exact-match required " +
+                                "while agent API is experimental)",
+                        category = AgentErrorCategory.ProtocolMismatch.wireName,
+                    )
+                ),
+            )
+        } finally {
+            running.set(false)
+            onDetach()
+        }
+        return false
+    }
+
+    /** Non-Hello first frame (pre-#199 attacher); tear down and close the connection (#199). */
+    private fun rejectPreHandshake(output: java.io.OutputStream, request: AgentRequest): Boolean {
+        try {
+            Framing.writeFrame(
+                output,
+                WireCodec.encode(
+                    AgentResponse.Error(
+                        message =
+                            "Protocol handshake required: send Hello before ${request.logLabel}",
+                        category = AgentErrorCategory.ProtocolMismatch.wireName,
+                    )
+                ),
+            )
+        } finally {
+            running.set(false)
+            onDetach()
+        }
+        return false
     }
 
     /**
