@@ -394,12 +394,18 @@ internal constructor(
         val sessionId: String
             get() = summary.sessionId
 
-        fun awaitIdleWaits(timeoutMs: Long = 30_000) {
-            val deadline = System.nanoTime() + timeoutMs * 1_000_000L
+        fun awaitIdleWaits(timeoutMs: Long = WAIT_DRAIN_TIMEOUT_MS) {
+            val deadline = System.nanoTime() + timeoutMs * NANOS_PER_MS
             while (activeWaits.get() > 0 && System.nanoTime() < deadline) {
-                Thread.sleep(10)
+                Thread.sleep(WAIT_DRAIN_POLL_MS)
             }
         }
+    }
+
+    private companion object {
+        const val WAIT_DRAIN_TIMEOUT_MS: Long = 30_000
+        const val WAIT_DRAIN_POLL_MS: Long = 10
+        const val NANOS_PER_MS: Long = 1_000_000
     }
 }
 
