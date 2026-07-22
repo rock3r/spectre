@@ -30,17 +30,22 @@ it next to capture workflows.
 ## When reload awareness activates
 
 On `spectre attach` (and the MCP `attach` tool), the daemon tries to discover an HR orchestration
-endpoint for that process:
+endpoint for that process from the target’s JVM arguments (and an optional explicit pid-file path
+used by tests / advanced callers):
 
-1. HR pid file (`compose.reload.pidFile` / default discovery) carrying `orchestration.port`
-2. JVM system property `compose.reload.orchestration.port` in the target’s arguments
+1. System property `compose.reload.orchestration.port` on the process command line
+2. System property `compose.reload.pidFile` pointing at HR’s pid file, which must contain
+   `orchestration.port` (and, when present, a matching `pid`)
+
+There is **no** scan of a default filesystem location for a pid file — only the property-backed
+path (or an explicit override) is read.
 
 If a port is found, the daemon opens a **Tooling**-role orchestration client (same public
 `hot-reload-orchestration` surface HR’s own tooling uses). That session is **reload-aware**:
 
 - `spectre wait --reload-settled <session>` / MCP `wait_for_reload_settled` wait for a full settle
-- Node keys returned by `tree` / `find` / capture are **generation-stamped** and invalidated after
-  a successful reload settles
+- Node keys returned by `tree` / `find` (and wait-for-node) are **generation-stamped** and
+  invalidated after a successful reload settles
 
 If no HR orchestration is found, attach still succeeds. The session is ordinary Spectre: all
 non-HR commands work; reload wait fails immediately with category `hotReloadUnavailable`.

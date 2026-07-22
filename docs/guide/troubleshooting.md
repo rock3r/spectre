@@ -126,9 +126,10 @@ The attached session is not reload-aware. Common causes:
 
 1. **The target is not running under Compose Hot Reload** — ordinary `run` / packaged launches
    are fine for Spectre; reload wait only activates when HR orchestration is discoverable.
-2. **Port discovery failed** — Spectre looks for HR’s pid file (`orchestration.port`) and the
-   `compose.reload.orchestration.port` JVM property. Confirm the app was started by an HR-aware
-   run configuration and that the pid file is still present for that process.
+2. **Port discovery failed** — Spectre reads `compose.reload.orchestration.port` and/or
+   `compose.reload.pidFile` from the **target process’s JVM arguments**, then the pid file’s
+   `orchestration.port` field. Confirm the app was started by an HR-aware run configuration that
+   still exposes those properties.
 3. **Orchestration never connected within the wait budget** — a very short `--timeout-ms` right
    after attach can report timeout rather than “unavailable”; give the Tooling client a moment
    after attach, or increase the timeout.
