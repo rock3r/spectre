@@ -37,9 +37,13 @@ The skill covers:
 - schemaVersion **1** field reference
 - ready-made `jq` recipes (clickable nodes by text, bounds by test tag, tree diffs)
 - capture → act → capture → diff workflow
-- node-key lifetime (re-capture after navigation / re-attach)
+- node-key lifetime (re-capture after navigation / re-attach / hot reload settle)
+- division of labor when both Compose Hot Reload MCP and Spectre are configured
 - `spectre captures prune` cleanup guidance
 - a manual find-click-verify recipe against a live fixture
+
+For reload settle and generation-stamped keys, see
+[Compose Hot Reload awareness](hot-reload.md).
 
 ## Schema versioning
 

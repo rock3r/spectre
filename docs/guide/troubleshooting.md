@@ -118,6 +118,49 @@ Use `pressKey(...)` for individual key events (modifier shortcuts, navigation ke
 `<kbd>Tab</kbd>`, `<kbd>Esc</kbd>`) — those go through the AWT key map, not the
 clipboard, so none of the paste-specific caveats apply.
 
+## Compose Hot Reload {#compose-hot-reload}
+
+### "`wait --reload-settled` says hotReloadUnavailable"
+
+The attached session is **not** reload-aware: attach did not find HR orchestration properties on
+the process, so no Hot Reload client was created. Common causes:
+
+1. **The target is not running under Compose Hot Reload** — ordinary `run` / packaged launches
+   are fine for Spectre; reload wait only activates when HR properties are discoverable.
+2. **Port discovery found nothing** — Spectre reads `compose.reload.orchestration.port` and/or
+   `compose.reload.pidFile` from the **target process’s JVM arguments**, then the pid file’s
+   `orchestration.port` field. Confirm the app was started by an HR-aware run configuration that
+   still exposes those properties.
+
+If properties **are** present but the orchestration server is down or the port is stale, wait
+returns **`timeout`**, not `hotReloadUnavailable` (the session is still treated as reload-aware).
+
+See [Compose Hot Reload awareness](hot-reload.md).
+
+### "`reloadFailed` vs `timeout`"
+
+- **`reloadFailed`** — HR completed a `ReloadClassesResult` with `isSuccess = false` (for
+  example a redefine error). Fix the reload in the app/IDE; Spectre is only reporting HR’s
+  outcome.
+- **`timeout`** — the settle chain (`Request` → `Result` → `UIRendered` → `Ping`/`Ack`) did not
+  finish in time, **or** a reload-aware session never connected to orchestration (stale port,
+  HR not listening yet). Retry with a larger `--timeout-ms`, confirm HR is healthy and still
+  advertising a live port, then re-query the tree.
+
+### "Clicks fail with nodeNotFound after a hot reload"
+
+On reload-aware sessions, node keys from `tree` / `find` are generation-stamped and cleared
+after a successful reload settle. Pre-reload keys (and guessed `g{n}:…` stamps before a fresh
+tree) return `nodeNotFound`. Arm `spectre wait --reload-settled <session>` **before** the
+reload, then `tree` / `find` again and use the new stamped keys. Do not reuse keys from an
+older `capture.json` for clicks after settle — capture writes raw keys for inspection.
+
+### "Older Hot Reload builds"
+
+Spectre tests against the Compose Hot Reload **1.2** line (pinned **1.2.0-rc01**, minimum
+**1.2.0-alpha+211**). Older orchestration servers may omit message types Spectre needs; upgrade
+HR rather than expecting settle wait to work.
+
 ## "The JVM is headless"
 
 Spectre input and screenshots need AWT. If the JVM is launched with

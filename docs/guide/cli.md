@@ -68,6 +68,9 @@ spectre capture <session-id> --json
 spectre captures list
 # Prune closed-session captures on the default root (never touches live sessions without --force).
 spectre captures prune --keep 20
+# When the target runs under Compose Hot Reload: wait for a full settle, then re-tree.
+spectre wait --reload-settled <session-id>
+spectre tree <session-id> --json
 spectre record start <session-id> --output ./interaction.mp4
 # Window is default (index 0); --fullscreen is opt-in full primary display.
 spectre record start <session-id> --window 0 --output ./window.mp4
@@ -105,8 +108,13 @@ them.
 ## MCP
 
 Run `spectre mcp` when an MCP client should drive the UI. It exposes process discovery, attach,
-window/tree lookup, test-tag lookup, click, text input, screenshots, and recording as tools.
-Screenshots are returned to MCP clients as inline PNG images.
+window/tree lookup, test-tag lookup, click, text input, screenshots, recording, atomic capture,
+and optional Compose Hot Reload settle (`wait_for_reload_settled`) as tools. Screenshots are
+returned to MCP clients as inline PNG images.
+
+When an agent also has Compose Hot Reload’s own MCP configured, follow the division of labor in
+[Compose Hot Reload awareness](hot-reload.md): HR MCP for quick reload-native sanity checks;
+Spectre for tree, input, capture, and evidence.
 
 For example, configure a client with the absolute executable path:
 
@@ -136,7 +144,11 @@ writes banners or logs to standard output.
 - `click` and `type` send real operating-system input to the target UI. They can move focus and
   change application state.
 - Node keys are short-lived. After an interaction changes the UI, run `tree` or `find` again
-  before using another node key.
+  before using another node key. On **reload-aware** sessions (Compose Hot Reload detected at
+  attach), keys are also invalidated after `wait --reload-settled` completes — always re-query.
+- `spectre wait --reload-settled <session-id>` is meaningful only when the attached process is
+  running under Compose Hot Reload; otherwise it fails closed with `hotReloadUnavailable`. See
+  [Compose Hot Reload awareness](hot-reload.md).
 - The CLI attaches only to JVMs. It does not make a non-Compose or non-Spectre application
   inspectable.
 

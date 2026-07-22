@@ -19,8 +19,12 @@ The guide walks through using Spectre end-to-end:
 11. **[Agent attach](agent.md)** — attach to a running Spectre-instrumented JVM.
 12. **[Capability matrix](capability-matrix.md)** — ops × transports × platforms, with
     fail-closed CI evidence for every Supported cell.
-13. **[IntelliJ-hosted Compose](intellij.md)** — Jewel-on-IntelliJ tool windows.
-14. **[Troubleshooting](troubleshooting.md)** — platform-specific gotchas.
+13. **[CLI](cli.md)** — interactive `spectre` command and MCP server.
+14. **[Atomic capture](capture.md)** — window PNG + versioned tree for agents.
+15. **[Compose Hot Reload](hot-reload.md)** — optional reload settle wait and key
+    invalidation when the target runs under HR (CLI/MCP only).
+16. **[IntelliJ-hosted Compose](intellij.md)** — Jewel-on-IntelliJ tool windows.
+17. **[Troubleshooting](troubleshooting.md)** — platform-specific gotchas.
 
 If you're new to Spectre, start with [Installation](installation.md) and
 [Getting started](getting-started.md), then read [The automator](automator.md) before
