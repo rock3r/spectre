@@ -26,13 +26,60 @@ internal data class RecordingStatus(
  */
 @OptIn(ExperimentalSpectreAgentApi::class)
 internal class DaemonSessionRecording(
-    private val delegate: AttachedAutomator,
     private val sessionId: String,
+    private val targetPid: Long,
+    private val windowIdentities: (windowIndex: Int?) -> List<WindowIdentityDto>,
     private val clock: Clock = Clock.systemUTC(),
     private val ledger: CaptureLedger = CaptureLifecycle.ledger(),
     private val fullscreenRegionBounds: () -> Rectangle = ::requireFullscreenRegionBounds,
     private val autoRecorderFactory: () -> AutoRecorder = { AutoRecorder() },
+    /**
+     * Screen Recording TCC preflight (macOS). Tests inject a no-op so kill-target coverage does not
+     * require real TCC on hermetic CI runners.
+     */
+    private val requireScreenCaptureAccess: () -> Unit = ::defaultRequireScreenCaptureAccess,
+    /**
+     * Out-of-process window recording seam (default: [AutoRecorder.startWindowByTitle]). Tests
+     * inject a fake starter so kill-target / finalize behaviour is CI-safe without SCK/WGC/portal.
+     */
+    private val startWindowByTitle:
+        (
+            title: String,
+            windowOwnerPid: Long,
+            output: Path,
+            cropInWindow: Rectangle?,
+            scaleX: Double,
+            scaleY: Double,
+        ) -> RecordingHandle =
+        { title, windowOwnerPid, output, cropInWindow, scaleX, scaleY ->
+            autoRecorderFactory()
+                .startWindowByTitle(
+                    title = title,
+                    windowOwnerPid = windowOwnerPid,
+                    output = output,
+                    cropInWindow = cropInWindow,
+                    scaleX = scaleX,
+                    scaleY = scaleY,
+                )
+        },
 ) {
+    constructor(
+        delegate: AttachedAutomator,
+        sessionId: String,
+        clock: Clock = Clock.systemUTC(),
+        ledger: CaptureLedger = CaptureLifecycle.ledger(),
+        fullscreenRegionBounds: () -> Rectangle = ::requireFullscreenRegionBounds,
+        autoRecorderFactory: () -> AutoRecorder = { AutoRecorder() },
+    ) : this(
+        sessionId = sessionId,
+        targetPid = delegate.pid,
+        windowIdentities = { index -> delegate.windowIdentities(index) },
+        clock = clock,
+        ledger = ledger,
+        fullscreenRegionBounds = fullscreenRegionBounds,
+        autoRecorderFactory = autoRecorderFactory,
+    )
+
     private var recording: RecordingHandle? = null
     private var recordingOutput: Path? = null
     private var captureDirectory: Path? = null
@@ -157,14 +204,6 @@ internal class DaemonSessionRecording(
         captureDirectory = null
     }
 
-    private fun requireScreenCaptureAccess() {
-        try {
-            MacOsScreenCaptureAccess.requireGranted()
-        } catch (exception: ScreenCaptureAccessDeniedException) {
-            throw IOException(exception.message ?: "Screen Recording not granted", exception)
-        }
-    }
-
     private fun requireRecordableIdentity(windowIndex: Int): WindowIdentityDto =
         selectIdentity(windowIndex)
             ?: throw IOException(
@@ -182,7 +221,7 @@ internal class DaemonSessionRecording(
     private fun requireUniqueTitle(title: String, selectedIndex: Int) {
         val all =
             try {
-                delegate.windowIdentities(null)
+                windowIdentities(null)
             } catch (exception: IOException) {
                 throw IOException(
                     "failed to enumerate windows for title uniqueness: ${exception.message}",
@@ -217,15 +256,14 @@ internal class DaemonSessionRecording(
             } else {
                 null
             }
-        return autoRecorderFactory()
-            .startWindowByTitle(
-                title = title,
-                windowOwnerPid = delegate.pid,
-                output = destination,
-                cropInWindow = crop,
-                scaleX = identity.scaleX,
-                scaleY = identity.scaleY,
-            )
+        return startWindowByTitle(
+            title,
+            targetPid,
+            destination,
+            crop,
+            identity.scaleX,
+            identity.scaleY,
+        )
     }
 
     private fun appendLedger(directory: Path, sizeBytes: Long, explicit: Boolean) {
@@ -243,7 +281,7 @@ internal class DaemonSessionRecording(
     private fun selectIdentity(windowIndex: Int): WindowIdentityDto? {
         val identities =
             try {
-                delegate.windowIdentities(windowIndex)
+                windowIdentities(windowIndex)
             } catch (exception: IOException) {
                 throw IOException(
                     "failed to read window identity for recording: ${exception.message}",
@@ -283,6 +321,14 @@ internal class DaemonSessionRecording(
         val file = Path.of(outputPath).toAbsolutePath().normalize()
         val directory = file.parent ?: Path.of(".")
         return ResolvedOutput(file = file, directory = directory, explicitOutDir = true)
+    }
+}
+
+private fun defaultRequireScreenCaptureAccess() {
+    try {
+        MacOsScreenCaptureAccess.requireGranted()
+    } catch (exception: ScreenCaptureAccessDeniedException) {
+        throw IOException(exception.message ?: "Screen Recording not granted", exception)
     }
 }
 

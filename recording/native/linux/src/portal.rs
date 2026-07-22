@@ -797,4 +797,71 @@ mod restore_token_tests {
         clear_restore_token("monitor-embedded").unwrap();
         std::env::remove_var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH");
     }
+
+    #[test]
+    fn restore_token_key_is_stable_per_source_and_cursor() {
+        let monitor_embedded =
+            restore_token_key(&[SourceType::Monitor], CursorMode::Embedded);
+        let monitor_hidden = restore_token_key(&[SourceType::Monitor], CursorMode::Hidden);
+        let window_embedded = restore_token_key(&[SourceType::Window], CursorMode::Embedded);
+        assert_eq!(monitor_embedded, "monitor-embedded");
+        assert_eq!(monitor_hidden, "monitor-hidden");
+        assert_eq!(window_embedded, "window-embedded");
+        assert_ne!(monitor_embedded, monitor_hidden);
+        assert_ne!(monitor_embedded, window_embedded);
+    }
+
+    #[test]
+    fn is_restore_token_rejection_only_matches_select_or_start_token_failures() {
+        assert!(is_restore_token_rejection(&anyhow::anyhow!(
+            "SelectSources rejected (response code 2): stored restore_token"
+        )));
+        assert!(is_restore_token_rejection(&anyhow::anyhow!(
+            "Start rejected: restore_token no longer valid"
+        )));
+        // Timeouts and CreateSession failures must NOT clear a still-valid grant.
+        assert!(!is_restore_token_rejection(&anyhow::anyhow!(
+            "Timed out after 60s waiting for Response signal"
+        )));
+        assert!(!is_restore_token_rejection(&anyhow::anyhow!(
+            "CreateSession rejected (response code 2)"
+        )));
+        assert!(!is_restore_token_rejection(&anyhow::anyhow!(
+            "OpenPipeWireRemote failed"
+        )));
+    }
+
+    #[test]
+    fn save_restore_token_is_atomic_and_does_not_leave_partial_files() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!(
+            "spectre-restore-atomic-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR", &dir);
+        std::env::remove_var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH");
+
+        save_restore_token("monitor-embedded", "first").unwrap();
+        save_restore_token("monitor-embedded", "second-overwrite").unwrap();
+        assert_eq!(
+            load_restore_token("monitor-embedded").unwrap().as_deref(),
+            Some("second-overwrite")
+        );
+        // write_private_file temps are named ".{name}.tmp.{pid}" (extension is the pid, not "tmp").
+        let leftovers: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with('.') && name.contains(".tmp."))
+            })
+            .collect();
+        assert!(leftovers.is_empty(), "tmp leftovers: {leftovers:?}");
+
+        std::env::remove_var("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR");
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
