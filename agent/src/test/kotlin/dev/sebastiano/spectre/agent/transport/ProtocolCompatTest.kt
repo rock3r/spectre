@@ -104,6 +104,11 @@ class ProtocolCompatTest {
                 Framing.writeFrame(output, futureOpEnvelopeBytes())
                 val respBytes = Framing.readFrame(input) ?: error("no error response")
                 val opResp = WireCodec.decodeOpResponse(respBytes)
+                assertEquals(
+                    1L,
+                    opResp.opId,
+                    "decode failure must still correlate to the request opId",
+                )
                 val err = assertIs<AgentResponse.Error>(opResp.body)
                 assertEquals(AgentErrorCategory.UnsupportedOperation.wireName, err.category)
             }

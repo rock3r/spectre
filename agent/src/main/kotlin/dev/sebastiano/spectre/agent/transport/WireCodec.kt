@@ -39,6 +39,13 @@ internal object WireCodec {
     fun decodeOpRequest(bytes: ByteArray): OpRequest =
         cbor.decodeFromByteArray(OpRequest.serializer(), bytes)
 
+    /**
+     * Best-effort [OpRequest.opId] extraction when full [decodeOpRequest] fails (e.g. unknown body
+     * discriminator). Relies on [Cbor.ignoreUnknownKeys] to drop the body field.
+     */
+    fun decodeOpRequestShell(bytes: ByteArray): OpRequestShell =
+        cbor.decodeFromByteArray(OpRequestShell.serializer(), bytes)
+
     fun decodeOpResponse(bytes: ByteArray): OpResponse =
         cbor.decodeFromByteArray(OpResponse.serializer(), bytes)
 

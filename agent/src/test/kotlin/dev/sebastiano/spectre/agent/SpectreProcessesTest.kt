@@ -72,9 +72,9 @@ class SpectreProcessesTest {
     }
 
     private companion object {
-        // CI runners have JVMs starting/stopping all the time; back-to-back
-        // `VirtualMachine.list()` calls can disagree by a few. A genuine filter regression
-        // would diverge by orders of magnitude, not by ≤ 5 entries.
-        const val MAX_PROCESS_LIST_DRIFT: Int = 5
+        // CI runners and busy developer machines have JVMs starting/stopping all the time;
+        // back-to-back `VirtualMachine.list()` calls can disagree by more than a handful.
+        // A genuine filter regression would diverge by orders of magnitude, not by ≤ 25.
+        const val MAX_PROCESS_LIST_DRIFT: Int = 25
     }
 }

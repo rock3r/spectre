@@ -18,6 +18,12 @@ internal data class OpRequest(
     val body: AgentRequest,
 )
 
+/**
+ * Partial decode of [OpRequest] that ignores `body`. Used when full decode fails (unknown body
+ * discriminator) so the server can still correlate the error to the client's [opId].
+ */
+@Serializable internal data class OpRequestShell(val opId: Long, val deadlineEpochMs: Long? = null)
+
 /** Multiplexed response envelope correlating to [OpRequest.opId]. */
 @Serializable
 @SerialName("opResponse")

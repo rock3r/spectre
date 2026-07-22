@@ -11,11 +11,6 @@ import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
-import java.util.concurrent.Future
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -143,7 +138,7 @@ constructor(
             // Phase 1: bare Hello (#199).
             if (!performHandshake(input, output)) return
             // Phase 2: multiplexed OpRequest frames on a worker pool (#200).
-            runMultiplexedSession(input, output)
+            MultiplexedIpcSession(handler, running, onDetach).run(input, output)
         }
     }
 
@@ -178,211 +173,6 @@ constructor(
             }
         }
         return handshakeComplete
-    }
-
-    /**
-     * Multiplexed session: accept thread only reads/dispatches; work runs on [workers] so long ops
-     * do not block cancel/detach (#200).
-     *
-     * Client EOF (socket close without Detach) ends the session only — [running] stays true so
-     * another client can connect. Explicit Detach tears the agent down via [onDetach].
-     */
-    private fun runMultiplexedSession(input: InputStream, output: OutputStream) {
-        val workers: ExecutorService = Executors.newCachedThreadPool { r ->
-            Thread(r, "spectre-agent-op-worker").apply { isDaemon = true }
-        }
-        val inFlight = ConcurrentHashMap<Long, Future<*>>()
-        val writeLock = Any()
-        try {
-            serveOps(input, output, workers, inFlight, writeLock)
-        } finally {
-            inFlight.values.forEach { it.cancel(true) }
-            workers.shutdownNow()
-            runCatching { workers.awaitTermination(WORKER_SHUTDOWN_SEC, TimeUnit.SECONDS) }
-        }
-    }
-
-    private fun serveOps(
-        input: InputStream,
-        output: OutputStream,
-        workers: ExecutorService,
-        inFlight: ConcurrentHashMap<Long, Future<*>>,
-        writeLock: Any,
-    ) {
-        while (running.get()) {
-            val requestBytes = Framing.readFrame(input) ?: return
-            val op = decodeOpOrReport(requestBytes, output, writeLock) ?: continue
-            when (val body = op.body) {
-                is AgentRequest.Cancel -> handleCancel(body, op.opId, output, writeLock, inFlight)
-                AgentRequest.Detach -> {
-                    handleDetach(op.opId, output, writeLock, inFlight)
-                    return
-                }
-                else -> dispatchOp(op, body, workers, inFlight, output, writeLock)
-            }
-        }
-    }
-
-    private fun decodeOpOrReport(
-        requestBytes: ByteArray,
-        output: OutputStream,
-        writeLock: Any,
-    ): OpRequest? =
-        try {
-            WireCodec.decodeOpRequest(requestBytes)
-        } catch (ex: kotlinx.serialization.SerializationException) {
-            // Unknown/malformed envelope — report and continue serving.
-            writeOpResponse(
-                output,
-                writeLock,
-                opId = -1L,
-                AgentResponse.Error(
-                    message = "Malformed or unsupported op frame: ${ex.message}",
-                    category = AgentErrorCategory.UnsupportedOperation.wireName,
-                ),
-            )
-            null
-        }
-
-    private fun handleCancel(
-        cancel: AgentRequest.Cancel,
-        cancelFrameOpId: Long,
-        output: OutputStream,
-        writeLock: Any,
-        inFlight: ConcurrentHashMap<Long, Future<*>>,
-    ) {
-        val cancelled = inFlight.remove(cancel.opId)
-        cancelled?.cancel(/* mayInterruptIfRunning= */ true)
-        // Reply on the cancelled op's channel so the waiting client unblocks,
-        // then ack the cancel frame itself.
-        if (cancelled != null) {
-            writeOpResponse(
-                output,
-                writeLock,
-                cancel.opId,
-                AgentResponse.Error(
-                    message = "Operation cancelled",
-                    category = AgentErrorCategory.Cancelled.wireName,
-                ),
-            )
-        }
-        writeOpResponse(output, writeLock, cancelFrameOpId, AgentResponse.Ok)
-    }
-
-    private fun handleDetach(
-        opId: Long,
-        output: OutputStream,
-        writeLock: Any,
-        inFlight: ConcurrentHashMap<Long, Future<*>>,
-    ) {
-        inFlight.values.forEach { it.cancel(true) }
-        try {
-            writeOpResponse(output, writeLock, opId, AgentResponse.Detached)
-        } finally {
-            running.set(false)
-            onDetach()
-        }
-    }
-
-    private fun dispatchOp(
-        op: OpRequest,
-        body: AgentRequest,
-        workers: ExecutorService,
-        inFlight: ConcurrentHashMap<Long, Future<*>>,
-        output: OutputStream,
-        writeLock: Any,
-    ) {
-        // Register a placeholder before submit so cancel cannot race past an empty map.
-        val placeholder = CompletableFuturePlaceholder()
-        inFlight[op.opId] = placeholder
-        val future = workers.submit {
-            try {
-                if (Thread.currentThread().isInterrupted) return@submit
-                val response = executeOp(body, op.deadlineEpochMs)
-                // Cancel path may already have written cancelled for this opId.
-                if (!Thread.currentThread().isInterrupted) {
-                    writeOpResponse(output, writeLock, op.opId, response)
-                }
-            } finally {
-                inFlight.remove(op.opId)
-            }
-        }
-        // Replace placeholder with the real Future so cancel interrupts the worker.
-        if (!inFlight.replace(op.opId, placeholder, future)) {
-            // Cancel already removed the placeholder — interrupt the just-started work.
-            future.cancel(true)
-        }
-    }
-
-    /**
-     * Stand-in [Future] registered before [ExecutorService.submit] so a concurrent cancel always
-     * finds the op id. [cancel] is a no-op until the real future replaces this entry.
-     */
-    private class CompletableFuturePlaceholder : Future<Unit> {
-        private val cancelled = AtomicBoolean(false)
-
-        override fun cancel(mayInterruptIfRunning: Boolean): Boolean =
-            cancelled.compareAndSet(false, true)
-
-        override fun isCancelled(): Boolean = cancelled.get()
-
-        override fun isDone(): Boolean = cancelled.get()
-
-        override fun get(): Unit = Unit
-
-        override fun get(timeout: Long, unit: TimeUnit): Unit = Unit
-    }
-
-    @Suppress("TooGenericExceptionCaught")
-    private fun executeOp(request: AgentRequest, deadlineEpochMs: Long?): AgentResponse {
-        if (deadlineEpochMs != null && System.currentTimeMillis() > deadlineEpochMs) {
-            return AgentResponse.Error(
-                message = "Deadline already elapsed before op started",
-                category = AgentErrorCategory.Timeout.wireName,
-            )
-        }
-        return try {
-            // Cooperative deadline: if the op is slow, BlockingSuspendInvoker still has its own
-            // timeout; we also re-check deadline after the call.
-            val response = handler.handle(request)
-            if (deadlineEpochMs != null && System.currentTimeMillis() > deadlineEpochMs) {
-                AgentResponse.Error(
-                    message = "Deadline elapsed during op",
-                    category = AgentErrorCategory.Timeout.wireName,
-                )
-            } else {
-                response
-            }
-        } catch (ex: InterruptedException) {
-            Thread.currentThread().interrupt()
-            AgentResponse.Error(
-                message = "Operation cancelled",
-                category = AgentErrorCategory.Cancelled.wireName,
-            )
-        } catch (ex: Exception) {
-            val category =
-                when (ex) {
-                    is java.util.concurrent.TimeoutException -> AgentErrorCategory.Timeout
-                    is IllegalArgumentException -> AgentErrorCategory.InvalidSelector
-                    is NoSuchElementException -> AgentErrorCategory.NodeNotFound
-                    else -> AgentErrorCategory.InternalError
-                }
-            AgentResponse.Error(
-                message = "${ex.javaClass.simpleName}: ${ex.message ?: "<no message>"}",
-                category = category.wireName,
-            )
-        }
-    }
-
-    private fun writeOpResponse(
-        output: OutputStream,
-        writeLock: Any,
-        opId: Long,
-        body: AgentResponse,
-    ) {
-        synchronized(writeLock) {
-            Framing.writeFrame(output, WireCodec.encode(OpResponse(opId = opId, body = body)))
-        }
     }
 
     /** Decode failure response; pre-handshake failures tear down agent state (#199). */
@@ -508,10 +298,6 @@ constructor(
             // Best-effort — if the parent is gone or non-empty, leaving it is safer.
         }
         acceptThread.interrupt()
-    }
-
-    private companion object {
-        const val WORKER_SHUTDOWN_SEC: Long = 2
     }
 }
 
