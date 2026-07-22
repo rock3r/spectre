@@ -207,6 +207,14 @@ internal class InputOpsReflectiveMapper(
     }
 
     fun handlePressKey(request: AgentRequest.PressKey): AgentResponse {
+        // AWT Robot rejects keyCode 0; if modifiers were pressed first they can stick (RobotDriver
+        // releases in a non-finally path). Reject before dispatching.
+        if (request.keyCode <= 0) {
+            return AgentResponse.Error(
+                message = "keyCode must be a positive AWT VK_* constant",
+                category = AgentErrorCategory.InvalidSelector.wireName,
+            )
+        }
         val method = pressKeyMethod ?: return unsupported("pressKey(keyCode, modifiers)")
         // Real OS key events require the target JVM to own keyboard focus (same guard as typeText).
         if (!isTargetJvmFocused()) {

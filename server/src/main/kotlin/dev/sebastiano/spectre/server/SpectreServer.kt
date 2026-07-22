@@ -177,6 +177,10 @@ private fun Route.inputRoutes(automator: ComposeAutomator) {
 
     post("/pressKey") {
         val request = receiveOrRespond400<PressKeyRequest>(call, "PressKeyRequest") ?: return@post
+        if (request.keyCode <= 0) {
+            respondInvalidSelector(call)
+            return@post
+        }
         respondInputVoid(call) { automator.pressKey(request.keyCode, request.modifiers) }
     }
 
