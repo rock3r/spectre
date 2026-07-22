@@ -176,11 +176,15 @@ jq '.summary' "$CAP"
 - Keys are valid for the **current attach session** and the tree they came from.
 - After navigation, re-composition, or re-attach, **re-capture** and re-resolve keys.
 - Do not cache keys across detach/attach cycles.
-- **Compose Hot Reload:** on reload-aware attaches, keys are generation-stamped and cleared after
-  a successful reload settle. After you (or the IDE) hot-reloads code:
-  1. `spectre wait --reload-settled <session-id>` (or MCP `wait_for_reload_settled`)
-  2. **Re-capture** (or `tree` / `find`) and resolve keys from the **new** tree
+- **Compose Hot Reload:** on reload-aware attaches, keys from **`tree` / `find`** are
+  generation-stamped and cleared after a successful reload settle. Workflow:
+  1. Start `spectre wait --reload-settled <session-id>` (or MCP `wait_for_reload_settled`)
+     **before** triggering the reload (the wait must be armed to observe the settle chain)
+  2. Trigger the reload; when wait returns, run **`tree` / `find`** and resolve keys from that
+     response
   3. Never reuse pre-reload keys — they fail as `nodeNotFound`
+  4. `capture.json` remains useful for evidence and `jq`, but its keys are **not** stamped for
+     post-reload click dispatch on reload-aware sessions — prefer `tree` / `find` for input keys
 
 ## Capture from MCP / CLI / library
 

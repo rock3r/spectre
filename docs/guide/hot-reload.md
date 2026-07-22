@@ -63,15 +63,21 @@ drain.
 
 ### CLI
 
+The wait only observes reloads that start **while it is running** (it must see
+`ReloadClassesRequest` through the settle chain). Start the wait **before** you save/reload,
+not after:
+
 ```shell
 spectre attach <pid> --json
-# …trigger a hot reload in the app / IDE…
+# Terminal A — arm the wait first (blocks until settle or timeout):
 spectre wait --reload-settled <session-id>
-# optional:
-spectre wait --reload-settled <session-id> --timeout-ms 60000 --json
+# optional: --timeout-ms 60000 --json
+# Terminal B / IDE — then trigger the hot reload (save, apply changes, etc.)
 ```
 
-On success the command prints that the reload settled (or JSON completion with the session id).
+On success the wait prints that the reload settled (or JSON completion with the session id).
+If you reload first and only then call `wait`, a fast settle can finish before the waiter
+subscribes and the command will sit until the **next** reload or time out.
 
 ### MCP
 
@@ -93,13 +99,19 @@ Tool name: **`wait_for_reload_settled`**
 
 ## Node keys after reload
 
-On reload-aware sessions, node keys clients see are **stamped** with a generation prefix
-(`g{n}:…`). After a successful reload settle:
+On reload-aware sessions, node keys from **`tree` / `find`** (and wait-for-node) are **stamped**
+with a generation prefix (`g{n}:…`). After a successful reload settle:
 
 1. Spectre advances the generation and clears the issued-key allowlist.
 2. Pre-reload keys fail closed as `nodeNotFound` (including guessed stamps for the new generation
    until a fresh tree is issued).
-3. Call `tree`, `find`, or `capture` again, then use the new keys for input.
+3. Call `tree` or `find` again, then use the new stamped keys for input.
+
+**Atomic capture** still writes the window PNG and a full semantics tree for inspection, but
+`capture.json` node keys are the raw tree keys — they are **not** generation-stamped for click
+dispatch on reload-aware sessions. After a reload settle, resolve keys with `tree` / `find`
+(or MCP equivalents) before clicking; use capture for evidence and `jq` recipes, not as the
+source of post-reload click keys.
 
 On non-reload-aware sessions, keys stay unstamped and behave as before: still short-lived across
 UI changes, but not generation-gated by HR.
@@ -118,15 +130,13 @@ empty result as “no nodes”.
 - **Spectre never redefines classes.** Coexistence with HR’s agent is intentional: Spectre does
   not trip HR’s external-reload trackers.
 
-## Launching with `hotRun`
+## Launching under Hot Reload
 
 Prefer a **prod-like** launch for everyday automation (`installDist`, packaged app, plain
-`java -jar`). Gradle `run` / Compose Hot Reload `hotRun` launches are useful in the
-edit–reload–inspect loop but need extra care for attach timing and JVM args.
-
-A first-class **launch-and-attach** harness (CLI + testing) is the place that will document
-Gradle/`hotRun` warnings in detail as that surface ships. Until then: start the app under HR
-yourself, confirm attach, then use `wait --reload-settled` between reloads.
+`java -jar`) when you do not need HR. For the edit–reload–inspect loop, start the app under
+Compose Hot Reload yourself (IDE run configuration or Gradle `hotRun`), confirm
+`spectre attach` succeeds, arm `wait --reload-settled` **before** each reload, then re-query
+the tree afterward.
 
 ## Manual dual-MCP recipe
 
@@ -135,9 +145,12 @@ Use this when validating an agent that has **both** HR MCP and Spectre configure
 1. Start the Compose app under Hot Reload (IDE run configuration or `hotRun`).
 2. Confirm Spectre can see it: `spectre ps --json` → `spectre attach <pid> --json`.
 3. For a **quick HR-native sanity check** (reload plumbing only), use the HR MCP tools.
-4. For **tree / click / capture / screenshot**, use Spectre only — do not alternate randomly.
-5. After an intentional code reload: `spectre wait --reload-settled <session>`, then
-   `spectre tree` / `spectre capture` and act on **new** keys.
+4. For **tree / click / screenshot / capture-as-evidence**, use Spectre only — do not alternate
+   randomly.
+5. Before an intentional code reload: start `spectre wait --reload-settled <session>` (blocking
+   call), then trigger the reload; when wait returns, run `spectre tree` / `spectre find` and
+   act on **new** stamped keys. Use `capture` for screenshots and `jq` inspection if useful —
+   not for post-reload click keys.
 6. Detach when finished; prune captures if you used atomic capture.
 
 ## Related

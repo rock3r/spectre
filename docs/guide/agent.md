@@ -449,8 +449,9 @@ Restart Claude Code after changing the configuration. It can then use these tool
 3. `tree` or `find` to retrieve current node keys, then `click` or `type_text` to interact.
 4. `screenshot` to receive a window-scoped PNG as MCP image content (optional `window_index` /
    `surface_id` / `fullscreen`), rather than a file path.
-5. When the target runs under Compose Hot Reload: `wait_for_reload_settled` after a code reload,
-   then re-run `tree` / `find` before further input.
+5. When the target runs under Compose Hot Reload: call `wait_for_reload_settled` **before**
+   triggering a code reload (it must observe the settle chain), then re-run `tree` / `find`
+   before further input.
 
 Node keys are short-lived: get a fresh key with `tree` or `find` after an interaction changes the
 UI. On reload-aware sessions, keys are also invalidated after a successful hot reload settle —

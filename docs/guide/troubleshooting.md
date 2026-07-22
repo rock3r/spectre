@@ -147,10 +147,11 @@ See [Compose Hot Reload awareness](hot-reload.md).
 
 ### "Clicks fail with nodeNotFound after a hot reload"
 
-On reload-aware sessions, node keys are generation-stamped and cleared after a successful
-reload settle. Pre-reload keys (and guessed `g{n}:…` stamps before a fresh tree) return
-`nodeNotFound`. Run `spectre wait --reload-settled <session>`, then `tree` / `find` / `capture`
-again and use the new keys.
+On reload-aware sessions, node keys from `tree` / `find` are generation-stamped and cleared
+after a successful reload settle. Pre-reload keys (and guessed `g{n}:…` stamps before a fresh
+tree) return `nodeNotFound`. Arm `spectre wait --reload-settled <session>` **before** the
+reload, then `tree` / `find` again and use the new stamped keys. Do not reuse keys from an
+older `capture.json` for clicks after settle — capture writes raw keys for inspection.
 
 ### "Older Hot Reload builds"
 
