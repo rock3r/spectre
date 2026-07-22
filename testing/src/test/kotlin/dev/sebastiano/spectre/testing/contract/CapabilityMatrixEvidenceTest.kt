@@ -41,6 +41,11 @@ class CapabilityMatrixEvidenceTest {
                         failures +=
                             "$label evidence '${ev.id}': missing workflowPath $workflow " +
                                 "(resolved $wf)"
+                    } else if (!workflowCoversEvidence(wf.toFile().readText(), ev)) {
+                        failures +=
+                            "$label evidence '${ev.id}': workflow $workflow does not reference " +
+                                "the test class, module test task, or full ./gradlew check " +
+                                "for ${ev.sourcePath}"
                     }
                 }
             }
@@ -50,6 +55,35 @@ class CapabilityMatrixEvidenceTest {
             failures.isEmpty(),
             "Supported cells missing executable evidence:\n" + failures.joinToString("\n"),
         )
+    }
+
+    /**
+     * Ensures a cited workflow actually runs (or re-runs) the evidence test, not just that the YAML
+     * file exists. Accepts: simple test class name, `:$module:test`, or a full `./gradlew check`
+     * that includes the module.
+     */
+    private fun workflowCoversEvidence(
+        workflowText: String,
+        evidence: CapabilityEvidence,
+    ): Boolean {
+        val className = evidence.sourcePath.substringAfterLast('/').removeSuffix(".kt")
+        if (className.isNotEmpty() && workflowText.contains(className)) return true
+
+        val module = evidence.sourcePath.substringBefore('/')
+        if (module.isNotEmpty() && workflowText.contains(":$module:test")) return true
+
+        // Full check on CI includes all library modules' unit tests.
+        if (workflowText.contains("./gradlew check") || workflowText.contains("gradlew check")) {
+            return module in setOf("core", "testing", "server", "agent", "cli", "recording")
+        }
+
+        val hint = evidence.gradleTaskHint.orEmpty()
+        if (hint.isNotEmpty()) {
+            // Match distinctive tokens from the hint (e.g. :testing:test, AgentContractCorpusTest).
+            val tokens = Regex(""":[\w-]+:\w+|[\w]+Test""").findAll(hint).map { it.value }.toList()
+            if (tokens.any { it in workflowText }) return true
+        }
+        return false
     }
 
     @Test
