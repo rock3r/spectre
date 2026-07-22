@@ -6,13 +6,13 @@ import dev.sebastiano.spectre.agent.transport.AgentErrorCategory
 import dev.sebastiano.spectre.agent.transport.AgentRequest
 import dev.sebastiano.spectre.agent.transport.AgentResponse
 import java.lang.reflect.Method
-import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Reflective bridge for richer input verbs (#203): doubleClick, longClick, swipe, scrollWheel,
  * pressKey. Kept out of [ReflectiveAutomatorHandler] for detekt size/complexity budgets.
  *
- * Kotlin mangles `Duration` parameters into primitive `long` nanoseconds (same as wait ops).
+ * Kotlin mangles `Duration` parameters into primitive `long` carrying [Duration]'s packed
+ * `rawValue` (not plain nanoseconds). Use [durationStorageFromMs] when invoking those methods.
  */
 internal class InputOpsReflectiveMapper(
     private val automator: Any,
@@ -98,7 +98,7 @@ internal class InputOpsReflectiveMapper(
             method,
             automator,
             node,
-            request.holdForMs.milliseconds.inWholeNanoseconds,
+            durationStorageFromMs(request.holdForMs),
             timeoutMsOverride = request.holdForMs + SUSPEND_BRIDGE_SLACK_MS,
         )
         return AgentResponse.Ok
@@ -164,7 +164,7 @@ internal class InputOpsReflectiveMapper(
             from,
             to,
             request.steps,
-            request.durationMs.milliseconds.inWholeNanoseconds,
+            durationStorageFromMs(request.durationMs),
             timeoutMsOverride = request.durationMs + SUSPEND_BRIDGE_SLACK_MS,
         )
         return AgentResponse.Ok
@@ -193,7 +193,7 @@ internal class InputOpsReflectiveMapper(
             endX,
             endY,
             request.steps,
-            request.durationMs.milliseconds.inWholeNanoseconds,
+            durationStorageFromMs(request.durationMs),
             timeoutMsOverride = request.durationMs + SUSPEND_BRIDGE_SLACK_MS,
         )
         return AgentResponse.Ok
@@ -250,5 +250,19 @@ internal class InputOpsReflectiveMapper(
         const val CONTINUATION_FQN: String = "kotlin.coroutines.Continuation"
         /** Extra budget so the suspend bridge outlives short holds/swipes. */
         const val SUSPEND_BRIDGE_SLACK_MS: Long = 5_000
+
+        /**
+         * Packs milliseconds into the `long` storage used by Kotlin [kotlin.time.Duration] on the
+         * JVM (nanos << 1 for small values; millis << 1 | 1 when nanos would overflow).
+         *
+         * Reflective `Method.invoke` must pass this packing — not [Duration.inWholeNanoseconds] —
+         * or longClick/swipe holds are half the intended length.
+         */
+        fun durationStorageFromMs(ms: Long): Long {
+            require(ms >= 0L) { "duration ms must be non-negative" }
+            val nanos = ms * 1_000_000L
+            // Matches Duration's "fits in nanos" threshold (Long.MAX_VALUE / 2).
+            return if (nanos <= Long.MAX_VALUE / 2) nanos shl 1 else (ms shl 1) + 1
+        }
     }
 }
