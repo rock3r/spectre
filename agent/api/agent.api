@@ -144,6 +144,12 @@ public final class dev/sebastiano/spectre/agent/ScreenshotTargetKt {
 	public static final fun resolveScreenshotTarget (ZLjava/lang/Integer;Ljava/lang/String;Ljava/util/List;)Ljava/lang/Object;
 }
 
+public final class dev/sebastiano/spectre/agent/SpectreAgentException : java/io/IOException {
+	public fun <init> (Ldev/sebastiano/spectre/agent/transport/AgentErrorCategory;Ljava/lang/String;Ljava/lang/Throwable;)V
+	public synthetic fun <init> (Ldev/sebastiano/spectre/agent/transport/AgentErrorCategory;Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getCategory ()Ldev/sebastiano/spectre/agent/transport/AgentErrorCategory;
+}
+
 public abstract class dev/sebastiano/spectre/agent/SpectreAttachException : java/lang/RuntimeException {
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
@@ -159,6 +165,26 @@ public final class dev/sebastiano/spectre/agent/runtime/SpectreAgent {
 	public static final field INSTANCE Ldev/sebastiano/spectre/agent/runtime/SpectreAgent;
 	public static final fun agentmain (Ljava/lang/String;Ljava/lang/instrument/Instrumentation;)V
 	public static final fun premain (Ljava/lang/String;Ljava/lang/instrument/Instrumentation;)V
+}
+
+public final class dev/sebastiano/spectre/agent/transport/AgentErrorCategory : java/lang/Enum {
+	public static final field Companion Ldev/sebastiano/spectre/agent/transport/AgentErrorCategory$Companion;
+	public static final field InputRejected Ldev/sebastiano/spectre/agent/transport/AgentErrorCategory;
+	public static final field InternalError Ldev/sebastiano/spectre/agent/transport/AgentErrorCategory;
+	public static final field InvalidSelector Ldev/sebastiano/spectre/agent/transport/AgentErrorCategory;
+	public static final field NodeNotFound Ldev/sebastiano/spectre/agent/transport/AgentErrorCategory;
+	public static final field ProtocolMismatch Ldev/sebastiano/spectre/agent/transport/AgentErrorCategory;
+	public static final field Timeout Ldev/sebastiano/spectre/agent/transport/AgentErrorCategory;
+	public static final field UnsupportedOperation Ldev/sebastiano/spectre/agent/transport/AgentErrorCategory;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public final fun getWireName ()Ljava/lang/String;
+	public static fun valueOf (Ljava/lang/String;)Ldev/sebastiano/spectre/agent/transport/AgentErrorCategory;
+	public static fun values ()[Ldev/sebastiano/spectre/agent/transport/AgentErrorCategory;
+}
+
+public final class dev/sebastiano/spectre/agent/transport/AgentErrorCategory$Companion {
+	public final fun fromWire (Ljava/lang/String;)Ldev/sebastiano/spectre/agent/transport/AgentErrorCategory;
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
 }
 
 public final class dev/sebastiano/spectre/agent/transport/Framing {
@@ -213,6 +239,11 @@ public final synthetic class dev/sebastiano/spectre/agent/transport/NodeSnapshot
 
 public final class dev/sebastiano/spectre/agent/transport/NodeSnapshotDto$Companion {
 	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/agent/transport/ProtocolVersion {
+	public static final field CURRENT I
+	public static final field INSTANCE Ldev/sebastiano/spectre/agent/transport/ProtocolVersion;
 }
 
 public final class dev/sebastiano/spectre/agent/transport/RectDto {

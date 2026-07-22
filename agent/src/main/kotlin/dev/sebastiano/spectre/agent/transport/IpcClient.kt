@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.agent.transport
 
+import dev.sebastiano.spectre.agent.SpectreAgentException
 import java.io.EOFException
 import java.io.IOException
 import java.io.InputStream
@@ -44,12 +45,67 @@ internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) 
     private val input: InputStream = Channels.newInputStream(channel)
     private val output: OutputStream = Channels.newOutputStream(channel)
 
+    init {
+        // #199: exact-match protocol handshake is the first exchange after connect.
+        // Always close the channel if handshake does not complete cleanly (no FD leak).
+        var handshakeOk = false
+        try {
+            val hello = AgentRequest.Hello(protocolVersion = ProtocolVersion.CURRENT)
+            val ack = sendWithoutHandshake(hello)
+            when (ack) {
+                is AgentResponse.HelloAck -> {
+                    if (ack.protocolVersion != ProtocolVersion.CURRENT) {
+                        throw SpectreAgentException(
+                            category = AgentErrorCategory.ProtocolMismatch,
+                            message =
+                                "Agent protocol mismatch: runtime advertised " +
+                                    "${ack.protocolVersion}, client expects " +
+                                    "${ProtocolVersion.CURRENT}",
+                        )
+                    }
+                    handshakeOk = true
+                }
+                is AgentResponse.Error -> {
+                    // Pre-#199 runtimes return message-only Error (defaults to internalError)
+                    // when they cannot decode Hello — treat as protocol mismatch, not internal.
+                    val category =
+                        when (val decoded = AgentErrorCategory.fromWire(ack.category)) {
+                            AgentErrorCategory.InternalError -> AgentErrorCategory.ProtocolMismatch
+                            else -> decoded
+                        }
+                    // Best-effort Detach so a legacy runtime that only clears agentState on
+                    // Detach can be re-attached with a matching JAR after this failure.
+                    runCatching { sendWithoutHandshake(AgentRequest.Detach) }
+                    throw SpectreAgentException(
+                        category = category,
+                        message =
+                            "Agent rejected protocol handshake " +
+                                "(${category.wireName}): ${ack.message}",
+                    )
+                }
+                else -> {
+                    throw SpectreAgentException(
+                        category = AgentErrorCategory.ProtocolMismatch,
+                        message =
+                            "Agent protocol handshake expected HelloAck, got " +
+                                "${ack::class.simpleName}",
+                    )
+                }
+            }
+        } finally {
+            if (!handshakeOk) runCatching { channel.close() }
+        }
+    }
+
     /**
      * Sends [request], blocks until the matching response arrives, returns it. Throws [IOException]
      * if the channel closes mid-exchange or the wire protocol is violated.
      */
     @Throws(IOException::class)
-    fun send(request: AgentRequest): AgentResponse {
+    fun send(request: AgentRequest): AgentResponse = sendWithoutHandshake(request)
+
+    @Throws(IOException::class)
+    private fun sendWithoutHandshake(request: AgentRequest): AgentResponse {
         Framing.writeFrame(output, WireCodec.encode(request))
         val responseBytes =
             Framing.readFrame(input)

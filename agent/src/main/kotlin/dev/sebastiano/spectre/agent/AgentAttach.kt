@@ -52,6 +52,9 @@ public object AgentAttach {
         val client =
             try {
                 IpcClient(udsPath)
+            } catch (ex: SpectreAgentException) {
+                // Preserve taxonomy from handshake (e.g. protocolMismatch) — do not wrap.
+                throw ex
             } catch (ex: IOException) {
                 throw SpectreAttachExceptionImpl(
                     "Failed to connect to agent's UDS at $udsPath: ${ex.message}",

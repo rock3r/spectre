@@ -98,9 +98,22 @@ internal class ReflectiveAutomatorHandler(
                 is AgentRequest.WindowIdentity ->
                     WindowIdentityReflectiveMapper.invoke(automator, request.windowIndex)
                 AgentRequest.Detach -> AgentResponse.Detached
+                // Handled in IpcServer before the automator handler; keep exhaustive.
+                is AgentRequest.Hello ->
+                    AgentResponse.HelloAck(
+                        protocolVersion =
+                            dev.sebastiano.spectre.agent.transport.ProtocolVersion.CURRENT
+                    )
             }
         } catch (ex: ReflectiveOperationException) {
-            AgentResponse.Error("Reflective call failed: ${ex.targetMessage()}")
+            val message = "Reflective call failed: ${ex.targetMessage()}"
+            val category =
+                if (reflectiveIsInputRejection(ex)) {
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InputRejected
+                } else {
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InternalError
+                }
+            AgentResponse.Error(message = message, category = category.wireName)
         }
 
     // Note on un-caught exceptions: any non-reflective `RuntimeException` thrown by the
@@ -136,11 +149,20 @@ internal class ReflectiveAutomatorHandler(
         val allNodes = allNodesMethod.invoke(automator) as List<*>
         val match =
             allNodes.firstOrNull { it != null && extractKey(it) == nodeKey }
-                ?: return AgentResponse.Error("No node found with key=$nodeKey")
+                ?: return AgentResponse.Error(
+                    message = "No node found with key=$nodeKey",
+                    category =
+                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory.NodeNotFound
+                            .wireName,
+                )
         val method =
             clickSuspendMethod
                 ?: return AgentResponse.Error(
-                    "ComposeAutomator does not expose a click(node) method"
+                    message = "ComposeAutomator does not expose a click(node) method",
+                    category =
+                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory
+                            .UnsupportedOperation
+                            .wireName,
                 )
         suspendInvoker.invoke(method, automator, match)
         return AgentResponse.Ok
@@ -150,7 +172,11 @@ internal class ReflectiveAutomatorHandler(
         val method =
             typeTextSuspendMethod
                 ?: return AgentResponse.Error(
-                    "ComposeAutomator does not expose a typeText(text) method"
+                    message = "ComposeAutomator does not expose a typeText(text) method",
+                    category =
+                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory
+                            .UnsupportedOperation
+                            .wireName,
                 )
         refreshWindowsMethod.invoke(automator)
         val allNodes = allNodesMethod.invoke(automator) as List<*>
@@ -158,19 +184,27 @@ internal class ReflectiveAutomatorHandler(
             allNodes.filterNotNull().filter { nodeBooleanProperty(it, methodName = "isFocused") }
         if (focusedNodes.isEmpty()) {
             return AgentResponse.Error(
-                "Refusing typeText because no focused Spectre node was found in the " +
-                    "target JVM. Focus a target node before sending real keyboard events."
+                message =
+                    "Refusing typeText because no focused Spectre node was found in the " +
+                        "target JVM. Focus a target node before sending real keyboard events.",
+                category =
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InputRejected.wireName,
             )
         }
         if (focusedNodes.none { extractKey(it).isNotBlank() }) {
             return AgentResponse.Error(
-                "Refusing typeText because every focused Spectre node has a blank key."
+                message = "Refusing typeText because every focused Spectre node has a blank key.",
+                category =
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InputRejected.wireName,
             )
         }
         if (!isTargetJvmFocused()) {
             return AgentResponse.Error(
-                "Refusing typeText because the target JVM does not currently own OS keyboard " +
-                    "focus. Activate the target window before sending real keyboard events."
+                message =
+                    "Refusing typeText because the target JVM does not currently own OS keyboard " +
+                        "focus. Activate the target window before sending real keyboard events.",
+                category =
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InputRejected.wireName,
             )
         }
         suspendInvoker.invoke(method, automator, text)
@@ -194,7 +228,13 @@ internal class ReflectiveAutomatorHandler(
                     windows = windowSummaries,
                 )
                 .getOrElse {
-                    return AgentResponse.Error(it.message ?: "Invalid screenshot request")
+                    return AgentResponse.Error(
+                        message = it.message ?: "Invalid screenshot request",
+                        category =
+                            dev.sebastiano.spectre.agent.transport.AgentErrorCategory
+                                .InvalidSelector
+                                .wireName,
+                    )
                 }
 
         val regionScreenshotMethod =
@@ -204,7 +244,12 @@ internal class ReflectiveAutomatorHandler(
                     it.parameterTypes[0].name == AWT_RECTANGLE_FQN
             }
                 ?: return AgentResponse.Error(
-                    "ComposeAutomator does not expose screenshot(Rectangle?) on this build"
+                    message =
+                        "ComposeAutomator does not expose screenshot(Rectangle?) on this build",
+                    category =
+                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory
+                            .UnsupportedOperation
+                            .wireName,
                 )
 
         val image =
@@ -376,4 +421,15 @@ internal class ReflectiveAutomatorHandler(
             }
         }
     }
+}
+
+/** TCC / Accessibility / permission refusals from Robot — taxonomy inputRejected (#199). */
+private fun reflectiveIsInputRejection(ex: ReflectiveOperationException): Boolean {
+    val root = ex.cause ?: ex
+    if (root !is IllegalStateException) return false
+    val msg = root.message.orEmpty().lowercase()
+    return "accessibility" in msg ||
+        "tcc" in msg ||
+        "permission" in msg ||
+        "screen recording" in msg
 }

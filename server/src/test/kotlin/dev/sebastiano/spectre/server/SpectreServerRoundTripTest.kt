@@ -101,7 +101,8 @@ class SpectreServerRoundTripTest {
             }
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
-        assertTrue(response.bodyAsText().contains("Malformed node key"))
+        // #199 taxonomy: invalidSelector is the stable body token (no free-text / no key echo).
+        assertTrue(response.bodyAsText().contains("invalidSelector"))
     }
 
     @Test

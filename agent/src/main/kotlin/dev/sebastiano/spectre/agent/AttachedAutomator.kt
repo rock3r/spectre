@@ -163,7 +163,13 @@ internal constructor(
         check(!closed.get()) { "AttachedAutomator is closed" }
         val resp = client.send(request)
         if (resp is AgentResponse.Error) {
-            throw IOException("Agent reported error for ${request.logLabel}: ${resp.message}")
+            val category =
+                dev.sebastiano.spectre.agent.transport.AgentErrorCategory.fromWire(resp.category)
+            throw SpectreAgentException(
+                category = category,
+                message =
+                    "Agent reported ${category.wireName} for ${request.logLabel}: ${resp.message}",
+            )
         }
         return resp
     }

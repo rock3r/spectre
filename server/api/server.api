@@ -21,6 +21,26 @@ public final class dev/sebastiano/spectre/server/HttpComposeAutomatorKt {
 	public static synthetic fun http$default (Ldev/sebastiano/spectre/core/ComposeAutomator$Companion;Ljava/lang/String;ILjava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/server/HttpComposeAutomator;
 }
 
+public final class dev/sebastiano/spectre/server/SpectreErrorCategory : java/lang/Enum {
+	public static final field Companion Ldev/sebastiano/spectre/server/SpectreErrorCategory$Companion;
+	public static final field InputRejected Ldev/sebastiano/spectre/server/SpectreErrorCategory;
+	public static final field InternalError Ldev/sebastiano/spectre/server/SpectreErrorCategory;
+	public static final field InvalidSelector Ldev/sebastiano/spectre/server/SpectreErrorCategory;
+	public static final field NodeNotFound Ldev/sebastiano/spectre/server/SpectreErrorCategory;
+	public static final field ProtocolMismatch Ldev/sebastiano/spectre/server/SpectreErrorCategory;
+	public static final field Timeout Ldev/sebastiano/spectre/server/SpectreErrorCategory;
+	public static final field UnsupportedOperation Ldev/sebastiano/spectre/server/SpectreErrorCategory;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public final fun getWireName ()Ljava/lang/String;
+	public static fun valueOf (Ljava/lang/String;)Ldev/sebastiano/spectre/server/SpectreErrorCategory;
+	public static fun values ()[Ldev/sebastiano/spectre/server/SpectreErrorCategory;
+}
+
+public final class dev/sebastiano/spectre/server/SpectreErrorCategory$Companion {
+	public final fun fromWire (Ljava/lang/String;)Ldev/sebastiano/spectre/server/SpectreErrorCategory;
+	public final fun httpStatus (Ldev/sebastiano/spectre/server/SpectreErrorCategory;)Lio/ktor/http/HttpStatusCode;
+}
+
 public final class dev/sebastiano/spectre/server/SpectreServerKt {
 	public static final fun installSpectreRoutes (Lio/ktor/server/application/Application;Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/lang/String;)V
 	public static synthetic fun installSpectreRoutes$default (Lio/ktor/server/application/Application;Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/lang/String;ILjava/lang/Object;)V

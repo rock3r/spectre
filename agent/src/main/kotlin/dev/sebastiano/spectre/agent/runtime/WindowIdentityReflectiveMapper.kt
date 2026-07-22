@@ -21,7 +21,11 @@ internal object WindowIdentityReflectiveMapper {
                 it.name == "windowIdentities" && it.parameterCount == 0
             }
                 ?: return AgentResponse.Error(
-                    "ComposeAutomator does not expose windowIdentities() on this build"
+                    message = "ComposeAutomator does not expose windowIdentities() on this build",
+                    category =
+                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory
+                            .UnsupportedOperation
+                            .wireName,
                 )
         val all = listMethod.invoke(automator) as List<*>
         val selected = if (windowIndex == null) all else listOfNotNull(all.getOrNull(windowIndex))

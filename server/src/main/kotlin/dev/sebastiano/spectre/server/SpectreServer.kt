@@ -117,29 +117,66 @@ private fun Route.spectreRoutes(automator: ComposeAutomator) {
             try {
                 NodeKey.parse(request.nodeKey)
             } catch (_: IllegalArgumentException) {
-                call.respond(HttpStatusCode.BadRequest, "Malformed node key")
+                // #199 taxonomy: invalidSelector → 400; body carries the stable category name.
+                call.respond(
+                    SpectreErrorCategory.httpStatus(SpectreErrorCategory.InvalidSelector),
+                    SpectreErrorCategory.InvalidSelector.wireName,
+                )
                 return@post
             }
         val node = automator.allNodes().firstOrNull { it.key == key }
         if (node == null) {
             // R5/F5c: do NOT echo `request.nodeKey` here — caller-controlled content must
-            // not be reflected in the response body.
-            call.respond(HttpStatusCode.NotFound, "No matching node")
+            // not be reflected in the response body. #199 taxonomy: nodeNotFound → 404.
+            call.respond(
+                SpectreErrorCategory.httpStatus(SpectreErrorCategory.NodeNotFound),
+                SpectreErrorCategory.NodeNotFound.wireName,
+            )
             return@post
         }
-        automator.click(node)
-        call.respond(HttpStatusCode.NoContent)
+        try {
+            automator.click(node)
+            call.respond(HttpStatusCode.NoContent)
+        } catch (ex: kotlinx.coroutines.CancellationException) {
+            throw ex
+        } catch (_: IllegalStateException) {
+            // Robot/TCC refusals → inputRejected (409). CancellationException rethrown above.
+            call.respond(
+                SpectreErrorCategory.httpStatus(SpectreErrorCategory.InputRejected),
+                SpectreErrorCategory.InputRejected.wireName,
+            )
+        }
     }
 
     post("/typeText") {
         val request = receiveOrRespond400<TypeTextRequest>(call, "TypeTextRequest") ?: return@post
-        automator.typeText(request.text)
-        call.respond(HttpStatusCode.NoContent)
+        try {
+            automator.typeText(request.text)
+            call.respond(HttpStatusCode.NoContent)
+        } catch (ex: kotlinx.coroutines.CancellationException) {
+            throw ex
+        } catch (_: IllegalStateException) {
+            // #199: Robot/TCC/focus refusals → inputRejected (409), not an opaque 500.
+            call.respond(
+                SpectreErrorCategory.httpStatus(SpectreErrorCategory.InputRejected),
+                SpectreErrorCategory.InputRejected.wireName,
+            )
+        }
     }
 
     get("/screenshot") {
-        val image = automator.screenshot()
-        call.respond(image.toScreenshotResponse())
+        try {
+            val image = automator.screenshot()
+            call.respond(image.toScreenshotResponse())
+        } catch (ex: kotlinx.coroutines.CancellationException) {
+            throw ex
+        } catch (_: IllegalStateException) {
+            // Screen Recording TCC / Robot refusal → inputRejected (409).
+            call.respond(
+                SpectreErrorCategory.httpStatus(SpectreErrorCategory.InputRejected),
+                SpectreErrorCategory.InputRejected.wireName,
+            )
+        }
     }
 }
 

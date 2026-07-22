@@ -97,6 +97,18 @@ internal sealed interface AgentRequest {
      * replies with [AgentResponse.Detached] and then closes the channel.
      */
     @Serializable @SerialName("detach") data object Detach : AgentRequest
+
+    /**
+     * First frame after connect (#199). Client announces [protocolVersion]; server replies with
+     * [AgentResponse.HelloAck] on exact match (experimental rule) or [AgentResponse.Error] with
+     * [AgentErrorCategory.ProtocolMismatch].
+     */
+    @Serializable
+    @SerialName("hello")
+    // No default on protocolVersion: WireCodec uses encodeDefaults=false, so a default would
+    // omit the field on the wire and peers would fill their own CURRENT — breaking exact-match
+    // negotiation across version bumps (#199 / Bugbot).
+    data class Hello(val protocolVersion: Int) : AgentRequest
 }
 
 /** Payload-free operation label for diagnostics. Never include caller-controlled request data. */
@@ -113,6 +125,7 @@ internal val AgentRequest.logLabel: String
             is AgentRequest.Capture -> "capture"
             is AgentRequest.WindowIdentity -> "windowIdentity"
             AgentRequest.Detach -> "detach"
+            is AgentRequest.Hello -> "hello"
         }
 
 /** Server-to-client response envelope. */
@@ -205,12 +218,30 @@ internal sealed interface AgentResponse {
     data class WindowIdentities(val windows: List<WindowIdentityDto>) : AgentResponse
 
     /**
-     * Server-side failure. Carries a human-readable [message]; the structured failure type isn't
-     * exposed across the wire yet to keep the protocol small. This response goes back to the
-     * same-UID client that sent the request, so messages may include caller-controlled selectors or
-     * node keys for debugging. Persistent diagnostics must use [AgentRequest.logLabel] instead.
+     * Server-side failure with a stable [category] from the #199 error taxonomy plus a
+     * human-readable [message].
+     *
+     * [category] is the wire name (e.g. `unsupportedOperation`). Defaults to `internalError` so
+     * older runtimes that only sent [message] still decode on new clients. This response goes back
+     * to the same-UID client that sent the request, so messages may include caller-controlled
+     * selectors or node keys for debugging. Persistent diagnostics must use [AgentRequest.logLabel]
+     * instead.
      */
-    @Serializable @SerialName("error") data class Error(val message: String) : AgentResponse
+    @Serializable
+    @SerialName("error")
+    data class Error(
+        val message: String,
+        val category: String = AgentErrorCategory.InternalError.wireName,
+    ) : AgentResponse
+
+    /**
+     * Reply to [AgentRequest.Hello] when versions match (experimental exact-match rule).
+     * [protocolVersion] echoes the runtime's [ProtocolVersion.CURRENT].
+     */
+    @Serializable
+    @SerialName("helloAck")
+    // No default — see [AgentRequest.Hello] (must be on the wire for exact-match).
+    data class HelloAck(val protocolVersion: Int) : AgentResponse
 }
 
 /**

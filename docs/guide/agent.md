@@ -267,6 +267,59 @@ DTOs live in `dev.sebastiano.spectre.agent.transport.*`. Both sides share the sa
 classes; CBOR's `@SerialName` discriminators pin each variant in the sealed-interface
 hierarchy.
 
+### Protocol version handshake (#199)
+
+After the UDS connects, the first exchange is always:
+
+1. Client → `hello` with `protocolVersion` (currently `1` — `ProtocolVersion.CURRENT`)
+2. Runtime → `helloAck` with the same version, or `error` with category
+   `protocolMismatch`
+
+While the agent API is experimental, compatibility is **exact-match**. A version
+mismatch fails attach with a clear `IOException` / `SpectreAgentException` rather than
+proceeding and hanging on later frames. From 1.0 the rule may become additive-compatible
+(min/max range); that change will bump `ProtocolVersion.CURRENT` and this section.
+
+### Unknown operations
+
+A newer attacher that sends an unknown request discriminator (sealed `@SerialName` the
+runtime does not know) receives `error` with category **`unsupportedOperation`**, not a
+decode hang or silent close. That is how mixed-version pairs degrade.
+
+### Error taxonomy
+
+`AgentResponse.Error` carries a stable `category` string alongside `message`:
+
+| Category | Meaning |
+| --- | --- |
+| `unsupportedOperation` | Runtime too old / op not implemented |
+| `protocolMismatch` | Handshake or schema/framing mismatch |
+| `invalidSelector` | Malformed node key or selector |
+| `nodeNotFound` | Well-formed key, no matching node |
+| `timeout` | Deadline exceeded |
+| `inputRejected` | Focus / Robot / permission rejection |
+| `internalError` | Unexpected agent-side failure (default) |
+
+Clients should branch on `category` (see `AgentErrorCategory` / `SpectreAgentException`),
+not on free-text `message`. The HTTP transport maps the same names onto status codes
+(`invalidSelector` → 400, `nodeNotFound` → 404, `unsupportedOperation` → 501, etc.) via
+`SpectreErrorCategory` in `:server`.
+
+### Schema evolution rules
+
+Additive-safe on DTOs:
+
+- New **optional** fields with defaults on request/response data classes
+- New **sealed variants** with new `@SerialName` values (old peers answer
+  `unsupportedOperation` for unknown request names)
+
+Not additive-safe without a version bump:
+
+- Renaming or removing fields
+- Changing field types or making an optional field required
+- Reusing an old `@SerialName` for a different shape (see `screenshot_v2` vs pre-#289
+  `screenshot`)
+
 ## Current limitations
 
 - **Windows needs 10 version 1803 / Server 2019 or newer.** That's when native `AF_UNIX` landed;
