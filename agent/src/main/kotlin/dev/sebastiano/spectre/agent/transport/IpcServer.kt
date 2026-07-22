@@ -157,7 +157,17 @@ constructor(
         handshakeComplete: Boolean,
         setHandshakeComplete: (Boolean) -> Unit,
     ): Boolean {
-        val requestBytes = Framing.readFrame(input) ?: return false
+        val requestBytes =
+            try {
+                Framing.readFrame(input) ?: return false
+            } catch (ex: IllegalStateException) {
+                // Oversized/negative length prefix before handshake — tear down so re-attach works.
+                if (!handshakeComplete) {
+                    running.set(false)
+                    onDetach()
+                }
+                throw ex
+            }
         val request =
             try {
                 WireCodec.decodeRequest(requestBytes)

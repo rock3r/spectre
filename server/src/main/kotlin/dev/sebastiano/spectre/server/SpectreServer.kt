@@ -137,10 +137,10 @@ private fun Route.spectreRoutes(automator: ComposeAutomator) {
         try {
             automator.click(node)
             call.respond(HttpStatusCode.NoContent)
-        } catch (ex: IllegalStateException) {
-            // CancellationException <: IllegalStateException — must rethrow so Ktor cancels
-            // cleanly.
-            if (ex is kotlinx.coroutines.CancellationException) throw ex
+        } catch (ex: kotlinx.coroutines.CancellationException) {
+            throw ex
+        } catch (_: IllegalStateException) {
+            // Robot/TCC refusals → inputRejected (409). CancellationException rethrown above.
             call.respond(
                 SpectreErrorCategory.httpStatus(SpectreErrorCategory.InputRejected),
                 SpectreErrorCategory.InputRejected.wireName,
@@ -153,9 +153,10 @@ private fun Route.spectreRoutes(automator: ComposeAutomator) {
         try {
             automator.typeText(request.text)
             call.respond(HttpStatusCode.NoContent)
-        } catch (ex: IllegalStateException) {
+        } catch (ex: kotlinx.coroutines.CancellationException) {
+            throw ex
+        } catch (_: IllegalStateException) {
             // #199: Robot/TCC/focus refusals → inputRejected (409), not an opaque 500.
-            if (ex is kotlinx.coroutines.CancellationException) throw ex
             call.respond(
                 SpectreErrorCategory.httpStatus(SpectreErrorCategory.InputRejected),
                 SpectreErrorCategory.InputRejected.wireName,
