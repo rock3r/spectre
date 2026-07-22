@@ -89,7 +89,11 @@ public final class dev/sebastiano/spectre/agent/AttachedAutomator : java/lang/Au
 	public static synthetic fun capture$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;IILjava/lang/Object;)Ldev/sebastiano/spectre/agent/AtomicCaptureResult;
 	public final fun click (Ljava/lang/String;)V
 	public fun close ()V
+	public final fun findByContentDescription (Ljava/lang/String;)Ljava/util/List;
+	public final fun findByRole (Ljava/lang/String;)Ljava/util/List;
 	public final fun findByTestTag (Ljava/lang/String;)Ljava/util/List;
+	public final fun findByText (Ljava/lang/String;Z)Ljava/util/List;
+	public static synthetic fun findByText$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/String;ZILjava/lang/Object;)Ljava/util/List;
 	public final fun getPid ()J
 	public final fun screenshot (Ljava/lang/Integer;Ljava/lang/String;Z)[B
 	public static synthetic fun screenshot$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/Integer;Ljava/lang/String;ZILjava/lang/Object;)[B
@@ -205,29 +209,35 @@ public final class dev/sebastiano/spectre/agent/transport/FramingKt {
 
 public final class dev/sebastiano/spectre/agent/transport/NodeSnapshotDto {
 	public static final field Companion Ldev/sebastiano/spectre/agent/transport/NodeSnapshotDto$Companion;
-	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZLdev/sebastiano/spectre/agent/transport/RectDto;)V
-	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZLdev/sebastiano/spectre/agent/transport/RectDto;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;ZZZZLdev/sebastiano/spectre/agent/transport/RectDto;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;ZZZZLdev/sebastiano/spectre/agent/transport/RectDto;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()Ljava/lang/String;
+	public final fun component10 ()Z
+	public final fun component11 ()Z
+	public final fun component12 ()Ldev/sebastiano/spectre/agent/transport/RectDto;
 	public final fun component2 ()Ljava/lang/String;
 	public final fun component3 ()Ljava/util/List;
 	public final fun component4 ()Ljava/lang/String;
 	public final fun component5 ()Ljava/lang/String;
 	public final fun component6 ()Ljava/lang/String;
-	public final fun component7 ()Z
+	public final fun component7 ()Ljava/util/List;
 	public final fun component8 ()Z
-	public final fun component9 ()Ldev/sebastiano/spectre/agent/transport/RectDto;
-	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZLdev/sebastiano/spectre/agent/transport/RectDto;)Ldev/sebastiano/spectre/agent/transport/NodeSnapshotDto;
-	public static synthetic fun copy$default (Ldev/sebastiano/spectre/agent/transport/NodeSnapshotDto;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZLdev/sebastiano/spectre/agent/transport/RectDto;ILjava/lang/Object;)Ldev/sebastiano/spectre/agent/transport/NodeSnapshotDto;
+	public final fun component9 ()Z
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;ZZZZLdev/sebastiano/spectre/agent/transport/RectDto;)Ldev/sebastiano/spectre/agent/transport/NodeSnapshotDto;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/agent/transport/NodeSnapshotDto;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;ZZZZLdev/sebastiano/spectre/agent/transport/RectDto;ILjava/lang/Object;)Ldev/sebastiano/spectre/agent/transport/NodeSnapshotDto;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getBounds ()Ldev/sebastiano/spectre/agent/transport/RectDto;
 	public final fun getContentDescription ()Ljava/lang/String;
+	public final fun getContentDescriptions ()Ljava/util/List;
 	public final fun getEditableText ()Ljava/lang/String;
 	public final fun getKey ()Ljava/lang/String;
 	public final fun getRole ()Ljava/lang/String;
 	public final fun getTestTag ()Ljava/lang/String;
 	public final fun getTexts ()Ljava/util/List;
 	public fun hashCode ()I
+	public final fun isDisabled ()Z
 	public final fun isFocused ()Z
+	public final fun isSelected ()Z
 	public final fun isVisible ()Z
 	public fun toString ()Ljava/lang/String;
 }

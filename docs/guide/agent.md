@@ -303,6 +303,20 @@ decode hang or silent close. That is how mixed-version pairs degrade.
 | `inputRejected` | Focus / Robot / permission rejection |
 | `internalError` | Unexpected agent-side failure (default) |
 
+### Selectors (#202)
+
+Beyond `findByTestTag`, the agent transport supports:
+
+| Wire op | Notes |
+| --- | --- |
+| `findByText` | `text`, `exact` (default true) |
+| `findByContentDescription` | `description` |
+| `findByRole` | `role` string (e.g. `Button`); matches `role.toString()` |
+
+`NodeSnapshotDto` includes `contentDescriptions`, `isDisabled`, `isSelected` (HTTP field-set
+parity). On-screen `bounds` stay integer AWT units on the agent; HTTP keeps double
+window+screen rects.
+
 ### Payload limits (#204)
 
 Each IPC frame is length-prefixed and hard-capped at **16 MiB** (`MAX_FRAME_BYTES`). This is a

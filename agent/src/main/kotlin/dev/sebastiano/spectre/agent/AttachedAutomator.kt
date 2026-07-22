@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * @property pid the target JVM's process id; informational, set by [AgentAttach.attach].
  */
 @ExperimentalSpectreAgentApi
+@Suppress("TooManyFunctions") // Public wire surface mirrors ComposeAutomator selectors + waits.
 public class AttachedAutomator
 internal constructor(
     public val pid: Long,
@@ -52,6 +53,30 @@ internal constructor(
     @Throws(IOException::class)
     public fun findByTestTag(tag: String): List<NodeSnapshotDto> {
         val resp = exchange(AgentRequest.FindByTestTag(tag))
+        return (resp as? AgentResponse.Nodes)?.nodes ?: throw wireMismatch("Nodes", resp)
+    }
+
+    /** Find nodes by text (#202). See in-process `findByText`. */
+    @Throws(IOException::class)
+    public fun findByText(text: String, exact: Boolean = true): List<NodeSnapshotDto> {
+        val resp = exchange(AgentRequest.FindByText(text = text, exact = exact))
+        return (resp as? AgentResponse.Nodes)?.nodes ?: throw wireMismatch("Nodes", resp)
+    }
+
+    /** Find nodes by content description (#202). */
+    @Throws(IOException::class)
+    public fun findByContentDescription(description: String): List<NodeSnapshotDto> {
+        val resp = exchange(AgentRequest.FindByContentDescription(description))
+        return (resp as? AgentResponse.Nodes)?.nodes ?: throw wireMismatch("Nodes", resp)
+    }
+
+    /**
+     * Find nodes by Compose [role] name (e.g. `"Button"`) (#202). Unknown names throw
+     * [SpectreAgentException] with category `invalidSelector`.
+     */
+    @Throws(IOException::class)
+    public fun findByRole(role: String): List<NodeSnapshotDto> {
+        val resp = exchange(AgentRequest.FindByRole(role))
         return (resp as? AgentResponse.Nodes)?.nodes ?: throw wireMismatch("Nodes", resp)
     }
 

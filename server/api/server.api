@@ -7,7 +7,11 @@ public final class dev/sebastiano/spectre/server/HttpComposeAutomator : java/lan
 	public final fun allNodes (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun click (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun close ()V
+	public final fun findByContentDescription (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun findByRole (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun findByTestTag (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun findByText (Ljava/lang/String;ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun findByText$default (Ldev/sebastiano/spectre/server/HttpComposeAutomator;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun screenshot (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun typeText (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun windows (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;

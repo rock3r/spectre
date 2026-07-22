@@ -96,12 +96,38 @@ private fun Route.spectreRoutes(automator: ComposeAutomator) {
         // Query handlers always refresh first: in-process callers control when to refresh, but
         // remote callers expect a request to reflect current state without an explicit prelude.
         automator.refreshWindows()
-        val testTag = call.request.queryParameters["testTag"]
+        val params = call.request.queryParameters
+        val testTag = params["testTag"]
+        val text = params["text"]
+        val contentDescription = params["contentDescription"]
+        val role = params["role"]
+        val selectorCount = listOfNotNull(testTag, text, contentDescription, role).size
+        if (selectorCount > 1) {
+            call.respond(
+                SpectreErrorCategory.httpStatus(SpectreErrorCategory.InvalidSelector),
+                SpectreErrorCategory.InvalidSelector.wireName,
+            )
+            return@get
+        }
         val nodes =
-            if (testTag != null) {
-                automator.findByTestTag(testTag)
-            } else {
-                automator.allNodes()
+            when {
+                testTag != null -> automator.findByTestTag(testTag)
+                text != null -> {
+                    val exact = params["exact"]?.toBooleanStrictOrNull() ?: true
+                    automator.findByText(text, exact = exact)
+                }
+                contentDescription != null -> automator.findByContentDescription(contentDescription)
+                role != null -> {
+                    // Role is a Compose value class (int-backed); match by toString() name
+                    // so HTTP callers pass "Button" etc. without packing Role constants.
+                    val matches = automator.allNodes().filter { it.role?.toString() == role }
+                    if (matches.isEmpty() && automator.allNodes().none { it.role != null }) {
+                        // No roles in tree is fine (empty list). Unknown names with other
+                        // roles present still return empty — same as in-process findByRole.
+                    }
+                    matches
+                }
+                else -> automator.allNodes()
             }
         call.respond(NodesResponse(nodes = nodes.map { it.toDto() }))
     }

@@ -470,6 +470,9 @@ class IpcRoundTripTest {
             AgentRequest.Windows -> AgentResponse.Windows(emptyList())
             AgentRequest.AllNodes -> AgentResponse.Nodes(emptyList())
             is AgentRequest.FindByTestTag -> AgentResponse.Nodes(emptyList())
+            is AgentRequest.FindByText -> AgentResponse.Nodes(emptyList())
+            is AgentRequest.FindByContentDescription -> AgentResponse.Nodes(emptyList())
+            is AgentRequest.FindByRole -> AgentResponse.Nodes(emptyList())
             is AgentRequest.Click -> AgentResponse.Ok
             is AgentRequest.TypeText -> AgentResponse.Ok
             is AgentRequest.Screenshot -> AgentResponse.Screenshot(ByteArray(0))
