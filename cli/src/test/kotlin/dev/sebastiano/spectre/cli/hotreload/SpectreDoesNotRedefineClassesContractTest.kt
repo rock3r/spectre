@@ -52,17 +52,16 @@ class SpectreDoesNotRedefineClassesContractTest {
      * `.worktrees` if present).
      */
     private fun discoverProductionMainSourceRoots(repoRoot: Path): List<Path> {
-        val found = mutableListOf<Path>()
+        val found = ArrayList<Path>()
         Files.walk(repoRoot, 6).use { stream ->
-            stream
-                .asSequence()
-                .filter { Files.isDirectory(it) && it.fileName.toString() == "main" }
-                .filter { it.parent?.fileName?.toString() == "src" }
-                .filter { path ->
-                    val s = path.toString().replace('\\', '/')
-                    "/build/" !in s && "/.git/" !in s && "/.worktrees/" !in s
-                }
-                .forEach { found += it }
+            stream.forEach { path ->
+                if (!Files.isDirectory(path)) return@forEach
+                if (path.fileName.toString() != "main") return@forEach
+                if (path.parent?.fileName?.toString() != "src") return@forEach
+                val s = path.toString().replace('\\', '/')
+                if ("/build/" in s || "/.git/" in s || "/.worktrees/" in s) return@forEach
+                found.add(path)
+            }
         }
         return found.sortedBy { it.toString() }
     }
