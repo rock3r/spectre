@@ -108,7 +108,7 @@ internal class ReflectiveAutomatorHandler(
         } catch (ex: ReflectiveOperationException) {
             val message = "Reflective call failed: ${ex.targetMessage()}"
             val category =
-                if (isInputRejection(ex)) {
+                if (reflectiveIsInputRejection(ex)) {
                     dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InputRejected
                 } else {
                     dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InternalError
@@ -407,17 +407,6 @@ internal class ReflectiveAutomatorHandler(
         return "${cause.javaClass.simpleName}: ${cause.message ?: NO_MESSAGE_PLACEHOLDER}"
     }
 
-    /** TCC / Accessibility / permission refusals from Robot — taxonomy inputRejected (#199). */
-    private fun isInputRejection(ex: ReflectiveOperationException): Boolean {
-        val cause = ex.cause ?: ex
-        if (cause !is IllegalStateException) return false
-        val msg = cause.message.orEmpty().lowercase()
-        return "accessibility" in msg ||
-            "tcc" in msg ||
-            "permission" in msg ||
-            "screen recording" in msg
-    }
-
     private companion object {
         const val CONTINUATION_FQN: String = "kotlin.coroutines.Continuation"
         const val AWT_RECTANGLE_FQN: String = "java.awt.Rectangle"
@@ -432,4 +421,15 @@ internal class ReflectiveAutomatorHandler(
             }
         }
     }
+}
+
+/** TCC / Accessibility / permission refusals from Robot — taxonomy inputRejected (#199). */
+private fun reflectiveIsInputRejection(ex: ReflectiveOperationException): Boolean {
+    val root = ex.cause ?: ex
+    if (root !is IllegalStateException) return false
+    val msg = root.message.orEmpty().lowercase()
+    return "accessibility" in msg ||
+        "tcc" in msg ||
+        "permission" in msg ||
+        "screen recording" in msg
 }
