@@ -104,14 +104,16 @@ class AgentContractCorpusTest {
                 assertTrue(automator.windows().isNotEmpty(), "fixture should expose a window")
 
                 val error = AtomicReference<Throwable?>(null)
-                val started = CountDownLatch(1)
+                val enteredWaitCall = CountDownLatch(1)
                 val waiter =
                     Thread({
                             try {
-                                started.countDown()
+                                enteredWaitCall.countDown()
                                 automator.waitForNode(
                                     tag = "agent-fixture-never-appears-cancel",
+                                    // Short poll so the agent enters the wait loop quickly.
                                     timeoutMs = 25_000,
+                                    pollIntervalMs = 50,
                                 )
                                 error.set(
                                     AssertionError("waitForNode was expected to be cancelled")
@@ -126,9 +128,42 @@ class AgentContractCorpusTest {
                             start()
                         }
 
-                assertTrue(started.await(3, TimeUnit.SECONDS), "wait thread never started")
-                // Let the WaitForNode op leave the client and enter the agent worker.
-                Thread.sleep(200)
+                assertTrue(
+                    enteredWaitCall.await(3, TimeUnit.SECONDS),
+                    "wait thread never entered waitForNode",
+                )
+                // WaitForNode is multiplexed: a concurrent snapshot must complete while the long
+                // wait is in flight. Stronger than a fixed sleep — WaitForNode must have been
+                // accepted and be holding a worker for the wait to still be running when
+                // windows() returns on another client thread.
+                val inFlight = CountDownLatch(1)
+                val probe =
+                    Thread({
+                            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+                            while (System.nanoTime() < deadline && waiter.isAlive) {
+                                try {
+                                    if (automator.windows().isNotEmpty()) {
+                                        inFlight.countDown()
+                                        return@Thread
+                                    }
+                                } catch (_: Exception) {
+                                    // Brief write contention while the wait frame is in flight.
+                                }
+                                Thread.sleep(20)
+                            }
+                        })
+                        .apply {
+                            isDaemon = true
+                            name = "fixture-wait-inflight-probe"
+                            start()
+                        }
+                assertTrue(
+                    inFlight.await(5, TimeUnit.SECONDS),
+                    "concurrent windows() never succeeded while waitForNode was running — " +
+                        "wait may not have been in flight on the agent",
+                )
+                probe.join(1_000)
+
                 waiter.interrupt()
                 waiter.join(10_000)
                 assertTrue(!waiter.isAlive, "wait thread still running after interrupt")
