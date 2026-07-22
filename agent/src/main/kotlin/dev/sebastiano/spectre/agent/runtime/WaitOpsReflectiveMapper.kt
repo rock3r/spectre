@@ -12,6 +12,9 @@ import kotlin.time.Duration.Companion.milliseconds
 /**
  * Reflective bridge for [AgentRequest.WaitForNode] / [AgentRequest.WaitForVisualIdle] (#201). Lives
  * outside [ReflectiveAutomatorHandler] to keep that class under detekt complexity limits.
+ *
+ * Kotlin mangles `Duration` parameters into primitive `long` (nanoseconds) and renames methods
+ * (e.g. `waitForNode-ck1zr5g`). Lookups use parameter types, not the unmangled source name.
  */
 internal class WaitOpsReflectiveMapper(
     private val automator: Any,
@@ -19,18 +22,27 @@ internal class WaitOpsReflectiveMapper(
     private val mapNode: (Any) -> NodeSnapshotDto,
 ) {
     private val automatorClass: Class<*> = automator.javaClass
+    private val longPrimitive: Class<*> = Long::class.javaPrimitiveType!!
+    private val intPrimitive: Class<*> = Int::class.javaPrimitiveType!!
 
     private val waitForNodeSuspendMethod: Method? =
         automatorClass.methods.firstOrNull {
-            it.name == "waitForNode" &&
+            it.name.startsWith("waitForNode") &&
                 it.parameterTypes.size == 5 &&
+                it.parameterTypes[0] == String::class.java &&
+                it.parameterTypes[1] == String::class.java &&
+                it.parameterTypes[2] == longPrimitive &&
+                it.parameterTypes[3] == longPrimitive &&
                 it.parameterTypes[4].name == CONTINUATION_FQN
         }
 
     private val waitForVisualIdleSuspendMethod: Method? =
         automatorClass.methods.firstOrNull {
-            it.name == "waitForVisualIdle" &&
+            it.name.startsWith("waitForVisualIdle") &&
                 it.parameterTypes.size == 4 &&
+                it.parameterTypes[0] == longPrimitive &&
+                it.parameterTypes[1] == intPrimitive &&
+                it.parameterTypes[2] == longPrimitive &&
                 it.parameterTypes[3].name == CONTINUATION_FQN
         }
 
@@ -56,8 +68,9 @@ internal class WaitOpsReflectiveMapper(
                     automator,
                     request.tag,
                     request.text,
-                    timeoutMs.milliseconds,
-                    pollMs.milliseconds,
+                    // Duration is a value class: JVM surface is primitive long nanoseconds.
+                    timeoutMs.milliseconds.inWholeNanoseconds,
+                    pollMs.milliseconds.inWholeNanoseconds,
                     timeoutMsOverride = timeoutMs + SUSPEND_BRIDGE_SLACK_MS,
                 )
             if (node == null) {
@@ -85,9 +98,9 @@ internal class WaitOpsReflectiveMapper(
             suspendInvoker.invoke(
                 method,
                 automator,
-                timeoutMs.milliseconds,
+                timeoutMs.milliseconds.inWholeNanoseconds,
                 stableFrames,
-                pollMs.milliseconds,
+                pollMs.milliseconds.inWholeNanoseconds,
                 timeoutMsOverride = timeoutMs + SUSPEND_BRIDGE_SLACK_MS,
             )
             AgentResponse.Ok
