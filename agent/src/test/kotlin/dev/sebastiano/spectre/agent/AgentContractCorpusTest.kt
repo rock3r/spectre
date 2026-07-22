@@ -186,8 +186,23 @@ class AgentContractCorpusTest {
                 )
             }
 
+        override val supportsWaitTaxonomy: Boolean = true
+
         override fun waitForNode(tag: String?, text: String?, timeoutMs: Long): String =
             automator.waitForNode(tag = tag, text = text, timeoutMs = timeoutMs).key
+
+        override fun waitForNodeFailureCategory(
+            tag: String?,
+            text: String?,
+            timeoutMs: Long,
+        ): String {
+            try {
+                automator.waitForNode(tag = tag, text = text, timeoutMs = timeoutMs)
+                error("waitForNode was expected to time out")
+            } catch (ex: SpectreAgentException) {
+                return ex.category.wireName
+            }
+        }
 
         override fun click(nodeKey: String) {
             automator.click(nodeKey)

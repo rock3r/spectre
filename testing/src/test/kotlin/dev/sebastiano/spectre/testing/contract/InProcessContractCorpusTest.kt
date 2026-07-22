@@ -105,11 +105,33 @@ private class InProcessContractDriver(private val automator: ComposeAutomator) :
         runBlocking { automator.pressKey(keyCode, modifiers) }
     }
 
+    override val supportsWaitTaxonomy: Boolean = true
+
     override fun waitForNode(tag: String?, text: String?, timeoutMs: Long): String = runBlocking {
         automator
             .waitForNode(tag = tag, text = text, timeout = timeoutMs.milliseconds)
             .key
             .toString()
+    }
+
+    override fun waitForNodeFailureCategory(tag: String?, text: String?, timeoutMs: Long): String {
+        try {
+            runBlocking {
+                automator.waitForNode(tag = tag, text = text, timeout = timeoutMs.milliseconds)
+            }
+            error("waitForNode was expected to time out")
+        } catch (ex: Exception) {
+            val name = ex.javaClass.name
+            val msg = ex.message.orEmpty().lowercase()
+            if (
+                name.endsWith("IdleTimeoutException") ||
+                    "timed out" in msg ||
+                    name.endsWith("TimeoutException")
+            ) {
+                return "timeout"
+            }
+            throw ex
+        }
     }
 
     override fun screenshotProbe(): ScreenshotProbe? {

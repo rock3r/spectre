@@ -2,6 +2,7 @@
 
 package dev.sebastiano.spectre.agent.transport
 
+import dev.sebastiano.spectre.agent.runtime.ReflectiveAutomatorHandler
 import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
@@ -141,6 +142,40 @@ class WaitOpsInfrastructureTest {
             }
     }
 
+    /**
+     * Same cancel taxonomy, but the server dispatches through the real [ReflectiveAutomatorHandler]
+     * + wait reflective bridge (not a canned WaitForNode stub). Proves cancel wins while the
+     *   suspend bridge is blocked inside a long waitForNode.
+     */
+    @Test
+    fun `slow waitForNode through ReflectiveAutomatorHandler can be cancelled`() {
+        val started = CountDownLatch(1)
+        val automator = SlowWaitFakeAutomator(onWaitStarted = { started.countDown() })
+        val handler = ReflectiveAutomatorHandler(automator)
+        IpcServer(udsPath, handler).use {
+            awaitSocket(udsPath)
+            IpcClient(udsPath).use { client ->
+                val holder = arrayOfNulls<AgentResponse>(1)
+                val t = Thread {
+                    holder[0] =
+                        client.send(AgentRequest.WaitForNode(tag = "never", timeoutMs = 25_000))
+                }
+                t.isDaemon = true
+                t.start()
+                assertTrue(
+                    started.await(5, TimeUnit.SECONDS),
+                    "IPC path never entered ReflectiveAutomatorHandler.waitForNode; " +
+                        "holder=${holder[0]}",
+                )
+                client.cancel(1L)
+                assertEquals(AgentResponse.Pong, client.send(AgentRequest.Ping))
+                t.join(5_000)
+                val err = assertIs<AgentResponse.Error>(holder[0])
+                assertEquals(AgentErrorCategory.Cancelled.wireName, err.category)
+            }
+        }
+    }
+
     private fun awaitSocket(path: Path, timeoutMs: Long = 5_000) {
         val deadline = System.nanoTime() + timeoutMs * 1_000_000L
         while (System.nanoTime() < deadline) {
@@ -154,4 +189,62 @@ class WaitOpsInfrastructureTest {
         if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true))
             Path.of(System.getProperty("java.io.tmpdir"))
         else Path.of("/tmp")
+}
+
+/**
+ * Minimal stand-in whose JVM shape matches ComposeAutomator enough for [ReflectiveAutomatorHandler]
+ * construction + waitForNode dispatch. Sleeps inside waitForNode so cancel can interrupt the worker
+ * mid-op.
+ *
+ * Must be [internal] (JVM-public), not private: [BlockingSuspendInvoker] lives in another package
+ * and reflective Method.invoke cannot call members of a package-private class from outside.
+ */
+internal class SlowWaitFakeAutomator(private val onWaitStarted: () -> Unit) {
+    @Suppress("unused") fun refreshWindows() = Unit
+
+    @Suppress("unused") fun getWindows(): List<Any> = emptyList()
+
+    @Suppress("unused") fun allNodes(): List<Any> = emptyList()
+
+    @Suppress("unused") fun findByTestTag(tag: String): List<Any> = emptyList()
+
+    @Suppress("unused") fun findByText(text: String, exact: Boolean): List<Any> = emptyList()
+
+    @Suppress("unused") fun findByContentDescription(description: String): List<Any> = emptyList()
+
+    @Suppress("unused")
+    fun screenshot(region: java.awt.Rectangle?): java.awt.image.BufferedImage =
+        java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+
+    @Suppress("unused")
+    fun screenshot(windowIndex: Int): java.awt.image.BufferedImage =
+        java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+
+    @Suppress("unused") fun windowIdentities(): List<Any> = emptyList()
+
+    @Suppress("unused", "UNUSED_PARAMETER")
+    fun waitForNode(
+        tag: String?,
+        text: String?,
+        timeoutRaw: Long,
+        pollRaw: Long,
+        continuation: kotlin.coroutines.Continuation<Any?>,
+    ): Any? {
+        onWaitStarted()
+        try {
+            Thread.sleep(30_000)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw InterruptedException("waitForNode interrupted")
+        }
+        return null
+    }
+
+    @Suppress("unused", "UNUSED_PARAMETER")
+    fun waitForVisualIdle(
+        timeoutRaw: Long,
+        stableFrames: Int,
+        pollRaw: Long,
+        continuation: kotlin.coroutines.Continuation<Any?>,
+    ): Any? = Unit
 }
