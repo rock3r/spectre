@@ -98,11 +98,13 @@ internal class WaitOpsReflectiveMapper(
      * Maps wait-loop timeouts (stdlib [TimeoutException], IdleTimeoutException,
      * TimeoutCancellationException) to taxonomy `timeout`; rethrows everything else.
      */
-    @Suppress("TooGenericExceptionCaught") // IdleTimeoutException and TimeoutCancellationException.
+    @Suppress("TooGenericExceptionCaught", "InstanceOfCheckForException")
     private fun runWait(block: () -> AgentResponse): AgentResponse =
         try {
             block()
         } catch (ex: Exception) {
+            // IdleTimeoutException / TimeoutCancellationException are not on the classpath of
+            // :agent; match by type name so wait timeouts become taxonomy `timeout`.
             if (ex is java.util.concurrent.TimeoutException || isWaitTimeout(ex)) {
                 timeoutError(ex)
             } else {
