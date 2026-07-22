@@ -104,8 +104,41 @@ internal constructor(
 
     override fun waitForReloadSettled(timeoutMs: Long): ReloadSettleOutcome {
         if (closed.get()) return ReloadSettleOutcome.Cancelled
-        val handle = handleRef.get() ?: return ReloadSettleOutcome.Unavailable
-        return runBlocking { settleOn(handle, timeoutMs) }
+        // If reconnect was never started, fail closed immediately (tests / non-HR injection).
+        if (reconnectJob == null && handleRef.get() == null) {
+            return ReloadSettleOutcome.Unavailable
+        }
+        val startedNs = System.nanoTime()
+        val handle =
+            awaitConnection(timeoutMs)
+                ?: return if (closed.get()) {
+                    ReloadSettleOutcome.Cancelled
+                } else {
+                    ReloadSettleOutcome.Unavailable
+                }
+        val elapsedMs = (System.nanoTime() - startedNs) / NANOS_PER_MS
+        val remainingMs = (timeoutMs - elapsedMs).coerceAtLeast(0)
+        if (remainingMs == 0L) return ReloadSettleOutcome.TimedOut
+        return runBlocking { settleOn(handle, remainingMs) }
+    }
+
+    /**
+     * Waits up to [timeoutMs] for the Tooling client to finish its first (or next) connect. Avoids
+     * a race where attach creates a reload-aware session and an immediate wait reports
+     * `hotReloadUnavailable` before the reconnect loop connects.
+     */
+    private fun awaitConnection(timeoutMs: Long): OrchestrationHandle? {
+        handleRef.get()?.let {
+            return it
+        }
+        val deadlineMs = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadlineMs && !closed.get()) {
+            handleRef.get()?.let {
+                return it
+            }
+            Thread.sleep(CONNECT_POLL_MS)
+        }
+        return handleRef.get()
     }
 
     override fun close() {
@@ -149,6 +182,8 @@ internal constructor(
     public companion object {
         public const val DEFAULT_SETTLE_TIMEOUT_MS: Long = 60_000
         private const val DEFAULT_RECONNECT_DELAY_MS: Long = 2_000
+        private const val CONNECT_POLL_MS: Long = 50
+        private const val NANOS_PER_MS: Long = 1_000_000
 
         /** Creates a session that discovers the port for [targetPid] on each reconnect attempt. */
         public fun forTargetPid(

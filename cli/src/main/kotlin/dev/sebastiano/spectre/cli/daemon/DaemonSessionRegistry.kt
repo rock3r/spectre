@@ -442,7 +442,12 @@ internal constructor(
     }
 
     private companion object {
-        const val WAIT_DRAIN_TIMEOUT_MS: Long = 30_000
+        /**
+         * Must cover long outside-lock waits such as [DaemonRequest.WaitForReloadSettled] (default
+         * 60s) so detach/close does not tear down mid-wait. Kept above
+         * [dev.sebastiano.spectre.cli.hotreload.HotReloadSession.DEFAULT_SETTLE_TIMEOUT_MS].
+         */
+        const val WAIT_DRAIN_TIMEOUT_MS: Long = 90_000
         const val WAIT_DRAIN_POLL_MS: Long = 10
         const val NANOS_PER_MS: Long = 1_000_000
     }
