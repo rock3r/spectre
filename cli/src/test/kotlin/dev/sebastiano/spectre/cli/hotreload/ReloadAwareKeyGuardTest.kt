@@ -65,6 +65,18 @@ class ReloadAwareKeyGuardTest {
         assertNull(ReloadAwareKeyGuard.unstamp("main:0:1"))
     }
 
+    @Test
+    fun `dispatchKeys reports the first stale stamped key`() {
+        val guard = ReloadAwareKeyGuard()
+        val issued = guard.issueNodes(listOf(sample("from"), sample("to")))
+        val to = issued[1].key
+        guard.onReload()
+        val freshFrom = guard.issueNodes(listOf(sample("from"))).single().key
+        val stale = guard.dispatchKeys(freshFrom, to) { _, _ -> error("should not dispatch") }
+        assertEquals(to, stale)
+        assertNull(guard.dispatchKeys(freshFrom, null) { raw, _ -> assertEquals("from", raw) })
+    }
+
     private fun sample(key: String): NodeSnapshotDto =
         NodeSnapshotDto(
             key = key,

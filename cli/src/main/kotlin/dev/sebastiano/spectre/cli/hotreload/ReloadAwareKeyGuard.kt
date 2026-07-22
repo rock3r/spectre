@@ -77,27 +77,30 @@ public class ReloadAwareKeyGuard {
     /**
      * Validates zero, one, or two stamped keys and runs [op] under the same lock as [onReload]
      * (used by swipe so both keys stay valid for the IPC call).
+     *
+     * @return null when both keys were valid and [op] ran; otherwise the first stamped key that
+     *   failed resolution (so callers can name the stale key in `nodeNotFound`).
      */
     public fun dispatchKeys(
         first: String?,
         second: String?,
         op: (rawFirst: String?, rawSecond: String?) -> Unit,
-    ): Boolean {
+    ): String? {
         synchronized(lock) {
             val rawFirst =
                 if (first == null) {
                     null
                 } else {
-                    resolveUnlocked(first) ?: return false
+                    resolveUnlocked(first) ?: return first
                 }
             val rawSecond =
                 if (second == null) {
                     null
                 } else {
-                    resolveUnlocked(second) ?: return false
+                    resolveUnlocked(second) ?: return second
                 }
             op(rawFirst, rawSecond)
-            return true
+            return null
         }
     }
 

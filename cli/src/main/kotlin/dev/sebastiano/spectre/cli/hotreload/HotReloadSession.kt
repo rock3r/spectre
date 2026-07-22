@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.cli.hotreload
 
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineDispatcher
@@ -8,6 +9,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -52,6 +55,9 @@ public interface HotReloadCapability : AutoCloseable {
  * HR's own MCP), and exposes [waitForReloadSettled] for the full settle chain.
  *
  * Lifetime is owned by the daemon session: [close] on detach.
+ *
+ * Lifecycle messages are read by a **single** [asChannel] consumer per connected handle and fanned
+ * out to the invalidation observer and any concurrent [waitForReloadSettled] waiters (#212 Codex).
  */
 public class HotReloadSession
 internal constructor(
@@ -66,6 +72,11 @@ internal constructor(
     private val closed = AtomicBoolean(false)
     private val reloadSettledListener = AtomicReference<(() -> Unit)?>(null)
     private var reconnectJob: Job? = null
+    /**
+     * Active settle-wait subscribers for the current handle. Written only from the pump coroutine
+     * and subscribe/unsubscribe paths; CopyOnWrite so the pump can fan out without holding a lock.
+     */
+    private val lifecycleSubscribers = CopyOnWriteArrayList<SendChannel<ReloadLifecycleEvent>>()
 
     /** True when a live orchestration handle is connected. */
     public val isConnected: Boolean
@@ -95,51 +106,95 @@ internal constructor(
 
     private suspend fun awaitConnectedHandle(handle: OrchestrationHandle) {
         handleRef.set(handle)
-        val observer = scope.launch { observeReloadsForInvalidation(handle) }
+        // One reader for the handle; invalidation + waiters share fanned-out lifecycle events.
+        val pump = scope.launch { pumpLifecycle(handle) }
         try {
             // Suspend until the handle finishes (app exit / disconnect).
             handle.await()
         } catch (_: Exception) {
             // fall through to reconnect
         } finally {
-            observer.cancel()
+            pump.cancel()
+            clearLifecycleSubscribers()
             handleRef.compareAndSet(handle, null)
             runCatching { handle.close() }
         }
     }
 
     /**
-     * Background observation: after a successful class reload is rendered (`ReloadClassesResult`
-     * success + matching `UIRendered`), notify the invalidation listener so node keys are flushed
-     * (#212). Does not send Ping (avoids racing [waitForReloadSettled]).
+     * Single [asChannel] consumer: drives invalidation bookkeeping and fans every lifecycle event
+     * to concurrent [waitForReloadSettled] subscribers so they cannot steal messages from each
+     * other.
      */
-    private suspend fun observeReloadsForInvalidation(handle: OrchestrationHandle) {
+    private suspend fun pumpLifecycle(handle: OrchestrationHandle) {
         val channel = handle.asChannel()
         var pendingSuccessfulRequestId: String? = null
         try {
             while (scope.isActive && !closed.get()) {
-                val message = channel.receiveCatching().getOrNull() ?: break
-                when (val event = message.toLifecycleEvent()) {
-                    is ReloadLifecycleEvent.ReloadClassesResult -> {
-                        if (event.isSuccess) {
-                            pendingSuccessfulRequestId = event.reloadRequestId
-                        } else if (event.reloadRequestId == pendingSuccessfulRequestId) {
-                            // Only clear when the failure is for the request we were tracking.
-                            pendingSuccessfulRequestId = null
-                        }
-                    }
-                    is ReloadLifecycleEvent.UIRendered -> {
-                        val requestId = event.reloadRequestId
-                        if (requestId != null && requestId == pendingSuccessfulRequestId) {
-                            pendingSuccessfulRequestId = null
-                            reloadSettledListener.get()?.invoke()
-                        }
-                    }
-                    else -> Unit
+                val message = channel.receiveCatching().getOrNull()
+                if (message == null) {
+                    return
+                }
+                val event = message.toLifecycleEvent()
+                if (event != null) {
+                    pendingSuccessfulRequestId =
+                        updatePendingSuccess(pendingSuccessfulRequestId, event)
+                    fanOut(event)
                 }
             }
         } finally {
             channel.cancel()
+        }
+    }
+
+    /**
+     * Tracks successful reload → matching UIRendered for the invalidation listener. Does not send
+     * Ping (the settle waiter owns Ping/Ack drain).
+     */
+    private fun updatePendingSuccess(pending: String?, event: ReloadLifecycleEvent): String? =
+        when (event) {
+            is ReloadLifecycleEvent.ReloadClassesResult -> {
+                when {
+                    event.isSuccess -> event.reloadRequestId
+                    event.reloadRequestId == pending -> null
+                    else -> pending
+                }
+            }
+            is ReloadLifecycleEvent.UIRendered -> {
+                val requestId = event.reloadRequestId
+                if (requestId != null && requestId == pending) {
+                    reloadSettledListener.get()?.invoke()
+                    null
+                } else {
+                    pending
+                }
+            }
+            else -> pending
+        }
+
+    private fun fanOut(event: ReloadLifecycleEvent) {
+        for (subscriber in lifecycleSubscribers) {
+            // DROP when a waiter is not draining fast enough; settle timeout still covers misses.
+            subscriber.trySend(event)
+        }
+    }
+
+    /**
+     * Registers a buffered channel that receives every lifecycle event for the current connection.
+     * Caller must [Channel.cancel] when done; [invokeOnClose] removes the subscriber.
+     */
+    private fun subscribeLifecycle(): Channel<ReloadLifecycleEvent> {
+        val channel = Channel<ReloadLifecycleEvent>(Channel.BUFFERED)
+        lifecycleSubscribers.add(channel)
+        channel.invokeOnClose { lifecycleSubscribers.remove(channel) }
+        return channel
+    }
+
+    private fun clearLifecycleSubscribers() {
+        val snapshot = lifecycleSubscribers.toList()
+        lifecycleSubscribers.clear()
+        for (subscriber in snapshot) {
+            subscriber.close()
         }
     }
 
@@ -195,6 +250,7 @@ internal constructor(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         reconnectJob?.cancel()
+        clearLifecycleSubscribers()
         handleRef.getAndSet(null)?.let { runCatching { it.close() } }
         scope.cancel()
     }
@@ -204,7 +260,7 @@ internal constructor(
         timeoutMs: Long,
     ): ReloadSettleOutcome {
         val machine = ReloadSettleStateMachine()
-        val channel = handle.asChannel()
+        val events = subscribeLifecycle()
         try {
             val settled =
                 withTimeoutOrNull(timeoutMs) {
@@ -215,10 +271,9 @@ internal constructor(
                             handle.send(ping)
                             machine.beginPingDrain(ping.messageId.toString())
                         }
-                        val message =
-                            channel.receiveCatching().getOrNull()
+                        val event =
+                            events.receiveCatching().getOrNull()
                                 ?: return@withTimeoutOrNull ReloadSettleOutcome.Cancelled
-                        val event = message.toLifecycleEvent() ?: continue
                         val outcome = machine.onEvent(event)
                         if (outcome != null) return@withTimeoutOrNull outcome
                     }
@@ -226,7 +281,7 @@ internal constructor(
                 }
             return settled ?: machine.onTimeout()
         } finally {
-            channel.cancel()
+            events.cancel()
         }
     }
 

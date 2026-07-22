@@ -9,13 +9,16 @@ import dev.sebastiano.spectre.cli.hotreload.ReloadAwareKeyGuard
  *
  * Never stamps a snapshot under a generation that advanced after the query — loops until the
  * generation is stable or the attempt budget is exhausted.
+ *
+ * @return stamped nodes, or `null` when the generation kept racing through [maxAttempts] (caller
+ *   must fail closed — do not report an empty tree as success).
  */
 @OptIn(ExperimentalSpectreAgentApi::class)
 internal fun issueNodesAcrossReload(
     keyGuard: ReloadAwareKeyGuard?,
     maxAttempts: Int = 4,
     query: () -> List<NodeSnapshotDto>,
-): List<NodeSnapshotDto> {
+): List<NodeSnapshotDto>? {
     if (keyGuard == null) return query()
     repeat(maxAttempts) {
         val gen = keyGuard.snapshotGeneration()
@@ -23,8 +26,8 @@ internal fun issueNodesAcrossReload(
         val stamped = keyGuard.issueNodesIfGeneration(gen, nodes)
         if (stamped != null) return stamped
     }
-    // Generation kept racing — return empty rather than stamping a stale snapshot.
-    return emptyList()
+    // Generation kept racing — fail closed rather than returning a false empty tree.
+    return null
 }
 
 /**
@@ -46,4 +49,12 @@ internal fun staleNodeKeyError(nodeKey: String): DaemonResponse.Error =
         code = DaemonErrorCode.OperationFailed,
         message = "No node found with key=$nodeKey",
         category = "nodeNotFound",
+    )
+
+/** Fail-closed error when [issueNodesAcrossReload] exhausts its generation-race budget. */
+internal fun reloadRaceExhaustedError(): DaemonResponse.Error =
+    DaemonResponse.Error(
+        code = DaemonErrorCode.OperationFailed,
+        message = "reload settled during tree query; re-query required",
+        category = "reloadRace",
     )

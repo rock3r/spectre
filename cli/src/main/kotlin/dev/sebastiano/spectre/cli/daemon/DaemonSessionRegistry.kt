@@ -188,7 +188,9 @@ internal constructor(
                 }
             is DaemonRequest.AllNodes ->
                 invokeWithSession(request.sessionId) { session, automator ->
-                    val nodes = issueNodesAcrossReload(session.keyGuard) { automator.allNodes() }
+                    val nodes =
+                        issueNodesAcrossReload(session.keyGuard) { automator.allNodes() }
+                            ?: return@invokeWithSession reloadRaceExhaustedError()
                     DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByTestTag,
@@ -335,7 +337,7 @@ internal constructor(
                     val nodes =
                         issueNodesAcrossReload(session.keyGuard) {
                             automator.findByTestTag(request.tag)
-                        }
+                        } ?: return@invokeWithSession reloadRaceExhaustedError()
                     DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByText ->
@@ -343,7 +345,7 @@ internal constructor(
                     val nodes =
                         issueNodesAcrossReload(session.keyGuard) {
                             automator.findByText(request.text, request.exact)
-                        }
+                        } ?: return@invokeWithSession reloadRaceExhaustedError()
                     DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByContentDescription ->
@@ -351,7 +353,7 @@ internal constructor(
                     val nodes =
                         issueNodesAcrossReload(session.keyGuard) {
                             automator.findByContentDescription(request.description)
-                        }
+                        } ?: return@invokeWithSession reloadRaceExhaustedError()
                     DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByRole ->
@@ -359,7 +361,7 @@ internal constructor(
                     val nodes =
                         issueNodesAcrossReload(session.keyGuard) {
                             automator.findByRole(request.role)
-                        }
+                        } ?: return@invokeWithSession reloadRaceExhaustedError()
                     DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             else -> error("Not a query session command: ${request::class.simpleName}")
@@ -412,7 +414,7 @@ internal constructor(
                     durationMs = request.durationMs,
                 )
             } else {
-                val ok =
+                val staleKey =
                     guard.dispatchKeys(request.fromNodeKey, request.toNodeKey) { from, to ->
                         automator.swipe(
                             fromNodeKey = from,
@@ -425,9 +427,8 @@ internal constructor(
                             durationMs = request.durationMs,
                         )
                     }
-                if (!ok) {
-                    val bad = request.fromNodeKey ?: request.toNodeKey ?: "unknown"
-                    return@invokeWithSession staleNodeKeyError(bad)
+                if (staleKey != null) {
+                    return@invokeWithSession staleNodeKeyError(staleKey)
                 }
             }
             DaemonResponse.Completed(request.sessionId)

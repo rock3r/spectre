@@ -5,7 +5,9 @@ package dev.sebastiano.spectre.cli.hotreload
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineDispatcher
@@ -62,6 +64,61 @@ class HotReloadInvalidationIntegrationTest {
             assertTrue(latch.await(10, TimeUnit.SECONDS), "invalidation listener did not fire")
             assertTrue(fired.get())
             // Spectre never called redefineClasses — coexistence premise.
+        } finally {
+            session.close()
+            appJob.cancel()
+            appScope.cancel()
+            server.close()
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    fun `concurrent waitForReloadSettled and invalidation listener both observe the same settle`() {
+        val server = startOrchestrationServer()
+        val port = server.port.getBlocking(15.seconds).getOrThrow()
+        val appScope = applicationScope()
+        val appJob = startAckingApplicationClient(port, appScope)
+        val session = HotReloadSession.forPort(port)
+        val listenerFired = AtomicBoolean(false)
+        val listenerLatch = CountDownLatch(1)
+        session.setReloadSettledListener {
+            listenerFired.set(true)
+            listenerLatch.countDown()
+        }
+        try {
+            awaitConnected(session)
+            val outcomeRef = AtomicReference<ReloadSettleOutcome?>(null)
+            val waitLatch = CountDownLatch(1)
+            Thread(
+                    {
+                        outcomeRef.set(session.waitForReloadSettled(timeoutMs = 15_000))
+                        waitLatch.countDown()
+                    },
+                    "concurrent-settle-wait",
+                )
+                .start()
+            // Subscribe before broadcasting so the fan-out waiter is armed.
+            Thread.sleep(200)
+
+            val request = OrchestrationMessage.ReloadClassesRequest()
+            server sendBlocking request
+            server sendBlocking
+                OrchestrationMessage.ReloadClassesResult(
+                    reloadRequestId = request.messageId,
+                    isSuccess = true,
+                )
+            server sendBlocking
+                OrchestrationMessage.UIRendered(
+                    windowId = null,
+                    reloadRequestId = request.messageId,
+                    iteration = 1,
+                )
+
+            assertTrue(waitLatch.await(10, TimeUnit.SECONDS), "settle wait did not complete")
+            assertTrue(listenerLatch.await(10, TimeUnit.SECONDS), "listener did not fire")
+            assertEquals(ReloadSettleOutcome.Settled, outcomeRef.get())
+            assertTrue(listenerFired.get())
         } finally {
             session.close()
             appJob.cancel()

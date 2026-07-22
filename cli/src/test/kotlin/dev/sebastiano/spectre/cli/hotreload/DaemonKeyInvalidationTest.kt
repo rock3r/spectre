@@ -8,10 +8,13 @@ import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import dev.sebastiano.spectre.cli.daemon.DaemonSessionRegistry
 import dev.sebastiano.spectre.cli.daemon.TestDaemonSessionAutomator
+import dev.sebastiano.spectre.cli.daemon.issueNodesAcrossReload
+import dev.sebastiano.spectre.cli.daemon.reloadRaceExhaustedError
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalSpectreAgentApi::class)
@@ -84,6 +87,59 @@ class DaemonKeyInvalidationTest {
         assertIs<DaemonResponse.Completed>(
             registry.handle(DaemonRequest.Click(sessionId, "never-issued"))
         )
+    }
+
+    @Test
+    fun `swipe nodeNotFound names the stale to-key when from-key is still valid`() {
+        val hr = ControllableHotReloadCapability(ConcurrentLinkedQueue())
+        val registry =
+            DaemonSessionRegistry(
+                hotReloadSessionFactory = { hr },
+                attachAutomator = {
+                    TestDaemonSessionAutomator(
+                        nodesResult = { listOf(sampleNode("from"), sampleNode("to")) }
+                    )
+                },
+            )
+        val sessionId =
+            assertIs<DaemonResponse.Attached>(registry.handle(DaemonRequest.Attach(7))).sessionId
+        val tree =
+            assertIs<DaemonResponse.Nodes>(registry.handle(DaemonRequest.AllNodes(sessionId)))
+        val toKey = tree.nodes.first { it.key.endsWith(":to") }.key
+        // Advance generation and re-issue only "from" so the pre-reload to-key is uniquely stale.
+        hr.fireReloadSettled()
+        val reissued =
+            assertIs<DaemonResponse.Nodes>(registry.handle(DaemonRequest.AllNodes(sessionId)))
+        val freshFrom = reissued.nodes.first { it.key.endsWith(":from") }.key
+        val rejected =
+            assertIs<DaemonResponse.Error>(
+                registry.handle(
+                    DaemonRequest.Swipe(
+                        sessionId = sessionId,
+                        fromNodeKey = freshFrom,
+                        toNodeKey = toKey,
+                    )
+                )
+            )
+        assertEquals("nodeNotFound", rejected.category)
+        assertTrue(
+            rejected.message.contains(toKey),
+            "expected stale to-key in message, got: ${rejected.message}",
+        )
+    }
+
+    @Test
+    fun `issueNodesAcrossReload returns null when generation keeps racing`() {
+        val guard = ReloadAwareKeyGuard()
+        val result =
+            issueNodesAcrossReload(keyGuard = guard, maxAttempts = 3) {
+                guard.onReload()
+                listOf(sampleNode("never-stamped"))
+            }
+        assertNull(result)
+        val wire = reloadRaceExhaustedError()
+        assertEquals(DaemonErrorCode.OperationFailed, wire.code)
+        assertEquals("reloadRace", wire.category)
     }
 
     private fun sampleNode(key: String): NodeSnapshotDto =
