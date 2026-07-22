@@ -230,7 +230,8 @@ constructor(
                     )
                 ),
             )
-            return true
+            // End the connection so a stale peer cannot monopolize the single accept slot.
+            return false
         }
 
         // Generic Exception catch: an automator handler may throw NPE / CCE / ISE (unchecked)
