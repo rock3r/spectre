@@ -3,6 +3,7 @@
 package dev.sebastiano.spectre.agent
 
 import dev.sebastiano.spectre.agent.fixture.READY_SENTINEL
+import dev.sebastiano.spectre.agent.transport.AgentErrorCategory
 import dev.sebastiano.spectre.testing.contract.AutomatorContractCorpus
 import dev.sebastiano.spectre.testing.contract.AutomatorContractDriver
 import dev.sebastiano.spectre.testing.contract.AutomatorTransport
@@ -18,8 +19,12 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
@@ -67,6 +72,77 @@ class AgentContractCorpusTest {
                 val capture = automator.capture(windowIndex = 0)
                 check(capture.pngBytes.isNotEmpty()) { "capture png empty" }
                 check(capture.captureJson.isNotBlank()) { "capture json blank" }
+            }
+        }
+    }
+
+    /**
+     * #201 fixture cancel: interrupt a live [AttachedAutomator.waitForNode] against the Compose
+     * fixture. Client interrupt cancels the remote op; taxonomy must be `cancelled` (not hang /
+     * timeout / connection error). Complements infrastructure cancel tests that use a reflective
+     * fake automator without a real Compose tree.
+     */
+    @Test
+    fun `waitForNode on live fixture is cancelled when the client thread is interrupted`() {
+        assumeFalse(
+            GraphicsEnvironment.isHeadless(),
+            "Requires non-headless JVM for Compose Desktop + java.awt.Robot",
+        )
+        val agentJar = locateAgentJarOrSkip()
+
+        spawnComposeFixture().use { fixture ->
+            val udsPath = AttachOptions.defaultUdsPath(fixture.pid)
+            orphanUdsFiles.add(udsPath)
+            val options =
+                AttachOptions(
+                    agentJarPath = agentJar,
+                    udsPath = udsPath,
+                    attachTimeoutMs = ATTACH_TIMEOUT_MS,
+                )
+            AgentAttach.attach(fixture.pid, options).use { automator ->
+                // Prove the fixture is live before starting a long wait.
+                assertTrue(automator.windows().isNotEmpty(), "fixture should expose a window")
+
+                val error = AtomicReference<Throwable?>(null)
+                val started = CountDownLatch(1)
+                val waiter =
+                    Thread({
+                            try {
+                                started.countDown()
+                                automator.waitForNode(
+                                    tag = "agent-fixture-never-appears-cancel",
+                                    timeoutMs = 25_000,
+                                )
+                                error.set(
+                                    AssertionError("waitForNode was expected to be cancelled")
+                                )
+                            } catch (ex: Throwable) {
+                                error.set(ex)
+                            }
+                        })
+                        .apply {
+                            isDaemon = true
+                            name = "fixture-wait-cancel"
+                            start()
+                        }
+
+                assertTrue(started.await(3, TimeUnit.SECONDS), "wait thread never started")
+                // Let the WaitForNode op leave the client and enter the agent worker.
+                Thread.sleep(200)
+                waiter.interrupt()
+                waiter.join(10_000)
+                assertTrue(!waiter.isAlive, "wait thread still running after interrupt")
+
+                val thrown = error.get()
+                val agentEx =
+                    assertIs<SpectreAgentException>(
+                        thrown,
+                        "expected SpectreAgentException, got $thrown",
+                    )
+                assertEquals(AgentErrorCategory.Cancelled, agentEx.category)
+
+                // Session remains usable after cancel.
+                assertTrue(automator.windows().isNotEmpty(), "windows() after cancel")
             }
         }
     }
