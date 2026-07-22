@@ -31,7 +31,9 @@ class SpectreDoesNotRedefineClassesContractTest {
             Files.walk(mainSrc).use { stream ->
                 stream
                     .asSequence()
-                    .filter { it.isRegularFile() && it.extension == "kt" }
+                    .filter {
+                        it.isRegularFile() && (it.extension == "kt" || it.extension == "java")
+                    }
                     .forEach { path ->
                         if (REDEFINE_CLASSES_CALL.containsMatchIn(path.readText())) {
                             hits += path.toString()
