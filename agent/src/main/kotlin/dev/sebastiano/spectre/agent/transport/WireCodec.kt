@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.agent.transport
 
 import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.cbor.Cbor
 
 /**
@@ -28,4 +29,18 @@ internal object WireCodec {
     /** Decode CBOR bytes into a response. */
     fun decodeResponse(bytes: ByteArray): AgentResponse =
         cbor.decodeFromByteArray(AgentResponse.serializer(), bytes)
+
+    /**
+     * True when [ex] looks like an unknown sealed-class discriminator (newer op against an older
+     * runtime), as opposed to truncated/corrupt CBOR. Used to map decode failures to
+     * [AgentErrorCategory.UnsupportedOperation] instead of hanging or treating them as internal
+     * errors (#199).
+     */
+    fun isUnknownDiscriminator(ex: SerializationException): Boolean {
+        val msg = ex.message.orEmpty().lowercase()
+        return "polymorphic" in msg ||
+            "serializer" in msg && ("not found" in msg || "for class" in msg || "unknown" in msg) ||
+            "unknown" in msg && ("class" in msg || "type" in msg || "serial" in msg) ||
+            "cannot find" in msg
+    }
 }

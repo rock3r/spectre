@@ -456,6 +456,7 @@ class IpcRoundTripTest {
                 )
             is AgentRequest.WindowIdentity -> AgentResponse.WindowIdentities(emptyList())
             AgentRequest.Detach -> AgentResponse.Detached
+            is AgentRequest.Hello -> AgentResponse.HelloAck()
         }
     }
 

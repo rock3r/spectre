@@ -98,6 +98,12 @@ internal class ReflectiveAutomatorHandler(
                 is AgentRequest.WindowIdentity ->
                     WindowIdentityReflectiveMapper.invoke(automator, request.windowIndex)
                 AgentRequest.Detach -> AgentResponse.Detached
+                // Handled in IpcServer before the automator handler; keep exhaustive.
+                is AgentRequest.Hello ->
+                    AgentResponse.HelloAck(
+                        protocolVersion =
+                            dev.sebastiano.spectre.agent.transport.ProtocolVersion.CURRENT
+                    )
             }
         } catch (ex: ReflectiveOperationException) {
             AgentResponse.Error("Reflective call failed: ${ex.targetMessage()}")
@@ -136,7 +142,12 @@ internal class ReflectiveAutomatorHandler(
         val allNodes = allNodesMethod.invoke(automator) as List<*>
         val match =
             allNodes.firstOrNull { it != null && extractKey(it) == nodeKey }
-                ?: return AgentResponse.Error("No node found with key=$nodeKey")
+                ?: return AgentResponse.Error(
+                    message = "No node found with key=$nodeKey",
+                    category =
+                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory.NodeNotFound
+                            .wireName,
+                )
         val method =
             clickSuspendMethod
                 ?: return AgentResponse.Error(

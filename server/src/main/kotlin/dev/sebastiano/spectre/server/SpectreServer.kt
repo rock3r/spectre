@@ -117,14 +117,21 @@ private fun Route.spectreRoutes(automator: ComposeAutomator) {
             try {
                 NodeKey.parse(request.nodeKey)
             } catch (_: IllegalArgumentException) {
-                call.respond(HttpStatusCode.BadRequest, "Malformed node key")
+                // #199 taxonomy: invalidSelector → 400; body carries the stable category name.
+                call.respond(
+                    SpectreErrorCategory.httpStatus(SpectreErrorCategory.InvalidSelector),
+                    SpectreErrorCategory.InvalidSelector.wireName,
+                )
                 return@post
             }
         val node = automator.allNodes().firstOrNull { it.key == key }
         if (node == null) {
             // R5/F5c: do NOT echo `request.nodeKey` here — caller-controlled content must
-            // not be reflected in the response body.
-            call.respond(HttpStatusCode.NotFound, "No matching node")
+            // not be reflected in the response body. #199 taxonomy: nodeNotFound → 404.
+            call.respond(
+                SpectreErrorCategory.httpStatus(SpectreErrorCategory.NodeNotFound),
+                SpectreErrorCategory.NodeNotFound.wireName,
+            )
             return@post
         }
         automator.click(node)

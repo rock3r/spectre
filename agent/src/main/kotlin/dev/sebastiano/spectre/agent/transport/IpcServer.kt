@@ -154,12 +154,44 @@ constructor(
             try {
                 WireCodec.decodeRequest(requestBytes)
             } catch (ex: kotlinx.serialization.SerializationException) {
+                // Unknown sealed discriminators (newer attacher ops) must not hang or look like a
+                // decode crash — return taxonomy unsupportedOperation (#199).
+                val category =
+                    if (WireCodec.isUnknownDiscriminator(ex)) {
+                        AgentErrorCategory.UnsupportedOperation
+                    } else {
+                        AgentErrorCategory.ProtocolMismatch
+                    }
                 Framing.writeFrame(
                     output,
-                    WireCodec.encode(AgentResponse.Error("Malformed request: ${ex.message}")),
+                    WireCodec.encode(
+                        AgentResponse.Error(
+                            message = "Malformed or unsupported request: ${ex.message}",
+                            category = category.wireName,
+                        )
+                    ),
                 )
                 return true
             }
+
+        // Hello is handled here (not in ReflectiveAutomatorHandler) so the handshake does not
+        // require a live ComposeAutomator (#199).
+        if (request is AgentRequest.Hello) {
+            val response =
+                if (request.protocolVersion == ProtocolVersion.CURRENT) {
+                    AgentResponse.HelloAck(protocolVersion = ProtocolVersion.CURRENT)
+                } else {
+                    AgentResponse.Error(
+                        message =
+                            "Protocol version mismatch: client=${request.protocolVersion}, " +
+                                "runtime=${ProtocolVersion.CURRENT} (exact-match required " +
+                                "while agent API is experimental)",
+                        category = AgentErrorCategory.ProtocolMismatch.wireName,
+                    )
+                }
+            Framing.writeFrame(output, WireCodec.encode(response))
+            return true
+        }
 
         // Generic Exception catch: an automator handler may throw NPE / CCE / ISE (unchecked)
         // when the target's `ComposeAutomator` is in an unexpected state, OR a checked
@@ -175,7 +207,17 @@ constructor(
             try {
                 handler.handle(request)
             } catch (ex: Exception) {
-                AgentResponse.Error("${ex.javaClass.simpleName}: ${ex.message ?: "<no message>"}")
+                val category =
+                    when (ex) {
+                        is java.util.concurrent.TimeoutException -> AgentErrorCategory.Timeout
+                        is IllegalArgumentException -> AgentErrorCategory.InvalidSelector
+                        is NoSuchElementException -> AgentErrorCategory.NodeNotFound
+                        else -> AgentErrorCategory.InternalError
+                    }
+                AgentResponse.Error(
+                    message = "${ex.javaClass.simpleName}: ${ex.message ?: "<no message>"}",
+                    category = category.wireName,
+                )
             }
         // Detach side-effects (`running.set(false)` + `onDetach()`) MUST run even if writing
         // the response fails — e.g. the attaching client closed mid-Detach. Without the

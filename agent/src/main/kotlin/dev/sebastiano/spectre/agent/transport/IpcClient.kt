@@ -44,12 +44,44 @@ internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) 
     private val input: InputStream = Channels.newInputStream(channel)
     private val output: OutputStream = Channels.newOutputStream(channel)
 
+    init {
+        // #199: exact-match protocol handshake is the first exchange after connect.
+        val hello = AgentRequest.Hello(protocolVersion = ProtocolVersion.CURRENT)
+        val ack = sendWithoutHandshake(hello)
+        when (ack) {
+            is AgentResponse.HelloAck -> {
+                if (ack.protocolVersion != ProtocolVersion.CURRENT) {
+                    channel.close()
+                    throw IOException(
+                        "Agent protocol mismatch: runtime advertised ${ack.protocolVersion}, " +
+                            "client expects ${ProtocolVersion.CURRENT}"
+                    )
+                }
+            }
+            is AgentResponse.Error -> {
+                channel.close()
+                throw IOException(
+                    "Agent rejected protocol handshake " + "(${ack.category}): ${ack.message}"
+                )
+            }
+            else -> {
+                channel.close()
+                throw IOException(
+                    "Agent protocol handshake expected HelloAck, got ${ack::class.simpleName}"
+                )
+            }
+        }
+    }
+
     /**
      * Sends [request], blocks until the matching response arrives, returns it. Throws [IOException]
      * if the channel closes mid-exchange or the wire protocol is violated.
      */
     @Throws(IOException::class)
-    fun send(request: AgentRequest): AgentResponse {
+    fun send(request: AgentRequest): AgentResponse = sendWithoutHandshake(request)
+
+    @Throws(IOException::class)
+    private fun sendWithoutHandshake(request: AgentRequest): AgentResponse {
         Framing.writeFrame(output, WireCodec.encode(request))
         val responseBytes =
             Framing.readFrame(input)
