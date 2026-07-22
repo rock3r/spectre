@@ -118,6 +118,11 @@ internal class AttachedDaemonSession(
         steps: Int,
         durationMs: Long,
     ) {
+        val nodeMode = fromNodeKey != null || toNodeKey != null
+        val coordMode = startX != null || startY != null || endX != null || endY != null
+        if (nodeMode && coordMode) {
+            throw IOException("swipe accepts either node keys or coordinates, not both")
+        }
         if (fromNodeKey != null && toNodeKey != null) {
             delegate.swipe(fromNodeKey, toNodeKey, steps, durationMs)
             return

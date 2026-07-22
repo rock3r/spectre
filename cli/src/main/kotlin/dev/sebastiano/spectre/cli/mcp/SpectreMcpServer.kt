@@ -461,18 +461,27 @@ public object SpectreMcpServer {
 
     private fun CallToolRequest.requiredString(name: String): String = callString(name)
 
-    private fun CallToolRequest.optionalString(name: String): String? =
-        arguments?.get(name)?.jsonPrimitive?.content
+    private fun CallToolRequest.optionalString(name: String): String? {
+        val element = arguments?.get(name) ?: return null
+        if (element is kotlinx.serialization.json.JsonNull) return null
+        return element.jsonPrimitive.content
+    }
 
     private fun CallToolRequest.requiredInt(name: String): Int =
         requiredString(name).toIntOrNull()
             ?: throw IllegalArgumentException("MCP tool argument '$name' must be an integer")
 
-    private fun CallToolRequest.optionalInt(name: String): Int? =
-        arguments?.get(name)?.jsonPrimitive?.content?.toIntOrNull()
+    private fun CallToolRequest.optionalInt(name: String): Int? {
+        val element = arguments?.get(name) ?: return null
+        if (element is kotlinx.serialization.json.JsonNull) return null
+        return element.jsonPrimitive.content.toIntOrNull()
+    }
 
-    private fun CallToolRequest.optionalLong(name: String): Long? =
-        arguments?.get(name)?.jsonPrimitive?.content?.toLongOrNull()
+    private fun CallToolRequest.optionalLong(name: String): Long? {
+        val element = arguments?.get(name) ?: return null
+        if (element is kotlinx.serialization.json.JsonNull) return null
+        return element.jsonPrimitive.content.toLongOrNull()
+    }
 
     private fun CallToolRequest.requiredLong(name: String): Long =
         requiredString(name).toLongOrNull()
