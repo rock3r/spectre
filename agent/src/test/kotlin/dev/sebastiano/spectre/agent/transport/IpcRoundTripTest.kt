@@ -468,13 +468,16 @@ class IpcRoundTripTest {
         when (request) {
             AgentRequest.Ping -> AgentResponse.Pong
             AgentRequest.Windows -> AgentResponse.Windows(emptyList())
-            AgentRequest.AllNodes -> AgentResponse.Nodes(emptyList())
-            is AgentRequest.FindByTestTag -> AgentResponse.Nodes(emptyList())
-            is AgentRequest.FindByText -> AgentResponse.Nodes(emptyList())
-            is AgentRequest.FindByContentDescription -> AgentResponse.Nodes(emptyList())
-            is AgentRequest.FindByRole -> AgentResponse.Nodes(emptyList())
-            is AgentRequest.Click -> AgentResponse.Ok
-            is AgentRequest.TypeText -> AgentResponse.Ok
+            AgentRequest.AllNodes,
+            is AgentRequest.FindByTestTag,
+            is AgentRequest.FindByText,
+            is AgentRequest.FindByContentDescription,
+            is AgentRequest.FindByRole,
+            is AgentRequest.WaitForNode -> AgentResponse.Nodes(emptyList())
+            is AgentRequest.Click,
+            is AgentRequest.TypeText,
+            is AgentRequest.Cancel,
+            is AgentRequest.WaitForVisualIdle -> AgentResponse.Ok
             is AgentRequest.Screenshot -> AgentResponse.Screenshot(ByteArray(0))
             is AgentRequest.Capture ->
                 AgentResponse.Capture(
@@ -493,9 +496,6 @@ class IpcRoundTripTest {
             AgentRequest.Detach -> AgentResponse.Detached
             is AgentRequest.Hello ->
                 AgentResponse.HelloAck(protocolVersion = ProtocolVersion.CURRENT)
-            is AgentRequest.Cancel -> AgentResponse.Ok
-            is AgentRequest.WaitForNode -> AgentResponse.Nodes(emptyList())
-            is AgentRequest.WaitForVisualIdle -> AgentResponse.Ok
         }
     }
 

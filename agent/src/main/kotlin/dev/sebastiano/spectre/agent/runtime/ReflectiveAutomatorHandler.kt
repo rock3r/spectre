@@ -183,9 +183,11 @@ internal class ReflectiveAutomatorHandler(
                             .UnsupportedOperation
                             .wireName,
                 )
-        if (request.text.isBlank()) {
+        // Empty text is valid in-process (exact match on empty EditableText). Whitespace-only is
+        // almost never intentional and diverges from useful substring semantics — reject it.
+        if (request.text.isNotEmpty() && request.text.isBlank()) {
             return AgentResponse.Error(
-                message = "text must be non-blank",
+                message = "text must not be whitespace-only",
                 category =
                     dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InvalidSelector
                         .wireName,
@@ -220,16 +222,19 @@ internal class ReflectiveAutomatorHandler(
     }
 
     private fun handleFindByRole(roleName: String): AgentResponse {
-        if (roleName.isBlank()) {
+        if (roleName.isBlank() || roleName !in KNOWN_ROLE_WIRE_NAMES) {
             return AgentResponse.Error(
-                message = "role must be non-blank",
+                message =
+                    if (roleName.isBlank()) "role must be non-blank"
+                    else "unknown role name: $roleName",
                 category =
                     dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InvalidSelector
                         .wireName,
             )
         }
         // Role is a Compose value class; match by role.toString() on the snapshot to avoid
-        // packing Role constants reflectively.
+        // packing Role constants reflectively. Names match Role.toString() (ValuePicker →
+        // "Picker").
         refreshWindowsMethod.invoke(automator)
         val nodes = allNodesMethod.invoke(automator) as List<*>
         val matches =
@@ -444,7 +449,9 @@ internal class ReflectiveAutomatorHandler(
             isFocused = nodeBooleanProperty(node, methodName = "isFocused", default = false),
             isDisabled = nodeBooleanProperty(node, methodName = "isDisabled", default = false),
             isSelected = nodeBooleanProperty(node, methodName = "isSelected", default = false),
-            isVisible = nodeBooleanProperty(node, methodName = "isVisible", default = true),
+            // isVisible is part of the long-standing AutomatorNode contract — fail loudly if
+            // absent.
+            isVisible = requireNodeBoolean(node, methodName = "isVisible"),
             bounds =
                 boundsToRect(
                     // `AutomatorNode.boundsOnScreen: Rectangle` → getBoundsOnScreen().
@@ -461,19 +468,37 @@ internal class ReflectiveAutomatorHandler(
             ?.invoke(node)
             ?.toString() ?: node.toString()
 
+    /**
+     * Soft boolean lookup: missing accessors return [default]. Used for optional snapshot fields
+     * (`isDisabled` / `isSelected` / `isFocused`) so older fakes and partial test doubles still map
+     * cleanly.
+     */
     private fun nodeBooleanProperty(
         node: Any,
         methodName: String,
         default: Boolean = false,
     ): Boolean {
-        val method =
-            nodeBooleanMethods.computeIfAbsent(node.javaClass to methodName) { (klass, name) ->
-                klass.methods.firstOrNull { it.name == name && it.parameterCount == 0 }
-                    ?: MISSING_BOOLEAN_METHOD
-            }
+        val method = resolveBooleanMethod(node, methodName)
         if (method === MISSING_BOOLEAN_METHOD) return default
         return method.invoke(node) as Boolean
     }
+
+    /** Hard boolean lookup: missing accessor is an AutomatorNode API mismatch. */
+    private fun requireNodeBoolean(node: Any, methodName: String): Boolean {
+        val method = resolveBooleanMethod(node, methodName)
+        if (method === MISSING_BOOLEAN_METHOD) {
+            error(
+                "AutomatorNode API mismatch: ${node.javaClass.name} does not expose $methodName()"
+            )
+        }
+        return method.invoke(node) as Boolean
+    }
+
+    private fun resolveBooleanMethod(node: Any, methodName: String): Method =
+        nodeBooleanMethods.computeIfAbsent(node.javaClass to methodName) { (klass, name) ->
+            klass.methods.firstOrNull { it.name == name && it.parameterCount == 0 }
+                ?: MISSING_BOOLEAN_METHOD
+        }
 
     private fun nodeEditableText(node: Any): String? =
         nodeEditableTextMethods
@@ -525,6 +550,24 @@ internal class ReflectiveAutomatorHandler(
         const val NO_MESSAGE_PLACEHOLDER: String = "<no message>"
         /** Sentinel when a fake/partial AutomatorNode lacks an optional boolean getter. */
         val MISSING_BOOLEAN_METHOD: Method = Object::class.java.getMethod("hashCode")
+
+        /**
+         * Compose [androidx.compose.ui.semantics.Role] wire names — the strings [Role.toString]
+         * returns. Agent has no compile-time Compose dependency, so the set is duplicated here.
+         * Note [Role.ValuePicker] stringifies as `"Picker"`, not `"ValuePicker"`.
+         */
+        val KNOWN_ROLE_WIRE_NAMES: Set<String> =
+            setOf(
+                "Button",
+                "Checkbox",
+                "Switch",
+                "RadioButton",
+                "Tab",
+                "Image",
+                "DropdownList",
+                "Picker",
+                "Carousel",
+            )
 
         fun targetJvmHasKeyboardFocus(): Boolean {
             val focusManager = KeyboardFocusManager.getCurrentKeyboardFocusManager()

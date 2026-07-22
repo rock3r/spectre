@@ -193,8 +193,12 @@ internal fun BufferedImage.toScreenshotResponse(): ScreenshotResponse {
 }
 
 /**
- * Resolves `/nodes` selectors (#202). Returns null when more than one selector query param is set
- * (invalidSelector).
+ * Resolves `/nodes` selectors (#202). Returns null for invalidSelector cases: more than one
+ * selector query param, whitespace-only text, blank contentDescription/role, or an unknown role
+ * name.
+ *
+ * Empty text (`text=`) is allowed so exact match can target empty [editableText] fields, matching
+ * in-process `findByText("")`.
  */
 private fun selectNodes(
     automator: ComposeAutomator,
@@ -208,15 +212,41 @@ private fun selectNodes(
     return when {
         testTag != null -> automator.findByTestTag(testTag)
         text != null -> {
+            // Whitespace-only (but not empty) is almost never intentional.
+            if (text.isNotEmpty() && text.isBlank()) return null
             val exact = params["exact"]?.toBooleanStrictOrNull() ?: true
             automator.findByText(text, exact = exact)
         }
-        contentDescription != null -> automator.findByContentDescription(contentDescription)
+        contentDescription != null -> {
+            if (contentDescription.isBlank()) return null
+            automator.findByContentDescription(contentDescription)
+        }
         // Role is a Compose value class; match by toString() name ("Button", …).
-        role != null -> automator.allNodes().filter { it.role?.toString() == role }
+        role != null -> {
+            if (role.isBlank() || role !in KNOWN_ROLE_WIRE_NAMES) return null
+            automator.allNodes().filter { it.role?.toString() == role }
+        }
         else -> automator.allNodes()
     }
 }
+
+/**
+ * Compose [androidx.compose.ui.semantics.Role.toString] names. Kept local to the server module so
+ * HTTP and agent agree without a shared compile-time Role dependency in agent. [Role.ValuePicker]
+ * stringifies as `"Picker"`.
+ */
+private val KNOWN_ROLE_WIRE_NAMES: Set<String> =
+    setOf(
+        "Button",
+        "Checkbox",
+        "Switch",
+        "RadioButton",
+        "Tab",
+        "Image",
+        "DropdownList",
+        "Picker",
+        "Carousel",
+    )
 
 /**
  * Narrow decode-error mapping for `call.receive<T>()` (R4): Ktor's default response when
