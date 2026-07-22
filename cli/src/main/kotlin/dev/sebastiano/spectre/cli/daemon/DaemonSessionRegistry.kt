@@ -27,8 +27,19 @@ internal constructor(
 
     private var shutdown: Boolean = false
 
-    @Synchronized
+    /**
+     * Dispatches a daemon request. Long waits (#201) run **outside** the registry monitor so a
+     * multi-second `waitForNode` does not freeze attach/ps for other clients.
+     */
     public fun handle(request: DaemonRequest): DaemonResponse =
+        when (request) {
+            is DaemonRequest.WaitForNode,
+            is DaemonRequest.WaitForVisualIdle -> handleWaitOutsideLock(request)
+            else -> handleSynchronized(request)
+        }
+
+    @Synchronized
+    private fun handleSynchronized(request: DaemonRequest): DaemonResponse =
         when (request) {
             is DaemonRequest.Hello ->
                 DaemonResponse.Hello(daemonVersion = DaemonProtocol.CurrentVersion)
@@ -43,8 +54,6 @@ internal constructor(
             is DaemonRequest.FindByText,
             is DaemonRequest.FindByContentDescription,
             is DaemonRequest.FindByRole,
-            is DaemonRequest.WaitForNode,
-            is DaemonRequest.WaitForVisualIdle,
             is DaemonRequest.Click,
             is DaemonRequest.DoubleClick,
             is DaemonRequest.LongClick,
@@ -57,8 +66,60 @@ internal constructor(
             is DaemonRequest.StartRecording,
             is DaemonRequest.StopRecording,
             is DaemonRequest.RecordingStatus -> handleSessionCommand(request)
+            // Wait ops are dispatched by [handle] outside the monitor.
+            is DaemonRequest.WaitForNode,
+            is DaemonRequest.WaitForVisualIdle -> error("wait ops must use handleWaitOutsideLock")
             DaemonRequest.Shutdown -> shutdown()
         }
+
+    private fun handleWaitOutsideLock(request: DaemonRequest): DaemonResponse {
+        val sessionId =
+            when (request) {
+                is DaemonRequest.WaitForNode -> request.sessionId
+                is DaemonRequest.WaitForVisualIdle -> request.sessionId
+                else -> error("not a wait request")
+            }
+        val automator =
+            synchronized(this) {
+                if (shutdown) {
+                    return DaemonResponse.Error(
+                        code = DaemonErrorCode.ShutdownInProgress,
+                        message = "daemon is shutting down",
+                    )
+                }
+                sessionsByPid.values.firstOrNull { it.sessionId == sessionId }?.automator
+            } ?: return sessionNotFound(sessionId)
+        return try {
+            when (request) {
+                is DaemonRequest.WaitForNode ->
+                    DaemonResponse.Nodes(
+                        request.sessionId,
+                        listOf(
+                            automator.waitForNode(
+                                tag = request.tag,
+                                text = request.text,
+                                timeoutMs = request.timeoutMs,
+                                pollIntervalMs = request.pollIntervalMs,
+                            )
+                        ),
+                    )
+                is DaemonRequest.WaitForVisualIdle -> {
+                    automator.waitForVisualIdle(
+                        timeoutMs = request.timeoutMs,
+                        stableFrames = request.stableFrames,
+                        pollIntervalMs = request.pollIntervalMs,
+                    )
+                    DaemonResponse.Completed(request.sessionId)
+                }
+                else -> error("not a wait request")
+            }
+        } catch (exception: IOException) {
+            DaemonResponse.Error(
+                code = DaemonErrorCode.OperationFailed,
+                message = exception.message ?: "session operation failed",
+            )
+        }
+    }
 
     private fun handleSessionCommand(request: DaemonRequest): DaemonResponse =
         when (request) {
@@ -73,9 +134,7 @@ internal constructor(
             is DaemonRequest.FindByTestTag,
             is DaemonRequest.FindByText,
             is DaemonRequest.FindByContentDescription,
-            is DaemonRequest.FindByRole,
-            is DaemonRequest.WaitForNode,
-            is DaemonRequest.WaitForVisualIdle -> handleQuerySessionCommand(request)
+            is DaemonRequest.FindByRole -> handleQuerySessionCommand(request)
             is DaemonRequest.Click,
             is DaemonRequest.DoubleClick,
             is DaemonRequest.LongClick,
@@ -215,29 +274,6 @@ internal constructor(
             is DaemonRequest.FindByRole ->
                 invoke(request.sessionId) { automator ->
                     DaemonResponse.Nodes(request.sessionId, automator.findByRole(request.role))
-                }
-            is DaemonRequest.WaitForNode ->
-                invoke(request.sessionId) { automator ->
-                    DaemonResponse.Nodes(
-                        request.sessionId,
-                        listOf(
-                            automator.waitForNode(
-                                tag = request.tag,
-                                text = request.text,
-                                timeoutMs = request.timeoutMs,
-                                pollIntervalMs = request.pollIntervalMs,
-                            )
-                        ),
-                    )
-                }
-            is DaemonRequest.WaitForVisualIdle ->
-                invoke(request.sessionId) { automator ->
-                    automator.waitForVisualIdle(
-                        timeoutMs = request.timeoutMs,
-                        stableFrames = request.stableFrames,
-                        pollIntervalMs = request.pollIntervalMs,
-                    )
-                    DaemonResponse.Completed(request.sessionId)
                 }
             else -> error("Not a query session command: ${request::class.simpleName}")
         }

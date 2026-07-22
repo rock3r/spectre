@@ -127,7 +127,16 @@ public object SpectreMcpServer {
                     required = listOf("session_id", "text"),
                 ),
         ) { call ->
-            val exact = call.optionalString("exact")?.toBooleanStrictOrNull() ?: true
+            val exactParam = call.optionalString("exact")
+            val exact =
+                if (exactParam == null) {
+                    true
+                } else {
+                    exactParam.toBooleanStrictOrNull()
+                        ?: throw IllegalArgumentException(
+                            "MCP tool argument 'exact' must be true or false"
+                        )
+                }
             request(
                     DaemonRequest.FindByText(
                         call.requiredString("session_id"),

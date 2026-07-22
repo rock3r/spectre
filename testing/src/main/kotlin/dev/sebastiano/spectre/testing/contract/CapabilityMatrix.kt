@@ -479,7 +479,8 @@ public object CapabilityMatrix {
                 )
             )
         }
-        // HTTP headless corpus exercises selector entry points.
+        // HTTP selector routes exist; headless HttpContractCorpusTest only proves entry points
+        // with empty trees (expectsFixtureSemantics=false), not fixture-backed matches.
         for (op in
             listOf(
                 AutomatorOperation.FindByText,
@@ -491,7 +492,9 @@ public object CapabilityMatrix {
                     operation = op,
                     transport = AutomatorTransport.Http,
                     platform = PlatformPrerequisite.AnyJvm,
-                    state = CellState.Supported,
+                    state = CellState.NotYetCiExecuted,
+                    rationale =
+                        "HTTP routes wired; needs display-backed HTTP fixture corpus for Supported.",
                     evidence = listOf(httpHeadlessCorpus),
                 )
             )
