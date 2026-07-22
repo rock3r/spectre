@@ -94,6 +94,18 @@ class DaemonHandshakeTest {
                 )
             ),
         )
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 9),
+            DaemonProtocol.minimumDaemonVersion(
+                DaemonRequest.DoubleClick(sessionId = "session-1234", nodeKey = "k")
+            ),
+        )
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 9),
+            DaemonProtocol.minimumDaemonVersion(
+                DaemonRequest.PressKey(sessionId = "session-1234", keyCode = 10)
+            ),
+        )
     }
 }
 

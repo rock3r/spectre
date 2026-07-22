@@ -2,12 +2,18 @@
 
 package dev.sebastiano.spectre.server
 
+import dev.sebastiano.spectre.core.AutomatorNode
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.InternalSpectreApi
 import dev.sebastiano.spectre.core.NodeKey
 import dev.sebastiano.spectre.server.dto.ClickRequest
+import dev.sebastiano.spectre.server.dto.DoubleClickRequest
+import dev.sebastiano.spectre.server.dto.LongClickRequest
 import dev.sebastiano.spectre.server.dto.NodesResponse
+import dev.sebastiano.spectre.server.dto.PressKeyRequest
 import dev.sebastiano.spectre.server.dto.ScreenshotResponse
+import dev.sebastiano.spectre.server.dto.ScrollWheelRequest
+import dev.sebastiano.spectre.server.dto.SwipeRequest
 import dev.sebastiano.spectre.server.dto.TypeTextRequest
 import dev.sebastiano.spectre.server.dto.WindowsResponse
 import dev.sebastiano.spectre.server.dto.toDto
@@ -28,6 +34,7 @@ import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.util.Base64
 import javax.imageio.ImageIO
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Mounts the Spectre HTTP transport on this Ktor [Application], backed by the supplied in-process
@@ -105,63 +112,7 @@ private fun Route.spectreRoutes(automator: ComposeAutomator) {
         call.respond(NodesResponse(nodes = nodes.map { it.toDto() }))
     }
 
-    post("/click") {
-        automator.refreshWindows()
-        val request = receiveOrRespond400<ClickRequest>(call, "ClickRequest") ?: return@post
-        // NodeKey.parse throws on malformed input — surface that as a client error (400)
-        // rather than letting it bubble up as a generic 500. The body must NOT echo the
-        // attacker-supplied key (R5/F5b): `NodeKey.parse` raises `Invalid NodeKey: $key`
-        // and pre-R5 we interpolated that message verbatim.
-        val key =
-            try {
-                NodeKey.parse(request.nodeKey)
-            } catch (_: IllegalArgumentException) {
-                // #199 taxonomy: invalidSelector → 400; body carries the stable category name.
-                call.respond(
-                    SpectreErrorCategory.httpStatus(SpectreErrorCategory.InvalidSelector),
-                    SpectreErrorCategory.InvalidSelector.wireName,
-                )
-                return@post
-            }
-        val node = automator.allNodes().firstOrNull { it.key == key }
-        if (node == null) {
-            // R5/F5c: do NOT echo `request.nodeKey` here — caller-controlled content must
-            // not be reflected in the response body. #199 taxonomy: nodeNotFound → 404.
-            call.respond(
-                SpectreErrorCategory.httpStatus(SpectreErrorCategory.NodeNotFound),
-                SpectreErrorCategory.NodeNotFound.wireName,
-            )
-            return@post
-        }
-        try {
-            automator.click(node)
-            call.respond(HttpStatusCode.NoContent)
-        } catch (ex: kotlinx.coroutines.CancellationException) {
-            throw ex
-        } catch (_: IllegalStateException) {
-            // Robot/TCC refusals → inputRejected (409). CancellationException rethrown above.
-            call.respond(
-                SpectreErrorCategory.httpStatus(SpectreErrorCategory.InputRejected),
-                SpectreErrorCategory.InputRejected.wireName,
-            )
-        }
-    }
-
-    post("/typeText") {
-        val request = receiveOrRespond400<TypeTextRequest>(call, "TypeTextRequest") ?: return@post
-        try {
-            automator.typeText(request.text)
-            call.respond(HttpStatusCode.NoContent)
-        } catch (ex: kotlinx.coroutines.CancellationException) {
-            throw ex
-        } catch (_: IllegalStateException) {
-            // #199: Robot/TCC/focus refusals → inputRejected (409), not an opaque 500.
-            call.respond(
-                SpectreErrorCategory.httpStatus(SpectreErrorCategory.InputRejected),
-                SpectreErrorCategory.InputRejected.wireName,
-            )
-        }
-    }
+    inputRoutes(automator)
 
     get("/screenshot") {
         try {
@@ -179,6 +130,132 @@ private fun Route.spectreRoutes(automator: ComposeAutomator) {
     }
 }
 
+/** Input verbs (#203) — kept out of [spectreRoutes] for length/complexity budgets. */
+private fun Route.inputRoutes(automator: ComposeAutomator) {
+    post("/click") {
+        automator.refreshWindows()
+        val request = receiveOrRespond400<ClickRequest>(call, "ClickRequest") ?: return@post
+        val node = resolveNodeOrRespond(call, automator, request.nodeKey) ?: return@post
+        respondInputVoid(call) { automator.click(node) }
+    }
+
+    post("/doubleClick") {
+        automator.refreshWindows()
+        val request =
+            receiveOrRespond400<DoubleClickRequest>(call, "DoubleClickRequest") ?: return@post
+        val node = resolveNodeOrRespond(call, automator, request.nodeKey) ?: return@post
+        respondInputVoid(call) { automator.doubleClick(node) }
+    }
+
+    post("/longClick") {
+        automator.refreshWindows()
+        val request = receiveOrRespond400<LongClickRequest>(call, "LongClickRequest") ?: return@post
+        if (request.holdForMs <= 0L) {
+            call.respond(
+                SpectreErrorCategory.httpStatus(SpectreErrorCategory.InvalidSelector),
+                SpectreErrorCategory.InvalidSelector.wireName,
+            )
+            return@post
+        }
+        val node = resolveNodeOrRespond(call, automator, request.nodeKey) ?: return@post
+        respondInputVoid(call) { automator.longClick(node, request.holdForMs.milliseconds) }
+    }
+
+    post("/swipe") {
+        automator.refreshWindows()
+        val request = receiveOrRespond400<SwipeRequest>(call, "SwipeRequest") ?: return@post
+        handleSwipePost(call, automator, request)
+    }
+
+    post("/scrollWheel") {
+        automator.refreshWindows()
+        val request =
+            receiveOrRespond400<ScrollWheelRequest>(call, "ScrollWheelRequest") ?: return@post
+        val node = resolveNodeOrRespond(call, automator, request.nodeKey) ?: return@post
+        respondInputVoid(call) { automator.scrollWheel(node, request.wheelClicks) }
+    }
+
+    post("/pressKey") {
+        val request = receiveOrRespond400<PressKeyRequest>(call, "PressKeyRequest") ?: return@post
+        if (request.keyCode <= 0) {
+            respondInvalidSelector(call)
+            return@post
+        }
+        respondInputVoid(call) { automator.pressKey(request.keyCode, request.modifiers) }
+    }
+
+    post("/typeText") {
+        val request = receiveOrRespond400<TypeTextRequest>(call, "TypeTextRequest") ?: return@post
+        respondInputVoid(call) { automator.typeText(request.text) }
+    }
+}
+
+private suspend fun handleSwipePost(
+    call: io.ktor.server.application.ApplicationCall,
+    automator: ComposeAutomator,
+    request: SwipeRequest,
+) {
+    if (request.steps <= 0 || request.durationMs <= 0L) {
+        respondInvalidSelector(call)
+        return
+    }
+    val nodeMode = request.fromNodeKey != null || request.toNodeKey != null
+    val coordMode =
+        request.startX != null ||
+            request.startY != null ||
+            request.endX != null ||
+            request.endY != null
+    if (nodeMode == coordMode) {
+        respondInvalidSelector(call)
+        return
+    }
+    if (nodeMode) handleNodeSwipePost(call, automator, request)
+    else handleCoordSwipePost(call, automator, request)
+}
+
+private suspend fun handleNodeSwipePost(
+    call: io.ktor.server.application.ApplicationCall,
+    automator: ComposeAutomator,
+    request: SwipeRequest,
+) {
+    val fromKey = request.fromNodeKey
+    val toKey = request.toNodeKey
+    if (fromKey == null || toKey == null) {
+        respondInvalidSelector(call)
+        return
+    }
+    val from = resolveNodeOrRespond(call, automator, fromKey) ?: return
+    val to = resolveNodeOrRespond(call, automator, toKey) ?: return
+    respondInputVoid(call) {
+        automator.swipe(from, to, request.steps, request.durationMs.milliseconds)
+    }
+}
+
+private suspend fun handleCoordSwipePost(
+    call: io.ktor.server.application.ApplicationCall,
+    automator: ComposeAutomator,
+    request: SwipeRequest,
+) {
+    val startX = request.startX
+    val startY = request.startY
+    val endX = request.endX
+    val endY = request.endY
+    if (startX == null || startY == null || endX == null || endY == null) {
+        respondInvalidSelector(call)
+        return
+    }
+    respondInputVoid(call) {
+        automator.swipe(startX, startY, endX, endY, request.steps, request.durationMs.milliseconds)
+    }
+}
+
+private suspend fun respondInvalidSelector(call: io.ktor.server.application.ApplicationCall) {
+    call.respond(
+        SpectreErrorCategory.httpStatus(SpectreErrorCategory.InvalidSelector),
+        SpectreErrorCategory.InvalidSelector.wireName,
+    )
+}
+
 internal fun BufferedImage.toScreenshotResponse(): ScreenshotResponse {
     val bytes =
         ByteArrayOutputStream().use { stream ->
@@ -190,6 +267,54 @@ internal fun BufferedImage.toScreenshotResponse(): ScreenshotResponse {
         width = width,
         height = height,
     )
+}
+
+/**
+ * Looks up a node by wire key. Responds with invalidSelector (malformed key) or nodeNotFound and
+ * returns null when the caller should stop. Does not echo the raw key in the body (R5).
+ */
+private suspend fun resolveNodeOrRespond(
+    call: io.ktor.server.application.ApplicationCall,
+    automator: ComposeAutomator,
+    nodeKey: String,
+): AutomatorNode? {
+    val key =
+        try {
+            NodeKey.parse(nodeKey)
+        } catch (_: IllegalArgumentException) {
+            call.respond(
+                SpectreErrorCategory.httpStatus(SpectreErrorCategory.InvalidSelector),
+                SpectreErrorCategory.InvalidSelector.wireName,
+            )
+            return null
+        }
+    val node = automator.allNodes().firstOrNull { it.key == key }
+    if (node == null) {
+        call.respond(
+            SpectreErrorCategory.httpStatus(SpectreErrorCategory.NodeNotFound),
+            SpectreErrorCategory.NodeNotFound.wireName,
+        )
+        return null
+    }
+    return node
+}
+
+/** Runs a real-input suspend block; maps Robot/TCC refusals to inputRejected. */
+private suspend fun respondInputVoid(
+    call: io.ktor.server.application.ApplicationCall,
+    block: suspend () -> Unit,
+) {
+    try {
+        block()
+        call.respond(HttpStatusCode.NoContent)
+    } catch (ex: kotlinx.coroutines.CancellationException) {
+        throw ex
+    } catch (_: IllegalStateException) {
+        call.respond(
+            SpectreErrorCategory.httpStatus(SpectreErrorCategory.InputRejected),
+            SpectreErrorCategory.InputRejected.wireName,
+        )
+    }
 }
 
 /**

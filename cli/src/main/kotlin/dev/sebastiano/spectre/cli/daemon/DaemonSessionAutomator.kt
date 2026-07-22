@@ -10,6 +10,7 @@ import java.time.Clock
 
 /** Operation surface retained by one daemon session. */
 @OptIn(ExperimentalSpectreAgentApi::class)
+@Suppress("TooManyFunctions") // Session surface grows with transport parity (#203).
 internal interface DaemonSessionAutomator : AutoCloseable {
     @Throws(IOException::class) fun windows(): List<WindowSummaryDto>
 
@@ -18,6 +19,26 @@ internal interface DaemonSessionAutomator : AutoCloseable {
     @Throws(IOException::class) fun findByTestTag(tag: String): List<NodeSnapshotDto>
 
     @Throws(IOException::class) fun click(nodeKey: String)
+
+    @Throws(IOException::class) fun doubleClick(nodeKey: String)
+
+    @Throws(IOException::class) fun longClick(nodeKey: String, holdForMs: Long = 500)
+
+    @Throws(IOException::class)
+    fun swipe(
+        fromNodeKey: String? = null,
+        toNodeKey: String? = null,
+        startX: Int? = null,
+        startY: Int? = null,
+        endX: Int? = null,
+        endY: Int? = null,
+        steps: Int = 12,
+        durationMs: Long = 200,
+    )
+
+    @Throws(IOException::class) fun scrollWheel(nodeKey: String, wheelClicks: Int)
+
+    @Throws(IOException::class) fun pressKey(keyCode: Int, modifiers: Int = 0)
 
     @Throws(IOException::class) fun typeText(text: String)
 
@@ -59,6 +80,7 @@ internal interface DaemonSessionAutomator : AutoCloseable {
 }
 
 @OptIn(ExperimentalSpectreAgentApi::class)
+@Suppress("TooManyFunctions") // Implements DaemonSessionAutomator 1:1.
 internal class AttachedDaemonSession(
     private val delegate: AttachedAutomator,
     sessionId: String,
@@ -80,6 +102,45 @@ internal class AttachedDaemonSession(
     override fun findByTestTag(tag: String): List<NodeSnapshotDto> = delegate.findByTestTag(tag)
 
     override fun click(nodeKey: String): Unit = delegate.click(nodeKey)
+
+    override fun doubleClick(nodeKey: String): Unit = delegate.doubleClick(nodeKey)
+
+    override fun longClick(nodeKey: String, holdForMs: Long): Unit =
+        delegate.longClick(nodeKey, holdForMs)
+
+    override fun swipe(
+        fromNodeKey: String?,
+        toNodeKey: String?,
+        startX: Int?,
+        startY: Int?,
+        endX: Int?,
+        endY: Int?,
+        steps: Int,
+        durationMs: Long,
+    ) {
+        val nodeMode = fromNodeKey != null || toNodeKey != null
+        val coordMode = startX != null || startY != null || endX != null || endY != null
+        if (nodeMode && coordMode) {
+            throw IOException("swipe accepts either node keys or coordinates, not both")
+        }
+        if (fromNodeKey != null && toNodeKey != null) {
+            delegate.swipe(fromNodeKey, toNodeKey, steps, durationMs)
+            return
+        }
+        if (startX != null && startY != null && endX != null && endY != null) {
+            delegate.swipe(startX, startY, endX, endY, steps, durationMs)
+            return
+        }
+        throw IOException(
+            "swipe requires fromNodeKey+toNodeKey or startX/startY/endX/endY coordinates"
+        )
+    }
+
+    override fun scrollWheel(nodeKey: String, wheelClicks: Int): Unit =
+        delegate.scrollWheel(nodeKey, wheelClicks)
+
+    override fun pressKey(keyCode: Int, modifiers: Int): Unit =
+        delegate.pressKey(keyCode, modifiers)
 
     override fun typeText(text: String): Unit = delegate.typeText(text)
 

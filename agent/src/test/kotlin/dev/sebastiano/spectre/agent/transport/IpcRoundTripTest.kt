@@ -475,6 +475,11 @@ class IpcRoundTripTest {
             is AgentRequest.FindByRole,
             is AgentRequest.WaitForNode -> AgentResponse.Nodes(emptyList())
             is AgentRequest.Click,
+            is AgentRequest.DoubleClick,
+            is AgentRequest.LongClick,
+            is AgentRequest.Swipe,
+            is AgentRequest.ScrollWheel,
+            is AgentRequest.PressKey,
             is AgentRequest.TypeText,
             is AgentRequest.Cancel,
             is AgentRequest.WaitForVisualIdle -> AgentResponse.Ok

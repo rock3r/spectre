@@ -99,6 +99,15 @@ internal class ReflectiveAutomatorHandler(
 
     private val suspendInvoker = BlockingSuspendInvoker()
     private val waitOps = WaitOpsReflectiveMapper(automator, suspendInvoker, ::mapAutomatorNode)
+    private val inputOps =
+        InputOpsReflectiveMapper(
+            automator = automator,
+            suspendInvoker = suspendInvoker,
+            refreshWindows = { refreshWindowsMethod.invoke(automator) },
+            allNodes = { allNodesMethod.invoke(automator) as List<*> },
+            extractKey = ::extractKey,
+            isTargetJvmFocused = isTargetJvmFocused,
+        )
 
     override fun handle(request: AgentRequest): AgentResponse =
         try {
@@ -132,6 +141,11 @@ internal class ReflectiveAutomatorHandler(
                 handleFindByContentDescription(request.description)
             is AgentRequest.FindByRole -> handleFindByRole(request.role)
             is AgentRequest.Click -> handleClick(request.nodeKey)
+            is AgentRequest.DoubleClick -> inputOps.handleDoubleClick(request.nodeKey)
+            is AgentRequest.LongClick -> inputOps.handleLongClick(request)
+            is AgentRequest.Swipe -> inputOps.handleSwipe(request)
+            is AgentRequest.ScrollWheel -> inputOps.handleScrollWheel(request)
+            is AgentRequest.PressKey -> inputOps.handlePressKey(request)
             is AgentRequest.TypeText -> handleTypeText(request.text)
             is AgentRequest.Screenshot -> handleScreenshot(request)
             is AgentRequest.Capture ->

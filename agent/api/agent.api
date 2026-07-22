@@ -89,14 +89,24 @@ public final class dev/sebastiano/spectre/agent/AttachedAutomator : java/lang/Au
 	public static synthetic fun capture$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;IILjava/lang/Object;)Ldev/sebastiano/spectre/agent/AtomicCaptureResult;
 	public final fun click (Ljava/lang/String;)V
 	public fun close ()V
+	public final fun doubleClick (Ljava/lang/String;)V
 	public final fun findByContentDescription (Ljava/lang/String;)Ljava/util/List;
 	public final fun findByRole (Ljava/lang/String;)Ljava/util/List;
 	public final fun findByTestTag (Ljava/lang/String;)Ljava/util/List;
 	public final fun findByText (Ljava/lang/String;Z)Ljava/util/List;
 	public static synthetic fun findByText$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/String;ZILjava/lang/Object;)Ljava/util/List;
 	public final fun getPid ()J
+	public final fun longClick (Ljava/lang/String;J)V
+	public static synthetic fun longClick$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/String;JILjava/lang/Object;)V
+	public final fun pressKey (II)V
+	public static synthetic fun pressKey$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;IIILjava/lang/Object;)V
 	public final fun screenshot (Ljava/lang/Integer;Ljava/lang/String;Z)[B
 	public static synthetic fun screenshot$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/Integer;Ljava/lang/String;ZILjava/lang/Object;)[B
+	public final fun scrollWheel (Ljava/lang/String;I)V
+	public final fun swipe (IIIIIJ)V
+	public final fun swipe (Ljava/lang/String;Ljava/lang/String;IJ)V
+	public static synthetic fun swipe$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;IIIIIJILjava/lang/Object;)V
+	public static synthetic fun swipe$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/String;Ljava/lang/String;IJILjava/lang/Object;)V
 	public final fun typeText (Ljava/lang/String;)V
 	public final fun waitForNode (Ljava/lang/String;Ljava/lang/String;JJ)Ldev/sebastiano/spectre/agent/transport/NodeSnapshotDto;
 	public static synthetic fun waitForNode$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/String;Ljava/lang/String;JJILjava/lang/Object;)Ldev/sebastiano/spectre/agent/transport/NodeSnapshotDto;

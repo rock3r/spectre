@@ -4,9 +4,14 @@ package dev.sebastiano.spectre.server
 
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.server.dto.ClickRequest
+import dev.sebastiano.spectre.server.dto.DoubleClickRequest
+import dev.sebastiano.spectre.server.dto.LongClickRequest
 import dev.sebastiano.spectre.server.dto.NodeSnapshotDto
 import dev.sebastiano.spectre.server.dto.NodesResponse
+import dev.sebastiano.spectre.server.dto.PressKeyRequest
 import dev.sebastiano.spectre.server.dto.ScreenshotResponse
+import dev.sebastiano.spectre.server.dto.ScrollWheelRequest
+import dev.sebastiano.spectre.server.dto.SwipeRequest
 import dev.sebastiano.spectre.server.dto.TypeTextRequest
 import dev.sebastiano.spectre.server.dto.WindowSummaryDto
 import dev.sebastiano.spectre.server.dto.WindowsResponse
@@ -38,6 +43,7 @@ import javax.imageio.ImageIO
  * { ... }` from `kotlin.AutoCloseable` for scoped lifecycles.
  */
 @ExperimentalSpectreHttpApi
+@Suppress("TooManyFunctions") // Mirrors remote input surface (#203).
 public class HttpComposeAutomator internal constructor(private val baseUrl: String) :
     AutoCloseable {
 
@@ -83,15 +89,67 @@ public class HttpComposeAutomator internal constructor(private val baseUrl: Stri
      * [IllegalStateException] on any non-2xx response.
      */
     public suspend fun click(nodeKey: String) {
-        val response =
-            client.post("$baseUrl/click") {
-                contentType(ContentType.Application.Json)
-                setBody(ClickRequest(nodeKey = nodeKey))
-            }
-        // R5/F5d: keep the status code in the message, but do NOT interpolate
-        // `response.bodyAsText()` — a malicious or unexpected peer can reflect arbitrary
-        // body content into logs/test output through this exception message.
-        check(response.status.isSuccess()) { "click failed: ${response.status}" }
+        postInput("click", ClickRequest(nodeKey = nodeKey))
+    }
+
+    /** Double-click (#203). */
+    public suspend fun doubleClick(nodeKey: String) {
+        postInput("doubleClick", DoubleClickRequest(nodeKey = nodeKey))
+    }
+
+    /** Long-press (#203). [holdForMs] defaults to 500, matching in-process `longClick`. */
+    public suspend fun longClick(nodeKey: String, holdForMs: Long = 500) {
+        postInput("longClick", LongClickRequest(nodeKey = nodeKey, holdForMs = holdForMs))
+    }
+
+    /** Node-to-node drag (#203). */
+    public suspend fun swipe(
+        fromNodeKey: String,
+        toNodeKey: String,
+        steps: Int = 12,
+        durationMs: Long = 200,
+    ) {
+        postInput(
+            "swipe",
+            SwipeRequest(
+                fromNodeKey = fromNodeKey,
+                toNodeKey = toNodeKey,
+                steps = steps,
+                durationMs = durationMs,
+            ),
+        )
+    }
+
+    /** Coordinate swipe in screen space (#203). */
+    public suspend fun swipe(
+        startX: Int,
+        startY: Int,
+        endX: Int,
+        endY: Int,
+        steps: Int = 12,
+        durationMs: Long = 200,
+    ) {
+        postInput(
+            "swipe",
+            SwipeRequest(
+                startX = startX,
+                startY = startY,
+                endX = endX,
+                endY = endY,
+                steps = steps,
+                durationMs = durationMs,
+            ),
+        )
+    }
+
+    /** Mouse-wheel scroll at [nodeKey]'s centre (#203). */
+    public suspend fun scrollWheel(nodeKey: String, wheelClicks: Int) {
+        postInput("scrollWheel", ScrollWheelRequest(nodeKey = nodeKey, wheelClicks = wheelClicks))
+    }
+
+    /** Raw key event with optional AWT modifier mask (#203). */
+    public suspend fun pressKey(keyCode: Int, modifiers: Int = 0) {
+        postInput("pressKey", PressKeyRequest(keyCode = keyCode, modifiers = modifiers))
     }
 
     /**
@@ -100,13 +158,19 @@ public class HttpComposeAutomator internal constructor(private val baseUrl: Stri
      * non-2xx response.
      */
     public suspend fun typeText(text: String) {
+        postInput("typeText", TypeTextRequest(text = text))
+    }
+
+    private suspend fun postInput(path: String, body: Any) {
         val response =
-            client.post("$baseUrl/typeText") {
+            client.post("$baseUrl/$path") {
                 contentType(ContentType.Application.Json)
-                setBody(TypeTextRequest(text = text))
+                setBody(body)
             }
-        // R5/F5d: see `click` above — peer body deliberately not echoed.
-        check(response.status.isSuccess()) { "typeText failed: ${response.status}" }
+        // R5/F5d: keep the status code in the message, but do NOT interpolate
+        // `response.bodyAsText()` — a malicious or unexpected peer can reflect arbitrary
+        // body content into logs/test output through this exception message.
+        check(response.status.isSuccess()) { "$path failed: ${response.status}" }
     }
 
     /**

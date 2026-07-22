@@ -55,6 +55,41 @@ public data class RectangleDto(val x: Double, val y: Double, val width: Double, 
 /** Request body for `POST /click`. */
 @ExperimentalSpectreHttpApi @Serializable public data class ClickRequest(val nodeKey: String)
 
+/** Request body for `POST /doubleClick` (#203). */
+@ExperimentalSpectreHttpApi @Serializable public data class DoubleClickRequest(val nodeKey: String)
+
+/** Request body for `POST /longClick` (#203). */
+@ExperimentalSpectreHttpApi
+@Serializable
+public data class LongClickRequest(val nodeKey: String, val holdForMs: Long = 500)
+
+/**
+ * Request body for `POST /swipe` (#203). Either node-to-node ([fromNodeKey]/[toNodeKey]) or screen
+ * coordinates ([startX]/[startY]/[endX]/[endY]).
+ */
+@ExperimentalSpectreHttpApi
+@Serializable
+public data class SwipeRequest(
+    val fromNodeKey: String? = null,
+    val toNodeKey: String? = null,
+    val startX: Int? = null,
+    val startY: Int? = null,
+    val endX: Int? = null,
+    val endY: Int? = null,
+    val steps: Int = 12,
+    val durationMs: Long = 200,
+)
+
+/** Request body for `POST /scrollWheel` (#203). */
+@ExperimentalSpectreHttpApi
+@Serializable
+public data class ScrollWheelRequest(val nodeKey: String, val wheelClicks: Int)
+
+/** Request body for `POST /pressKey` (#203). */
+@ExperimentalSpectreHttpApi
+@Serializable
+public data class PressKeyRequest(val keyCode: Int, val modifiers: Int = 0)
+
 /** Request body for `POST /typeText`. */
 @ExperimentalSpectreHttpApi @Serializable public data class TypeTextRequest(val text: String)
 

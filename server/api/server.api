@@ -7,12 +7,22 @@ public final class dev/sebastiano/spectre/server/HttpComposeAutomator : java/lan
 	public final fun allNodes (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun click (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun close ()V
+	public final fun doubleClick (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun findByContentDescription (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun findByRole (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun findByTestTag (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun findByText (Ljava/lang/String;ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun findByText$default (Ldev/sebastiano/spectre/server/HttpComposeAutomator;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun longClick (Ljava/lang/String;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun longClick$default (Ldev/sebastiano/spectre/server/HttpComposeAutomator;Ljava/lang/String;JLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun pressKey (IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun pressKey$default (Ldev/sebastiano/spectre/server/HttpComposeAutomator;IILkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun screenshot (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun scrollWheel (Ljava/lang/String;ILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun swipe (IIIIIJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun swipe (Ljava/lang/String;Ljava/lang/String;IJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun swipe$default (Ldev/sebastiano/spectre/server/HttpComposeAutomator;IIIIIJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun swipe$default (Ldev/sebastiano/spectre/server/HttpComposeAutomator;Ljava/lang/String;Ljava/lang/String;IJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun typeText (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun windows (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
@@ -76,6 +86,63 @@ public final synthetic class dev/sebastiano/spectre/server/dto/ClickRequest$$ser
 }
 
 public final class dev/sebastiano/spectre/server/dto/ClickRequest$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/server/dto/DoubleClickRequest {
+	public static final field Companion Ldev/sebastiano/spectre/server/dto/DoubleClickRequest$Companion;
+	public fun <init> (Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;)Ldev/sebastiano/spectre/server/dto/DoubleClickRequest;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/server/dto/DoubleClickRequest;Ljava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/server/dto/DoubleClickRequest;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getNodeKey ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final synthetic class dev/sebastiano/spectre/server/dto/DoubleClickRequest$$serializer : kotlinx/serialization/internal/GeneratedSerializer {
+	public static final field INSTANCE Ldev/sebastiano/spectre/server/dto/DoubleClickRequest$$serializer;
+	public final fun childSerializers ()[Lkotlinx/serialization/KSerializer;
+	public final fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ldev/sebastiano/spectre/server/dto/DoubleClickRequest;
+	public synthetic fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ljava/lang/Object;
+	public final fun getDescriptor ()Lkotlinx/serialization/descriptors/SerialDescriptor;
+	public final fun serialize (Lkotlinx/serialization/encoding/Encoder;Ldev/sebastiano/spectre/server/dto/DoubleClickRequest;)V
+	public synthetic fun serialize (Lkotlinx/serialization/encoding/Encoder;Ljava/lang/Object;)V
+	public fun typeParametersSerializers ()[Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/server/dto/DoubleClickRequest$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/server/dto/LongClickRequest {
+	public static final field Companion Ldev/sebastiano/spectre/server/dto/LongClickRequest$Companion;
+	public fun <init> (Ljava/lang/String;J)V
+	public synthetic fun <init> (Ljava/lang/String;JILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()J
+	public final fun copy (Ljava/lang/String;J)Ldev/sebastiano/spectre/server/dto/LongClickRequest;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/server/dto/LongClickRequest;Ljava/lang/String;JILjava/lang/Object;)Ldev/sebastiano/spectre/server/dto/LongClickRequest;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getHoldForMs ()J
+	public final fun getNodeKey ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final synthetic class dev/sebastiano/spectre/server/dto/LongClickRequest$$serializer : kotlinx/serialization/internal/GeneratedSerializer {
+	public static final field INSTANCE Ldev/sebastiano/spectre/server/dto/LongClickRequest$$serializer;
+	public final fun childSerializers ()[Lkotlinx/serialization/KSerializer;
+	public final fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ldev/sebastiano/spectre/server/dto/LongClickRequest;
+	public synthetic fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ljava/lang/Object;
+	public final fun getDescriptor ()Lkotlinx/serialization/descriptors/SerialDescriptor;
+	public final fun serialize (Lkotlinx/serialization/encoding/Encoder;Ldev/sebastiano/spectre/server/dto/LongClickRequest;)V
+	public synthetic fun serialize (Lkotlinx/serialization/encoding/Encoder;Ljava/lang/Object;)V
+	public fun typeParametersSerializers ()[Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/server/dto/LongClickRequest$Companion {
 	public final fun serializer ()Lkotlinx/serialization/KSerializer;
 }
 
@@ -154,6 +221,36 @@ public final class dev/sebastiano/spectre/server/dto/NodesResponse$Companion {
 	public final fun serializer ()Lkotlinx/serialization/KSerializer;
 }
 
+public final class dev/sebastiano/spectre/server/dto/PressKeyRequest {
+	public static final field Companion Ldev/sebastiano/spectre/server/dto/PressKeyRequest$Companion;
+	public fun <init> (II)V
+	public synthetic fun <init> (IIILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()I
+	public final fun component2 ()I
+	public final fun copy (II)Ldev/sebastiano/spectre/server/dto/PressKeyRequest;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/server/dto/PressKeyRequest;IIILjava/lang/Object;)Ldev/sebastiano/spectre/server/dto/PressKeyRequest;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getKeyCode ()I
+	public final fun getModifiers ()I
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final synthetic class dev/sebastiano/spectre/server/dto/PressKeyRequest$$serializer : kotlinx/serialization/internal/GeneratedSerializer {
+	public static final field INSTANCE Ldev/sebastiano/spectre/server/dto/PressKeyRequest$$serializer;
+	public final fun childSerializers ()[Lkotlinx/serialization/KSerializer;
+	public final fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ldev/sebastiano/spectre/server/dto/PressKeyRequest;
+	public synthetic fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ljava/lang/Object;
+	public final fun getDescriptor ()Lkotlinx/serialization/descriptors/SerialDescriptor;
+	public final fun serialize (Lkotlinx/serialization/encoding/Encoder;Ldev/sebastiano/spectre/server/dto/PressKeyRequest;)V
+	public synthetic fun serialize (Lkotlinx/serialization/encoding/Encoder;Ljava/lang/Object;)V
+	public fun typeParametersSerializers ()[Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/server/dto/PressKeyRequest$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
 public final class dev/sebastiano/spectre/server/dto/RectangleDto {
 	public static final field Companion Ldev/sebastiano/spectre/server/dto/RectangleDto$Companion;
 	public fun <init> (DDDD)V
@@ -215,6 +312,78 @@ public final synthetic class dev/sebastiano/spectre/server/dto/ScreenshotRespons
 }
 
 public final class dev/sebastiano/spectre/server/dto/ScreenshotResponse$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/server/dto/ScrollWheelRequest {
+	public static final field Companion Ldev/sebastiano/spectre/server/dto/ScrollWheelRequest$Companion;
+	public fun <init> (Ljava/lang/String;I)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()I
+	public final fun copy (Ljava/lang/String;I)Ldev/sebastiano/spectre/server/dto/ScrollWheelRequest;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/server/dto/ScrollWheelRequest;Ljava/lang/String;IILjava/lang/Object;)Ldev/sebastiano/spectre/server/dto/ScrollWheelRequest;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getNodeKey ()Ljava/lang/String;
+	public final fun getWheelClicks ()I
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final synthetic class dev/sebastiano/spectre/server/dto/ScrollWheelRequest$$serializer : kotlinx/serialization/internal/GeneratedSerializer {
+	public static final field INSTANCE Ldev/sebastiano/spectre/server/dto/ScrollWheelRequest$$serializer;
+	public final fun childSerializers ()[Lkotlinx/serialization/KSerializer;
+	public final fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ldev/sebastiano/spectre/server/dto/ScrollWheelRequest;
+	public synthetic fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ljava/lang/Object;
+	public final fun getDescriptor ()Lkotlinx/serialization/descriptors/SerialDescriptor;
+	public final fun serialize (Lkotlinx/serialization/encoding/Encoder;Ldev/sebastiano/spectre/server/dto/ScrollWheelRequest;)V
+	public synthetic fun serialize (Lkotlinx/serialization/encoding/Encoder;Ljava/lang/Object;)V
+	public fun typeParametersSerializers ()[Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/server/dto/ScrollWheelRequest$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/server/dto/SwipeRequest {
+	public static final field Companion Ldev/sebastiano/spectre/server/dto/SwipeRequest$Companion;
+	public fun <init> ()V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;IJ)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;IJILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/Integer;
+	public final fun component4 ()Ljava/lang/Integer;
+	public final fun component5 ()Ljava/lang/Integer;
+	public final fun component6 ()Ljava/lang/Integer;
+	public final fun component7 ()I
+	public final fun component8 ()J
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;IJ)Ldev/sebastiano/spectre/server/dto/SwipeRequest;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/server/dto/SwipeRequest;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;IJILjava/lang/Object;)Ldev/sebastiano/spectre/server/dto/SwipeRequest;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDurationMs ()J
+	public final fun getEndX ()Ljava/lang/Integer;
+	public final fun getEndY ()Ljava/lang/Integer;
+	public final fun getFromNodeKey ()Ljava/lang/String;
+	public final fun getStartX ()Ljava/lang/Integer;
+	public final fun getStartY ()Ljava/lang/Integer;
+	public final fun getSteps ()I
+	public final fun getToNodeKey ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final synthetic class dev/sebastiano/spectre/server/dto/SwipeRequest$$serializer : kotlinx/serialization/internal/GeneratedSerializer {
+	public static final field INSTANCE Ldev/sebastiano/spectre/server/dto/SwipeRequest$$serializer;
+	public final fun childSerializers ()[Lkotlinx/serialization/KSerializer;
+	public final fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ldev/sebastiano/spectre/server/dto/SwipeRequest;
+	public synthetic fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ljava/lang/Object;
+	public final fun getDescriptor ()Lkotlinx/serialization/descriptors/SerialDescriptor;
+	public final fun serialize (Lkotlinx/serialization/encoding/Encoder;Ldev/sebastiano/spectre/server/dto/SwipeRequest;)V
+	public synthetic fun serialize (Lkotlinx/serialization/encoding/Encoder;Ljava/lang/Object;)V
+	public fun typeParametersSerializers ()[Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/server/dto/SwipeRequest$Companion {
 	public final fun serializer ()Lkotlinx/serialization/KSerializer;
 }
 

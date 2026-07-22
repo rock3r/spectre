@@ -48,6 +48,25 @@ internal class TestDaemonSessionAutomator(
 
     override fun click(nodeKey: String): Unit = clickAction(nodeKey)
 
+    override fun doubleClick(nodeKey: String): Unit = Unit
+
+    override fun longClick(nodeKey: String, holdForMs: Long): Unit = Unit
+
+    override fun swipe(
+        fromNodeKey: String?,
+        toNodeKey: String?,
+        startX: Int?,
+        startY: Int?,
+        endX: Int?,
+        endY: Int?,
+        steps: Int,
+        durationMs: Long,
+    ): Unit = Unit
+
+    override fun scrollWheel(nodeKey: String, wheelClicks: Int): Unit = Unit
+
+    override fun pressKey(keyCode: Int, modifiers: Int): Unit = Unit
+
     override fun typeText(text: String): Unit = typeTextAction(text)
 
     override fun screenshot(windowIndex: Int?, surfaceId: String?, fullscreen: Boolean): ByteArray =

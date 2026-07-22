@@ -634,6 +634,54 @@ class ReflectiveAutomatorHandlerMappingTest {
         assertEquals(AgentResponse.Ok, response)
         assertEquals(listOf("x"), fake.typedTexts)
     }
+
+    @Test
+    fun `DoubleClick and ScrollWheel dispatch to the matching node`() {
+        val fake =
+            FakeSuspendCapableAutomator(allNodesValue = listOf(FakeAutomatorNode(keyValue = "btn")))
+        val handler = ReflectiveAutomatorHandler(fake, isTargetJvmFocused = { true })
+
+        assertEquals(AgentResponse.Ok, handler.handle(AgentRequest.DoubleClick("btn")))
+        assertEquals(
+            AgentResponse.Ok,
+            handler.handle(AgentRequest.ScrollWheel(nodeKey = "btn", wheelClicks = 2)),
+        )
+        assertEquals(listOf("btn"), fake.doubleClickedKeys)
+        assertEquals(listOf("btn" to 2), fake.scrollWheels)
+    }
+
+    @Test
+    fun `PressKey refuses when target JVM lacks OS focus`() {
+        val fake = FakeSuspendCapableAutomator()
+        val handler = ReflectiveAutomatorHandler(fake, isTargetJvmFocused = { false })
+
+        val response = handler.handle(AgentRequest.PressKey(keyCode = 10, modifiers = 0))
+        check(response is AgentResponse.Error)
+        assertEquals(
+            dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InputRejected.wireName,
+            response.category,
+        )
+    }
+
+    @Test
+    fun `Swipe node-to-node resolves both keys`() {
+        val from = FakeAutomatorNode(keyValue = "from")
+        val to = FakeAutomatorNode(keyValue = "to")
+        val fake = FakeSuspendCapableAutomator(allNodesValue = listOf(from, to))
+        val handler = ReflectiveAutomatorHandler(fake)
+
+        val response =
+            handler.handle(
+                AgentRequest.Swipe(
+                    fromNodeKey = "from",
+                    toNodeKey = "to",
+                    steps = 5,
+                    durationMs = 100,
+                )
+            )
+        assertEquals(AgentResponse.Ok, response)
+        assertEquals(listOf("from" to "to"), fake.nodeSwipes)
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -861,6 +909,10 @@ private class FakeNodeWithoutVisible(
 
 private class FakeSuspendCapableAutomator(private val allNodesValue: List<Any> = emptyList()) {
     val typedTexts = mutableListOf<String>()
+    val doubleClickedKeys = mutableListOf<String>()
+    val scrollWheels = mutableListOf<Pair<String, Int>>()
+    val nodeSwipes = mutableListOf<Pair<String, String>>()
+    val pressKeys = mutableListOf<Pair<Int, Int>>()
 
     @Suppress("unused") fun refreshWindows() = Unit
 
@@ -876,8 +928,68 @@ private class FakeSuspendCapableAutomator(private val allNodesValue: List<Any> =
     fun click(node: Any, continuation: kotlin.coroutines.Continuation<Any?>): Any? = Unit
 
     @Suppress("unused", "UNUSED_PARAMETER")
+    fun doubleClick(node: Any, continuation: kotlin.coroutines.Continuation<Any?>): Any? {
+        doubleClickedKeys += nodeKey(node)
+        return Unit
+    }
+
+    @Suppress("unused", "UNUSED_PARAMETER")
+    fun longClick(
+        node: Any,
+        holdForNanos: Long,
+        continuation: kotlin.coroutines.Continuation<Any?>,
+    ): Any? = Unit
+
+    @Suppress("unused", "UNUSED_PARAMETER")
+    fun swipe(
+        from: Any,
+        to: Any,
+        steps: Int,
+        durationNanos: Long,
+        continuation: kotlin.coroutines.Continuation<Any?>,
+    ): Any? {
+        nodeSwipes += nodeKey(from) to nodeKey(to)
+        return Unit
+    }
+
+    @Suppress("unused", "UNUSED_PARAMETER")
+    fun swipe(
+        startX: Int,
+        startY: Int,
+        endX: Int,
+        endY: Int,
+        steps: Int,
+        durationNanos: Long,
+        continuation: kotlin.coroutines.Continuation<Any?>,
+    ): Any? = Unit
+
+    @Suppress("unused", "UNUSED_PARAMETER")
+    fun scrollWheel(
+        node: Any,
+        wheelClicks: Int,
+        continuation: kotlin.coroutines.Continuation<Any?>,
+    ): Any? {
+        scrollWheels += nodeKey(node) to wheelClicks
+        return Unit
+    }
+
+    @Suppress("unused", "UNUSED_PARAMETER")
+    fun pressKey(
+        keyCode: Int,
+        modifiers: Int,
+        continuation: kotlin.coroutines.Continuation<Any?>,
+    ): Any? {
+        pressKeys += keyCode to modifiers
+        return Unit
+    }
+
+    @Suppress("unused", "UNUSED_PARAMETER")
     fun typeText(text: String, continuation: kotlin.coroutines.Continuation<Any?>): Any? {
         typedTexts += text
         return Unit
     }
+
+    private fun nodeKey(node: Any): String =
+        node.javaClass.methods.first { it.name == "getKey" && it.parameterCount == 0 }.invoke(node)
+            as String
 }

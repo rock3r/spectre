@@ -41,6 +41,11 @@ internal constructor(
             is DaemonRequest.AllNodes,
             is DaemonRequest.FindByTestTag,
             is DaemonRequest.Click,
+            is DaemonRequest.DoubleClick,
+            is DaemonRequest.LongClick,
+            is DaemonRequest.Swipe,
+            is DaemonRequest.ScrollWheel,
+            is DaemonRequest.PressKey,
             is DaemonRequest.TypeText,
             is DaemonRequest.Screenshot,
             is DaemonRequest.Capture,
@@ -64,16 +69,13 @@ internal constructor(
                 invoke(request.sessionId) { automator ->
                     DaemonResponse.Nodes(request.sessionId, automator.findByTestTag(request.tag))
                 }
-            is DaemonRequest.Click ->
-                invoke(request.sessionId) { automator ->
-                    automator.click(request.nodeKey)
-                    DaemonResponse.Completed(request.sessionId)
-                }
-            is DaemonRequest.TypeText ->
-                invoke(request.sessionId) { automator ->
-                    automator.typeText(request.text)
-                    DaemonResponse.Completed(request.sessionId)
-                }
+            is DaemonRequest.Click,
+            is DaemonRequest.DoubleClick,
+            is DaemonRequest.LongClick,
+            is DaemonRequest.Swipe,
+            is DaemonRequest.ScrollWheel,
+            is DaemonRequest.PressKey,
+            is DaemonRequest.TypeText -> handleInputSessionCommand(request)
             is DaemonRequest.Screenshot ->
                 invoke(request.sessionId) { automator ->
                     DaemonResponse.Screenshot(
@@ -182,6 +184,55 @@ internal constructor(
     }
 
     private fun liveSessionIds(): Set<String> = sessionsByPid.values.map { it.sessionId }.toSet()
+
+    private fun handleInputSessionCommand(request: DaemonRequest): DaemonResponse =
+        when (request) {
+            is DaemonRequest.Click ->
+                invoke(request.sessionId) { automator ->
+                    automator.click(request.nodeKey)
+                    DaemonResponse.Completed(request.sessionId)
+                }
+            is DaemonRequest.DoubleClick ->
+                invoke(request.sessionId) { automator ->
+                    automator.doubleClick(request.nodeKey)
+                    DaemonResponse.Completed(request.sessionId)
+                }
+            is DaemonRequest.LongClick ->
+                invoke(request.sessionId) { automator ->
+                    automator.longClick(request.nodeKey, request.holdForMs)
+                    DaemonResponse.Completed(request.sessionId)
+                }
+            is DaemonRequest.Swipe ->
+                invoke(request.sessionId) { automator ->
+                    automator.swipe(
+                        fromNodeKey = request.fromNodeKey,
+                        toNodeKey = request.toNodeKey,
+                        startX = request.startX,
+                        startY = request.startY,
+                        endX = request.endX,
+                        endY = request.endY,
+                        steps = request.steps,
+                        durationMs = request.durationMs,
+                    )
+                    DaemonResponse.Completed(request.sessionId)
+                }
+            is DaemonRequest.ScrollWheel ->
+                invoke(request.sessionId) { automator ->
+                    automator.scrollWheel(request.nodeKey, request.wheelClicks)
+                    DaemonResponse.Completed(request.sessionId)
+                }
+            is DaemonRequest.PressKey ->
+                invoke(request.sessionId) { automator ->
+                    automator.pressKey(request.keyCode, request.modifiers)
+                    DaemonResponse.Completed(request.sessionId)
+                }
+            is DaemonRequest.TypeText ->
+                invoke(request.sessionId) { automator ->
+                    automator.typeText(request.text)
+                    DaemonResponse.Completed(request.sessionId)
+                }
+            else -> error("Not an input session command: ${request::class.simpleName}")
+        }
 
     private fun listSessions(): DaemonResponse =
         DaemonResponse.Sessions(
