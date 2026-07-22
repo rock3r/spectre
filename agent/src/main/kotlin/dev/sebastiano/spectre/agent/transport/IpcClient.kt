@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.agent.transport
 
+import dev.sebastiano.spectre.agent.SpectreAgentException
 import java.io.EOFException
 import java.io.IOException
 import java.io.InputStream
@@ -54,21 +55,30 @@ internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) 
             when (ack) {
                 is AgentResponse.HelloAck -> {
                     if (ack.protocolVersion != ProtocolVersion.CURRENT) {
-                        throw IOException(
-                            "Agent protocol mismatch: runtime advertised ${ack.protocolVersion}, " +
-                                "client expects ${ProtocolVersion.CURRENT}"
+                        throw SpectreAgentException(
+                            category = AgentErrorCategory.ProtocolMismatch,
+                            message =
+                                "Agent protocol mismatch: runtime advertised " +
+                                    "${ack.protocolVersion}, client expects " +
+                                    "${ProtocolVersion.CURRENT}",
                         )
                     }
                     handshakeOk = true
                 }
                 is AgentResponse.Error -> {
-                    throw IOException(
-                        "Agent rejected protocol handshake " + "(${ack.category}): ${ack.message}"
+                    throw SpectreAgentException(
+                        category = AgentErrorCategory.fromWire(ack.category),
+                        message =
+                            "Agent rejected protocol handshake " +
+                                "(${ack.category}): ${ack.message}",
                     )
                 }
                 else -> {
-                    throw IOException(
-                        "Agent protocol handshake expected HelloAck, got ${ack::class.simpleName}"
+                    throw SpectreAgentException(
+                        category = AgentErrorCategory.ProtocolMismatch,
+                        message =
+                            "Agent protocol handshake expected HelloAck, got " +
+                                "${ack::class.simpleName}",
                     )
                 }
             }

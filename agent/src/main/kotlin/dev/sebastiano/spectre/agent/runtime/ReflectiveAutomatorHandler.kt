@@ -151,7 +151,11 @@ internal class ReflectiveAutomatorHandler(
         val method =
             clickSuspendMethod
                 ?: return AgentResponse.Error(
-                    "ComposeAutomator does not expose a click(node) method"
+                    message = "ComposeAutomator does not expose a click(node) method",
+                    category =
+                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory
+                            .UnsupportedOperation
+                            .wireName,
                 )
         suspendInvoker.invoke(method, automator, match)
         return AgentResponse.Ok
@@ -161,7 +165,11 @@ internal class ReflectiveAutomatorHandler(
         val method =
             typeTextSuspendMethod
                 ?: return AgentResponse.Error(
-                    "ComposeAutomator does not expose a typeText(text) method"
+                    message = "ComposeAutomator does not expose a typeText(text) method",
+                    category =
+                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory
+                            .UnsupportedOperation
+                            .wireName,
                 )
         refreshWindowsMethod.invoke(automator)
         val allNodes = allNodesMethod.invoke(automator) as List<*>
@@ -213,7 +221,13 @@ internal class ReflectiveAutomatorHandler(
                     windows = windowSummaries,
                 )
                 .getOrElse {
-                    return AgentResponse.Error(it.message ?: "Invalid screenshot request")
+                    return AgentResponse.Error(
+                        message = it.message ?: "Invalid screenshot request",
+                        category =
+                            dev.sebastiano.spectre.agent.transport.AgentErrorCategory
+                                .InvalidSelector
+                                .wireName,
+                    )
                 }
 
         val regionScreenshotMethod =
@@ -223,7 +237,12 @@ internal class ReflectiveAutomatorHandler(
                     it.parameterTypes[0].name == AWT_RECTANGLE_FQN
             }
                 ?: return AgentResponse.Error(
-                    "ComposeAutomator does not expose screenshot(Rectangle?) on this build"
+                    message =
+                        "ComposeAutomator does not expose screenshot(Rectangle?) on this build",
+                    category =
+                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory
+                            .UnsupportedOperation
+                            .wireName,
                 )
 
         val image =
