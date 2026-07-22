@@ -22,8 +22,10 @@ internal class WaitOpsReflectiveMapper(
     private val mapNode: (Any) -> NodeSnapshotDto,
 ) {
     private val automatorClass: Class<*> = automator.javaClass
-    private val longPrimitive: Class<*> = Long::class.javaPrimitiveType!!
-    private val intPrimitive: Class<*> = Int::class.javaPrimitiveType!!
+    private val longPrimitive: Class<*> =
+        Long::class.javaPrimitiveType ?: error("Long primitive type missing")
+    private val intPrimitive: Class<*> =
+        Int::class.javaPrimitiveType ?: error("Int primitive type missing")
 
     private val waitForNodeSuspendMethod: Method? =
         automatorClass.methods.firstOrNull {
