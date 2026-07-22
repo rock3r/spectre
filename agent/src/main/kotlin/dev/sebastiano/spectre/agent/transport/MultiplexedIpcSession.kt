@@ -6,8 +6,11 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -25,12 +28,17 @@ internal class MultiplexedIpcSession(
     private val onDetach: () -> Unit,
 ) {
     fun run(input: InputStream, output: OutputStream) {
-        // Bound concurrency: automation is mostly serial, but cancel/quick ops need a free
-        // worker while a long op runs. Unbounded cached pools let a buggy client exhaust threads.
+        // Bound threads *and* queue so a buggy client cannot OOM the agent with enqueued ops.
         val workers: ExecutorService =
-            Executors.newFixedThreadPool(MAX_OP_WORKERS) { r ->
-                Thread(r, "spectre-agent-op-worker").apply { isDaemon = true }
-            }
+            ThreadPoolExecutor(
+                /* corePoolSize= */ MAX_OP_WORKERS,
+                /* maximumPoolSize= */ MAX_OP_WORKERS,
+                /* keepAliveTime= */ 0L,
+                TimeUnit.MILLISECONDS,
+                LinkedBlockingQueue(MAX_OP_QUEUE),
+                { r -> Thread(r, "spectre-agent-op-worker").apply { isDaemon = true } },
+                ThreadPoolExecutor.AbortPolicy(),
+            )
         val deadlineScheduler: ScheduledExecutorService =
             Executors.newSingleThreadScheduledExecutor { r ->
                 Thread(r, "spectre-agent-deadline").apply { isDaemon = true }
@@ -154,21 +162,36 @@ internal class MultiplexedIpcSession(
     ) {
         val slot = OpSlot()
         inFlight[op.opId] = slot
-        val future = workers.submit {
-            if (slot.isAborted || Thread.currentThread().isInterrupted) {
+        val future =
+            try {
+                workers.submit {
+                    if (slot.isAborted || Thread.currentThread().isInterrupted) {
+                        inFlight.remove(op.opId, slot)
+                        return@submit
+                    }
+                    val response = executeOp(body, op.deadlineEpochMs)
+                    // Only the winner of tryClaimResponse may write (cancel/deadline may have won).
+                    slot.cancelDeadlineTask()
+                    if (slot.tryClaimResponse()) {
+                        inFlight.remove(op.opId, slot)
+                        writeOpResponse(output, writeLock, op.opId, response)
+                    } else {
+                        inFlight.remove(op.opId, slot)
+                    }
+                }
+            } catch (_: RejectedExecutionException) {
                 inFlight.remove(op.opId, slot)
-                return@submit
+                writeOpResponse(
+                    output,
+                    writeLock,
+                    op.opId,
+                    AgentResponse.Error(
+                        message = "Too many concurrent operations (queue full)",
+                        category = AgentErrorCategory.InternalError.wireName,
+                    ),
+                )
+                return
             }
-            val response = executeOp(body, op.deadlineEpochMs)
-            // Only the winner of tryClaimResponse may write (cancel/deadline may have won).
-            slot.cancelDeadlineTask()
-            if (slot.tryClaimResponse()) {
-                inFlight.remove(op.opId, slot)
-                writeOpResponse(output, writeLock, op.opId, response)
-            } else {
-                inFlight.remove(op.opId, slot)
-            }
-        }
         slot.attachFuture(future)
         // If cancel already aborted before attachFuture, interrupt the just-started work.
         if (slot.isAborted) {
@@ -314,5 +337,7 @@ internal class MultiplexedIpcSession(
         const val WORKER_SHUTDOWN_SEC: Long = 2
         /** Max concurrent op workers per attached session (long op + cancel + headroom). */
         const val MAX_OP_WORKERS: Int = 8
+        /** Max queued ops beyond the worker pool (reject when full). */
+        const val MAX_OP_QUEUE: Int = 32
     }
 }
