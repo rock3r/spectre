@@ -1,62 +1,43 @@
 package dev.sebastiano.spectre.cli.hotreload
 
+import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
+
 /**
  * Tracks node keys issued to clients for a reload-aware session (#212).
  *
- * After a hot reload, keys captured from pre-reload tree dumps are rejected with a defined
- * `nodeNotFound` failure instead of being resolved against a post-reload tree that may reuse
- * Compose node ids for different content.
+ * Keys returned to clients are **generation-stamped** (`g{n}:{rawKey}`). After a hot reload the
+ * generation advances, so pre-reload stamped keys fail closed as `nodeNotFound` even if Compose
+ * reuses node ids. Dispatch re-validates the stamp under the guard lock so a settle cannot race a
+ * click between check and IPC.
  *
  * Non-reload-aware sessions do not use this guard.
  */
+@OptIn(ExperimentalSpectreAgentApi::class)
 public class ReloadAwareKeyGuard {
     private val lock = Any()
-    /** Bumped on each [onReload]; only keys remembered for the current generation are accepted. */
     private var generation: Long = 0L
-    /**
-     * Keys issued in [generation]. `null` means no tree has been issued in this generation yet —
-     * key ops still go to the live agent (same as pre-#212 behaviour for the first tree).
-     */
+    /** Raw (unstamped) keys issued in [generation]. */
     private var issuedKeys: Set<String>? = null
 
     /**
-     * Snapshots the current generation. Pass the result to [rememberIssuedKeysIfGeneration] so a
-     * tree captured before [onReload] cannot re-arm pre-reload keys after settle.
+     * Records raw keys from a tree/find under the current generation and returns nodes with stamped
+     * keys for the client. Unions with keys already issued in this generation.
      */
-    public fun snapshotGeneration(): Long = synchronized(lock) { generation }
-
-    /**
-     * Records keys from a tree/find only when [expectedGeneration] still matches the live
-     * generation (unioning within that generation).
-     */
-    public fun rememberIssuedKeysIfGeneration(
-        expectedGeneration: Long,
-        keys: Collection<String>,
-    ): Boolean {
+    public fun issueNodes(nodes: List<NodeSnapshotDto>): List<NodeSnapshotDto> {
         synchronized(lock) {
-            if (expectedGeneration != generation) return false
-            val existing = issuedKeys
-            issuedKeys =
-                if (existing == null) {
-                    keys.toSet()
-                } else {
-                    existing + keys
-                }
-            return true
+            val rawKeys = nodes.map { it.key }
+            val prior = issuedKeys
+            issuedKeys = if (prior == null) rawKeys.toSet() else prior + rawKeys
+            val gen = generation
+            return nodes.map { node -> node.copy(key = stamp(gen, node.key)) }
         }
     }
 
-    /**
-     * Records keys for the current generation (unioning). Prefer [rememberIssuedKeysIfGeneration].
-     */
-    public fun rememberIssuedKeys(keys: Collection<String>) {
-        rememberIssuedKeysIfGeneration(snapshotGeneration(), keys)
-    }
+    /** Issues a single node key (e.g. waitForNode result) under the current generation. */
+    public fun issueNode(node: NodeSnapshotDto): NodeSnapshotDto = issueNodes(listOf(node)).single()
 
-    /**
-     * Marks the session as post-reload: subsequent [accepts] fail until [rememberIssuedKeys] runs
-     * for the new generation.
-     */
+    /** Advances generation and clears issued keys after a successful reload settle. */
     public fun onReload() {
         synchronized(lock) {
             generation += 1
@@ -65,22 +46,47 @@ public class ReloadAwareKeyGuard {
     }
 
     /**
-     * Returns true when [key] may be forwarded to the agent. False means the daemon should fail
-     * closed as `nodeNotFound` without contacting the target.
+     * Validates a client [stampedKey] and returns the raw key for agent dispatch, or `null` if the
+     * key is stale / unknown.
+     *
+     * When [issuedKeys] is still null in generation 0 (no tree yet), plain unstamped keys are
+     * accepted for compatibility with first-click-without-tree flows.
      */
-    public fun accepts(key: String): Boolean {
+    public fun resolveForDispatch(stampedKey: String): String? {
         synchronized(lock) {
+            val parsed = unstamp(stampedKey)
+            if (parsed == null) {
+                // Unstamped: only allow before any reload and before any tree (legacy path).
+                if (generation != 0L || issuedKeys != null) return null
+                return stampedKey
+            }
+            val (gen, raw) = parsed
+            if (gen != generation) return null
             val known = issuedKeys
-            // After reload and before the next tree, reject everything.
-            if (known == null) return generation == 0L
-            return key in known
+            if (known != null && raw !in known) return null
+            return raw
         }
     }
 
-    /** Test/diagnostics: whether a reload has invalidated keys awaiting a fresh tree. */
-    public fun isInvalidated(): Boolean =
-        synchronized(lock) { issuedKeys == null && generation > 0 }
+    /** @deprecated Prefer [resolveForDispatch]; kept for unit tests of stamp semantics. */
+    public fun accepts(stampedKey: String): Boolean = resolveForDispatch(stampedKey) != null
 
-    /** Test/diagnostics: current generation after reloads. */
+    public fun isInvalidated(): Boolean =
+        synchronized(lock) { issuedKeys == null && generation > 0L }
+
     public fun generation(): Long = synchronized(lock) { generation }
+
+    public companion object {
+        internal fun stamp(generation: Long, rawKey: String): String = "g$generation:$rawKey"
+
+        internal fun unstamp(stampedKey: String): Pair<Long, String>? {
+            if (!stampedKey.startsWith("g")) return null
+            val colon = stampedKey.indexOf(':')
+            if (colon <= 1) return null
+            val gen = stampedKey.substring(1, colon).toLongOrNull() ?: return null
+            val raw = stampedKey.substring(colon + 1)
+            if (raw.isEmpty()) return null
+            return gen to raw
+        }
+    }
 }

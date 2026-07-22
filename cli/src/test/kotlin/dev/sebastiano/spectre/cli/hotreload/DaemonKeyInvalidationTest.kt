@@ -23,6 +23,7 @@ class DaemonKeyInvalidationTest {
         val preKey = "main:0:1"
         val postKey = "main:0:99"
         var treeGeneration = 0
+        val clicked = mutableListOf<String>()
         val registry =
             DaemonSessionRegistry(
                 hotReloadSessionFactory = { hr },
@@ -32,11 +33,7 @@ class DaemonKeyInvalidationTest {
                             val key = if (treeGeneration == 0) preKey else postKey
                             listOf(sampleNode(key))
                         },
-                        clickAction = { key ->
-                            // Live resolve would still "find" post-reload nodes if we re-walked;
-                            // the guard must reject pre-reload keys before this runs.
-                            assertTrue(key == postKey, "stale key must not reach the automator")
-                        },
+                        clickAction = { key -> clicked += key },
                     )
                 },
             )
@@ -45,23 +42,29 @@ class DaemonKeyInvalidationTest {
 
         val tree =
             assertIs<DaemonResponse.Nodes>(registry.handle(DaemonRequest.AllNodes(sessionId)))
-        assertEquals(preKey, tree.nodes.single().key)
+        val stampedPre = tree.nodes.single().key
+        assertTrue(stampedPre.startsWith("g0:"))
+        assertTrue(stampedPre.endsWith(preKey))
 
-        // Simulate HR settle → invalidation listener.
         hr.fireReloadSettled()
         treeGeneration = 1
 
         val rejected =
-            assertIs<DaemonResponse.Error>(registry.handle(DaemonRequest.Click(sessionId, preKey)))
+            assertIs<DaemonResponse.Error>(
+                registry.handle(DaemonRequest.Click(sessionId, stampedPre))
+            )
         assertEquals(DaemonErrorCode.OperationFailed, rejected.code)
         assertEquals("nodeNotFound", rejected.category)
-        assertTrue(rejected.message.contains(preKey))
+        assertTrue(clicked.isEmpty())
 
-        // Fresh tree re-arms keys.
         val fresh =
             assertIs<DaemonResponse.Nodes>(registry.handle(DaemonRequest.AllNodes(sessionId)))
-        assertEquals(postKey, fresh.nodes.single().key)
-        assertIs<DaemonResponse.Completed>(registry.handle(DaemonRequest.Click(sessionId, postKey)))
+        val stampedPost = fresh.nodes.single().key
+        assertTrue(stampedPost.startsWith("g1:"))
+        assertIs<DaemonResponse.Completed>(
+            registry.handle(DaemonRequest.Click(sessionId, stampedPost))
+        )
+        assertEquals(listOf(postKey), clicked)
     }
 
     @Test
@@ -78,7 +81,6 @@ class DaemonKeyInvalidationTest {
             )
         val sessionId =
             assertIs<DaemonResponse.Attached>(registry.handle(DaemonRequest.Attach(1))).sessionId
-        // Click without a prior tree still works (no key guard).
         assertIs<DaemonResponse.Completed>(
             registry.handle(DaemonRequest.Click(sessionId, "never-issued"))
         )

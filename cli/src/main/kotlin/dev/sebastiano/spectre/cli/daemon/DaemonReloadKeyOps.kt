@@ -4,34 +4,43 @@ import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.cli.hotreload.ReloadAwareKeyGuard
 
-/**
- * File-level helpers for reload-aware node-key invalidation (#212), kept out of
- * [DaemonSessionRegistry] to satisfy TooManyFunctions.
- */
+/** Issue generation-stamped keys for a tree/find response (#212). */
 @OptIn(ExperimentalSpectreAgentApi::class)
-internal fun rejectStaleNodeKey(
+internal fun issueNodeKeys(
+    keyGuard: ReloadAwareKeyGuard?,
+    nodes: List<NodeSnapshotDto>,
+): List<NodeSnapshotDto> = if (keyGuard == null) nodes else keyGuard.issueNodes(nodes)
+
+/** Issue a single stamped key (#212). */
+@OptIn(ExperimentalSpectreAgentApi::class)
+internal fun issueNodeKey(keyGuard: ReloadAwareKeyGuard?, node: NodeSnapshotDto): NodeSnapshotDto =
+    if (keyGuard == null) node else keyGuard.issueNode(node)
+
+/** Resolve a client key for agent dispatch. Returns an error when the key is stale after reload. */
+internal fun resolveNodeKeyForDispatch(
     keyGuard: ReloadAwareKeyGuard?,
     nodeKey: String?,
-): DaemonResponse.Error? {
-    if (nodeKey == null || keyGuard == null) return null
-    if (keyGuard.accepts(nodeKey)) return null
-    return DaemonResponse.Error(
-        code = DaemonErrorCode.OperationFailed,
-        message = "No node found with key=$nodeKey",
-        category = "nodeNotFound",
-    )
+): KeyResolution {
+    if (nodeKey == null) return KeyResolution.Missing
+    if (keyGuard == null) return KeyResolution.Raw(nodeKey)
+    val raw = keyGuard.resolveForDispatch(nodeKey)
+    return if (raw == null) {
+        KeyResolution.Stale(
+            DaemonResponse.Error(
+                code = DaemonErrorCode.OperationFailed,
+                message = "No node found with key=$nodeKey",
+                category = "nodeNotFound",
+            )
+        )
+    } else {
+        KeyResolution.Raw(raw)
+    }
 }
 
-@OptIn(ExperimentalSpectreAgentApi::class)
-internal fun rememberNodeKeys(
-    keyGuard: ReloadAwareKeyGuard?,
-    generation: Long?,
-    nodes: List<NodeSnapshotDto>,
-) {
-    if (keyGuard == null) return
-    if (generation == null) {
-        keyGuard.rememberIssuedKeys(nodes.map(NodeSnapshotDto::key))
-    } else {
-        keyGuard.rememberIssuedKeysIfGeneration(generation, nodes.map(NodeSnapshotDto::key))
-    }
+internal sealed interface KeyResolution {
+    data object Missing : KeyResolution
+
+    data class Raw(val key: String) : KeyResolution
+
+    data class Stale(val error: DaemonResponse.Error) : KeyResolution
 }
