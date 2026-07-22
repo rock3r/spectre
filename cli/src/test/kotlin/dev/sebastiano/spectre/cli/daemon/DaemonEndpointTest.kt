@@ -34,6 +34,7 @@ class DaemonEndpointTest {
     fun `discovers prior minor-version sockets during the stable endpoint migration`() {
         assertEquals(
             listOf(
+                Path.of("/tmp", "sp-d-2bd806c9", "daemon-v1-9.sock"),
                 Path.of("/tmp", "sp-d-2bd806c9", "daemon-v1-8.sock"),
                 Path.of("/tmp", "sp-d-2bd806c9", "daemon-v1-7.sock"),
                 Path.of("/tmp", "sp-d-2bd806c9", "daemon-v1-6.sock"),

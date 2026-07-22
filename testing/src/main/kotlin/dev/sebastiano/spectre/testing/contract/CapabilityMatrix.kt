@@ -448,30 +448,86 @@ public object CapabilityMatrix {
             )
         )
 
-        // Remote growth track (#201–#203): ops may already have Supported cells above; remaining
-        // display-backed gaps stay NotYetCiExecuted with explicit evidence notes.
-        for (transport in listOf(AutomatorTransport.Http, AutomatorTransport.Agent)) {
-            for (op in
-                listOf(
-                    AutomatorOperation.DoubleClick,
-                    AutomatorOperation.LongClick,
-                    AutomatorOperation.Swipe,
-                    AutomatorOperation.ScrollWheel,
-                    AutomatorOperation.PressKey,
-                )) {
-                add(
-                    CapabilityCell(
-                        operation = op,
-                        transport = transport,
-                        platform = PlatformPrerequisite.AnyJvm,
-                        state = CellState.NotYetCiExecuted,
-                        rationale =
-                            "#203 wires agent/HTTP/daemon paths with unit evidence " +
-                                "(InputParityTest / ReflectiveAutomatorHandlerMappingTest); " +
-                                "display-backed drag/scroll/chord fixture CI is still open.",
-                    )
+        // #201–#203 agent fixture-backed cells (AgentContractCorpusTest under Xvfb/macOS).
+        for (op in
+            listOf(
+                AutomatorOperation.WaitForNode,
+                AutomatorOperation.FindByText,
+                AutomatorOperation.FindByRole,
+                AutomatorOperation.FindByContentDescription,
+                AutomatorOperation.DoubleClick,
+                AutomatorOperation.Swipe,
+                AutomatorOperation.ScrollWheel,
+                AutomatorOperation.PressKey,
+            )) {
+            add(
+                CapabilityCell(
+                    operation = op,
+                    transport = AutomatorTransport.Agent,
+                    platform = PlatformPrerequisite.LinuxXvfb,
+                    state = CellState.Supported,
+                    evidence = listOf(agentLinuxXvfb),
                 )
-            }
+            )
+            add(
+                CapabilityCell(
+                    operation = op,
+                    transport = AutomatorTransport.Agent,
+                    platform = PlatformPrerequisite.MacOsDesktop,
+                    state = CellState.Supported,
+                    evidence = listOf(agentMacOs),
+                )
+            )
+        }
+        // HTTP headless corpus exercises selector entry points.
+        for (op in
+            listOf(
+                AutomatorOperation.FindByText,
+                AutomatorOperation.FindByRole,
+                AutomatorOperation.FindByContentDescription,
+            )) {
+            add(
+                CapabilityCell(
+                    operation = op,
+                    transport = AutomatorTransport.Http,
+                    platform = PlatformPrerequisite.AnyJvm,
+                    state = CellState.Supported,
+                    evidence = listOf(httpHeadlessCorpus),
+                )
+            )
+        }
+        for (op in listOf(AutomatorOperation.LongClick, AutomatorOperation.WaitForVisualIdle)) {
+            add(
+                CapabilityCell(
+                    operation = op,
+                    transport = AutomatorTransport.Agent,
+                    platform = PlatformPrerequisite.AnyJvm,
+                    state = CellState.NotYetCiExecuted,
+                    rationale =
+                        "Wired on agent; dedicated fixture scenario not yet in AgentContractCorpus.",
+                )
+            )
+        }
+        for (op in
+            listOf(
+                AutomatorOperation.DoubleClick,
+                AutomatorOperation.LongClick,
+                AutomatorOperation.Swipe,
+                AutomatorOperation.ScrollWheel,
+                AutomatorOperation.PressKey,
+                AutomatorOperation.WaitForNode,
+                AutomatorOperation.WaitForVisualIdle,
+            )) {
+            add(
+                CapabilityCell(
+                    operation = op,
+                    transport = AutomatorTransport.Http,
+                    platform = PlatformPrerequisite.AnyJvm,
+                    state = CellState.NotYetCiExecuted,
+                    rationale =
+                        "HTTP routes exist (#201–#203); display-backed HTTP fixture corpus still open.",
+                )
+            )
         }
     }
 

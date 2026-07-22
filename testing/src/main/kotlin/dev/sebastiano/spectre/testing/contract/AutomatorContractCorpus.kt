@@ -39,6 +39,16 @@ public interface AutomatorContractDriver : AutoCloseable {
 
     public fun findByTestTag(tag: String): List<ContractNode>
 
+    /** Optional richer selectors (#202). Default: unsupported (skipped in headless corpus). */
+    public fun findByText(text: String, exact: Boolean = true): List<ContractNode> =
+        error("findByText not implemented for $transport")
+
+    public fun findByContentDescription(description: String): List<ContractNode> =
+        error("findByContentDescription not implemented for $transport")
+
+    public fun findByRole(role: String): List<ContractNode> =
+        error("findByRole not implemented for $transport")
+
     /**
      * Click by canonical node key. Drivers may throw on unknown keys; the corpus has a dedicated
      * unknown-key scenario that expects failure.
@@ -48,11 +58,39 @@ public interface AutomatorContractDriver : AutoCloseable {
     /** Type into whatever holds focus. Headless drivers may no-op successfully. */
     public fun typeText(text: String)
 
+    /** Optional input verbs (#203). Default: unsupported. */
+    public fun doubleClick(nodeKey: String) {
+        error("doubleClick not implemented for $transport")
+    }
+
+    public fun swipe(fromNodeKey: String, toNodeKey: String) {
+        error("swipe not implemented for $transport")
+    }
+
+    public fun scrollWheel(nodeKey: String, wheelClicks: Int) {
+        error("scrollWheel not implemented for $transport")
+    }
+
+    public fun pressKey(keyCode: Int, modifiers: Int = 0) {
+        error("pressKey not implemented for $transport")
+    }
+
+    /**
+     * Optional wait (#201). [waitForNodeTimeoutMs] is the budget. Should throw on timeout when
+     * waiting for a never-present selector. Returns the matched node key on success.
+     */
+    public fun waitForNode(tag: String?, text: String?, timeoutMs: Long): String =
+        error("waitForNode not implemented for $transport")
+
     /**
      * Optional screenshot probe. Return `null` if the transport/driver does not exercise screenshot
      * in this corpus level; non-null means bytes or a decoded image were obtained.
      */
     public fun screenshotProbe(): ScreenshotProbe? = null
+
+    /** When true, corpus runs #201–#203 extended scenarios (selectors/waits/input). */
+    public val supportsExtendedParity: Boolean
+        get() = expectsFixtureSemantics
 
     override fun close() {}
 }
@@ -173,6 +211,9 @@ public object AutomatorContractCorpus {
                     check(probe.byteCount > 0) { "screenshot empty" }
                     "bytes=${probe.byteCount} format=${probe.formatHint}"
                 }
+            if (driver.supportsExtendedParity) {
+                results += extendedParityScenarios(driver)
+            }
         } else {
             results +=
                 ScenarioResult(
@@ -207,6 +248,103 @@ public object AutomatorContractCorpus {
         }
 
         return RunResult(transport = driver.transport, results = results)
+    }
+
+    /** #201–#203 scenarios against a live fixture-backed driver (agent Xvfb/macOS). */
+    private fun extendedParityScenarios(driver: AutomatorContractDriver): List<ScenarioResult> {
+        val out = mutableListOf<ScenarioResult>()
+        // #202 selectors
+        out +=
+            scenario("find-by-text-fixture-label", driver.transport) {
+                val nodes = driver.findByText("Spectre agent fixture", exact = true)
+                check(nodes.isNotEmpty()) { "findByText exact missed fixture label" }
+                "matched=${nodes.size}"
+            }
+        out +=
+            scenario("find-by-text-substring", driver.transport) {
+                val nodes = driver.findByText("agent fixture", exact = false)
+                check(nodes.isNotEmpty()) { "findByText substring missed fixture label" }
+                "matched=${nodes.size}"
+            }
+        out +=
+            scenario("find-by-role-button", driver.transport) {
+                val nodes = driver.findByRole("Button")
+                check(nodes.isNotEmpty()) { "findByRole(Button) empty" }
+                "matched=${nodes.size}"
+            }
+        out +=
+            scenario("find-by-content-description", driver.transport) {
+                val nodes = driver.findByContentDescription("fixture submit")
+                check(nodes.isNotEmpty()) { "findByContentDescription empty" }
+                "matched=${nodes.size}"
+            }
+        // #201 waits
+        out +=
+            scenario("wait-for-node-present-tag", driver.transport) {
+                val key =
+                    driver.waitForNode(
+                        tag = ContractFixtureTags.BUTTON,
+                        text = null,
+                        timeoutMs = 3_000,
+                    )
+                check(key.isNotBlank()) { "waitForNode returned blank key" }
+                "key=$key"
+            }
+        out +=
+            scenario("wait-for-node-timeout", driver.transport) {
+                val failed =
+                    runCatching {
+                            driver.waitForNode(
+                                tag = "agent-fixture-never-appears",
+                                text = null,
+                                timeoutMs = 400,
+                            )
+                        }
+                        .isFailure
+                check(failed) { "waitForNode for missing tag must fail/timeout" }
+                "timed-out-as-expected"
+            }
+        // #203 input verbs (real Robot on fixture)
+        out +=
+            scenario("double-click-fixture-button", driver.transport) {
+                val button =
+                    driver.findByTestTag(ContractFixtureTags.BUTTON).firstOrNull()
+                        ?: error("fixture button missing")
+                driver.doubleClick(button.key)
+                "double-clicked=${button.key}"
+            }
+        out +=
+            scenario("swipe-label-to-button", driver.transport) {
+                val label =
+                    driver.findByTestTag(ContractFixtureTags.LABEL).firstOrNull()
+                        ?: error("fixture label missing")
+                val button =
+                    driver.findByTestTag(ContractFixtureTags.BUTTON).firstOrNull()
+                        ?: error("fixture button missing")
+                driver.swipe(label.key, button.key)
+                "swiped ${label.key}->${button.key}"
+            }
+        out +=
+            scenario("scroll-wheel-on-label", driver.transport) {
+                val label =
+                    driver.findByTestTag(ContractFixtureTags.LABEL).firstOrNull()
+                        ?: error("fixture label missing")
+                driver.scrollWheel(label.key, wheelClicks = 1)
+                "scrolled=${label.key}"
+            }
+        out +=
+            scenario("press-key-tab", driver.transport) {
+                // VK_TAB = 9. Agent may refuse when the target lacks OS keyboard focus (CI).
+                val result = runCatching { driver.pressKey(keyCode = 9, modifiers = 0) }
+                val msg = result.exceptionOrNull()?.message.orEmpty()
+                if (result.isFailure && "keyboard focus" in msg) {
+                    "skipped:os-focus"
+                } else {
+                    result.getOrThrow()
+                    "pressKey=VK_TAB"
+                }
+            }
+        return out
     }
 
     private inline fun scenario(

@@ -18,6 +18,25 @@ internal interface DaemonSessionAutomator : AutoCloseable {
 
     @Throws(IOException::class) fun findByTestTag(tag: String): List<NodeSnapshotDto>
 
+    @Throws(IOException::class)
+    fun findByText(text: String, exact: Boolean = true): List<NodeSnapshotDto>
+
+    @Throws(IOException::class)
+    fun findByContentDescription(description: String): List<NodeSnapshotDto>
+
+    @Throws(IOException::class) fun findByRole(role: String): List<NodeSnapshotDto>
+
+    @Throws(IOException::class)
+    fun waitForNode(
+        tag: String? = null,
+        text: String? = null,
+        timeoutMs: Long = 5_000,
+        pollIntervalMs: Long = 100,
+    ): NodeSnapshotDto
+
+    @Throws(IOException::class)
+    fun waitForVisualIdle(timeoutMs: Long = 5_000, stableFrames: Int = 3, pollIntervalMs: Long = 16)
+
     @Throws(IOException::class) fun click(nodeKey: String)
 
     @Throws(IOException::class) fun doubleClick(nodeKey: String)
@@ -100,6 +119,24 @@ internal class AttachedDaemonSession(
     override fun allNodes(): List<NodeSnapshotDto> = delegate.allNodes()
 
     override fun findByTestTag(tag: String): List<NodeSnapshotDto> = delegate.findByTestTag(tag)
+
+    override fun findByText(text: String, exact: Boolean): List<NodeSnapshotDto> =
+        delegate.findByText(text, exact)
+
+    override fun findByContentDescription(description: String): List<NodeSnapshotDto> =
+        delegate.findByContentDescription(description)
+
+    override fun findByRole(role: String): List<NodeSnapshotDto> = delegate.findByRole(role)
+
+    override fun waitForNode(
+        tag: String?,
+        text: String?,
+        timeoutMs: Long,
+        pollIntervalMs: Long,
+    ): NodeSnapshotDto = delegate.waitForNode(tag, text, timeoutMs, pollIntervalMs)
+
+    override fun waitForVisualIdle(timeoutMs: Long, stableFrames: Int, pollIntervalMs: Long): Unit =
+        delegate.waitForVisualIdle(timeoutMs, stableFrames, pollIntervalMs)
 
     override fun click(nodeKey: String): Unit = delegate.click(nodeKey)
 

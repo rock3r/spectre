@@ -16,6 +16,10 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposePanel
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import java.awt.Dimension
 import javax.swing.JFrame
@@ -92,7 +96,11 @@ fun main() {
                             )
                             Button(
                                 onClick = { typed = "$BUTTON_CLICKED_PREFIX$typed" },
-                                modifier = Modifier.testTag(TAG_BUTTON),
+                                modifier =
+                                    Modifier.testTag(TAG_BUTTON).semantics {
+                                        role = Role.Button
+                                        contentDescription = "fixture submit"
+                                    },
                             ) {
                                 Text(text = "Click me")
                             }

@@ -453,11 +453,7 @@ internal class ReflectiveAutomatorHandler(
                     ?.filterIsInstance<String>()
                     .orEmpty(),
             editableText = nodeEditableText(node),
-            role =
-                klass.methods
-                    .firstOrNull { it.name == "getRole" && it.parameterCount == 0 }
-                    ?.invoke(node)
-                    ?.toString(),
+            role = mapRoleWireName(node),
             contentDescription = singularDescription,
             contentDescriptions = descriptions.ifEmpty { listOfNotNull(singularDescription) },
             isFocused = nodeBooleanProperty(node, methodName = "isFocused", default = false),
@@ -481,6 +477,25 @@ internal class ReflectiveAutomatorHandler(
             .firstOrNull { it.name == "getKey" && it.parameterCount == 0 }
             ?.invoke(node)
             ?.toString() ?: node.toString()
+
+    /**
+     * Maps Compose `Role` to its wire name. Kotlin mangles the getter for the value class
+     * (`getRole- RLKlGQI`), and reflective invoke may return a boxed Role or a raw Int ordinal.
+     */
+    private fun mapRoleWireName(node: Any): String? {
+        val method =
+            node.javaClass.methods.firstOrNull {
+                it.parameterCount == 0 && (it.name == "getRole" || it.name.startsWith("getRole-"))
+            } ?: return null
+        val raw = method.invoke(node) ?: return null
+        if (raw is Number) {
+            return ROLE_ORDINAL_WIRE_NAMES[raw.toInt()]
+        }
+        val asString = raw.toString()
+        if (asString in KNOWN_ROLE_WIRE_NAMES) return asString
+        return asString.takeUnless { it == "null" || it.all { ch -> ch.isDigit() } }
+            ?: (raw as? Number)?.toInt()?.let { ROLE_ORDINAL_WIRE_NAMES[it] }
+    }
 
     /**
      * Soft boolean lookup: missing accessors return [default]. Used for optional snapshot fields
@@ -581,6 +596,20 @@ internal class ReflectiveAutomatorHandler(
                 "DropdownList",
                 "Picker",
                 "Carousel",
+            )
+
+        /** Compose Role constructor values → Role.toString() names (ValuePicker → Picker). */
+        val ROLE_ORDINAL_WIRE_NAMES: Map<Int, String> =
+            mapOf(
+                0 to "Button",
+                1 to "Checkbox",
+                2 to "Switch",
+                3 to "RadioButton",
+                4 to "Tab",
+                5 to "Image",
+                6 to "DropdownList",
+                7 to "Picker",
+                8 to "Carousel",
             )
 
         fun targetJvmHasKeyboardFocus(): Boolean {

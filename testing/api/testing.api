@@ -58,18 +58,40 @@ public abstract interface class dev/sebastiano/spectre/testing/contract/Automato
 	public abstract fun allNodes ()Ljava/util/List;
 	public abstract fun click (Ljava/lang/String;)V
 	public fun close ()V
+	public fun doubleClick (Ljava/lang/String;)V
+	public fun findByContentDescription (Ljava/lang/String;)Ljava/util/List;
+	public fun findByRole (Ljava/lang/String;)Ljava/util/List;
 	public abstract fun findByTestTag (Ljava/lang/String;)Ljava/util/List;
+	public fun findByText (Ljava/lang/String;Z)Ljava/util/List;
+	public static synthetic fun findByText$default (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;ZILjava/lang/Object;)Ljava/util/List;
 	public fun getExpectsFixtureSemantics ()Z
+	public fun getSupportsExtendedParity ()Z
 	public abstract fun getTransport ()Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;
+	public fun pressKey (II)V
+	public static synthetic fun pressKey$default (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;IIILjava/lang/Object;)V
 	public fun screenshotProbe ()Ldev/sebastiano/spectre/testing/contract/ScreenshotProbe;
+	public fun scrollWheel (Ljava/lang/String;I)V
+	public fun swipe (Ljava/lang/String;Ljava/lang/String;)V
 	public abstract fun typeText (Ljava/lang/String;)V
+	public fun waitForNode (Ljava/lang/String;Ljava/lang/String;J)Ljava/lang/String;
 	public abstract fun windows ()Ljava/util/List;
 }
 
 public final class dev/sebastiano/spectre/testing/contract/AutomatorContractDriver$DefaultImpls {
 	public static fun close (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;)V
+	public static fun doubleClick (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;)V
+	public static fun findByContentDescription (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;)Ljava/util/List;
+	public static fun findByRole (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;)Ljava/util/List;
+	public static fun findByText (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;Z)Ljava/util/List;
+	public static synthetic fun findByText$default (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;ZILjava/lang/Object;)Ljava/util/List;
 	public static fun getExpectsFixtureSemantics (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;)Z
+	public static fun getSupportsExtendedParity (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;)Z
+	public static fun pressKey (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;II)V
+	public static synthetic fun pressKey$default (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;IIILjava/lang/Object;)V
 	public static fun screenshotProbe (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;)Ldev/sebastiano/spectre/testing/contract/ScreenshotProbe;
+	public static fun scrollWheel (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;I)V
+	public static fun swipe (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;Ljava/lang/String;)V
+	public static fun waitForNode (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;Ljava/lang/String;J)Ljava/lang/String;
 }
 
 public final class dev/sebastiano/spectre/testing/contract/AutomatorOperation : java/lang/Enum {

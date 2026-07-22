@@ -159,6 +159,36 @@ class AgentContractCorpusTest {
                 )
             }
 
+        override fun findByText(text: String, exact: Boolean): List<ContractNode> =
+            automator.findByText(text, exact).map {
+                ContractNode(
+                    key = it.key,
+                    testTag = it.testTag,
+                    text = it.texts.firstOrNull() ?: it.editableText,
+                )
+            }
+
+        override fun findByContentDescription(description: String): List<ContractNode> =
+            automator.findByContentDescription(description).map {
+                ContractNode(
+                    key = it.key,
+                    testTag = it.testTag,
+                    text = it.texts.firstOrNull() ?: it.editableText,
+                )
+            }
+
+        override fun findByRole(role: String): List<ContractNode> =
+            automator.findByRole(role).map {
+                ContractNode(
+                    key = it.key,
+                    testTag = it.testTag,
+                    text = it.texts.firstOrNull() ?: it.editableText,
+                )
+            }
+
+        override fun waitForNode(tag: String?, text: String?, timeoutMs: Long): String =
+            automator.waitForNode(tag = tag, text = text, timeoutMs = timeoutMs).key
+
         override fun click(nodeKey: String) {
             automator.click(nodeKey)
         }
@@ -168,6 +198,22 @@ class AgentContractCorpusTest {
             // precisely because CI focus flakes exist. AgentAttachIntegrationTest owns the
             // nuanced CI skip path; the shared corpus must not claim a silent pass.
             automator.typeText(text)
+        }
+
+        override fun doubleClick(nodeKey: String) {
+            automator.doubleClick(nodeKey)
+        }
+
+        override fun swipe(fromNodeKey: String, toNodeKey: String) {
+            automator.swipe(fromNodeKey, toNodeKey)
+        }
+
+        override fun scrollWheel(nodeKey: String, wheelClicks: Int) {
+            automator.scrollWheel(nodeKey, wheelClicks)
+        }
+
+        override fun pressKey(keyCode: Int, modifiers: Int) {
+            automator.pressKey(keyCode, modifiers)
         }
 
         override fun screenshotProbe(): ScreenshotProbe {

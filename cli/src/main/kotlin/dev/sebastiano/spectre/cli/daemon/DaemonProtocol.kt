@@ -11,7 +11,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 9)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 10)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -45,6 +45,11 @@ public object DaemonProtocol {
             is DaemonRequest.Swipe,
             is DaemonRequest.ScrollWheel,
             is DaemonRequest.PressKey -> versionFor(INPUT_VERBS_INTRODUCED_MINOR)
+            is DaemonRequest.WaitForNode,
+            is DaemonRequest.WaitForVisualIdle -> versionFor(WAIT_OPS_INTRODUCED_MINOR)
+            is DaemonRequest.FindByText,
+            is DaemonRequest.FindByContentDescription,
+            is DaemonRequest.FindByRole -> versionFor(SELECTOR_PARITY_INTRODUCED_MINOR)
             is DaemonRequest.ListJvmProcesses -> versionFor(LIST_JVM_PROCESSES_INTRODUCED_MINOR)
             is DaemonRequest.StartRecording ->
                 if (request.fullscreen) {
@@ -74,6 +79,9 @@ public object DaemonProtocol {
     private const val RECORDING_FULLSCREEN_INTRODUCED_MINOR: Int = 8
     /** Richer input verbs: doubleClick / longClick / swipe / scrollWheel / pressKey (#203). */
     private const val INPUT_VERBS_INTRODUCED_MINOR: Int = 9
+    /** waitForNode / waitForVisualIdle and selector finders over daemon (#201/#202). */
+    private const val WAIT_OPS_INTRODUCED_MINOR: Int = 10
+    private const val SELECTOR_PARITY_INTRODUCED_MINOR: Int = 10
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)
@@ -169,6 +177,45 @@ public sealed interface DaemonRequest {
     @SerialName("typeText")
     public data class TypeText(public val sessionId: String, public val text: String) :
         DaemonRequest
+
+    @Serializable
+    @SerialName("findByText")
+    public data class FindByText(
+        public val sessionId: String,
+        public val text: String,
+        public val exact: Boolean = true,
+    ) : DaemonRequest
+
+    @Serializable
+    @SerialName("findByContentDescription")
+    public data class FindByContentDescription(
+        public val sessionId: String,
+        public val description: String,
+    ) : DaemonRequest
+
+    @Serializable
+    @SerialName("findByRole")
+    public data class FindByRole(public val sessionId: String, public val role: String) :
+        DaemonRequest
+
+    @Serializable
+    @SerialName("waitForNode")
+    public data class WaitForNode(
+        public val sessionId: String,
+        public val tag: String? = null,
+        public val text: String? = null,
+        public val timeoutMs: Long = 5_000,
+        public val pollIntervalMs: Long = 100,
+    ) : DaemonRequest
+
+    @Serializable
+    @SerialName("waitForVisualIdle")
+    public data class WaitForVisualIdle(
+        public val sessionId: String,
+        public val timeoutMs: Long = 5_000,
+        public val stableFrames: Int = 3,
+        public val pollIntervalMs: Long = 16,
+    ) : DaemonRequest
 
     @Serializable
     @SerialName("screenshot")

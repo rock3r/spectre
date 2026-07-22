@@ -106,6 +106,18 @@ class DaemonHandshakeTest {
                 DaemonRequest.PressKey(sessionId = "session-1234", keyCode = 10)
             ),
         )
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 10),
+            DaemonProtocol.minimumDaemonVersion(
+                DaemonRequest.WaitForNode(sessionId = "session-1234", tag = "x")
+            ),
+        )
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 10),
+            DaemonProtocol.minimumDaemonVersion(
+                DaemonRequest.FindByText(sessionId = "session-1234", text = "hi")
+            ),
+        )
     }
 }
 

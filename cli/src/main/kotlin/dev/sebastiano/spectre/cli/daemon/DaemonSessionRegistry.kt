@@ -40,6 +40,11 @@ internal constructor(
             is DaemonRequest.Windows,
             is DaemonRequest.AllNodes,
             is DaemonRequest.FindByTestTag,
+            is DaemonRequest.FindByText,
+            is DaemonRequest.FindByContentDescription,
+            is DaemonRequest.FindByRole,
+            is DaemonRequest.WaitForNode,
+            is DaemonRequest.WaitForVisualIdle,
             is DaemonRequest.Click,
             is DaemonRequest.DoubleClick,
             is DaemonRequest.LongClick,
@@ -65,10 +70,12 @@ internal constructor(
                 invoke(request.sessionId) { automator ->
                     DaemonResponse.Nodes(request.sessionId, automator.allNodes())
                 }
-            is DaemonRequest.FindByTestTag ->
-                invoke(request.sessionId) { automator ->
-                    DaemonResponse.Nodes(request.sessionId, automator.findByTestTag(request.tag))
-                }
+            is DaemonRequest.FindByTestTag,
+            is DaemonRequest.FindByText,
+            is DaemonRequest.FindByContentDescription,
+            is DaemonRequest.FindByRole,
+            is DaemonRequest.WaitForNode,
+            is DaemonRequest.WaitForVisualIdle -> handleQuerySessionCommand(request)
             is DaemonRequest.Click,
             is DaemonRequest.DoubleClick,
             is DaemonRequest.LongClick,
@@ -184,6 +191,56 @@ internal constructor(
     }
 
     private fun liveSessionIds(): Set<String> = sessionsByPid.values.map { it.sessionId }.toSet()
+
+    private fun handleQuerySessionCommand(request: DaemonRequest): DaemonResponse =
+        when (request) {
+            is DaemonRequest.FindByTestTag ->
+                invoke(request.sessionId) { automator ->
+                    DaemonResponse.Nodes(request.sessionId, automator.findByTestTag(request.tag))
+                }
+            is DaemonRequest.FindByText ->
+                invoke(request.sessionId) { automator ->
+                    DaemonResponse.Nodes(
+                        request.sessionId,
+                        automator.findByText(request.text, request.exact),
+                    )
+                }
+            is DaemonRequest.FindByContentDescription ->
+                invoke(request.sessionId) { automator ->
+                    DaemonResponse.Nodes(
+                        request.sessionId,
+                        automator.findByContentDescription(request.description),
+                    )
+                }
+            is DaemonRequest.FindByRole ->
+                invoke(request.sessionId) { automator ->
+                    DaemonResponse.Nodes(request.sessionId, automator.findByRole(request.role))
+                }
+            is DaemonRequest.WaitForNode ->
+                invoke(request.sessionId) { automator ->
+                    DaemonResponse.Nodes(
+                        request.sessionId,
+                        listOf(
+                            automator.waitForNode(
+                                tag = request.tag,
+                                text = request.text,
+                                timeoutMs = request.timeoutMs,
+                                pollIntervalMs = request.pollIntervalMs,
+                            )
+                        ),
+                    )
+                }
+            is DaemonRequest.WaitForVisualIdle ->
+                invoke(request.sessionId) { automator ->
+                    automator.waitForVisualIdle(
+                        timeoutMs = request.timeoutMs,
+                        stableFrames = request.stableFrames,
+                        pollIntervalMs = request.pollIntervalMs,
+                    )
+                    DaemonResponse.Completed(request.sessionId)
+                }
+            else -> error("Not a query session command: ${request::class.simpleName}")
+        }
 
     private fun handleInputSessionCommand(request: DaemonRequest): DaemonResponse =
         when (request) {

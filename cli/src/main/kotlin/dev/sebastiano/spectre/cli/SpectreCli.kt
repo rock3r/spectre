@@ -135,6 +135,9 @@ private class RootCommand(
             WindowsCommand(request, output),
             TreeCommand(request, output),
             FindCommand(request, output),
+            FindByTextCommand(request, output),
+            WaitForNodeCommand(request, output),
+            WaitForVisualIdleCommand(request, output),
             ClickCommand(request, output),
             DoubleClickCommand(request, output),
             LongClickCommand(request, output),
@@ -607,6 +610,108 @@ private class FindCommand(
         if (json) output.append(CLI_JSON.encodeToString(TreeJson(nodes = nodes.map(::NodeJson))))
         else
             output.append(nodes.joinToString("\n") { node -> "${node.key} ${node.role ?: "Node"}" })
+        output.appendLine()
+    }
+}
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private class FindByTextCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "find-text") {
+    private val sessionId: String by argument()
+    private val text: String by argument()
+    private val substring: Boolean by option("--substring").flag(default = false)
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val nodes =
+            when (
+                val response =
+                    request(
+                        DaemonRequest.FindByText(
+                            sessionId = sessionId,
+                            text = text,
+                            exact = !substring,
+                        )
+                    )
+            ) {
+                is DaemonResponse.Nodes -> response.nodes
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
+                else -> error("Daemon returned an unexpected response to find-text")
+            }
+        if (json) output.append(CLI_JSON.encodeToString(TreeJson(nodes = nodes.map(::NodeJson))))
+        else
+            output.append(nodes.joinToString("\n") { node -> "${node.key} ${node.role ?: "Node"}" })
+        output.appendLine()
+    }
+}
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private class WaitForNodeCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "wait-for-node") {
+    private val sessionId: String by argument()
+    private val tag: String? by option("--tag")
+    private val text: String? by option("--text")
+    private val timeoutMs: Long by option("--timeout-ms").long().default(5_000)
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val nodes =
+            when (
+                val response =
+                    request(
+                        DaemonRequest.WaitForNode(
+                            sessionId = sessionId,
+                            tag = tag,
+                            text = text,
+                            timeoutMs = timeoutMs,
+                        )
+                    )
+            ) {
+                is DaemonResponse.Nodes -> response.nodes
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
+                else -> error("Daemon returned an unexpected response to wait-for-node")
+            }
+        if (json) output.append(CLI_JSON.encodeToString(TreeJson(nodes = nodes.map(::NodeJson))))
+        else
+            output.append(
+                nodes.joinToString("\n") { node ->
+                    "${node.key} ${node.testTag ?: node.role ?: "Node"}"
+                }
+            )
+        output.appendLine()
+    }
+}
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private class WaitForVisualIdleCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "wait-for-visual-idle") {
+    private val sessionId: String by argument()
+    private val timeoutMs: Long by option("--timeout-ms").long().default(5_000)
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val completedSessionId =
+            when (
+                val response =
+                    request(
+                        DaemonRequest.WaitForVisualIdle(
+                            sessionId = sessionId,
+                            timeoutMs = timeoutMs,
+                        )
+                    )
+            ) {
+                is DaemonResponse.Completed -> response.sessionId
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
+                else -> error("Daemon returned an unexpected response to wait-for-visual-idle")
+            }
+        if (json) output.append(CLI_JSON.encodeToString(CompletionJson(id = completedSessionId)))
+        else output.append("Visual idle for session $completedSessionId.")
         output.appendLine()
     }
 }

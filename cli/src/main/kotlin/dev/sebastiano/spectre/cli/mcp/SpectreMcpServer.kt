@@ -116,6 +116,69 @@ public object SpectreMcpServer {
                 .asResult { it is DaemonResponse.Nodes }
         }
         server.addTool(
+            name = "find_text",
+            description =
+                "Find nodes by visible/editable text (#202). exact defaults true; set exact=false for substring.",
+            inputSchema =
+                schema(
+                    "session_id" to "string",
+                    "text" to "string",
+                    "exact" to "boolean",
+                    required = listOf("session_id", "text"),
+                ),
+        ) { call ->
+            val exact = call.optionalString("exact")?.toBooleanStrictOrNull() ?: true
+            request(
+                    DaemonRequest.FindByText(
+                        call.requiredString("session_id"),
+                        call.requiredString("text"),
+                        exact = exact,
+                    )
+                )
+                .asResult { it is DaemonResponse.Nodes }
+        }
+        server.addTool(
+            name = "wait_for_node",
+            description =
+                "Wait until a semantics node matches tag and/or text (#201). Throws on timeout.",
+            inputSchema =
+                schema(
+                    "session_id" to "string",
+                    "tag" to "string",
+                    "text" to "string",
+                    "timeout_ms" to "integer",
+                    required = listOf("session_id"),
+                ),
+        ) { call ->
+            request(
+                    DaemonRequest.WaitForNode(
+                        sessionId = call.requiredString("session_id"),
+                        tag = call.optionalString("tag"),
+                        text = call.optionalString("text"),
+                        timeoutMs = call.optionalLong("timeout_ms") ?: 5_000L,
+                    )
+                )
+                .asResult { it is DaemonResponse.Nodes }
+        }
+        server.addTool(
+            name = "wait_for_visual_idle",
+            description = "Wait until consecutive visual frames are stable (#201).",
+            inputSchema =
+                schema(
+                    "session_id" to "string",
+                    "timeout_ms" to "integer",
+                    required = listOf("session_id"),
+                ),
+        ) { call ->
+            request(
+                    DaemonRequest.WaitForVisualIdle(
+                        sessionId = call.requiredString("session_id"),
+                        timeoutMs = call.optionalLong("timeout_ms") ?: 5_000L,
+                    )
+                )
+                .asResult { it is DaemonResponse.Completed }
+        }
+        server.addTool(
             name = "click",
             description =
                 "Click a visible semantics node by its node key. Refresh the tree after UI changes.",

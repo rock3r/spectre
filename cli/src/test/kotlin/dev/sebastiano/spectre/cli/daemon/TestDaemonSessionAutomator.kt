@@ -46,6 +46,22 @@ internal class TestDaemonSessionAutomator(
 
     override fun findByTestTag(tag: String): List<NodeSnapshotDto> = findByTestTagResult(tag)
 
+    override fun findByText(text: String, exact: Boolean): List<NodeSnapshotDto> = emptyList()
+
+    override fun findByContentDescription(description: String): List<NodeSnapshotDto> = emptyList()
+
+    override fun findByRole(role: String): List<NodeSnapshotDto> = emptyList()
+
+    override fun waitForNode(
+        tag: String?,
+        text: String?,
+        timeoutMs: Long,
+        pollIntervalMs: Long,
+    ): NodeSnapshotDto = error("waitForNode not stubbed")
+
+    override fun waitForVisualIdle(timeoutMs: Long, stableFrames: Int, pollIntervalMs: Long): Unit =
+        Unit
+
     override fun click(nodeKey: String): Unit = clickAction(nodeKey)
 
     override fun doubleClick(nodeKey: String): Unit = Unit
