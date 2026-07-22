@@ -188,6 +188,28 @@ public object SpectreMcpServer {
                 .asResult { it is DaemonResponse.Completed }
         }
         server.addTool(
+            name = "wait_for_reload_settled",
+            description =
+                "Wait until a Compose Hot Reload settles for a reload-aware session (#211): " +
+                    "ReloadClassesRequest → matching ReloadClassesResult → matching UIRendered → " +
+                    "Ping/Ack drain. Fails immediately with hotReloadUnavailable when the target " +
+                    "is not running under HR. Distinguishes reloadFailed vs timeout.",
+            inputSchema =
+                schema(
+                    "session_id" to "string",
+                    "timeout_ms" to "integer",
+                    required = listOf("session_id"),
+                ),
+        ) { call ->
+            request(
+                    DaemonRequest.WaitForReloadSettled(
+                        sessionId = call.requiredString("session_id"),
+                        timeoutMs = call.optionalLong("timeout_ms") ?: 60_000L,
+                    )
+                )
+                .asResult { it is DaemonResponse.Completed }
+        }
+        server.addTool(
             name = "click",
             description =
                 "Click a visible semantics node by its node key. Refresh the tree after UI changes.",

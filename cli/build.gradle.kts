@@ -136,6 +136,10 @@ tasks.shadowJar {
                 "-dontwarn ch.qos.logback.classic.**",
                 "-keepattributes SourceFile,LineNumberTable",
                 "-keep class dev.sebastiano.spectre.cli.** { *; }",
+                // Compose Hot Reload orchestration uses reflection + service loaders for message
+                // encoders; keep the public client surface used by waitForReloadSettled (#211).
+                "-keep class org.jetbrains.compose.reload.** { *; }",
+                "-dontwarn org.jetbrains.compose.reload.**",
             )
         }
     }
@@ -349,11 +353,19 @@ dependencies {
     implementation(libs.kotlinx.serialization.cbor)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.mcp.kotlin.sdk.server)
+    // Compose Hot Reload orchestration client (#211). Daemon/CLI/MCP only — never a dependency
+    // of :core / :agent / :testing. Pin stays aligned with HotReloadVersions.PINNED.
+    // `hot-reload-core` is required on the compile classpath for Task/Try/Either types exposed by
+    // the orchestration public API (Kotlin does not re-export transitive compile deps).
+    implementation(libs.compose.hotReload.orchestration)
+    implementation(libs.compose.hotReload.core)
+    implementation(libs.kotlinx.coroutines.core)
 
     detektPlugins(libs.compose.rules.detekt)
 
     testImplementation(libs.kotlin.testJunit5)
     testImplementation(libs.mcp.kotlin.sdk.client)
+    testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(projects.agentTestFixture)
 }
 

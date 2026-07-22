@@ -3,6 +3,11 @@ package dev.sebastiano.spectre.cli.daemon
 import dev.sebastiano.spectre.agent.AgentAttach
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.SpectreAttachException
+import dev.sebastiano.spectre.cli.hotreload.HotReloadCapability
+import dev.sebastiano.spectre.cli.hotreload.HotReloadPortDiscovery
+import dev.sebastiano.spectre.cli.hotreload.HotReloadSession
+import dev.sebastiano.spectre.cli.hotreload.ReloadSettleErrorCategory
+import dev.sebastiano.spectre.cli.hotreload.mapReloadSettleOutcome
 import dev.sebastiano.spectre.cli.jdkPreflightError
 import java.io.IOException
 
@@ -11,6 +16,10 @@ import java.io.IOException
 public class DaemonSessionRegistry
 internal constructor(
     private val jvmProcessDiscovery: DaemonJvmProcessDiscovery = DaemonJvmProcessDiscovery(),
+    private val hotReloadSessionFactory: (Long) -> HotReloadCapability? = { targetPid ->
+        defaultHotReloadCapability(targetPid)
+    },
+    // Last so trailing-lambda call sites keep meaning attachAutomator.
     private val attachAutomator: (Long) -> DaemonSessionAutomator = { targetPid ->
         installEmbeddedAgentRuntimeIfNeeded()
         val automator = AgentAttach.attach(targetPid)
@@ -34,7 +43,8 @@ internal constructor(
     public fun handle(request: DaemonRequest): DaemonResponse =
         when (request) {
             is DaemonRequest.WaitForNode,
-            is DaemonRequest.WaitForVisualIdle -> handleWaitOutsideLock(request)
+            is DaemonRequest.WaitForVisualIdle,
+            is DaemonRequest.WaitForReloadSettled -> handleWaitOutsideLock(request)
             else -> handleSynchronized(request)
         }
 
@@ -68,7 +78,9 @@ internal constructor(
             is DaemonRequest.RecordingStatus -> handleSessionCommand(request)
             // Wait ops are dispatched by [handle] outside the monitor.
             is DaemonRequest.WaitForNode,
-            is DaemonRequest.WaitForVisualIdle -> error("wait ops must use handleWaitOutsideLock")
+            is DaemonRequest.WaitForVisualIdle,
+            is DaemonRequest.WaitForReloadSettled ->
+                error("wait ops must use handleWaitOutsideLock")
             DaemonRequest.Shutdown -> shutdown()
         }
 
@@ -77,6 +89,14 @@ internal constructor(
             when (request) {
                 is DaemonRequest.WaitForNode -> request.sessionId
                 is DaemonRequest.WaitForVisualIdle -> request.sessionId
+                is DaemonRequest.WaitForReloadSettled -> request.sessionId
+                else -> error("not a wait request")
+            }
+        val waitTimeoutMs =
+            when (request) {
+                is DaemonRequest.WaitForNode -> request.timeoutMs
+                is DaemonRequest.WaitForVisualIdle -> request.timeoutMs
+                is DaemonRequest.WaitForReloadSettled -> request.timeoutMs
                 else -> error("not a wait request")
             }
         // Pin the session and bump activeWaits under the monitor so detach/close will wait
@@ -92,33 +112,12 @@ internal constructor(
                 val found =
                     sessionsByPid.values.firstOrNull { it.sessionId == sessionId }
                         ?: return sessionNotFound(sessionId)
+                found.noteWaitStarted(waitTimeoutMs)
                 found.activeWaits.incrementAndGet()
                 found
             }
         return try {
-            when (request) {
-                is DaemonRequest.WaitForNode ->
-                    DaemonResponse.Nodes(
-                        request.sessionId,
-                        listOf(
-                            session.automator.waitForNode(
-                                tag = request.tag,
-                                text = request.text,
-                                timeoutMs = request.timeoutMs,
-                                pollIntervalMs = request.pollIntervalMs,
-                            )
-                        ),
-                    )
-                is DaemonRequest.WaitForVisualIdle -> {
-                    session.automator.waitForVisualIdle(
-                        timeoutMs = request.timeoutMs,
-                        stableFrames = request.stableFrames,
-                        pollIntervalMs = request.pollIntervalMs,
-                    )
-                    DaemonResponse.Completed(request.sessionId)
-                }
-                else -> error("not a wait request")
-            }
+            runWaitRequest(session, request)
         } catch (exception: IOException) {
             DaemonResponse.Error(
                 code = DaemonErrorCode.OperationFailed,
@@ -127,6 +126,51 @@ internal constructor(
         } finally {
             session.activeWaits.decrementAndGet()
         }
+    }
+
+    private fun runWaitRequest(session: DaemonSession, request: DaemonRequest): DaemonResponse =
+        when (request) {
+            is DaemonRequest.WaitForNode ->
+                DaemonResponse.Nodes(
+                    request.sessionId,
+                    listOf(
+                        session.automator.waitForNode(
+                            tag = request.tag,
+                            text = request.text,
+                            timeoutMs = request.timeoutMs,
+                            pollIntervalMs = request.pollIntervalMs,
+                        )
+                    ),
+                )
+            is DaemonRequest.WaitForVisualIdle -> {
+                session.automator.waitForVisualIdle(
+                    timeoutMs = request.timeoutMs,
+                    stableFrames = request.stableFrames,
+                    pollIntervalMs = request.pollIntervalMs,
+                )
+                DaemonResponse.Completed(request.sessionId)
+            }
+            is DaemonRequest.WaitForReloadSettled -> runReloadSettleWait(session, request)
+            else -> error("not a wait request: ${request::class.simpleName}")
+        }
+
+    private fun runReloadSettleWait(
+        session: DaemonSession,
+        request: DaemonRequest.WaitForReloadSettled,
+    ): DaemonResponse {
+        val hotReload = session.hotReloadSession
+        if (hotReload == null) {
+            return DaemonResponse.Error(
+                code = DaemonErrorCode.HotReloadUnavailable,
+                message = "hot reload is not available for this session",
+                category = ReloadSettleErrorCategory.HOT_RELOAD_UNAVAILABLE,
+            )
+        }
+        return mapReloadSettleOutcome(
+            hotReload.waitForReloadSettled(request.timeoutMs),
+            request.sessionId,
+            request.timeoutMs,
+        )
     }
 
     private fun handleSessionCommand(request: DaemonRequest): DaemonResponse =
@@ -234,7 +278,18 @@ internal constructor(
                     message = exception.message ?: "Failed to prepare the agent runtime",
                 )
             }
-        val session = DaemonSession(summary = targetPid.toSessionSummary(), automator = attached)
+        val hotReload =
+            try {
+                hotReloadSessionFactory(targetPid)
+            } catch (_: Exception) {
+                null
+            }
+        val session =
+            DaemonSession(
+                summary = sessionSummaryFor(targetPid),
+                automator = attached,
+                hotReloadSession = hotReload,
+            )
         sessionsByPid[targetPid] = session
         return DaemonResponse.Attached(
             sessionId = session.summary.sessionId,
@@ -249,12 +304,13 @@ internal constructor(
                     code = DaemonErrorCode.SessionNotFound,
                     message = "session not found: $sessionId",
                 )
-        val remainingLive = liveSessionIds() - sessionId
+        val remainingLive = sessionsByPid.values.map { it.sessionId }.toSet() - sessionId
         val session = sessionsByPid.remove(removed.key)
         // Let in-flight waits finish before tearing down the automator (see handleWaitOutsideLock).
         session?.awaitIdleWaits()
         // Finalize recording while other sessions are still known live (#185 review).
         session?.automator?.finalizeRecording(remainingLive)
+        session?.hotReloadSession?.close()
         session?.automator?.close()
         return CaptureSessionReport.forDetach(sessionId)
     }
@@ -359,12 +415,6 @@ internal constructor(
         }
     }
 
-    private fun sessionNotFound(sessionId: String): DaemonResponse.Error =
-        DaemonResponse.Error(
-            code = DaemonErrorCode.SessionNotFound,
-            message = "session not found: $sessionId",
-        )
-
     private fun shutdown(): DaemonResponse {
         close()
         return DaemonResponse.ShuttingDown
@@ -378,24 +428,34 @@ internal constructor(
         // Outside the monitor after clear so wait finally-blocks can finish.
         snapshot.forEach { session ->
             session.awaitIdleWaits()
+            session.hotReloadSession?.close()
             session.automator.close()
         }
     }
 
-    private fun Long.toSessionSummary(): DaemonSessionSummary =
-        DaemonSessionSummary(sessionId = "pid-$this", targetPid = this)
-
     private data class DaemonSession(
         val summary: DaemonSessionSummary,
         val automator: DaemonSessionAutomator,
+        val hotReloadSession: HotReloadCapability? = null,
         val activeWaits: java.util.concurrent.atomic.AtomicInteger =
             java.util.concurrent.atomic.AtomicInteger(0),
+        /** Absolute nanoTime deadline for the longest currently tracked outside-lock wait. */
+        val waitDeadlineNs: java.util.concurrent.atomic.AtomicLong =
+            java.util.concurrent.atomic.AtomicLong(0),
     ) {
         val sessionId: String
             get() = summary.sessionId
 
+        fun noteWaitStarted(timeoutMs: Long) {
+            val candidate = System.nanoTime() + timeoutMs.coerceAtLeast(0) * NANOS_PER_MS
+            waitDeadlineNs.updateAndGet { current -> maxOf(current, candidate) }
+        }
+
         fun awaitIdleWaits(timeoutMs: Long = WAIT_DRAIN_TIMEOUT_MS) {
-            val deadline = System.nanoTime() + timeoutMs * NANOS_PER_MS
+            val trackedRemainingMs =
+                ((waitDeadlineNs.get() - System.nanoTime()) / NANOS_PER_MS).coerceAtLeast(0)
+            val budgetMs = maxOf(timeoutMs, trackedRemainingMs + WAIT_DRAIN_MARGIN_MS)
+            val deadline = System.nanoTime() + budgetMs * NANOS_PER_MS
             while (activeWaits.get() > 0 && System.nanoTime() < deadline) {
                 Thread.sleep(WAIT_DRAIN_POLL_MS)
             }
@@ -403,7 +463,12 @@ internal constructor(
     }
 
     private companion object {
-        const val WAIT_DRAIN_TIMEOUT_MS: Long = 30_000
+        /**
+         * Floor for drain-before-close. Active waits may extend this via
+         * [DaemonSession.noteWaitStarted] so caller-chosen settle timeouts are honored.
+         */
+        const val WAIT_DRAIN_TIMEOUT_MS: Long = 90_000
+        const val WAIT_DRAIN_MARGIN_MS: Long = 5_000
         const val WAIT_DRAIN_POLL_MS: Long = 10
         const val NANOS_PER_MS: Long = 1_000_000
     }
@@ -418,6 +483,31 @@ private fun installEmbeddedAgentRuntimeIfNeeded() {
     }
 }
 
+/**
+ * Creates an HR capability when the target already exposes a port, or when it only advertises a
+ * pid-file path (port may appear shortly after attach while HR finishes writing the file).
+ */
+private fun defaultHotReloadCapability(targetPid: Long): HotReloadCapability? {
+    if (HotReloadPortDiscovery.discover(targetPid) != null) {
+        return HotReloadSession.forTargetPid(targetPid)
+    }
+    // Port not readable yet, but a pid-file property means HR is (or will be) present.
+    val args =
+        try {
+            ProcessHandle.of(targetPid)
+                .orElse(null)
+                ?.info()
+                ?.arguments()
+                ?.orElse(null)
+                ?.toList()
+                .orEmpty()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    val pidFile = HotReloadPortDiscovery.parsePidFilePathFromJvmArgs(args) ?: return null
+    return HotReloadSession.forTargetPid(targetPid, explicitPidFile = pidFile)
+}
+
 private fun listJvmProcesses(
     discovery: DaemonJvmProcessDiscovery,
     requesterPid: Long,
@@ -427,3 +517,12 @@ private fun attachPreflightFailure(): DaemonResponse.Error? =
     jdkPreflightError()?.let { message ->
         DaemonResponse.Error(code = DaemonErrorCode.AttachFailed, message = message)
     }
+
+private fun sessionNotFound(sessionId: String): DaemonResponse.Error =
+    DaemonResponse.Error(
+        code = DaemonErrorCode.SessionNotFound,
+        message = "session not found: $sessionId",
+    )
+
+private fun sessionSummaryFor(targetPid: Long): DaemonSessionSummary =
+    DaemonSessionSummary(sessionId = "pid-$targetPid", targetPid = targetPid)

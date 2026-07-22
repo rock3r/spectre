@@ -138,6 +138,7 @@ private class RootCommand(
             FindByTextCommand(request, output),
             WaitForNodeCommand(request, output),
             WaitForVisualIdleCommand(request, output),
+            WaitCommand(request, output),
             ClickCommand(request, output),
             DoubleClickCommand(request, output),
             LongClickCommand(request, output),
@@ -716,6 +717,54 @@ private class WaitForVisualIdleCommand(
     }
 }
 
+/**
+ * `spectre wait --reload-settled <session>` — await Compose Hot Reload settle (#211).
+ *
+ * Only meaningful on reload-aware sessions; non-HR targets fail closed immediately with
+ * `hotReloadUnavailable`.
+ */
+@OptIn(ExperimentalSpectreAgentApi::class)
+private class WaitCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "wait") {
+    private val sessionId: String by argument(help = "Attached session id")
+    private val reloadSettled: Boolean by
+        option(
+                "--reload-settled",
+                help =
+                    "Wait until a Compose Hot Reload completes (request → result → UIRendered → Ping/Ack).",
+            )
+            .flag(default = false)
+    private val timeoutMs: Long by option("--timeout-ms").long().default(60_000)
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        if (!reloadSettled) {
+            throw CliktError(
+                "Specify --reload-settled (the only wait mode supported by this command)."
+            )
+        }
+        val completedSessionId =
+            when (
+                val response =
+                    request(
+                        DaemonRequest.WaitForReloadSettled(
+                            sessionId = sessionId,
+                            timeoutMs = timeoutMs,
+                        )
+                    )
+            ) {
+                is DaemonResponse.Completed -> response.sessionId
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
+                else -> error("Daemon returned an unexpected response to wait --reload-settled")
+            }
+        if (json) output.append(CLI_JSON.encodeToString(CompletionJson(id = completedSessionId)))
+        else output.append("Reload settled for session $completedSessionId.")
+        output.appendLine()
+    }
+}
+
 @OptIn(ExperimentalSpectreAgentApi::class)
 private class TreeCommand(
     private val request: (DaemonRequest) -> DaemonResponse,
@@ -1179,5 +1228,8 @@ private fun exitCodeFor(code: DaemonErrorCode): Int =
         DaemonErrorCode.SessionNotFound -> EXIT_TARGET_NOT_FOUND
         DaemonErrorCode.ProtocolError,
         DaemonErrorCode.ShutdownInProgress,
-        DaemonErrorCode.OperationFailed -> EXIT_DAEMON_FAILURE
+        DaemonErrorCode.OperationFailed,
+        DaemonErrorCode.HotReloadUnavailable,
+        DaemonErrorCode.ReloadFailed,
+        DaemonErrorCode.Timeout -> EXIT_DAEMON_FAILURE
     }

@@ -118,6 +118,12 @@ class DaemonHandshakeTest {
                 DaemonRequest.FindByText(sessionId = "session-1234", text = "hi")
             ),
         )
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 11),
+            DaemonProtocol.minimumDaemonVersion(
+                DaemonRequest.WaitForReloadSettled(sessionId = "session-1234")
+            ),
+        )
     }
 }
 
