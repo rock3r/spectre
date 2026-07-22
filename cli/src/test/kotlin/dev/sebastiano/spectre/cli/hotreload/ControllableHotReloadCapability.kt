@@ -19,5 +19,10 @@ internal class ControllableHotReloadCapability(
         reloadListener?.invoke()
     }
 
+    /** Enqueue a controlled wait outcome (tests). */
+    fun enqueue(outcome: ReloadSettleOutcome) {
+        outcomes.add(outcome)
+    }
+
     override fun close() = Unit
 }
