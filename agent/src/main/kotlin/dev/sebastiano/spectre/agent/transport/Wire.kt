@@ -344,7 +344,9 @@ public data class NodeSnapshotDto(
     public val isFocused: Boolean = false,
     public val isDisabled: Boolean = false,
     public val isSelected: Boolean = false,
-    public val isVisible: Boolean = true,
+    // Required (no default): encodeDefaults=false would omit a defaulted true and break older
+    // v2 clients whose NodeSnapshotDto decoder still requires this field on the wire.
+    public val isVisible: Boolean,
     public val bounds: RectDto,
 )
 
