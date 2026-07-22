@@ -170,23 +170,26 @@ constructor(
                     } else {
                         AgentErrorCategory.ProtocolMismatch
                     }
-                Framing.writeFrame(
-                    output,
-                    WireCodec.encode(
-                        AgentResponse.Error(
-                            message = "Malformed or unsupported request: ${ex.message}",
-                            category = category.wireName,
-                        )
-                    ),
-                )
-                // Pre-handshake decode failure: drop the connection so the accept loop can
-                // serve a valid attacher (and release agent state for re-bootstrap).
-                if (!handshakeComplete) {
-                    running.set(false)
-                    onDetach()
-                    return false
+                val tearDown = !handshakeComplete
+                try {
+                    Framing.writeFrame(
+                        output,
+                        WireCodec.encode(
+                            AgentResponse.Error(
+                                message = "Malformed or unsupported request: ${ex.message}",
+                                category = category.wireName,
+                            )
+                        ),
+                    )
+                } finally {
+                    // Pre-handshake decode failure: always release agent state even if the
+                    // error write races a dropped client.
+                    if (tearDown) {
+                        running.set(false)
+                        onDetach()
+                    }
                 }
-                return true
+                return !tearDown
             }
 
         // Hello is handled here (not in ReflectiveAutomatorHandler) so the handshake does not
