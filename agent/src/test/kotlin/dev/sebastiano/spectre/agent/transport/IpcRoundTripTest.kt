@@ -308,11 +308,20 @@ class IpcRoundTripTest {
         server.use {
             awaitSocket(udsPath)
 
-            // Send a frame with a deliberately invalid length prefix (negative). The server
-            // will throw `IllegalStateException` inside `readFrame`; we need the per-
-            // connection catch to absorb it without killing the loop.
+            // Complete handshake first, then send a bad length prefix. Pre-handshake bad
+            // frames intentionally tear down agent state (#199); this test pins post-
+            // handshake accept-loop survival only.
             java.nio.channels.SocketChannel.open(java.net.UnixDomainSocketAddress.of(udsPath))
                 .use { rawClient ->
+                    val output = java.nio.channels.Channels.newOutputStream(rawClient)
+                    val input = java.nio.channels.Channels.newInputStream(rawClient)
+                    Framing.writeFrame(
+                        output,
+                        WireCodec.encode(
+                            AgentRequest.Hello(protocolVersion = ProtocolVersion.CURRENT)
+                        ),
+                    )
+                    Framing.readFrame(input) // HelloAck
                     val invalidHeader =
                         java.nio.ByteBuffer.allocate(Int.SIZE_BYTES)
                             .order(java.nio.ByteOrder.BIG_ENDIAN)
