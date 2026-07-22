@@ -35,6 +35,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Assumptions.assumeFalse
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
 
@@ -228,6 +229,72 @@ class DaemonFixtureIntegrationTest {
             deleteTemporaryDaemonFixtureSocketPath(socketPath)
         }
     }
+
+    /**
+     * #185 kill-target acceptance (real attach): daemon-owned record start → kill fixture mid-
+     * record → stop still finalises a non-empty MP4. Skips on headless CI and when Screen Recording
+     * is not granted (macOS TCC).
+     */
+    @Test
+    @EnabledOnOs(OS.MAC)
+    fun `CLI record stop finalizes after killing the attached target process`() {
+        assumeFalse(GraphicsEnvironment.isHeadless(), "Requires a Compose Desktop display")
+        assumeTrue(
+            runCatching {
+                    dev.sebastiano.spectre.recording.screencapturekit.MacOsScreenCaptureAccess
+                        .preflight()
+                        .granted
+                }
+                .getOrDefault(false),
+            "Screen Recording TCC not granted for this runner",
+        )
+        val daemonUser = "spectre-record-kill-e2e-${UUID.randomUUID()}"
+        val output = Files.createTempFile("spectre-record-kill-", ".mp4")
+        Files.deleteIfExists(output)
+
+        try {
+            spawnComposeFixture().use { fixture ->
+                val attached = runCliBinary(daemonUser, "attach", fixture.pid.toString(), "--json")
+                assertEquals(0, attached.exitCode, attached.output + attached.errorOutput)
+                val sessionId =
+                    Json.parseToJsonElement(attached.output)
+                        .jsonObject
+                        .getValue("id")
+                        .jsonPrimitive
+                        .content
+
+                val start =
+                    runCliBinary(
+                        daemonUser,
+                        "record",
+                        "start",
+                        sessionId,
+                        "--output",
+                        output.toString(),
+                        "--json",
+                    )
+                assertEquals(0, start.exitCode, start.output + start.errorOutput)
+                assertTrue(Files.exists(output) || start.output.contains("mp4"), start.output)
+
+                // Kill the target mid-record; daemon + SCK helper must keep running.
+                fixture.close()
+                Thread.sleep(RECORD_AFTER_KILL_SETTLE_MILLIS)
+
+                val stop = runCliBinary(daemonUser, "record", "stop", sessionId, "--json")
+                // Stop may report helper exit 5 if the window vanished; the file must still exist.
+                assertTrue(
+                    Files.isRegularFile(output) && Files.size(output) > 0,
+                    "expected finalized MP4 after kill+stop; stop.exit=${stop.exitCode} " +
+                        "out=${stop.output} err=${stop.errorOutput} size=" +
+                        runCatching { Files.size(output) }.getOrDefault(-1),
+                )
+            }
+        } finally {
+            runCatching { runCliBinary(daemonUser, "daemon", "kill") }
+            Files.deleteIfExists(output)
+            deleteDaemonSocketAndParent(DaemonEndpoint.defaultSocketPath(userName = daemonUser))
+        }
+    }
 }
 
 private fun temporaryDaemonFixtureSocketPath(): Path =
@@ -418,6 +485,7 @@ private const val FIXTURE_STOP_TIMEOUT_SECONDS: Long = 2
 private const val DRAINER_JOIN_TIMEOUT_MILLIS: Long = 500
 private const val CLI_PROCESS_TIMEOUT_SECONDS: Long = 30
 private const val MCP_CONNECTION_TIMEOUT_MILLIS: Long = 10_000
+private const val RECORD_AFTER_KILL_SETTLE_MILLIS: Long = 1_500
 private const val MIN_PNG_BYTES: Int = 100
 private val PNG_MAGIC: ByteArray =
     byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)

@@ -48,6 +48,15 @@ failure modes, and the section below
 
 ## Wayland restore_token (agent non-interactive runs)
 
+CI and hermetic tests can redirect token storage with:
+
+- `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` — directory for per-source token files (mode `0700`)
+- `SPECTRE_WAYLAND_RESTORE_TOKEN_PATH` — single-file override (mode `0600`)
+
+Headless runners without a seated GNOME session will not expose
+`org.freedesktop.portal.ScreenCast`; unit tests cover persist/reuse/clear without a
+live portal. Interactive first-consent still requires a real compositor seat.
+
 On Linux Wayland, the ScreenCast portal consent dialog is the analogue of macOS TCC:
 interactive and not automatable. Spectre's `spectre-wayland-helper` uses portal
 `persist_mode=persistent` and stores a `restore_token` under
