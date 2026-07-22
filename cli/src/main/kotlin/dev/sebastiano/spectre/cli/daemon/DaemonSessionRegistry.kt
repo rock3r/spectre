@@ -17,13 +17,7 @@ public class DaemonSessionRegistry
 internal constructor(
     private val jvmProcessDiscovery: DaemonJvmProcessDiscovery = DaemonJvmProcessDiscovery(),
     private val hotReloadSessionFactory: (Long) -> HotReloadCapability? = { targetPid ->
-        // Only become reload-aware when HR is detectable at attach time. Absent → no behavior
-        // change for the session (#211 layering rule).
-        if (HotReloadPortDiscovery.discover(targetPid) == null) {
-            null
-        } else {
-            HotReloadSession.forTargetPid(targetPid)
-        }
+        defaultHotReloadCapability(targetPid)
     },
     // Last so trailing-lambda call sites keep meaning attachAutomator.
     private val attachAutomator: (Long) -> DaemonSessionAutomator = { targetPid ->
@@ -98,6 +92,13 @@ internal constructor(
                 is DaemonRequest.WaitForReloadSettled -> request.sessionId
                 else -> error("not a wait request")
             }
+        val waitTimeoutMs =
+            when (request) {
+                is DaemonRequest.WaitForNode -> request.timeoutMs
+                is DaemonRequest.WaitForVisualIdle -> request.timeoutMs
+                is DaemonRequest.WaitForReloadSettled -> request.timeoutMs
+                else -> error("not a wait request")
+            }
         // Pin the session and bump activeWaits under the monitor so detach/close will wait
         // for in-flight waits before closing the automator.
         val session =
@@ -111,48 +112,12 @@ internal constructor(
                 val found =
                     sessionsByPid.values.firstOrNull { it.sessionId == sessionId }
                         ?: return sessionNotFound(sessionId)
+                found.noteWaitStarted(waitTimeoutMs)
                 found.activeWaits.incrementAndGet()
                 found
             }
         return try {
-            when (request) {
-                is DaemonRequest.WaitForNode ->
-                    DaemonResponse.Nodes(
-                        request.sessionId,
-                        listOf(
-                            session.automator.waitForNode(
-                                tag = request.tag,
-                                text = request.text,
-                                timeoutMs = request.timeoutMs,
-                                pollIntervalMs = request.pollIntervalMs,
-                            )
-                        ),
-                    )
-                is DaemonRequest.WaitForVisualIdle -> {
-                    session.automator.waitForVisualIdle(
-                        timeoutMs = request.timeoutMs,
-                        stableFrames = request.stableFrames,
-                        pollIntervalMs = request.pollIntervalMs,
-                    )
-                    DaemonResponse.Completed(request.sessionId)
-                }
-                is DaemonRequest.WaitForReloadSettled -> {
-                    val hotReload = session.hotReloadSession
-                    if (hotReload == null) {
-                        DaemonResponse.Error(
-                            code = DaemonErrorCode.HotReloadUnavailable,
-                            message = "hot reload is not available for this session",
-                            category = ReloadSettleErrorCategory.HOT_RELOAD_UNAVAILABLE,
-                        )
-                    } else {
-                        mapReloadSettleOutcome(
-                            hotReload.waitForReloadSettled(request.timeoutMs),
-                            request.sessionId,
-                            request.timeoutMs,
-                        )
-                    }
-                }
-            }
+            runWaitRequest(session, request)
         } catch (exception: IOException) {
             DaemonResponse.Error(
                 code = DaemonErrorCode.OperationFailed,
@@ -161,6 +126,50 @@ internal constructor(
         } finally {
             session.activeWaits.decrementAndGet()
         }
+    }
+
+    private fun runWaitRequest(session: DaemonSession, request: DaemonRequest): DaemonResponse =
+        when (request) {
+            is DaemonRequest.WaitForNode ->
+                DaemonResponse.Nodes(
+                    request.sessionId,
+                    listOf(
+                        session.automator.waitForNode(
+                            tag = request.tag,
+                            text = request.text,
+                            timeoutMs = request.timeoutMs,
+                            pollIntervalMs = request.pollIntervalMs,
+                        )
+                    ),
+                )
+            is DaemonRequest.WaitForVisualIdle -> {
+                session.automator.waitForVisualIdle(
+                    timeoutMs = request.timeoutMs,
+                    stableFrames = request.stableFrames,
+                    pollIntervalMs = request.pollIntervalMs,
+                )
+                DaemonResponse.Completed(request.sessionId)
+            }
+            is DaemonRequest.WaitForReloadSettled -> runReloadSettleWait(session, request)
+        }
+
+    private fun runReloadSettleWait(
+        session: DaemonSession,
+        request: DaemonRequest.WaitForReloadSettled,
+    ): DaemonResponse {
+        val hotReload = session.hotReloadSession
+        if (hotReload == null) {
+            return DaemonResponse.Error(
+                code = DaemonErrorCode.HotReloadUnavailable,
+                message = "hot reload is not available for this session",
+                category = ReloadSettleErrorCategory.HOT_RELOAD_UNAVAILABLE,
+            )
+        }
+        return mapReloadSettleOutcome(
+            hotReload.waitForReloadSettled(request.timeoutMs),
+            request.sessionId,
+            request.timeoutMs,
+        )
     }
 
     private fun handleSessionCommand(request: DaemonRequest): DaemonResponse =
@@ -429,12 +438,23 @@ internal constructor(
         val hotReloadSession: HotReloadCapability? = null,
         val activeWaits: java.util.concurrent.atomic.AtomicInteger =
             java.util.concurrent.atomic.AtomicInteger(0),
+        /** Absolute nanoTime deadline for the longest currently tracked outside-lock wait. */
+        val waitDeadlineNs: java.util.concurrent.atomic.AtomicLong =
+            java.util.concurrent.atomic.AtomicLong(0),
     ) {
         val sessionId: String
             get() = summary.sessionId
 
+        fun noteWaitStarted(timeoutMs: Long) {
+            val candidate = System.nanoTime() + timeoutMs.coerceAtLeast(0) * NANOS_PER_MS
+            waitDeadlineNs.updateAndGet { current -> maxOf(current, candidate) }
+        }
+
         fun awaitIdleWaits(timeoutMs: Long = WAIT_DRAIN_TIMEOUT_MS) {
-            val deadline = System.nanoTime() + timeoutMs * NANOS_PER_MS
+            val trackedRemainingMs =
+                ((waitDeadlineNs.get() - System.nanoTime()) / NANOS_PER_MS).coerceAtLeast(0)
+            val budgetMs = maxOf(timeoutMs, trackedRemainingMs + WAIT_DRAIN_MARGIN_MS)
+            val deadline = System.nanoTime() + budgetMs * NANOS_PER_MS
             while (activeWaits.get() > 0 && System.nanoTime() < deadline) {
                 Thread.sleep(WAIT_DRAIN_POLL_MS)
             }
@@ -443,11 +463,11 @@ internal constructor(
 
     private companion object {
         /**
-         * Must cover long outside-lock waits such as [DaemonRequest.WaitForReloadSettled] (default
-         * 60s) so detach/close does not tear down mid-wait. Kept above
-         * [dev.sebastiano.spectre.cli.hotreload.HotReloadSession.DEFAULT_SETTLE_TIMEOUT_MS].
+         * Floor for drain-before-close. Active waits may extend this via
+         * [DaemonSession.noteWaitStarted] so caller-chosen settle timeouts are honored.
          */
         const val WAIT_DRAIN_TIMEOUT_MS: Long = 90_000
+        const val WAIT_DRAIN_MARGIN_MS: Long = 5_000
         const val WAIT_DRAIN_POLL_MS: Long = 10
         const val NANOS_PER_MS: Long = 1_000_000
     }
@@ -460,6 +480,31 @@ private fun installEmbeddedAgentRuntimeIfNeeded() {
     EmbeddedAgentRuntime.install()?.let { runtime ->
         System.setProperty(AGENT_RUNTIME_JAR_PROPERTY, runtime.toString())
     }
+}
+
+/**
+ * Creates an HR capability when the target already exposes a port, or when it only advertises a
+ * pid-file path (port may appear shortly after attach while HR finishes writing the file).
+ */
+private fun defaultHotReloadCapability(targetPid: Long): HotReloadCapability? {
+    if (HotReloadPortDiscovery.discover(targetPid) != null) {
+        return HotReloadSession.forTargetPid(targetPid)
+    }
+    // Port not readable yet, but a pid-file property means HR is (or will be) present.
+    val args =
+        try {
+            ProcessHandle.of(targetPid)
+                .orElse(null)
+                ?.info()
+                ?.arguments()
+                ?.orElse(null)
+                ?.toList()
+                .orEmpty()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    val pidFile = HotReloadPortDiscovery.parsePidFilePathFromJvmArgs(args) ?: return null
+    return HotReloadSession.forTargetPid(targetPid, explicitPidFile = pidFile)
 }
 
 private fun listJvmProcesses(
