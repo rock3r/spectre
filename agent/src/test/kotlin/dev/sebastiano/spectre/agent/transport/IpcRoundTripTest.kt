@@ -192,6 +192,17 @@ class IpcRoundTripTest {
             repeat(3) {
                 java.nio.channels.SocketChannel.open(java.net.UnixDomainSocketAddress.of(udsPath))
                     .use { rawClient ->
+                        val output = java.nio.channels.Channels.newOutputStream(rawClient)
+                        val input = java.nio.channels.Channels.newInputStream(rawClient)
+                        // #199: complete handshake first; the regression under test is broken-pipe
+                        // after a valid session, not pre-handshake teardown.
+                        Framing.writeFrame(
+                            output,
+                            WireCodec.encode(
+                                AgentRequest.Hello(protocolVersion = ProtocolVersion.CURRENT)
+                            ),
+                        )
+                        Framing.readFrame(input) // HelloAck
                         val pingBytes = WireCodec.encode(AgentRequest.Ping)
                         val frame =
                             java.nio.ByteBuffer.allocate(Int.SIZE_BYTES + pingBytes.size).apply {
