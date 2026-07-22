@@ -109,6 +109,13 @@ internal sealed interface AgentRequest {
     // omit the field on the wire and peers would fill their own CURRENT — breaking exact-match
     // negotiation across version bumps (#199 / Bugbot).
     data class Hello(val protocolVersion: Int) : AgentRequest
+
+    /**
+     * Cancel an in-flight op by [opId] (#200). Server replies with [AgentResponse.Error] category
+     * `cancelled` for the target op (and [AgentResponse.Ok] for this cancel frame itself when the
+     * cancel was accepted).
+     */
+    @Serializable @SerialName("cancel") data class Cancel(val opId: Long) : AgentRequest
 }
 
 /** Payload-free operation label for diagnostics. Never include caller-controlled request data. */
@@ -126,6 +133,7 @@ internal val AgentRequest.logLabel: String
             is AgentRequest.WindowIdentity -> "windowIdentity"
             AgentRequest.Detach -> "detach"
             is AgentRequest.Hello -> "hello"
+            is AgentRequest.Cancel -> "cancel"
         }
 
 /** Server-to-client response envelope. */

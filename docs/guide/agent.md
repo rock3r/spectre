@@ -271,7 +271,7 @@ hierarchy.
 
 After the UDS connects, the first exchange is always:
 
-1. Client → `hello` with `protocolVersion` (currently `1` — `ProtocolVersion.CURRENT`)
+1. Client → `hello` with `protocolVersion` (currently `2` — `ProtocolVersion.CURRENT`)
 2. Runtime → `helloAck` with the same version, or `error` with category
    `protocolMismatch`
 
@@ -297,13 +297,28 @@ decode hang or silent close. That is how mixed-version pairs degrade.
 | `invalidSelector` | Malformed node key or selector |
 | `nodeNotFound` | Well-formed key, no matching node |
 | `timeout` | Deadline exceeded |
+| `cancelled` | Explicit cancel of an in-flight op (#200) |
 | `inputRejected` | Focus / Robot / permission rejection |
 | `internalError` | Unexpected agent-side failure (default) |
 
+### Long operations and cancel (#200)
+
+After Hello, every request is an **operation envelope** (`opId`, optional absolute
+`deadlineEpochMs`, body). Responses are correlated by `opId` so multiple ops can share one
+connection.
+
+- Long work (future waits, heavy capture) runs on a **worker thread**, not the accept loop —
+  so cancel/detach stay responsive.
+- **Cancel** is an explicit wire op (`cancel` with the target `opId`), not socket-close.
+- Closing a CLI/MCP front-end during a long-poll should cancel the front-end's op via the
+  daemon without detaching the target session (daemon cancel-on-frontend-loss); the agent
+  transport itself only detaches on an explicit `detach` or handshake failure teardown.
+
+
 Clients should branch on `category` (see `AgentErrorCategory` / `SpectreAgentException`),
 not on free-text `message`. The HTTP transport maps the same names onto status codes
-(`invalidSelector` → 400, `nodeNotFound` → 404, `unsupportedOperation` → 501, etc.) via
-`SpectreErrorCategory` in `:server`.
+(`invalidSelector` → 400, `nodeNotFound` → 404, `unsupportedOperation` → 501,
+`cancelled` → 499 Client Closed Request, etc.) via `SpectreErrorCategory` in `:server`.
 
 ### Schema evolution rules
 

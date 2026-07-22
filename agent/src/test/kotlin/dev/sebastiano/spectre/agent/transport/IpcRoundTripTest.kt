@@ -203,7 +203,8 @@ class IpcRoundTripTest {
                             ),
                         )
                         Framing.readFrame(input) // HelloAck
-                        val pingBytes = WireCodec.encode(AgentRequest.Ping)
+                        val pingBytes =
+                            WireCodec.encode(OpRequest(opId = 1L, body = AgentRequest.Ping))
                         val frame =
                             java.nio.ByteBuffer.allocate(Int.SIZE_BYTES + pingBytes.size).apply {
                                 putInt(pingBytes.size)
@@ -387,7 +388,8 @@ class IpcRoundTripTest {
                         ),
                     )
                     Framing.readFrame(input) // HelloAck
-                    val detachBytes = WireCodec.encode(AgentRequest.Detach)
+                    val detachBytes =
+                        WireCodec.encode(OpRequest(opId = 1L, body = AgentRequest.Detach))
                     val frame =
                         java.nio.ByteBuffer.allocate(Int.SIZE_BYTES + detachBytes.size).apply {
                             putInt(detachBytes.size)
@@ -488,6 +490,7 @@ class IpcRoundTripTest {
             AgentRequest.Detach -> AgentResponse.Detached
             is AgentRequest.Hello ->
                 AgentResponse.HelloAck(protocolVersion = ProtocolVersion.CURRENT)
+            is AgentRequest.Cancel -> AgentResponse.Ok
         }
     }
 

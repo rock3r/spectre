@@ -30,6 +30,18 @@ internal object WireCodec {
     fun decodeResponse(bytes: ByteArray): AgentResponse =
         cbor.decodeFromByteArray(AgentResponse.serializer(), bytes)
 
+    fun encode(request: OpRequest): ByteArray =
+        cbor.encodeToByteArray(OpRequest.serializer(), request)
+
+    fun encode(response: OpResponse): ByteArray =
+        cbor.encodeToByteArray(OpResponse.serializer(), response)
+
+    fun decodeOpRequest(bytes: ByteArray): OpRequest =
+        cbor.decodeFromByteArray(OpRequest.serializer(), bytes)
+
+    fun decodeOpResponse(bytes: ByteArray): OpResponse =
+        cbor.decodeFromByteArray(OpResponse.serializer(), bytes)
+
     /**
      * True when [ex] looks like an unknown sealed-class discriminator (newer op against an older
      * runtime), as opposed to truncated/corrupt CBOR. Used to map decode failures to

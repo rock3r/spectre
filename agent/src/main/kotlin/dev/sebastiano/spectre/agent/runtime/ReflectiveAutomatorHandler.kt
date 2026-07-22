@@ -104,6 +104,7 @@ internal class ReflectiveAutomatorHandler(
                         protocolVersion =
                             dev.sebastiano.spectre.agent.transport.ProtocolVersion.CURRENT
                     )
+                is AgentRequest.Cancel -> AgentResponse.Ok
             }
         } catch (ex: ReflectiveOperationException) {
             val message = "Reflective call failed: ${ex.targetMessage()}"

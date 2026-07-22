@@ -9,6 +9,11 @@ package dev.sebastiano.spectre.agent.transport
  * bump this constant and update the handshake docs in `docs/guide/agent.md`.
  */
 public object ProtocolVersion {
-    /** Current protocol revision carried on [AgentRequest.Hello] / [AgentResponse.HelloAck]. */
-    public const val CURRENT: Int = 1
+    /**
+     * Current protocol revision carried on [AgentRequest.Hello] / [AgentResponse.HelloAck].
+     *
+     * v1: bare request/response frames after Hello. v2 (#200): operation envelopes with op ids,
+     * cancel, and deadline budgets; long ops run off the accept thread.
+     */
+    public const val CURRENT: Int = 2
 }
