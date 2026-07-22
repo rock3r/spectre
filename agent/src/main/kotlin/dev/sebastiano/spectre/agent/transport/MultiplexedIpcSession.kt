@@ -7,6 +7,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -109,6 +110,7 @@ internal class MultiplexedIpcSession(
     ) {
         val slot = inFlight.remove(cancel.opId)
         if (slot != null) {
+            slot.cancelDeadlineTask()
             slot.abortRunningWork()
             if (slot.tryClaimResponse()) {
                 writeOpResponse(
@@ -159,6 +161,7 @@ internal class MultiplexedIpcSession(
             }
             val response = executeOp(body, op.deadlineEpochMs)
             // Only the winner of tryClaimResponse may write (cancel/deadline may have won).
+            slot.cancelDeadlineTask()
             if (slot.tryClaimResponse()) {
                 inFlight.remove(op.opId, slot)
                 writeOpResponse(output, writeLock, op.opId, response)
@@ -173,12 +176,15 @@ internal class MultiplexedIpcSession(
             inFlight.remove(op.opId, slot)
             return
         }
-        scheduleDeadline(op, slot, deadlineScheduler, inFlight, output, writeLock)
+        slot.attachDeadlineTask(
+            scheduleDeadline(op, slot, deadlineScheduler, inFlight, output, writeLock)
+        )
     }
 
     /**
      * When [OpRequest.deadlineEpochMs] is in the future, interrupt the worker at the deadline and
-     * claim the response as taxonomy `timeout`.
+     * claim the response as taxonomy `timeout`. Returns the scheduled task so the slot can cancel
+     * it when the op completes early.
      */
     private fun scheduleDeadline(
         op: OpRequest,
@@ -187,10 +193,10 @@ internal class MultiplexedIpcSession(
         inFlight: ConcurrentHashMap<Long, OpSlot>,
         output: OutputStream,
         writeLock: Any,
-    ) {
-        val deadline = op.deadlineEpochMs ?: return
+    ): ScheduledFuture<*>? {
+        val deadline = op.deadlineEpochMs ?: return null
         val delayMs = deadline - System.currentTimeMillis()
-        val fireTimeout = {
+        val fireTimeout = Runnable {
             if (inFlight.remove(op.opId, slot)) {
                 slot.abortRunningWork()
                 if (slot.tryClaimResponse()) {
@@ -207,10 +213,10 @@ internal class MultiplexedIpcSession(
             }
         }
         if (delayMs <= 0L) {
-            fireTimeout()
-            return
+            fireTimeout.run()
+            return null
         }
-        deadlineScheduler.schedule(fireTimeout, delayMs, TimeUnit.MILLISECONDS)
+        return deadlineScheduler.schedule(fireTimeout, delayMs, TimeUnit.MILLISECONDS)
     }
 
     @Suppress("TooGenericExceptionCaught")
@@ -271,6 +277,7 @@ internal class MultiplexedIpcSession(
         private val aborted = AtomicBoolean(false)
         private val responseClaimed = AtomicBoolean(false)
         private val future = AtomicReference<Future<*>?>(null)
+        private val deadlineTask = AtomicReference<ScheduledFuture<*>?>(null)
 
         val isAborted: Boolean
             get() = aborted.get()
@@ -280,6 +287,19 @@ internal class MultiplexedIpcSession(
             if (aborted.get()) {
                 f.cancel(/* mayInterruptIfRunning= */ true)
             }
+        }
+
+        fun attachDeadlineTask(task: ScheduledFuture<*>?) {
+            if (task == null) return
+            deadlineTask.set(task)
+            // Op may already have completed/cancelled before the task was registered.
+            if (responseClaimed.get() || aborted.get()) {
+                task.cancel(/* mayInterruptIfRunning= */ false)
+            }
+        }
+
+        fun cancelDeadlineTask() {
+            deadlineTask.getAndSet(null)?.cancel(/* mayInterruptIfRunning= */ false)
         }
 
         fun abortRunningWork() {
