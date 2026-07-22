@@ -13,15 +13,8 @@ import kotlin.test.Test
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
-/**
- * Coexistence premise with Compose Hot Reload's JdwpTracker (#212): Spectre must not call
- * [java.lang.instrument.Instrumentation.redefineClasses], which would look like an external
- * redefine and trip HR's tracker.
- *
- * Scans every production `src/main` Kotlin tree under the Spectre repo (all modules that have a
- * `build.gradle.kts` + `src/main`) for the forbidden call site. `redefineModule` (module opens at
- * attach) is allowed and is a different API.
- */
+// HR coexistence: Spectre must never call Instrumentation.redefineClasses (JdwpTracker tripwire).
+// redefineModule for attach-time module opens is a different API and is allowed.
 class SpectreDoesNotRedefineClassesContractTest {
     @Test
     fun `production sources never call Instrumentation redefineClasses`() {
@@ -53,45 +46,41 @@ class SpectreDoesNotRedefineClassesContractTest {
         )
     }
 
-    /**
-     * Finds production modules by looking for immediate child directories (and recording/*) that
-     * have both `build.gradle.kts` and `src/main`.
-     */
     private fun discoverProductionMainSourceRoots(repoRoot: Path): List<Path> {
         val roots = ArrayList<Path>()
         fun consider(moduleDir: Path) {
             if (!moduleDir.isDirectory()) return
             if (!Files.isRegularFile(moduleDir.resolve("build.gradle.kts"))) return
-            val main = moduleDir.resolve("src/main")
-            if (main.isDirectory()) roots.add(main)
+            val main = moduleDir.resolve("src").resolve("main")
+            if (main.isDirectory()) {
+                roots.add(main)
+            }
         }
-        // Top-level modules
         repoRoot.listDirectoryEntries().forEach { consider(it) }
-        // Nested platform recording modules
         val recording = repoRoot.resolve("recording")
         if (recording.isDirectory()) {
             recording.listDirectoryEntries().forEach { consider(it) }
+            consider(recording)
         }
-        // Also consider recording itself
-        consider(recording)
         return roots.sortedBy { it.toString() }
     }
 
     private fun resolveRepoRoot(): Path {
         var dir = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize()
         repeat(8) {
-            if (
-                Files.isRegularFile(dir.resolve("settings.gradle.kts")) &&
-                    Files.isDirectory(dir.resolve("cli"))
-            ) {
+            val settings = dir.resolve("settings.gradle.kts")
+            val cli = dir.resolve("cli")
+            if (Files.isRegularFile(settings) && Files.isDirectory(cli)) {
                 return dir
             }
             dir = dir.parent ?: fail("walked off filesystem from ${System.getProperty("user.dir")}")
         }
         fail(
-            "could not find Spectre repo root (settings.gradle.kts) from " +
+            "could not find Spectre repo root from " +
                 System.getProperty("user.dir") +
-                " (cwd name=${Path.of(System.getProperty("user.dir")).name})"
+                " (cwd name=" +
+                Path.of(System.getProperty("user.dir")).name +
+                ")"
         )
     }
 
