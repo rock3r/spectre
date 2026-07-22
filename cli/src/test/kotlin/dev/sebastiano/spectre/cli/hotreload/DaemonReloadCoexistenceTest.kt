@@ -4,7 +4,6 @@ import dev.sebastiano.spectre.agent.AtomicCaptureResult
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.RectDto
-import dev.sebastiano.spectre.cli.daemon.CapturePruner
 import dev.sebastiano.spectre.cli.daemon.DaemonErrorCode
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
@@ -123,15 +122,9 @@ class DaemonReloadCoexistenceTest {
                 )
             )
         } finally {
-            CapturePruner.prune(
-                request =
-                    CapturePruner.Request(
-                        sessionId = "pid-4242",
-                        force = true,
-                        allowExplicitOutDir = true,
-                    ),
-                liveSessionIds = emptySet(),
-            )
+            // Match DaemonSessionRegistryTest capture isolation: explicit outDir + delete tree.
+            // CaptureArtifactStore still appends to the process ledger (same as sibling tests);
+            // we never force-prune the shared ledger (that would risk deleting real pid-4242 rows).
             outRoot.toFile().deleteRecursively()
             registry.close()
         }
