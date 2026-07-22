@@ -9,6 +9,7 @@ import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import dev.sebastiano.spectre.cli.daemon.DaemonSessionRegistry
 import dev.sebastiano.spectre.cli.daemon.TestDaemonSessionAutomator
+import java.nio.file.Files
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
@@ -36,6 +37,7 @@ class DaemonReloadCoexistenceTest {
         val generation = AtomicInteger(0)
         val clicked = mutableListOf<String>()
         val captureCalls = AtomicInteger(0)
+        val outDir = Files.createTempDirectory("spectre-coexist-cap").toString()
 
         val registry =
             DaemonSessionRegistry(
@@ -75,9 +77,12 @@ class DaemonReloadCoexistenceTest {
         val preKey = preTree.nodes.single().key
         assertTrue(preKey.startsWith("g0:"), "expected stamped pre-reload key, got $preKey")
 
-        // Capture while attached and pre-reload.
+        // Capture while attached and pre-reload (isolated outDir — do not touch shared capture
+        // root).
         assertIs<DaemonResponse.Capture>(
-            registry.handle(DaemonRequest.Capture(sessionId = sessionId, windowIndex = 0))
+            registry.handle(
+                DaemonRequest.Capture(sessionId = sessionId, windowIndex = 0, outDir = outDir)
+            )
         )
         assertEquals(1, captureCalls.get())
 
@@ -100,22 +105,22 @@ class DaemonReloadCoexistenceTest {
 
         // Capture still works after reload settle (attach session still healthy).
         assertIs<DaemonResponse.Capture>(
-            registry.handle(DaemonRequest.Capture(sessionId = sessionId, windowIndex = 0))
+            registry.handle(
+                DaemonRequest.Capture(sessionId = sessionId, windowIndex = 0, outDir = outDir)
+            )
         )
         assertEquals(2, captureCalls.get())
 
         assertIs<DaemonResponse.Completed>(registry.handle(DaemonRequest.Click(sessionId, postKey)))
         assertEquals(listOf("main:0:1"), clicked)
 
-        // Explicit wait still works after coexistence path (controllable returns Unavailable when
-        // queue empty — proves the session still has an HR capability wired).
-        val wait =
-            assertIs<DaemonResponse.Error>(
-                registry.handle(
-                    DaemonRequest.WaitForReloadSettled(sessionId = sessionId, timeoutMs = 50)
-                )
+        // Session still has an HR capability: enqueue Settled and wait successfully.
+        hr.enqueue(ReloadSettleOutcome.Settled)
+        assertIs<DaemonResponse.Completed>(
+            registry.handle(
+                DaemonRequest.WaitForReloadSettled(sessionId = sessionId, timeoutMs = 1_000)
             )
-        assertEquals(DaemonErrorCode.HotReloadUnavailable, wait.code)
+        )
 
         registry.close()
     }
