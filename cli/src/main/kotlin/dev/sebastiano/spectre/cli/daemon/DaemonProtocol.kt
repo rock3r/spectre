@@ -11,7 +11,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 10)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 11)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -47,6 +47,7 @@ public object DaemonProtocol {
             is DaemonRequest.PressKey -> versionFor(INPUT_VERBS_INTRODUCED_MINOR)
             is DaemonRequest.WaitForNode,
             is DaemonRequest.WaitForVisualIdle -> versionFor(WAIT_OPS_INTRODUCED_MINOR)
+            is DaemonRequest.WaitForReloadSettled -> versionFor(RELOAD_SETTLE_INTRODUCED_MINOR)
             is DaemonRequest.FindByText,
             is DaemonRequest.FindByContentDescription,
             is DaemonRequest.FindByRole -> versionFor(SELECTOR_PARITY_INTRODUCED_MINOR)
@@ -82,6 +83,8 @@ public object DaemonProtocol {
     /** waitForNode / waitForVisualIdle and selector finders over daemon (#201/#202). */
     private const val WAIT_OPS_INTRODUCED_MINOR: Int = 10
     private const val SELECTOR_PARITY_INTRODUCED_MINOR: Int = 10
+    /** waitForReloadSettled for Compose Hot Reload awareness (#211). */
+    private const val RELOAD_SETTLE_INTRODUCED_MINOR: Int = 11
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)
@@ -215,6 +218,20 @@ public sealed interface DaemonRequest {
         public val timeoutMs: Long = 5_000,
         public val stableFrames: Int = 3,
         public val pollIntervalMs: Long = 16,
+    ) : DaemonRequest
+
+    /**
+     * Wait until a Compose Hot Reload settle chain completes (#211).
+     *
+     * Available only when the attach session is reload-aware. Failures carry
+     * a #199-style [DaemonResponse.Error.category] (`hotReloadUnavailable` / `reloadFailed` /
+     * `timeout` / `cancelled`).
+     */
+    @Serializable
+    @SerialName("waitForReloadSettled")
+    public data class WaitForReloadSettled(
+        public val sessionId: String,
+        public val timeoutMs: Long = 60_000,
     ) : DaemonRequest
 
     @Serializable
@@ -371,8 +388,15 @@ public sealed interface DaemonResponse {
 
     @Serializable
     @SerialName("error")
-    public data class Error(public val code: DaemonErrorCode, public val message: String) :
-        DaemonResponse
+    public data class Error(
+        public val code: DaemonErrorCode,
+        public val message: String,
+        /**
+         * Optional #199 taxonomy wire name (e.g. `timeout`, `hotReloadUnavailable`). Null for
+         * pre-taxonomy daemon failures.
+         */
+        public val category: String? = null,
+    ) : DaemonResponse
 }
 
 @Serializable
@@ -388,4 +412,10 @@ public enum class DaemonErrorCode {
     ProtocolError,
     ShutdownInProgress,
     OperationFailed,
+    /** Target is not running under Compose Hot Reload (#211). */
+    HotReloadUnavailable,
+    /** HR reported a failed class reload (#211). */
+    ReloadFailed,
+    /** Wait exceeded its deadline (#199 / #211). */
+    Timeout,
 }

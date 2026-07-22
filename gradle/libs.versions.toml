@@ -2,6 +2,9 @@
 androidx-lifecycle = "2.10.0"
 androidx-tracing = "2.0.0-alpha06"
 composeMultiplatform = "1.10.3"
+# Compose Hot Reload orchestration client for daemon-side reload awareness (#211).
+# Keep aligned with cli HotReloadVersions.PINNED.
+composeHotReload = "1.2.0-rc01"
 clikt = "5.0.1"
 composeRules = "0.5.6"
 detekt = "2.0.0-alpha.3"
@@ -47,6 +50,8 @@ compose-material3 = { module = "org.jetbrains.compose.material3:material3", vers
 compose-rules-detekt = { module = "io.nlopez.compose.rules:detekt", version.ref = "composeRules" }
 compose-ui = { module = "org.jetbrains.compose.ui:ui", version.ref = "composeMultiplatform" }
 compose-components-resources = { module = "org.jetbrains.compose.components:components-resources", version.ref = "composeMultiplatform" }
+compose-hotReload-orchestration = { module = "org.jetbrains.compose.hot-reload:hot-reload-orchestration", version.ref = "composeHotReload" }
+compose-hotReload-core = { module = "org.jetbrains.compose.hot-reload:hot-reload-core", version.ref = "composeHotReload" }
 clikt = { module = "com.github.ajalt.clikt:clikt", version.ref = "clikt" }
 compose-uiToolingPreview = { module = "org.jetbrains.compose.ui:ui-tooling-preview", version.ref = "composeMultiplatform" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }

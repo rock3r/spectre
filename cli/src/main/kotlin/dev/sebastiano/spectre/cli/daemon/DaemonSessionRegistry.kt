@@ -3,6 +3,11 @@ package dev.sebastiano.spectre.cli.daemon
 import dev.sebastiano.spectre.agent.AgentAttach
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.SpectreAttachException
+import dev.sebastiano.spectre.cli.hotreload.HotReloadCapability
+import dev.sebastiano.spectre.cli.hotreload.HotReloadPortDiscovery
+import dev.sebastiano.spectre.cli.hotreload.HotReloadSession
+import dev.sebastiano.spectre.cli.hotreload.ReloadSettleErrorCategory
+import dev.sebastiano.spectre.cli.hotreload.mapReloadSettleOutcome
 import dev.sebastiano.spectre.cli.jdkPreflightError
 import java.io.IOException
 
@@ -11,6 +16,16 @@ import java.io.IOException
 public class DaemonSessionRegistry
 internal constructor(
     private val jvmProcessDiscovery: DaemonJvmProcessDiscovery = DaemonJvmProcessDiscovery(),
+    private val hotReloadSessionFactory: (Long) -> HotReloadCapability? = { targetPid ->
+        // Only become reload-aware when HR is detectable at attach time. Absent → no behavior
+        // change for the session (#211 layering rule).
+        if (HotReloadPortDiscovery.discover(targetPid) == null) {
+            null
+        } else {
+            HotReloadSession.forTargetPid(targetPid)
+        }
+    },
+    // Last so trailing-lambda call sites keep meaning attachAutomator.
     private val attachAutomator: (Long) -> DaemonSessionAutomator = { targetPid ->
         installEmbeddedAgentRuntimeIfNeeded()
         val automator = AgentAttach.attach(targetPid)
@@ -34,7 +49,8 @@ internal constructor(
     public fun handle(request: DaemonRequest): DaemonResponse =
         when (request) {
             is DaemonRequest.WaitForNode,
-            is DaemonRequest.WaitForVisualIdle -> handleWaitOutsideLock(request)
+            is DaemonRequest.WaitForVisualIdle,
+            is DaemonRequest.WaitForReloadSettled -> handleWaitOutsideLock(request)
             else -> handleSynchronized(request)
         }
 
@@ -68,7 +84,9 @@ internal constructor(
             is DaemonRequest.RecordingStatus -> handleSessionCommand(request)
             // Wait ops are dispatched by [handle] outside the monitor.
             is DaemonRequest.WaitForNode,
-            is DaemonRequest.WaitForVisualIdle -> error("wait ops must use handleWaitOutsideLock")
+            is DaemonRequest.WaitForVisualIdle,
+            is DaemonRequest.WaitForReloadSettled ->
+                error("wait ops must use handleWaitOutsideLock")
             DaemonRequest.Shutdown -> shutdown()
         }
 
@@ -77,6 +95,7 @@ internal constructor(
             when (request) {
                 is DaemonRequest.WaitForNode -> request.sessionId
                 is DaemonRequest.WaitForVisualIdle -> request.sessionId
+                is DaemonRequest.WaitForReloadSettled -> request.sessionId
                 else -> error("not a wait request")
             }
         // Pin the session and bump activeWaits under the monitor so detach/close will wait
@@ -117,7 +136,22 @@ internal constructor(
                     )
                     DaemonResponse.Completed(request.sessionId)
                 }
-                else -> error("not a wait request")
+                is DaemonRequest.WaitForReloadSettled -> {
+                    val hotReload = session.hotReloadSession
+                    if (hotReload == null) {
+                        DaemonResponse.Error(
+                            code = DaemonErrorCode.HotReloadUnavailable,
+                            message = "hot reload is not available for this session",
+                            category = ReloadSettleErrorCategory.HOT_RELOAD_UNAVAILABLE,
+                        )
+                    } else {
+                        mapReloadSettleOutcome(
+                            hotReload.waitForReloadSettled(request.timeoutMs),
+                            request.sessionId,
+                            request.timeoutMs,
+                        )
+                    }
+                }
             }
         } catch (exception: IOException) {
             DaemonResponse.Error(
@@ -234,7 +268,18 @@ internal constructor(
                     message = exception.message ?: "Failed to prepare the agent runtime",
                 )
             }
-        val session = DaemonSession(summary = targetPid.toSessionSummary(), automator = attached)
+        val hotReload =
+            try {
+                hotReloadSessionFactory(targetPid)
+            } catch (_: Exception) {
+                null
+            }
+        val session =
+            DaemonSession(
+                summary = sessionSummaryFor(targetPid),
+                automator = attached,
+                hotReloadSession = hotReload,
+            )
         sessionsByPid[targetPid] = session
         return DaemonResponse.Attached(
             sessionId = session.summary.sessionId,
@@ -249,12 +294,13 @@ internal constructor(
                     code = DaemonErrorCode.SessionNotFound,
                     message = "session not found: $sessionId",
                 )
-        val remainingLive = liveSessionIds() - sessionId
+        val remainingLive = sessionsByPid.values.map { it.sessionId }.toSet() - sessionId
         val session = sessionsByPid.remove(removed.key)
         // Let in-flight waits finish before tearing down the automator (see handleWaitOutsideLock).
         session?.awaitIdleWaits()
         // Finalize recording while other sessions are still known live (#185 review).
         session?.automator?.finalizeRecording(remainingLive)
+        session?.hotReloadSession?.close()
         session?.automator?.close()
         return CaptureSessionReport.forDetach(sessionId)
     }
@@ -359,12 +405,6 @@ internal constructor(
         }
     }
 
-    private fun sessionNotFound(sessionId: String): DaemonResponse.Error =
-        DaemonResponse.Error(
-            code = DaemonErrorCode.SessionNotFound,
-            message = "session not found: $sessionId",
-        )
-
     private fun shutdown(): DaemonResponse {
         close()
         return DaemonResponse.ShuttingDown
@@ -378,16 +418,15 @@ internal constructor(
         // Outside the monitor after clear so wait finally-blocks can finish.
         snapshot.forEach { session ->
             session.awaitIdleWaits()
+            session.hotReloadSession?.close()
             session.automator.close()
         }
     }
 
-    private fun Long.toSessionSummary(): DaemonSessionSummary =
-        DaemonSessionSummary(sessionId = "pid-$this", targetPid = this)
-
     private data class DaemonSession(
         val summary: DaemonSessionSummary,
         val automator: DaemonSessionAutomator,
+        val hotReloadSession: HotReloadCapability? = null,
         val activeWaits: java.util.concurrent.atomic.AtomicInteger =
             java.util.concurrent.atomic.AtomicInteger(0),
     ) {
@@ -427,3 +466,12 @@ private fun attachPreflightFailure(): DaemonResponse.Error? =
     jdkPreflightError()?.let { message ->
         DaemonResponse.Error(code = DaemonErrorCode.AttachFailed, message = message)
     }
+
+private fun sessionNotFound(sessionId: String): DaemonResponse.Error =
+    DaemonResponse.Error(
+        code = DaemonErrorCode.SessionNotFound,
+        message = "session not found: $sessionId",
+    )
+
+private fun sessionSummaryFor(targetPid: Long): DaemonSessionSummary =
+    DaemonSessionSummary(sessionId = "pid-$targetPid", targetPid = targetPid)

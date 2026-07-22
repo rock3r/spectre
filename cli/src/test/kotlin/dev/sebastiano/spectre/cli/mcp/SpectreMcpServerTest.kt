@@ -35,6 +35,7 @@ class SpectreMcpServerTest {
                 "find_text",
                 "wait_for_node",
                 "wait_for_visual_idle",
+                "wait_for_reload_settled",
                 "click",
                 "double_click",
                 "long_click",

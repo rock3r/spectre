@@ -62,6 +62,7 @@ class SpectreMcpStdioIntegrationTest {
                         "type_text",
                         "wait_for_node",
                         "wait_for_visual_idle",
+                        "wait_for_reload_settled",
                         "windows",
                     ),
                     client.listTools().tools.map { it.name }.toSet(),
