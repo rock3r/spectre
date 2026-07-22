@@ -108,6 +108,17 @@ public interface AutomatorContractDriver : AutoCloseable {
         get() = expectsFixtureSemantics
 
     /**
+     * Binary-compatible alias for [supportsFixtureParity]. Prefer [supportsFixtureParity]; this
+     * name remains so drivers compiled against older `testing` artifacts keep linking.
+     */
+    @Deprecated(
+        message = "Renamed to supportsFixtureParity",
+        replaceWith = ReplaceWith("supportsFixtureParity"),
+    )
+    public val supportsExtendedParity: Boolean
+        get() = supportsFixtureParity
+
+    /**
      * When true, [waitForNodeFailureCategory] is implemented (agent + in-process). HTTP has no wait
      * routes (#201 is agent-scoped).
      */

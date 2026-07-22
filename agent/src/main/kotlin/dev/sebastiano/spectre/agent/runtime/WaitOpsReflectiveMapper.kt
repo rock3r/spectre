@@ -174,8 +174,16 @@ internal class WaitOpsReflectiveMapper(
          */
         fun durationStorageFromMs(ms: Long): Long {
             require(ms >= 0L) { "duration ms must be non-negative" }
-            val nanos = ms * 1_000_000L
-            return if (nanos <= Long.MAX_VALUE / 2) nanos shl 1 else (ms shl 1) + 1
+            // Compare against the nanos-storage threshold in ms-space first so
+            // `ms * NANOS_PER_MS` cannot overflow Long before the millis-unit branch.
+            val maxMsStoredAsNanos = (Long.MAX_VALUE / 2) / NANOS_PER_MS
+            return if (ms <= maxMsStoredAsNanos) {
+                (ms * NANOS_PER_MS) shl 1
+            } else {
+                (ms shl 1) + 1
+            }
         }
+
+        private const val NANOS_PER_MS: Long = 1_000_000L
     }
 }
