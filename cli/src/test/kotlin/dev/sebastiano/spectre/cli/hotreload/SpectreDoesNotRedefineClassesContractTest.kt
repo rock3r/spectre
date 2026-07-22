@@ -3,7 +3,9 @@ package dev.sebastiano.spectre.cli.hotreload
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.extension
+import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
+import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
 import kotlin.io.path.readText
 import kotlin.streams.asSequence
@@ -16,16 +18,21 @@ import kotlin.test.fail
  * [java.lang.instrument.Instrumentation.redefineClasses], which would look like an external
  * redefine and trip HR's tracker.
  *
- * Scans every production `src/main` Kotlin tree under the Spectre repo (all modules, not a
- * hard-coded subset) for the forbidden call site. `redefineModule` (module opens at attach) is
- * allowed and is a different API.
+ * Scans every production `src/main` Kotlin tree under the Spectre repo (all modules that have a
+ * `build.gradle.kts` + `src/main`) for the forbidden call site. `redefineModule` (module opens at
+ * attach) is allowed and is a different API.
  */
 class SpectreDoesNotRedefineClassesContractTest {
     @Test
     fun `production sources never call Instrumentation redefineClasses`() {
         val repoRoot = resolveRepoRoot()
         val mainSrcRoots = discoverProductionMainSourceRoots(repoRoot)
-        assertTrue(mainSrcRoots.isNotEmpty(), "expected at least one src/main tree under $repoRoot")
+        assertTrue(
+            mainSrcRoots.isNotEmpty(),
+            "expected at least one src/main tree under $repoRoot (user.dir=" +
+                System.getProperty("user.dir") +
+                ")",
+        )
         val hits = mutableListOf<String>()
         for (mainSrc in mainSrcRoots) {
             Files.walk(mainSrc).use { stream ->
@@ -33,8 +40,7 @@ class SpectreDoesNotRedefineClassesContractTest {
                     .asSequence()
                     .filter { it.isRegularFile() && it.extension == "kt" }
                     .forEach { path ->
-                        val text = path.readText()
-                        if (REDEFINE_CLASSES_CALL.containsMatchIn(text)) {
+                        if (REDEFINE_CLASSES_CALL.containsMatchIn(path.readText())) {
                             hits += path.toString()
                         }
                     }
@@ -48,27 +54,32 @@ class SpectreDoesNotRedefineClassesContractTest {
     }
 
     /**
-     * Walks the repo for production `src/main` directories (skip `build/`, `.git/`, nested
-     * `.worktrees` if present).
+     * Finds production modules by looking for immediate child directories (and recording/*) that
+     * have both `build.gradle.kts` and `src/main`.
      */
     private fun discoverProductionMainSourceRoots(repoRoot: Path): List<Path> {
-        val found = ArrayList<Path>()
-        Files.walk(repoRoot, 6).use { stream ->
-            stream.forEach { path ->
-                if (!Files.isDirectory(path)) return@forEach
-                if (path.fileName.toString() != "main") return@forEach
-                if (path.parent?.fileName?.toString() != "src") return@forEach
-                val s = path.toString().replace('\\', '/')
-                if ("/build/" in s || "/.git/" in s || "/.worktrees/" in s) return@forEach
-                found.add(path)
-            }
+        val roots = ArrayList<Path>()
+        fun consider(moduleDir: Path) {
+            if (!moduleDir.isDirectory()) return
+            if (!Files.isRegularFile(moduleDir.resolve("build.gradle.kts"))) return
+            val main = moduleDir.resolve("src/main")
+            if (main.isDirectory()) roots.add(main)
         }
-        return found.sortedBy { it.toString() }
+        // Top-level modules
+        repoRoot.listDirectoryEntries().forEach { consider(it) }
+        // Nested platform recording modules
+        val recording = repoRoot.resolve("recording")
+        if (recording.isDirectory()) {
+            recording.listDirectoryEntries().forEach { consider(it) }
+        }
+        // Also consider recording itself
+        consider(recording)
+        return roots.sortedBy { it.toString() }
     }
 
     private fun resolveRepoRoot(): Path {
         var dir = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize()
-        repeat(6) {
+        repeat(8) {
             if (
                 Files.isRegularFile(dir.resolve("settings.gradle.kts")) &&
                     Files.isDirectory(dir.resolve("cli"))
