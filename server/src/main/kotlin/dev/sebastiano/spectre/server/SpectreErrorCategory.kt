@@ -15,6 +15,8 @@ public enum class SpectreErrorCategory(public val wireName: String) {
     Timeout("timeout"),
     /** Explicit cancel of an in-flight op (#200); agent wire name `cancelled`. */
     Cancelled("cancelled"),
+    /** Payload exceeds the transport hard limit (#204). */
+    PayloadTooLarge("payloadTooLarge"),
     InputRejected("inputRejected"),
     InternalError("internalError");
 
@@ -29,6 +31,7 @@ public enum class SpectreErrorCategory(public val wireName: String) {
                 Timeout -> io.ktor.http.HttpStatusCode.GatewayTimeout
                 // Non-standard but widely understood "client closed request" for cancelled work.
                 Cancelled -> CLIENT_CLOSED_REQUEST
+                PayloadTooLarge -> io.ktor.http.HttpStatusCode.PayloadTooLarge
                 InputRejected -> io.ktor.http.HttpStatusCode.Conflict
                 InternalError -> io.ktor.http.HttpStatusCode.InternalServerError
             }
