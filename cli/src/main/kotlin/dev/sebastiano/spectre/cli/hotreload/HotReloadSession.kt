@@ -111,10 +111,11 @@ internal constructor(
         val startedNs = System.nanoTime()
         val handle =
             awaitConnection(timeoutMs)
-                ?: return if (closed.get()) {
-                    ReloadSettleOutcome.Cancelled
-                } else {
-                    ReloadSettleOutcome.Unavailable
+                ?: return when {
+                    closed.get() -> ReloadSettleOutcome.Cancelled
+                    // Reconnect was running but never produced a handle within the budget →
+                    // settle-timeout, not "HR unavailable" (session is still reload-aware).
+                    else -> ReloadSettleOutcome.TimedOut
                 }
         val elapsedMs = (System.nanoTime() - startedNs) / NANOS_PER_MS
         val remainingMs = (timeoutMs - elapsedMs).coerceAtLeast(0)
