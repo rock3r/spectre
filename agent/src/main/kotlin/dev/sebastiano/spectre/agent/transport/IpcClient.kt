@@ -113,10 +113,13 @@ internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) 
         try {
             val frame = OpRequest(opId = opId, deadlineEpochMs = deadlineEpochMs, body = request)
             synchronized(writeLock) { Framing.writeFrame(output, WireCodec.encode(frame)) }
-            // Already-elapsed deadlines still need time for the server to return taxonomy
-            // `timeout` (Codex P2 / Windows flake: 1ms wait raced the UDS round-trip).
-            val waitMs = clientWaitMs(deadlineEpochMs)
-            return future.get(waitMs, TimeUnit.MILLISECONDS)
+            // No client-side deadline: wait indefinitely for the server (matches pre-#200
+            // blocking read). With a deadline: pad so server taxonomy timeout can still arrive.
+            return if (deadlineEpochMs == null) {
+                future.get()
+            } else {
+                future.get(clientWaitMs(deadlineEpochMs), TimeUnit.MILLISECONDS)
+            }
         } catch (ex: java.util.concurrent.TimeoutException) {
             pending.remove(opId)
             runCatching { cancel(opId) }
@@ -235,15 +238,13 @@ internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) 
         failAllPending(EOFException("IpcClient closed"))
     }
 
-    private fun clientWaitMs(deadlineEpochMs: Long?): Long {
-        if (deadlineEpochMs == null) return DEFAULT_WAIT_MS
+    private fun clientWaitMs(deadlineEpochMs: Long): Long {
         val remaining = deadlineEpochMs - System.currentTimeMillis()
         // Always pad so a server-side timeout response can still arrive after the deadline.
         return remaining.coerceAtLeast(0L) + ELAPSED_DEADLINE_GRACE_MS
     }
 
     private companion object {
-        const val DEFAULT_WAIT_MS: Long = 120_000
         /** Floor so a server-side timeout/cancel response can arrive over UDS. */
         const val ELAPSED_DEADLINE_GRACE_MS: Long = 5_000
         const val CANCEL_ACK_WAIT_MS: Long = 5_000

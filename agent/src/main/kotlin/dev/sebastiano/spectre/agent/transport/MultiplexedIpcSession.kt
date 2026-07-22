@@ -9,6 +9,7 @@ import java.util.concurrent.Future
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Post-Hello multiplexed IPC session (#200): accept thread only reads/dispatches; work runs on a
@@ -30,12 +31,13 @@ internal class MultiplexedIpcSession(
             Executors.newSingleThreadScheduledExecutor { r ->
                 Thread(r, "spectre-agent-deadline").apply { isDaemon = true }
             }
-        val inFlight = ConcurrentHashMap<Long, Future<*>>()
+        val inFlight = ConcurrentHashMap<Long, OpSlot>()
         val writeLock = Any()
         try {
             serveOps(input, output, workers, deadlineScheduler, inFlight, writeLock)
         } finally {
-            inFlight.values.forEach { it.cancel(true) }
+            inFlight.values.forEach { it.abortRunningWork() }
+            inFlight.clear()
             deadlineScheduler.shutdownNow()
             workers.shutdownNow()
             runCatching { workers.awaitTermination(WORKER_SHUTDOWN_SEC, TimeUnit.SECONDS) }
@@ -47,7 +49,7 @@ internal class MultiplexedIpcSession(
         output: OutputStream,
         workers: ExecutorService,
         deadlineScheduler: ScheduledExecutorService,
-        inFlight: ConcurrentHashMap<Long, Future<*>>,
+        inFlight: ConcurrentHashMap<Long, OpSlot>,
         writeLock: Any,
     ) {
         while (running.get()) {
@@ -100,22 +102,22 @@ internal class MultiplexedIpcSession(
         cancelFrameOpId: Long,
         output: OutputStream,
         writeLock: Any,
-        inFlight: ConcurrentHashMap<Long, Future<*>>,
+        inFlight: ConcurrentHashMap<Long, OpSlot>,
     ) {
-        // Atomic remove claims write ownership for this opId; the worker only writes if it still
-        // owns the map entry (Bugbot: cancel must not race a second response for the same op).
-        val cancelled = inFlight.remove(cancel.opId)
-        cancelled?.cancel(/* mayInterruptIfRunning= */ true)
-        if (cancelled != null) {
-            writeOpResponse(
-                output,
-                writeLock,
-                cancel.opId,
-                AgentResponse.Error(
-                    message = "Operation cancelled",
-                    category = AgentErrorCategory.Cancelled.wireName,
-                ),
-            )
+        val slot = inFlight.remove(cancel.opId)
+        if (slot != null) {
+            slot.abortRunningWork()
+            if (slot.tryClaimResponse()) {
+                writeOpResponse(
+                    output,
+                    writeLock,
+                    cancel.opId,
+                    AgentResponse.Error(
+                        message = "Operation cancelled",
+                        category = AgentErrorCategory.Cancelled.wireName,
+                    ),
+                )
+            }
         }
         writeOpResponse(output, writeLock, cancelFrameOpId, AgentResponse.Ok)
     }
@@ -124,9 +126,9 @@ internal class MultiplexedIpcSession(
         opId: Long,
         output: OutputStream,
         writeLock: Any,
-        inFlight: ConcurrentHashMap<Long, Future<*>>,
+        inFlight: ConcurrentHashMap<Long, OpSlot>,
     ) {
-        inFlight.values.forEach { it.cancel(true) }
+        inFlight.values.forEach { it.abortRunningWork() }
         inFlight.clear()
         try {
             writeOpResponse(output, writeLock, opId, AgentResponse.Detached)
@@ -141,81 +143,71 @@ internal class MultiplexedIpcSession(
         body: AgentRequest,
         workers: ExecutorService,
         deadlineScheduler: ScheduledExecutorService,
-        inFlight: ConcurrentHashMap<Long, Future<*>>,
+        inFlight: ConcurrentHashMap<Long, OpSlot>,
         output: OutputStream,
         writeLock: Any,
     ) {
-        // Register a placeholder before submit so cancel cannot race past an empty map.
-        val placeholder = CompletableFuturePlaceholder()
-        inFlight[op.opId] = placeholder
+        val slot = OpSlot()
+        inFlight[op.opId] = slot
         val future = workers.submit {
-            if (Thread.currentThread().isInterrupted) {
-                // Cancel may already own the slot; do not write a second response.
-                inFlight.remove(op.opId)
+            if (slot.isAborted || Thread.currentThread().isInterrupted) {
+                inFlight.remove(op.opId, slot)
                 return@submit
             }
             val response = executeOp(body, op.deadlineEpochMs)
-            // Claim write ownership: only the winner of remove() may write the response.
-            if (inFlight.remove(op.opId) != null) {
+            // Only the winner of tryClaimResponse may write (cancel/deadline may have won).
+            if (slot.tryClaimResponse()) {
+                inFlight.remove(op.opId, slot)
                 writeOpResponse(output, writeLock, op.opId, response)
+            } else {
+                inFlight.remove(op.opId, slot)
             }
         }
-        // Replace placeholder with the real Future so cancel interrupts the worker.
-        // On failure: cancel already removed the slot (and called cancel(true)), or the worker
-        // already claimed ownership and may be mid-write — do NOT cancel again (Bugbot: that
-        // interrupted Framing.writeFrame on fast ops).
-        if (!inFlight.replace(op.opId, placeholder, future)) {
+        slot.attachFuture(future)
+        // If cancel already aborted before attachFuture, interrupt the just-started work.
+        if (slot.isAborted) {
+            future.cancel(true)
+            inFlight.remove(op.opId, slot)
             return
         }
-        scheduleDeadline(op, deadlineScheduler, inFlight, output, writeLock)
+        scheduleDeadline(op, slot, deadlineScheduler, inFlight, output, writeLock)
     }
 
     /**
      * When [OpRequest.deadlineEpochMs] is in the future, interrupt the worker at the deadline and
-     * claim the response as taxonomy `timeout` (Codex P2: do not wait for a blocking handler to
-     * return).
+     * claim the response as taxonomy `timeout`.
      */
     private fun scheduleDeadline(
         op: OpRequest,
+        slot: OpSlot,
         deadlineScheduler: ScheduledExecutorService,
-        inFlight: ConcurrentHashMap<Long, Future<*>>,
+        inFlight: ConcurrentHashMap<Long, OpSlot>,
         output: OutputStream,
         writeLock: Any,
     ) {
         val deadline = op.deadlineEpochMs ?: return
         val delayMs = deadline - System.currentTimeMillis()
+        val fireTimeout = {
+            if (inFlight.remove(op.opId, slot)) {
+                slot.abortRunningWork()
+                if (slot.tryClaimResponse()) {
+                    writeOpResponse(
+                        output,
+                        writeLock,
+                        op.opId,
+                        AgentResponse.Error(
+                            message = "Deadline elapsed during op",
+                            category = AgentErrorCategory.Timeout.wireName,
+                        ),
+                    )
+                }
+            }
+        }
         if (delayMs <= 0L) {
-            // Deadline hit between worker start and registration — claim timeout now.
-            val f = inFlight.remove(op.opId) ?: return
-            f.cancel(/* mayInterruptIfRunning= */ true)
-            writeOpResponse(
-                output,
-                writeLock,
-                op.opId,
-                AgentResponse.Error(
-                    message = "Deadline elapsed during op",
-                    category = AgentErrorCategory.Timeout.wireName,
-                ),
-            )
+            fireTimeout()
             return
         }
-        deadlineScheduler.schedule(
-            {
-                val f = inFlight.remove(op.opId) ?: return@schedule
-                f.cancel(/* mayInterruptIfRunning= */ true)
-                writeOpResponse(
-                    output,
-                    writeLock,
-                    op.opId,
-                    AgentResponse.Error(
-                        message = "Deadline elapsed during op",
-                        category = AgentErrorCategory.Timeout.wireName,
-                    ),
-                )
-            },
-            delayMs,
-            TimeUnit.MILLISECONDS,
-        )
+        deadlineScheduler.schedule(fireTimeout, delayMs, TimeUnit.MILLISECONDS)
     }
 
     @Suppress("TooGenericExceptionCaught")
@@ -269,22 +261,30 @@ internal class MultiplexedIpcSession(
     }
 
     /**
-     * Stand-in [Future] registered before [ExecutorService.submit] so a concurrent cancel always
-     * finds the op id. [cancel] is a no-op until the real future replaces this entry.
+     * Per-op coordination: abort flag for interrupt, future ref so cancel can interrupt after
+     * submit, and single-winner response claim so cancel/worker/deadline never double-write.
      */
-    private class CompletableFuturePlaceholder : Future<Unit> {
-        private val cancelled = AtomicBoolean(false)
+    private class OpSlot {
+        private val aborted = AtomicBoolean(false)
+        private val responseClaimed = AtomicBoolean(false)
+        private val future = AtomicReference<Future<*>?>(null)
 
-        override fun cancel(mayInterruptIfRunning: Boolean): Boolean =
-            cancelled.compareAndSet(false, true)
+        val isAborted: Boolean
+            get() = aborted.get()
 
-        override fun isCancelled(): Boolean = cancelled.get()
+        fun attachFuture(f: Future<*>) {
+            future.set(f)
+            if (aborted.get()) {
+                f.cancel(/* mayInterruptIfRunning= */ true)
+            }
+        }
 
-        override fun isDone(): Boolean = cancelled.get()
+        fun abortRunningWork() {
+            aborted.set(true)
+            future.get()?.cancel(/* mayInterruptIfRunning= */ true)
+        }
 
-        override fun get(): Unit = Unit
-
-        override fun get(timeout: Long, unit: TimeUnit): Unit = Unit
+        fun tryClaimResponse(): Boolean = responseClaimed.compareAndSet(false, true)
     }
 
     private companion object {
