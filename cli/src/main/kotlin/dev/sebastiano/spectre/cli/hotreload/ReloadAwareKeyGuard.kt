@@ -19,9 +19,22 @@ public class ReloadAwareKeyGuard {
      */
     private var issuedKeys: Set<String>? = null
 
-    /** Records keys from a tree/find response for the current generation (unioning). */
-    public fun rememberIssuedKeys(keys: Collection<String>) {
+    /**
+     * Snapshots the current generation. Pass the result to [rememberIssuedKeysIfGeneration] so a
+     * tree captured before [onReload] cannot re-arm pre-reload keys after settle.
+     */
+    public fun snapshotGeneration(): Long = synchronized(lock) { generation }
+
+    /**
+     * Records keys from a tree/find only when [expectedGeneration] still matches the live
+     * generation (unioning within that generation).
+     */
+    public fun rememberIssuedKeysIfGeneration(
+        expectedGeneration: Long,
+        keys: Collection<String>,
+    ): Boolean {
         synchronized(lock) {
+            if (expectedGeneration != generation) return false
             val existing = issuedKeys
             issuedKeys =
                 if (existing == null) {
@@ -29,7 +42,15 @@ public class ReloadAwareKeyGuard {
                 } else {
                     existing + keys
                 }
+            return true
         }
+    }
+
+    /**
+     * Records keys for the current generation (unioning). Prefer [rememberIssuedKeysIfGeneration].
+     */
+    public fun rememberIssuedKeys(keys: Collection<String>) {
+        rememberIssuedKeysIfGeneration(snapshotGeneration(), keys)
     }
 
     /**

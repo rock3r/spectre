@@ -23,6 +23,15 @@ internal fun rejectStaleNodeKey(
 }
 
 @OptIn(ExperimentalSpectreAgentApi::class)
-internal fun rememberNodeKeys(keyGuard: ReloadAwareKeyGuard?, nodes: List<NodeSnapshotDto>) {
-    keyGuard?.rememberIssuedKeys(nodes.map(NodeSnapshotDto::key))
+internal fun rememberNodeKeys(
+    keyGuard: ReloadAwareKeyGuard?,
+    generation: Long?,
+    nodes: List<NodeSnapshotDto>,
+) {
+    if (keyGuard == null) return
+    if (generation == null) {
+        keyGuard.rememberIssuedKeys(nodes.map(NodeSnapshotDto::key))
+    } else {
+        keyGuard.rememberIssuedKeysIfGeneration(generation, nodes.map(NodeSnapshotDto::key))
+    }
 }

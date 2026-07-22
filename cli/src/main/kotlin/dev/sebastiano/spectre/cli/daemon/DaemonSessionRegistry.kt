@@ -132,6 +132,7 @@ internal constructor(
     private fun runWaitRequest(session: DaemonSession, request: DaemonRequest): DaemonResponse =
         when (request) {
             is DaemonRequest.WaitForNode -> {
+                val gen = session.keyGuard?.snapshotGeneration()
                 val node =
                     session.automator.waitForNode(
                         tag = request.tag,
@@ -139,7 +140,7 @@ internal constructor(
                         timeoutMs = request.timeoutMs,
                         pollIntervalMs = request.pollIntervalMs,
                     )
-                rememberNodeKeys(session.keyGuard, listOf(node))
+                rememberNodeKeys(session.keyGuard, gen, listOf(node))
                 DaemonResponse.Nodes(request.sessionId, listOf(node))
             }
             is DaemonRequest.WaitForVisualIdle -> {
@@ -181,8 +182,9 @@ internal constructor(
                 }
             is DaemonRequest.AllNodes ->
                 invokeWithSession(request.sessionId) { session, automator ->
+                    val gen = session.keyGuard?.snapshotGeneration()
                     val nodes = automator.allNodes()
-                    rememberNodeKeys(session.keyGuard, nodes)
+                    rememberNodeKeys(session.keyGuard, gen, nodes)
                     DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByTestTag,
@@ -326,26 +328,30 @@ internal constructor(
         when (request) {
             is DaemonRequest.FindByTestTag ->
                 invokeWithSession(request.sessionId) { session, automator ->
+                    val gen = session.keyGuard?.snapshotGeneration()
                     val nodes = automator.findByTestTag(request.tag)
-                    rememberNodeKeys(session.keyGuard, nodes)
+                    rememberNodeKeys(session.keyGuard, gen, nodes)
                     DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByText ->
                 invokeWithSession(request.sessionId) { session, automator ->
+                    val gen = session.keyGuard?.snapshotGeneration()
                     val nodes = automator.findByText(request.text, request.exact)
-                    rememberNodeKeys(session.keyGuard, nodes)
+                    rememberNodeKeys(session.keyGuard, gen, nodes)
                     DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByContentDescription ->
                 invokeWithSession(request.sessionId) { session, automator ->
+                    val gen = session.keyGuard?.snapshotGeneration()
                     val nodes = automator.findByContentDescription(request.description)
-                    rememberNodeKeys(session.keyGuard, nodes)
+                    rememberNodeKeys(session.keyGuard, gen, nodes)
                     DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByRole ->
                 invokeWithSession(request.sessionId) { session, automator ->
+                    val gen = session.keyGuard?.snapshotGeneration()
                     val nodes = automator.findByRole(request.role)
-                    rememberNodeKeys(session.keyGuard, nodes)
+                    rememberNodeKeys(session.keyGuard, gen, nodes)
                     DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             else -> error("Not a query session command: ${request::class.simpleName}")
