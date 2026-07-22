@@ -66,11 +66,18 @@ internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) 
                     handshakeOk = true
                 }
                 is AgentResponse.Error -> {
+                    // Pre-#199 runtimes return message-only Error (defaults to internalError)
+                    // when they cannot decode Hello — treat as protocol mismatch, not internal.
+                    val category =
+                        when (val decoded = AgentErrorCategory.fromWire(ack.category)) {
+                            AgentErrorCategory.InternalError -> AgentErrorCategory.ProtocolMismatch
+                            else -> decoded
+                        }
                     throw SpectreAgentException(
-                        category = AgentErrorCategory.fromWire(ack.category),
+                        category = category,
                         message =
                             "Agent rejected protocol handshake " +
-                                "(${ack.category}): ${ack.message}",
+                                "(${category.wireName}): ${ack.message}",
                     )
                 }
                 else -> {

@@ -106,7 +106,14 @@ internal class ReflectiveAutomatorHandler(
                     )
             }
         } catch (ex: ReflectiveOperationException) {
-            AgentResponse.Error("Reflective call failed: ${ex.targetMessage()}")
+            val message = "Reflective call failed: ${ex.targetMessage()}"
+            val category =
+                if (isInputRejection(ex)) {
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InputRejected
+                } else {
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InternalError
+                }
+            AgentResponse.Error(message = message, category = category.wireName)
         }
 
     // Note on un-caught exceptions: any non-reflective `RuntimeException` thrown by the
@@ -398,6 +405,17 @@ internal class ReflectiveAutomatorHandler(
         // ReflectiveOperationException), which produced misleading messages like
         // `"NullPointerException: InvocationTargetException"`. Bugbot caught it.
         return "${cause.javaClass.simpleName}: ${cause.message ?: NO_MESSAGE_PLACEHOLDER}"
+    }
+
+    /** TCC / Accessibility / permission refusals from Robot — taxonomy inputRejected (#199). */
+    private fun isInputRejection(ex: ReflectiveOperationException): Boolean {
+        val cause = ex.cause ?: ex
+        if (cause !is IllegalStateException) return false
+        val msg = cause.message.orEmpty().lowercase()
+        return "accessibility" in msg ||
+            "tcc" in msg ||
+            "permission" in msg ||
+            "screen recording" in msg
     }
 
     private companion object {
