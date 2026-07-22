@@ -214,7 +214,15 @@ private fun selectNodes(
         text != null -> {
             // Whitespace-only (but not empty) is almost never intentional.
             if (text.isNotEmpty() && text.isBlank()) return null
-            val exact = params["exact"]?.toBooleanStrictOrNull() ?: true
+            // Absent `exact` defaults to true; present-but-non-boolean is invalidSelector
+            // (do not silently coerce `FALSE` / `yes` into the default).
+            val exactParam = params["exact"]
+            val exact =
+                if (exactParam == null) {
+                    true
+                } else {
+                    exactParam.toBooleanStrictOrNull() ?: return null
+                }
             automator.findByText(text, exact = exact)
         }
         contentDescription != null -> {
