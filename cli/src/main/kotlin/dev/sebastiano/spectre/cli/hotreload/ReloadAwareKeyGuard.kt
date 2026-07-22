@@ -11,19 +11,36 @@ package dev.sebastiano.spectre.cli.hotreload
  */
 public class ReloadAwareKeyGuard {
     private val lock = Any()
-    private var state: KeyState = KeyState.Untracked
+    /** Bumped on each [onReload]; only keys remembered for the current generation are accepted. */
+    private var generation: Long = 0L
+    /**
+     * Keys issued in [generation]. `null` means no tree has been issued in this generation yet —
+     * key ops still go to the live agent (same as pre-#212 behaviour for the first tree).
+     */
+    private var issuedKeys: Set<String>? = null
 
-    /** Records keys from a tree/find response and clears the post-reload invalidation flag. */
+    /** Records keys from a tree/find response for the current generation (unioning). */
     public fun rememberIssuedKeys(keys: Collection<String>) {
-        synchronized(lock) { state = KeyState.Tracked(keys.toSet()) }
+        synchronized(lock) {
+            val existing = issuedKeys
+            issuedKeys =
+                if (existing == null) {
+                    keys.toSet()
+                } else {
+                    existing + keys
+                }
+        }
     }
 
     /**
-     * Marks the session as post-reload: subsequent [accepts] calls fail until [rememberIssuedKeys]
-     * runs again.
+     * Marks the session as post-reload: subsequent [accepts] fail until [rememberIssuedKeys] runs
+     * for the new generation.
      */
     public fun onReload() {
-        synchronized(lock) { state = KeyState.Invalidated }
+        synchronized(lock) {
+            generation += 1
+            issuedKeys = null
+        }
     }
 
     /**
@@ -32,25 +49,17 @@ public class ReloadAwareKeyGuard {
      */
     public fun accepts(key: String): Boolean {
         synchronized(lock) {
-            return when (val current = state) {
-                KeyState.Untracked -> true
-                KeyState.Invalidated -> false
-                is KeyState.Tracked -> key in current.keys
-            }
+            val known = issuedKeys
+            // After reload and before the next tree, reject everything.
+            if (known == null) return generation == 0L
+            return key in known
         }
     }
 
     /** Test/diagnostics: whether a reload has invalidated keys awaiting a fresh tree. */
-    public fun isInvalidated(): Boolean = synchronized(lock) { state is KeyState.Invalidated }
+    public fun isInvalidated(): Boolean =
+        synchronized(lock) { issuedKeys == null && generation > 0 }
 
-    private sealed interface KeyState {
-        /** No tree has been issued yet — key ops still go to the live agent. */
-        data object Untracked : KeyState
-
-        /** Post-reload: every key is rejected until the next tree/find. */
-        data object Invalidated : KeyState
-
-        /** Keys from the last tree/find after attach or post-reload. */
-        data class Tracked(val keys: Set<String>) : KeyState
-    }
+    /** Test/diagnostics: current generation after reloads. */
+    public fun generation(): Long = synchronized(lock) { generation }
 }

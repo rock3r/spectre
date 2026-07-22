@@ -73,7 +73,7 @@ internal constructor(
 
     /** Starts the reconnect loop. Safe to call once after construction. */
     public fun start() {
-        if (closed.get()) return
+        if (closed.get() || reconnectJob != null) return
         reconnectJob = scope.launch { runReconnectLoop() }
     }
 
@@ -121,8 +121,12 @@ internal constructor(
                 val message = channel.receiveCatching().getOrNull() ?: break
                 when (val event = message.toLifecycleEvent()) {
                     is ReloadLifecycleEvent.ReloadClassesResult -> {
-                        pendingSuccessfulRequestId =
-                            if (event.isSuccess) event.reloadRequestId else null
+                        if (event.isSuccess) {
+                            pendingSuccessfulRequestId = event.reloadRequestId
+                        } else if (event.reloadRequestId == pendingSuccessfulRequestId) {
+                            // Only clear when the failure is for the request we were tracking.
+                            pendingSuccessfulRequestId = null
+                        }
                     }
                     is ReloadLifecycleEvent.UIRendered -> {
                         val requestId = event.reloadRequestId
@@ -232,10 +236,16 @@ internal constructor(
         private const val CONNECT_POLL_MS: Long = 50
         private const val NANOS_PER_MS: Long = 1_000_000
 
-        /** Creates a session that discovers the port for [targetPid] on each reconnect attempt. */
+        /**
+         * Creates a session that discovers the port for [targetPid] on each reconnect attempt.
+         *
+         * When [autoStart] is false, the caller must invoke [start] after wiring listeners (#212)
+         * so the first connect does not race past an unregistered invalidation listener.
+         */
         public fun forTargetPid(
             targetPid: Long,
             explicitPidFile: java.nio.file.Path? = null,
+            autoStart: Boolean = true,
         ): HotReloadSession {
             val session =
                 HotReloadSession(
@@ -247,16 +257,16 @@ internal constructor(
                             ?.port
                     }
                 )
-            session.start()
+            if (autoStart) session.start()
             return session
         }
 
         /**
          * Creates a session pinned to a fixed [port] (tests and explicit orchestration endpoints).
          */
-        public fun forPort(port: Int): HotReloadSession {
+        public fun forPort(port: Int, autoStart: Boolean = true): HotReloadSession {
             val session = HotReloadSession(portProvider = { port })
-            session.start()
+            if (autoStart) session.start()
             return session
         }
 

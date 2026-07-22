@@ -287,7 +287,9 @@ internal constructor(
                 null
             }
         val keyGuard = if (hotReload != null) ReloadAwareKeyGuard() else null
+        // Wire invalidation before the reconnect loop connects so the first settle is not missed.
         hotReload?.setReloadSettledListener { keyGuard?.onReload() }
+        (hotReload as? HotReloadSession)?.start()
         val session =
             DaemonSession(
                 summary = sessionSummaryFor(targetPid),
@@ -517,8 +519,9 @@ private fun installEmbeddedAgentRuntimeIfNeeded() {
  * pid-file path (port may appear shortly after attach while HR finishes writing the file).
  */
 private fun defaultHotReloadCapability(targetPid: Long): HotReloadCapability? {
+    // autoStart=false: attach wires the invalidation listener then calls start().
     if (HotReloadPortDiscovery.discover(targetPid) != null) {
-        return HotReloadSession.forTargetPid(targetPid)
+        return HotReloadSession.forTargetPid(targetPid, autoStart = false)
     }
     // Port not readable yet, but a pid-file property means HR is (or will be) present.
     val args =
@@ -534,7 +537,11 @@ private fun defaultHotReloadCapability(targetPid: Long): HotReloadCapability? {
             emptyList()
         }
     val pidFile = HotReloadPortDiscovery.parsePidFilePathFromJvmArgs(args) ?: return null
-    return HotReloadSession.forTargetPid(targetPid, explicitPidFile = pidFile)
+    return HotReloadSession.forTargetPid(
+        targetPid = targetPid,
+        explicitPidFile = pidFile,
+        autoStart = false,
+    )
 }
 
 private fun listJvmProcesses(

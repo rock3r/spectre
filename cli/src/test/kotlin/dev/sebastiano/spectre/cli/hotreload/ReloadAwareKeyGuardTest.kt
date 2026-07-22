@@ -12,12 +12,14 @@ class ReloadAwareKeyGuardTest {
     }
 
     @Test
-    fun `after tree only issued keys are accepted`() {
+    fun `after tree only issued keys are accepted and finds union`() {
         val guard = ReloadAwareKeyGuard()
         guard.rememberIssuedKeys(listOf("a", "b"))
+        guard.rememberIssuedKeys(listOf("c"))
         assertTrue(guard.accepts("a"))
         assertTrue(guard.accepts("b"))
-        assertFalse(guard.accepts("c"))
+        assertTrue(guard.accepts("c"))
+        assertFalse(guard.accepts("d"))
     }
 
     @Test
