@@ -135,16 +135,23 @@ internal constructor(
     private fun runWaitRequest(session: DaemonSession, request: DaemonRequest): DaemonResponse =
         when (request) {
             is DaemonRequest.WaitForNode -> {
-                val node =
-                    issueNodeAcrossReload(session.keyGuard) {
-                        session.automator.waitForNode(
-                            tag = request.tag,
-                            text = request.text,
-                            timeoutMs = request.timeoutMs,
-                            pollIntervalMs = request.pollIntervalMs,
+                val gen = session.keyGuard?.snapshotGeneration() ?: 0L
+                val rawNode =
+                    session.automator.waitForNode(
+                        tag = request.tag,
+                        text = request.text,
+                        timeoutMs = request.timeoutMs,
+                        pollIntervalMs = request.pollIntervalMs,
+                    )
+                val stamped =
+                    stampNodeIfCurrentGeneration(session.keyGuard, gen, rawNode)
+                        ?: return DaemonResponse.Error(
+                            code = DaemonErrorCode.OperationFailed,
+                            message =
+                                "No node found with key=${rawNode.key} (reload settled during wait)",
+                            category = "nodeNotFound",
                         )
-                    }
-                DaemonResponse.Nodes(request.sessionId, listOf(node))
+                DaemonResponse.Nodes(request.sessionId, listOf(stamped))
             }
             is DaemonRequest.WaitForVisualIdle -> {
                 session.automator.waitForVisualIdle(
@@ -393,28 +400,36 @@ internal constructor(
     private fun handleSwipe(request: DaemonRequest.Swipe): DaemonResponse =
         invokeWithSession(request.sessionId) { session, automator ->
             val guard = session.keyGuard
-            var from: String? = request.fromNodeKey
-            var to: String? = request.toNodeKey
-            if (guard != null) {
-                if (request.fromNodeKey != null) {
-                    val ok = guard.dispatch(request.fromNodeKey) { raw -> from = raw }
-                    if (!ok) return@invokeWithSession staleNodeKeyError(request.fromNodeKey)
-                }
-                if (request.toNodeKey != null) {
-                    val ok = guard.dispatch(request.toNodeKey) { raw -> to = raw }
-                    if (!ok) return@invokeWithSession staleNodeKeyError(request.toNodeKey)
+            if (guard == null) {
+                automator.swipe(
+                    fromNodeKey = request.fromNodeKey,
+                    toNodeKey = request.toNodeKey,
+                    startX = request.startX,
+                    startY = request.startY,
+                    endX = request.endX,
+                    endY = request.endY,
+                    steps = request.steps,
+                    durationMs = request.durationMs,
+                )
+            } else {
+                val ok =
+                    guard.dispatchKeys(request.fromNodeKey, request.toNodeKey) { from, to ->
+                        automator.swipe(
+                            fromNodeKey = from,
+                            toNodeKey = to,
+                            startX = request.startX,
+                            startY = request.startY,
+                            endX = request.endX,
+                            endY = request.endY,
+                            steps = request.steps,
+                            durationMs = request.durationMs,
+                        )
+                    }
+                if (!ok) {
+                    val bad = request.fromNodeKey ?: request.toNodeKey ?: "unknown"
+                    return@invokeWithSession staleNodeKeyError(bad)
                 }
             }
-            automator.swipe(
-                fromNodeKey = from,
-                toNodeKey = to,
-                startX = request.startX,
-                startY = request.startY,
-                endX = request.endX,
-                endY = request.endY,
-                steps = request.steps,
-                durationMs = request.durationMs,
-            )
             DaemonResponse.Completed(request.sessionId)
         }
 

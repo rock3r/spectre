@@ -74,6 +74,33 @@ public class ReloadAwareKeyGuard {
         }
     }
 
+    /**
+     * Validates zero, one, or two stamped keys and runs [op] under the same lock as [onReload]
+     * (used by swipe so both keys stay valid for the IPC call).
+     */
+    public fun dispatchKeys(
+        first: String?,
+        second: String?,
+        op: (rawFirst: String?, rawSecond: String?) -> Unit,
+    ): Boolean {
+        synchronized(lock) {
+            val rawFirst =
+                if (first == null) {
+                    null
+                } else {
+                    resolveUnlocked(first) ?: return false
+                }
+            val rawSecond =
+                if (second == null) {
+                    null
+                } else {
+                    resolveUnlocked(second) ?: return false
+                }
+            op(rawFirst, rawSecond)
+            return true
+        }
+    }
+
     public fun resolveForDispatch(stampedKey: String): String? =
         synchronized(lock) { resolveUnlocked(stampedKey) }
 

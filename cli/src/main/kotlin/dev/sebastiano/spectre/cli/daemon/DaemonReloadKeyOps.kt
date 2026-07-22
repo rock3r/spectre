@@ -4,30 +4,42 @@ import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.cli.hotreload.ReloadAwareKeyGuard
 
-/** Query the automator and stamp keys, re-querying once if a reload settles mid-query (#212). */
+/**
+ * Query the automator and stamp keys, re-querying while a reload settles mid-query (#212).
+ *
+ * Never stamps a snapshot under a generation that advanced after the query — loops until the
+ * generation is stable or the attempt budget is exhausted.
+ */
 @OptIn(ExperimentalSpectreAgentApi::class)
 internal fun issueNodesAcrossReload(
     keyGuard: ReloadAwareKeyGuard?,
+    maxAttempts: Int = 4,
     query: () -> List<NodeSnapshotDto>,
 ): List<NodeSnapshotDto> {
     if (keyGuard == null) return query()
-    val gen1 = keyGuard.snapshotGeneration()
-    val nodes1 = query()
-    keyGuard.issueNodesIfGeneration(gen1, nodes1)?.let {
-        return it
+    repeat(maxAttempts) {
+        val gen = keyGuard.snapshotGeneration()
+        val nodes = query()
+        val stamped = keyGuard.issueNodesIfGeneration(gen, nodes)
+        if (stamped != null) return stamped
     }
-    // Reload settled during the query — re-read under the new generation.
-    val gen2 = keyGuard.snapshotGeneration()
-    val nodes2 = query()
-    return keyGuard.issueNodesIfGeneration(gen2, nodes2)
-        ?: keyGuard.issueNodes(nodes2) // generation stable after re-query
+    // Generation kept racing — return empty rather than stamping a stale snapshot.
+    return emptyList()
 }
 
+/**
+ * Stamp a single node that was already obtained (e.g. after waitForNode). Does **not** re-run the
+ * wait — if a reload raced the wait, returns null so the caller can fail closed.
+ */
 @OptIn(ExperimentalSpectreAgentApi::class)
-internal fun issueNodeAcrossReload(
+internal fun stampNodeIfCurrentGeneration(
     keyGuard: ReloadAwareKeyGuard?,
-    query: () -> NodeSnapshotDto,
-): NodeSnapshotDto = issueNodesAcrossReload(keyGuard) { listOf(query()) }.single()
+    expectedGeneration: Long,
+    node: NodeSnapshotDto,
+): NodeSnapshotDto? {
+    if (keyGuard == null) return node
+    return keyGuard.issueNodesIfGeneration(expectedGeneration, listOf(node))?.single()
+}
 
 internal fun staleNodeKeyError(nodeKey: String): DaemonResponse.Error =
     DaemonResponse.Error(
