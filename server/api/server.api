@@ -22,6 +22,7 @@ public final class dev/sebastiano/spectre/server/HttpComposeAutomatorKt {
 }
 
 public final class dev/sebastiano/spectre/server/SpectreErrorCategory : java/lang/Enum {
+	public static final field Cancelled Ldev/sebastiano/spectre/server/SpectreErrorCategory;
 	public static final field Companion Ldev/sebastiano/spectre/server/SpectreErrorCategory$Companion;
 	public static final field InputRejected Ldev/sebastiano/spectre/server/SpectreErrorCategory;
 	public static final field InternalError Ldev/sebastiano/spectre/server/SpectreErrorCategory;

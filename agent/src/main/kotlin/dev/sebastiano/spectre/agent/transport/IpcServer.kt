@@ -1,6 +1,8 @@
 package dev.sebastiano.spectre.agent.transport
 
 import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
 import java.nio.channels.Channels
@@ -21,8 +23,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * layering client multiplexing on top would just paint over reality. Multi-client support, if it
  * ever lands, is a follow-up.
  *
- * The accept loop runs on a single daemon thread; per-request work happens inline on that thread.
- * [close] interrupts the loop, closes the server channel, and unlinks the UDS path.
+ * The accept loop runs on a single daemon thread. After Hello, request bodies run on a worker pool
+ * (#200) so long ops do not block cancel/detach dispatch. [close] interrupts the loop, closes the
+ * server channel, and unlinks the UDS path.
  *
  * Created and managed by [dev.sebastiano.spectre.agent.runtime.SpectreAgent] inside the target JVM
  * after the classloader bootstrap succeeds.
@@ -132,110 +135,49 @@ constructor(
         client.use { socket ->
             val input = Channels.newInputStream(socket)
             val output = Channels.newOutputStream(socket)
-            var keepReading = true
-            // #199: each connection must complete Hello/HelloAck before any other op.
-            var handshakeComplete = false
-            while (running.get() && keepReading) {
-                keepReading =
-                    handleOneRequest(input, output, handshakeComplete) { handshakeComplete = it }
-            }
+            // Phase 1: bare Hello (#199).
+            if (!performHandshake(input, output)) return
+            // Phase 2: multiplexed OpRequest frames on a worker pool (#200).
+            MultiplexedIpcSession(handler, running, onDetach).run(input, output)
         }
     }
 
-    /**
-     * Reads one request frame, dispatches it to the handler, writes the response. Returns `false`
-     * on clean EOF or after processing an [AgentRequest.Detach] — the caller uses the return value
-     * as the single loop-exit signal.
-     *
-     * [handshakeComplete] tracks whether this connection has accepted [AgentRequest.Hello]; non-
-     * Hello ops before that get [AgentErrorCategory.ProtocolMismatch].
-     */
-    @Suppress("TooGenericExceptionCaught")
-    private fun handleOneRequest(
-        input: java.io.InputStream,
-        output: java.io.OutputStream,
-        handshakeComplete: Boolean,
-        setHandshakeComplete: (Boolean) -> Unit,
-    ): Boolean {
-        val requestBytes =
-            try {
-                Framing.readFrame(input) ?: return false
-            } catch (ex: IllegalStateException) {
-                // Oversized/negative length prefix before handshake — tear down so re-attach works.
-                if (!handshakeComplete) {
+    /** Bare Hello handshake. Returns false if the connection should end. */
+    private fun performHandshake(input: InputStream, output: OutputStream): Boolean {
+        var handshakeComplete = false
+        while (running.get() && !handshakeComplete) {
+            val requestBytes =
+                try {
+                    Framing.readFrame(input) ?: return false
+                } catch (ex: IllegalStateException) {
                     running.set(false)
                     onDetach()
+                    throw ex
                 }
-                throw ex
-            }
-        val request =
-            try {
-                WireCodec.decodeRequest(requestBytes)
-            } catch (ex: kotlinx.serialization.SerializationException) {
-                return respondDecodeFailure(output, ex, handshakeComplete)
-            }
-
-        // Hello is handled here (not in ReflectiveAutomatorHandler) so the handshake does not
-        // require a live ComposeAutomator (#199).
-        if (request is AgentRequest.Hello) {
-            return respondHello(output, request, setHandshakeComplete)
-        }
-
-        if (!handshakeComplete) {
-            return rejectPreHandshake(output, request)
-        }
-
-        // Generic Exception catch: an automator handler may throw NPE / CCE / ISE (unchecked)
-        // when the target's `ComposeAutomator` is in an unexpected state, OR a checked
-        // exception such as `java.util.concurrent.TimeoutException` from
-        // [dev.sebastiano.spectre.agent.runtime.BlockingSuspendInvoker] when a suspend op
-        // (click/typeText) hangs. Both must surface to the client as `AgentResponse.Error`
-        // rather than kill the accept thread and orphan the connection (a `TimeoutException`
-        // is `Exception`, NOT `RuntimeException`, so a narrower catch would let it escape
-        // through `handleConnection` → `acceptLoop` and permanently crash the IPC server
-        // after one slow UI op). Errors (OOM, StackOverflow) are intentionally NOT caught.
-        // Detekt's TooGenericExceptionCaught is suppressed here with rationale.
-        val response: AgentResponse =
-            try {
-                handler.handle(request)
-            } catch (ex: Exception) {
-                val category =
-                    when (ex) {
-                        is java.util.concurrent.TimeoutException -> AgentErrorCategory.Timeout
-                        is IllegalArgumentException -> AgentErrorCategory.InvalidSelector
-                        is NoSuchElementException -> AgentErrorCategory.NodeNotFound
-                        else -> AgentErrorCategory.InternalError
-                    }
-                AgentResponse.Error(
-                    message = "${ex.javaClass.simpleName}: ${ex.message ?: "<no message>"}",
-                    category = category.wireName,
-                )
-            }
-        // Detach side-effects (`running.set(false)` + `onDetach()`) MUST run even if writing
-        // the response fails — e.g. the attaching client closed mid-Detach. Without the
-        // `finally`, an `IOException` from `writeFrame` would propagate out, the per-
-        // connection catch in `acceptLoop` would absorb it, and the server would stay
-        // alive — but `SpectreAgent.agentState` would remain non-null, so the next
-        // re-attach attempt hits the idempotency guard, skips creating a new IPC server
-        // for the new UDS path, and the caller's `waitForUdsPath` polls until
-        // `AgentBootstrapTimeoutException`. The target JVM would become permanently
-        // un-attachable until restart. Bugbot caught this (MEDIUM); the regression test
-        // "Detach cleanup fires even when the response write fails" pins the contract.
-        val isDetach = request is AgentRequest.Detach
-        try {
-            Framing.writeFrame(output, WireCodec.encode(response))
-        } finally {
-            if (isDetach) {
-                running.set(false)
-                onDetach()
+            val request =
+                try {
+                    WireCodec.decodeRequest(requestBytes)
+                } catch (ex: kotlinx.serialization.SerializationException) {
+                    respondDecodeFailure(output, ex, handshakeComplete = false)
+                    return false
+                }
+            when (request) {
+                is AgentRequest.Hello -> {
+                    val ok = respondHello(output, request) { handshakeComplete = it }
+                    if (!ok) return false
+                }
+                else -> {
+                    rejectPreHandshake(output, request)
+                    return false
+                }
             }
         }
-        return !isDetach
+        return handshakeComplete
     }
 
     /** Decode failure response; pre-handshake failures tear down agent state (#199). */
     private fun respondDecodeFailure(
-        output: java.io.OutputStream,
+        output: OutputStream,
         ex: kotlinx.serialization.SerializationException,
         handshakeComplete: Boolean,
     ): Boolean {
@@ -267,7 +209,7 @@ constructor(
 
     /** Hello handshake; mismatch tears down agent state so re-attach can re-bootstrap (#199). */
     private fun respondHello(
-        output: java.io.OutputStream,
+        output: OutputStream,
         request: AgentRequest.Hello,
         setHandshakeComplete: (Boolean) -> Unit,
     ): Boolean {
@@ -301,7 +243,7 @@ constructor(
     }
 
     /** Non-Hello first frame (pre-#199 attacher); tear down and close the connection (#199). */
-    private fun rejectPreHandshake(output: java.io.OutputStream, request: AgentRequest): Boolean {
+    private fun rejectPreHandshake(output: OutputStream, request: AgentRequest): Boolean {
         try {
             Framing.writeFrame(
                 output,

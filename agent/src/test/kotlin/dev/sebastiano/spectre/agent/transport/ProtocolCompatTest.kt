@@ -100,10 +100,16 @@ class ProtocolCompatTest {
                 val ackBytes = Framing.readFrame(input) ?: error("no helloAck")
                 assertIs<AgentResponse.HelloAck>(WireCodec.decodeResponse(ackBytes))
 
-                Framing.writeFrame(output, futureOpRequestBytes())
+                // After handshake, frames are OpRequest envelopes (#200).
+                Framing.writeFrame(output, futureOpEnvelopeBytes())
                 val respBytes = Framing.readFrame(input) ?: error("no error response")
-                val resp = WireCodec.decodeResponse(respBytes)
-                val err = assertIs<AgentResponse.Error>(resp)
+                val opResp = WireCodec.decodeOpResponse(respBytes)
+                assertEquals(
+                    1L,
+                    opResp.opId,
+                    "decode failure must still correlate to the request opId",
+                )
+                val err = assertIs<AgentResponse.Error>(opResp.body)
                 assertEquals(AgentErrorCategory.UnsupportedOperation.wireName, err.category)
             }
         }
@@ -190,12 +196,17 @@ class ProtocolCompatTest {
      * op name — models a newer attacher talking to the current runtime.
      */
     private fun futureOpRequestBytes(): ByteArray {
-        // Encode a real Ping, then replace its "ping" discriminator with "futureOp_v99".
-        // kotlinx CBOR sealed encoding embeds the @SerialName as UTF-8 text in the payload.
+        // Encode a real Ping, then replace its "ping" discriminator with "zzzz".
         val ping = WireCodec.encode(AgentRequest.Ping)
         val asLatin1 = ping.toString(Charsets.ISO_8859_1)
         require(asLatin1.contains("ping")) { "expected ping discriminator in CBOR payload" }
-        // Same length as "ping" so CBOR string length prefixes stay valid.
+        return asLatin1.replace("ping", "zzzz").toByteArray(Charsets.ISO_8859_1)
+    }
+
+    private fun futureOpEnvelopeBytes(): ByteArray {
+        val envelope = WireCodec.encode(OpRequest(opId = 1L, body = AgentRequest.Ping))
+        val asLatin1 = envelope.toString(Charsets.ISO_8859_1)
+        require(asLatin1.contains("ping")) { "expected ping discriminator in OpRequest payload" }
         return asLatin1.replace("ping", "zzzz").toByteArray(Charsets.ISO_8859_1)
     }
 }

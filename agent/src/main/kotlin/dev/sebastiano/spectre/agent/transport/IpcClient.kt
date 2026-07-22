@@ -10,30 +10,28 @@ import java.net.UnixDomainSocketAddress
 import java.nio.channels.Channels
 import java.nio.channels.SocketChannel
 import java.nio.file.Path
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Client-side IPC endpoint: opens a connection to the agent's Unix Domain Socket at [udsPath] and
- * synchronously sends [AgentRequest]s with [send].
+ * Client-side IPC endpoint (#200 multiplexed ops).
  *
- * Single-shot send/receive: each [send] writes one framed CBOR request and reads the next framed
- * response. The current wire protocol is strictly request/response (no streaming), so this is safe
- * to use without explicit pipelining.
+ * After Hello handshake, every request is an [OpRequest] with a unique [opId]. A background reader
+ * thread demultiplexes [OpResponse] frames so a cancel (or a second quick op) can share the
+ * connection with a long-running wait without blocking the accept path on the server.
  *
- * Not thread-safe — callers that need concurrent automator access should synchronise externally.
- * The `AttachedAutomator` wrapper exposes only serial operations.
+ * Public [send] remains synchronous for [AttachedAutomator]; [cancel] aborts an in-flight op by id.
+ *
+ * [close] only drops the socket — it does **not** send [AgentRequest.Detach]. Detach is an
+ * intentional agent teardown (see [dev.sebastiano.spectre.agent.AttachedAutomator.close]); a plain
+ * client close must leave the server free to accept another connection (e.g. reconnect / tests).
  */
 internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) : AutoCloseable {
     private val channel: SocketChannel =
         SocketChannel.open(StandardProtocolFamily.UNIX).also { channel ->
-            // Outer `success` sentinel + `finally` so the channel is unconditionally closed
-            // if `connect()` throws (e.g. agent hasn't bound yet, connection refused, path
-            // doesn't exist). Without this, the opened `SocketChannel` would only get
-            // reclaimed on the next GC cycle via `sun.nio.ch.SocketChannelImpl`'s registered
-            // `Cleaner` — relying on GC for resource lifecycle is anti-pattern. Same fix
-            // shape as `IpcServer`'s constructor (Bugbot LOW on b98e93c) applied to the
-            // symmetric client side. Bugbot caught this side too (LOW). No unit-level
-            // regression test — the GC-reclaim path makes an FD-count assertion flaky
-            // (see the explanatory NOTE in `IpcRoundTripTest`).
             var success = false
             try {
                 channel.connect(UnixDomainSocketAddress.of(udsPath))
@@ -44,14 +42,17 @@ internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) 
         }
     private val input: InputStream = Channels.newInputStream(channel)
     private val output: OutputStream = Channels.newOutputStream(channel)
+    private val writeLock = Any()
+    private val nextOpId = AtomicLong(1)
+    private val pending = ConcurrentHashMap<Long, CompletableFuture<AgentResponse>>()
+    private val closed = AtomicBoolean(false)
+    private val readerThread: Thread
 
     init {
-        // #199: exact-match protocol handshake is the first exchange after connect.
-        // Always close the channel if handshake does not complete cleanly (no FD leak).
         var handshakeOk = false
         try {
             val hello = AgentRequest.Hello(protocolVersion = ProtocolVersion.CURRENT)
-            val ack = sendWithoutHandshake(hello)
+            val ack = exchangeBare(hello)
             when (ack) {
                 is AgentResponse.HelloAck -> {
                     if (ack.protocolVersion != ProtocolVersion.CURRENT) {
@@ -66,16 +67,12 @@ internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) 
                     handshakeOk = true
                 }
                 is AgentResponse.Error -> {
-                    // Pre-#199 runtimes return message-only Error (defaults to internalError)
-                    // when they cannot decode Hello — treat as protocol mismatch, not internal.
                     val category =
                         when (val decoded = AgentErrorCategory.fromWire(ack.category)) {
                             AgentErrorCategory.InternalError -> AgentErrorCategory.ProtocolMismatch
                             else -> decoded
                         }
-                    // Best-effort Detach so a legacy runtime that only clears agentState on
-                    // Detach can be re-attached with a matching JAR after this failure.
-                    runCatching { sendWithoutHandshake(AgentRequest.Detach) }
+                    runCatching { exchangeBare(AgentRequest.Detach) }
                     throw SpectreAgentException(
                         category = category,
                         message =
@@ -95,17 +92,135 @@ internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) 
         } finally {
             if (!handshakeOk) runCatching { channel.close() }
         }
+
+        readerThread =
+            Thread(::readerLoop, "spectre-ipc-client-reader").apply {
+                isDaemon = true
+                start()
+            }
     }
 
     /**
-     * Sends [request], blocks until the matching response arrives, returns it. Throws [IOException]
-     * if the channel closes mid-exchange or the wire protocol is violated.
+     * Sends [request] and blocks until the correlated response arrives. [deadlineEpochMs] is an
+     * absolute epoch-millis deadline propagated to the runtime (#200).
      */
     @Throws(IOException::class)
-    fun send(request: AgentRequest): AgentResponse = sendWithoutHandshake(request)
+    fun send(request: AgentRequest, deadlineEpochMs: Long? = null): AgentResponse {
+        check(!closed.get()) { "IpcClient is closed" }
+        val opId = nextOpId.getAndIncrement()
+        val future = CompletableFuture<AgentResponse>()
+        pending[opId] = future
+        try {
+            val frame = OpRequest(opId = opId, deadlineEpochMs = deadlineEpochMs, body = request)
+            synchronized(writeLock) { Framing.writeFrame(output, WireCodec.encode(frame)) }
+            // No client-side deadline: wait indefinitely for the server (matches pre-#200
+            // blocking read). With a deadline: pad so server taxonomy timeout can still arrive.
+            return if (deadlineEpochMs == null) {
+                future.get()
+            } else {
+                future.get(clientWaitMs(deadlineEpochMs), TimeUnit.MILLISECONDS)
+            }
+        } catch (ex: java.util.concurrent.TimeoutException) {
+            pending.remove(opId)
+            runCatching { cancel(opId) }
+            throw SpectreAgentException(
+                category = AgentErrorCategory.Timeout,
+                message = "Timed out waiting for response to ${request.logLabel} (opId=$opId)",
+                cause = ex,
+            )
+        } catch (ex: InterruptedException) {
+            // Caller thread interrupted while waiting — cancel the remote op so UI work stops
+            // (Codex P2).
+            pending.remove(opId)
+            runCatching { cancel(opId) }
+            Thread.currentThread().interrupt()
+            throw SpectreAgentException(
+                category = AgentErrorCategory.Cancelled,
+                message = "Interrupted while waiting for ${request.logLabel} (opId=$opId)",
+                cause = ex,
+            )
+        } catch (ex: java.util.concurrent.ExecutionException) {
+            pending.remove(opId)
+            throw unwrapExecutionFailure(opId, ex)
+        } finally {
+            pending.remove(opId)
+        }
+    }
 
+    /** Explicit cancel for [opId] (#200). Best-effort; safe if the op already completed. */
     @Throws(IOException::class)
-    private fun sendWithoutHandshake(request: AgentRequest): AgentResponse {
+    fun cancel(opId: Long) {
+        check(!closed.get()) { "IpcClient is closed" }
+        val cancelId = nextOpId.getAndIncrement()
+        val future = CompletableFuture<AgentResponse>()
+        pending[cancelId] = future
+        try {
+            val frame = OpRequest(opId = cancelId, body = AgentRequest.Cancel(opId = opId))
+            synchronized(writeLock) { Framing.writeFrame(output, WireCodec.encode(frame)) }
+            future.get(CANCEL_ACK_WAIT_MS, TimeUnit.MILLISECONDS)
+        } catch (_: java.util.concurrent.TimeoutException) {
+            // Best-effort: cancel ack lag is non-fatal.
+        } catch (_: java.util.concurrent.ExecutionException) {
+            // Best-effort: transport error while waiting for cancel ack.
+        } catch (_: java.util.concurrent.CancellationException) {
+            // Best-effort: local future cancelled during client close.
+        } catch (_: IOException) {
+            // Best-effort: write failed (peer already gone).
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        } finally {
+            pending.remove(cancelId)
+        }
+    }
+
+    private fun unwrapExecutionFailure(
+        opId: Long,
+        ex: java.util.concurrent.ExecutionException,
+    ): IOException {
+        val cause = ex.cause
+        return when (cause) {
+            is IOException -> cause
+            null -> IOException("Op $opId failed: ${ex.message}", ex)
+            else -> IOException("Op $opId failed: ${cause.message}", cause)
+        }
+    }
+
+    /** Last assigned op id (for tests). */
+    internal fun lastOpId(): Long = nextOpId.get() - 1
+
+    private fun readerLoop() {
+        try {
+            while (!closed.get()) {
+                val bytes = Framing.readFrame(input) ?: break
+                dispatchOpResponse(bytes)
+            }
+        } catch (_: Exception) {
+            // Channel closed or transport error — complete outstanding futures below.
+        } finally {
+            failAllPending(EOFException("Agent closed the connection while waiting for a response"))
+        }
+    }
+
+    private fun dispatchOpResponse(bytes: ByteArray) {
+        val opResponse =
+            try {
+                WireCodec.decodeOpResponse(bytes)
+            } catch (_: Exception) {
+                // Legacy bare response should not appear after handshake; treat as disconnect.
+                failAllPending(EOFException("Unexpected non-envelope response after handshake"))
+                return
+            }
+        pending.remove(opResponse.opId)?.complete(opResponse.body)
+    }
+
+    private fun failAllPending(err: Exception) {
+        pending.forEach { (_, future) -> future.completeExceptionally(err) }
+        pending.clear()
+    }
+
+    /** Bare (pre-envelope) exchange used only for Hello / best-effort Detach on failed Hello. */
+    @Throws(IOException::class)
+    private fun exchangeBare(request: AgentRequest): AgentResponse {
         Framing.writeFrame(output, WireCodec.encode(request))
         val responseBytes =
             Framing.readFrame(input)
@@ -116,6 +231,23 @@ internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) 
     }
 
     override fun close() {
-        channel.close()
+        if (!closed.compareAndSet(false, true)) return
+        // Drop the socket only — Detach is explicit agent teardown, not implied by close.
+        runCatching { channel.close() }
+        runCatching { readerThread.join(READER_JOIN_MS) }
+        failAllPending(EOFException("IpcClient closed"))
+    }
+
+    private fun clientWaitMs(deadlineEpochMs: Long): Long {
+        val remaining = deadlineEpochMs - System.currentTimeMillis()
+        // Always pad so a server-side timeout response can still arrive after the deadline.
+        return remaining.coerceAtLeast(0L) + ELAPSED_DEADLINE_GRACE_MS
+    }
+
+    private companion object {
+        /** Floor so a server-side timeout/cancel response can arrive over UDS. */
+        const val ELAPSED_DEADLINE_GRACE_MS: Long = 5_000
+        const val CANCEL_ACK_WAIT_MS: Long = 5_000
+        const val READER_JOIN_MS: Long = 1_000
     }
 }

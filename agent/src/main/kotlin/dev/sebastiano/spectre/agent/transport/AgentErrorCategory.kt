@@ -29,6 +29,9 @@ public enum class AgentErrorCategory {
     /** Operation exceeded its deadline. */
     @SerialName("timeout") Timeout,
 
+    /** Explicit cancel of an in-flight op (#200). */
+    @SerialName("cancelled") Cancelled,
+
     /** Input was refused (focus, permissions, Robot backend rejection). */
     @SerialName("inputRejected") InputRejected,
 
@@ -44,6 +47,7 @@ public enum class AgentErrorCategory {
                 InvalidSelector -> "invalidSelector"
                 NodeNotFound -> "nodeNotFound"
                 Timeout -> "timeout"
+                Cancelled -> "cancelled"
                 InputRejected -> "inputRejected"
                 InternalError -> "internalError"
             }

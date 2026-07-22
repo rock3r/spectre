@@ -168,6 +168,7 @@ public final class dev/sebastiano/spectre/agent/runtime/SpectreAgent {
 }
 
 public final class dev/sebastiano/spectre/agent/transport/AgentErrorCategory : java/lang/Enum {
+	public static final field Cancelled Ldev/sebastiano/spectre/agent/transport/AgentErrorCategory;
 	public static final field Companion Ldev/sebastiano/spectre/agent/transport/AgentErrorCategory$Companion;
 	public static final field InputRejected Ldev/sebastiano/spectre/agent/transport/AgentErrorCategory;
 	public static final field InternalError Ldev/sebastiano/spectre/agent/transport/AgentErrorCategory;
