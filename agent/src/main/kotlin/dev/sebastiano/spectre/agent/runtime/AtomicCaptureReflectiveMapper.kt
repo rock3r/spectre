@@ -19,7 +19,12 @@ internal object AtomicCaptureReflectiveMapper {
                     it.parameterTypes[0] == Int::class.javaPrimitiveType
             }
                 ?: return AgentResponse.Error(
-                    "ComposeAutomator does not expose capture(windowIndex: Int) on this build"
+                    message =
+                        "ComposeAutomator does not expose capture(windowIndex: Int) on this build",
+                    category =
+                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory
+                            .UnsupportedOperation
+                            .wireName,
                 )
         val result =
             captureMethod.invoke(automator, windowIndex)
