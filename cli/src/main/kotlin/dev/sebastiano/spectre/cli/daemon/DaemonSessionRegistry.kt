@@ -151,6 +151,7 @@ internal constructor(
                 DaemonResponse.Completed(request.sessionId)
             }
             is DaemonRequest.WaitForReloadSettled -> runReloadSettleWait(session, request)
+            else -> error("not a wait request: ${request::class.simpleName}")
         }
 
     private fun runReloadSettleWait(
