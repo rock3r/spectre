@@ -26,6 +26,14 @@ class HotReloadPortDiscoveryTest {
     }
 
     @Test
+    fun `pid file rejects invalid orchestration ports`() {
+        assertNull(HotReloadPortDiscovery.parsePortFromPidFileProperties("orchestration.port=0\n"))
+        assertNull(
+            HotReloadPortDiscovery.parsePortFromPidFileProperties("orchestration.port=70000\n")
+        )
+    }
+
+    @Test
     fun `jvm args dashD port property is discovered`() {
         val found =
             HotReloadPortDiscovery.parsePortFromJvmArgs(

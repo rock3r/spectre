@@ -53,7 +53,8 @@ public object HotReloadPortDiscovery {
     public fun parsePortFromPidFileProperties(content: String): Int? {
         val properties = Properties()
         properties.load(StringReader(content))
-        return properties.getProperty(HotReloadVersions.PID_FILE_PORT_KEY)?.toIntOrNull()
+        val port = properties.getProperty(HotReloadVersions.PID_FILE_PORT_KEY)?.toIntOrNull()
+        return port?.takeIf { it in 1..MAX_TCP_PORT }
     }
 
     /** Reads [path] if it is a regular file and returns the orchestration port, if present. */
