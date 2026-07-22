@@ -125,6 +125,17 @@ internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) 
                 message = "Timed out waiting for response to ${request.logLabel} (opId=$opId)",
                 cause = ex,
             )
+        } catch (ex: InterruptedException) {
+            // Caller thread interrupted while waiting — cancel the remote op so UI work stops
+            // (Codex P2).
+            pending.remove(opId)
+            runCatching { cancel(opId) }
+            Thread.currentThread().interrupt()
+            throw SpectreAgentException(
+                category = AgentErrorCategory.Cancelled,
+                message = "Interrupted while waiting for ${request.logLabel} (opId=$opId)",
+                cause = ex,
+            )
         } catch (ex: java.util.concurrent.ExecutionException) {
             pending.remove(opId)
             throw unwrapExecutionFailure(opId, ex)
