@@ -213,19 +213,28 @@ internal constructor(
         if (reconnectJob == null && handleRef.get() == null) {
             return ReloadSettleOutcome.Unavailable
         }
-        val startedNs = System.nanoTime()
-        val handle =
-            awaitConnection(timeoutMs)
-                ?: return when {
-                    closed.get() -> ReloadSettleOutcome.Cancelled
-                    // Reconnect was running but never produced a handle within the budget →
-                    // settle-timeout, not "HR unavailable" (session is still reload-aware).
-                    else -> ReloadSettleOutcome.TimedOut
-                }
-        val elapsedMs = (System.nanoTime() - startedNs) / NANOS_PER_MS
-        val remainingMs = (timeoutMs - elapsedMs).coerceAtLeast(0)
-        if (remainingMs == 0L) return ReloadSettleOutcome.TimedOut
-        return runBlocking { settleOn(handle, remainingMs) }
+        // Arm fan-out *before* awaitConnection so a reload that races connect → settle cannot
+        // fan out to an empty subscriber list and leave this waiter stuck in AwaitRequest.
+        val events = subscribeLifecycle()
+        try {
+            val startedNs = System.nanoTime()
+            val handle =
+                awaitConnection(timeoutMs)
+                    ?: return when {
+                        closed.get() -> ReloadSettleOutcome.Cancelled
+                        // Reconnect was running but never produced a handle within the budget →
+                        // settle-timeout, not "HR unavailable" (session is still reload-aware).
+                        else -> ReloadSettleOutcome.TimedOut
+                    }
+            val elapsedMs = (System.nanoTime() - startedNs) / NANOS_PER_MS
+            val remainingMs = (timeoutMs - elapsedMs).coerceAtLeast(0)
+            if (remainingMs == 0L) return ReloadSettleOutcome.TimedOut
+            // Pin the handle that is currently pumping into [events]; send Ping only on that
+            // same instance so reconnect cannot pair a dead send with a live receive.
+            return runBlocking { settleOn(handle, remainingMs, events) }
+        } finally {
+            events.cancel()
+        }
     }
 
     /**
@@ -256,33 +265,39 @@ internal constructor(
     }
 
     private suspend fun settleOn(
-        handle: OrchestrationHandle,
+        connectedHandle: OrchestrationHandle,
         timeoutMs: Long,
+        events: Channel<ReloadLifecycleEvent>,
     ): ReloadSettleOutcome {
         val machine = ReloadSettleStateMachine()
-        val events = subscribeLifecycle()
-        try {
-            val settled =
-                withTimeoutOrNull(timeoutMs) {
-                    while (true) {
-                        if (machine.needsPing()) {
-                            // Ping assigns its own messageId; match Ack against that id.
-                            val ping = OrchestrationMessage.Ping()
-                            handle.send(ping)
-                            machine.beginPingDrain(ping.messageId.toString())
+        val settled =
+            withTimeoutOrNull(timeoutMs) {
+                while (true) {
+                    if (machine.needsPing()) {
+                        // Only send on the same handle that was live when this waiter armed;
+                        // reconnect clears subscribers (channel closes → Cancelled) and replaces
+                        // handleRef, so a mismatched ref means this wait is already obsolete.
+                        val live = handleRef.get()
+                        if (live == null || live !== connectedHandle) {
+                            return@withTimeoutOrNull ReloadSettleOutcome.Cancelled
                         }
-                        val event =
-                            events.receiveCatching().getOrNull()
-                                ?: return@withTimeoutOrNull ReloadSettleOutcome.Cancelled
-                        val outcome = machine.onEvent(event)
-                        if (outcome != null) return@withTimeoutOrNull outcome
+                        val ping = OrchestrationMessage.Ping()
+                        try {
+                            live.send(ping)
+                        } catch (_: Exception) {
+                            return@withTimeoutOrNull ReloadSettleOutcome.Cancelled
+                        }
+                        machine.beginPingDrain(ping.messageId.toString())
                     }
-                    @Suppress("UNREACHABLE_CODE") ReloadSettleOutcome.TimedOut
+                    val event =
+                        events.receiveCatching().getOrNull()
+                            ?: return@withTimeoutOrNull ReloadSettleOutcome.Cancelled
+                    val outcome = machine.onEvent(event)
+                    if (outcome != null) return@withTimeoutOrNull outcome
                 }
-            return settled ?: machine.onTimeout()
-        } finally {
-            events.cancel()
-        }
+                @Suppress("UNREACHABLE_CODE") ReloadSettleOutcome.TimedOut
+            }
+        return settled ?: machine.onTimeout()
     }
 
     public companion object {
