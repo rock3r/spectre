@@ -47,20 +47,15 @@ class SpectreDoesNotRedefineClassesContractTest {
     }
 
     private fun discoverProductionMainSourceRoots(repoRoot: Path): List<Path> {
+        // Top-level Gradle modules only (recording-macos/linux/windows are siblings of recording/).
         val roots = ArrayList<Path>()
-        fun consider(moduleDir: Path) {
-            if (!moduleDir.isDirectory()) return
-            if (!Files.isRegularFile(moduleDir.resolve("build.gradle.kts"))) return
+        for (moduleDir in repoRoot.listDirectoryEntries()) {
+            if (!moduleDir.isDirectory()) continue
+            if (!Files.isRegularFile(moduleDir.resolve("build.gradle.kts"))) continue
             val main = moduleDir.resolve("src").resolve("main")
             if (main.isDirectory()) {
                 roots.add(main)
             }
-        }
-        repoRoot.listDirectoryEntries().forEach { consider(it) }
-        val recording = repoRoot.resolve("recording")
-        if (recording.isDirectory()) {
-            recording.listDirectoryEntries().forEach { consider(it) }
-            consider(recording)
         }
         return roots.sortedBy { it.toString() }
     }
