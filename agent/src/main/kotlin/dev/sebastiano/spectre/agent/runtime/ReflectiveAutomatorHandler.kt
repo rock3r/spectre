@@ -36,6 +36,9 @@ import javax.imageio.ImageIO
  * developers expect them; we deliberately don't ship them across the wire because that would mean
  * smuggling `Throwable` types we can't safely reconstruct on the client side.
  */
+// Snapshot/input/wait ops each live in helpers where possible; remaining private methods stay
+// under detekt's function-count budget.
+@Suppress("TooManyFunctions")
 internal class ReflectiveAutomatorHandler(
     private val automator: Any,
     private val isTargetJvmFocused: () -> Boolean = ::targetJvmHasKeyboardFocus,
@@ -82,30 +85,11 @@ internal class ReflectiveAutomatorHandler(
         }
 
     private val suspendInvoker = BlockingSuspendInvoker()
+    private val waitOps = WaitOpsReflectiveMapper(automator, suspendInvoker, ::mapAutomatorNode)
 
     override fun handle(request: AgentRequest): AgentResponse =
         try {
-            when (request) {
-                AgentRequest.Ping -> AgentResponse.Pong
-                AgentRequest.Windows -> handleWindows()
-                AgentRequest.AllNodes -> handleAllNodes()
-                is AgentRequest.FindByTestTag -> handleFindByTestTag(request.tag)
-                is AgentRequest.Click -> handleClick(request.nodeKey)
-                is AgentRequest.TypeText -> handleTypeText(request.text)
-                is AgentRequest.Screenshot -> handleScreenshot(request)
-                is AgentRequest.Capture ->
-                    AtomicCaptureReflectiveMapper.invoke(automator, request.windowIndex)
-                is AgentRequest.WindowIdentity ->
-                    WindowIdentityReflectiveMapper.invoke(automator, request.windowIndex)
-                AgentRequest.Detach -> AgentResponse.Detached
-                // Handled in IpcServer before the automator handler; keep exhaustive.
-                is AgentRequest.Hello ->
-                    AgentResponse.HelloAck(
-                        protocolVersion =
-                            dev.sebastiano.spectre.agent.transport.ProtocolVersion.CURRENT
-                    )
-                is AgentRequest.Cancel -> AgentResponse.Ok
-            }
+            dispatch(request)
         } catch (ex: ReflectiveOperationException) {
             val message = "Reflective call failed: ${ex.targetMessage()}"
             val category =
@@ -115,6 +99,36 @@ internal class ReflectiveAutomatorHandler(
                     dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InternalError
                 }
             AgentResponse.Error(message = message, category = category.wireName)
+        } catch (ex: java.util.concurrent.TimeoutException) {
+            AgentResponse.Error(
+                message = "${ex.javaClass.simpleName}: ${ex.message ?: "<no message>"}",
+                category =
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.Timeout.wireName,
+            )
+        }
+
+    private fun dispatch(request: AgentRequest): AgentResponse =
+        when (request) {
+            AgentRequest.Ping -> AgentResponse.Pong
+            AgentRequest.Windows -> handleWindows()
+            AgentRequest.AllNodes -> handleAllNodes()
+            is AgentRequest.FindByTestTag -> handleFindByTestTag(request.tag)
+            is AgentRequest.Click -> handleClick(request.nodeKey)
+            is AgentRequest.TypeText -> handleTypeText(request.text)
+            is AgentRequest.Screenshot -> handleScreenshot(request)
+            is AgentRequest.Capture ->
+                AtomicCaptureReflectiveMapper.invoke(automator, request.windowIndex)
+            is AgentRequest.WindowIdentity ->
+                WindowIdentityReflectiveMapper.invoke(automator, request.windowIndex)
+            AgentRequest.Detach -> AgentResponse.Detached
+            // Handled in IpcServer before the automator handler; keep exhaustive.
+            is AgentRequest.Hello ->
+                AgentResponse.HelloAck(
+                    protocolVersion = dev.sebastiano.spectre.agent.transport.ProtocolVersion.CURRENT
+                )
+            is AgentRequest.Cancel -> AgentResponse.Ok
+            is AgentRequest.WaitForNode -> waitOps.handleWaitForNode(request)
+            is AgentRequest.WaitForVisualIdle -> waitOps.handleWaitForVisualIdle(request)
         }
 
     // Note on un-caught exceptions: any non-reflective `RuntimeException` thrown by the

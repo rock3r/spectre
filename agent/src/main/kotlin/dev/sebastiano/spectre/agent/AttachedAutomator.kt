@@ -136,6 +136,59 @@ internal constructor(
     }
 
     /**
+     * Wait until a semantics node matches [tag] and/or [text] (AND when both are set), same as
+     * in-process `ComposeAutomator.waitForNode` (#201).
+     *
+     * Propagates [timeoutMs] as an absolute deadline on the wire so the agent and client share one
+     * budget. Throws [SpectreAgentException] with category `timeout` when the wait expires.
+     */
+    @Throws(IOException::class)
+    public fun waitForNode(
+        tag: String? = null,
+        text: String? = null,
+        timeoutMs: Long = 5_000,
+        pollIntervalMs: Long = 100,
+    ): NodeSnapshotDto {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        val resp =
+            exchange(
+                AgentRequest.WaitForNode(
+                    tag = tag,
+                    text = text,
+                    timeoutMs = timeoutMs,
+                    pollIntervalMs = pollIntervalMs,
+                ),
+                deadlineEpochMs = deadline,
+            )
+        val nodes = (resp as? AgentResponse.Nodes)?.nodes ?: throw wireMismatch("Nodes", resp)
+        return nodes.singleOrNull()
+            ?: throw IOException("waitForNode expected a single node, got ${nodes.size}")
+    }
+
+    /**
+     * Wait until consecutive visual frames are stable (#201). Same semantics as in-process
+     * `ComposeAutomator.waitForVisualIdle`.
+     */
+    @Throws(IOException::class)
+    public fun waitForVisualIdle(
+        timeoutMs: Long = 5_000,
+        stableFrames: Int = 3,
+        pollIntervalMs: Long = 16,
+    ) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        val resp =
+            exchange(
+                AgentRequest.WaitForVisualIdle(
+                    timeoutMs = timeoutMs,
+                    stableFrames = stableFrames,
+                    pollIntervalMs = pollIntervalMs,
+                ),
+                deadlineEpochMs = deadline,
+            )
+        if (resp !is AgentResponse.Ok) throw wireMismatch("Ok", resp)
+    }
+
+    /**
      * Send [AgentRequest.Detach], wait for [AgentResponse.Detached], close the underlying client.
      * Idempotent — calling twice is a no-op.
      */
@@ -159,9 +212,9 @@ internal constructor(
         }
     }
 
-    private fun exchange(request: AgentRequest): AgentResponse {
+    private fun exchange(request: AgentRequest, deadlineEpochMs: Long? = null): AgentResponse {
         check(!closed.get()) { "AttachedAutomator is closed" }
-        val resp = client.send(request)
+        val resp = client.send(request, deadlineEpochMs = deadlineEpochMs)
         if (resp is AgentResponse.Error) {
             val category =
                 dev.sebastiano.spectre.agent.transport.AgentErrorCategory.fromWire(resp.category)

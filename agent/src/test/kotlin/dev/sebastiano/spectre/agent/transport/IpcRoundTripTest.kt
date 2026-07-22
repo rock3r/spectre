@@ -491,6 +491,8 @@ class IpcRoundTripTest {
             is AgentRequest.Hello ->
                 AgentResponse.HelloAck(protocolVersion = ProtocolVersion.CURRENT)
             is AgentRequest.Cancel -> AgentResponse.Ok
+            is AgentRequest.WaitForNode -> AgentResponse.Nodes(emptyList())
+            is AgentRequest.WaitForVisualIdle -> AgentResponse.Ok
         }
     }
 

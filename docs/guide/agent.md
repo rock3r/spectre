@@ -252,7 +252,8 @@ translateY)`; scale widths/heights by `scaleX`/`scaleY` only (no translation). D
 recording (#183) uses this so capture stays on the daemon host rather than over the
 transport.
 
-Streaming / long-poll ops (`waitForVisualIdle`, idling resources, `withTracing`) are
+`waitForNode` and `waitForVisualIdle` are available over the agent transport (#201).
+Streaming / long-poll idling resources and `withTracing` remain
 deferred to a follow-up.
 
 ## Wire format
@@ -357,7 +358,8 @@ Not additive-safe without a version bump:
 
 - **Windows needs 10 version 1803 / Server 2019 or newer.** That's when native `AF_UNIX` landed;
   older Windows fails the attach preflight with `AttachPlatformUnsupportedException`.
-- **No streaming ops.** `waitForVisualIdle` and friends are HTTP-only or in-process only for now.
+- **Wait ops.** `waitForNode` / `waitForVisualIdle` are supported over agent IPC (#201) with
+  shared deadline budgets and cancel. Idling-resource `waitForIdle` stays in-process only.
 - **IntelliJ-hosted Compose**: the classloader-disambiguation rule (D-14 in the plan) was
   designed to handle `PluginClassLoader` chains but isn't automatically tested yet. If
   you hit issues attaching to an IntelliJ-hosted target, file a Spectre issue with the
