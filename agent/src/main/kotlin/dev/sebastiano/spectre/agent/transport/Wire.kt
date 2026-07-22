@@ -339,7 +339,9 @@ public data class NodeSnapshotDto(
     public val texts: List<String>,
     public val editableText: String? = null,
     public val role: String?,
-    public val contentDescription: String? = null,
+    // Required nullable (no default): encodeDefaults=false would omit a defaulted null and break
+    // older v2 clients whose decoder still requires contentDescription on every node snapshot.
+    public val contentDescription: String?,
     public val contentDescriptions: List<String> = emptyList(),
     public val isFocused: Boolean = false,
     public val isDisabled: Boolean = false,
