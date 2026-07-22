@@ -73,11 +73,12 @@ class HotReloadPortDiscoveryTest {
 
     @Test
     fun `pid file path is parsed from jvm args`() {
+        val expected = java.nio.file.Path.of("tmp", "app.pid")
         val path =
             HotReloadPortDiscovery.parsePidFilePathFromJvmArgs(
-                listOf("-Dcompose.reload.pidFile=/tmp/app.pid")
+                listOf("-Dcompose.reload.pidFile=${expected}")
             )
-        assertEquals("/tmp/app.pid", path?.toString())
+        assertEquals(expected, path)
     }
 
     @Test
