@@ -50,42 +50,29 @@ class SpectreDoesNotRedefineClassesContractTest {
 
     private fun discoverProductionMainSourceRoots(repoRoot: Path): List<Path> {
         // Top-level Gradle modules only (recording-macos/linux/windows are siblings of recording/).
-        val roots = ArrayList<Path>()
-        for (moduleDir in repoRoot.listDirectoryEntries()) {
-            if (!moduleDir.isDirectory()) continue
-            if (!Files.isRegularFile(moduleDir.resolve("build.gradle.kts"))) continue
-            val main = moduleDir.resolve("src").resolve("main")
-            if (main.isDirectory()) {
-                roots.add(main)
-            }
-        }
-        return roots.sortedBy { it.toString() }
+        return repoRoot
+            .listDirectoryEntries()
+            .filter { it.isDirectory() }
+            .filter { Files.isRegularFile(it.resolve("build.gradle.kts")) }
+            .map { it.resolve("src").resolve("main") }
+            .filter { it.isDirectory() }
+            .sortedBy { it.toString() }
     }
 
     private fun resolveRepoRoot(): Path {
-        var dir = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize()
-        var hops = 0
-        while (hops < 8) {
-            val settings = dir.resolve("settings.gradle.kts")
-            val cli = dir.resolve("cli")
-            val found = Files.isRegularFile(settings) && Files.isDirectory(cli)
-            if (found) {
-                return dir
-            }
-            val parent = dir.parent
-            if (parent == null) {
-                break
-            }
-            dir = parent
-            hops += 1
+        val start = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize()
+        val ancestors = generateSequence(start) { it.parent }.take(8).toList()
+        return ancestors.firstOrNull { dir ->
+            Files.isRegularFile(dir.resolve("settings.gradle.kts")) &&
+                Files.isDirectory(dir.resolve("cli"))
         }
-        fail(
-            "could not find Spectre repo root from " +
-                System.getProperty("user.dir") +
-                " (cwd name=" +
-                Path.of(System.getProperty("user.dir")).name +
-                ")"
-        )
+            ?: fail(
+                "could not find Spectre repo root from " +
+                    System.getProperty("user.dir") +
+                    " (cwd name=" +
+                    Path.of(System.getProperty("user.dir")).name +
+                    ")"
+            )
     }
 
     companion object {
