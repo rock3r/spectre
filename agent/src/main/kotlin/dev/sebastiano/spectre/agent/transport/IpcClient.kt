@@ -73,6 +73,9 @@ internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) 
                             AgentErrorCategory.InternalError -> AgentErrorCategory.ProtocolMismatch
                             else -> decoded
                         }
+                    // Best-effort Detach so a legacy runtime that only clears agentState on
+                    // Detach can be re-attached with a matching JAR after this failure.
+                    runCatching { sendWithoutHandshake(AgentRequest.Detach) }
                     throw SpectreAgentException(
                         category = category,
                         message =
