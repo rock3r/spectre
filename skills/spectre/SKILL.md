@@ -21,8 +21,19 @@ Use the published docs as the source of truth when answering setup questions:
 - Installation and coordinates: <https://spectre.sebastiano.dev/guide/installation/>
 - Agent attach: <https://spectre.sebastiano.dev/guide/agent/>
 - Cross-JVM HTTP transport: <https://spectre.sebastiano.dev/guide/cross-jvm/>
+- Compose Hot Reload awareness (CLI/MCP only): <https://spectre.sebastiano.dev/guide/hot-reload/>
 
 In the Spectre repository, the same pages live under `docs/guide/`.
+
+## Division of labor vs Compose Hot Reload MCP
+
+When an agent has **both** Compose Hot Reload’s MCP and Spectre configured:
+
+> **If you have HR available and want quick sanity checks while iterating on a live app, use the
+> HR MCP; in any other case, Spectre is the right choice.**
+
+Do **not** use HR for repeatable tests. Spectre’s `:testing` / JUnit surface has no
+`waitForReloadSettled` — that wait exists only on the interactive CLI/daemon/MCP tier.
 
 ## The 30-second mental model
 

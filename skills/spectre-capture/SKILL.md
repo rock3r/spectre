@@ -4,12 +4,29 @@ description: >
   Use when working with Spectre atomic captures — capture.json + screenshot.png written by
   `spectre capture`, the capture MCP tool, or ComposeAutomator.capture. Covers the versioned
   capture schema, jq recipes over the tree, capture → act → capture → diff verification,
-  node-key lifetime, and captures prune cleanup.
+  node-key lifetime (including Compose Hot Reload invalidation), division of labor vs the
+  Hot Reload MCP, and captures prune cleanup.
 license: Apache-2.0
 compatibility: Requires the Spectre CLI (or in-process capture API) and schemaVersion 1 captures.
 ---
 
 # Spectre capture output
+
+## Division of labor (HR MCP vs Spectre)
+
+If this agent also has Compose Hot Reload’s MCP server configured, **do not flip a coin per
+call**. Use this rule verbatim:
+
+> **If you have HR available and want quick sanity checks while iterating on a live app, use the
+> HR MCP; in any other case, Spectre is the right choice.**
+
+- **HR MCP** — quick reload-native sanity checks while iterating on a live HR run.
+- **Spectre** (CLI / MCP / capture) — semantics tree, node keys, real input, screenshots,
+  recording, atomic capture, attach to any Spectre-enabled JVM, and
+  `wait --reload-settled` / `wait_for_reload_settled` when you need settle + re-inspect.
+
+Reload awareness is **optional** and **dev-loop only**. It is not part of Spectre’s JUnit
+`:testing` surface. Full user guide: <https://spectre.sebastiano.dev/guide/hot-reload/>
 
 Atomic capture freezes one Compose window into:
 
@@ -159,6 +176,11 @@ jq '.summary' "$CAP"
 - Keys are valid for the **current attach session** and the tree they came from.
 - After navigation, re-composition, or re-attach, **re-capture** and re-resolve keys.
 - Do not cache keys across detach/attach cycles.
+- **Compose Hot Reload:** on reload-aware attaches, keys are generation-stamped and cleared after
+  a successful reload settle. After you (or the IDE) hot-reloads code:
+  1. `spectre wait --reload-settled <session-id>` (or MCP `wait_for_reload_settled`)
+  2. **Re-capture** (or `tree` / `find`) and resolve keys from the **new** tree
+  3. Never reuse pre-reload keys — they fail as `nodeNotFound`
 
 ## Capture from MCP / CLI / library
 
@@ -191,4 +213,5 @@ With only this skill + the Spectre CLI (no source reading):
 
 - User guide CLI: <https://spectre.sebastiano.dev/guide/cli/>
 - Capture skill page: <https://spectre.sebastiano.dev/guide/capture/>
+- Compose Hot Reload awareness: <https://spectre.sebastiano.dev/guide/hot-reload/>
 - General UI automation skill: `spectre-ui-automation` / `spectre`

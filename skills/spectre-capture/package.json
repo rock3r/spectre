@@ -1,8 +1,8 @@
 {
   "name": "spectre-capture",
-  "version": "1.0.0",
-  "description": "Agent skill for querying Spectre atomic capture output (capture.json schema v1)",
-  "keywords": ["claude-skill", "spectre", "capture", "compose-desktop", "jq", "ui-automation"],
+  "version": "1.1.0",
+  "description": "Agent skill for querying Spectre atomic capture output (capture.json schema v1), including Hot Reload key invalidation and HR vs Spectre division of labor",
+  "keywords": ["claude-skill", "spectre", "capture", "compose-desktop", "jq", "ui-automation", "hot-reload"],
   "author": "Sebastiano Poggi <poggos@gmail.com>",
   "license": "Apache-2.0",
   "files": ["SKILL.md"]

@@ -4,6 +4,14 @@ Spectre deliberately doesn't wrap reads and actions in an implicit idle barrier.
 flip side is that you have a small but explicit set of wait helpers, and you decide
 where to put them. This page covers all three.
 
+## Interactive-only: Compose Hot Reload settle
+
+JUnit / `:testing` has **no** hot-reload wait. For the CLI and MCP attach path only, Spectre
+exposes `wait --reload-settled` / `wait_for_reload_settled` when the target process is already
+running under Compose Hot Reload. That wait is optional, fails closed without HR, and is
+documented under [Compose Hot Reload awareness](hot-reload.md). Prefer
+`waitForNode` / `waitForIdle` / `waitForVisualIdle` in automated tests.
+
 ## The EDT rule
 
 All three wait helpers — `waitForNode`, `waitForIdle`, and `waitForVisualIdle` — refuse

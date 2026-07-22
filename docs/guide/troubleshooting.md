@@ -118,6 +118,46 @@ Use `pressKey(...)` for individual key events (modifier shortcuts, navigation ke
 `<kbd>Tab</kbd>`, `<kbd>Esc</kbd>`) — those go through the AWT key map, not the
 clipboard, so none of the paste-specific caveats apply.
 
+## Compose Hot Reload {#compose-hot-reload}
+
+### "`wait --reload-settled` says hotReloadUnavailable"
+
+The attached session is not reload-aware. Common causes:
+
+1. **The target is not running under Compose Hot Reload** — ordinary `run` / packaged launches
+   are fine for Spectre; reload wait only activates when HR orchestration is discoverable.
+2. **Port discovery failed** — Spectre looks for HR’s pid file (`orchestration.port`) and the
+   `compose.reload.orchestration.port` JVM property. Confirm the app was started by an HR-aware
+   run configuration and that the pid file is still present for that process.
+3. **Orchestration never connected within the wait budget** — a very short `--timeout-ms` right
+   after attach can report timeout rather than “unavailable”; give the Tooling client a moment
+   after attach, or increase the timeout.
+
+See [Compose Hot Reload awareness](hot-reload.md).
+
+### "`reloadFailed` vs `timeout`"
+
+- **`reloadFailed`** — HR completed a `ReloadClassesResult` with `isSuccess = false` (for
+  example a redefine error). Fix the reload in the app/IDE; Spectre is only reporting HR’s
+  outcome.
+- **`timeout`** — the settle chain (`Request` → `Result` → `UIRendered` → `Ping`/`Ack`) did not
+  finish in time. The reload may still be running, UI may not have rendered, or the connection
+  dropped mid-wait. Retry with a larger `--timeout-ms`, confirm HR is healthy, then re-query the
+  tree.
+
+### "Clicks fail with nodeNotFound after a hot reload"
+
+On reload-aware sessions, node keys are generation-stamped and cleared after a successful
+reload settle. Pre-reload keys (and guessed `g{n}:…` stamps before a fresh tree) return
+`nodeNotFound`. Run `spectre wait --reload-settled <session>`, then `tree` / `find` / `capture`
+again and use the new keys.
+
+### "Older Hot Reload builds"
+
+Spectre tests against the Compose Hot Reload **1.2** line (pinned **1.2.0-rc01**, minimum
+**1.2.0-alpha+211**). Older orchestration servers may omit message types Spectre needs; upgrade
+HR rather than expecting settle wait to work.
+
 ## "The JVM is headless"
 
 Spectre input and screenshots need AWT. If the JVM is launched with
