@@ -185,12 +185,20 @@ constructor(
         // Hello is handled here (not in ReflectiveAutomatorHandler) so the handshake does not
         // require a live ComposeAutomator (#199).
         if (request is AgentRequest.Hello) {
-            val response =
-                if (request.protocolVersion == ProtocolVersion.CURRENT) {
-                    setHandshakeComplete(true)
-                    AgentResponse.HelloAck(protocolVersion = ProtocolVersion.CURRENT)
-                } else {
-                    setHandshakeComplete(false)
+            if (request.protocolVersion == ProtocolVersion.CURRENT) {
+                setHandshakeComplete(true)
+                Framing.writeFrame(
+                    output,
+                    WireCodec.encode(
+                        AgentResponse.HelloAck(protocolVersion = ProtocolVersion.CURRENT)
+                    ),
+                )
+                return true
+            }
+            setHandshakeComplete(false)
+            Framing.writeFrame(
+                output,
+                WireCodec.encode(
                     AgentResponse.Error(
                         message =
                             "Protocol version mismatch: client=${request.protocolVersion}, " +
@@ -198,9 +206,13 @@ constructor(
                                 "while agent API is experimental)",
                         category = AgentErrorCategory.ProtocolMismatch.wireName,
                     )
-                }
-            Framing.writeFrame(output, WireCodec.encode(response))
-            return true
+                ),
+            )
+            // #199 P1: rejected handshake must release SpectreAgent singleton state so a
+            // subsequent attach with a matching runtime can bootstrap again.
+            running.set(false)
+            onDetach()
+            return false
         }
 
         if (!handshakeComplete) {
