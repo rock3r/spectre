@@ -24,9 +24,12 @@ internal class MultiplexedIpcSession(
     private val onDetach: () -> Unit,
 ) {
     fun run(input: InputStream, output: OutputStream) {
-        val workers: ExecutorService = Executors.newCachedThreadPool { r ->
-            Thread(r, "spectre-agent-op-worker").apply { isDaemon = true }
-        }
+        // Bound concurrency: automation is mostly serial, but cancel/quick ops need a free
+        // worker while a long op runs. Unbounded cached pools let a buggy client exhaust threads.
+        val workers: ExecutorService =
+            Executors.newFixedThreadPool(MAX_OP_WORKERS) { r ->
+                Thread(r, "spectre-agent-op-worker").apply { isDaemon = true }
+            }
         val deadlineScheduler: ScheduledExecutorService =
             Executors.newSingleThreadScheduledExecutor { r ->
                 Thread(r, "spectre-agent-deadline").apply { isDaemon = true }
@@ -289,5 +292,7 @@ internal class MultiplexedIpcSession(
 
     private companion object {
         const val WORKER_SHUTDOWN_SEC: Long = 2
+        /** Max concurrent op workers per attached session (long op + cancel + headroom). */
+        const val MAX_OP_WORKERS: Int = 8
     }
 }
