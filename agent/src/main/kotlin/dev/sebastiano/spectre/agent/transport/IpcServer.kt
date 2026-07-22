@@ -179,6 +179,13 @@ constructor(
                         )
                     ),
                 )
+                // Pre-handshake decode failure: drop the connection so the accept loop can
+                // serve a valid attacher (and release agent state for re-bootstrap).
+                if (!handshakeComplete) {
+                    running.set(false)
+                    onDetach()
+                    return false
+                }
                 return true
             }
 
@@ -220,17 +227,23 @@ constructor(
         }
 
         if (!handshakeComplete) {
-            Framing.writeFrame(
-                output,
-                WireCodec.encode(
-                    AgentResponse.Error(
-                        message =
-                            "Protocol handshake required: send Hello before ${request.logLabel}",
-                        category = AgentErrorCategory.ProtocolMismatch.wireName,
-                    )
-                ),
-            )
-            // End the connection so a stale peer cannot monopolize the single accept slot.
+            try {
+                Framing.writeFrame(
+                    output,
+                    WireCodec.encode(
+                        AgentResponse.Error(
+                            message =
+                                "Protocol handshake required: send Hello before ${request.logLabel}",
+                            category = AgentErrorCategory.ProtocolMismatch.wireName,
+                        )
+                    ),
+                )
+            } finally {
+                // Pre-#199 attachers send ops without Hello; tear down so a current attacher
+                // can re-bootstrap on a new UDS path.
+                running.set(false)
+                onDetach()
+            }
             return false
         }
 
