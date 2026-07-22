@@ -4,6 +4,7 @@ import dev.sebastiano.spectre.agent.AtomicCaptureResult
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.RectDto
+import dev.sebastiano.spectre.cli.daemon.CapturePruner
 import dev.sebastiano.spectre.cli.daemon.DaemonErrorCode
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
@@ -24,10 +25,10 @@ import kotlin.test.assertTrue
  * - pre-reload stamped keys fail closed as nodeNotFound
  * - a fresh tree after settle yields usable keys for input
  *
- * Full class-redefine + JdwpTracker coexistence needs a live HR `hotRun` process (#208 still open).
- * This test exercises the Spectre-owned path that product code actually runs after orchestration
- * reports settle: key flush + attach/capture stay healthy without Spectre calling
- * `Instrumentation.redefineClasses` (see [SpectreDoesNotRedefineClassesContractTest]).
+ * Full class-redefine + JdwpTracker coexistence needs a live HR hotRun process (#208 still open).
+ * This test exercises the Spectre-owned path after orchestration reports settle: key flush +
+ * attach/capture stay healthy without Spectre calling Instrumentation.redefineClasses (see
+ * SpectreDoesNotRedefineClassesContractTest).
  */
 @OptIn(ExperimentalSpectreAgentApi::class)
 class DaemonReloadCoexistenceTest {
@@ -37,8 +38,8 @@ class DaemonReloadCoexistenceTest {
         val generation = AtomicInteger(0)
         val clicked = mutableListOf<String>()
         val captureCalls = AtomicInteger(0)
-        val outDir = Files.createTempDirectory("spectre-coexist-cap").toString()
-
+        val outRoot = Files.createTempDirectory("spectre-coexist-cap")
+        val outDir = outRoot.toString()
         val registry =
             DaemonSessionRegistry(
                 hotReloadSessionFactory = { hr },
@@ -69,60 +70,71 @@ class DaemonReloadCoexistenceTest {
                 },
             )
 
-        val sessionId =
-            assertIs<DaemonResponse.Attached>(registry.handle(DaemonRequest.Attach(4242))).sessionId
+        try {
+            val sessionId =
+                assertIs<DaemonResponse.Attached>(registry.handle(DaemonRequest.Attach(4242)))
+                    .sessionId
 
-        val preTree =
-            assertIs<DaemonResponse.Nodes>(registry.handle(DaemonRequest.AllNodes(sessionId)))
-        val preKey = preTree.nodes.single().key
-        assertTrue(preKey.startsWith("g0:"), "expected stamped pre-reload key, got $preKey")
+            val preTree =
+                assertIs<DaemonResponse.Nodes>(registry.handle(DaemonRequest.AllNodes(sessionId)))
+            val preKey = preTree.nodes.single().key
+            assertTrue(preKey.startsWith("g0:"), "expected stamped pre-reload key, got $preKey")
 
-        // Capture while attached and pre-reload (isolated outDir — do not touch shared capture
-        // root).
-        assertIs<DaemonResponse.Capture>(
-            registry.handle(
-                DaemonRequest.Capture(sessionId = sessionId, windowIndex = 0, outDir = outDir)
+            assertIs<DaemonResponse.Capture>(
+                registry.handle(
+                    DaemonRequest.Capture(sessionId = sessionId, windowIndex = 0, outDir = outDir)
+                )
             )
-        )
-        assertEquals(1, captureCalls.get())
+            assertEquals(1, captureCalls.get())
 
-        // Simulated HR settle (orchestration already drained in production by HotReloadSession).
-        hr.fireReloadSettled()
-        generation.set(1)
+            hr.fireReloadSettled()
+            generation.set(1)
 
-        val stale =
-            assertIs<DaemonResponse.Error>(registry.handle(DaemonRequest.Click(sessionId, preKey)))
-        assertEquals(DaemonErrorCode.OperationFailed, stale.code)
-        assertEquals("nodeNotFound", stale.category)
-        assertTrue(clicked.isEmpty(), "stale key must not dispatch click")
+            val stale =
+                assertIs<DaemonResponse.Error>(
+                    registry.handle(DaemonRequest.Click(sessionId, preKey))
+                )
+            assertEquals(DaemonErrorCode.OperationFailed, stale.code)
+            assertEquals("nodeNotFound", stale.category)
+            assertTrue(clicked.isEmpty(), "stale key must not dispatch click")
 
-        // Tree re-read after reload.
-        val postTree =
-            assertIs<DaemonResponse.Nodes>(registry.handle(DaemonRequest.AllNodes(sessionId)))
-        val postKey = postTree.nodes.single().key
-        assertTrue(postKey.startsWith("g1:"), "expected new generation stamp, got $postKey")
-        assertTrue(postKey != preKey)
+            val postTree =
+                assertIs<DaemonResponse.Nodes>(registry.handle(DaemonRequest.AllNodes(sessionId)))
+            val postKey = postTree.nodes.single().key
+            assertTrue(postKey.startsWith("g1:"), "expected new generation stamp, got $postKey")
+            assertTrue(postKey != preKey)
 
-        // Capture still works after reload settle (attach session still healthy).
-        assertIs<DaemonResponse.Capture>(
-            registry.handle(
-                DaemonRequest.Capture(sessionId = sessionId, windowIndex = 0, outDir = outDir)
+            assertIs<DaemonResponse.Capture>(
+                registry.handle(
+                    DaemonRequest.Capture(sessionId = sessionId, windowIndex = 0, outDir = outDir)
+                )
             )
-        )
-        assertEquals(2, captureCalls.get())
+            assertEquals(2, captureCalls.get())
 
-        assertIs<DaemonResponse.Completed>(registry.handle(DaemonRequest.Click(sessionId, postKey)))
-        assertEquals(listOf("main:0:1"), clicked)
-
-        // Session still has an HR capability: enqueue Settled and wait successfully.
-        hr.enqueue(ReloadSettleOutcome.Settled)
-        assertIs<DaemonResponse.Completed>(
-            registry.handle(
-                DaemonRequest.WaitForReloadSettled(sessionId = sessionId, timeoutMs = 1_000)
+            assertIs<DaemonResponse.Completed>(
+                registry.handle(DaemonRequest.Click(sessionId, postKey))
             )
-        )
+            assertEquals(listOf("main:0:1"), clicked)
 
-        registry.close()
+            hr.enqueue(ReloadSettleOutcome.Settled)
+            assertIs<DaemonResponse.Completed>(
+                registry.handle(
+                    DaemonRequest.WaitForReloadSettled(sessionId = sessionId, timeoutMs = 1_000)
+                )
+            )
+        } finally {
+            CapturePruner.prune(
+                request =
+                    CapturePruner.Request(
+                        sessionId = "pid-4242",
+                        force = true,
+                        allowExplicitOutDir = true,
+                    ),
+                liveSessionIds = emptySet(),
+            )
+            outRoot.toFile().deleteRecursively()
+            registry.close()
+        }
     }
 
     private fun sampleNode(rawKey: String, tag: String): NodeSnapshotDto =
