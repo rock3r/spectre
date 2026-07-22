@@ -28,6 +28,7 @@ public final class dev/sebastiano/spectre/server/SpectreErrorCategory : java/lan
 	public static final field InternalError Ldev/sebastiano/spectre/server/SpectreErrorCategory;
 	public static final field InvalidSelector Ldev/sebastiano/spectre/server/SpectreErrorCategory;
 	public static final field NodeNotFound Ldev/sebastiano/spectre/server/SpectreErrorCategory;
+	public static final field PayloadTooLarge Ldev/sebastiano/spectre/server/SpectreErrorCategory;
 	public static final field ProtocolMismatch Ldev/sebastiano/spectre/server/SpectreErrorCategory;
 	public static final field Timeout Ldev/sebastiano/spectre/server/SpectreErrorCategory;
 	public static final field UnsupportedOperation Ldev/sebastiano/spectre/server/SpectreErrorCategory;

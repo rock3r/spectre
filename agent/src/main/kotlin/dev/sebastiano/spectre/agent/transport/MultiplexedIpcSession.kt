@@ -287,9 +287,26 @@ internal class MultiplexedIpcSession(
         opId: Long,
         body: AgentResponse,
     ) {
-        synchronized(writeLock) {
-            Framing.writeFrame(output, WireCodec.encode(OpResponse(opId = opId, body = body)))
-        }
+        val payload = WireCodec.encode(OpResponse(opId = opId, body = body))
+        val toWrite =
+            if (payload.size <= MAX_FRAME_BYTES) {
+                payload
+            } else {
+                // Fail closed with a small taxonomy error instead of throwing mid-write (#204).
+                WireCodec.encode(
+                    OpResponse(
+                        opId = opId,
+                        body =
+                            AgentResponse.Error(
+                                message =
+                                    "Response payload size ${payload.size} exceeds " +
+                                        "MAX_FRAME_BYTES=$MAX_FRAME_BYTES",
+                                category = AgentErrorCategory.PayloadTooLarge.wireName,
+                            ),
+                    )
+                )
+            }
+        synchronized(writeLock) { Framing.writeFrame(output, toWrite) }
     }
 
     /**

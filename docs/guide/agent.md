@@ -298,8 +298,25 @@ decode hang or silent close. That is how mixed-version pairs degrade.
 | `nodeNotFound` | Well-formed key, no matching node |
 | `timeout` | Deadline exceeded |
 | `cancelled` | Explicit cancel of an in-flight op (#200) |
+| `payloadTooLarge` | Response/request exceeds the frame hard limit (#204) |
 | `inputRejected` | Focus / Robot / permission rejection |
 | `internalError` | Unexpected agent-side failure (default) |
+
+### Payload limits (#204)
+
+Each IPC frame is length-prefixed and hard-capped at **16 MiB** (`MAX_FRAME_BYTES`). This is a
+**fail-closed** policy:
+
+- Responses that encode larger than the cap (e.g. a huge screenshot) are **not** truncated or
+  spilled to disk by the agent transport. The runtime replies with `error` category
+  **`payloadTooLarge`** and a message that includes the sizes.
+- The connection stays open; subsequent ops on the same session continue normally.
+- Parity CI can rely on deterministic taxonomy behaviour instead of size-threshold flakes.
+
+Spill-to-file for large captures remains a higher-level concern (capture directories / daemon
+shared FS from #181); the wire layer does not invent a second path for oversized frames.
+
+HTTP maps `payloadTooLarge` → **413 Payload Too Large**.
 
 ### Long operations and cancel (#200)
 
@@ -318,7 +335,8 @@ connection.
 Clients should branch on `category` (see `AgentErrorCategory` / `SpectreAgentException`),
 not on free-text `message`. The HTTP transport maps the same names onto status codes
 (`invalidSelector` → 400, `nodeNotFound` → 404, `unsupportedOperation` → 501,
-`cancelled` → 499 Client Closed Request, etc.) via `SpectreErrorCategory` in `:server`.
+`cancelled` → 499 Client Closed Request, `payloadTooLarge` → 413, etc.) via
+`SpectreErrorCategory` in `:server`.
 
 ### Schema evolution rules
 

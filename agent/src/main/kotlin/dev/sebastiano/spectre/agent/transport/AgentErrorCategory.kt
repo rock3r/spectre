@@ -32,6 +32,12 @@ public enum class AgentErrorCategory {
     /** Explicit cancel of an in-flight op (#200). */
     @SerialName("cancelled") Cancelled,
 
+    /**
+     * Response (or request) payload exceeds the framing hard limit ([MAX_FRAME_BYTES]) (#204).
+     * Deterministic fail-closed behaviour — never truncate or hang.
+     */
+    @SerialName("payloadTooLarge") PayloadTooLarge,
+
     /** Input was refused (focus, permissions, Robot backend rejection). */
     @SerialName("inputRejected") InputRejected,
 
@@ -48,6 +54,7 @@ public enum class AgentErrorCategory {
                 NodeNotFound -> "nodeNotFound"
                 Timeout -> "timeout"
                 Cancelled -> "cancelled"
+                PayloadTooLarge -> "payloadTooLarge"
                 InputRejected -> "inputRejected"
                 InternalError -> "internalError"
             }
