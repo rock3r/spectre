@@ -165,8 +165,18 @@ private fun Route.spectreRoutes(automator: ComposeAutomator) {
     }
 
     get("/screenshot") {
-        val image = automator.screenshot()
-        call.respond(image.toScreenshotResponse())
+        try {
+            val image = automator.screenshot()
+            call.respond(image.toScreenshotResponse())
+        } catch (ex: kotlinx.coroutines.CancellationException) {
+            throw ex
+        } catch (_: IllegalStateException) {
+            // Screen Recording TCC / Robot refusal → inputRejected (409).
+            call.respond(
+                SpectreErrorCategory.httpStatus(SpectreErrorCategory.InputRejected),
+                SpectreErrorCategory.InputRejected.wireName,
+            )
+        }
     }
 }
 
