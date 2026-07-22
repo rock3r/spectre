@@ -26,6 +26,8 @@ dependencies {
     detektPlugins(libs.compose.rules.detekt)
 
     testImplementation(projects.core)
+    // Shared automator contract corpus + capability matrix (#198).
+    testImplementation(projects.testing)
     testImplementation(libs.kotlinx.coroutines.core)
     testImplementation(libs.kotlin.testJunit5)
     testImplementation(libs.kotlinx.coroutines.test)

@@ -176,23 +176,23 @@ jobs:
           xvfb-run -a ./gradlew :sample-desktop:runLinuxRobotUnfocusedSmoke
         shell: bash
 
-      - name: Run agent attach integration test under Xvfb
+      - name: Run agent attach integration + contract corpus under Xvfb
         # `AgentAttachIntegrationTest` validates the full attach → exercise → detach chain
-        # against a child JVM running the `:agent-test-fixture` Compose app. It
-        # assumption-skips on headless JVMs (Compose Desktop can't create a
-        # `JFrame + ComposePanel` without a display), and `ci.yml`'s `:check` job runs
-        # headless — so this Xvfb step is the only place the test executes on Linux CI.
-        # Without it, "macOS and Linux" agent support (docs/guide/agent.md) is only ever
-        # proven on macOS dev machines.
+        # against a child JVM running the `:agent-test-fixture` Compose app.
+        # `AgentContractCorpusTest` is the agent leg of the shared #198 contract corpus
+        # (same fixture + public AttachedAutomator entry points). Both assumption-skip on
+        # headless JVMs; `ci.yml`'s `:check` job runs headless — so this Xvfb step is the
+        # only place they execute on Linux CI. Without it, "macOS and Linux" agent support
+        # (docs/guide/agent.md + capability-matrix.md) is only ever proven on macOS.
         #
-        # Child-process display inheritance: the test spawns the fixture via
+        # Child-process display inheritance: the tests spawn the fixture via
         # `ProcessBuilder` without touching `environment()`, so the child inherits
         # `xvfb-run`'s `DISPLAY` (and the test JVM itself already passes
         # `-Djava.awt.headless=false` and `-XX:+EnableDynamicAgentLoading` to the fixture —
-        # see `spawnComposeFixture` in `AgentAttachIntegrationTest.kt`).
+        # see `spawnComposeFixture` in the agent tests).
         #
         # Runs as its own step (not folded into the validation Gradle invocation above) so
-        # the agent test never shares the X display with the Robot-driven sample-desktop
+        # the agent tests never share the X display with the Robot-driven sample-desktop
         # tasks — both sides drive real focus/keyboard input and would fight over the
         # active window if Gradle ran them in parallel. `if: always()` for independent
         # failure attribution, same as the smoke steps above.
@@ -207,7 +207,10 @@ jobs:
         # ignore the cache for this invocation.
         if: always()
         run: |
-          xvfb-run -a ./gradlew :agent:test --tests "*AgentAttachIntegrationTest*" --rerun-tasks
+          xvfb-run -a ./gradlew :agent:test \
+            --tests "*AgentAttachIntegrationTest*" \
+            --tests "*AgentContractCorpusTest*" \
+            --rerun-tasks
         shell: bash
 
       - name: Smoke the unpacked CLI distribution against the Compose fixture
@@ -318,46 +321,53 @@ jobs:
           echo "All required classes present; ${#all_xml[@]} discovered XML report(s) clean."
         shell: bash
 
-      - name: Verify agent attach test executed via JUnit XML
+      - name: Verify agent attach + contract corpus executed via JUnit XML
         # A green `:agent:test` exit code is NOT sufficient evidence the round-trip ran:
-        # the test self-skips through JUnit assumptions (headless JVM, missing
+        # tests self-skip through JUnit assumptions (headless JVM, missing
         # `runtimeJar` system property), and both of those exit 0 — which is precisely how
-        # the test sat silently skipped in `ci.yml`'s headless `:check` run while the docs
+        # attach sat silently skipped in `ci.yml`'s headless `:check` run while the docs
         # claimed Linux coverage. (Cache-replay of a stale passing XML is handled upstream
         # by `--rerun-tasks` on the run step; this verifier catches the assumption-skips.)
         # So beyond the failures/errors hygiene the sample-desktop verifier above does,
-        # this one also requires the test to have actually RUN: tests ≥ 1 and skipped = 0.
+        # this one also requires each class to have actually RUN: tests ≥ 1 and skipped = 0.
+        # `AgentContractCorpusTest` is the #198 matrix evidence for agent Supported cells.
         if: always()
         run: |
           set -euo pipefail
-          xml="agent/build/test-results/test/TEST-dev.sebastiano.spectre.agent.AgentAttachIntegrationTest.xml"
-          if [ ! -f "$xml" ]; then
-            echo "::error::Missing JUnit XML report $xml — :agent:test never ran AgentAttachIntegrationTest"
-            exit 1
-          fi
           # `grep -oE` returns non-zero on no match; `|| true` captures missing attributes
           # as empty strings so they fall into the malformation branch instead of aborting
           # the script under `set -e` (same pattern as the verifier above).
-          get_attr() {
-            grep -oE "$1=\"[0-9]+\"" "$xml" | head -n1 | grep -oE '[0-9]+' || true
+          verify_agent_xml() {
+            local class_name="$1"
+            local xml="agent/build/test-results/test/TEST-dev.sebastiano.spectre.agent.${class_name}.xml"
+            if [ ! -f "$xml" ]; then
+              echo "::error::Missing JUnit XML report $xml — :agent:test never ran $class_name"
+              exit 1
+            fi
+            get_attr() {
+              grep -oE "$1=\"[0-9]+\"" "$xml" | head -n1 | grep -oE '[0-9]+' || true
+            }
+            local tests skipped failures errors
+            tests=$(get_attr tests)
+            skipped=$(get_attr skipped)
+            failures=$(get_attr failures)
+            errors=$(get_attr errors)
+            if [ -z "$tests" ] || [ -z "$skipped" ] || [ -z "$failures" ] || [ -z "$errors" ]; then
+              echo "::error file=$xml::Malformed JUnit XML — missing/unparsable tests/skipped/failures/errors attribute"
+              exit 1
+            fi
+            if [ "$tests" -lt 1 ] || [ "$skipped" -gt 0 ]; then
+              echo "::error file=$xml::$class_name did not execute (tests=$tests skipped=$skipped) — an assumption-skip under Xvfb means the display setup or the runtimeJar wiring in agent/build.gradle.kts broke"
+              exit 1
+            fi
+            if [ "$failures" -gt 0 ] || [ "$errors" -gt 0 ]; then
+              echo "::error file=$xml::$class_name reported failures=$failures errors=$errors"
+              exit 1
+            fi
+            echo "$class_name executed: tests=$tests skipped=0 failures=0 errors=0."
           }
-          tests=$(get_attr tests)
-          skipped=$(get_attr skipped)
-          failures=$(get_attr failures)
-          errors=$(get_attr errors)
-          if [ -z "$tests" ] || [ -z "$skipped" ] || [ -z "$failures" ] || [ -z "$errors" ]; then
-            echo "::error file=$xml::Malformed JUnit XML — missing/unparsable tests/skipped/failures/errors attribute"
-            exit 1
-          fi
-          if [ "$tests" -lt 1 ] || [ "$skipped" -gt 0 ]; then
-            echo "::error file=$xml::AgentAttachIntegrationTest did not execute (tests=$tests skipped=$skipped) — an assumption-skip under Xvfb means the display setup or the runtimeJar wiring in agent/build.gradle.kts broke"
-            exit 1
-          fi
-          if [ "$failures" -gt 0 ] || [ "$errors" -gt 0 ]; then
-            echo "::error file=$xml::AgentAttachIntegrationTest reported failures=$failures errors=$errors"
-            exit 1
-          fi
-          echo "AgentAttachIntegrationTest executed: tests=$tests skipped=0 failures=0 errors=0."
+          verify_agent_xml "AgentAttachIntegrationTest"
+          verify_agent_xml "AgentContractCorpusTest"
         shell: bash
 
       - name: Upload validation artefacts

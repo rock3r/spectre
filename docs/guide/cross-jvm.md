@@ -19,7 +19,9 @@ top of an in-process `ComposeAutomator`; the test JVM talks to it through
     nodes by tag, click, type-text, and screenshot. Advanced features that need live
     JVM objects (idling resources, `withTracing`) or stateful long-poll semantics
     (`waitForVisualIdle`) are in-process only. If you need them, run the test JVM in
-    the same process as the UI.
+    the same process as the UI. The full ops × transports × platforms picture — with
+    multi-state cells and fail-closed CI evidence — lives in the
+    [capability matrix](capability-matrix.md).
 
 !!! warning "Trust boundary"
     The HTTP transport is **experimental** and intended for **trusted local / test

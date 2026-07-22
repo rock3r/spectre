@@ -38,6 +38,8 @@ dependencies {
 
     testImplementation(libs.kotlin.testJunit5)
     testImplementation(libs.kotlinx.coroutines.test)
+    // Shared automator contract corpus + capability matrix (#198).
+    testImplementation(projects.testing)
     testImplementation(libs.ktor.server.testHost)
     // ktor-server-cio is only needed for HttpComposeAutomatorE2ETest, which boots a real
     // CIO-backed server on an ephemeral port to exercise the client class over an actual

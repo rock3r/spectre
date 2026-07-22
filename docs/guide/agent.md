@@ -14,7 +14,10 @@ This is the right transport when:
   current limitations below — IntelliJ support is gated until further validation.*
 
 For comparison with the other transports, see [Cross-JVM access](cross-jvm.md) (HTTP) and
-[IntelliJ-hosted Compose](intellij.md) (in-process via `intellij-ide-starter`).
+[IntelliJ-hosted Compose](intellij.md) (in-process via `intellij-ide-starter`). Which
+operations are **Supported** vs **Unsupported by design** vs **Not yet CI-executed** is
+tracked in the [capability matrix](capability-matrix.md) — every Supported cell must have
+executable CI evidence.
 
 !!! warning "Experimental API"
 

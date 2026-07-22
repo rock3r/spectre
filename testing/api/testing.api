@@ -16,3 +16,218 @@ public final class dev/sebastiano/spectre/testing/ComposeAutomatorRule : org/jun
 	public final fun getAutomator ()Ldev/sebastiano/spectre/core/ComposeAutomator;
 }
 
+public final class dev/sebastiano/spectre/testing/contract/AutomatorContractCorpus {
+	public static final field INSTANCE Ldev/sebastiano/spectre/testing/contract/AutomatorContractCorpus;
+	public final fun run (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;)Ldev/sebastiano/spectre/testing/contract/AutomatorContractCorpus$RunResult;
+}
+
+public final class dev/sebastiano/spectre/testing/contract/AutomatorContractCorpus$RunResult {
+	public fun <init> (Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;Ljava/util/List;)V
+	public final fun component1 ()Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;
+	public final fun component2 ()Ljava/util/List;
+	public final fun copy (Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;Ljava/util/List;)Ldev/sebastiano/spectre/testing/contract/AutomatorContractCorpus$RunResult;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/testing/contract/AutomatorContractCorpus$RunResult;Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;Ljava/util/List;ILjava/lang/Object;)Ldev/sebastiano/spectre/testing/contract/AutomatorContractCorpus$RunResult;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAllPassed ()Z
+	public final fun getResults ()Ljava/util/List;
+	public final fun getTransport ()Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;
+	public fun hashCode ()I
+	public final fun requireAllPassed ()V
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/testing/contract/AutomatorContractCorpus$ScenarioResult {
+	public fun <init> (Ljava/lang/String;Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;ZLjava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;ZLjava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;
+	public final fun component3 ()Z
+	public final fun component4 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;ZLjava/lang/String;)Ldev/sebastiano/spectre/testing/contract/AutomatorContractCorpus$ScenarioResult;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/testing/contract/AutomatorContractCorpus$ScenarioResult;Ljava/lang/String;Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;ZLjava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/testing/contract/AutomatorContractCorpus$ScenarioResult;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDetail ()Ljava/lang/String;
+	public final fun getId ()Ljava/lang/String;
+	public final fun getPassed ()Z
+	public final fun getTransport ()Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class dev/sebastiano/spectre/testing/contract/AutomatorContractDriver : java/lang/AutoCloseable {
+	public abstract fun allNodes ()Ljava/util/List;
+	public abstract fun click (Ljava/lang/String;)V
+	public fun close ()V
+	public abstract fun findByTestTag (Ljava/lang/String;)Ljava/util/List;
+	public fun getExpectsFixtureSemantics ()Z
+	public abstract fun getTransport ()Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;
+	public fun screenshotProbe ()Ldev/sebastiano/spectre/testing/contract/ScreenshotProbe;
+	public abstract fun typeText (Ljava/lang/String;)V
+	public abstract fun windows ()Ljava/util/List;
+}
+
+public final class dev/sebastiano/spectre/testing/contract/AutomatorContractDriver$DefaultImpls {
+	public static fun close (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;)V
+	public static fun getExpectsFixtureSemantics (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;)Z
+	public static fun screenshotProbe (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;)Ldev/sebastiano/spectre/testing/contract/ScreenshotProbe;
+}
+
+public final class dev/sebastiano/spectre/testing/contract/AutomatorOperation : java/lang/Enum {
+	public static final field AllNodes Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field Capture Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field Click Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field DoubleClick Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field FindByContentDescription Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field FindByRole Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field FindByTestTag Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field FindByText Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field LongClick Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field PressKey Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field RegisterIdlingResource Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field Screenshot Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field ScrollWheel Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field Swipe Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field TypeText Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field WaitForIdle Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field WaitForNode Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field WaitForVisualIdle Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field WindowIdentities Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field Windows Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field WithTracing Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static fun values ()[Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+}
+
+public final class dev/sebastiano/spectre/testing/contract/AutomatorTransport : java/lang/Enum {
+	public static final field Agent Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;
+	public static final field Http Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;
+	public static final field InProcess Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;
+	public static fun values ()[Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;
+}
+
+public final class dev/sebastiano/spectre/testing/contract/CapabilityCell {
+	public fun <init> (Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;Ldev/sebastiano/spectre/testing/contract/CellState;Ljava/util/List;Ljava/lang/String;)V
+	public synthetic fun <init> (Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;Ldev/sebastiano/spectre/testing/contract/CellState;Ljava/util/List;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public final fun component2 ()Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;
+	public final fun component3 ()Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;
+	public final fun component4 ()Ldev/sebastiano/spectre/testing/contract/CellState;
+	public final fun component5 ()Ljava/util/List;
+	public final fun component6 ()Ljava/lang/String;
+	public final fun copy (Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;Ldev/sebastiano/spectre/testing/contract/CellState;Ljava/util/List;Ljava/lang/String;)Ldev/sebastiano/spectre/testing/contract/CapabilityCell;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/testing/contract/CapabilityCell;Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;Ldev/sebastiano/spectre/testing/contract/CellState;Ljava/util/List;Ljava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/testing/contract/CapabilityCell;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getEvidence ()Ljava/util/List;
+	public final fun getOperation ()Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public final fun getPlatform ()Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;
+	public final fun getRationale ()Ljava/lang/String;
+	public final fun getState ()Ldev/sebastiano/spectre/testing/contract/CellState;
+	public final fun getTransport ()Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/testing/contract/CapabilityEvidence {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ldev/sebastiano/spectre/testing/contract/CapabilityEvidence;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/testing/contract/CapabilityEvidence;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/testing/contract/CapabilityEvidence;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDescription ()Ljava/lang/String;
+	public final fun getGradleTaskHint ()Ljava/lang/String;
+	public final fun getId ()Ljava/lang/String;
+	public final fun getSourcePath ()Ljava/lang/String;
+	public final fun getWorkflowPath ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/testing/contract/CapabilityMatrix {
+	public static final field INSTANCE Ldev/sebastiano/spectre/testing/contract/CapabilityMatrix;
+	public final fun cell (Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;)Ldev/sebastiano/spectre/testing/contract/CapabilityCell;
+	public final fun cellsFor (Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;)Ljava/util/List;
+	public final fun getCells ()Ljava/util/List;
+	public final fun supportedCells ()Ljava/util/List;
+}
+
+public final class dev/sebastiano/spectre/testing/contract/CellState : java/lang/Enum {
+	public static final field Experimental Ldev/sebastiano/spectre/testing/contract/CellState;
+	public static final field NotYetCiExecuted Ldev/sebastiano/spectre/testing/contract/CellState;
+	public static final field Supported Ldev/sebastiano/spectre/testing/contract/CellState;
+	public static final field UnsupportedByDesign Ldev/sebastiano/spectre/testing/contract/CellState;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/sebastiano/spectre/testing/contract/CellState;
+	public static fun values ()[Ldev/sebastiano/spectre/testing/contract/CellState;
+}
+
+public final class dev/sebastiano/spectre/testing/contract/ContractFixtureTags {
+	public static final field BUTTON Ljava/lang/String;
+	public static final field INSTANCE Ldev/sebastiano/spectre/testing/contract/ContractFixtureTags;
+	public static final field LABEL Ljava/lang/String;
+	public static final field TEXT_FIELD Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/testing/contract/ContractNode {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ldev/sebastiano/spectre/testing/contract/ContractNode;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/testing/contract/ContractNode;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/testing/contract/ContractNode;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getKey ()Ljava/lang/String;
+	public final fun getTestTag ()Ljava/lang/String;
+	public final fun getText ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/testing/contract/ContractWindow {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;)Ldev/sebastiano/spectre/testing/contract/ContractWindow;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/testing/contract/ContractWindow;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/testing/contract/ContractWindow;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getSurfaceId ()Ljava/lang/String;
+	public final fun getTitle ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/testing/contract/PlatformPrerequisite : java/lang/Enum {
+	public static final field AnyJvm Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;
+	public static final field Headless Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;
+	public static final field LinuxWayland Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;
+	public static final field LinuxXvfb Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;
+	public static final field MacOsDesktop Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;
+	public static final field WindowsDesktop Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;
+	public static fun values ()[Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;
+}
+
+public final class dev/sebastiano/spectre/testing/contract/ScreenshotProbe {
+	public fun <init> (ILjava/lang/String;)V
+	public synthetic fun <init> (ILjava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()I
+	public final fun component2 ()Ljava/lang/String;
+	public final fun copy (ILjava/lang/String;)Ldev/sebastiano/spectre/testing/contract/ScreenshotProbe;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/testing/contract/ScreenshotProbe;ILjava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/testing/contract/ScreenshotProbe;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getByteCount ()I
+	public final fun getFormatHint ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+

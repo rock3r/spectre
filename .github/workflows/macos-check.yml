@@ -85,6 +85,59 @@ jobs:
       - name: Run checks
         run: ./gradlew check
 
+      - name: Re-run agent attach + contract corpus (bypass test cache)
+        # `--rerun-tasks` is load-bearing (same as validation-linux.yml): with
+        # `org.gradle.caching=true` and setup-gradle cache restore, a green `:check` can mark
+        # `:agent:test` FROM-CACHE and restore a prior job's passing JUnit XML. Forcing a fresh
+        # run makes the fail-closed verifier below prove *this* macOS job executed the attach
+        # corpus — required for MacOsDesktop Supported matrix cells.
+        if: always()
+        run: |
+          ./gradlew :agent:test \
+            --tests "*AgentAttachIntegrationTest*" \
+            --tests "*AgentContractCorpusTest*" \
+            --rerun-tasks
+
+      - name: Verify agent attach + contract corpus executed via JUnit XML
+        # Same fail-closed gate as validation-linux.yml: a green exit is not enough if
+        # AgentAttachIntegrationTest / AgentContractCorpusTest assumption-skipped. macOS
+        # Supported matrix cells cite this workflow as evidence.
+        if: always()
+        run: |
+          set -euo pipefail
+          verify_agent_xml() {
+            local class_name="$1"
+            local xml="agent/build/test-results/test/TEST-dev.sebastiano.spectre.agent.${class_name}.xml"
+            if [ ! -f "$xml" ]; then
+              echo "::error::Missing JUnit XML report $xml — agent tests never ran $class_name"
+              exit 1
+            fi
+            get_attr() {
+              grep -oE "$1=\"[0-9]+\"" "$xml" | head -n1 | grep -oE '[0-9]+' || true
+            }
+            local tests skipped failures errors
+            tests=$(get_attr tests)
+            skipped=$(get_attr skipped)
+            failures=$(get_attr failures)
+            errors=$(get_attr errors)
+            if [ -z "$tests" ] || [ -z "$skipped" ] || [ -z "$failures" ] || [ -z "$errors" ]; then
+              echo "::error file=$xml::Malformed JUnit XML — missing/unparsable tests/skipped/failures/errors attribute"
+              exit 1
+            fi
+            if [ "$tests" -lt 1 ] || [ "$skipped" -gt 0 ]; then
+              echo "::error file=$xml::$class_name did not execute (tests=$tests skipped=$skipped)"
+              exit 1
+            fi
+            if [ "$failures" -gt 0 ] || [ "$errors" -gt 0 ]; then
+              echo "::error file=$xml::$class_name reported failures=$failures errors=$errors"
+              exit 1
+            fi
+            echo "$class_name executed: tests=$tests skipped=0 failures=0 errors=0."
+          }
+          verify_agent_xml "AgentAttachIntegrationTest"
+          verify_agent_xml "AgentContractCorpusTest"
+        shell: bash
+
       - name: Smoke the unpacked CLI distribution against the Compose fixture
         run: |
           case "$(uname -m)" in

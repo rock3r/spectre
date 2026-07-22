@@ -16,8 +16,11 @@ The guide walks through using Spectre end-to-end:
 9. **[Recording and screenshots](recording.md)** — region capture, window-targeted video,
    and native still-window screenshots.
 10. **[Cross-JVM access](cross-jvm.md)** — driving a UI hosted in another JVM.
-11. **[IntelliJ-hosted Compose](intellij.md)** — Jewel-on-IntelliJ tool windows.
-12. **[Troubleshooting](troubleshooting.md)** — platform-specific gotchas.
+11. **[Agent attach](agent.md)** — attach to a running Spectre-instrumented JVM.
+12. **[Capability matrix](capability-matrix.md)** — ops × transports × platforms, with
+    fail-closed CI evidence for every Supported cell.
+13. **[IntelliJ-hosted Compose](intellij.md)** — Jewel-on-IntelliJ tool windows.
+14. **[Troubleshooting](troubleshooting.md)** — platform-specific gotchas.
 
 If you're new to Spectre, start with [Installation](installation.md) and
 [Getting started](getting-started.md), then read [The automator](automator.md) before

@@ -37,6 +37,9 @@ Guidelines:
 - `sample-desktop` is a harness, not the source of truth for automation logic.
 - `testing` should exercise public seams and reusable fixtures, not reach through private internals
   without a strong reason.
+- Transport parity (in-process / HTTP / agent) is enforced by a **shared contract-test corpus** in
+  `:testing` (`AutomatorContractCorpus` + `CapabilityMatrix`), not by a single shared automator
+  interface — see [capability matrix](guide/capability-matrix.md) and epic #197.
 - `recording` should isolate OS- and native-library-specific behaviour from the core query/input
   APIs. Runtime helper binaries live in platform helper artifacts, not the API jar.
 
