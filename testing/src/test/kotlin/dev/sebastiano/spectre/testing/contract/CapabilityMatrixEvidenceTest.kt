@@ -59,32 +59,50 @@ class CapabilityMatrixEvidenceTest {
 
     /**
      * Ensures a cited workflow actually runs (or re-runs) the evidence test, not just that the YAML
-     * file exists. Accepts: simple test class name, `:$module:test`, or a full `./gradlew check`
-     * that includes the module.
+     * file exists.
+     *
+     * Agent fixture attach/corpus tests must cite a display-backed workflow that both names the
+     * class and fail-closes (`--rerun-tasks` and/or JUnit XML skipped verification). Headless
+     * `ci.yml` only annotates soft-skips and must not count as Supported evidence for those
+     * classes.
      */
     private fun workflowCoversEvidence(
         workflowText: String,
         evidence: CapabilityEvidence,
     ): Boolean {
         val className = evidence.sourcePath.substringAfterLast('/').removeSuffix(".kt")
-        if (className.isNotEmpty() && workflowText.contains(className)) return true
-
         val module = evidence.sourcePath.substringBefore('/')
+
+        if (isAgentFixtureEvidence(module, className)) {
+            val namesClass = className.isNotEmpty() && workflowText.contains(className)
+            val failClosed =
+                workflowText.contains("--rerun-tasks") ||
+                    workflowText.contains("verify_agent_xml") ||
+                    (workflowText.contains("skipped") && workflowText.contains("tests="))
+            return namesClass && failClosed
+        }
+
+        if (className.isNotEmpty() && workflowText.contains(className)) return true
         if (module.isNotEmpty() && workflowText.contains(":$module:test")) return true
 
-        // Full check on CI includes all library modules' unit tests.
+        // Full check covers non-fixture library unit tests (not agent attach/corpus).
         if (workflowText.contains("./gradlew check") || workflowText.contains("gradlew check")) {
-            return module in setOf("core", "testing", "server", "agent", "cli", "recording")
+            return module in setOf("core", "testing", "server", "cli", "recording")
         }
 
         val hint = evidence.gradleTaskHint.orEmpty()
         if (hint.isNotEmpty()) {
-            // Match distinctive tokens from the hint (e.g. :testing:test, AgentContractCorpusTest).
             val tokens = Regex(""":[\w-]+:\w+|[\w]+Test""").findAll(hint).map { it.value }.toList()
             if (tokens.any { it in workflowText }) return true
         }
         return false
     }
+
+    private fun isAgentFixtureEvidence(module: String, className: String): Boolean =
+        module == "agent" &&
+            (className.contains("AgentAttach") ||
+                className.contains("AgentContractCorpus") ||
+                className.contains("ContractCorpus"))
 
     @Test
     fun `unsupported-by-design cells carry a rationale`() {
