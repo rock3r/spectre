@@ -6,6 +6,7 @@ import dev.sebastiano.spectre.agent.SpectreAttachException
 import dev.sebastiano.spectre.cli.hotreload.HotReloadCapability
 import dev.sebastiano.spectre.cli.hotreload.HotReloadPortDiscovery
 import dev.sebastiano.spectre.cli.hotreload.HotReloadSession
+import dev.sebastiano.spectre.cli.hotreload.ReloadAwareKeyGuard
 import dev.sebastiano.spectre.cli.hotreload.ReloadSettleErrorCategory
 import dev.sebastiano.spectre.cli.hotreload.mapReloadSettleOutcome
 import dev.sebastiano.spectre.cli.jdkPreflightError
@@ -55,7 +56,10 @@ internal constructor(
                 DaemonResponse.Hello(daemonVersion = DaemonProtocol.CurrentVersion)
             is DaemonRequest.Attach -> attach(request.targetPid)
             is DaemonRequest.Detach -> detach(request.sessionId)
-            DaemonRequest.ListSessions -> listSessions()
+            DaemonRequest.ListSessions ->
+                DaemonResponse.Sessions(
+                    sessions = sessionsByPid.values.map { it.summary }.sortedBy { it.targetPid }
+                )
             is DaemonRequest.ListJvmProcesses ->
                 listJvmProcesses(jvmProcessDiscovery, request.requesterPid)
             is DaemonRequest.Windows,
@@ -130,18 +134,25 @@ internal constructor(
 
     private fun runWaitRequest(session: DaemonSession, request: DaemonRequest): DaemonResponse =
         when (request) {
-            is DaemonRequest.WaitForNode ->
-                DaemonResponse.Nodes(
-                    request.sessionId,
-                    listOf(
-                        session.automator.waitForNode(
-                            tag = request.tag,
-                            text = request.text,
-                            timeoutMs = request.timeoutMs,
-                            pollIntervalMs = request.pollIntervalMs,
+            is DaemonRequest.WaitForNode -> {
+                val gen = session.keyGuard?.snapshotGeneration() ?: 0L
+                val rawNode =
+                    session.automator.waitForNode(
+                        tag = request.tag,
+                        text = request.text,
+                        timeoutMs = request.timeoutMs,
+                        pollIntervalMs = request.pollIntervalMs,
+                    )
+                val stamped =
+                    stampNodeIfCurrentGeneration(session.keyGuard, gen, rawNode)
+                        ?: return DaemonResponse.Error(
+                            code = DaemonErrorCode.OperationFailed,
+                            message =
+                                "No node found with key=${rawNode.key} (reload settled during wait)",
+                            category = "nodeNotFound",
                         )
-                    ),
-                )
+                DaemonResponse.Nodes(request.sessionId, listOf(stamped))
+            }
             is DaemonRequest.WaitForVisualIdle -> {
                 session.automator.waitForVisualIdle(
                     timeoutMs = request.timeoutMs,
@@ -150,28 +161,24 @@ internal constructor(
                 )
                 DaemonResponse.Completed(request.sessionId)
             }
-            is DaemonRequest.WaitForReloadSettled -> runReloadSettleWait(session, request)
+            is DaemonRequest.WaitForReloadSettled -> {
+                val hotReload = session.hotReloadSession
+                if (hotReload == null) {
+                    DaemonResponse.Error(
+                        code = DaemonErrorCode.HotReloadUnavailable,
+                        message = "hot reload is not available for this session",
+                        category = ReloadSettleErrorCategory.HOT_RELOAD_UNAVAILABLE,
+                    )
+                } else {
+                    mapReloadSettleOutcome(
+                        hotReload.waitForReloadSettled(request.timeoutMs),
+                        request.sessionId,
+                        request.timeoutMs,
+                    )
+                }
+            }
             else -> error("not a wait request: ${request::class.simpleName}")
         }
-
-    private fun runReloadSettleWait(
-        session: DaemonSession,
-        request: DaemonRequest.WaitForReloadSettled,
-    ): DaemonResponse {
-        val hotReload = session.hotReloadSession
-        if (hotReload == null) {
-            return DaemonResponse.Error(
-                code = DaemonErrorCode.HotReloadUnavailable,
-                message = "hot reload is not available for this session",
-                category = ReloadSettleErrorCategory.HOT_RELOAD_UNAVAILABLE,
-            )
-        }
-        return mapReloadSettleOutcome(
-            hotReload.waitForReloadSettled(request.timeoutMs),
-            request.sessionId,
-            request.timeoutMs,
-        )
-    }
 
     private fun handleSessionCommand(request: DaemonRequest): DaemonResponse =
         when (request) {
@@ -180,8 +187,11 @@ internal constructor(
                     DaemonResponse.Windows(request.sessionId, automator.windows())
                 }
             is DaemonRequest.AllNodes ->
-                invoke(request.sessionId) { automator ->
-                    DaemonResponse.Nodes(request.sessionId, automator.allNodes())
+                invokeWithSession(request.sessionId) { session, automator ->
+                    val nodes =
+                        issueNodesAcrossReload(session.keyGuard) { automator.allNodes() }
+                            ?: return@invokeWithSession reloadRaceExhaustedError()
+                    DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByTestTag,
             is DaemonRequest.FindByText,
@@ -211,7 +221,7 @@ internal constructor(
                         sessionId = request.sessionId,
                         result = automator.capture(request.windowIndex),
                         outDir = request.outDir,
-                        liveSessionIds = liveSessionIds(),
+                        liveSessionIds = sessionsByPid.values.map { it.sessionId }.toSet(),
                     )
                 }
             is DaemonRequest.StartRecording ->
@@ -229,7 +239,7 @@ internal constructor(
                 invoke(request.sessionId) { automator ->
                     DaemonResponse.RecordingStopped(
                         request.sessionId,
-                        automator.stopRecording(liveSessionIds()),
+                        automator.stopRecording(sessionsByPid.values.map { it.sessionId }.toSet()),
                     )
                 }
             is DaemonRequest.RecordingStatus ->
@@ -284,11 +294,16 @@ internal constructor(
             } catch (_: Exception) {
                 null
             }
+        val keyGuard = if (hotReload != null) ReloadAwareKeyGuard() else null
+        // Wire invalidation before the reconnect loop connects so the first settle is not missed.
+        hotReload?.setReloadSettledListener { keyGuard?.onReload() }
+        (hotReload as? HotReloadSession)?.start()
         val session =
             DaemonSession(
                 summary = sessionSummaryFor(targetPid),
                 automator = attached,
                 hotReloadSession = hotReload,
+                keyGuard = keyGuard,
             )
         sessionsByPid[targetPid] = session
         return DaemonResponse.Attached(
@@ -315,31 +330,39 @@ internal constructor(
         return CaptureSessionReport.forDetach(sessionId)
     }
 
-    private fun liveSessionIds(): Set<String> = sessionsByPid.values.map { it.sessionId }.toSet()
-
     private fun handleQuerySessionCommand(request: DaemonRequest): DaemonResponse =
         when (request) {
             is DaemonRequest.FindByTestTag ->
-                invoke(request.sessionId) { automator ->
-                    DaemonResponse.Nodes(request.sessionId, automator.findByTestTag(request.tag))
+                invokeWithSession(request.sessionId) { session, automator ->
+                    val nodes =
+                        issueNodesAcrossReload(session.keyGuard) {
+                            automator.findByTestTag(request.tag)
+                        } ?: return@invokeWithSession reloadRaceExhaustedError()
+                    DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByText ->
-                invoke(request.sessionId) { automator ->
-                    DaemonResponse.Nodes(
-                        request.sessionId,
-                        automator.findByText(request.text, request.exact),
-                    )
+                invokeWithSession(request.sessionId) { session, automator ->
+                    val nodes =
+                        issueNodesAcrossReload(session.keyGuard) {
+                            automator.findByText(request.text, request.exact)
+                        } ?: return@invokeWithSession reloadRaceExhaustedError()
+                    DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByContentDescription ->
-                invoke(request.sessionId) { automator ->
-                    DaemonResponse.Nodes(
-                        request.sessionId,
-                        automator.findByContentDescription(request.description),
-                    )
+                invokeWithSession(request.sessionId) { session, automator ->
+                    val nodes =
+                        issueNodesAcrossReload(session.keyGuard) {
+                            automator.findByContentDescription(request.description)
+                        } ?: return@invokeWithSession reloadRaceExhaustedError()
+                    DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByRole ->
-                invoke(request.sessionId) { automator ->
-                    DaemonResponse.Nodes(request.sessionId, automator.findByRole(request.role))
+                invokeWithSession(request.sessionId) { session, automator ->
+                    val nodes =
+                        issueNodesAcrossReload(session.keyGuard) {
+                            automator.findByRole(request.role)
+                        } ?: return@invokeWithSession reloadRaceExhaustedError()
+                    DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             else -> error("Not a query session command: ${request::class.simpleName}")
         }
@@ -347,39 +370,22 @@ internal constructor(
     private fun handleInputSessionCommand(request: DaemonRequest): DaemonResponse =
         when (request) {
             is DaemonRequest.Click ->
-                invoke(request.sessionId) { automator ->
-                    automator.click(request.nodeKey)
-                    DaemonResponse.Completed(request.sessionId)
+                invokeResolvedKey(request.sessionId, request.nodeKey) { auto, key ->
+                    auto.click(key)
                 }
             is DaemonRequest.DoubleClick ->
-                invoke(request.sessionId) { automator ->
-                    automator.doubleClick(request.nodeKey)
-                    DaemonResponse.Completed(request.sessionId)
+                invokeResolvedKey(request.sessionId, request.nodeKey) { auto, key ->
+                    auto.doubleClick(key)
                 }
             is DaemonRequest.LongClick ->
-                invoke(request.sessionId) { automator ->
-                    automator.longClick(request.nodeKey, request.holdForMs)
-                    DaemonResponse.Completed(request.sessionId)
-                }
-            is DaemonRequest.Swipe ->
-                invoke(request.sessionId) { automator ->
-                    automator.swipe(
-                        fromNodeKey = request.fromNodeKey,
-                        toNodeKey = request.toNodeKey,
-                        startX = request.startX,
-                        startY = request.startY,
-                        endX = request.endX,
-                        endY = request.endY,
-                        steps = request.steps,
-                        durationMs = request.durationMs,
-                    )
-                    DaemonResponse.Completed(request.sessionId)
+                invokeResolvedKey(request.sessionId, request.nodeKey) { auto, key ->
+                    auto.longClick(key, request.holdForMs)
                 }
             is DaemonRequest.ScrollWheel ->
-                invoke(request.sessionId) { automator ->
-                    automator.scrollWheel(request.nodeKey, request.wheelClicks)
-                    DaemonResponse.Completed(request.sessionId)
+                invokeResolvedKey(request.sessionId, request.nodeKey) { auto, key ->
+                    auto.scrollWheel(key, request.wheelClicks)
                 }
+            is DaemonRequest.Swipe -> handleSwipe(request)
             is DaemonRequest.PressKey ->
                 invoke(request.sessionId) { automator ->
                     automator.pressKey(request.keyCode, request.modifiers)
@@ -393,20 +399,70 @@ internal constructor(
             else -> error("Not an input session command: ${request::class.simpleName}")
         }
 
-    private fun listSessions(): DaemonResponse =
-        DaemonResponse.Sessions(
-            sessions = sessionsByPid.values.map { it.summary }.sortedBy { it.targetPid }
-        )
+    private fun handleSwipe(request: DaemonRequest.Swipe): DaemonResponse =
+        invokeWithSession(request.sessionId) { session, automator ->
+            val guard = session.keyGuard
+            if (guard == null) {
+                automator.swipe(
+                    fromNodeKey = request.fromNodeKey,
+                    toNodeKey = request.toNodeKey,
+                    startX = request.startX,
+                    startY = request.startY,
+                    endX = request.endX,
+                    endY = request.endY,
+                    steps = request.steps,
+                    durationMs = request.durationMs,
+                )
+            } else {
+                val staleKey =
+                    guard.dispatchKeys(request.fromNodeKey, request.toNodeKey) { from, to ->
+                        automator.swipe(
+                            fromNodeKey = from,
+                            toNodeKey = to,
+                            startX = request.startX,
+                            startY = request.startY,
+                            endX = request.endX,
+                            endY = request.endY,
+                            steps = request.steps,
+                            durationMs = request.durationMs,
+                        )
+                    }
+                if (staleKey != null) {
+                    return@invokeWithSession staleNodeKeyError(staleKey)
+                }
+            }
+            DaemonResponse.Completed(request.sessionId)
+        }
+
+    private fun invokeResolvedKey(
+        sessionId: String,
+        nodeKey: String,
+        op: (DaemonSessionAutomator, String) -> Unit,
+    ): DaemonResponse =
+        invokeWithSession(sessionId) { session, automator ->
+            val guard = session.keyGuard
+            if (guard == null) {
+                op(automator, nodeKey)
+            } else if (!guard.dispatch(nodeKey) { raw -> op(automator, raw) }) {
+                return@invokeWithSession staleNodeKeyError(nodeKey)
+            }
+            DaemonResponse.Completed(sessionId)
+        }
 
     private fun invoke(
         sessionId: String,
         operation: (DaemonSessionAutomator) -> DaemonResponse,
+    ): DaemonResponse = invokeWithSession(sessionId) { _, automator -> operation(automator) }
+
+    private fun invokeWithSession(
+        sessionId: String,
+        operation: (DaemonSession, DaemonSessionAutomator) -> DaemonResponse,
     ): DaemonResponse {
         val session =
             sessionsByPid.values.firstOrNull { it.sessionId == sessionId }
                 ?: return sessionNotFound(sessionId)
         return try {
-            operation(session.automator)
+            operation(session, session.automator)
         } catch (exception: IOException) {
             DaemonResponse.Error(
                 code = DaemonErrorCode.OperationFailed,
@@ -432,45 +488,40 @@ internal constructor(
             session.automator.close()
         }
     }
+}
 
-    private data class DaemonSession(
-        val summary: DaemonSessionSummary,
-        val automator: DaemonSessionAutomator,
-        val hotReloadSession: HotReloadCapability? = null,
-        val activeWaits: java.util.concurrent.atomic.AtomicInteger =
-            java.util.concurrent.atomic.AtomicInteger(0),
-        /** Absolute nanoTime deadline for the longest currently tracked outside-lock wait. */
-        val waitDeadlineNs: java.util.concurrent.atomic.AtomicLong =
-            java.util.concurrent.atomic.AtomicLong(0),
-    ) {
-        val sessionId: String
-            get() = summary.sessionId
+private const val WAIT_DRAIN_TIMEOUT_MS: Long = 90_000
+private const val WAIT_DRAIN_MARGIN_MS: Long = 5_000
+private const val WAIT_DRAIN_POLL_MS: Long = 10
+private const val NANOS_PER_MS: Long = 1_000_000
 
-        fun noteWaitStarted(timeoutMs: Long) {
-            val candidate = System.nanoTime() + timeoutMs.coerceAtLeast(0) * NANOS_PER_MS
-            waitDeadlineNs.updateAndGet { current -> maxOf(current, candidate) }
-        }
+private data class DaemonSession(
+    val summary: DaemonSessionSummary,
+    val automator: DaemonSessionAutomator,
+    val hotReloadSession: HotReloadCapability? = null,
+    val keyGuard: ReloadAwareKeyGuard? = null,
+    val activeWaits: java.util.concurrent.atomic.AtomicInteger =
+        java.util.concurrent.atomic.AtomicInteger(0),
+    /** Absolute nanoTime deadline for the longest currently tracked outside-lock wait. */
+    val waitDeadlineNs: java.util.concurrent.atomic.AtomicLong =
+        java.util.concurrent.atomic.AtomicLong(0),
+) {
+    val sessionId: String
+        get() = summary.sessionId
 
-        fun awaitIdleWaits(timeoutMs: Long = WAIT_DRAIN_TIMEOUT_MS) {
-            val trackedRemainingMs =
-                ((waitDeadlineNs.get() - System.nanoTime()) / NANOS_PER_MS).coerceAtLeast(0)
-            val budgetMs = maxOf(timeoutMs, trackedRemainingMs + WAIT_DRAIN_MARGIN_MS)
-            val deadline = System.nanoTime() + budgetMs * NANOS_PER_MS
-            while (activeWaits.get() > 0 && System.nanoTime() < deadline) {
-                Thread.sleep(WAIT_DRAIN_POLL_MS)
-            }
-        }
+    fun noteWaitStarted(timeoutMs: Long) {
+        val candidate = System.nanoTime() + timeoutMs.coerceAtLeast(0) * NANOS_PER_MS
+        waitDeadlineNs.updateAndGet { current -> maxOf(current, candidate) }
     }
 
-    private companion object {
-        /**
-         * Floor for drain-before-close. Active waits may extend this via
-         * [DaemonSession.noteWaitStarted] so caller-chosen settle timeouts are honored.
-         */
-        const val WAIT_DRAIN_TIMEOUT_MS: Long = 90_000
-        const val WAIT_DRAIN_MARGIN_MS: Long = 5_000
-        const val WAIT_DRAIN_POLL_MS: Long = 10
-        const val NANOS_PER_MS: Long = 1_000_000
+    fun awaitIdleWaits(timeoutMs: Long = WAIT_DRAIN_TIMEOUT_MS) {
+        val trackedRemainingMs =
+            ((waitDeadlineNs.get() - System.nanoTime()) / NANOS_PER_MS).coerceAtLeast(0)
+        val budgetMs = maxOf(timeoutMs, trackedRemainingMs + WAIT_DRAIN_MARGIN_MS)
+        val deadline = System.nanoTime() + budgetMs * NANOS_PER_MS
+        while (activeWaits.get() > 0 && System.nanoTime() < deadline) {
+            Thread.sleep(WAIT_DRAIN_POLL_MS)
+        }
     }
 }
 
@@ -488,8 +539,9 @@ private fun installEmbeddedAgentRuntimeIfNeeded() {
  * pid-file path (port may appear shortly after attach while HR finishes writing the file).
  */
 private fun defaultHotReloadCapability(targetPid: Long): HotReloadCapability? {
+    // autoStart=false: attach wires the invalidation listener then calls start().
     if (HotReloadPortDiscovery.discover(targetPid) != null) {
-        return HotReloadSession.forTargetPid(targetPid)
+        return HotReloadSession.forTargetPid(targetPid, autoStart = false)
     }
     // Port not readable yet, but a pid-file property means HR is (or will be) present.
     val args =
@@ -505,7 +557,11 @@ private fun defaultHotReloadCapability(targetPid: Long): HotReloadCapability? {
             emptyList()
         }
     val pidFile = HotReloadPortDiscovery.parsePidFilePathFromJvmArgs(args) ?: return null
-    return HotReloadSession.forTargetPid(targetPid, explicitPidFile = pidFile)
+    return HotReloadSession.forTargetPid(
+        targetPid = targetPid,
+        explicitPidFile = pidFile,
+        autoStart = false,
+    )
 }
 
 private fun listJvmProcesses(

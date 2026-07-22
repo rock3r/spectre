@@ -82,12 +82,3 @@ class DaemonReloadSettleTest {
         assertEquals(sessionId, settled.sessionId)
     }
 }
-
-private class ControllableHotReloadCapability(
-    private val outcomes: java.util.Queue<ReloadSettleOutcome>
-) : HotReloadCapability {
-    override fun waitForReloadSettled(timeoutMs: Long): ReloadSettleOutcome =
-        outcomes.poll() ?: ReloadSettleOutcome.Unavailable
-
-    override fun close() = Unit
-}
