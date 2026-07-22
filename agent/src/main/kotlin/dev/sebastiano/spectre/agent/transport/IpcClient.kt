@@ -46,30 +46,34 @@ internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) 
 
     init {
         // #199: exact-match protocol handshake is the first exchange after connect.
-        val hello = AgentRequest.Hello(protocolVersion = ProtocolVersion.CURRENT)
-        val ack = sendWithoutHandshake(hello)
-        when (ack) {
-            is AgentResponse.HelloAck -> {
-                if (ack.protocolVersion != ProtocolVersion.CURRENT) {
-                    channel.close()
+        // Always close the channel if handshake does not complete cleanly (no FD leak).
+        var handshakeOk = false
+        try {
+            val hello = AgentRequest.Hello(protocolVersion = ProtocolVersion.CURRENT)
+            val ack = sendWithoutHandshake(hello)
+            when (ack) {
+                is AgentResponse.HelloAck -> {
+                    if (ack.protocolVersion != ProtocolVersion.CURRENT) {
+                        throw IOException(
+                            "Agent protocol mismatch: runtime advertised ${ack.protocolVersion}, " +
+                                "client expects ${ProtocolVersion.CURRENT}"
+                        )
+                    }
+                    handshakeOk = true
+                }
+                is AgentResponse.Error -> {
                     throw IOException(
-                        "Agent protocol mismatch: runtime advertised ${ack.protocolVersion}, " +
-                            "client expects ${ProtocolVersion.CURRENT}"
+                        "Agent rejected protocol handshake " + "(${ack.category}): ${ack.message}"
+                    )
+                }
+                else -> {
+                    throw IOException(
+                        "Agent protocol handshake expected HelloAck, got ${ack::class.simpleName}"
                     )
                 }
             }
-            is AgentResponse.Error -> {
-                channel.close()
-                throw IOException(
-                    "Agent rejected protocol handshake " + "(${ack.category}): ${ack.message}"
-                )
-            }
-            else -> {
-                channel.close()
-                throw IOException(
-                    "Agent protocol handshake expected HelloAck, got ${ack::class.simpleName}"
-                )
-            }
+        } finally {
+            if (!handshakeOk) runCatching { channel.close() }
         }
     }
 

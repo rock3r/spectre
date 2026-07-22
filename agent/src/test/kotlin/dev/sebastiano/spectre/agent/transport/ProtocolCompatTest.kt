@@ -33,6 +33,22 @@ class ProtocolCompatTest {
     }
 
     @Test
+    fun `Hello CBOR encodes protocolVersion so exact-match cannot be faked by defaults`() {
+        val encoded =
+            WireCodec.encode(AgentRequest.Hello(protocolVersion = ProtocolVersion.CURRENT))
+        // encodeDefaults=false must still include the non-default-less Int field.
+        val latin1 = encoded.toString(Charsets.ISO_8859_1)
+        assertTrue(
+            latin1.contains("protocolVersion") ||
+                encoded.contains(ProtocolVersion.CURRENT.toByte()),
+            "Hello must put protocolVersion on the wire; got ${encoded.size} bytes",
+        )
+        val decoded = WireCodec.decodeRequest(encoded)
+        assertIs<AgentRequest.Hello>(decoded)
+        assertEquals(ProtocolVersion.CURRENT, decoded.protocolVersion)
+    }
+
+    @Test
     fun `IpcClient handshake exchanges Hello and HelloAck at CURRENT version`() {
         IpcServer(udsPath, stubHandler()).use {
             awaitSocket(udsPath)
@@ -145,7 +161,8 @@ class ProtocolCompatTest {
     private fun stubHandler(): AgentRequestHandler = AgentRequestHandler { request ->
         when (request) {
             AgentRequest.Ping -> AgentResponse.Pong
-            is AgentRequest.Hello -> AgentResponse.HelloAck()
+            is AgentRequest.Hello ->
+                AgentResponse.HelloAck(protocolVersion = ProtocolVersion.CURRENT)
             else ->
                 AgentResponse.Error(
                     message = "stub unhandled ${request.logLabel}",

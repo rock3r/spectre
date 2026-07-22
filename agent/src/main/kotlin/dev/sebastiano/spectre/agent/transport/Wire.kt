@@ -105,7 +105,10 @@ internal sealed interface AgentRequest {
      */
     @Serializable
     @SerialName("hello")
-    data class Hello(val protocolVersion: Int = ProtocolVersion.CURRENT) : AgentRequest
+    // No default on protocolVersion: WireCodec uses encodeDefaults=false, so a default would
+    // omit the field on the wire and peers would fill their own CURRENT — breaking exact-match
+    // negotiation across version bumps (#199 / Bugbot).
+    data class Hello(val protocolVersion: Int) : AgentRequest
 }
 
 /** Payload-free operation label for diagnostics. Never include caller-controlled request data. */
@@ -237,7 +240,8 @@ internal sealed interface AgentResponse {
      */
     @Serializable
     @SerialName("helloAck")
-    data class HelloAck(val protocolVersion: Int = ProtocolVersion.CURRENT) : AgentResponse
+    // No default — see [AgentRequest.Hello] (must be on the wire for exact-match).
+    data class HelloAck(val protocolVersion: Int) : AgentResponse
 }
 
 /**
