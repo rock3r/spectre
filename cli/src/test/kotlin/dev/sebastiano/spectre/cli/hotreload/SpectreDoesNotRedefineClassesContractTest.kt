@@ -64,13 +64,20 @@ class SpectreDoesNotRedefineClassesContractTest {
 
     private fun resolveRepoRoot(): Path {
         var dir = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize()
-        repeat(8) {
+        var hops = 0
+        while (hops < 8) {
             val settings = dir.resolve("settings.gradle.kts")
             val cli = dir.resolve("cli")
-            if (Files.isRegularFile(settings) && Files.isDirectory(cli)) {
+            val found = Files.isRegularFile(settings) && Files.isDirectory(cli)
+            if (found) {
                 return dir
             }
-            dir = dir.parent ?: fail("walked off filesystem from ${System.getProperty("user.dir")}")
+            val parent = dir.parent
+            if (parent == null) {
+                break
+            }
+            dir = parent
+            hops += 1
         }
         fail(
             "could not find Spectre repo root from " +
