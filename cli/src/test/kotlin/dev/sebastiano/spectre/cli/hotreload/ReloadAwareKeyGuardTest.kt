@@ -17,6 +17,15 @@ class ReloadAwareKeyGuardTest {
     }
 
     @Test
+    fun `after reload guessed stamps for current generation are rejected until tree`() {
+        val guard = ReloadAwareKeyGuard()
+        guard.issueNodes(listOf(sample("a")))
+        guard.onReload()
+        assertNull(guard.resolveForDispatch("g1:guessed"))
+        assertNull(guard.resolveForDispatch("g0:a"))
+    }
+
+    @Test
     fun `issued keys are stamped and resolve to raw keys`() {
         val guard = ReloadAwareKeyGuard()
         val issued = guard.issueNodes(listOf(sample("a"), sample("b")))

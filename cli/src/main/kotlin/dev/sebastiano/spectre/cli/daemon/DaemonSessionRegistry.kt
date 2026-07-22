@@ -136,15 +136,14 @@ internal constructor(
         when (request) {
             is DaemonRequest.WaitForNode -> {
                 val node =
-                    issueNodeKey(
-                        session.keyGuard,
+                    issueNodeAcrossReload(session.keyGuard) {
                         session.automator.waitForNode(
                             tag = request.tag,
                             text = request.text,
                             timeoutMs = request.timeoutMs,
                             pollIntervalMs = request.pollIntervalMs,
-                        ),
-                    )
+                        )
+                    }
                 DaemonResponse.Nodes(request.sessionId, listOf(node))
             }
             is DaemonRequest.WaitForVisualIdle -> {
@@ -182,7 +181,7 @@ internal constructor(
                 }
             is DaemonRequest.AllNodes ->
                 invokeWithSession(request.sessionId) { session, automator ->
-                    val nodes = issueNodeKeys(session.keyGuard, automator.allNodes())
+                    val nodes = issueNodesAcrossReload(session.keyGuard) { automator.allNodes() }
                     DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByTestTag,
@@ -327,30 +326,33 @@ internal constructor(
             is DaemonRequest.FindByTestTag ->
                 invokeWithSession(request.sessionId) { session, automator ->
                     val nodes =
-                        issueNodeKeys(session.keyGuard, automator.findByTestTag(request.tag))
+                        issueNodesAcrossReload(session.keyGuard) {
+                            automator.findByTestTag(request.tag)
+                        }
                     DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByText ->
                 invokeWithSession(request.sessionId) { session, automator ->
                     val nodes =
-                        issueNodeKeys(
-                            session.keyGuard,
-                            automator.findByText(request.text, request.exact),
-                        )
+                        issueNodesAcrossReload(session.keyGuard) {
+                            automator.findByText(request.text, request.exact)
+                        }
                     DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByContentDescription ->
                 invokeWithSession(request.sessionId) { session, automator ->
                     val nodes =
-                        issueNodeKeys(
-                            session.keyGuard,
-                            automator.findByContentDescription(request.description),
-                        )
+                        issueNodesAcrossReload(session.keyGuard) {
+                            automator.findByContentDescription(request.description)
+                        }
                     DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             is DaemonRequest.FindByRole ->
                 invokeWithSession(request.sessionId) { session, automator ->
-                    val nodes = issueNodeKeys(session.keyGuard, automator.findByRole(request.role))
+                    val nodes =
+                        issueNodesAcrossReload(session.keyGuard) {
+                            automator.findByRole(request.role)
+                        }
                     DaemonResponse.Nodes(request.sessionId, nodes)
                 }
             else -> error("Not a query session command: ${request::class.simpleName}")
@@ -390,18 +392,19 @@ internal constructor(
 
     private fun handleSwipe(request: DaemonRequest.Swipe): DaemonResponse =
         invokeWithSession(request.sessionId) { session, automator ->
-            val from =
-                when (val r = resolveNodeKeyForDispatch(session.keyGuard, request.fromNodeKey)) {
-                    is KeyResolution.Stale -> return@invokeWithSession r.error
-                    is KeyResolution.Raw -> r.key
-                    KeyResolution.Missing -> null
+            val guard = session.keyGuard
+            var from: String? = request.fromNodeKey
+            var to: String? = request.toNodeKey
+            if (guard != null) {
+                if (request.fromNodeKey != null) {
+                    val ok = guard.dispatch(request.fromNodeKey) { raw -> from = raw }
+                    if (!ok) return@invokeWithSession staleNodeKeyError(request.fromNodeKey)
                 }
-            val to =
-                when (val r = resolveNodeKeyForDispatch(session.keyGuard, request.toNodeKey)) {
-                    is KeyResolution.Stale -> return@invokeWithSession r.error
-                    is KeyResolution.Raw -> r.key
-                    KeyResolution.Missing -> null
+                if (request.toNodeKey != null) {
+                    val ok = guard.dispatch(request.toNodeKey) { raw -> to = raw }
+                    if (!ok) return@invokeWithSession staleNodeKeyError(request.toNodeKey)
                 }
+            }
             automator.swipe(
                 fromNodeKey = from,
                 toNodeKey = to,
@@ -421,10 +424,11 @@ internal constructor(
         op: (DaemonSessionAutomator, String) -> Unit,
     ): DaemonResponse =
         invokeWithSession(sessionId) { session, automator ->
-            when (val resolved = resolveNodeKeyForDispatch(session.keyGuard, nodeKey)) {
-                is KeyResolution.Stale -> return@invokeWithSession resolved.error
-                is KeyResolution.Raw -> op(automator, resolved.key)
-                KeyResolution.Missing -> error("missing node key")
+            val guard = session.keyGuard
+            if (guard == null) {
+                op(automator, nodeKey)
+            } else if (!guard.dispatch(nodeKey) { raw -> op(automator, raw) }) {
+                return@invokeWithSession staleNodeKeyError(nodeKey)
             }
             DaemonResponse.Completed(sessionId)
         }
