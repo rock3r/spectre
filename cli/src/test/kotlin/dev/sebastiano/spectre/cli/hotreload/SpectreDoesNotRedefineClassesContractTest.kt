@@ -16,19 +16,18 @@ import kotlin.test.fail
  * [java.lang.instrument.Instrumentation.redefineClasses], which would look like an external
  * redefine and trip HR's tracker.
  *
- * Scans production Kotlin sources under `cli/`, `agent/`, `agent-runtime/`, and `core/` for the
- * forbidden call site. `redefineModule` (module opens at attach) is allowed and is a different API.
+ * Scans every production `src/main` Kotlin tree under the Spectre repo (all modules, not a
+ * hard-coded subset) for the forbidden call site. `redefineModule` (module opens at attach) is
+ * allowed and is a different API.
  */
 class SpectreDoesNotRedefineClassesContractTest {
     @Test
     fun `production sources never call Instrumentation redefineClasses`() {
         val repoRoot = resolveRepoRoot()
-        val roots = listOf("cli", "agent", "agent-runtime", "core").map { repoRoot.resolve(it) }
+        val mainSrcRoots = discoverProductionMainSourceRoots(repoRoot)
+        assertTrue(mainSrcRoots.isNotEmpty(), "expected at least one src/main tree under $repoRoot")
         val hits = mutableListOf<String>()
-        for (root in roots) {
-            assertTrue(Files.isDirectory(root), "expected module directory $root")
-            val mainSrc = root.resolve("src/main")
-            if (!Files.isDirectory(mainSrc)) continue
+        for (mainSrc in mainSrcRoots) {
             Files.walk(mainSrc).use { stream ->
                 stream
                     .asSequence()
@@ -46,6 +45,26 @@ class SpectreDoesNotRedefineClassesContractTest {
             "Spectre must not call Instrumentation.redefineClasses (HR coexistence). Hits:\n" +
                 hits.joinToString("\n"),
         )
+    }
+
+    /**
+     * Walks the repo for `**/src/main` directories that look like production modules (skip
+     * `build/`, `.git/`, worktrees under nested `.worktrees` if present).
+     */
+    private fun discoverProductionMainSourceRoots(repoRoot: Path): List<Path> {
+        val found = mutableListOf<Path>()
+        Files.walk(repoRoot, 6).use { stream ->
+            stream
+                .asSequence()
+                .filter { Files.isDirectory(it) && it.fileName.toString() == "main" }
+                .filter { it.parent?.fileName?.toString() == "src" }
+                .filter { path ->
+                    val s = path.toString().replace('\\', '/')
+                    "/build/" !in s && "/.git/" !in s && "/.worktrees/" !in s
+                }
+                .forEach { found += it }
+        }
+        return found.sortedBy { it.toString() }
     }
 
     private fun resolveRepoRoot(): Path {
