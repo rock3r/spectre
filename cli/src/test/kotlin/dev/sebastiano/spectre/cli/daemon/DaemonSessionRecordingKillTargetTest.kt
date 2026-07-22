@@ -42,6 +42,7 @@ class DaemonSessionRecordingKillTargetTest {
                     }
                     if (index == null) list else list.filter { it.index == index }
                 },
+                requireScreenCaptureAccess = {},
                 startWindowByTitle = { _, _, _, _, _, _ -> handle },
             )
 
@@ -71,6 +72,7 @@ class DaemonSessionRecordingKillTargetTest {
                 sessionId = "session-finalize",
                 targetPid = 99L,
                 windowIdentities = { listOf(identity) },
+                requireScreenCaptureAccess = {},
                 startWindowByTitle = { _, _, _, _, _, _ -> handle },
             )
         recording.start(outputPath = output.toString(), windowIndex = 0)

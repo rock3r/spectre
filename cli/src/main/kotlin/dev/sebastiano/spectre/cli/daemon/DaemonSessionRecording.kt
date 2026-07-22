@@ -34,6 +34,11 @@ internal class DaemonSessionRecording(
     private val fullscreenRegionBounds: () -> Rectangle = ::requireFullscreenRegionBounds,
     private val autoRecorderFactory: () -> AutoRecorder = { AutoRecorder() },
     /**
+     * Screen Recording TCC preflight (macOS). Tests inject a no-op so kill-target coverage does not
+     * require real TCC on hermetic CI runners.
+     */
+    private val requireScreenCaptureAccess: () -> Unit = ::defaultRequireScreenCaptureAccess,
+    /**
      * Out-of-process window recording seam (default: [AutoRecorder.startWindowByTitle]). Tests
      * inject a fake starter so kill-target / finalize behaviour is CI-safe without SCK/WGC/portal.
      */
@@ -199,14 +204,6 @@ internal class DaemonSessionRecording(
         captureDirectory = null
     }
 
-    private fun requireScreenCaptureAccess() {
-        try {
-            MacOsScreenCaptureAccess.requireGranted()
-        } catch (exception: ScreenCaptureAccessDeniedException) {
-            throw IOException(exception.message ?: "Screen Recording not granted", exception)
-        }
-    }
-
     private fun requireRecordableIdentity(windowIndex: Int): WindowIdentityDto =
         selectIdentity(windowIndex)
             ?: throw IOException(
@@ -324,6 +321,14 @@ internal class DaemonSessionRecording(
         val file = Path.of(outputPath).toAbsolutePath().normalize()
         val directory = file.parent ?: Path.of(".")
         return ResolvedOutput(file = file, directory = directory, explicitOutDir = true)
+    }
+}
+
+private fun defaultRequireScreenCaptureAccess() {
+    try {
+        MacOsScreenCaptureAccess.requireGranted()
+    } catch (exception: ScreenCaptureAccessDeniedException) {
+        throw IOException(exception.message ?: "Screen Recording not granted", exception)
     }
 }
 

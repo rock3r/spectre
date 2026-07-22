@@ -849,15 +849,14 @@ mod restore_token_tests {
             load_restore_token("monitor-embedded").unwrap().as_deref(),
             Some("second-overwrite")
         );
-        // No leftover *.tmp from the atomic rename path.
+        // write_private_file temps are named ".{name}.tmp.{pid}" (extension is the pid, not "tmp").
         let leftovers: Vec<_> = fs::read_dir(&dir)
             .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| {
-                e.path()
-                    .extension()
-                    .and_then(|x| x.to_str())
-                    .is_some_and(|x| x == "tmp")
+                e.file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with('.') && name.contains(".tmp."))
             })
             .collect();
         assert!(leftovers.is_empty(), "tmp leftovers: {leftovers:?}");
