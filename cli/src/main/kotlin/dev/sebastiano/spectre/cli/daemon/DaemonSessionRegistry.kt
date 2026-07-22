@@ -79,7 +79,9 @@ internal constructor(
                 is DaemonRequest.WaitForVisualIdle -> request.sessionId
                 else -> error("not a wait request")
             }
-        val automator =
+        // Pin the session and bump activeWaits under the monitor so detach/close will wait
+        // for in-flight waits before closing the automator.
+        val session =
             synchronized(this) {
                 if (shutdown) {
                     return DaemonResponse.Error(
@@ -87,15 +89,19 @@ internal constructor(
                         message = "daemon is shutting down",
                     )
                 }
-                sessionsByPid.values.firstOrNull { it.sessionId == sessionId }?.automator
-            } ?: return sessionNotFound(sessionId)
+                val found =
+                    sessionsByPid.values.firstOrNull { it.sessionId == sessionId }
+                        ?: return sessionNotFound(sessionId)
+                found.activeWaits.incrementAndGet()
+                found
+            }
         return try {
             when (request) {
                 is DaemonRequest.WaitForNode ->
                     DaemonResponse.Nodes(
                         request.sessionId,
                         listOf(
-                            automator.waitForNode(
+                            session.automator.waitForNode(
                                 tag = request.tag,
                                 text = request.text,
                                 timeoutMs = request.timeoutMs,
@@ -104,7 +110,7 @@ internal constructor(
                         ),
                     )
                 is DaemonRequest.WaitForVisualIdle -> {
-                    automator.waitForVisualIdle(
+                    session.automator.waitForVisualIdle(
                         timeoutMs = request.timeoutMs,
                         stableFrames = request.stableFrames,
                         pollIntervalMs = request.pollIntervalMs,
@@ -118,6 +124,8 @@ internal constructor(
                 code = DaemonErrorCode.OperationFailed,
                 message = exception.message ?: "session operation failed",
             )
+        } finally {
+            session.activeWaits.decrementAndGet()
         }
     }
 
@@ -242,10 +250,12 @@ internal constructor(
                     message = "session not found: $sessionId",
                 )
         val remainingLive = liveSessionIds() - sessionId
-        val automator = sessionsByPid.remove(removed.key)?.automator
+        val session = sessionsByPid.remove(removed.key)
+        // Let in-flight waits finish before tearing down the automator (see handleWaitOutsideLock).
+        session?.awaitIdleWaits()
         // Finalize recording while other sessions are still known live (#185 review).
-        automator?.finalizeRecording(remainingLive)
-        automator?.close()
+        session?.automator?.finalizeRecording(remainingLive)
+        session?.automator?.close()
         return CaptureSessionReport.forDetach(sessionId)
     }
 
@@ -363,8 +373,13 @@ internal constructor(
     @Synchronized
     override fun close() {
         shutdown = true
-        sessionsByPid.values.forEach { session -> session.automator.close() }
+        val snapshot = sessionsByPid.values.toList()
         sessionsByPid.clear()
+        // Outside the monitor after clear so wait finally-blocks can finish.
+        snapshot.forEach { session ->
+            session.awaitIdleWaits()
+            session.automator.close()
+        }
     }
 
     private fun Long.toSessionSummary(): DaemonSessionSummary =
@@ -373,9 +388,18 @@ internal constructor(
     private data class DaemonSession(
         val summary: DaemonSessionSummary,
         val automator: DaemonSessionAutomator,
+        val activeWaits: java.util.concurrent.atomic.AtomicInteger =
+            java.util.concurrent.atomic.AtomicInteger(0),
     ) {
         val sessionId: String
             get() = summary.sessionId
+
+        fun awaitIdleWaits(timeoutMs: Long = 30_000) {
+            val deadline = System.nanoTime() + timeoutMs * 1_000_000L
+            while (activeWaits.get() > 0 && System.nanoTime() < deadline) {
+                Thread.sleep(10)
+            }
+        }
     }
 }
 
