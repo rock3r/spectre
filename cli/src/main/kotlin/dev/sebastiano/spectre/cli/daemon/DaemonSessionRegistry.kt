@@ -27,8 +27,19 @@ internal constructor(
 
     private var shutdown: Boolean = false
 
-    @Synchronized
+    /**
+     * Dispatches a daemon request. Long waits (#201) run **outside** the registry monitor so a
+     * multi-second `waitForNode` does not freeze attach/ps for other clients.
+     */
     public fun handle(request: DaemonRequest): DaemonResponse =
+        when (request) {
+            is DaemonRequest.WaitForNode,
+            is DaemonRequest.WaitForVisualIdle -> handleWaitOutsideLock(request)
+            else -> handleSynchronized(request)
+        }
+
+    @Synchronized
+    private fun handleSynchronized(request: DaemonRequest): DaemonResponse =
         when (request) {
             is DaemonRequest.Hello ->
                 DaemonResponse.Hello(daemonVersion = DaemonProtocol.CurrentVersion)
@@ -40,6 +51,9 @@ internal constructor(
             is DaemonRequest.Windows,
             is DaemonRequest.AllNodes,
             is DaemonRequest.FindByTestTag,
+            is DaemonRequest.FindByText,
+            is DaemonRequest.FindByContentDescription,
+            is DaemonRequest.FindByRole,
             is DaemonRequest.Click,
             is DaemonRequest.DoubleClick,
             is DaemonRequest.LongClick,
@@ -52,8 +66,68 @@ internal constructor(
             is DaemonRequest.StartRecording,
             is DaemonRequest.StopRecording,
             is DaemonRequest.RecordingStatus -> handleSessionCommand(request)
+            // Wait ops are dispatched by [handle] outside the monitor.
+            is DaemonRequest.WaitForNode,
+            is DaemonRequest.WaitForVisualIdle -> error("wait ops must use handleWaitOutsideLock")
             DaemonRequest.Shutdown -> shutdown()
         }
+
+    private fun handleWaitOutsideLock(request: DaemonRequest): DaemonResponse {
+        val sessionId =
+            when (request) {
+                is DaemonRequest.WaitForNode -> request.sessionId
+                is DaemonRequest.WaitForVisualIdle -> request.sessionId
+                else -> error("not a wait request")
+            }
+        // Pin the session and bump activeWaits under the monitor so detach/close will wait
+        // for in-flight waits before closing the automator.
+        val session =
+            synchronized(this) {
+                if (shutdown) {
+                    return DaemonResponse.Error(
+                        code = DaemonErrorCode.ShutdownInProgress,
+                        message = "daemon is shutting down",
+                    )
+                }
+                val found =
+                    sessionsByPid.values.firstOrNull { it.sessionId == sessionId }
+                        ?: return sessionNotFound(sessionId)
+                found.activeWaits.incrementAndGet()
+                found
+            }
+        return try {
+            when (request) {
+                is DaemonRequest.WaitForNode ->
+                    DaemonResponse.Nodes(
+                        request.sessionId,
+                        listOf(
+                            session.automator.waitForNode(
+                                tag = request.tag,
+                                text = request.text,
+                                timeoutMs = request.timeoutMs,
+                                pollIntervalMs = request.pollIntervalMs,
+                            )
+                        ),
+                    )
+                is DaemonRequest.WaitForVisualIdle -> {
+                    session.automator.waitForVisualIdle(
+                        timeoutMs = request.timeoutMs,
+                        stableFrames = request.stableFrames,
+                        pollIntervalMs = request.pollIntervalMs,
+                    )
+                    DaemonResponse.Completed(request.sessionId)
+                }
+                else -> error("not a wait request")
+            }
+        } catch (exception: IOException) {
+            DaemonResponse.Error(
+                code = DaemonErrorCode.OperationFailed,
+                message = exception.message ?: "session operation failed",
+            )
+        } finally {
+            session.activeWaits.decrementAndGet()
+        }
+    }
 
     private fun handleSessionCommand(request: DaemonRequest): DaemonResponse =
         when (request) {
@@ -65,10 +139,10 @@ internal constructor(
                 invoke(request.sessionId) { automator ->
                     DaemonResponse.Nodes(request.sessionId, automator.allNodes())
                 }
-            is DaemonRequest.FindByTestTag ->
-                invoke(request.sessionId) { automator ->
-                    DaemonResponse.Nodes(request.sessionId, automator.findByTestTag(request.tag))
-                }
+            is DaemonRequest.FindByTestTag,
+            is DaemonRequest.FindByText,
+            is DaemonRequest.FindByContentDescription,
+            is DaemonRequest.FindByRole -> handleQuerySessionCommand(request)
             is DaemonRequest.Click,
             is DaemonRequest.DoubleClick,
             is DaemonRequest.LongClick,
@@ -176,14 +250,43 @@ internal constructor(
                     message = "session not found: $sessionId",
                 )
         val remainingLive = liveSessionIds() - sessionId
-        val automator = sessionsByPid.remove(removed.key)?.automator
+        val session = sessionsByPid.remove(removed.key)
+        // Let in-flight waits finish before tearing down the automator (see handleWaitOutsideLock).
+        session?.awaitIdleWaits()
         // Finalize recording while other sessions are still known live (#185 review).
-        automator?.finalizeRecording(remainingLive)
-        automator?.close()
+        session?.automator?.finalizeRecording(remainingLive)
+        session?.automator?.close()
         return CaptureSessionReport.forDetach(sessionId)
     }
 
     private fun liveSessionIds(): Set<String> = sessionsByPid.values.map { it.sessionId }.toSet()
+
+    private fun handleQuerySessionCommand(request: DaemonRequest): DaemonResponse =
+        when (request) {
+            is DaemonRequest.FindByTestTag ->
+                invoke(request.sessionId) { automator ->
+                    DaemonResponse.Nodes(request.sessionId, automator.findByTestTag(request.tag))
+                }
+            is DaemonRequest.FindByText ->
+                invoke(request.sessionId) { automator ->
+                    DaemonResponse.Nodes(
+                        request.sessionId,
+                        automator.findByText(request.text, request.exact),
+                    )
+                }
+            is DaemonRequest.FindByContentDescription ->
+                invoke(request.sessionId) { automator ->
+                    DaemonResponse.Nodes(
+                        request.sessionId,
+                        automator.findByContentDescription(request.description),
+                    )
+                }
+            is DaemonRequest.FindByRole ->
+                invoke(request.sessionId) { automator ->
+                    DaemonResponse.Nodes(request.sessionId, automator.findByRole(request.role))
+                }
+            else -> error("Not a query session command: ${request::class.simpleName}")
+        }
 
     private fun handleInputSessionCommand(request: DaemonRequest): DaemonResponse =
         when (request) {
@@ -270,8 +373,13 @@ internal constructor(
     @Synchronized
     override fun close() {
         shutdown = true
-        sessionsByPid.values.forEach { session -> session.automator.close() }
+        val snapshot = sessionsByPid.values.toList()
         sessionsByPid.clear()
+        // Outside the monitor after clear so wait finally-blocks can finish.
+        snapshot.forEach { session ->
+            session.awaitIdleWaits()
+            session.automator.close()
+        }
     }
 
     private fun Long.toSessionSummary(): DaemonSessionSummary =
@@ -280,9 +388,24 @@ internal constructor(
     private data class DaemonSession(
         val summary: DaemonSessionSummary,
         val automator: DaemonSessionAutomator,
+        val activeWaits: java.util.concurrent.atomic.AtomicInteger =
+            java.util.concurrent.atomic.AtomicInteger(0),
     ) {
         val sessionId: String
             get() = summary.sessionId
+
+        fun awaitIdleWaits(timeoutMs: Long = WAIT_DRAIN_TIMEOUT_MS) {
+            val deadline = System.nanoTime() + timeoutMs * NANOS_PER_MS
+            while (activeWaits.get() > 0 && System.nanoTime() < deadline) {
+                Thread.sleep(WAIT_DRAIN_POLL_MS)
+            }
+        }
+    }
+
+    private companion object {
+        const val WAIT_DRAIN_TIMEOUT_MS: Long = 30_000
+        const val WAIT_DRAIN_POLL_MS: Long = 10
+        const val NANOS_PER_MS: Long = 1_000_000
     }
 }
 

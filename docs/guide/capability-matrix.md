@@ -69,12 +69,12 @@ boundary without a different design:
 | `withTracing` | Live tracer hooks |
 | `waitForIdle` (idling-resource variant) | Same as idling resources |
 
-Remote **waits** (`waitForNode`, `waitForVisualIdle` over agent — #201) and richer **selectors**
-(`findByText` / content-description / role — #202) are available over agent/HTTP. **Input verbs**
-(`doubleClick` / `longClick` / `swipe` / `scrollWheel` / `pressKey` — #203) are wired on agent,
-HTTP, daemon/CLI/MCP with transport unit evidence; display-backed fixture CI still tracks
-**Not yet CI-executed** for full Robot-driven drag/scroll/chord scenarios until expanded
-validation lands.
+Remote **waits** (`waitForNode` over agent — #201, also CLI `wait-for-node` / MCP
+`wait_for_node`), **selectors** (`findByText` / role / content-description — #202), and **input
+verbs** (`doubleClick` / `swipe` / `scrollWheel` / `pressKey` — #203) are **Supported** on agent
+under Linux Xvfb and macOS desktop via `AgentContractCorpusTest` against `agent-test-fixture`.
+HTTP selector entry points are covered by headless `HttpContractCorpusTest`. Some HTTP
+input/wait cells and agent `longClick` / `waitForVisualIdle` remain **Not yet CI-executed**.
 
 ## How to read a cell
 

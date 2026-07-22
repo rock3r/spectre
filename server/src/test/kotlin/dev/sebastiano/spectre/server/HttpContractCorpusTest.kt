@@ -85,12 +85,58 @@ private class HttpContractDriver(port: Int) : AutomatorContractDriver {
         }
     }
 
+    override fun findByText(text: String, exact: Boolean): List<ContractNode> = runBlocking {
+        client.findByText(text, exact).map {
+            ContractNode(
+                key = it.key,
+                testTag = it.testTag,
+                text = it.texts.firstOrNull() ?: it.editableText,
+            )
+        }
+    }
+
+    override fun findByContentDescription(description: String): List<ContractNode> = runBlocking {
+        client.findByContentDescription(description).map {
+            ContractNode(
+                key = it.key,
+                testTag = it.testTag,
+                text = it.texts.firstOrNull() ?: it.editableText,
+            )
+        }
+    }
+
+    override fun findByRole(role: String): List<ContractNode> = runBlocking {
+        client.findByRole(role).map {
+            ContractNode(
+                key = it.key,
+                testTag = it.testTag,
+                text = it.texts.firstOrNull() ?: it.editableText,
+            )
+        }
+    }
+
     override fun click(nodeKey: String) {
         runBlocking { client.click(nodeKey) }
     }
 
     override fun typeText(text: String) {
         runBlocking { client.typeText(text) }
+    }
+
+    override fun doubleClick(nodeKey: String) {
+        runBlocking { client.doubleClick(nodeKey) }
+    }
+
+    override fun swipe(fromNodeKey: String, toNodeKey: String) {
+        runBlocking { client.swipe(fromNodeKey, toNodeKey) }
+    }
+
+    override fun scrollWheel(nodeKey: String, wheelClicks: Int) {
+        runBlocking { client.scrollWheel(nodeKey, wheelClicks) }
+    }
+
+    override fun pressKey(keyCode: Int, modifiers: Int) {
+        runBlocking { client.pressKey(keyCode, modifiers) }
     }
 
     override fun screenshotProbe(): ScreenshotProbe? = runBlocking {
