@@ -236,6 +236,11 @@ can add a reliable preflight via `HotSpotDiagnosticMXBean`.
 | `allNodes()`          | `AgentRequest.AllNodes`          | `List<NodeSnapshotDto>`  |
 | `findByTestTag(tag)`  | `AgentRequest.FindByTestTag`     | `List<NodeSnapshotDto>`  |
 | `click(nodeKey)`      | `AgentRequest.Click`             | `Unit`            |
+| `doubleClick(nodeKey)` | `AgentRequest.DoubleClick`     | `Unit`            |
+| `longClick(nodeKey, holdForMs?)` | `AgentRequest.LongClick` | `Unit`            |
+| `swipe(...)`          | `AgentRequest.Swipe`             | `Unit` (node-to-node or screen coords) |
+| `scrollWheel(nodeKey, wheelClicks)` | `AgentRequest.ScrollWheel` | `Unit`       |
+| `pressKey(keyCode, modifiers?)` | `AgentRequest.PressKey`  | `Unit`            |
 | `typeText(text)`      | `AgentRequest.TypeText`          | `Unit`            |
 | `screenshot(windowIndex?, surfaceId?, fullscreen?)` | `AgentRequest.Screenshot` | `ByteArray` (PNG); default window index 0, not full desktop |
 | `capture(windowIndex)`| `AgentRequest.Capture`           | `AtomicCaptureResult` |
@@ -253,8 +258,9 @@ recording (#183) uses this so capture stays on the daemon host rather than over 
 transport.
 
 `waitForNode` and `waitForVisualIdle` are available over the agent transport (#201).
-Streaming / long-poll idling resources and `withTracing` remain
-deferred to a follow-up.
+Richer input verbs (`doubleClick` / `longClick` / `swipe` / `scrollWheel` / `pressKey`)
+are available over agent, HTTP, and daemon/CLI/MCP (#203). Streaming / long-poll idling
+resources and `withTracing` remain deferred to a follow-up.
 
 ## Wire format
 

@@ -136,6 +136,11 @@ private class RootCommand(
             TreeCommand(request, output),
             FindCommand(request, output),
             ClickCommand(request, output),
+            DoubleClickCommand(request, output),
+            LongClickCommand(request, output),
+            SwipeCommand(request, output),
+            ScrollWheelCommand(request, output),
+            PressKeyCommand(request, output),
             TypeCommand(request, output),
             ScreenshotCommand(request, output),
             CaptureCommand(request, output),
@@ -439,6 +444,146 @@ private class ClickCommand(
             }
         if (json) output.append(CLI_JSON.encodeToString(CompletionJson(id = completedSessionId)))
         else output.append("Clicked $nodeKey.")
+        output.appendLine()
+    }
+}
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private class DoubleClickCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "double-click") {
+    private val sessionId: String by argument()
+    private val nodeKey: String by argument()
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val completedSessionId =
+            when (val response = request(DaemonRequest.DoubleClick(sessionId, nodeKey))) {
+                is DaemonResponse.Completed -> response.sessionId
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
+                else -> error("Daemon returned an unexpected response to double-click")
+            }
+        if (json) output.append(CLI_JSON.encodeToString(CompletionJson(id = completedSessionId)))
+        else output.append("Double-clicked $nodeKey.")
+        output.appendLine()
+    }
+}
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private class LongClickCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "long-click") {
+    private val sessionId: String by argument()
+    private val nodeKey: String by argument()
+    private val holdForMs: Long by option("--hold-ms").long().default(500)
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val completedSessionId =
+            when (
+                val response =
+                    request(DaemonRequest.LongClick(sessionId, nodeKey, holdForMs = holdForMs))
+            ) {
+                is DaemonResponse.Completed -> response.sessionId
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
+                else -> error("Daemon returned an unexpected response to long-click")
+            }
+        if (json) output.append(CLI_JSON.encodeToString(CompletionJson(id = completedSessionId)))
+        else output.append("Long-clicked $nodeKey (${holdForMs}ms).")
+        output.appendLine()
+    }
+}
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private class SwipeCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "swipe") {
+    private val sessionId: String by argument()
+    private val fromNodeKey: String? by option("--from")
+    private val toNodeKey: String? by option("--to")
+    private val startX: Int? by option("--start-x").int()
+    private val startY: Int? by option("--start-y").int()
+    private val endX: Int? by option("--end-x").int()
+    private val endY: Int? by option("--end-y").int()
+    private val steps: Int by option("--steps").int().default(12)
+    private val durationMs: Long by option("--duration-ms").long().default(200)
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val completedSessionId =
+            when (
+                val response =
+                    request(
+                        DaemonRequest.Swipe(
+                            sessionId = sessionId,
+                            fromNodeKey = fromNodeKey,
+                            toNodeKey = toNodeKey,
+                            startX = startX,
+                            startY = startY,
+                            endX = endX,
+                            endY = endY,
+                            steps = steps,
+                            durationMs = durationMs,
+                        )
+                    )
+            ) {
+                is DaemonResponse.Completed -> response.sessionId
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
+                else -> error("Daemon returned an unexpected response to swipe")
+            }
+        if (json) output.append(CLI_JSON.encodeToString(CompletionJson(id = completedSessionId)))
+        else output.append("Swipe completed.")
+        output.appendLine()
+    }
+}
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private class ScrollWheelCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "scroll-wheel") {
+    private val sessionId: String by argument()
+    private val nodeKey: String by argument()
+    private val wheelClicks: Int by argument().int()
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val completedSessionId =
+            when (
+                val response = request(DaemonRequest.ScrollWheel(sessionId, nodeKey, wheelClicks))
+            ) {
+                is DaemonResponse.Completed -> response.sessionId
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
+                else -> error("Daemon returned an unexpected response to scroll-wheel")
+            }
+        if (json) output.append(CLI_JSON.encodeToString(CompletionJson(id = completedSessionId)))
+        else output.append("Scrolled $nodeKey by $wheelClicks wheel clicks.")
+        output.appendLine()
+    }
+}
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private class PressKeyCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "press-key") {
+    private val sessionId: String by argument()
+    private val keyCode: Int by argument().int()
+    private val modifiers: Int by option("--modifiers").int().default(0)
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val completedSessionId =
+            when (val response = request(DaemonRequest.PressKey(sessionId, keyCode, modifiers))) {
+                is DaemonResponse.Completed -> response.sessionId
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
+                else -> error("Daemon returned an unexpected response to press-key")
+            }
+        if (json) output.append(CLI_JSON.encodeToString(CompletionJson(id = completedSessionId)))
+        else output.append("Pressed key $keyCode (modifiers=$modifiers).")
         output.appendLine()
     }
 }

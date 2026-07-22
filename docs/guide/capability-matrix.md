@@ -69,11 +69,12 @@ boundary without a different design:
 | `withTracing` | Live tracer hooks |
 | `waitForIdle` (idling-resource variant) | Same as idling resources |
 
-Remote **waits** (`waitForNode`, `waitForVisualIdle` over agent — #201), richer **selectors**
-(`findByText` / content-description / role — #202), and **input verbs**
-(drag / scroll / chords) are tracked as **Not yet CI-executed** on HTTP/agent until epic
-#197 sub-issues #201–#203 land. Do not document them as supported on remote transports until
-the matrix says so.
+Remote **waits** (`waitForNode`, `waitForVisualIdle` over agent — #201) and richer **selectors**
+(`findByText` / content-description / role — #202) are available over agent/HTTP. **Input verbs**
+(`doubleClick` / `longClick` / `swipe` / `scrollWheel` / `pressKey` — #203) are wired on agent,
+HTTP, daemon/CLI/MCP with transport unit evidence; display-backed fixture CI still tracks
+**Not yet CI-executed** for full Robot-driven drag/scroll/chord scenarios until expanded
+validation lands.
 
 ## How to read a cell
 

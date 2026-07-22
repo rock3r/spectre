@@ -90,6 +90,96 @@ internal constructor(
         if (resp !is AgentResponse.Ok) throw wireMismatch("Ok", resp)
     }
 
+    /** Double-click the node identified by [nodeKey] (#203). */
+    @Throws(IOException::class)
+    public fun doubleClick(nodeKey: String) {
+        val resp = exchange(AgentRequest.DoubleClick(nodeKey))
+        if (resp !is AgentResponse.Ok) throw wireMismatch("Ok", resp)
+    }
+
+    /**
+     * Long-press the node identified by [nodeKey] for [holdForMs] milliseconds (#203). Default
+     * matches in-process `longClick` (500 ms).
+     */
+    @Throws(IOException::class)
+    public fun longClick(nodeKey: String, holdForMs: Long = 500) {
+        val resp = exchange(AgentRequest.LongClick(nodeKey = nodeKey, holdForMs = holdForMs))
+        if (resp !is AgentResponse.Ok) throw wireMismatch("Ok", resp)
+    }
+
+    /**
+     * Node-to-node drag (#203). Resolves each key to centre-on-screen, then swipes.
+     *
+     * @param steps intermediate move points (default 12)
+     * @param durationMs total drag duration (default 200)
+     */
+    @Throws(IOException::class)
+    public fun swipe(
+        fromNodeKey: String,
+        toNodeKey: String,
+        steps: Int = 12,
+        durationMs: Long = 200,
+    ) {
+        val resp =
+            exchange(
+                AgentRequest.Swipe(
+                    fromNodeKey = fromNodeKey,
+                    toNodeKey = toNodeKey,
+                    steps = steps,
+                    durationMs = durationMs,
+                )
+            )
+        if (resp !is AgentResponse.Ok) throw wireMismatch("Ok", resp)
+    }
+
+    /**
+     * Coordinate swipe in screen space (#203).
+     *
+     * @param steps intermediate move points (default 12)
+     * @param durationMs total drag duration (default 200)
+     */
+    @Throws(IOException::class)
+    public fun swipe(
+        startX: Int,
+        startY: Int,
+        endX: Int,
+        endY: Int,
+        steps: Int = 12,
+        durationMs: Long = 200,
+    ) {
+        val resp =
+            exchange(
+                AgentRequest.Swipe(
+                    startX = startX,
+                    startY = startY,
+                    endX = endX,
+                    endY = endY,
+                    steps = steps,
+                    durationMs = durationMs,
+                )
+            )
+        if (resp !is AgentResponse.Ok) throw wireMismatch("Ok", resp)
+    }
+
+    /**
+     * Mouse-wheel scroll at the centre of [nodeKey] (#203). Positive [wheelClicks] scrolls down.
+     */
+    @Throws(IOException::class)
+    public fun scrollWheel(nodeKey: String, wheelClicks: Int) {
+        val resp = exchange(AgentRequest.ScrollWheel(nodeKey = nodeKey, wheelClicks = wheelClicks))
+        if (resp !is AgentResponse.Ok) throw wireMismatch("Ok", resp)
+    }
+
+    /**
+     * Raw key event with optional AWT modifier mask (#203). [keyCode] is a `KeyEvent.VK_*`
+     * constant; [modifiers] is an `InputEvent.*_DOWN_MASK` bitfield.
+     */
+    @Throws(IOException::class)
+    public fun pressKey(keyCode: Int, modifiers: Int = 0) {
+        val resp = exchange(AgentRequest.PressKey(keyCode = keyCode, modifiers = modifiers))
+        if (resp !is AgentResponse.Ok) throw wireMismatch("Ok", resp)
+    }
+
     /** Synthesise key events that type [text] into whatever holds focus in the target. */
     @Throws(IOException::class)
     public fun typeText(text: String) {

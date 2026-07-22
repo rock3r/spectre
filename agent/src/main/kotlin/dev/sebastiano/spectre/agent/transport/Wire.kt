@@ -67,6 +67,53 @@ internal sealed interface AgentRequest {
      */
     @Serializable @SerialName("click") data class Click(val nodeKey: String) : AgentRequest
 
+    /** Double-click the node identified by [nodeKey] (#203). */
+    @Serializable
+    @SerialName("doubleClick")
+    data class DoubleClick(val nodeKey: String) : AgentRequest
+
+    /**
+     * Long-press the node identified by [nodeKey] for [holdForMs] milliseconds (#203). Default
+     * matches in-process `longClick` (500 ms).
+     */
+    @Serializable
+    @SerialName("longClick")
+    data class LongClick(val nodeKey: String, val holdForMs: Long = 500) : AgentRequest
+
+    /**
+     * Drag / swipe (#203). Provide either both [fromNodeKey]/[toNodeKey] (node centres) or all of
+     * [startX]/[startY]/[endX]/[endY] (screen coords). Mixing or partial sets is
+     * [AgentErrorCategory.InvalidSelector].
+     */
+    @Serializable
+    @SerialName("swipe")
+    data class Swipe(
+        val fromNodeKey: String? = null,
+        val toNodeKey: String? = null,
+        val startX: Int? = null,
+        val startY: Int? = null,
+        val endX: Int? = null,
+        val endY: Int? = null,
+        val steps: Int = 12,
+        val durationMs: Long = 200,
+    ) : AgentRequest
+
+    /**
+     * Mouse-wheel scroll at [nodeKey]'s centre (#203). Positive [wheelClicks] scrolls down;
+     * negative scrolls up.
+     */
+    @Serializable
+    @SerialName("scrollWheel")
+    data class ScrollWheel(val nodeKey: String, val wheelClicks: Int) : AgentRequest
+
+    /**
+     * Raw key event with optional AWT modifier mask (#203). [keyCode] is a `KeyEvent.VK_*`
+     * constant; [modifiers] is an `InputEvent.*_DOWN_MASK` bitfield (e.g. CTRL_DOWN_MASK).
+     */
+    @Serializable
+    @SerialName("pressKey")
+    data class PressKey(val keyCode: Int, val modifiers: Int = 0) : AgentRequest
+
     /**
      * Synthesize a sequence of key events that types [text] into whatever currently holds focus.
      * Server replies with [AgentResponse.Ok] or [AgentResponse.Error].
@@ -179,6 +226,11 @@ internal val AgentRequest.logLabel: String
             is AgentRequest.FindByContentDescription -> "findByContentDescription"
             is AgentRequest.FindByRole -> "findByRole"
             is AgentRequest.Click -> "click"
+            is AgentRequest.DoubleClick -> "doubleClick"
+            is AgentRequest.LongClick -> "longClick"
+            is AgentRequest.Swipe -> "swipe"
+            is AgentRequest.ScrollWheel -> "scrollWheel"
+            is AgentRequest.PressKey -> "pressKey"
             is AgentRequest.TypeText -> "typeText"
             is AgentRequest.Screenshot -> "screenshot"
             is AgentRequest.Capture -> "capture"

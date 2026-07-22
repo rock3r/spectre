@@ -11,7 +11,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 8)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 9)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -40,6 +40,11 @@ public object DaemonProtocol {
             is DaemonRequest.FindByTestTag,
             is DaemonRequest.Click,
             is DaemonRequest.TypeText -> versionFor(SESSION_COMMANDS_INTRODUCED_MINOR)
+            is DaemonRequest.DoubleClick,
+            is DaemonRequest.LongClick,
+            is DaemonRequest.Swipe,
+            is DaemonRequest.ScrollWheel,
+            is DaemonRequest.PressKey -> versionFor(INPUT_VERBS_INTRODUCED_MINOR)
             is DaemonRequest.ListJvmProcesses -> versionFor(LIST_JVM_PROCESSES_INTRODUCED_MINOR)
             is DaemonRequest.StartRecording ->
                 if (request.fullscreen) {
@@ -67,6 +72,8 @@ public object DaemonProtocol {
     private const val SCREENSHOT_TARGETING_INTRODUCED_MINOR: Int = 7
     /** Full-desktop recording opt-in (`StartRecording.fullscreen`). */
     private const val RECORDING_FULLSCREEN_INTRODUCED_MINOR: Int = 8
+    /** Richer input verbs: doubleClick / longClick / swipe / scrollWheel / pressKey (#203). */
+    private const val INPUT_VERBS_INTRODUCED_MINOR: Int = 9
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)
@@ -114,6 +121,49 @@ public sealed interface DaemonRequest {
     @SerialName("click")
     public data class Click(public val sessionId: String, public val nodeKey: String) :
         DaemonRequest
+
+    @Serializable
+    @SerialName("doubleClick")
+    public data class DoubleClick(public val sessionId: String, public val nodeKey: String) :
+        DaemonRequest
+
+    @Serializable
+    @SerialName("longClick")
+    public data class LongClick(
+        public val sessionId: String,
+        public val nodeKey: String,
+        public val holdForMs: Long = 500,
+    ) : DaemonRequest
+
+    @Serializable
+    @SerialName("swipe")
+    public data class Swipe(
+        public val sessionId: String,
+        public val fromNodeKey: String? = null,
+        public val toNodeKey: String? = null,
+        public val startX: Int? = null,
+        public val startY: Int? = null,
+        public val endX: Int? = null,
+        public val endY: Int? = null,
+        public val steps: Int = 12,
+        public val durationMs: Long = 200,
+    ) : DaemonRequest
+
+    @Serializable
+    @SerialName("scrollWheel")
+    public data class ScrollWheel(
+        public val sessionId: String,
+        public val nodeKey: String,
+        public val wheelClicks: Int,
+    ) : DaemonRequest
+
+    @Serializable
+    @SerialName("pressKey")
+    public data class PressKey(
+        public val sessionId: String,
+        public val keyCode: Int,
+        public val modifiers: Int = 0,
+    ) : DaemonRequest
 
     @Serializable
     @SerialName("typeText")

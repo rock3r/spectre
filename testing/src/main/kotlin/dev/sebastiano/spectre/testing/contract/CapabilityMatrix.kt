@@ -448,15 +448,11 @@ public object CapabilityMatrix {
             )
         )
 
-        // Remote waits / richer selectors / input verbs — growth track (#201–#203)
+        // Remote growth track (#201–#203): ops may already have Supported cells above; remaining
+        // display-backed gaps stay NotYetCiExecuted with explicit evidence notes.
         for (transport in listOf(AutomatorTransport.Http, AutomatorTransport.Agent)) {
             for (op in
                 listOf(
-                    AutomatorOperation.WaitForNode,
-                    AutomatorOperation.WaitForVisualIdle,
-                    AutomatorOperation.FindByText,
-                    AutomatorOperation.FindByContentDescription,
-                    AutomatorOperation.FindByRole,
                     AutomatorOperation.DoubleClick,
                     AutomatorOperation.LongClick,
                     AutomatorOperation.Swipe,
@@ -470,7 +466,9 @@ public object CapabilityMatrix {
                         platform = PlatformPrerequisite.AnyJvm,
                         state = CellState.NotYetCiExecuted,
                         rationale =
-                            "Tracked by epic #197 sub-issues (#201 waits, #202 selectors, #203 input).",
+                            "#203 wires agent/HTTP/daemon paths with unit evidence " +
+                                "(InputParityTest / ReflectiveAutomatorHandlerMappingTest); " +
+                                "display-backed drag/scroll/chord fixture CI is still open.",
                     )
                 )
             }

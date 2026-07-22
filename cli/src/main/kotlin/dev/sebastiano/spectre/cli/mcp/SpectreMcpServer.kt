@@ -27,6 +27,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 /** MCP stdio facade over the local Spectre session daemon. */
+@Suppress("TooManyFunctions") // Tool registration surface grows with daemon ops.
 public object SpectreMcpServer {
     /** Creates the MCP server and registers the agent-facing daemon tools. */
     public fun create(request: (DaemonRequest) -> DaemonResponse): Server =
@@ -79,6 +80,7 @@ public object SpectreMcpServer {
         }
     }
 
+    @Suppress("LongMethod") // Session tool table includes #203 input verbs.
     private fun registerSessionTools(server: Server, request: (DaemonRequest) -> DaemonResponse) {
         server.addTool(
             name = "windows",
@@ -123,6 +125,115 @@ public object SpectreMcpServer {
                     DaemonRequest.Click(
                         call.requiredString("session_id"),
                         call.requiredString("node_key"),
+                    )
+                )
+                .asResult { it is DaemonResponse.Completed }
+        }
+        server.addTool(
+            name = "double_click",
+            description = "Double-click a semantics node by node key (#203).",
+            inputSchema = schema("session_id" to "string", "node_key" to "string"),
+        ) { call ->
+            request(
+                    DaemonRequest.DoubleClick(
+                        call.requiredString("session_id"),
+                        call.requiredString("node_key"),
+                    )
+                )
+                .asResult { it is DaemonResponse.Completed }
+        }
+        server.addTool(
+            name = "long_click",
+            description = "Long-press a semantics node by node key (#203). Optional hold_for_ms.",
+            inputSchema =
+                schema(
+                    "session_id" to "string",
+                    "node_key" to "string",
+                    "hold_for_ms" to "integer",
+                    required = listOf("session_id", "node_key"),
+                ),
+        ) { call ->
+            val hold = call.optionalLong("hold_for_ms") ?: 500L
+            request(
+                    DaemonRequest.LongClick(
+                        call.requiredString("session_id"),
+                        call.requiredString("node_key"),
+                        holdForMs = hold,
+                    )
+                )
+                .asResult { it is DaemonResponse.Completed }
+        }
+        server.addTool(
+            name = "swipe",
+            description =
+                "Drag between two node keys (from_node_key/to_node_key) or screen coordinates " +
+                    "(start_x/start_y/end_x/end_y) (#203).",
+            inputSchema =
+                schema(
+                    "session_id" to "string",
+                    "from_node_key" to "string",
+                    "to_node_key" to "string",
+                    "start_x" to "integer",
+                    "start_y" to "integer",
+                    "end_x" to "integer",
+                    "end_y" to "integer",
+                    "steps" to "integer",
+                    "duration_ms" to "integer",
+                    required = listOf("session_id"),
+                ),
+        ) { call ->
+            request(
+                    DaemonRequest.Swipe(
+                        sessionId = call.requiredString("session_id"),
+                        fromNodeKey = call.optionalString("from_node_key"),
+                        toNodeKey = call.optionalString("to_node_key"),
+                        startX = call.optionalInt("start_x"),
+                        startY = call.optionalInt("start_y"),
+                        endX = call.optionalInt("end_x"),
+                        endY = call.optionalInt("end_y"),
+                        steps = call.optionalInt("steps") ?: 12,
+                        durationMs = call.optionalLong("duration_ms") ?: 200L,
+                    )
+                )
+                .asResult { it is DaemonResponse.Completed }
+        }
+        server.addTool(
+            name = "scroll_wheel",
+            description =
+                "Mouse-wheel scroll at a node's centre (#203). Positive wheel_clicks scrolls down.",
+            inputSchema =
+                schema(
+                    "session_id" to "string",
+                    "node_key" to "string",
+                    "wheel_clicks" to "integer",
+                ),
+        ) { call ->
+            request(
+                    DaemonRequest.ScrollWheel(
+                        call.requiredString("session_id"),
+                        call.requiredString("node_key"),
+                        call.requiredInt("wheel_clicks"),
+                    )
+                )
+                .asResult { it is DaemonResponse.Completed }
+        }
+        server.addTool(
+            name = "press_key",
+            description =
+                "Send a raw AWT key code with optional modifiers mask (#203). Requires OS focus.",
+            inputSchema =
+                schema(
+                    "session_id" to "string",
+                    "key_code" to "integer",
+                    "modifiers" to "integer",
+                    required = listOf("session_id", "key_code"),
+                ),
+        ) { call ->
+            request(
+                    DaemonRequest.PressKey(
+                        call.requiredString("session_id"),
+                        call.requiredInt("key_code"),
+                        call.optionalInt("modifiers") ?: 0,
                     )
                 )
                 .asResult { it is DaemonResponse.Completed }
@@ -328,7 +439,10 @@ public object SpectreMcpServer {
         }
     }
 
-    private fun schema(vararg properties: Pair<String, String>): ToolSchema =
+    private fun schema(
+        vararg properties: Pair<String, String>,
+        required: List<String>? = null,
+    ): ToolSchema =
         ToolSchema(
             properties =
                 buildJsonObject {
@@ -336,7 +450,7 @@ public object SpectreMcpServer {
                         put(name, buildJsonObject { put("type", type) })
                     }
                 },
-            required = properties.map(Pair<String, String>::first),
+            required = required ?: properties.map(Pair<String, String>::first),
         )
 
     private fun sessionSchema(): ToolSchema = schema("session_id" to "string")
@@ -346,6 +460,19 @@ public object SpectreMcpServer {
             ?: throw IllegalArgumentException("MCP tool requires a non-empty '$name' argument")
 
     private fun CallToolRequest.requiredString(name: String): String = callString(name)
+
+    private fun CallToolRequest.optionalString(name: String): String? =
+        arguments?.get(name)?.jsonPrimitive?.content
+
+    private fun CallToolRequest.requiredInt(name: String): Int =
+        requiredString(name).toIntOrNull()
+            ?: throw IllegalArgumentException("MCP tool argument '$name' must be an integer")
+
+    private fun CallToolRequest.optionalInt(name: String): Int? =
+        arguments?.get(name)?.jsonPrimitive?.content?.toIntOrNull()
+
+    private fun CallToolRequest.optionalLong(name: String): Long? =
+        arguments?.get(name)?.jsonPrimitive?.content?.toLongOrNull()
 
     private fun CallToolRequest.requiredLong(name: String): Long =
         requiredString(name).toLongOrNull()
