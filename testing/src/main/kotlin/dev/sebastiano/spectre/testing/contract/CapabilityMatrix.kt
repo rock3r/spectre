@@ -49,21 +49,33 @@ public object CapabilityMatrix {
         CapabilityEvidence(
             id = "agent-attach-macos-check",
             description =
-                "Agent attach integration + contract corpus on the macOS check workflow " +
-                    "(non-headless runner)",
+                "Agent contract corpus on the macOS check workflow with fail-closed JUnit XML " +
+                    "verification (must execute, not assumption-skip)",
             sourcePath =
                 "agent/src/test/kotlin/dev/sebastiano/spectre/agent/AgentContractCorpusTest.kt",
             workflowPath = ".github/workflows/macos-check.yml",
             gradleTaskHint = "./gradlew :agent:test --tests \"*AgentContractCorpusTest*\"",
         )
 
-    private val agentAttachLegacy =
+    private val agentAttachLegacyLinux =
         CapabilityEvidence(
-            id = "agent-attach-integration",
-            description = "Legacy full-cycle AgentAttachIntegrationTest (windows/nodes/click/type)",
+            id = "agent-attach-integration-linux",
+            description =
+                "Full-cycle AgentAttachIntegrationTest under Xvfb (windows/nodes/click/type)",
             sourcePath =
                 "agent/src/test/kotlin/dev/sebastiano/spectre/agent/AgentAttachIntegrationTest.kt",
             workflowPath = ".github/workflows/validation-linux.yml",
+            gradleTaskHint = "./gradlew :agent:test --tests \"*AgentAttachIntegrationTest*\"",
+        )
+
+    private val agentAttachLegacyMacOs =
+        CapabilityEvidence(
+            id = "agent-attach-integration-macos",
+            description =
+                "Full-cycle AgentAttachIntegrationTest on macOS check (fail-closed JUnit XML)",
+            sourcePath =
+                "agent/src/test/kotlin/dev/sebastiano/spectre/agent/AgentAttachIntegrationTest.kt",
+            workflowPath = ".github/workflows/macos-check.yml",
             gradleTaskHint = "./gradlew :agent:test --tests \"*AgentAttachIntegrationTest*\"",
         )
 
@@ -106,7 +118,7 @@ public object CapabilityMatrix {
                     transport = AutomatorTransport.Agent,
                     platform = PlatformPrerequisite.LinuxXvfb,
                     state = CellState.Supported,
-                    evidence = listOf(agentLinuxXvfb, agentAttachLegacy),
+                    evidence = listOf(agentLinuxXvfb, agentAttachLegacyLinux),
                 )
             )
             add(
@@ -115,7 +127,7 @@ public object CapabilityMatrix {
                     transport = AutomatorTransport.Agent,
                     platform = PlatformPrerequisite.MacOsDesktop,
                     state = CellState.Supported,
-                    evidence = listOf(agentMacOs, agentAttachLegacy),
+                    evidence = listOf(agentMacOs, agentAttachLegacyMacOs),
                 )
             )
             add(
@@ -169,7 +181,7 @@ public object CapabilityMatrix {
                 transport = AutomatorTransport.Agent,
                 platform = PlatformPrerequisite.LinuxXvfb,
                 state = CellState.Supported,
-                evidence = listOf(agentLinuxXvfb, agentAttachLegacy),
+                evidence = listOf(agentLinuxXvfb, agentAttachLegacyLinux),
             )
         )
         add(
@@ -178,7 +190,7 @@ public object CapabilityMatrix {
                 transport = AutomatorTransport.Agent,
                 platform = PlatformPrerequisite.MacOsDesktop,
                 state = CellState.Supported,
-                evidence = listOf(agentMacOs, agentAttachLegacy),
+                evidence = listOf(agentMacOs, agentAttachLegacyMacOs),
             )
         )
         add(
@@ -228,8 +240,12 @@ public object CapabilityMatrix {
                 operation = AutomatorOperation.TypeText,
                 transport = AutomatorTransport.Agent,
                 platform = PlatformPrerequisite.LinuxXvfb,
-                state = CellState.Supported,
-                evidence = listOf(agentLinuxXvfb, agentAttachLegacy),
+                state = CellState.Experimental,
+                evidence = listOf(agentAttachLegacyLinux),
+                rationale =
+                    "AgentAttachIntegrationTest exercises typeText against the fixture, but " +
+                        "CI may soft-skip on OS keyboard focus loss after Compose focus is proven. " +
+                        "Not a Supported cell until typeText is fail-closed without silent skip.",
             )
         )
         add(
@@ -237,11 +253,11 @@ public object CapabilityMatrix {
                 operation = AutomatorOperation.TypeText,
                 transport = AutomatorTransport.Agent,
                 platform = PlatformPrerequisite.MacOsDesktop,
-                state = CellState.Supported,
-                evidence = listOf(agentMacOs, agentAttachLegacy),
+                state = CellState.Experimental,
+                evidence = listOf(agentAttachLegacyMacOs),
                 rationale =
-                    "CI may skip only the real-keyboard assertion on OS focus loss after " +
-                        "Compose focus is proven; attach/click/focus remain asserted.",
+                    "Same CI focus-loss soft-skip as Linux Xvfb; attach/click remain Supported " +
+                        "via the contract corpus. Full keyboard parity is experimental on CI.",
             )
         )
         add(
@@ -280,7 +296,7 @@ public object CapabilityMatrix {
                 transport = AutomatorTransport.Agent,
                 platform = PlatformPrerequisite.LinuxXvfb,
                 state = CellState.Supported,
-                evidence = listOf(agentLinuxXvfb, agentAttachLegacy),
+                evidence = listOf(agentLinuxXvfb, agentAttachLegacyLinux),
             )
         )
         add(
@@ -289,7 +305,7 @@ public object CapabilityMatrix {
                 transport = AutomatorTransport.Agent,
                 platform = PlatformPrerequisite.MacOsDesktop,
                 state = CellState.Supported,
-                evidence = listOf(agentMacOs, agentAttachLegacy),
+                evidence = listOf(agentMacOs, agentAttachLegacyMacOs),
             )
         )
         add(

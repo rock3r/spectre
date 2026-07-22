@@ -164,22 +164,10 @@ class AgentContractCorpusTest {
         }
 
         override fun typeText(text: String) {
-            try {
-                automator.typeText(text)
-            } catch (ex: IOException) {
-                // Match AgentAttachIntegrationTest: CI may lose OS keyboard focus after Compose
-                // focus is proven; the attach/click contract is still asserted by other scenarios.
-                if (
-                    System.getenv("CI").equals("true", ignoreCase = true) &&
-                        ex.message?.contains(TARGET_FOCUS_ERROR) == true
-                ) {
-                    System.err.println(
-                        "AgentContractCorpusTest: skipping typeText on CI focus loss: ${ex.message}"
-                    )
-                    return
-                }
-                throw ex
-            }
+            // Do not soft-succeed on focus loss: TypeText is Experimental on the agent matrix
+            // precisely because CI focus flakes exist. AgentAttachIntegrationTest owns the
+            // nuanced CI skip path; the shared corpus must not claim a silent pass.
+            automator.typeText(text)
         }
 
         override fun screenshotProbe(): ScreenshotProbe {
@@ -205,6 +193,5 @@ class AgentContractCorpusTest {
     private companion object {
         const val ATTACH_TIMEOUT_MS: Long = 15_000
         const val FIXTURE_READY_TIMEOUT_MS: Long = 30_000
-        const val TARGET_FOCUS_ERROR: String = "target JVM does not currently own OS keyboard focus"
     }
 }
