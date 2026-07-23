@@ -70,12 +70,19 @@ internal class LaunchCommand(private val output: Appendable, private val errorOu
         val shutdownHook =
             Thread(
                 {
-                    // Ctrl-C / JVM exit: do not rely on use{} unwinding during halt.
+                    // Ctrl-C / JVM exit: do not rely on finally{} unwinding during halt.
                     sessionRef.getAndSet(null)?.let { runCatching { it.close() } }
                 },
                 "spectre-launch-teardown",
             )
         try {
+            // Register the hook before launch so a Ctrl-C during launch still reaps if a session
+            // is published. IllegalStateException means the JVM is already shutting down.
+            try {
+                Runtime.getRuntime().addShutdownHook(shutdownHook)
+            } catch (ex: IllegalStateException) {
+                throw IOException("Cannot register launch teardown hook (JVM shutting down)", ex)
+            }
             // Released CLI packages embed agent-runtime; ensure AttachOptions can resolve it.
             // Kept inside try so install I/O failures report as launch I/O, not daemon errors.
             installEmbeddedAgentRuntimeForLaunch()
@@ -85,10 +92,7 @@ internal class LaunchCommand(private val output: Appendable, private val errorOu
                     errorOutput.appendLine()
                 }
             sessionRef.set(session)
-            // Always close the session if anything after launch fails (including hook
-            // registration).
             try {
-                runCatching { Runtime.getRuntime().addShutdownHook(shutdownHook) }
                 output.append("launchedPid=${session.launchedPid}")
                 output.append(" attachedPid=${session.attachedPid}")
                 output.append(" gradleish=${session.gradleish}")
@@ -112,7 +116,6 @@ internal class LaunchCommand(private val output: Appendable, private val errorOu
                 }
             } finally {
                 sessionRef.getAndSet(null)?.let { runCatching { it.close() } }
-                runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
             }
         } catch (ex: LaunchException) {
             errorOutput.append("Spectre launch error [${ex.stage}]: ${ex.message}")
@@ -122,6 +125,12 @@ internal class LaunchCommand(private val output: Appendable, private val errorOu
             errorOutput.append("Spectre launch I/O error: ${ex.message}")
             errorOutput.appendLine()
             throw ProgramResult(EXIT_ATTACH_FAILURE)
+        } finally {
+            // Drop the hook whether launch succeeded (normal teardown) or failed early.
+            runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
+            // If we aborted mid-flight without the inner finally, still close any published
+            // session.
+            sessionRef.getAndSet(null)?.let { runCatching { it.close() } }
         }
     }
 
