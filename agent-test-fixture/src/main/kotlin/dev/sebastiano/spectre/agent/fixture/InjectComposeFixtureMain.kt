@@ -37,7 +37,7 @@ fun injectMain() {
         val frame =
             JFrame(SPECTRE_FIXTURE_WINDOW_TITLE).apply {
                 defaultCloseOperation = WindowConstants.EXIT_ON_CLOSE
-                size = Dimension(320, 240)
+                size = Dimension(FIXTURE_WIDTH_PX, FIXTURE_HEIGHT_PX)
                 setLocationRelativeTo(null)
                 isAlwaysOnTop = true
             }
@@ -47,7 +47,7 @@ fun injectMain() {
                 setContent {
                     var typed by remember { mutableStateOf("") }
                     MaterialTheme {
-                        Column(modifier = Modifier.padding(16.dp)) {
+                        Column(modifier = Modifier.padding(FIXTURE_PADDING_DP.dp)) {
                             Text(
                                 text = "Spectre inject fixture",
                                 modifier = Modifier.testTag(TAG_LABEL),
@@ -76,12 +76,12 @@ fun injectMain() {
     }
 
     val panel = panelRef.get()
-    val deadline = System.currentTimeMillis() + 15_000L
+    val deadline = System.currentTimeMillis() + READY_POLL_TIMEOUT_MS
     while (injectSemanticsOwnerCountOnEdt(panel) == 0) {
         check(System.currentTimeMillis() < deadline) {
-            "Compose semantics tree did not populate within 15000ms"
+            "Compose semantics tree did not populate within ${READY_POLL_TIMEOUT_MS}ms"
         }
-        Thread.sleep(25L)
+        Thread.sleep(READY_POLL_INTERVAL_MS)
     }
     System.err.println("[inject-fixture] semantics ready; emitting READY")
     System.err.flush()
@@ -98,6 +98,12 @@ fun injectMain() {
 fun main() {
     injectMain()
 }
+
+private const val FIXTURE_PADDING_DP: Int = 16
+private const val FIXTURE_WIDTH_PX: Int = 320
+private const val FIXTURE_HEIGHT_PX: Int = 240
+private const val READY_POLL_INTERVAL_MS: Long = 25
+private const val READY_POLL_TIMEOUT_MS: Long = 15_000
 
 @OptIn(ExperimentalComposeUiApi::class)
 private fun injectSemanticsOwnerCountOnEdt(panel: ComposePanel): Int {

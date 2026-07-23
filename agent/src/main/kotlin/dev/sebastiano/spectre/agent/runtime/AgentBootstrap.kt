@@ -134,11 +134,11 @@ internal object AgentBootstrap {
                 injectJar = injectJar,
                 injectClassLoader = injectLoader,
             )
-        } catch (t: Throwable) {
+        } catch (error: Exception) {
             // Close loader before delete so Windows can unlink the jar file.
             runCatching { injectLoader?.close() }
             runCatching { java.nio.file.Files.deleteIfExists(injectJar) }
-            throw t
+            throw error
         }
     }
 }
