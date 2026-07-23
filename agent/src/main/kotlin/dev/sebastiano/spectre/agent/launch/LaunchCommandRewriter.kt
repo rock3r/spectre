@@ -115,19 +115,47 @@ public object LaunchCommandRewriter {
         var i = 1
         while (i < command.size) {
             val token = command[i]
+            classpathValueFromToken(token, command, i)?.let {
+                return it
+            }
             when {
-                token == "-jar" -> return null // remaining tokens are jar path + app args
-                token == "-cp" || token == "-classpath" || token == "--class-path" ->
-                    return command.getOrNull(i + 1)
-                token.startsWith("-cp=") -> return token.removePrefix("-cp=")
-                token.startsWith("-classpath=") -> return token.removePrefix("-classpath=")
-                token.startsWith("--class-path=") -> return token.removePrefix("--class-path=")
-                token.startsWith("-") -> i++ // other JVM launcher option
+                token == "-jar" -> return null
+                isLauncherOptionTakingValue(token) -> i += 2
+                token.startsWith("-") -> i++
                 else -> return null // main class — end of launcher options
             }
         }
         return null
     }
+
+    private fun classpathValueFromToken(token: String, command: List<String>, index: Int): String? =
+        when {
+            token == "-cp" || token == "-classpath" || token == "--class-path" ->
+                command.getOrNull(index + 1)
+            token.startsWith("-cp=") -> token.removePrefix("-cp=")
+            token.startsWith("-classpath=") -> token.removePrefix("-classpath=")
+            token.startsWith("--class-path=") -> token.removePrefix("--class-path=")
+            else -> null
+        }
+
+    private fun isLauncherOptionTakingValue(token: String): Boolean =
+        token in LAUNCHER_OPTIONS_WITH_VALUE
+
+    private val LAUNCHER_OPTIONS_WITH_VALUE: Set<String> =
+        setOf(
+            "-p",
+            "--module-path",
+            "--upgrade-module-path",
+            "--add-modules",
+            "--limit-modules",
+            "--add-exports",
+            "--add-opens",
+            "--add-reads",
+            "--patch-module",
+            "-cp",
+            "-classpath",
+            "--class-path",
+        )
 
     /** True when [classpath] contains a path segment that looks like a spectre-core jar. */
     public fun classpathContainsSpectreCore(classpath: String): Boolean {
