@@ -58,8 +58,6 @@ internal class LaunchCommand(private val output: Appendable, private val errorOu
         if (command.isEmpty()) {
             throw CliktError("launch requires a command after --")
         }
-        // Released CLI packages embed agent-runtime; ensure AttachOptions can resolve it.
-        installEmbeddedAgentRuntimeForLaunch()
         val spec =
             LaunchSpec(
                 command = command,
@@ -67,6 +65,9 @@ internal class LaunchCommand(private val output: Appendable, private val errorOu
                 appJvmNameFilter = nameFilter,
             )
         try {
+            // Released CLI packages embed agent-runtime; ensure AttachOptions can resolve it.
+            // Kept inside try so install I/O failures report as launch I/O, not daemon errors.
+            installEmbeddedAgentRuntimeForLaunch()
             LaunchAndAttach.launch(spec) { warning ->
                     errorOutput.append(warning)
                     errorOutput.appendLine()
