@@ -85,8 +85,10 @@ internal class LaunchCommand(private val output: Appendable, private val errorOu
                     errorOutput.appendLine()
                 }
             sessionRef.set(session)
-            Runtime.getRuntime().addShutdownHook(shutdownHook)
+            // Always close the session if anything after launch fails (including hook
+            // registration).
             try {
+                runCatching { Runtime.getRuntime().addShutdownHook(shutdownHook) }
                 output.append("launchedPid=${session.launchedPid}")
                 output.append(" attachedPid=${session.attachedPid}")
                 output.append(" gradleish=${session.gradleish}")
