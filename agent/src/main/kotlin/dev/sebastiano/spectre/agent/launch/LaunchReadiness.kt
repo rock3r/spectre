@@ -55,18 +55,17 @@ internal object LaunchReadiness {
             if (!process.isAlive && !gradleish) {
                 throw processExited(process, stdoutPath, stderrPath)
             }
-            val pid =
-                if (gradleish) {
-                    LaunchDescendantDiscovery.discoverAppJvm(launchedPid, nameFilter)
-                } else if (isDirectJvmReady(launchedPid, process)) {
-                    // Direct launches already know the target PID. Prefer VirtualMachine.list()
-                    // when available; if the process is still alive accept the launched PID even
-                    // when -XX:-UsePerfData hides it from list() (attach by explicit pid still
-                    // works — see SpectreProcesses docs).
-                    launchedPid
-                } else {
-                    null
+            if (!gradleish) {
+                // Direct launches already know the target PID. Stage PROCESS_ALIVE established
+                // the process is live; attach-by-pid works even when -XX:-UsePerfData hides the
+                // target from VirtualMachine.list() (see SpectreProcesses). Agent bootstrap's
+                // attachTimeoutMs covers "JVM not ready for loadAgent yet".
+                if (!process.isAlive) {
+                    throw processExited(process, stdoutPath, stderrPath)
                 }
+                return launchedPid
+            }
+            val pid = LaunchDescendantDiscovery.discoverAppJvm(launchedPid, nameFilter)
             if (pid != null) return pid
             sleepQuietly(POLL_MS)
         }
@@ -81,20 +80,16 @@ internal object LaunchReadiness {
             detail =
                 if (gradleish) {
                     "Gradle-ish launch: no daemon-child/client-descendant app JVM matched" +
-                        (nameFilter?.let { " nameFilter='$it'" }.orEmpty())
+                        (nameFilter?.let { " nameFilter='$it'" }.orEmpty()) +
+                        (if (nameFilter.isNullOrBlank()) {
+                            " (set LaunchSpec.appJvmNameFilter to disambiguate daemon children)"
+                        } else {
+                            ""
+                        })
                 } else {
-                    "pid $launchedPid is not attachable (process dead or not a live JVM)"
+                    "pid $launchedPid exited before attach"
                 },
         )
-    }
-
-    /**
-     * Direct path: listed in Attach API, or still-alive process (covers -XX:-UsePerfData where
-     * list() omits the target but attach-by-pid still works).
-     */
-    private fun isDirectJvmReady(launchedPid: Long, process: Process): Boolean {
-        if (LaunchDescendantDiscovery.isJvmAttachable(launchedPid)) return true
-        return process.isAlive && ProcessHandle.of(launchedPid).map { it.isAlive }.orElse(false)
     }
 
     /**

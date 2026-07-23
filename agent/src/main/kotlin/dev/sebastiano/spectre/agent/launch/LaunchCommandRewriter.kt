@@ -75,11 +75,25 @@ public object LaunchCommandRewriter {
         return result
     }
 
-    /** True when [command] already sets `±EnableDynamicAgentLoading`. */
-    public fun hasDynamicAgentLoadingFlag(command: List<String>): Boolean = command.any { token ->
-        token == DYNAMIC_AGENT_LOADING_FLAG ||
-            token == "-XX:-EnableDynamicAgentLoading" ||
-            token.contains("EnableDynamicAgentLoading")
+    /**
+     * True when [command] already sets `±EnableDynamicAgentLoading` as a **launcher** JVM flag
+     * (before `-jar` / main class). Unrelated tokens such as `-Dfeature=EnableDynamicAgentLoading`
+     * do not count.
+     */
+    public fun hasDynamicAgentLoadingFlag(command: List<String>): Boolean {
+        if (!isDirectJvmLaunch(command)) return false
+        var i = 1
+        while (i < command.size) {
+            val token = command[i]
+            when {
+                token == "-jar" -> return false
+                token == DYNAMIC_AGENT_LOADING_FLAG || token == "-XX:-EnableDynamicAgentLoading" ->
+                    return true
+                token.startsWith("-") -> i++
+                else -> return false // main class boundary
+            }
+        }
+        return false
     }
 
     /**
