@@ -127,6 +127,7 @@ internal object LaunchReadiness {
                 cause = ex,
             )
         } catch (ex: SpectreAgentException) {
+            rethrowIfProcessDied(process, gradleish, stdoutPath, stderrPath)
             throw LaunchAgentBootstrapException(
                 attachedPid = attachedPid,
                 stdoutPath = stdoutPath,
@@ -134,6 +135,7 @@ internal object LaunchReadiness {
                 cause = ex,
             )
         } catch (ex: SpectreAttachException) {
+            rethrowIfProcessDied(process, gradleish, stdoutPath, stderrPath)
             throw LaunchAgentBootstrapException(
                 attachedPid = attachedPid,
                 stdoutPath = stdoutPath,
@@ -141,12 +143,25 @@ internal object LaunchReadiness {
                 cause = ex,
             )
         } catch (ex: IOException) {
+            rethrowIfProcessDied(process, gradleish, stdoutPath, stderrPath)
             throw LaunchAgentBootstrapException(
                 attachedPid = attachedPid,
                 stdoutPath = stdoutPath,
                 stderrPath = stderrPath,
                 cause = ex,
             )
+        }
+    }
+
+    /** Prefer stage PROCESS_ALIVE when the process died during attach (race with early exit). */
+    private fun rethrowIfProcessDied(
+        process: Process,
+        gradleish: Boolean,
+        stdoutPath: Path,
+        stderrPath: Path,
+    ) {
+        if (!gradleish && !process.isAlive) {
+            throw processExited(process, stdoutPath, stderrPath)
         }
     }
 
