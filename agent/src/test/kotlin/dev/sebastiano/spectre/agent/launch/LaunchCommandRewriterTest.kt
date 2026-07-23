@@ -28,7 +28,7 @@ class LaunchCommandRewriterTest {
     }
 
     @Test
-    fun `isGradleishLaunch detects gradlew gradle and hotRun`() {
+    fun `isGradleishLaunch detects gradlew and gradle launchers only`() {
         assertTrue(LaunchCommandRewriter.isGradleishLaunch(listOf("./gradlew", ":app:run")))
         assertTrue(LaunchCommandRewriter.isGradleishLaunch(listOf("gradlew.bat", "run")))
         assertTrue(LaunchCommandRewriter.isGradleishLaunch(listOf("/opt/gradle/bin/gradle", "run")))
@@ -37,16 +37,14 @@ class LaunchCommandRewriterTest {
                 listOf("./gradlew", ":sample-desktop:hotRunJvm")
             )
         )
-        assertTrue(
-            LaunchCommandRewriter.isGradleishLaunch(listOf("java", "-jar", "wrapper.jar", "hotRun"))
-        )
+        // Direct java must not become Gradle-ish just because an arg mentions hotRun.
         assertFalse(
-            LaunchCommandRewriter.isDirectJvmLaunch(listOf("./gradlew", ":app:run")).let {
-                // gradle is not a direct JVM launch
-                it
-            }
+            LaunchCommandRewriter.isGradleishLaunch(
+                listOf("java", "-jar", "hotrun-tools.jar", "hotRun")
+            )
         )
         assertFalse(LaunchCommandRewriter.isGradleishLaunch(listOf("java", "-jar", "app.jar")))
+        assertFalse(LaunchCommandRewriter.isDirectJvmLaunch(listOf("./gradlew", ":app:run")))
     }
 
     @Test

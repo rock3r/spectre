@@ -19,25 +19,19 @@ public object LaunchCommandRewriter {
     }
 
     /**
-     * True when [command] is Gradle-client shaped (`gradlew`, `gradle`, or a clearly Gradle-driven
-     * Compose Hot Reload `hotRun` task). These launches spawn the app JVM from the Gradle daemon,
-     * so readiness/teardown must use descendant discovery rather than the client PID.
+     * True when [command] is Gradle-client shaped (`gradlew` / `gradle` as the executable).
+     *
+     * Only the **launcher** basename is used — a direct `java -jar hotrun-tools.jar` (or a main arg
+     * containing `hotRun`) must stay a direct JVM launch so readiness attaches to the launched PID.
+     * Compose Hot Reload `hotRun` tasks are still covered when invoked via `./gradlew …`.
      */
     public fun isGradleishLaunch(command: List<String>): Boolean {
         if (command.isEmpty()) return false
-        val basenames = command.map { basename(it).lowercase() }
-        if (
-            basenames.any {
-                it == "gradlew" || it == "gradlew.bat" || it == "gradle" || it == "gradle.bat"
-            }
-        ) {
-            return true
-        }
-        // Compose Hot Reload task names appear as Gradle task args on an otherwise normal command.
-        return command.any { token ->
-            val lower = token.lowercase()
-            lower.contains("hotrun") || lower.contains("hotrunjvm")
-        }
+        val launcher = basename(command.first()).lowercase()
+        return launcher == "gradlew" ||
+            launcher == "gradlew.bat" ||
+            launcher == "gradle" ||
+            launcher == "gradle.bat"
     }
 
     /**
