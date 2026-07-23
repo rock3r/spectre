@@ -287,12 +287,8 @@ class AgentAttachIntegrationTest {
 
     private fun spawnComposeFixture(dynamicAgentLoadingEnabled: Boolean = true): FixtureProcess {
         // ProcessBuilder does not append `.exe` for an absolute path on Windows, so pick the
-        // launcher name explicitly.
-        val javaExe =
-            if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true))
-                "java.exe"
-            else "java"
-        val javaBin = Paths.get(System.getProperty("java.home"), "bin", javaExe).toString()
+        // launcher name explicitly via FixtureJavaHome (also honours mixed-runtime overrides).
+        val javaBin = FixtureJavaHome.javaExecutable().toString()
         val classpath = System.getProperty("java.class.path")
         val process =
             ProcessBuilder(

@@ -1,0 +1,76 @@
+name: Setup matrix JDK
+description: >
+  Install a pinned Spectre runtime-matrix JDK (JBR 21, JBR 25, or Temurin LTS)
+  using .github/jbr-pins.env and actions/setup-java (cached per runner OS/arch).
+
+inputs:
+  runtime:
+    description: "Matrix runtime id: jbr-21 | jbr-25 | temurin-lts"
+    required: true
+  set-default:
+    description: "Whether this JDK becomes the job default JAVA_HOME"
+    required: false
+    default: "true"
+
+outputs:
+  distribution:
+    description: "actions/setup-java distribution"
+    value: ${{ steps.resolve.outputs.distribution }}
+  java-version:
+    description: "Pinned version range passed to setup-java"
+    value: ${{ steps.resolve.outputs.java-version }}
+  java-package:
+    description: "JetBrains package type (empty for Temurin)"
+    value: ${{ steps.resolve.outputs.java-package }}
+  runtime-label:
+    description: "Human-readable runtime label for logs"
+    value: ${{ steps.resolve.outputs.runtime-label }}
+  path:
+    description: "Installed JAVA_HOME path"
+    value: ${{ steps.path.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve pins
+      id: resolve
+      shell: bash
+      run: |
+        set -euo pipefail
+        bash .github/scripts/resolve-matrix-jdk.sh "${{ inputs.runtime }}" >> "$GITHUB_OUTPUT"
+        echo "Resolved ${{ inputs.runtime }} → $(bash .github/scripts/resolve-matrix-jdk.sh "${{ inputs.runtime }}" | tr '\n' ' ')"
+
+    - name: Install JDK (JetBrains JBR)
+      id: install-jbr
+      if: steps.resolve.outputs.distribution == 'jetbrains'
+      uses: actions/setup-java@v5
+      with:
+        distribution: jetbrains
+        java-version: ${{ steps.resolve.outputs.java-version }}
+        java-package: ${{ steps.resolve.outputs.java-package }}
+        set-default: ${{ inputs.set-default }}
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+
+    - name: Install JDK (Temurin)
+      id: install-temurin
+      if: steps.resolve.outputs.distribution == 'temurin'
+      uses: actions/setup-java@v5
+      with:
+        distribution: temurin
+        java-version: ${{ steps.resolve.outputs.java-version }}
+        set-default: ${{ inputs.set-default }}
+
+    - name: Export install path
+      id: path
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ "${{ steps.resolve.outputs.distribution }}" == "jetbrains" ]]; then
+          echo "path=${{ steps.install-jbr.outputs.path }}" >> "$GITHUB_OUTPUT"
+        else
+          echo "path=${{ steps.install-temurin.outputs.path }}" >> "$GITHUB_OUTPUT"
+        fi
+        if [[ "${{ inputs.set-default }}" == "true" ]]; then
+          java -version
+        fi

@@ -1,0 +1,286 @@
+name: Runtime matrix
+
+# Epic #215 / issue #216 — scheduled + release-gated JVM compatibility matrix.
+#
+# Cells: {JBR 21, JBR 25, Temurin LTS} × {macOS, Linux, Windows}
+# Suites per cell:
+#   - contract corpus (in-process + HTTP always; agent under a display)
+#   - agent attach (same-runtime; mixed vanilla↔JBR on Linux)
+#   - recording smoke on Linux under xvfb (`:recording:runLinuxX11RecordingSmoke`)
+#
+# Per-PR CI stays single-JDK (Temurin 21 in ci.yml). This workflow is intentionally
+# expensive and runs on schedule, workflow_dispatch, and as a hard gate on release tags
+# (called from release.yml via workflow_call).
+
+on:
+  schedule:
+    # Weekly Sunday 06:15 UTC — full nine-cell + mixed attach.
+    - cron: "15 6 * * 0"
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+  # Scheduled failure routing opens/labels issues (#216).
+  issues: write
+
+jobs:
+  pin-selftest:
+    name: Pins + resolver self-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Run structural pin/workflow checks
+        run: bash .github/scripts/test-resolve-matrix-jdk.sh
+
+  matrix:
+    name: ${{ matrix.runtime }} / ${{ matrix.os }}
+    needs: pin-selftest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        runtime: [jbr-21, jbr-25, temurin-lts]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up matrix JDK
+        id: jdk
+        uses: ./.github/actions/setup-matrix-jdk
+        with:
+          runtime: ${{ matrix.runtime }}
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Install Linux display + native build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libdbus-1-dev pkg-config
+
+      - name: Set up Rust (Linux Wayland helper)
+        if: runner.os == 'Linux'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Log runtime identity
+        shell: bash
+        run: |
+          echo "Matrix cell: runtime=${{ matrix.runtime }} os=${{ matrix.os }}"
+          echo "JAVA_HOME=$JAVA_HOME"
+          java -version
+          echo "runtime-label=${{ steps.jdk.outputs.runtime-label }}"
+
+      - name: Contract corpus (in-process + HTTP)
+        shell: bash
+        run: |
+          ./gradlew \
+            :testing:test --tests '*InProcessContractCorpusTest*' \
+            :server:test --tests '*HttpContractCorpusTest*' \
+            --rerun-tasks
+
+      - name: Agent attach + agent contract corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle_cmd=(./gradlew :agent:test
+            --tests '*AgentAttachIntegrationTest*'
+            --tests '*AgentContractCorpusTest*'
+            --rerun-tasks)
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            xvfb-run -a "${gradle_cmd[@]}"
+          else
+            "${gradle_cmd[@]}"
+          fi
+
+      - name: Verify agent suites executed (no assumption-skip)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          verify_agent_xml() {
+            local class_name="$1"
+            local xml="agent/build/test-results/test/TEST-dev.sebastiano.spectre.agent.${class_name}.xml"
+            if [ ! -f "$xml" ]; then
+              echo "::error::Missing JUnit XML $xml"
+              exit 1
+            fi
+            get_attr() {
+              grep -oE "$1=\"[0-9]+\"" "$xml" | head -n1 | grep -oE '[0-9]+' || true
+            }
+            local tests skipped failures errors
+            tests=$(get_attr tests)
+            skipped=$(get_attr skipped)
+            failures=$(get_attr failures)
+            errors=$(get_attr errors)
+            if [ -z "$tests" ] || [ -z "$skipped" ] || [ -z "$failures" ] || [ -z "$errors" ]; then
+              echo "::error file=$xml::Malformed JUnit XML"
+              exit 1
+            fi
+            if [ "$tests" -lt 1 ] || [ "$skipped" -gt 0 ]; then
+              echo "::error file=$xml::$class_name did not execute (tests=$tests skipped=$skipped)"
+              exit 1
+            fi
+            if [ "$failures" -gt 0 ] || [ "$errors" -gt 0 ]; then
+              echo "::error file=$xml::$class_name failures=$failures errors=$errors"
+              exit 1
+            fi
+            echo "$class_name OK"
+          }
+          verify_agent_xml "AgentAttachIntegrationTest"
+          verify_agent_xml "AgentContractCorpusTest"
+
+      - name: Linux X11 recording smoke under xvfb
+        if: runner.os == 'Linux'
+        shell: bash
+        run: xvfb-run -a ./gradlew :recording:runLinuxX11RecordingSmoke
+
+      - name: Upload cell artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-matrix-${{ matrix.runtime }}-${{ matrix.os }}
+          path: |
+            agent/build/reports/tests/
+            agent/build/test-results/
+            testing/build/reports/tests/
+            testing/build/test-results/
+            server/build/reports/tests/
+            server/build/test-results/
+            recording/build/reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Open failure issue (scheduled runs only)
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_RUNTIME: ${{ matrix.runtime }}
+          MATRIX_FIXTURE_RUNTIME: same
+        run: bash .github/scripts/open-matrix-failure-issue.sh
+        shell: bash
+
+  mixed-attach:
+    name: mixed ${{ matrix.attacher }}→${{ matrix.fixture }} / ${{ matrix.os }}
+    needs: pin-selftest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Mixed pairs are the expensive corner of the epic; run on Linux (xvfb) where
+        # agent attach is already proven under a display, and keep two directional pairs.
+        include:
+          - os: ubuntu-latest
+            attacher: jbr-25
+            fixture: temurin-lts
+          - os: ubuntu-latest
+            attacher: temurin-lts
+            fixture: jbr-25
+          - os: ubuntu-latest
+            attacher: jbr-21
+            fixture: temurin-lts
+          - os: ubuntu-latest
+            attacher: temurin-lts
+            fixture: jbr-21
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install fixture JDK (non-default)
+        id: fixture-jdk
+        uses: ./.github/actions/setup-matrix-jdk
+        with:
+          runtime: ${{ matrix.fixture }}
+          set-default: "false"
+
+      - name: Install attacher JDK (default)
+        id: attacher-jdk
+        uses: ./.github/actions/setup-matrix-jdk
+        with:
+          runtime: ${{ matrix.attacher }}
+          set-default: "true"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Install Linux display + native build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libdbus-1-dev pkg-config
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Mixed-runtime agent attach
+        env:
+          SPECTRE_FIXTURE_JAVA_HOME: ${{ steps.fixture-jdk.outputs.path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Attacher JAVA_HOME=$JAVA_HOME"
+          echo "Fixture JAVA_HOME=$SPECTRE_FIXTURE_JAVA_HOME"
+          java -version
+          "$SPECTRE_FIXTURE_JAVA_HOME/bin/java" -version
+          xvfb-run -a ./gradlew :agent:test \
+            --tests '*AgentAttachIntegrationTest*' \
+            --tests '*AgentContractCorpusTest*' \
+            --rerun-tasks
+
+      - name: Verify mixed attach executed
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          for class_name in AgentAttachIntegrationTest AgentContractCorpusTest; do
+            xml="agent/build/test-results/test/TEST-dev.sebastiano.spectre.agent.${class_name}.xml"
+            if [ ! -f "$xml" ]; then
+              echo "::error::Missing $xml"
+              exit 1
+            fi
+            tests=$(grep -oE 'tests="[0-9]+"' "$xml" | head -n1 | grep -oE '[0-9]+' || true)
+            skipped=$(grep -oE 'skipped="[0-9]+"' "$xml" | head -n1 | grep -oE '[0-9]+' || true)
+            failures=$(grep -oE 'failures="[0-9]+"' "$xml" | head -n1 | grep -oE '[0-9]+' || true)
+            errors=$(grep -oE 'errors="[0-9]+"' "$xml" | head -n1 | grep -oE '[0-9]+' || true)
+            if [ "${tests:-0}" -lt 1 ] || [ "${skipped:-1}" -gt 0 ] || [ "${failures:-1}" -gt 0 ] || [ "${errors:-1}" -gt 0 ]; then
+              echo "::error file=$xml::$class_name tests=$tests skipped=$skipped failures=$failures errors=$errors"
+              exit 1
+            fi
+            echo "$class_name OK (mixed)"
+          done
+
+      - name: Open failure issue (scheduled runs only)
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_RUNTIME: ${{ matrix.attacher }}
+          MATRIX_FIXTURE_RUNTIME: ${{ matrix.fixture }}
+        run: bash .github/scripts/open-matrix-failure-issue.sh
+        shell: bash
+
+  matrix-gate:
+    name: Runtime matrix gate
+    if: always()
+    needs: [pin-selftest, matrix, mixed-attach]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all matrix jobs green
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin="${{ needs.pin-selftest.result }}"
+          matrix="${{ needs.matrix.result }}"
+          mixed="${{ needs.mixed-attach.result }}"
+          echo "pin-selftest=$pin matrix=$matrix mixed-attach=$mixed"
+          if [[ "$pin" != "success" || "$matrix" != "success" || "$mixed" != "success" ]]; then
+            echo "::error::Runtime matrix gate failed (pin=$pin matrix=$matrix mixed=$mixed)"
+            exit 1
+          fi
+          echo "Runtime matrix gate passed."

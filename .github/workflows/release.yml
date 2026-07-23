@@ -11,6 +11,11 @@ name: Release
 #
 # Release job graph:
 #
+#   0. `runtime-matrix`   — Reuses `.github/workflows/runtime-matrix.yml` (epic #215 /
+#                            issue #216). Full {JBR 21, JBR 25, Temurin LTS} × OS matrix
+#                            plus mixed-runtime agent attach. A red matrix blocks the
+#                            release; per-PR CI stays on single-JDK Temurin 21.
+#
 #   1. `release-gate`     — Linux runner. Rejects non-SemVer `v*` tags, runs the
 #                            full Gradle `check`, and runs `mkdocs build --strict`
 #                            before any helper build or publish job starts.
@@ -72,9 +77,15 @@ permissions:
   contents: read
 
 jobs:
+  runtime-matrix:
+    name: Runtime compatibility matrix
+    uses: ./.github/workflows/runtime-matrix.yml
+
   release-gate:
     name: Validate release tag
     runs-on: ubuntu-latest
+    needs:
+      - runtime-matrix
     outputs:
       version: ${{ steps.version.outputs.version }}
 

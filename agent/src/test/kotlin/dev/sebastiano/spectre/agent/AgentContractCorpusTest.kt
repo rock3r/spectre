@@ -183,11 +183,8 @@ class AgentContractCorpusTest {
     }
 
     private fun spawnComposeFixture(): FixtureProcess {
-        val javaExe =
-            if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true))
-                "java.exe"
-            else "java"
-        val javaBin = Paths.get(System.getProperty("java.home"), "bin", javaExe).toString()
+        // Honours -Ddev.sebastiano.spectre.agent.fixtureJavaHome for mixed-runtime matrix cells.
+        val javaBin = FixtureJavaHome.javaExecutable().toString()
         val classpath = System.getProperty("java.class.path")
         val process =
             ProcessBuilder(

@@ -103,8 +103,10 @@ Two heavier checks live outside `:check`:
 
 ## Supported JVMs
 
-JBR 21 is the dev-loop default. JBR 25 also gets exercised via the IDE-hosted test (bundled
-with IntelliJ 2026.1). Any JDK 21+ works for the non-IDE modules. CI runs on Temurin 21.
+JBR 21 is the dev-loop default. JBR 25 and Temurin LTS (toolchain major) are exercised by the
+scheduled [runtime matrix](.github/workflows/runtime-matrix.yml) (epic #215 / #216) and re-run
+as a **release gate**. Per-PR CI stays on Temurin 21 for speed. Any JDK 21+ works for the
+non-IDE modules; pins and the bump procedure live in [`.github/jbr-pins.env`](.github/jbr-pins.env).
 
 ## CI
 
@@ -122,6 +124,9 @@ with IntelliJ 2026.1). Any JDK 21+ works for the non-IDE modules. CI runs on Tem
 - [`validation-linux.yml`](.github/workflows/validation-linux.yml) — same validation matrix
   on Linux under `xvfb-run` (real Xorg, no compositor in the loop), gated on the same
   `sample-desktop/**` filter shape.
+- [`runtime-matrix.yml`](.github/workflows/runtime-matrix.yml) — weekly + release-gated
+  `{JBR 21, JBR 25, Temurin LTS} × {macOS, Linux, Windows}` with contract corpus, agent
+  attach (incl. mixed vanilla↔JBR on Linux), and Linux recording smoke under xvfb.
 
 For consumer projects, see [Running on CI](docs/guide/ci.md) for the required test-JVM flags:
 `java.awt.headless=false` for AWT, `skiko.renderApi=SOFTWARE_COMPAT` on GPU-less Linux runners,

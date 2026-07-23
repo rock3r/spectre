@@ -77,11 +77,28 @@ tasks.withType<Test>().configureEach {
         project(":agent-runtime").tasks.named<Jar>("jar").flatMap { it.archiveFile }
     inputs.file(runtimeJarFile)
     dependsOn(runtimeJarFile)
+    // Mixed-runtime matrix cells (#216): forward fixture JAVA_HOME into the forked test JVM.
+    // Gradle CLI `-D…` alone only hits the daemon; Test workers need an explicit -D via this
+    // provider. Prefer (1) `-Pspectre.agent.fixtureJavaHome=…`, then (2) env
+    // `SPECTRE_FIXTURE_JAVA_HOME`, then (3) a daemon system property of the same name.
+    val fixtureJavaHome =
+        providers
+            .gradleProperty("spectre.agent.fixtureJavaHome")
+            .orElse(providers.environmentVariable("SPECTRE_FIXTURE_JAVA_HOME"))
+            .orElse(providers.systemProperty("dev.sebastiano.spectre.agent.fixtureJavaHome"))
+
     jvmArgumentProviders.add(
         CommandLineArgumentProvider {
-            listOf(
-                "-Ddev.sebastiano.spectre.agent.runtimeJar=${runtimeJarFile.get().asFile.absolutePath}"
-            )
+            buildList {
+                add(
+                    "-Ddev.sebastiano.spectre.agent.runtimeJar=" +
+                        runtimeJarFile.get().asFile.absolutePath
+                )
+                val home = fixtureJavaHome.orNull?.takeIf { it.isNotBlank() }
+                if (home != null) {
+                    add("-Ddev.sebastiano.spectre.agent.fixtureJavaHome=$home")
+                }
+            }
         }
     )
 }
