@@ -179,6 +179,164 @@ public final class dev/sebastiano/spectre/agent/SpectreProcesses {
 	public final fun listJvmProcesses ()Ljava/util/List;
 }
 
+public final class dev/sebastiano/spectre/agent/launch/FirstWindowTimeoutException : dev/sebastiano/spectre/agent/launch/LaunchException {
+	public fun <init> (JJLjava/nio/file/Path;Ljava/nio/file/Path;Ljava/lang/Throwable;)V
+	public synthetic fun <init> (JJLjava/nio/file/Path;Ljava/nio/file/Path;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getAttachedPid ()J
+	public final fun getStderrPath ()Ljava/nio/file/Path;
+	public final fun getStdoutPath ()Ljava/nio/file/Path;
+	public final fun getTimeoutMs ()J
+}
+
+public final class dev/sebastiano/spectre/agent/launch/JvmNotAttachableException : dev/sebastiano/spectre/agent/launch/LaunchException {
+	public fun <init> (JJLjava/nio/file/Path;Ljava/nio/file/Path;Ljava/lang/String;)V
+	public synthetic fun <init> (JJLjava/nio/file/Path;Ljava/nio/file/Path;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getDetail ()Ljava/lang/String;
+	public final fun getLaunchedPid ()J
+	public final fun getStderrPath ()Ljava/nio/file/Path;
+	public final fun getStdoutPath ()Ljava/nio/file/Path;
+	public final fun getTimeoutMs ()J
+}
+
+public final class dev/sebastiano/spectre/agent/launch/LaunchAgentBootstrapException : dev/sebastiano/spectre/agent/launch/LaunchException {
+	public fun <init> (JLjava/nio/file/Path;Ljava/nio/file/Path;Ljava/lang/Throwable;)V
+	public synthetic fun <init> (JLjava/nio/file/Path;Ljava/nio/file/Path;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getAttachedPid ()J
+	public final fun getStderrPath ()Ljava/nio/file/Path;
+	public final fun getStdoutPath ()Ljava/nio/file/Path;
+}
+
+public final class dev/sebastiano/spectre/agent/launch/LaunchAndAttach {
+	public static final field INSTANCE Ldev/sebastiano/spectre/agent/launch/LaunchAndAttach;
+	public final fun launch (Ldev/sebastiano/spectre/agent/launch/LaunchSpec;)Ldev/sebastiano/spectre/agent/launch/LaunchedSession;
+}
+
+public final class dev/sebastiano/spectre/agent/launch/LaunchCommandRewriter {
+	public static final field DYNAMIC_AGENT_LOADING_FLAG Ljava/lang/String;
+	public static final field INSTANCE Ldev/sebastiano/spectre/agent/launch/LaunchCommandRewriter;
+	public final fun classpathContainsSpectreCore (Ljava/lang/String;)Z
+	public final fun extractClasspath (Ljava/util/List;)Ljava/lang/String;
+	public final fun gradleLaunchWarning ()Ljava/lang/String;
+	public final fun hasDynamicAgentLoadingFlag (Ljava/util/List;)Z
+	public final fun isDirectJvmLaunch (Ljava/util/List;)Z
+	public final fun isGradleishLaunch (Ljava/util/List;)Z
+	public final fun rewriteDirectJvmCommand (Ljava/util/List;Ljava/util/List;Z)Ljava/util/List;
+	public static synthetic fun rewriteDirectJvmCommand$default (Ldev/sebastiano/spectre/agent/launch/LaunchCommandRewriter;Ljava/util/List;Ljava/util/List;ZILjava/lang/Object;)Ljava/util/List;
+}
+
+public final class dev/sebastiano/spectre/agent/launch/LaunchDescendantDiscovery {
+	public static final field INSTANCE Ldev/sebastiano/spectre/agent/launch/LaunchDescendantDiscovery;
+	public final fun discoverAppJvm (JLjava/lang/String;)Ljava/lang/Long;
+	public final fun isGradleDaemonDisplayName (Ljava/lang/String;)Z
+}
+
+public abstract class dev/sebastiano/spectre/agent/launch/LaunchException : java/lang/RuntimeException {
+	public synthetic fun <init> (Ldev/sebastiano/spectre/agent/launch/LaunchStage;Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ldev/sebastiano/spectre/agent/launch/LaunchStage;Ljava/lang/String;Ljava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getStage ()Ldev/sebastiano/spectre/agent/launch/LaunchStage;
+}
+
+public final class dev/sebastiano/spectre/agent/launch/LaunchSpec {
+	public fun <init> (Ljava/util/List;Ljava/nio/file/Path;Ljava/util/Map;Ljava/util/List;Ljava/nio/file/Path;Ldev/sebastiano/spectre/agent/launch/LaunchStageTimeouts;Ldev/sebastiano/spectre/agent/AttachOptions;Ljava/lang/String;ZZ)V
+	public synthetic fun <init> (Ljava/util/List;Ljava/nio/file/Path;Ljava/util/Map;Ljava/util/List;Ljava/nio/file/Path;Ldev/sebastiano/spectre/agent/launch/LaunchStageTimeouts;Ldev/sebastiano/spectre/agent/AttachOptions;Ljava/lang/String;ZZILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/util/List;
+	public final fun component10 ()Z
+	public final fun component2 ()Ljava/nio/file/Path;
+	public final fun component3 ()Ljava/util/Map;
+	public final fun component4 ()Ljava/util/List;
+	public final fun component5 ()Ljava/nio/file/Path;
+	public final fun component6 ()Ldev/sebastiano/spectre/agent/launch/LaunchStageTimeouts;
+	public final fun component7 ()Ldev/sebastiano/spectre/agent/AttachOptions;
+	public final fun component8 ()Ljava/lang/String;
+	public final fun component9 ()Z
+	public final fun copy (Ljava/util/List;Ljava/nio/file/Path;Ljava/util/Map;Ljava/util/List;Ljava/nio/file/Path;Ldev/sebastiano/spectre/agent/launch/LaunchStageTimeouts;Ldev/sebastiano/spectre/agent/AttachOptions;Ljava/lang/String;ZZ)Ldev/sebastiano/spectre/agent/launch/LaunchSpec;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/agent/launch/LaunchSpec;Ljava/util/List;Ljava/nio/file/Path;Ljava/util/Map;Ljava/util/List;Ljava/nio/file/Path;Ldev/sebastiano/spectre/agent/launch/LaunchStageTimeouts;Ldev/sebastiano/spectre/agent/AttachOptions;Ljava/lang/String;ZZILjava/lang/Object;)Ldev/sebastiano/spectre/agent/launch/LaunchSpec;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAppJvmNameFilter ()Ljava/lang/String;
+	public final fun getAttachOptions ()Ldev/sebastiano/spectre/agent/AttachOptions;
+	public final fun getCaptureDirectory ()Ljava/nio/file/Path;
+	public final fun getCommand ()Ljava/util/List;
+	public final fun getEnvironment ()Ljava/util/Map;
+	public final fun getExtraJvmArgs ()Ljava/util/List;
+	public final fun getInjectDynamicAgentLoading ()Z
+	public final fun getRequireSpectreCoreOnClasspath ()Z
+	public final fun getStageTimeouts ()Ldev/sebastiano/spectre/agent/launch/LaunchStageTimeouts;
+	public final fun getWorkingDirectory ()Ljava/nio/file/Path;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/agent/launch/LaunchStage : java/lang/Enum {
+	public static final field AGENT_BOOTSTRAP Ldev/sebastiano/spectre/agent/launch/LaunchStage;
+	public static final field FIRST_WINDOW Ldev/sebastiano/spectre/agent/launch/LaunchStage;
+	public static final field JVM_ATTACHABLE Ldev/sebastiano/spectre/agent/launch/LaunchStage;
+	public static final field PROCESS_ALIVE Ldev/sebastiano/spectre/agent/launch/LaunchStage;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/sebastiano/spectre/agent/launch/LaunchStage;
+	public static fun values ()[Ldev/sebastiano/spectre/agent/launch/LaunchStage;
+}
+
+public final class dev/sebastiano/spectre/agent/launch/LaunchStageTimeouts {
+	public static final field Companion Ldev/sebastiano/spectre/agent/launch/LaunchStageTimeouts$Companion;
+	public static final field DEFAULT_AGENT_BOOTSTRAP_MS J
+	public static final field DEFAULT_FIRST_WINDOW_MS J
+	public static final field DEFAULT_JVM_ATTACHABLE_MS J
+	public static final field DEFAULT_PROCESS_ALIVE_MS J
+	public fun <init> ()V
+	public fun <init> (JJJJ)V
+	public synthetic fun <init> (JJJJILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()J
+	public final fun component2 ()J
+	public final fun component3 ()J
+	public final fun component4 ()J
+	public final fun copy (JJJJ)Ldev/sebastiano/spectre/agent/launch/LaunchStageTimeouts;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/agent/launch/LaunchStageTimeouts;JJJJILjava/lang/Object;)Ldev/sebastiano/spectre/agent/launch/LaunchStageTimeouts;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAgentBootstrapMs ()J
+	public final fun getFirstWindowMs ()J
+	public final fun getJvmAttachableMs ()J
+	public final fun getProcessAliveMs ()J
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/agent/launch/LaunchStageTimeouts$Companion {
+}
+
+public final class dev/sebastiano/spectre/agent/launch/LaunchedSession : java/lang/AutoCloseable {
+	public fun close ()V
+	public final fun getAttachedPid ()J
+	public final fun getAutomator ()Ldev/sebastiano/spectre/agent/AttachedAutomator;
+	public final fun getGradleish ()Z
+	public final fun getLaunchedPid ()J
+	public final fun getStderrPath ()Ljava/nio/file/Path;
+	public final fun getStdoutPath ()Ljava/nio/file/Path;
+	public final fun getWarnings ()Ljava/util/List;
+}
+
+public final class dev/sebastiano/spectre/agent/launch/ProcessExitedBeforeAttachException : dev/sebastiano/spectre/agent/launch/LaunchException {
+	public fun <init> (ILjava/lang/String;Ljava/nio/file/Path;Ljava/nio/file/Path;Ljava/lang/Throwable;)V
+	public synthetic fun <init> (ILjava/lang/String;Ljava/nio/file/Path;Ljava/nio/file/Path;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getExitCode ()I
+	public final fun getStderrExcerpt ()Ljava/lang/String;
+	public final fun getStderrPath ()Ljava/nio/file/Path;
+	public final fun getStdoutPath ()Ljava/nio/file/Path;
+}
+
+public final class dev/sebastiano/spectre/agent/launch/ProcessTreeTeardown {
+	public static final field DEFAULT_GRACE_MS J
+	public static final field INSTANCE Ldev/sebastiano/spectre/agent/launch/ProcessTreeTeardown;
+	public final fun destroyTree (Ljava/lang/ProcessHandle;J)Z
+	public static synthetic fun destroyTree$default (Ldev/sebastiano/spectre/agent/launch/ProcessTreeTeardown;Ljava/lang/ProcessHandle;JILjava/lang/Object;)Z
+	public final fun destroyTreeByPid (JJ)Z
+	public static synthetic fun destroyTreeByPid$default (Ldev/sebastiano/spectre/agent/launch/ProcessTreeTeardown;JJILjava/lang/Object;)Z
+}
+
+public final class dev/sebastiano/spectre/agent/launch/SpectreCoreMissingOnClasspathException : dev/sebastiano/spectre/agent/launch/LaunchException {
+	public fun <init> (Ljava/lang/String;)V
+	public final fun getClasspath ()Ljava/lang/String;
+}
+
 public final class dev/sebastiano/spectre/agent/runtime/SpectreAgent {
 	public static final field INSTANCE Ldev/sebastiano/spectre/agent/runtime/SpectreAgent;
 	public static final fun agentmain (Ljava/lang/String;Ljava/lang/instrument/Instrumentation;)V
