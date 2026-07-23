@@ -57,7 +57,7 @@ fi
 # Workflow must cover the 3×3 product and gate suites.
 for needle in jbr-21 jbr-25 temurin-lts ubuntu-latest macos-latest windows-latest \
   AgentContractCorpusTest AgentAttachIntegrationTest InProcessContractCorpusTest \
-  runLinuxX11RecordingSmoke workflow_call schedule; do
+  runLinuxX11RecordingSmoke workflow_call schedule "runner.os != 'Windows'"; do
   grep -q "$needle" "$workflow" || fail "runtime-matrix.yml missing expected token: $needle"
 done
 

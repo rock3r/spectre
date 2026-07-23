@@ -84,7 +84,12 @@ jobs:
             :server:test --tests '*HttpContractCorpusTest*' \
             --rerun-tasks
 
+      # Agent attach + agent contract corpus are @EnabledOnOs(LINUX, MAC) only — hosted
+      # Windows runners do not provide a reliable interactive desktop for the Robot-backed
+      # fixture (see AgentAttachIntegrationTest KDoc). Windows cells still exercise the
+      # in-process + HTTP corpus above; agent evidence stays Linux/macOS.
       - name: Agent attach + agent contract corpus
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
@@ -99,7 +104,7 @@ jobs:
           fi
 
       - name: Verify agent suites executed (no assumption-skip)
-        if: always()
+        if: always() && runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail

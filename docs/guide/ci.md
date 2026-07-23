@@ -143,7 +143,7 @@ workflow (epic #215 / issue #216):
 | --- | --- |
 | Runtime | JBR 21, JBR 25, Temurin LTS |
 | OS | macOS, Linux (`xvfb`), Windows |
-| Suites | Contract corpus, agent attach (same-runtime + mixed vanilla↔JBR on Linux), Linux X11 recording smoke |
+| Suites | Contract corpus (all OSes); agent attach same-runtime on Linux/macOS + mixed vanilla↔JBR on Linux; Linux X11 recording smoke. Agent suites are `@EnabledOnOs(LINUX, MAC)` only — Windows cells still run the non-agent corpus. |
 
 Pins live in [`.github/jbr-pins.env`](https://github.com/rock3r/spectre/blob/main/.github/jbr-pins.env)
 (JBRSDK / `jdk` package, not `jbr_jcef`). Bump procedure is in that file’s header comments.

@@ -15,7 +15,9 @@ set -euo pipefail
 : "${MATRIX_RUNTIME:?}"
 
 fixture="${MATRIX_FIXTURE_RUNTIME:-same}"
-title="[runtime-matrix] ${MATRIX_RUNTIME} on ${MATRIX_OS} (fixture=${fixture})"
+# Title avoids parentheses so GitHub issue search (which treats () as grouping) can still
+# match when we dedup by a short query; exact title equality is checked in jq below.
+title="[runtime-matrix] ${MATRIX_RUNTIME} on ${MATRIX_OS} fixture=${fixture}"
 run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 body="$(
   cat <<EOF
@@ -38,14 +40,16 @@ EOF
 )"
 
 # Prefer an open issue with the same title to avoid spam; otherwise create one.
+# Search with a parenthesis-free query, then exact-match the title in jq.
+search_query="runtime-matrix ${MATRIX_RUNTIME} ${MATRIX_OS} fixture=${fixture}"
 existing="$(
   gh issue list \
     --repo "$GITHUB_REPOSITORY" \
     --label runtime-matrix \
     --state open \
-    --search "in:title ${title}" \
+    --search "$search_query" \
     --json number,title \
-    --jq ".[] | select(.title == \"${title}\") | .number" \
+    --jq ".[] | select(.title == \"${title//\"/\\\"}\") | .number" \
     | head -n1 || true
 )"
 
