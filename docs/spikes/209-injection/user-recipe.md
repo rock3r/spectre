@@ -2,11 +2,20 @@
 
 ## Automated path (CI / developer)
 
+**Prerequisites:** Linux or macOS with a non-headless display (or `xvfb-run -a` on Linux).
+The test is `@EnabledOnOs(LINUX, MAC)` and assumes `!GraphicsEnvironment.isHeadless()` — on
+Windows and headless Linux CI it **skips** (green Gradle with no attach/tree evidence). Do not
+treat a skipped run as inject proof.
+
 ```bash
+# macOS / interactive Linux:
 ./gradlew :agent:test --tests '*AgentInjectAttachIntegrationTest*'
+
+# headless Linux with a virtual display:
+xvfb-run -a ./gradlew :agent:test --tests '*AgentInjectAttachIntegrationTest*'
 ```
 
-What it does (real shipped APIs):
+What it does when it **runs** (real shipped APIs):
 
 1. Builds `spectre-agent-runtime` with nested `META-INF/spectre/inject-runtime.jar`.
 2. Spawns `InjectComposeFixtureMain` on a child JVM **without** `spectre-core` on its classpath.
