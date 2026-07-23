@@ -404,9 +404,10 @@ returns a human-readable diagnostic without throwing.
   set and what “supported” means operationally live in
   [Stability policy — JVM runtime support tiers](../STABILITY.md#jvm-runtime-support-tiers).
 
-**Agent attach** requires a real JDK (not a JRE-only image) on both attacher and target.
-**IntelliJ-hosted Compose** always implies the IDE’s bundled JBR — do not ship a second
-skiko into the plugin classloader (see [IntelliJ guide](intellij.md)).
+**Agent attach** needs a real JDK (with `jdk.attach`) on the **attacher** process; the
+target only needs to allow dynamic agent loading. **IntelliJ-hosted Compose** always
+implies the IDE’s bundled JBR — do not ship a second skiko into the plugin classloader
+(see [IntelliJ guide](intellij.md)).
 
 The sample IntelliJ plugin module configures its sandbox JDK via the IntelliJ Platform
 Gradle plugin; you do not pick Temurin for that path.

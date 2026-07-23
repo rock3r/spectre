@@ -146,7 +146,7 @@ Spectre is JVM-first and targets desktop OSes.
 
 Spectre is a JVM library and CLI. **Supported JVM runtimes** are the set we claim work
 for non-IDE modules; claims are fail-closed on **executable evidence** (same rule as the
-[capability matrix](guide/capability-matrix.md) / epic #198).
+[capability matrix](guide/capability-matrix.md)).
 
 | Runtime | Tier | Evidence / notes |
 | --- | --- | --- |
