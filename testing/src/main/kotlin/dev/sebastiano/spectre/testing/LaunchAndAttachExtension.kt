@@ -72,20 +72,23 @@ public class LaunchAndAttachExtension(
     /**
      * Live session for the current test on this thread. Backed by a thread-local so parallel
      * methods each see their own session even when multiple extension instances are registered.
+     * Capture the session (or [automator]) on the test thread before hopping to child threads —
+     * child threads do not inherit the thread-local.
+     *
      * Prefer parameter injection of [LaunchedSession] / [AttachedAutomator] when a single extension
      * is registered; prefer this accessor when multiple extensions share a class.
      */
     public val launched: LaunchedSession
         get() =
-            checkNotNull(threadSession.get() ?: lastSequentialSession) {
-                "LaunchAndAttachExtension.launched accessed outside of a running test"
+            checkNotNull(threadSession.get()) {
+                "LaunchAndAttachExtension.launched accessed outside of a running test " +
+                    "(or from a child thread that did not capture the session on the test thread)"
             }
 
     /** Attached automator for the current test (same lifetime as [launched]). */
     public val automator: AttachedAutomator
         get() = launched.automator
 
-    @Volatile private var lastSequentialSession: LaunchedSession? = null
     private val threadSession: ThreadLocal<LaunchedSession> = ThreadLocal()
 
     /**
@@ -102,17 +105,11 @@ public class LaunchAndAttachExtension(
         val launchedSession = LaunchAndAttach.launch(spec, warningSink)
         context.getStore(storeNamespace).put(STORE_KEY, launchedSession)
         threadSession.set(launchedSession)
-        lastSequentialSession = launchedSession
     }
 
     override fun afterEach(context: ExtensionContext) {
         val stored = context.getStore(storeNamespace).remove(STORE_KEY, LaunchedSession::class.java)
-        if (threadSession.get() === stored) {
-            threadSession.remove()
-        }
-        if (lastSequentialSession === stored) {
-            lastSequentialSession = null
-        }
+        threadSession.remove()
         stored?.close()
     }
 

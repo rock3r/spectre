@@ -106,7 +106,8 @@ class LaunchedAppTest {
             LaunchSpec(
                 command =
                     listOf(
-                        javaBin,
+                        // java.home/bin/java (or java.exe on Windows)
+                        "${System.getProperty("java.home")}/bin/java",
                         "-jar",
                         "app/build/libs/app.jar",
                     )
