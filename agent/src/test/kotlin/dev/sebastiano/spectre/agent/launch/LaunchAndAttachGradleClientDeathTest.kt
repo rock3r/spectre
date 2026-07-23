@@ -73,10 +73,13 @@ class LaunchAndAttachGradleClientDeathTest {
             "message should explain gradle client died before app JVM; got: ${ex.message}",
         )
         // Must not look like a name-filter miss on JVM_ATTACHABLE.
-        assertFalse(ex is JvmNotAttachableException, "must not report as JvmNotAttachableException")
         assertFalse(
             ex.message!!.contains("nameFilter", ignoreCase = true),
             "must not blame nameFilter when the Gradle client already exited; got: ${ex.message}",
+        )
+        assertFalse(
+            ex.message!!.contains("JVM_ATTACHABLE", ignoreCase = true),
+            "must not report stage JVM_ATTACHABLE; got: ${ex.message}",
         )
     }
 }
