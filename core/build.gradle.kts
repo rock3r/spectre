@@ -34,4 +34,28 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
 }
 
-tasks.withType<Test>().configureEach { useJUnitPlatform() }
+tasks.withType<Test>().configureEach {
+    useJUnitPlatform()
+    // Docs contract tests read repo-root markdown at runtime; register them as inputs so
+    // :core:test is not UP-TO-DATE/cache-hit after spike/guide docs change (#209).
+    val docsRoot = rootProject.layout.projectDirectory.dir("docs")
+    inputs
+        .files(
+            docsRoot.file("spikes/209-injection/api-audit.md"),
+            docsRoot.file("spikes/209-injection/decision.md"),
+            docsRoot.file("spikes/209-injection/practicalities.md"),
+            docsRoot.file("spikes/209-injection/user-recipe.md"),
+            docsRoot.file("spikes/209-injection/inject-packaging.md"),
+            docsRoot.file("guide/getting-started.md"),
+            docsRoot.file("guide/junit.md"),
+            docsRoot.file("guide/troubleshooting.md"),
+            docsRoot.file("guide/selectors.md"),
+            docsRoot.file("guide/interactions.md"),
+        )
+        .withPropertyName("docsContractInputs")
+        .optional()
+    inputs
+        .file(rootProject.layout.projectDirectory.file("skills/spectre/SKILL.md"))
+        .withPropertyName("skillContractInput")
+        .optional()
+}
