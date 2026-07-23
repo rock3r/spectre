@@ -14,6 +14,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.extension.AfterEachCallback
 import org.junit.jupiter.api.extension.BeforeEachCallback
+import org.junit.jupiter.api.extension.ParameterResolver
 
 /**
  * Lifecycle tests for the JUnit launch surface. Full UI attach e2e lives in `:agent`
@@ -22,10 +23,14 @@ import org.junit.jupiter.api.extension.BeforeEachCallback
 class LaunchAndAttachExtensionTest {
 
     @Test
-    fun `extension implements before and after each callbacks`() {
-        val ext = LaunchAndAttachExtension(LaunchSpec(command = listOf(javaBin(), "-version")))
-        assertTrue(ext is BeforeEachCallback)
-        assertTrue(ext is AfterEachCallback)
+    fun `extension implements lifecycle callbacks and parameter resolver`() {
+        // Reflective assignability so the contracts stay asserted without always-true smart casts.
+        val extClass = LaunchAndAttachExtension::class.java
+        assertTrue(BeforeEachCallback::class.java.isAssignableFrom(extClass))
+        assertTrue(AfterEachCallback::class.java.isAssignableFrom(extClass))
+        assertTrue(ParameterResolver::class.java.isAssignableFrom(extClass))
+        // Constructor still callable with a minimal spec.
+        LaunchAndAttachExtension(LaunchSpec(command = listOf(javaBin(), "-version")))
     }
 
     @Test

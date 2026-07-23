@@ -7,9 +7,12 @@ import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.launch.LaunchAndAttach
 import dev.sebastiano.spectre.agent.launch.LaunchSpec
 import dev.sebastiano.spectre.agent.launch.LaunchedSession
+import java.lang.reflect.Method
 import org.junit.jupiter.api.extension.AfterEachCallback
 import org.junit.jupiter.api.extension.BeforeEachCallback
 import org.junit.jupiter.api.extension.ExtensionContext
+import org.junit.jupiter.api.extension.ParameterContext
+import org.junit.jupiter.api.extension.ParameterResolver
 
 /**
  * JUnit 5 extension that launches a process via [LaunchAndAttach] before each test and tears it
@@ -19,7 +22,7 @@ import org.junit.jupiter.api.extension.ExtensionContext
  * failure-artifact hooks (#205) can plug into after-each teardown without the launch harness owning
  * that path.
  *
- * Usage:
+ * Sequential usage (`@RegisterExtension` property accessors):
  * ```
  * @JvmField
  * @RegisterExtension
@@ -32,16 +35,38 @@ import org.junit.jupiter.api.extension.ExtensionContext
  * }
  * ```
  *
+ * Parallel-safe usage (parameter injection from the per-invocation store):
+ * ```
+ * @JvmField
+ * @RegisterExtension
+ * val launchExt = LaunchAndAttachExtension(
+ *     LaunchSpec(command = listOf("java", "-jar", "app.jar"))
+ * )
+ *
+ * @Test fun exercise(session: LaunchedSession) {
+ *     session.automator.windows()
+ * }
+ *
+ * @Test fun alsoFine(automator: AttachedAutomator) {
+ *     automator.windows()
+ * }
+ * ```
+ *
  * Prefer a prod-like [LaunchSpec.command]. Gradle `run` / `hotRun` work but warn loudly.
+ *
+ * Note: this extension requires a [LaunchSpec], so it is registered with `@RegisterExtension`
+ * rather than `@ExtendWith`. [ParameterResolver] still applies to parameters of methods on the same
+ * test class.
  */
 public class LaunchAndAttachExtension(
     private val spec: LaunchSpec,
     private val warningSink: (String) -> Unit = LaunchAndAttach.DEFAULT_WARNING_SINK,
-) : BeforeEachCallback, AfterEachCallback {
+) : BeforeEachCallback, AfterEachCallback, ParameterResolver {
 
     /**
-     * Live session for the **most recent** sequential `@RegisterExtension` test. Prefer
-     * [launchedFrom] when running tests in parallel.
+     * Live session for the **most recent** sequential `@RegisterExtension` test. Prefer parameter
+     * injection of [LaunchedSession] / [AttachedAutomator] (or [launchedFrom]) when running tests
+     * in parallel.
      */
     public val launched: LaunchedSession
         get() =
@@ -55,7 +80,11 @@ public class LaunchAndAttachExtension(
 
     @Volatile private var lastSequentialSession: LaunchedSession? = null
 
-    /** Per-invocation session from [context] (parallel-safe). */
+    /**
+     * Per-invocation session from [context] (parallel-safe). Prefer method-parameter injection of
+     * [LaunchedSession] / [AttachedAutomator] from test bodies; this accessor is for other
+     * extensions that already hold an [ExtensionContext].
+     */
     public fun launchedFrom(context: ExtensionContext): LaunchedSession =
         checkNotNull(context.getStore(NAMESPACE).get(STORE_KEY, LaunchedSession::class.java)) {
             "No LaunchAndAttach session registered for this test invocation"
@@ -73,6 +102,34 @@ public class LaunchAndAttachExtension(
             lastSequentialSession = null
         }
         stored?.close()
+    }
+
+    override fun supportsParameter(
+        parameterContext: ParameterContext,
+        extensionContext: ExtensionContext,
+    ): Boolean {
+        if (parameterContext.declaringExecutable !is Method) return false
+        // Restrict resolution to per-test method invocations. Constructor parameters and
+        // @BeforeAll / @AfterAll lifecycle hooks run outside the per-test window.
+        if (!extensionContext.testMethod.isPresent) return false
+        val type = parameterContext.parameter.type
+        return type == LaunchedSession::class.java || type == AttachedAutomator::class.java
+    }
+
+    override fun resolveParameter(
+        parameterContext: ParameterContext,
+        extensionContext: ExtensionContext,
+    ): Any {
+        val session = launchedFrom(extensionContext)
+        return when (parameterContext.parameter.type) {
+            LaunchedSession::class.java -> session
+            AttachedAutomator::class.java -> session.automator
+            else ->
+                error(
+                    "LaunchAndAttachExtension cannot resolve parameter type " +
+                        parameterContext.parameter.type.name
+                )
+        }
     }
 
     private companion object {

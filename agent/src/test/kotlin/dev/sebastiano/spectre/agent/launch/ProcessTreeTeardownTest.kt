@@ -46,6 +46,11 @@ class ProcessTreeTeardownTest {
         try {
             assertTrue(process.isAlive, "sleep helper should still be running")
             assertTrue(ProcessTreeTeardown.destroyTree(process.toHandle(), graceMs = 500))
+            // ProcessHandle may observe death slightly before Process.isAlive flips on some hosts.
+            assertTrue(
+                process.waitFor(2, TimeUnit.SECONDS),
+                "process should exit after destroyTree",
+            )
             assertFalse(process.isAlive, "process should be dead after destroyTree")
         } finally {
             if (process.isAlive) process.destroyForcibly()
