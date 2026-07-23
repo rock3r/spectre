@@ -52,66 +52,61 @@ internal object LaunchReadiness {
     ): Long {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
         while (System.nanoTime() < deadline) {
-            if (!process.isAlive) {
-                // Direct: client is the target. Gradle-ish: client is ./gradlew — if it died
-                // before we discovered an app JVM, surface client exit/stderr rather than a
-                // misleading name-filter miss at JVM_ATTACHABLE.
-                throw processExited(
-                    process = process,
-                    stdoutPath = stdoutPath,
-                    stderrPath = stderrPath,
-                    detail =
-                        if (gradleish) {
-                            GRADLE_CLIENT_DEAD_BEFORE_APP_JVM
-                        } else {
-                            ""
-                        },
-                )
-            }
             if (!gradleish) {
-                // Direct launches already know the target PID. Stage PROCESS_ALIVE established
-                // the process is live; attach-by-pid works even when -XX:-UsePerfData hides the
-                // target from VirtualMachine.list() (see SpectreProcesses). Agent bootstrap's
-                // attachTimeoutMs covers "JVM not ready for loadAgent yet".
+                // Direct: client is the target. Stage PROCESS_ALIVE established the process is
+                // live; attach-by-pid works even when -XX:-UsePerfData hides the target from
+                // VirtualMachine.list() (see SpectreProcesses).
+                if (!process.isAlive) {
+                    throw processExited(process, stdoutPath, stderrPath)
+                }
                 return launchedPid
             }
+            // Gradle-ish: keep discovering after the client exits. The app JVM is often a
+            // daemon child (not a ProcessHandle descendant of ./gradlew); tasks that fork and
+            // return still need the remaining stage budget to observe the app.
             val pid = LaunchDescendantDiscovery.discoverAppJvm(launchedPid, nameFilter)
             if (pid != null) return pid
             sleepQuietly(POLL_MS)
         }
+        if (!gradleish) {
+            if (!process.isAlive) {
+                throw processExited(process, stdoutPath, stderrPath)
+            }
+            throw JvmNotAttachableException(
+                launchedPid = launchedPid,
+                timeoutMs = timeoutMs,
+                stdoutPath = stdoutPath,
+                stderrPath = stderrPath,
+                detail =
+                    "pid $launchedPid stayed alive but was not attachable within ${timeoutMs}ms",
+            )
+        }
+        // Gradle-ish timeout: classify by whether the *client* is still running.
+        // Dead client + no app → surface client exit/stderr (wrapper/env failure).
+        // Live client + no app → true discovery / name-filter miss.
         if (!process.isAlive) {
             throw processExited(
                 process = process,
                 stdoutPath = stdoutPath,
                 stderrPath = stderrPath,
-                detail =
-                    if (gradleish) {
-                        GRADLE_CLIENT_DEAD_BEFORE_APP_JVM
-                    } else {
-                        ""
-                    },
+                detail = GRADLE_CLIENT_DEAD_BEFORE_APP_JVM,
             )
         }
-        // Client still alive (or Gradle client still running) but no app JVM matched.
         throw JvmNotAttachableException(
             launchedPid = launchedPid,
             timeoutMs = timeoutMs,
             stdoutPath = stdoutPath,
             stderrPath = stderrPath,
             detail =
-                if (gradleish) {
-                    "Gradle-ish launch: client still running but no daemon-child/client-descendant " +
-                        "app JVM matched" +
-                        (nameFilter?.let { " nameFilter='$it'" }.orEmpty()) +
-                        (if (nameFilter.isNullOrBlank()) {
-                            " (set LaunchSpec.appJvmNameFilter / --app-name to disambiguate " +
-                                "daemon children)"
-                        } else {
-                            ""
-                        })
-                } else {
-                    "pid $launchedPid stayed alive but was not attachable within ${timeoutMs}ms"
-                },
+                "Gradle-ish launch: client still running but no daemon-child/client-descendant " +
+                    "app JVM matched" +
+                    (nameFilter?.let { " nameFilter='$it'" }.orEmpty()) +
+                    (if (nameFilter.isNullOrBlank()) {
+                        " (set LaunchSpec.appJvmNameFilter / --app-name to disambiguate " +
+                            "daemon children)"
+                    } else {
+                        ""
+                    }),
         )
     }
 

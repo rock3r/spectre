@@ -49,7 +49,10 @@ class LaunchAndAttachGradleClientDeathTest {
                         stageTimeouts =
                             LaunchStageTimeouts(
                                 processAliveMs = 500,
-                                jvmAttachableMs = 5_000,
+                                // Short discovery budget: client dies at ~1s; we still poll until
+                                // this timeout before classifying (daemon apps may appear after
+                                // client exit — but with an impossible nameFilter none will).
+                                jvmAttachableMs = 1_500,
                                 agentBootstrapMs = 2_000,
                                 firstWindowMs = 2_000,
                             ),
