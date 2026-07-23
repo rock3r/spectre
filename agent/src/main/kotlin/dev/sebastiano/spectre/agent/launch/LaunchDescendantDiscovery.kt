@@ -92,13 +92,23 @@ public object LaunchDescendantDiscovery {
                 addAll(daemonPids)
             }
         }
+        val daemonPidSet = daemonPids // roots may include daemon pids as walk roots only
         return roots
             .asSequence()
             .flatMap { root -> descendantPidsOf(root).asSequence() }
             .filter { pid -> pid != clientPid }
+            .filter { pid -> pid !in daemonPidSet }
             .filter { pid -> looksLikeJavaProcess(pid) }
+            .filter { pid -> !commandLineLooksLikeGradleDaemon(pid) }
             .filter { pid -> nameFilter.isNullOrBlank() || commandLineContains(pid, nameFilter) }
             .maxOrNull()
+    }
+
+    private fun commandLineLooksLikeGradleDaemon(pid: Long): Boolean {
+        val handle = ProcessHandle.of(pid).orElse(null) ?: return false
+        val cmd = handle.info().command().orElse("")
+        val args = handle.info().arguments().orElse(emptyArray()).joinToString(" ")
+        return isGradleDaemonDisplayName("$cmd $args")
     }
 
     private fun looksLikeJavaProcess(pid: Long): Boolean {

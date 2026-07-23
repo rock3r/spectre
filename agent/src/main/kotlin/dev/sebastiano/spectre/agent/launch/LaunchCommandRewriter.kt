@@ -91,7 +91,8 @@ public object LaunchCommandRewriter {
             when {
                 token == "-jar" -> return false
                 isExactDynamicAgentLoadingFlag(token) -> return true
-                token == "-cp" || token == "-classpath" -> i += 2 // skip classpath value
+                token == "-cp" || token == "-classpath" || token == "--class-path" ->
+                    i += 2 // skip classpath value
                 token.startsWith("-") -> i++
                 else -> return false // main class boundary
             }
@@ -116,9 +117,11 @@ public object LaunchCommandRewriter {
             val token = command[i]
             when {
                 token == "-jar" -> return null // remaining tokens are jar path + app args
-                token == "-cp" || token == "-classpath" -> return command.getOrNull(i + 1)
+                token == "-cp" || token == "-classpath" || token == "--class-path" ->
+                    return command.getOrNull(i + 1)
                 token.startsWith("-cp=") -> return token.removePrefix("-cp=")
                 token.startsWith("-classpath=") -> return token.removePrefix("-classpath=")
+                token.startsWith("--class-path=") -> return token.removePrefix("--class-path=")
                 token.startsWith("-") -> i++ // other JVM launcher option
                 else -> return null // main class — end of launcher options
             }
