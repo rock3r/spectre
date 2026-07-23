@@ -195,7 +195,7 @@ older `capture.json` for clicks after settle — capture writes raw keys for ins
 
 ### "Older Hot Reload builds"
 
-Spectre tests against the Compose Hot Reload **1.2** line (pinned **1.2.0-rc01**, minimum
+Spectre tests against the Compose Hot Reload **1.2** line (pinned **1.2.0**, minimum
 **1.2.0-alpha+211**). Older orchestration servers may omit message types Spectre needs; upgrade
 HR rather than expecting settle wait to work.
 
