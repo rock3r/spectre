@@ -160,6 +160,18 @@ internal object LaunchReadiness {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
         var lastError: IOException? = null
         while (System.nanoTime() < deadline) {
+            if (!ProcessHandle.of(attachedPid).map { it.isAlive }.orElse(false)) {
+                throw FirstWindowTimeoutException(
+                    attachedPid = attachedPid,
+                    timeoutMs = timeoutMs,
+                    stdoutPath = stdoutPath,
+                    stderrPath = stderrPath,
+                    cause =
+                        IllegalStateException(
+                            "Attached pid=$attachedPid exited before any window appeared"
+                        ),
+                )
+            }
             try {
                 if (automator.windows().isNotEmpty()) return
             } catch (ex: IOException) {

@@ -49,16 +49,75 @@ public object LaunchDescendantDiscovery {
             val nameMatched = nonDaemon.filter {
                 it.displayName.contains(nameFilter, ignoreCase = true)
             }
-            if (nameMatched.isEmpty()) return null
             val structural = nameMatched.filter { info ->
                 info.pid in childOfDaemon.map(JvmProcessInfo::pid).toSet() ||
                     info.pid in clientDescendants
             }
-            return structural.maxByOrNull { it.pid }?.pid
+            structural
+                .maxByOrNull { it.pid }
+                ?.pid
+                ?.let {
+                    return it
+                }
+            // Native process-tree fallback: hsperfdata/list can lag behind spawn. Walk daemon
+            // children and client descendants via ProcessHandle and match command/args.
+            return discoverByNativeTree(
+                clientPid = clientPid,
+                daemonPids = daemonPids,
+                nameFilter = nameFilter,
+            )
         }
 
         // No name filter: only client descendants (never unfiltered daemon children).
         return nonDaemon.filter { it.pid in clientDescendants }.maxByOrNull { it.pid }?.pid
+            ?: discoverByNativeTree(
+                clientPid = clientPid,
+                daemonPids = emptySet(), // no unfiltered daemon walk without nameFilter
+                nameFilter = null,
+            )
+    }
+
+    /**
+     * Walk [ProcessHandle] descendants when Attach list is incomplete. With [nameFilter], also walk
+     * daemon children; without it, only [clientPid] descendants.
+     */
+    private fun discoverByNativeTree(
+        clientPid: Long,
+        daemonPids: Set<Long>,
+        nameFilter: String?,
+    ): Long? {
+        val roots = buildList {
+            add(clientPid)
+            if (!nameFilter.isNullOrBlank()) {
+                addAll(daemonPids)
+            }
+        }
+        val candidates = mutableListOf<Long>()
+        for (root in roots) {
+            for (pid in descendantPidsOf(root)) {
+                if (pid == clientPid) continue
+                if (!looksLikeJavaProcess(pid)) continue
+                if (nameFilter.isNullOrBlank() || commandLineContains(pid, nameFilter)) {
+                    candidates.add(pid)
+                }
+            }
+        }
+        return candidates.maxOrNull()
+    }
+
+    private fun looksLikeJavaProcess(pid: Long): Boolean {
+        val handle = ProcessHandle.of(pid).orElse(null) ?: return false
+        if (!handle.isAlive) return false
+        val cmd = handle.info().command().orElse("")
+        val base = LaunchCommandRewriter.basename(cmd)
+        return base.equals("java", ignoreCase = true) || base.equals("java.exe", ignoreCase = true)
+    }
+
+    private fun commandLineContains(pid: Long, needle: String): Boolean {
+        val handle = ProcessHandle.of(pid).orElse(null) ?: return false
+        val cmd = handle.info().command().orElse("")
+        val args = handle.info().arguments().orElse(emptyArray()).joinToString(" ")
+        return cmd.contains(needle, ignoreCase = true) || args.contains(needle, ignoreCase = true)
     }
 
     /** True when [displayName] looks like a Gradle daemon JVM banner from `jps` / Attach list. */

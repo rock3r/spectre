@@ -65,7 +65,10 @@ public object LaunchCommandRewriter {
         if (!isDirectJvmLaunch(command)) return command
         val result = command.toMutableList()
         var insertAt = 1
-        if (inject && !hasDynamicAgentLoadingFlag(command)) {
+        val alreadyPresent =
+            hasDynamicAgentLoadingFlag(command) ||
+                extraJvmArgs.any { isExactDynamicAgentLoadingFlag(it) }
+        if (inject && !alreadyPresent) {
             result.add(insertAt, DYNAMIC_AGENT_LOADING_FLAG)
             insertAt++
         }
@@ -78,7 +81,7 @@ public object LaunchCommandRewriter {
     /**
      * True when [command] already sets `±EnableDynamicAgentLoading` as a **launcher** JVM flag
      * (before `-jar` / main class). Unrelated tokens such as `-Dfeature=EnableDynamicAgentLoading`
-     * do not count.
+     * do not count. Tokens that take a value (`-cp` / `-classpath`) skip their following argument.
      */
     public fun hasDynamicAgentLoadingFlag(command: List<String>): Boolean {
         if (!isDirectJvmLaunch(command)) return false
@@ -87,14 +90,17 @@ public object LaunchCommandRewriter {
             val token = command[i]
             when {
                 token == "-jar" -> return false
-                token == DYNAMIC_AGENT_LOADING_FLAG || token == "-XX:-EnableDynamicAgentLoading" ->
-                    return true
+                isExactDynamicAgentLoadingFlag(token) -> return true
+                token == "-cp" || token == "-classpath" -> i += 2 // skip classpath value
                 token.startsWith("-") -> i++
                 else -> return false // main class boundary
             }
         }
         return false
     }
+
+    private fun isExactDynamicAgentLoadingFlag(token: String): Boolean =
+        token == DYNAMIC_AGENT_LOADING_FLAG || token == "-XX:-EnableDynamicAgentLoading"
 
     /**
      * Best-effort scan of a direct JVM command line for a `-cp` / `-classpath` value among
