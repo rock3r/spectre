@@ -180,14 +180,16 @@ class DaemonFixtureIntegrationTest {
             spawnComposeFixture().use { fixture ->
                 DaemonClient(socketPath).use { client ->
                     val attached =
-                        client.requestOrStart(DaemonRequest.Attach(fixture.pid)) {
-                            daemon =
-                                DaemonProcessLauncher(
-                                        socketPath = socketPath,
-                                        classPath = daemonFixtureRuntimeClassPath(),
-                                    )
-                                    .start()
-                        } as DaemonResponse.Attached
+                        requireAttached(
+                            client.requestOrStart(DaemonRequest.Attach(fixture.pid)) {
+                                daemon =
+                                    DaemonProcessLauncher(
+                                            socketPath = socketPath,
+                                            classPath = daemonFixtureRuntimeClassPath(),
+                                        )
+                                        .start()
+                            }
+                        )
 
                     assertEquals(fixture.pid, attached.targetPid)
                     assertTrue(
@@ -452,6 +454,15 @@ private fun startMcpBinary(daemonUser: String): Process {
         )
         .start()
 }
+
+/** Cast attach responses with a useful message when the daemon returns [DaemonResponse.Error]. */
+private fun requireAttached(response: DaemonResponse): DaemonResponse.Attached =
+    when (response) {
+        is DaemonResponse.Attached -> response
+        is DaemonResponse.Error ->
+            error("daemon attach failed: code=${response.code} message=${response.message}")
+        else -> error("unexpected daemon response for attach: $response")
+    }
 
 private suspend fun mcpText(client: Client, tool: String, arguments: Map<String, Any?>): String {
     val result = client.callTool(tool, arguments)
