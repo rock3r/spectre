@@ -1,9 +1,9 @@
 name: IDE UI test
 
-# Runs the intellij-ide-starter UI test (#42) — boots a real IntelliJ IDEA 2026.1.1 in a child
-# process, installs the freshly-built `:sample-intellij-plugin` zip, invokes `RunSpectreAction`
-# via the Driver, and asserts every tagged Compose node from `SpectreSampleToolWindowContent`
-# appears in `idea.log`.
+# Runs the intellij-ide-starter UI test (#42) — boots a real IntelliJ IDEA 2026.2.0.1 (262 /
+# JBR 25 era) in a child process, installs the freshly-built `:sample-intellij-plugin` zip,
+# invokes `RunSpectreAction` via the Driver, and asserts every tagged Compose node from
+# `SpectreSampleToolWindowContent` appears in `idea.log`.
 #
 # Why this is its own workflow (not part of `ci.yml`):
 #   - First run downloads ~1 GB IDE installer (cached afterwards via the `ide-starter-cache`
@@ -67,12 +67,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up JDK 21
-        # Same toolchain as the rest of the project (see ci.yml for the temurin-vs-jbr note).
+      - name: Set up JDK 25
+        # ide-starter 262+ is compiled for Java 25 (class file 69). Running the uiTest
+        # executor on JDK 21 fails with UnsupportedClassVersionError on
+        # TestCleanupListener. The plugin still targets jvmToolchain(21) for compile —
+        # only the test process / Gradle JVM needs 25 (issue #217 / platform 262).
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "25"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
