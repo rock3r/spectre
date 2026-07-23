@@ -86,18 +86,18 @@ public class LaunchAndAttachExtension(
      * extensions that already hold an [ExtensionContext].
      */
     public fun launchedFrom(context: ExtensionContext): LaunchedSession =
-        checkNotNull(context.getStore(NAMESPACE).get(STORE_KEY, LaunchedSession::class.java)) {
+        checkNotNull(context.getStore(storeNamespace).get(STORE_KEY, LaunchedSession::class.java)) {
             "No LaunchAndAttach session registered for this test invocation"
         }
 
     override fun beforeEach(context: ExtensionContext) {
         val launchedSession = LaunchAndAttach.launch(spec, warningSink)
-        context.getStore(NAMESPACE).put(STORE_KEY, launchedSession)
+        context.getStore(storeNamespace).put(STORE_KEY, launchedSession)
         lastSequentialSession = launchedSession
     }
 
     override fun afterEach(context: ExtensionContext) {
-        val stored = context.getStore(NAMESPACE).remove(STORE_KEY, LaunchedSession::class.java)
+        val stored = context.getStore(storeNamespace).remove(STORE_KEY, LaunchedSession::class.java)
         if (lastSequentialSession === stored) {
             lastSequentialSession = null
         }
@@ -132,10 +132,13 @@ public class LaunchAndAttachExtension(
         }
     }
 
-    private companion object {
-        val NAMESPACE: ExtensionContext.Namespace =
-            ExtensionContext.Namespace.create(LaunchAndAttachExtension::class.java)
-    }
+    /**
+     * Per-instance store namespace so two `@RegisterExtension` fields on the same test class do not
+     * overwrite each other's sessions under a shared class-level key.
+     */
+    private val storeNamespace: ExtensionContext.Namespace =
+        ExtensionContext.Namespace.create(LaunchAndAttachExtension::class.java, this)
 }
 
+// File-level private constant rather than companion `const val` (which leaks into public ABI).
 private const val STORE_KEY: String = "launchedSession"
