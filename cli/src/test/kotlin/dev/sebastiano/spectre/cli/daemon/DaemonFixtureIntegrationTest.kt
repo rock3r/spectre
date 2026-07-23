@@ -361,6 +361,13 @@ private fun spawnComposeFixture(): FixtureProcess {
         process.destroyForcibly()
         "Compose fixture did not emit $READY_SENTINEL"
     }
+    // READY is printed before the JVM is always attachable; give the target a short settle
+    // window so VirtualMachine.attach is less likely to race (macOS CI flakes).
+    Thread.sleep(FIXTURE_ATTACH_SETTLE_MS)
+    check(process.isAlive) {
+        process.destroyForcibly()
+        "Compose fixture exited immediately after $READY_SENTINEL"
+    }
     return FixtureProcess(process, reader, drainer)
 }
 
@@ -476,12 +483,14 @@ private fun attachWithRetry(
             is DaemonResponse.Attached -> return response
             is DaemonResponse.Error -> {
                 lastError = response
-                val notReady =
-                    response.message.contains("not ready to participate in attach handshake")
-                if (!notReady || attempt == ATTACH_RETRY_ATTEMPTS - 1) {
+                val retryable =
+                    response.message.contains("not ready to participate in attach handshake") ||
+                        response.message.contains("No such process") ||
+                        response.message.contains("AttachNotSupportedException")
+                if (!retryable || attempt == ATTACH_RETRY_ATTEMPTS - 1) {
                     return requireAttached(response)
                 }
-                Thread.sleep(ATTACH_RETRY_BACKOFF_MS * (attempt + 1))
+                Thread.sleep(ATTACH_RETRY_BACKOFF_MS * (attempt + 1L))
             }
             else -> return requireAttached(response)
         }
@@ -489,8 +498,9 @@ private fun attachWithRetry(
     return requireAttached(lastError ?: error("attach retry loop exited without a response"))
 }
 
-private const val ATTACH_RETRY_ATTEMPTS: Int = 5
-private const val ATTACH_RETRY_BACKOFF_MS: Long = 250
+private const val ATTACH_RETRY_ATTEMPTS: Int = 8
+private const val ATTACH_RETRY_BACKOFF_MS: Long = 400
+private const val FIXTURE_ATTACH_SETTLE_MS: Long = 750
 
 private suspend fun mcpText(client: Client, tool: String, arguments: Map<String, Any?>): String {
     val result = client.callTool(tool, arguments)
