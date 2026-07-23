@@ -121,10 +121,9 @@ class LaunchedAppTest {
 }
 ```
 
-The extension implements `ParameterResolver`, so parallel-safe tests should take
-`LaunchedSession` or `AttachedAutomator` as method parameters (resolved from the
-per-invocation store). The `launchExt.automator` / `launchExt.launched` accessors return
-the most recent sequential session and can race under parallel execution:
+The extension implements `ParameterResolver`, so when a class registers **one**
+`LaunchAndAttachExtension`, parallel-safe tests can take `LaunchedSession` or
+`AttachedAutomator` as method parameters (resolved from the per-invocation store):
 
 ```kotlin
 @Test
@@ -138,8 +137,14 @@ fun alsoFine(automator: AttachedAutomator) {
 }
 ```
 
+The `launchExt.automator` / `launchExt.launched` accessors are instance-specific and
+thread-local-backed, so they stay correct under parallel execution and when a class
+registers **two** launch extensions (app + helper). With two or more registrations,
+parameter injection is disabled to avoid competing resolvers — use the property
+accessors instead.
+
 Because the extension needs a `LaunchSpec`, register it with `@RegisterExtension` (not
-`@ExtendWith`). Parameter injection still works for methods on the same test class.
+`@ExtendWith`).
 
 Prefer prod-like commands. For Gradle-ish launches, set `appJvmNameFilter` (main-class
 substring) so discovery can find the daemon-spawned app JVM without attaching an unrelated

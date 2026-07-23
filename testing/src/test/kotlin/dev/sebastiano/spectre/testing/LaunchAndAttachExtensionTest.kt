@@ -34,6 +34,13 @@ class LaunchAndAttachExtensionTest {
     }
 
     @Test
+    fun `launched accessor rejects out-of-lifecycle use on extension`() {
+        val ext = LaunchAndAttachExtension(LaunchSpec(command = listOf(javaBin(), "-version")))
+        assertFailsWith<IllegalStateException> { ext.launched }
+        assertFailsWith<IllegalStateException> { ext.automator }
+    }
+
+    @Test
     fun `rule before launches and surfaces stage PROCESS_ALIVE for java -version`() {
         val captureDir = Files.createTempDirectory("spectre-testing-launch-rule-")
         val rule =
