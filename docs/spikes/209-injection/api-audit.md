@@ -86,10 +86,16 @@ against the target:
 | `ComposeAutomator.refreshWindows` / `surfaceIds` / `tree` / `allNodes` | Window refresh + full tree |
 | `findByTestTag` / `findByText` / `findByContentDescription` / `findByRole` | Selectors |
 | `printTree` | Debug dump |
-| `waitForNode` / `waitForIdle` / `waitForVisualIdle` | Sync (mix of read + optional capture fingerprint) |
+| `waitForNode` / `waitForIdle` / `waitForVisualIdle` | Sync — see idle split below |
 | `windowIdentities` (`@InternalSpectreApi`) | Geometry for external recorders |
 
-`waitForVisualIdle` additionally samples screen pixels via Robot — see input path.
+**Idle helpers (do not conflate):**
+
+| API | Stability signal | Compose / Robot |
+| --- | --- | --- |
+| `waitForIdle` | UI **tree fingerprint** (`computeUiFingerprint`) until quiet | Read path (semantics / surface geometry) |
+| `waitForVisualIdle` | Screen **frame hash** only (`computeFrameHash` via Robot capture) | **OS-only** screenshots — no tree fingerprint |
+| `waitForNode` | Polls selectors until match | Read path |
 
 ---
 
@@ -156,8 +162,11 @@ window), these verbs need **no further Compose API**:
 | --- | --- |
 | `performSemanticsClick` | Needs live semantics action handle |
 | Overlay popup discovery completeness | Needs Compose-internal layer walk (read path) |
-| `waitForVisualIdle` frame hashing | Uses screenshots (OS-only) but also tree fingerprints (read path) |
+| `waitForIdle` / `waitForNode` | Need live semantics / tree fingerprint (read path) |
 | `monitorRecompositions` / `RecomposerInspector` | Compose-internal host chain |
+
+`waitForVisualIdle` is **not** in this table: it is frame-hash / Robot-screenshot based and does
+**not** consult the semantics tree fingerprint (unlike `waitForIdle`).
 
 ---
 
