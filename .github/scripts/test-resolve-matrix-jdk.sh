@@ -57,9 +57,12 @@ fi
 # Workflow must cover the 3×3 product and gate suites.
 for needle in jbr-21 jbr-25 temurin-lts ubuntu-latest macos-latest windows-latest \
   AgentContractCorpusTest AgentAttachIntegrationTest InProcessContractCorpusTest \
-  runLinuxX11RecordingSmoke workflow_call schedule "runner.os != 'Windows'"; do
+  runLinuxX11RecordingSmoke workflow_call schedule "runner.os != 'Windows'" \
+  SPECTRE_MATRIX_JAVA_HOME; do
   grep -q "$needle" "$workflow" || fail "runtime-matrix.yml missing expected token: $needle"
 done
+grep -q "SPECTRE_MATRIX_JAVA_HOME" "$script_dir/../../build.gradle.kts" ||
+  fail "root build.gradle.kts must honour SPECTRE_MATRIX_JAVA_HOME for matrix Test workers"
 
 # Release workflow must depend on the matrix gate.
 release="$script_dir/../workflows/release.yml"

@@ -116,6 +116,34 @@ subprojects {
     group = rootProject.group
     version = rootProject.version
 
+    // Runtime matrix (#216 / epic #215): modules keep `jvmToolchain(21)` for compile, but
+    // matrix cells must *execute* Test / JavaExec workers on the provisioned JBR/Temurin.
+    // When SPECTRE_MATRIX_JAVA_HOME is set (by `.github/workflows/runtime-matrix.yml`), force
+    // the worker JVM onto that home so JBR 25 cells do not silently fall back to a toolchain
+    // JDK 21.
+    val matrixJavaHome = providers.environmentVariable("SPECTRE_MATRIX_JAVA_HOME")
+    val matrixJavaExecutable =
+        matrixJavaHome.map { home ->
+            val javaName =
+                if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
+                ) {
+                    "java.exe"
+                } else {
+                    "java"
+                }
+            file("$home/bin/$javaName").absolutePath
+        }
+    tasks.withType<Test>().configureEach {
+        if (matrixJavaHome.isPresent) {
+            executable = matrixJavaExecutable.get()
+        }
+    }
+    tasks.withType<JavaExec>().configureEach {
+        if (matrixJavaHome.isPresent) {
+            executable = matrixJavaExecutable.get()
+        }
+    }
+
     pluginManager.withPlugin("com.ncorti.ktfmt.gradle") {
         extensions.configure<KtfmtExtension> { kotlinLangStyle() }
 

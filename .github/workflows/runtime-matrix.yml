@@ -76,7 +76,12 @@ jobs:
           java -version
           echo "runtime-label=${{ steps.jdk.outputs.runtime-label }}"
 
+      # Force Test/JavaExec workers onto the matrix JDK (see root build.gradle.kts). Modules
+      # still compile with jvmToolchain(21); SPECTRE_MATRIX_JAVA_HOME makes JBR 25 cells
+      # actually *run* on JBR 25 instead of a toolchain-provisioned JDK 21.
       - name: Contract corpus (in-process + HTTP)
+        env:
+          SPECTRE_MATRIX_JAVA_HOME: ${{ steps.jdk.outputs.path }}
         shell: bash
         run: |
           ./gradlew \
@@ -90,6 +95,8 @@ jobs:
       # in-process + HTTP corpus above; agent evidence stays Linux/macOS.
       - name: Agent attach + agent contract corpus
         if: runner.os != 'Windows'
+        env:
+          SPECTRE_MATRIX_JAVA_HOME: ${{ steps.jdk.outputs.path }}
         shell: bash
         run: |
           set -euo pipefail
@@ -142,6 +149,8 @@ jobs:
 
       - name: Linux X11 recording smoke under xvfb
         if: runner.os == 'Linux'
+        env:
+          SPECTRE_MATRIX_JAVA_HOME: ${{ steps.jdk.outputs.path }}
         shell: bash
         run: xvfb-run -a ./gradlew :recording:runLinuxX11RecordingSmoke
 
@@ -226,10 +235,12 @@ jobs:
       - name: Mixed-runtime agent attach
         env:
           SPECTRE_FIXTURE_JAVA_HOME: ${{ steps.fixture-jdk.outputs.path }}
+          SPECTRE_MATRIX_JAVA_HOME: ${{ steps.attacher-jdk.outputs.path }}
         shell: bash
         run: |
           set -euo pipefail
           echo "Attacher JAVA_HOME=$JAVA_HOME"
+          echo "SPECTRE_MATRIX_JAVA_HOME=$SPECTRE_MATRIX_JAVA_HOME"
           echo "Fixture JAVA_HOME=$SPECTRE_FIXTURE_JAVA_HOME"
           java -version
           "$SPECTRE_FIXTURE_JAVA_HOME/bin/java" -version

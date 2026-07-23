@@ -154,6 +154,11 @@ The matrix is **release-gated**: `release.yml` calls the same workflow via `work
 before helper builds and publish. A red cell blocks the release; scheduled failures open
 issues labelled `runtime-matrix` rather than vanishing into Actions noise.
 
+Test/JavaExec workers are forced onto the matrix JDK via `SPECTRE_MATRIX_JAVA_HOME`
+(root `build.gradle.kts`); modules still **compile** with `jvmToolchain(21)`. Without that
+env, Gradle would execute JBR 25 cells on a toolchain-provisioned JDK 21 and the matrix
+would not prove runtime compatibility.
+
 Mixed-runtime agent attach sets `SPECTRE_FIXTURE_JAVA_HOME` (or
 `-Pspectre.agent.fixtureJavaHome=…`) so the fixture JVM can differ from the attacher; the
 `:agent:test` task forwards it as
