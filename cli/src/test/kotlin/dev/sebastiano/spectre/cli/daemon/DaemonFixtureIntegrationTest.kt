@@ -326,6 +326,20 @@ private fun deleteDaemonSocketAndParent(socketPath: Path) {
 }
 
 private fun spawnComposeFixture(): FixtureProcess {
+    var lastError: String? = null
+    repeat(FIXTURE_SPAWN_ATTEMPTS) { attempt ->
+        try {
+            return spawnComposeFixtureOnce()
+        } catch (ex: IllegalStateException) {
+            lastError = ex.message
+            if (attempt == FIXTURE_SPAWN_ATTEMPTS - 1) throw ex
+            Thread.sleep(FIXTURE_ATTACH_SETTLE_MS * (attempt + 1L))
+        }
+    }
+    error(lastError ?: "Compose fixture failed to start")
+}
+
+private fun spawnComposeFixtureOnce(): FixtureProcess {
     val javaExe =
         if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "java.exe"
         else "java"
@@ -501,6 +515,7 @@ private fun attachWithRetry(
 private const val ATTACH_RETRY_ATTEMPTS: Int = 8
 private const val ATTACH_RETRY_BACKOFF_MS: Long = 400
 private const val FIXTURE_ATTACH_SETTLE_MS: Long = 750
+private const val FIXTURE_SPAWN_ATTEMPTS: Int = 3
 
 private suspend fun mcpText(client: Client, tool: String, arguments: Map<String, Any?>): String {
     val result = client.callTool(tool, arguments)
