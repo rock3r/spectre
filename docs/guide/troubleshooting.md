@@ -396,7 +396,7 @@ returns a human-readable diagnostic without throwing.
 ## "JBR vs Temurin: which JDK should I use?"
 
 - **Locally**: JBR 21 is the dev-loop default. JBR 25 also gets exercised via the
-  IDE-hosted UI test (it's bundled with IntelliJ 2026.1).
+  IDE-hosted UI test (it's bundled with IntelliJ 2026.2 / JBR 25).
 - **On CI**: Temurin 21. `actions/setup-java` does support the `jetbrains`
   distribution if you'd rather mirror the local toolchain — the choice here is
   pragmatic, not a constraint.

@@ -5,7 +5,6 @@ import com.intellij.driver.sdk.singleProject
 import com.intellij.driver.sdk.waitForIndicators
 import com.intellij.driver.sdk.waitForProjectOpen
 import com.intellij.ide.starter.driver.engine.runIdeWithDriver
-import com.intellij.ide.starter.ide.IdeProductProvider
 import com.intellij.ide.starter.junit5.hyphenateWithClass
 import com.intellij.ide.starter.models.TestCase
 import com.intellij.ide.starter.plugins.PluginConfigurator
@@ -13,6 +12,7 @@ import com.intellij.ide.starter.project.LocalProjectInfo
 import com.intellij.ide.starter.runner.CurrentTestMethod
 import com.intellij.ide.starter.runner.IDERunContext
 import com.intellij.ide.starter.runner.Starter
+import com.intellij.tools.ide.starter.product.idea.ultimate.IdeaUltimateProductInit
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicReference
@@ -28,9 +28,9 @@ import org.junit.jupiter.api.Test
  * IDE-hosted validation for #42: boots a real IntelliJ IDEA via `intellij-ide-starter`, installs
  * the locally-built `:sample-intellij-plugin` zip, invokes `RunSpectreAction`, and asserts the
  * action's `[Spectre]` log lines mention every tagged node from `SpectreSampleToolWindowContent`.
- * As of the 253.x (2026.1.x) line, JetBrains stopped shipping a distinct IntelliJ Community Edition
- * — IDEA Ultimate is now the unified product under a freemium licence, so this test naturally
- * targets IU.
+ * As of the 253.x line, JetBrains stopped shipping a distinct IntelliJ Community Edition — IDEA
+ * Ultimate is now the unified product under a freemium licence, so this test naturally targets IU.
+ * The platform pin is 262-based (IDEA 2026.2 / JBR 25 era; issue #217).
  *
  * Counterpart to the manual `./gradlew :sample-intellij-plugin:runIde` smoke that landed with #43 —
  * same assertions, no human in the loop. CI runs this only when the plugin or recording sources
@@ -57,21 +57,21 @@ class RunSpectreUiTest {
         val testContext =
             Starter.newContext(
                     CurrentTestMethod.hyphenateWithClass(),
-                    // The plugin compiles against IntelliJ IDEA 2026.1.1 (build
-                    // 261.23567.138 = IU). As of the 253.x line JetBrains stopped shipping a
-                    // distinct Community Edition — IU is the unified IDEA product under a
-                    // freemium licence — so `IdeProductProvider.IU` is the only thing
-                    // ide-starter has for 2026.1.x and this test targets it directly.
+                    // The plugin compiles against IntelliJ IDEA 2026.2.0.1 (build
+                    // 262.8665.337 = IU). As of 2026.2, ide-starter split product defaults
+                    // into `ide-starter-product-*` modules; IU is
+                    // `IdeaUltimateProductInit().ideInfo` (IdeProductProvider was removed).
+                    // As of the 253.x line JetBrains also stopped shipping a distinct
+                    // Community Edition — IU is the unified freemium product.
                     //
                     // We do NOT call `setLicense(...)` — invokeAction-only flows against
                     // an empty project don't need a paid licence. If the IDE later refuses
                     // to start because of licence validation, that's the signal to wire
                     // `LICENSE_KEY` from a CI secret.
                     TestCase(
-                        IdeProductProvider.IU.copy(
-                            buildType = "release",
-                            buildNumber = IDE_BUILD_NUMBER,
-                        ),
+                        IdeaUltimateProductInit()
+                            .ideInfo
+                            .copy(buildType = "release", buildNumber = IDE_BUILD_NUMBER),
                         LocalProjectInfo(tempProject),
                     ),
                 )
@@ -107,7 +107,10 @@ class RunSpectreUiTest {
                     // CI's fresh config dir this can briefly steal focus and adds
                     // unnecessary cost; we don't need it.
                     setIdeStartupDialogEnabled(false)
-                    setNeverShowInitConfigModal()
+                    // 262 renamed/folded the old setNeverShowInitConfigModal() into the
+                    // broader startup-dialog suppressors.
+                    disableStartupDialogs()
+                    disableNewUsersOnboardingDialogue()
                 }
                 // Skip stub-index initialization on project open. With the daemon disabled
                 // the dominant remaining cost on a cold Windows runner is ~3 min of stub /
@@ -251,12 +254,12 @@ class RunSpectreUiTest {
     }
 
     private companion object {
-        // IntelliJ IDEA 2026.1.1 build number (resolves to IU here — see comment on the
-        // `IdeProductProvider.IU` use above). Must stay in lockstep with `intellijIdea` in
-        // `gradle/libs.versions.toml` — bumping that version means updating this constant to
-        // the matching build (find it under
-        // https://www.jetbrains.com/intellij-repository/releases/com/jetbrains/intellij/idea/).
-        const val IDE_BUILD_NUMBER = "261.23567.138"
+        // IntelliJ IDEA 2026.2.0.1 build number (resolves to IU here — see comment on the
+        // `IdeProductProvider.IU` use above). Must stay in lockstep with `intellijIdea` /
+        // `ideStarter` in `gradle/libs.versions.toml` — bumping those means updating this
+        // constant to the matching build (product→build map:
+        // https://data.services.jetbrains.com/products?code=IIU&release.type=release).
+        const val IDE_BUILD_NUMBER = "262.8665.337"
         const val SPECTRE_ACTION_ID = "dev.sebastiano.spectre.sample.RunSpectre"
         // Matches every test-tagged node the manual smoke proved discoverable in PR #43.
         // Keep this list aligned with `SpectreSampleToolWindowContent`'s `Modifier.testTag`

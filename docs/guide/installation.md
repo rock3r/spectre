@@ -43,7 +43,8 @@ on `PATH`.
 ## Requirements
 
 - **JDK 21 or newer.** JBR 21 is the project's dev-loop default; JBR 25 is exercised via
-  the IDE-hosted UI test. Any JDK 21+ works for the non-IDE modules.
+  the IDE-hosted UI test (IntelliJ 2026.2 / platform 262) and the runtime matrix. Any JDK
+  21+ works for the non-IDE modules.
 - **Windows 10 version 1903 or newer**, **.NET 8 Desktop Runtime**, and
   **Windows App Runtime 1.8** for native window/region recording and still-window screenshots
   through Windows Graphics Capture. Contributors and CI that build the helper from source

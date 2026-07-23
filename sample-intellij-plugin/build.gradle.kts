@@ -19,7 +19,7 @@ kotlin { jvmToolchain(21) }
 // Repositories are inherited from settings.gradle.kts (Maven Central, Google, IntelliJ Platform
 // + JetBrains Skiko mirror) — the IntelliJ Platform settings plugin makes that work.
 
-// IDE 2026.1.1 bundles its own Jewel + Compose + skiko as platform modules (see
+// IDE 2026.2 (262) bundles its own Jewel + Compose + skiko as platform modules (see
 // `<idea-home>/lib/intellij.libraries.{skiko,compose.*}.jar` and
 // `intellij.platform.jewel.*.jar`). The IDE loads its bundled skiko native dylib at startup;
 // JNI native libraries are loaded once per JVM, so the plugin MUST use the IDE's own skiko
@@ -188,6 +188,7 @@ val uiTestRuntimeOnly by configurations.getting { extendsFrom(configurations["ru
 dependencies {
     "uiTestImplementation"(libs.junit5.api)
     "uiTestImplementation"(libs.ideStarter.squashed)
+    "uiTestImplementation"(libs.ideStarter.productIdeaUltimate)
     "uiTestImplementation"(libs.ideStarter.junit5)
     "uiTestImplementation"(libs.ideStarter.driver)
     "uiTestImplementation"(libs.ideStarter.driverClient)
@@ -211,7 +212,7 @@ val uiTest by
         group = "verification"
         description =
             "IDE-hosted UI test for the Spectre sample plugin (intellij-ide-starter, #42). " +
-                "Boots an IntelliJ IDEA 2026.1.1 in a child process, installs the plugin from " +
+                "Boots an IntelliJ IDEA 2026.2.0.1 in a child process, installs the plugin from " +
                 "the local buildPlugin output, invokes `RunSpectreAction`, and asserts the " +
                 "expected semantics tags appear in idea.log. NOT wired into :check — opt-in. " +
                 "Targets IU because JetBrains stopped shipping a distinct IC distribution as " +

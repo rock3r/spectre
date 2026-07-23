@@ -1,9 +1,9 @@
 name: IDE UI test
 
-# Runs the intellij-ide-starter UI test (#42) — boots a real IntelliJ IDEA 2026.1.1 in a child
-# process, installs the freshly-built `:sample-intellij-plugin` zip, invokes `RunSpectreAction`
-# via the Driver, and asserts every tagged Compose node from `SpectreSampleToolWindowContent`
-# appears in `idea.log`.
+# Runs the intellij-ide-starter UI test (#42) — boots a real IntelliJ IDEA 2026.2.0.1 (262 /
+# JBR 25 era) in a child process, installs the freshly-built `:sample-intellij-plugin` zip,
+# invokes `RunSpectreAction` via the Driver, and asserts every tagged Compose node from
+# `SpectreSampleToolWindowContent` appears in `idea.log`.
 #
 # Why this is its own workflow (not part of `ci.yml`):
 #   - First run downloads ~1 GB IDE installer (cached afterwards via the `ide-starter-cache`
