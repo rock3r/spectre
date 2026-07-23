@@ -122,17 +122,15 @@ subprojects {
     // the worker JVM onto that home so JBR 25 cells do not silently fall back to a toolchain
     // JDK 21.
     val matrixJavaHome = providers.environmentVariable("SPECTRE_MATRIX_JAVA_HOME")
-    val matrixJavaExecutable =
-        matrixJavaHome.map { home ->
-            val javaName =
-                if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
-                ) {
-                    "java.exe"
-                } else {
-                    "java"
-                }
-            file("$home/bin/$javaName").absolutePath
-        }
+    val matrixJavaExecutable = matrixJavaHome.map { home ->
+        val javaName =
+            if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)) {
+                "java.exe"
+            } else {
+                "java"
+            }
+        file("$home/bin/$javaName").absolutePath
+    }
     tasks.withType<Test>().configureEach {
         if (matrixJavaHome.isPresent) {
             // Test.executable is a Property<String> on modern Gradle; setExecutable keeps
