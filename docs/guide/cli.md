@@ -34,11 +34,40 @@ authoritative reference for command arguments and options.
 
 The CLI follows a simple loop:
 
-1. Find a running JVM with `ps`.
-2. Attach it and retain the returned session ID.
+1. Find a running JVM with `ps`, **or** launch one with `spectre launch -- <command>`.
+2. Attach it and retain the returned session ID (or hold the launch session open).
 3. Inspect windows, the semantics tree, or nodes with a Compose test tag.
 4. Use a current node key to click or type, then inspect again.
 5. Capture a screenshot or recording when useful.
+
+### Launch and attach
+
+`spectre launch` starts a command, runs staged readiness (process alive → JVM attachable →
+agent bootstrap → first window), attaches Spectre, and tears the process tree down when the
+session ends. Prefer **prod-like** launches (`java -jar`, installDist, packaged apps). Gradle
+`./gradlew :app:run` / `hotRun` work but print a loud warning and require `--app-name` when the
+app JVM is daemon-spawned.
+
+```shell
+# Prod-like (recommended)
+spectre launch --once -- java -jar app/build/libs/app.jar
+
+# Gradle-ish (supported with warnings; name filter recommended)
+spectre launch --once --app-name ComposeFixtureMain -- ./gradlew :agent-test-fixture:run
+
+# Hold the session open until Enter / EOF, then tear down
+spectre launch -- java -jar app.jar
+```
+
+Options:
+
+- `-C` / `--directory` — working directory for the launched process
+- `--app-name` — substring of the app JVM display name (Gradle-ish descendant discovery)
+- `--once` — exit after readiness succeeds (print window count) instead of holding the session
+
+Stdout/stderr from the launched process are captured to files; their paths are printed on
+success. Stage failures print a taxonomy error such as `[PROCESS_ALIVE]` with exit code and
+stderr excerpt. See [Troubleshooting](troubleshooting.md#launch-and-attach-harness).
 
 For scripts and agents, add `--json` to a command that supports it. JSON output includes a
 format version and stable field names; use the returned session ID and node keys rather than

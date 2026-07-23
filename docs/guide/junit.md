@@ -82,6 +82,53 @@ class MyTest {
 getter, which is what JUnit 4 reflects on. Without the `get:` prefix Kotlin would put
 the annotation on the property itself and JUnit wouldn't see it.
 
+## Launch-and-attach harness
+
+When the UI under test is a **separate JVM** (prod-like `java -jar`, installDist, or even
+`./gradlew :app:run` with warnings), use `LaunchAndAttachExtension` (JUnit 5) or
+`LaunchAndAttachRule` (JUnit 4) from `:testing`. They call the shared agent launch core
+before each test and tear the process tree down after — the same lifecycle window
+`ComposeAutomatorExtension` / `ComposeAutomatorRule` use, so future failure-artifact
+hooks can compose freely.
+
+```kotlin
+import dev.sebastiano.spectre.agent.launch.LaunchSpec
+import dev.sebastiano.spectre.testing.LaunchAndAttachExtension
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.RegisterExtension
+
+class LaunchedAppTest {
+
+    @JvmField
+    @RegisterExtension
+    val launchExt =
+        LaunchAndAttachExtension(
+            LaunchSpec(
+                command =
+                    listOf(
+                        javaBin,
+                        "-jar",
+                        "app/build/libs/app.jar",
+                    )
+            )
+        )
+
+    @Test
+    fun exercise() {
+        val windows = launchExt.automator.windows()
+        // …
+    }
+}
+```
+
+Prefer prod-like commands. For Gradle-ish launches, set `appJvmNameFilter` (main-class
+substring) so discovery can find the daemon-spawned app JVM without attaching an unrelated
+process. Direct `java` launches inject `-XX:+EnableDynamicAgentLoading` automatically.
+
+The full API lives in `dev.sebastiano.spectre.agent.launch` (`LaunchAndAttach`,
+`LaunchSpec`, stage exceptions). See [Agent attach](agent.md) and
+[Troubleshooting](troubleshooting.md#launch-and-attach-harness).
+
 ## Launching a Compose window from a test
 
 `application { Window(...) { ... } }` blocks until the app exits, so do not call it

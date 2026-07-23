@@ -17,6 +17,9 @@ kotlin {
 
 dependencies {
     api(projects.core)
+    // Launch-and-attach JUnit surface (#208) composes over the experimental agent launch API.
+    // Kept as `api` so consumers see `LaunchSpec` / `LaunchedSession` types from the extension.
+    api(projects.agent)
     // JUnit 4 and JUnit Jupiter are compileOnly so consumers pick whichever they're already
     // using; the testing module itself only references their public APIs.
     compileOnly(libs.junit4)
@@ -29,6 +32,8 @@ dependencies {
     testRuntimeOnly(libs.junit5.engine)
     // Lets us run the JUnit 4 rule via the JUnit Platform launcher in our own tests.
     testRuntimeOnly(libs.junit5.vintageEngine)
+    // Runtime jar path for attach e2es that launch fixtures via the harness.
+    testRuntimeOnly(projects.agentRuntime)
 }
 
 tasks.withType<Test>().configureEach { useJUnitPlatform() }
