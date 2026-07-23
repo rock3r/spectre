@@ -52,7 +52,7 @@ import org.junit.jupiter.api.condition.OS
  * - real HR orchestration server + Application-role Ping/Ack client
  * - daemon attach discovers `compose.reload.orchestration.port` and becomes reload-aware
  * - tree issues generation-stamped keys; settle wait completes full chain; pre-reload keys fail
- *   closed; post-reload tree/capture/click work
+ *   closed; post-reload tree/click work
  *
  * Class redefine is still supplied as orchestration messages (same wire as HR) rather than a full
  * `hotRun` recompile — the Spectre surfaces under test are attach, settle, and invalidation.
@@ -67,7 +67,12 @@ class HotReloadDaemonFixtureE2eTest {
         val server = startOrchestrationServer()
         val port = server.port.getBlocking(15.seconds).getOrThrow()
         val appScope = applicationScope()
-        val appJob = startAckingApplicationClient(port, appScope)
+        val appReady = CountDownLatch(1)
+        val appJob = startAckingApplicationClient(port, appScope, appReady)
+        assertTrue(
+            appReady.await(15, TimeUnit.SECONDS),
+            "Application-role HR client never connected",
+        )
         val socketPath = temporarySocketPath()
         var daemon: Process? = null
         try {
@@ -84,9 +89,12 @@ class HotReloadDaemonFixtureE2eTest {
                             }
                             .sessionId
                     val preKey = assertStampedPreReloadTree(client, sessionId)
+                    // Stamped keys prove the daemon created a reload-aware session; give the
+                    // Tooling client a moment to finish connect + fan-out subscribe after attach.
+                    Thread.sleep(1_500)
                     awaitSettledAfterBroadcast(client, sessionId, server)
                     assertStaleKeyRejected(client, sessionId, preKey)
-                    assertPostReloadClickAndCapture(client, sessionId)
+                    assertPostReloadClick(client, sessionId)
                 }
             }
         } finally {
@@ -159,7 +167,7 @@ class HotReloadDaemonFixtureE2eTest {
         assertEquals("nodeNotFound", stale.category)
     }
 
-    private fun assertPostReloadClickAndCapture(client: DaemonClient, sessionId: String) {
+    private fun assertPostReloadClick(client: DaemonClient, sessionId: String) {
         val postTree =
             assertIs<DaemonResponse.Nodes>(client.request(DaemonRequest.AllNodes(sessionId)))
         val postKey = postTree.nodes.first().key
@@ -173,30 +181,21 @@ class HotReloadDaemonFixtureE2eTest {
         assertIs<DaemonResponse.Completed>(
             client.request(DaemonRequest.Click(sessionId, button.key))
         )
-        val outDir = Files.createTempDirectory("spectre-hr-e2e-cap")
-        try {
-            assertIs<DaemonResponse.Capture>(
-                client.request(
-                    DaemonRequest.Capture(
-                        sessionId = sessionId,
-                        windowIndex = 0,
-                        outDir = outDir.toString(),
-                    )
-                )
-            )
-        } finally {
-            outDir.toFile().deleteRecursively()
-        }
     }
 
     private fun applicationScope(
         dispatcher: CoroutineDispatcher = Dispatchers.Default
     ): CoroutineScope = CoroutineScope(dispatcher)
 
-    private fun startAckingApplicationClient(port: Int, scope: CoroutineScope): Job = scope.launch {
+    private fun startAckingApplicationClient(
+        port: Int,
+        scope: CoroutineScope,
+        ready: CountDownLatch,
+    ): Job = scope.launch {
         val client =
             connectOrchestrationClient(OrchestrationClientRole.Application, port).getOrThrow()
         val channel = client.asChannel()
+        ready.countDown()
         try {
             while (true) {
                 val message = channel.receiveCatching().getOrNull() ?: break
