@@ -63,11 +63,6 @@ class AgentInjectAttachIntegrationTest {
             else "java"
         val javaBin = Paths.get(System.getProperty("java.home"), "bin", javaExe).toString()
         val classpath = classpathWithoutSpectreCore()
-        // Sanity: core must not be on the child CP.
-        assumeFalse(
-            classpath.split(java.io.File.pathSeparator).any { isSpectreCoreClasspathEntry(it) },
-            "Failed to strip spectre-core from fixture classpath",
-        )
 
         val process =
             ProcessBuilder(
@@ -123,24 +118,43 @@ class AgentInjectAttachIntegrationTest {
 
     private fun classpathWithoutSpectreCore(): String {
         val sep = java.io.File.pathSeparator
-        return System.getProperty("java.class.path")
-            .split(sep)
-            .filterNot { isSpectreCoreClasspathEntry(it) }
-            .joinToString(sep)
+        val original = System.getProperty("java.class.path").split(sep)
+        val coreEntries = original.filter { isSpectreCoreClasspathEntry(it) }
+        // Prove the attacher JVM actually had :core to strip — otherwise the child might still
+        // inherit core and forceLoadFromSystemLoader would hide a broken inject path.
+        assertTrue(
+            coreEntries.isNotEmpty(),
+            "Expected spectre :core on the test classpath so inject e2e can strip it; " +
+                "entries sample=${original.take(8)}",
+        )
+        val stripped = original.filterNot { isSpectreCoreClasspathEntry(it) }
+        assertTrue(
+            stripped.none { isSpectreCoreClasspathEntry(it) },
+            "Strip left residual core entries: ${stripped.filter { isSpectreCoreClasspathEntry(it) }}",
+        )
+        assertTrue(
+            stripped.size < original.size,
+            "Classpath strip did not remove any entries (original size=${original.size})",
+        )
+        return stripped.joinToString(sep)
     }
 
+    /**
+     * Spectre `:core` module outputs only — never `kotlinx-coroutines-core` or other `*-core`
+     * artifacts.
+     */
     private fun isSpectreCoreClasspathEntry(entry: String): Boolean {
         val n = entry.replace('\\', '/')
-        // Only Spectre's `:core` module outputs — never kotlinx-coroutines-core etc.
-        return n.contains("/spectre/core/build/classes/") ||
-            n.contains("/spectre/core/build/libs/") ||
-            n.contains("/.worktrees/") && n.contains("/core/build/classes/") ||
-            n.contains("/.worktrees/") && n.contains("/core/build/libs/") ||
-            n.contains("spectre-core-") ||
-            n.endsWith("/spectre-core.jar") ||
-            // Gradle project jar name for :core (e.g. core-0.1.0-SNAPSHOT.jar) when path ends
-            // with /core/build/libs/…
-            (n.contains("/core/build/libs/") && n.substringAfterLast('/').startsWith("core-"))
+        val base = n.substringAfterLast('/')
+        // Compiled classes / resources of the :core project (any checkout path).
+        if (n.contains("/core/build/classes/") || n.contains("/core/build/resources/")) return true
+        // Project jar under core/build/libs/core-*.jar (not kotlinx-coroutines-core-*.jar).
+        if (n.contains("/core/build/libs/") && base.startsWith("core-") && base.endsWith(".jar")) {
+            return true
+        }
+        if (base.startsWith("spectre-core-") && base.endsWith(".jar")) return true
+        if (base == "spectre-core.jar") return true
+        return false
     }
 
     private class FixtureProcess(
