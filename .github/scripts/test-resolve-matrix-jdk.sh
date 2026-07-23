@@ -59,7 +59,8 @@ for needle in jbr-21 jbr-25 temurin-lts ubuntu-latest macos-latest windows-lates
   AgentContractCorpusTest AgentAttachIntegrationTest InProcessContractCorpusTest \
   runLinuxX11RecordingSmoke workflow_call schedule "runner.os != 'Windows'" \
   SPECTRE_MATRIX_JAVA_HOME gstreamer1.0-tools gstreamer1.0-plugins-base \
-  gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly x11-utils; do
+  gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly gstreamer1.0-plugins-bad \
+  x11-utils; do
   grep -q "$needle" "$workflow" || fail "runtime-matrix.yml missing expected token: $needle"
 done
 grep -q "SPECTRE_MATRIX_JAVA_HOME" "$script_dir/../../build.gradle.kts" ||

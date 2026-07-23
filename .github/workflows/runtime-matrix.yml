@@ -75,6 +75,7 @@ jobs:
             gstreamer1.0-plugins-base \
             gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-ugly \
+            gstreamer1.0-plugins-bad \
             x11-utils
 
       - name: Set up Rust (Linux Wayland helper)
@@ -91,6 +92,10 @@ jobs:
           if [[ "${{ runner.os }}" == "Linux" ]]; then
             command -v gst-launch-1.0
             gst-launch-1.0 --version | head -n1
+            # Fail early if the X11 recording pipeline elements are missing (h264parse
+            # ships in plugins-bad; x264enc in plugins-ugly).
+            gst-inspect-1.0 h264parse >/dev/null
+            gst-inspect-1.0 x264enc >/dev/null
           fi
 
       # Force Test/JavaExec workers onto the matrix JDK (see root build.gradle.kts). Modules
