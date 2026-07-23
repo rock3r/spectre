@@ -33,6 +33,12 @@ public class ProcessExitedBeforeAttachException(
     public val stdoutPath: Path,
     public val stderrPath: Path,
     cause: Throwable? = null,
+    /**
+     * Optional context (e.g. Gradle client exited before an app JVM was discovered). Appended to
+     * the message so callers can distinguish wrapper death from a bare process exit without parsing
+     * free text for stage alone.
+     */
+    public val detail: String = "",
 ) :
     LaunchException(
         stage = LaunchStage.PROCESS_ALIVE,
@@ -40,6 +46,11 @@ public class ProcessExitedBeforeAttachException(
             buildString {
                 append("Launched process exited with code $exitCode before attach ")
                 append("(stage=${LaunchStage.PROCESS_ALIVE}). ")
+                if (detail.isNotBlank()) {
+                    append(detail.trim())
+                    if (!detail.trimEnd().endsWith('.')) append('.')
+                    append(' ')
+                }
                 append("stdout=$stdoutPath stderr=$stderrPath")
                 if (stderrExcerpt.isNotBlank()) {
                     append("\n--- captured stderr (excerpt) ---\n")

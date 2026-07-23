@@ -317,8 +317,9 @@ public final class dev/sebastiano/spectre/agent/launch/LaunchedSession : java/la
 }
 
 public final class dev/sebastiano/spectre/agent/launch/ProcessExitedBeforeAttachException : dev/sebastiano/spectre/agent/launch/LaunchException {
-	public fun <init> (ILjava/lang/String;Ljava/nio/file/Path;Ljava/nio/file/Path;Ljava/lang/Throwable;)V
-	public synthetic fun <init> (ILjava/lang/String;Ljava/nio/file/Path;Ljava/nio/file/Path;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (ILjava/lang/String;Ljava/nio/file/Path;Ljava/nio/file/Path;Ljava/lang/Throwable;Ljava/lang/String;)V
+	public synthetic fun <init> (ILjava/lang/String;Ljava/nio/file/Path;Ljava/nio/file/Path;Ljava/lang/Throwable;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getDetail ()Ljava/lang/String;
 	public final fun getExitCode ()I
 	public final fun getStderrExcerpt ()Ljava/lang/String;
 	public final fun getStderrPath ()Ljava/nio/file/Path;

@@ -52,25 +52,45 @@ internal object LaunchReadiness {
     ): Long {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
         while (System.nanoTime() < deadline) {
-            if (!process.isAlive && !gradleish) {
-                throw processExited(process, stdoutPath, stderrPath)
-            }
             if (!gradleish) {
-                // Direct launches already know the target PID. Stage PROCESS_ALIVE established
-                // the process is live; attach-by-pid works even when -XX:-UsePerfData hides the
-                // target from VirtualMachine.list() (see SpectreProcesses). Agent bootstrap's
-                // attachTimeoutMs covers "JVM not ready for loadAgent yet".
+                // Direct: client is the target. Stage PROCESS_ALIVE established the process is
+                // live; attach-by-pid works even when -XX:-UsePerfData hides the target from
+                // VirtualMachine.list() (see SpectreProcesses).
                 if (!process.isAlive) {
                     throw processExited(process, stdoutPath, stderrPath)
                 }
                 return launchedPid
             }
+            // Gradle-ish: keep discovering after the client exits. The app JVM is often a
+            // daemon child (not a ProcessHandle descendant of ./gradlew); tasks that fork and
+            // return still need the remaining stage budget to observe the app.
             val pid = LaunchDescendantDiscovery.discoverAppJvm(launchedPid, nameFilter)
             if (pid != null) return pid
             sleepQuietly(POLL_MS)
         }
-        if (!process.isAlive && !gradleish) {
-            throw processExited(process, stdoutPath, stderrPath)
+        if (!gradleish) {
+            if (!process.isAlive) {
+                throw processExited(process, stdoutPath, stderrPath)
+            }
+            throw JvmNotAttachableException(
+                launchedPid = launchedPid,
+                timeoutMs = timeoutMs,
+                stdoutPath = stdoutPath,
+                stderrPath = stderrPath,
+                detail =
+                    "pid $launchedPid stayed alive but was not attachable within ${timeoutMs}ms",
+            )
+        }
+        // Gradle-ish timeout: classify by whether the *client* is still running.
+        // Dead client + no app → surface client exit/stderr (wrapper/env failure).
+        // Live client + no app → true discovery / name-filter miss.
+        if (!process.isAlive) {
+            throw processExited(
+                process = process,
+                stdoutPath = stdoutPath,
+                stderrPath = stderrPath,
+                detail = GRADLE_CLIENT_DEAD_BEFORE_APP_JVM,
+            )
         }
         throw JvmNotAttachableException(
             launchedPid = launchedPid,
@@ -78,17 +98,15 @@ internal object LaunchReadiness {
             stdoutPath = stdoutPath,
             stderrPath = stderrPath,
             detail =
-                if (gradleish) {
-                    "Gradle-ish launch: no daemon-child/client-descendant app JVM matched" +
-                        (nameFilter?.let { " nameFilter='$it'" }.orEmpty()) +
-                        (if (nameFilter.isNullOrBlank()) {
-                            " (set LaunchSpec.appJvmNameFilter to disambiguate daemon children)"
-                        } else {
-                            ""
-                        })
-                } else {
-                    "pid $launchedPid exited before attach"
-                },
+                "Gradle-ish launch: client still running but no daemon-child/client-descendant " +
+                    "app JVM matched" +
+                    (nameFilter?.let { " nameFilter='$it'" }.orEmpty()) +
+                    (if (nameFilter.isNullOrBlank()) {
+                        " (set LaunchSpec.appJvmNameFilter / --app-name to disambiguate " +
+                            "daemon children)"
+                    } else {
+                        ""
+                    }),
         )
     }
 
@@ -207,6 +225,7 @@ internal object LaunchReadiness {
         process: Process,
         stdoutPath: Path,
         stderrPath: Path,
+        detail: String = "",
     ): ProcessExitedBeforeAttachException {
         val exitCode =
             try {
@@ -219,6 +238,7 @@ internal object LaunchReadiness {
             stderrExcerpt = readExcerpt(stderrPath),
             stdoutPath = stdoutPath,
             stderrPath = stderrPath,
+            detail = detail,
         )
     }
 
@@ -244,4 +264,13 @@ internal object LaunchReadiness {
     private const val POLL_MS: Long = 50
     private const val SETTLE_MS: Long = 250
     private const val STDERR_EXCERPT_CHARS: Int = 4_096
+
+    /**
+     * Surfaced when a Gradle-ish `./gradlew` client exits during descendant discovery before any
+     * app JVM is found. Prefer this over a name-filter [JvmNotAttachableException] so wrapper
+     * download / env failures are not misread as discovery misconfiguration.
+     */
+    internal const val GRADLE_CLIENT_DEAD_BEFORE_APP_JVM: String =
+        "Gradle client exited before any app JVM was discovered " +
+            "(wrapper download failure, bad env, or build error are common causes — see stderr)"
 }
