@@ -1,9 +1,17 @@
 package dev.sebastiano.spectre.agent.launch
 
 import dev.sebastiano.spectre.agent.AgentAttach
+import dev.sebastiano.spectre.agent.AgentBootstrapTimeoutException
+import dev.sebastiano.spectre.agent.AgentJarNotFoundException
+import dev.sebastiano.spectre.agent.AttachInterruptedException
 import dev.sebastiano.spectre.agent.AttachOptions
+import dev.sebastiano.spectre.agent.AttachPermissionDeniedException
+import dev.sebastiano.spectre.agent.AttachPlatformUnsupportedException
+import dev.sebastiano.spectre.agent.AttachUnsupportedException
 import dev.sebastiano.spectre.agent.AttachedAutomator
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.JavaVersionUnsupportedException
+import dev.sebastiano.spectre.agent.SpectreAgentException
 import dev.sebastiano.spectre.agent.SpectreAttachException
 import java.io.IOException
 import java.nio.charset.StandardCharsets
@@ -114,6 +122,23 @@ internal object LaunchReadiness {
             }
             try {
                 return AgentAttach.attach(attachedPid, options)
+            } catch (ex: AttachInterruptedException) {
+                // Cooperative cancellation must not be retried for the full stage budget.
+                Thread.currentThread().interrupt()
+                throw LaunchAgentBootstrapException(
+                    attachedPid = attachedPid,
+                    stdoutPath = stdoutPath,
+                    stderrPath = stderrPath,
+                    cause = ex,
+                )
+            } catch (ex: SpectreAgentException) {
+                // Protocol/handshake taxonomy from the wire — terminal for this launch.
+                throw LaunchAgentBootstrapException(
+                    attachedPid = attachedPid,
+                    stdoutPath = stdoutPath,
+                    stderrPath = stderrPath,
+                    cause = ex,
+                )
             } catch (ex: SpectreAttachException) {
                 lastFailure = ex
                 if (!isRetriableAttachFailure(ex)) {
@@ -125,6 +150,8 @@ internal object LaunchReadiness {
                     )
                 }
             } catch (ex: IOException) {
+                // Generic connect races (UDS not ready yet) are retriable; protocol errors are
+                // SpectreAgentException (caught above).
                 lastFailure = ex
             }
             sleepQuietly(POLL_MS)
@@ -183,16 +210,18 @@ internal object LaunchReadiness {
     }
 
     /**
-     * Permission / platform / jar-missing failures are terminal; bootstrap timeouts and generic
-     * connect races are retried within the stage budget.
+     * Bootstrap timeouts are retriable (agent may still be loading). Permission / platform /
+     * interrupt / jar-missing failures are terminal.
      */
     private fun isRetriableAttachFailure(ex: SpectreAttachException): Boolean =
         when (ex) {
-            is dev.sebastiano.spectre.agent.AttachPermissionDeniedException,
-            is dev.sebastiano.spectre.agent.AttachPlatformUnsupportedException,
-            is dev.sebastiano.spectre.agent.AttachUnsupportedException,
-            is dev.sebastiano.spectre.agent.JavaVersionUnsupportedException,
-            is dev.sebastiano.spectre.agent.AgentJarNotFoundException -> false
+            is AgentBootstrapTimeoutException -> true
+            is AttachInterruptedException,
+            is AttachPermissionDeniedException,
+            is AttachPlatformUnsupportedException,
+            is AttachUnsupportedException,
+            is JavaVersionUnsupportedException,
+            is AgentJarNotFoundException -> false
             else -> true
         }
 
