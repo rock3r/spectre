@@ -79,11 +79,13 @@ public object SpectreAgent {
             return
         }
 
-        // findSpectreClassLoader throws SpectreNotOnClasspathException or
-        // AmbiguousSpectreClasspathException; createAutomatorReflectively throws
-        // ReflectiveOperationException. Both propagate to the JVM agent layer which surfaces
-        // them at the attaching `VirtualMachine.loadAgent` call site.
-        val loader = AgentBootstrap.findSpectreClassLoader(instrumentation)
+        // findSpectre throws SpectreNotOnClasspathException /
+        // AmbiguousSpectreClasspathException / ComposeNotOnClasspathException;
+        // createAutomatorReflectively throws ReflectiveOperationException. Both propagate to the
+        // JVM agent layer which surfaces them at the attaching `VirtualMachine.loadAgent` call
+        // site.
+        val bootstrap = AgentBootstrap.findSpectre(instrumentation)
+        val loader = bootstrap.classLoader
         System.err.println("[spectre-agent] found Spectre via $loader")
 
         // Open AWT peer packages so core window-identity can resolve host HWND/NSWindow*/XID for
@@ -102,6 +104,9 @@ public object SpectreAgent {
             System.err.println(
                 "[spectre-agent] no UDS path provided; spike mode reports getWindows().size = $count"
             )
+            // Spike mode still releases inject payload so repeated attachSpike runs do not pile
+            // temp jars while the target stays alive.
+            bootstrap.releaseInjectResources()
             return
         }
 
@@ -118,18 +123,26 @@ public object SpectreAgent {
                 {
                     // Path B — crash safety. close() handles its own idempotency.
                     runCatching { server.close() }
+                    bootstrap.releaseInjectResources()
                 },
                 SHUTDOWN_HOOK_NAME,
             )
         Runtime.getRuntime().addShutdownHook(shutdownHook)
 
-        val newState = AgentState(server = server, udsPath = udsPath, shutdownHook = shutdownHook)
+        val newState =
+            AgentState(
+                server = server,
+                udsPath = udsPath,
+                shutdownHook = shutdownHook,
+                bootstrap = bootstrap,
+            )
         if (!agentState.compareAndSet(null, newState)) {
             // Idempotency race: someone bootstrapped between our earlier `get()` check and now.
             // Roll back: close our just-created server and remove our hook so the existing
             // state remains the source of truth.
             runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
             runCatching { server.close() }
+            bootstrap.releaseInjectResources()
             System.err.println(
                 "[spectre-agent] lost idempotency race; rolled back duplicate IPC server"
             )
@@ -143,7 +156,8 @@ public object SpectreAgent {
 
     /**
      * Called by [IpcServer] when it processes an `AgentRequest.Detach`. Performs the full D-7 Path
-     * A cleanup: clears the global slot, closes the server (idempotent), removes the shutdown hook.
+     * A cleanup: clears the global slot, closes the server (idempotent), removes the shutdown hook,
+     * and releases inject payload resources when the attach used injection (#209).
      *
      * The server has *already* set its `running` flag to false before invoking this; the `close()`
      * here ensures the ServerSocketChannel native fd is released and the UDS path unlinked. Without
@@ -153,6 +167,7 @@ public object SpectreAgent {
         val state = agentState.getAndSet(null) ?: return
         runCatching { state.server.close() }
         runCatching { Runtime.getRuntime().removeShutdownHook(state.shutdownHook) }
+        state.bootstrap.releaseInjectResources()
         System.err.println("[spectre-agent] detached cleanly; resources released")
     }
 
@@ -195,5 +210,6 @@ public object SpectreAgent {
         val server: IpcServer,
         val udsPath: Path,
         val shutdownHook: Thread,
+        val bootstrap: SpectreBootstrapResult,
     )
 }

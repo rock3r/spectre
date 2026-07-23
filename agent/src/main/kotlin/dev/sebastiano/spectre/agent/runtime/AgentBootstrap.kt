@@ -26,13 +26,28 @@ internal val COMPOSE_HOST_MARKER_FQNS: List<String> =
  * exists, fail loudly with [AmbiguousSpectreClasspathException] rather than silently picking the
  * wrong one.
  *
- * **Injection (#209):** when `ComposeAutomator` is absent, [findSpectreClassLoader] falls back to
- * loading the nested inject-runtime jar (relocated kotlinx + core, no Compose) against a Compose
- * host classloader discovered via [COMPOSE_HOST_MARKER_FQNS] / D-14.
+ * **Injection (#209):** when `ComposeAutomator` is absent, [findSpectre] falls back to loading the
+ * nested inject-runtime jar (relocated kotlinx + core, no Compose) against a Compose host
+ * classloader discovered via [COMPOSE_HOST_MARKER_FQNS] / D-14.
  *
  * Designed as `internal object` so callers go through the agent entry points ([SpectreAgent])
  * rather than reaching directly into the bootstrap machinery.
  */
+/**
+ * Result of [AgentBootstrap.findSpectre] so callers can release inject payload resources on detach
+ * (close [SpectreInjectClassLoader], delete extracted jar).
+ */
+internal data class SpectreBootstrapResult(
+    val classLoader: ClassLoader,
+    val injectJar: Path? = null,
+    val injectClassLoader: SpectreInjectClassLoader? = null,
+) {
+    fun releaseInjectResources() {
+        runCatching { injectClassLoader?.close() }
+        injectJar?.let { path -> runCatching { java.nio.file.Files.deleteIfExists(path) } }
+    }
+}
+
 internal object AgentBootstrap {
     /**
      * Walks the target JVM's loaded classes via [Instrumentation.getAllLoadedClasses], filters to
@@ -54,22 +69,28 @@ internal object AgentBootstrap {
      * @throws AmbiguousSpectreClasspathException when multiple candidates exist and no winner
      *   emerges from the selection rule.
      */
-    fun findSpectreClassLoader(instrumentation: Instrumentation): ClassLoader {
+    fun findSpectre(instrumentation: Instrumentation): SpectreBootstrapResult {
         val initialCandidates = collectCandidateClassLoaders(instrumentation, COMPOSE_AUTOMATOR_FQN)
-        if (initialCandidates.isNotEmpty()) return selectClassLoader(initialCandidates)
-
-        forceLoadFromSystemLoader()?.let {
-            return it
+        if (initialCandidates.isNotEmpty()) {
+            return SpectreBootstrapResult(selectClassLoader(initialCandidates))
         }
 
-        return injectSpectreClassLoader(instrumentation) ?: throw SpectreNotOnClasspathException()
+        forceLoadFromSystemLoader()?.let {
+            return SpectreBootstrapResult(it)
+        }
+
+        return injectSpectre(instrumentation) ?: throw SpectreNotOnClasspathException()
     }
+
+    /** Convenience for tests and call sites that only need the [ClassLoader]. */
+    fun findSpectreClassLoader(instrumentation: Instrumentation): ClassLoader =
+        findSpectre(instrumentation).classLoader
 
     /**
      * Builds an inject [ClassLoader] that owns Spectre core from [injectJar] while resolving
      * Compose against [composeHost]. Exposed for unit tests.
      */
-    fun openInjectClassLoader(injectJar: Path, composeHost: ClassLoader): ClassLoader {
+    fun openInjectClassLoader(injectJar: Path, composeHost: ClassLoader): SpectreInjectClassLoader {
         val urls = arrayOf(injectJar.toUri().toURL())
         return SpectreInjectClassLoader(urls, composeHost)
     }
@@ -96,17 +117,26 @@ internal object AgentBootstrap {
         throw ComposeNotOnClasspathException()
     }
 
-    private fun injectSpectreClassLoader(instrumentation: Instrumentation): ClassLoader? {
+    private fun injectSpectre(instrumentation: Instrumentation): SpectreBootstrapResult? {
         val injectJar = InjectRuntimeLocator.extractInjectJar() ?: return null
         System.err.println(
             "[spectre-agent] spectre-core not on target classpath; injecting from $injectJar"
         )
-        val composeHost = findComposeHostClassLoader(instrumentation)
-        System.err.println("[spectre-agent] Compose host classloader: $composeHost")
-        val injectLoader = openInjectClassLoader(injectJar, composeHost)
-        // Prove ComposeAutomator resolves from the inject jar before returning.
-        injectLoader.loadClass(COMPOSE_AUTOMATOR_FQN)
-        return injectLoader
+        return try {
+            val composeHost = findComposeHostClassLoader(instrumentation)
+            System.err.println("[spectre-agent] Compose host classloader: $composeHost")
+            val injectLoader = openInjectClassLoader(injectJar, composeHost)
+            // Prove ComposeAutomator resolves from the inject jar before returning.
+            injectLoader.loadClass(COMPOSE_AUTOMATOR_FQN)
+            SpectreBootstrapResult(
+                classLoader = injectLoader,
+                injectJar = injectJar,
+                injectClassLoader = injectLoader,
+            )
+        } catch (t: Throwable) {
+            runCatching { java.nio.file.Files.deleteIfExists(injectJar) }
+            throw t
+        }
     }
 }
 
