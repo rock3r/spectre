@@ -1,47 +1,67 @@
 package dev.sebastiano.spectre.agent.launch
 
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.JvmProcessInfo
 import dev.sebastiano.spectre.agent.SpectreProcesses
 import kotlin.streams.asSequence
 
 /**
- * Locates the real app JVM among a Gradle client's descendants for readiness and teardown.
+ * Locates the real app JVM for Gradle-ish launches (readiness + teardown).
  *
- * Never returns a JVM whose display name looks like a Gradle daemon — teardown must not kill the
- * daemon. Never returns an arbitrary machine-wide JVM when no descendants are known yet — that
- * would risk attaching to / killing an unrelated process.
+ * Layout reality: `./gradlew :app:run` typically has the **Gradle daemon** spawn the app JVM, so
+ * the app is **not** a ProcessHandle descendant of the gradlew client. Discovery therefore
+ * combines:
+ * 1. optional [nameFilter] against [JvmProcessInfo.displayName] (required for daemon-child apps
+ *    when the client graph does not contain the app)
+ * 2. JVMs parented by a known Gradle daemon (from the attach list)
+ * 3. ProcessHandle descendants of the client (covers `--no-daemon` / rare layouts)
+ *
+ * Never returns a Gradle daemon display-name match, and never falls back to an arbitrary
+ * machine-wide JVM without one of the signals above.
  */
 @ExperimentalSpectreAgentApi
 public object LaunchDescendantDiscovery {
 
     /**
-     * Find an attachable JVM that is a **ProcessHandle descendant** of [clientPid].
+     * Find an attachable app JVM for a Gradle-ish launch started as [clientPid].
      *
-     * Returns null when:
-     * - the client handle is missing,
-     * - no descendants are visible yet (keep polling),
-     * - no listed JVM is both a descendant and non-daemon (and matches [nameFilter] if set).
-     *
-     * Does **not** fall back to “any JVM on the machine.”
+     * @param nameFilter optional case-insensitive substring of the app's main-class display name.
+     *   Strongly recommended for multi-project machines. When set and no listed JVM matches,
+     *   returns null (does not fall through to unrelated JVMs).
      */
     public fun discoverAppJvm(clientPid: Long, nameFilter: String?): Long? {
-        val clientHandle = ProcessHandle.of(clientPid).orElse(null) ?: return null
-        val descendantPids: Set<Long> =
-            try {
-                clientHandle.descendants().asSequence().map { it.pid() }.toSet()
-            } catch (_: UnsupportedOperationException) {
-                emptySet()
-            }
-        if (descendantPids.isEmpty()) return null
-
         val listed = runCatching { SpectreProcesses.listJvmProcesses() }.getOrDefault(emptyList())
-        val candidates = listed.filter { info ->
-            info.pid in descendantPids &&
-                !isGradleDaemonDisplayName(info.displayName) &&
-                (nameFilter == null || info.displayName.contains(nameFilter, ignoreCase = true))
+        if (listed.isEmpty()) return null
+
+        val daemonPids =
+            listed.filter { isGradleDaemonDisplayName(it.displayName) }.map { it.pid }.toSet()
+        val nonDaemon = listed.filter { info ->
+            info.pid != clientPid && !isGradleDaemonDisplayName(info.displayName)
         }
-        // Prefer the highest PID among matches (typically the most recently spawned app JVM).
-        return candidates.maxByOrNull { it.pid }?.pid
+        if (nonDaemon.isEmpty()) return null
+
+        val clientDescendants = descendantPidsOf(clientPid)
+        val childOfDaemon = nonDaemon.filter { info ->
+            val parent = parentPid(info.pid) ?: return@filter false
+            parent in daemonPids
+        }
+
+        if (!nameFilter.isNullOrBlank()) {
+            val nameMatched = nonDaemon.filter {
+                it.displayName.contains(nameFilter, ignoreCase = true)
+            }
+            if (nameMatched.isEmpty()) return null
+            // Prefer daemon children and client descendants among name matches.
+            val preferred =
+                nameMatched.filter { it.pid in childOfDaemon.map(JvmProcessInfo::pid).toSet() } +
+                    nameMatched.filter { it.pid in clientDescendants } +
+                    nameMatched
+            return preferred.distinctBy { it.pid }.maxByOrNull { it.pid }?.pid
+        }
+
+        // No name filter: only structural signals (never "any non-daemon JVM").
+        val structural = childOfDaemon + nonDaemon.filter { it.pid in clientDescendants }
+        return structural.distinctBy { it.pid }.maxByOrNull { it.pid }?.pid
     }
 
     /** True when [displayName] looks like a Gradle daemon JVM banner from `jps` / Attach list. */
@@ -64,4 +84,16 @@ public object LaunchDescendantDiscovery {
         val listed = runCatching { SpectreProcesses.listJvmProcesses() }.getOrDefault(emptyList())
         return listed.any { it.pid == pid }
     }
+
+    private fun descendantPidsOf(clientPid: Long): Set<Long> {
+        val clientHandle = ProcessHandle.of(clientPid).orElse(null) ?: return emptySet()
+        return try {
+            clientHandle.descendants().asSequence().map { it.pid() }.toSet()
+        } catch (_: UnsupportedOperationException) {
+            emptySet()
+        }
+    }
+
+    private fun parentPid(pid: Long): Long? =
+        ProcessHandle.of(pid).flatMap { it.parent() }.map { it.pid() }.orElse(null)
 }

@@ -121,6 +121,12 @@ class LaunchCommandRewriterTest {
         )
         assertNull(LaunchCommandRewriter.extractClasspath(listOf("java", "-jar", "app.jar")))
         assertNull(LaunchCommandRewriter.extractClasspath(listOf("./gradlew", "run")))
+        // Application args after -jar must not be read as launcher classpath.
+        assertNull(
+            LaunchCommandRewriter.extractClasspath(
+                listOf("java", "-jar", "app.jar", "-cp", "user-value")
+            )
+        )
     }
 
     @Test

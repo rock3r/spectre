@@ -89,8 +89,11 @@ public object LaunchCommandRewriter {
     }
 
     /**
-     * Best-effort scan of a direct JVM command line for a `-cp` / `-classpath` value. Returns null
-     * when no classpath is present on the command line.
+     * Best-effort scan of a direct JVM command line for a `-cp` / `-classpath` value among
+     * **launcher** options only. Stops at `-jar <file>` or the first non-option token (main class)
+     * so application arguments like `java -jar app.jar -cp user-value` are not misread.
+     *
+     * Returns null when no classpath is present on the command line.
      */
     public fun extractClasspath(command: List<String>): String? {
         if (!isDirectJvmLaunch(command)) return null
@@ -98,10 +101,12 @@ public object LaunchCommandRewriter {
         while (i < command.size) {
             val token = command[i]
             when {
+                token == "-jar" -> return null // remaining tokens are jar path + app args
                 token == "-cp" || token == "-classpath" -> return command.getOrNull(i + 1)
                 token.startsWith("-cp=") -> return token.removePrefix("-cp=")
                 token.startsWith("-classpath=") -> return token.removePrefix("-classpath=")
-                else -> i++
+                token.startsWith("-") -> i++ // other JVM launcher option
+                else -> return null // main class — end of launcher options
             }
         }
         return null

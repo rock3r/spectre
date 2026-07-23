@@ -28,15 +28,29 @@ class LaunchDescendantDiscoveryTest {
     }
 
     @Test
-    fun `discoverAppJvm returns null when client pid has no descendants`() {
-        // Current process has no child JVMs in a normal unit-test run; must not fall back to
-        // attaching an arbitrary machine-wide JVM (e.g. the lowest listed PID).
+    fun `discoverAppJvm returns null for impossible nameFilter`() {
         val self = ProcessHandle.current().pid()
-        assertNull(LaunchDescendantDiscovery.discoverAppJvm(self, nameFilter = null))
+        assertNull(
+            LaunchDescendantDiscovery.discoverAppJvm(
+                clientPid = self,
+                nameFilter = "DefinitelyNotARealMainClass_issue208_xyz",
+            )
+        )
     }
 
     @Test
-    fun `discoverAppJvm returns null for missing client pid`() {
-        assertNull(LaunchDescendantDiscovery.discoverAppJvm(Long.MAX_VALUE / 3, nameFilter = null))
+    fun `discoverAppJvm never returns a Gradle daemon pid`() {
+        val self = ProcessHandle.current().pid()
+        val found = LaunchDescendantDiscovery.discoverAppJvm(self, nameFilter = null)
+        if (found != null) {
+            // If structural discovery found something on this machine, it must not be a daemon.
+            val listed = dev.sebastiano.spectre.agent.SpectreProcesses.listJvmProcesses()
+            val display = listed.firstOrNull { it.pid == found }?.displayName.orEmpty()
+            assertFalse(
+                LaunchDescendantDiscovery.isGradleDaemonDisplayName(display),
+                "discoverAppJvm returned daemon pid=$found displayName='$display'",
+            )
+            assertTrue(found != self, "must not return the client pid itself")
+        }
     }
 }

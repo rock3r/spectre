@@ -1,16 +1,10 @@
 package dev.sebastiano.spectre.agent.launch
 
 import dev.sebastiano.spectre.agent.AgentAttach
-import dev.sebastiano.spectre.agent.AgentBootstrapTimeoutException
-import dev.sebastiano.spectre.agent.AgentJarNotFoundException
 import dev.sebastiano.spectre.agent.AttachInterruptedException
 import dev.sebastiano.spectre.agent.AttachOptions
-import dev.sebastiano.spectre.agent.AttachPermissionDeniedException
-import dev.sebastiano.spectre.agent.AttachPlatformUnsupportedException
-import dev.sebastiano.spectre.agent.AttachUnsupportedException
 import dev.sebastiano.spectre.agent.AttachedAutomator
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
-import dev.sebastiano.spectre.agent.JavaVersionUnsupportedException
 import dev.sebastiano.spectre.agent.SpectreAgentException
 import dev.sebastiano.spectre.agent.SpectreAttachException
 import java.io.IOException
@@ -91,11 +85,13 @@ internal object LaunchReadiness {
     }
 
     /**
-     * Stage [LaunchStage.AGENT_BOOTSTRAP]: poll [AgentAttach.attach] until success, a terminal
-     * attach failure, process death, or [bootstrapTimeoutMs].
+     * Stage [LaunchStage.AGENT_BOOTSTRAP]: a **single** [AgentAttach.attach] with the stage budget
+     * as `attachTimeoutMs`.
      *
-     * Transient "agent not ready yet" failures are retried within the stage budget so a slow
-     * ComposeAutomator load does not fail the whole launch on the first attempt.
+     * Retries are intentionally avoided: each attach call may `loadAgent` with a UDS path, and a
+     * second attempt with a freshly generated path would wait forever while the already-loaded
+     * agent remains bound to the first socket (Codex P1). Stage 2 already waits for the JVM to
+     * appear in the Attach list before we get here.
      */
     fun awaitAgentBootstrap(
         process: Process,
@@ -106,62 +102,44 @@ internal object LaunchReadiness {
         stdoutPath: Path,
         stderrPath: Path,
     ): AttachedAutomator {
-        val options =
-            if (bootstrapTimeoutMs != attachOptions.attachTimeoutMs) {
-                attachOptions.copy(attachTimeoutMs = minOf(bootstrapTimeoutMs, ATTACH_ATTEMPT_MS))
-            } else {
-                attachOptions.copy(
-                    attachTimeoutMs = minOf(attachOptions.attachTimeoutMs, ATTACH_ATTEMPT_MS)
-                )
-            }
-        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(bootstrapTimeoutMs)
-        var lastFailure: Exception? = null
-        while (System.nanoTime() < deadline) {
-            if (!process.isAlive && !gradleish) {
-                throw processExited(process, stdoutPath, stderrPath)
-            }
-            try {
-                return AgentAttach.attach(attachedPid, options)
-            } catch (ex: AttachInterruptedException) {
-                // Cooperative cancellation must not be retried for the full stage budget.
-                Thread.currentThread().interrupt()
-                throw LaunchAgentBootstrapException(
-                    attachedPid = attachedPid,
-                    stdoutPath = stdoutPath,
-                    stderrPath = stderrPath,
-                    cause = ex,
-                )
-            } catch (ex: SpectreAgentException) {
-                // Protocol/handshake taxonomy from the wire — terminal for this launch.
-                throw LaunchAgentBootstrapException(
-                    attachedPid = attachedPid,
-                    stdoutPath = stdoutPath,
-                    stderrPath = stderrPath,
-                    cause = ex,
-                )
-            } catch (ex: SpectreAttachException) {
-                lastFailure = ex
-                if (!isRetriableAttachFailure(ex)) {
-                    throw LaunchAgentBootstrapException(
-                        attachedPid = attachedPid,
-                        stdoutPath = stdoutPath,
-                        stderrPath = stderrPath,
-                        cause = ex,
-                    )
-                }
-            } catch (ex: IOException) {
-                // Generic connect races (UDS not ready yet) are retriable; protocol errors are
-                // SpectreAgentException (caught above).
-                lastFailure = ex
-            }
-            sleepQuietly(POLL_MS)
+        if (!process.isAlive && !gradleish) {
+            throw processExited(process, stdoutPath, stderrPath)
         }
-        throw LaunchAgentBootstrapException(
-            attachedPid = attachedPid,
-            stdoutPath = stdoutPath,
-            stderrPath = stderrPath,
-            cause = lastFailure,
-        )
+        // Pin UDS path for the whole stage (even if a future retry is reintroduced).
+        val udsPath = attachOptions.udsPath ?: AttachOptions.defaultUdsPath(attachedPid)
+        val options = attachOptions.copy(udsPath = udsPath, attachTimeoutMs = bootstrapTimeoutMs)
+        return try {
+            AgentAttach.attach(attachedPid, options)
+        } catch (ex: AttachInterruptedException) {
+            Thread.currentThread().interrupt()
+            throw LaunchAgentBootstrapException(
+                attachedPid = attachedPid,
+                stdoutPath = stdoutPath,
+                stderrPath = stderrPath,
+                cause = ex,
+            )
+        } catch (ex: SpectreAgentException) {
+            throw LaunchAgentBootstrapException(
+                attachedPid = attachedPid,
+                stdoutPath = stdoutPath,
+                stderrPath = stderrPath,
+                cause = ex,
+            )
+        } catch (ex: SpectreAttachException) {
+            throw LaunchAgentBootstrapException(
+                attachedPid = attachedPid,
+                stdoutPath = stdoutPath,
+                stderrPath = stderrPath,
+                cause = ex,
+            )
+        } catch (ex: IOException) {
+            throw LaunchAgentBootstrapException(
+                attachedPid = attachedPid,
+                stdoutPath = stdoutPath,
+                stderrPath = stderrPath,
+                cause = ex,
+            )
+        }
     }
 
     fun awaitFirstWindow(
@@ -209,22 +187,6 @@ internal object LaunchReadiness {
         )
     }
 
-    /**
-     * Bootstrap timeouts are retriable (agent may still be loading). Permission / platform /
-     * interrupt / jar-missing failures are terminal.
-     */
-    private fun isRetriableAttachFailure(ex: SpectreAttachException): Boolean =
-        when (ex) {
-            is AgentBootstrapTimeoutException -> true
-            is AttachInterruptedException,
-            is AttachPermissionDeniedException,
-            is AttachPlatformUnsupportedException,
-            is AttachUnsupportedException,
-            is JavaVersionUnsupportedException,
-            is AgentJarNotFoundException -> false
-            else -> true
-        }
-
     private fun readExcerpt(path: Path, maxChars: Int = STDERR_EXCERPT_CHARS): String {
         if (!Files.isRegularFile(path)) return ""
         return try {
@@ -246,7 +208,5 @@ internal object LaunchReadiness {
 
     private const val POLL_MS: Long = 50
     private const val SETTLE_MS: Long = 250
-    /** Per-attempt attach budget so the outer stage can retry within [bootstrapTimeoutMs]. */
-    private const val ATTACH_ATTEMPT_MS: Long = 2_000
     private const val STDERR_EXCERPT_CHARS: Int = 4_096
 }
