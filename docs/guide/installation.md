@@ -42,9 +42,11 @@ on `PATH`.
 
 ## Requirements
 
-- **JDK 21 or newer.** JBR 21 is the project's dev-loop default; JBR 25 is exercised via
-  the IDE-hosted UI test (IntelliJ 2026.2 / platform 262) and the runtime matrix. Any JDK
-  21+ works for the non-IDE modules.
+- **JDK 21 or newer.** JBR 21 is the project's dev-loop default; JBR 25 and Temurin LTS
+  are matrix-exercised (see [Stability policy](../STABILITY.md#jvm-runtime-support-tiers)
+  and the [runtime matrix](https://github.com/rock3r/spectre/blob/main/.github/workflows/runtime-matrix.yml)).
+  Any JDK 21+ works for the non-IDE modules; IntelliJ-hosted Compose uses the IDE’s
+  bundled JBR.
 - **Windows 10 version 1903 or newer**, **.NET 8 Desktop Runtime**, and
   **Windows App Runtime 1.8** for native window/region recording and still-window screenshots
   through Windows Graphics Capture. Contributors and CI that build the helper from source
