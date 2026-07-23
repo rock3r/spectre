@@ -52,7 +52,7 @@ non-HR commands work; reload wait fails immediately with category `hotReloadUnav
 
 ## Version range
 
-Spectre pins and tests against Compose Hot Reload **1.2.0-rc01** on the CLI classpath. The
+Spectre pins and tests against Compose Hot Reload **1.2.0** on the CLI classpath. The
 supported line starts at **1.2.0-alpha+211** (the findings baseline for the Tooling client and
 settle chain). Older HR builds may omit newer orchestration messages; Spectre fails closed rather
 than guessing.

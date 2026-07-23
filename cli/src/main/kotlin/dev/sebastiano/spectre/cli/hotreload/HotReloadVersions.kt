@@ -9,13 +9,13 @@ package dev.sebastiano.spectre.cli.hotreload
  */
 public object HotReloadVersions {
     /** Exact artifact version resolved by Spectre's CLI/daemon dependency. */
-    public const val PINNED: String = "1.2.0-rc01"
+    public const val PINNED: String = "1.2.0"
 
     /** Inclusive lower bound of the supported 1.2 line (findings verified from alpha+211). */
     public const val MIN_SUPPORTED: String = "1.2.0-alpha+211"
 
     /** Inclusive upper bound of the currently tested range. */
-    public const val MAX_TESTED: String = "1.2.0-rc01"
+    public const val MAX_TESTED: String = "1.2.0"
 
     /** System property / env key for the orchestration TCP port (HR's own key). */
     public const val ORCHESTRATION_PORT_PROPERTY: String = "compose.reload.orchestration.port"

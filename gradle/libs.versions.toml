@@ -4,7 +4,7 @@ androidx-tracing = "2.0.0-alpha06"
 composeMultiplatform = "1.10.3"
 # Compose Hot Reload orchestration client for daemon-side reload awareness (#211).
 # Keep aligned with cli HotReloadVersions.PINNED.
-composeHotReload = "1.2.0-rc01"
+composeHotReload = "1.2.0"
 clikt = "5.0.1"
 composeRules = "0.5.6"
 detekt = "2.0.0-alpha.3"
