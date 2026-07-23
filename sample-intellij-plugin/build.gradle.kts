@@ -231,4 +231,12 @@ val uiTest by
         // filename, which depends on Gradle archive-naming conventions
         // (`<project>-<version>.zip`, not the plugin's display name).
         systemProperty("path.to.build.plugin", pluginZipProvider.get().asFile.absolutePath)
+        // ide-starter 262+ is class-file 69 (Java 25). Prefer a Java 25 toolchain launcher
+        // when the Gradle JVM is older so local `./gradlew :uiTest` on JBR 21 still works
+        // once a JDK 25 is installed (fooJay resolver).
+        javaLauncher.set(
+            javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(25)) }
+        )
+        // Required by ide-starter 2026.2 changelog for recent IDE runs.
+        jvmArgs("--add-opens=java.base/sun.nio.fs=ALL-UNNAMED")
     }
