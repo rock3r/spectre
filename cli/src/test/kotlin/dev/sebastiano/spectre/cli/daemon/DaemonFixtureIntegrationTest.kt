@@ -179,15 +179,17 @@ class DaemonFixtureIntegrationTest {
         try {
             spawnComposeFixture().use { fixture ->
                 DaemonClient(socketPath).use { client ->
+                    // Target JVM can briefly refuse attach ("state is not ready to participate
+                    // in attach handshake") right after READY; retry before failing the suite.
                     val attached =
-                        client.requestOrStart(DaemonRequest.Attach(fixture.pid)) {
+                        attachWithRetry(client, fixture.pid) {
                             daemon =
                                 DaemonProcessLauncher(
                                         socketPath = socketPath,
                                         classPath = daemonFixtureRuntimeClassPath(),
                                     )
                                     .start()
-                        } as DaemonResponse.Attached
+                        }
 
                     assertEquals(fixture.pid, attached.targetPid)
                     assertTrue(
@@ -324,6 +326,20 @@ private fun deleteDaemonSocketAndParent(socketPath: Path) {
 }
 
 private fun spawnComposeFixture(): FixtureProcess {
+    var lastError: String? = null
+    repeat(FIXTURE_SPAWN_ATTEMPTS) { attempt ->
+        try {
+            return spawnComposeFixtureOnce()
+        } catch (ex: IllegalStateException) {
+            lastError = ex.message
+            if (attempt == FIXTURE_SPAWN_ATTEMPTS - 1) throw ex
+            Thread.sleep(FIXTURE_ATTACH_SETTLE_MS * (attempt + 1L))
+        }
+    }
+    error(lastError ?: "Compose fixture failed to start")
+}
+
+private fun spawnComposeFixtureOnce(): FixtureProcess {
     val javaExe =
         if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "java.exe"
         else "java"
@@ -358,6 +374,13 @@ private fun spawnComposeFixture(): FixtureProcess {
     check(ready.await(FIXTURE_READY_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
         process.destroyForcibly()
         "Compose fixture did not emit $READY_SENTINEL"
+    }
+    // READY is printed before the JVM is always attachable; give the target a short settle
+    // window so VirtualMachine.attach is less likely to race (macOS CI flakes).
+    Thread.sleep(FIXTURE_ATTACH_SETTLE_MS)
+    check(process.isAlive) {
+        process.destroyForcibly()
+        "Compose fixture exited immediately after $READY_SENTINEL"
     }
     return FixtureProcess(process, reader, drainer)
 }
@@ -452,6 +475,47 @@ private fun startMcpBinary(daemonUser: String): Process {
         )
         .start()
 }
+
+/** Cast attach responses with a useful message when the daemon returns [DaemonResponse.Error]. */
+private fun requireAttached(response: DaemonResponse): DaemonResponse.Attached =
+    when (response) {
+        is DaemonResponse.Attached -> response
+        is DaemonResponse.Error ->
+            error("daemon attach failed: code=${response.code} message=${response.message}")
+        else -> error("unexpected daemon response for attach: $response")
+    }
+
+private fun attachWithRetry(
+    client: DaemonClient,
+    targetPid: Long,
+    startDaemon: () -> Unit,
+): DaemonResponse.Attached {
+    var lastError: DaemonResponse.Error? = null
+    repeat(ATTACH_RETRY_ATTEMPTS) { attempt ->
+        val response = client.requestOrStart(DaemonRequest.Attach(targetPid), start = startDaemon)
+        when (response) {
+            is DaemonResponse.Attached -> return response
+            is DaemonResponse.Error -> {
+                lastError = response
+                val retryable =
+                    response.message.contains("not ready to participate in attach handshake") ||
+                        response.message.contains("No such process") ||
+                        response.message.contains("AttachNotSupportedException")
+                if (!retryable || attempt == ATTACH_RETRY_ATTEMPTS - 1) {
+                    return requireAttached(response)
+                }
+                Thread.sleep(ATTACH_RETRY_BACKOFF_MS * (attempt + 1L))
+            }
+            else -> return requireAttached(response)
+        }
+    }
+    return requireAttached(lastError ?: error("attach retry loop exited without a response"))
+}
+
+private const val ATTACH_RETRY_ATTEMPTS: Int = 8
+private const val ATTACH_RETRY_BACKOFF_MS: Long = 400
+private const val FIXTURE_ATTACH_SETTLE_MS: Long = 750
+private const val FIXTURE_SPAWN_ATTEMPTS: Int = 3
 
 private suspend fun mcpText(client: Client, tool: String, arguments: Map<String, Any?>): String {
     val result = client.callTool(tool, arguments)

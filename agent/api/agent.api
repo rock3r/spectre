@@ -208,7 +208,9 @@ public final class dev/sebastiano/spectre/agent/launch/LaunchAgentBootstrapExcep
 
 public final class dev/sebastiano/spectre/agent/launch/LaunchAndAttach {
 	public static final field INSTANCE Ldev/sebastiano/spectre/agent/launch/LaunchAndAttach;
-	public final fun launch (Ldev/sebastiano/spectre/agent/launch/LaunchSpec;)Ldev/sebastiano/spectre/agent/launch/LaunchedSession;
+	public final fun getDEFAULT_WARNING_SINK ()Lkotlin/jvm/functions/Function1;
+	public final fun launch (Ldev/sebastiano/spectre/agent/launch/LaunchSpec;Lkotlin/jvm/functions/Function1;)Ldev/sebastiano/spectre/agent/launch/LaunchedSession;
+	public static synthetic fun launch$default (Ldev/sebastiano/spectre/agent/launch/LaunchAndAttach;Ldev/sebastiano/spectre/agent/launch/LaunchSpec;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Ldev/sebastiano/spectre/agent/launch/LaunchedSession;
 }
 
 public final class dev/sebastiano/spectre/agent/launch/LaunchCommandRewriter {

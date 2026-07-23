@@ -2,6 +2,37 @@
 
 Common surprises and their fixes, ordered roughly by how often they bite.
 
+## Launch-and-attach harness
+
+### "Launched process exited with code N before attach (PROCESS_ALIVE)"
+
+The process died before Spectre could attach. The exception message includes the exit
+code, paths to stdout/stderr capture files, and a stderr excerpt. Fix the app startup
+failure first (missing main class, bad classpath, AWT headless, etc.).
+
+### "No attachable JVM … (JVM_ATTACHABLE)" on a Gradle launch
+
+`./gradlew :app:run` spawns the app JVM from the **Gradle daemon**, not the `gradlew`
+client. Pass `LaunchSpec.appJvmNameFilter` / `spectre launch --app-name <MainClass>` so
+discovery can match the app among daemon children. Never kill the Gradle daemon to "fix"
+teardown — the harness only tears down the discovered app JVM.
+
+You will also see a loud **Gradle-ish** warning naming daemon, sandbox, and JEP 451
+caveats. Prefer a prod-like launch (`java -jar`, installDist) when you control the build.
+
+### "Agent bootstrap failed (AGENT_BOOTSTRAP)"
+
+The target JVM was found but the agent did not bind its UDS in time, or
+`ComposeAutomator` was not on the target classpath. Ensure the app depends on
+`spectre-core`, and for direct launches that Spectre injects
+`-XX:+EnableDynamicAgentLoading` (Gradle launches must set that flag in the build).
+
+### "Attached but no window (FIRST_WINDOW)"
+
+Attach succeeded but `windows()` stayed empty until timeout. The app may still be
+showing a splash screen, or the Compose tree never registered a window. Increase
+`LaunchStageTimeouts.firstWindowMs` or fix the UI startup path.
+
 ## "I called a wait helper from the EDT"
 
 ```

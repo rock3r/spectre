@@ -82,6 +82,82 @@ class MyTest {
 getter, which is what JUnit 4 reflects on. Without the `get:` prefix Kotlin would put
 the annotation on the property itself and JUnit wouldn't see it.
 
+## Launch-and-attach harness
+
+When the UI under test is a **separate JVM** (prod-like `java -jar`, installDist, or even
+`./gradlew :app:run` with warnings), use `LaunchAndAttachExtension` (JUnit 5) or
+`LaunchAndAttachRule` (JUnit 4) from `:testing`. They call the shared agent launch core
+before each test and tear the process tree down after — the same lifecycle window
+`ComposeAutomatorExtension` / `ComposeAutomatorRule` use, so future failure-artifact
+hooks can compose freely.
+
+```kotlin
+import dev.sebastiano.spectre.agent.launch.LaunchSpec
+import dev.sebastiano.spectre.testing.LaunchAndAttachExtension
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.RegisterExtension
+
+class LaunchedAppTest {
+
+    @JvmField
+    @RegisterExtension
+    val launchExt =
+        LaunchAndAttachExtension(
+            LaunchSpec(
+                command =
+                    listOf(
+                        // java.home/bin/java (or java.exe on Windows)
+                        "${System.getProperty("java.home")}/bin/java",
+                        "-jar",
+                        "app/build/libs/app.jar",
+                    )
+            )
+        )
+
+    @Test
+    fun exercise() {
+        val windows = launchExt.automator.windows()
+        // …
+    }
+}
+```
+
+The extension implements `ParameterResolver`, so when a class registers **one**
+`LaunchAndAttachExtension`, parallel-safe tests can take `LaunchedSession` or
+`AttachedAutomator` as method parameters (resolved from the per-invocation store):
+
+```kotlin
+import dev.sebastiano.spectre.agent.AttachedAutomator
+import dev.sebastiano.spectre.agent.launch.LaunchedSession
+
+@Test
+fun exercise(session: LaunchedSession) {
+    session.automator.windows()
+}
+
+@Test
+fun alsoFine(automator: AttachedAutomator) {
+    automator.windows()
+}
+```
+
+The `launchExt.automator` / `launchExt.launched` accessors are instance-specific and
+thread-local-backed, so they stay correct under parallel execution and when a class
+registers **two** launch extensions (app + helper). With two or more registrations,
+parameter injection is disabled to avoid competing resolvers — use the property
+accessors instead.
+
+Because the extension needs a `LaunchSpec`, register it with `@RegisterExtension` (not
+`@ExtendWith`).
+
+Prefer prod-like commands. For Gradle-ish launches, set `appJvmNameFilter` (main-class
+substring) so discovery can find the daemon-spawned app JVM without attaching an unrelated
+process. Direct `java` launches inject `-XX:+EnableDynamicAgentLoading` automatically.
+
+The full API lives in `dev.sebastiano.spectre.agent.launch` (`LaunchAndAttach`,
+`LaunchSpec`, stage exceptions). See [Agent attach](agent.md) and
+[Troubleshooting](troubleshooting.md#launch-and-attach-harness).
+
 ## Launching a Compose window from a test
 
 `application { Window(...) { ... } }` blocks until the app exits, so do not call it

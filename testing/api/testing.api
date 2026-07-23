@@ -16,6 +16,27 @@ public final class dev/sebastiano/spectre/testing/ComposeAutomatorRule : org/jun
 	public final fun getAutomator ()Ldev/sebastiano/spectre/core/ComposeAutomator;
 }
 
+public final class dev/sebastiano/spectre/testing/LaunchAndAttachExtension : org/junit/jupiter/api/extension/AfterEachCallback, org/junit/jupiter/api/extension/BeforeEachCallback, org/junit/jupiter/api/extension/ParameterResolver {
+	public fun <init> (Ldev/sebastiano/spectre/agent/launch/LaunchSpec;Lkotlin/jvm/functions/Function1;)V
+	public synthetic fun <init> (Ldev/sebastiano/spectre/agent/launch/LaunchSpec;Lkotlin/jvm/functions/Function1;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun afterEach (Lorg/junit/jupiter/api/extension/ExtensionContext;)V
+	public fun beforeEach (Lorg/junit/jupiter/api/extension/ExtensionContext;)V
+	public final fun getAutomator ()Ldev/sebastiano/spectre/agent/AttachedAutomator;
+	public final fun getLaunched ()Ldev/sebastiano/spectre/agent/launch/LaunchedSession;
+	public final fun launchedFrom (Lorg/junit/jupiter/api/extension/ExtensionContext;)Ldev/sebastiano/spectre/agent/launch/LaunchedSession;
+	public fun resolveParameter (Lorg/junit/jupiter/api/extension/ParameterContext;Lorg/junit/jupiter/api/extension/ExtensionContext;)Ljava/lang/Object;
+	public fun supportsParameter (Lorg/junit/jupiter/api/extension/ParameterContext;Lorg/junit/jupiter/api/extension/ExtensionContext;)Z
+}
+
+public final class dev/sebastiano/spectre/testing/LaunchAndAttachRule : org/junit/rules/ExternalResource {
+	public fun <init> (Ldev/sebastiano/spectre/agent/launch/LaunchSpec;Lkotlin/jvm/functions/Function1;)V
+	public synthetic fun <init> (Ldev/sebastiano/spectre/agent/launch/LaunchSpec;Lkotlin/jvm/functions/Function1;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getAutomator ()Ldev/sebastiano/spectre/agent/AttachedAutomator;
+	public final fun getLaunched ()Ldev/sebastiano/spectre/agent/launch/LaunchedSession;
+	public final fun startSession ()V
+	public final fun stopSession ()V
+}
+
 public final class dev/sebastiano/spectre/testing/contract/AutomatorContractCorpus {
 	public static final field INSTANCE Ldev/sebastiano/spectre/testing/contract/AutomatorContractCorpus;
 	public final fun run (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;)Ldev/sebastiano/spectre/testing/contract/AutomatorContractCorpus$RunResult;

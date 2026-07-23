@@ -56,7 +56,7 @@ public class SpectreCli(
 
     /** Parses and executes one CLI invocation, returning zero when it succeeds. */
     public fun run(arguments: List<String>): Int {
-        val command = RootCommand(request, shutdownRequest, output)
+        val command = RootCommand(request, shutdownRequest, output, errorOutput)
         return try {
             command.parse(arguments)
             EXIT_SUCCESS
@@ -127,11 +127,13 @@ private class RootCommand(
     request: (DaemonRequest) -> DaemonResponse,
     shutdownRequest: () -> DaemonResponse,
     output: Appendable,
+    errorOutput: Appendable,
 ) : CliktCommand(name = "spectre") {
     init {
         subcommands(
             AttachCommand(request, output),
             DetachCommand(request, output),
+            LaunchCommand(output, errorOutput),
             WindowsCommand(request, output),
             TreeCommand(request, output),
             FindCommand(request, output),
