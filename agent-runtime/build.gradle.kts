@@ -2,6 +2,7 @@ import java.io.File
 import java.util.jar.Attributes
 import java.util.jar.Manifest
 import java.util.zip.ZipFile
+import org.gradle.jvm.tasks.Jar as JvmJar
 
 plugins {
     alias(libs.plugins.detekt)
@@ -25,8 +26,15 @@ tasks.withType<Test>().configureEach { useJUnitPlatform() }
 
 val runtimeClasspath = configurations.named("runtimeClasspath")
 
-tasks.named<Jar>("jar") {
+// Nested inject payload (#209): relocated core + kotlinx, no Compose. Packaged as a resource
+// so the thin agent-runtime still forbids exploded core/ classes (verifyAgentRuntimeJarContents).
+val injectRuntimeJarTask = project(":agent-inject-runtime").tasks.named("shadowJar")
+val injectRuntimeJarFile = injectRuntimeJarTask.map { task -> task.outputs.files.singleFile }
+
+tasks.named<JvmJar>("jar") {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    dependsOn(injectRuntimeJarTask)
+    inputs.file(injectRuntimeJarFile)
 
     manifest {
         attributes(
@@ -48,15 +56,22 @@ tasks.named<Jar>("jar") {
         exclude("META-INF/*.RSA")
         exclude("META-INF/INDEX.LIST")
     }
+
+    // Nested jar resource — not exploded core classes.
+    from(injectRuntimeJarFile) {
+        into("META-INF/spectre")
+        rename { "inject-runtime.jar" }
+    }
 }
 
 val verifyAgentRuntimeJarContents by tasks.registering {
     description =
         "Asserts the agent runtime JAR is loadable by the Attach API and stays thin: no " +
-            "Compose, Skiko, Kotlin stdlib, coroutines, or Spectre core classes."
+            "exploded Compose, Skiko, Kotlin stdlib, coroutines, or Spectre core classes. " +
+            "Nested META-INF/spectre/inject-runtime.jar is required for #209 injection."
     group = "verification"
 
-    val jarFile = tasks.named<Jar>("jar").flatMap { it.archiveFile }
+    val jarFile = tasks.named<JvmJar>("jar").flatMap { it.archiveFile }
     dependsOn(jarFile)
     inputs.file(jarFile)
 
@@ -74,6 +89,11 @@ val verifyAgentRuntimeJarContents by tasks.registering {
             }
             require(attrs.getValue("Premain-Class") == expectedAgentClass) {
                 "Agent runtime jar is missing Premain-Class=$expectedAgentClass"
+            }
+
+            val injectEntry = zip.getEntry("META-INF/spectre/inject-runtime.jar")
+            require(injectEntry != null && injectEntry.size > 0L) {
+                "Agent runtime jar missing nested META-INF/spectre/inject-runtime.jar (#209)"
             }
 
             val forbiddenPrefixes =
@@ -108,6 +128,9 @@ private fun includeInAgentRuntimeJar(file: File): Boolean {
         name.startsWith("kotlin-reflect") -> false
         name.startsWith("kotlinx-coroutines") -> false
         name.startsWith("annotations-") -> false
+        // Never explode the inject payload into the agent-runtime root.
+        name.startsWith("spectre-agent-inject-runtime") -> false
+        name.startsWith("agent-inject-runtime") -> false
         else -> true
     }
 }

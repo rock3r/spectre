@@ -79,71 +79,93 @@ public object SpectreAgent {
             return
         }
 
-        // findSpectreClassLoader throws SpectreNotOnClasspathException or
-        // AmbiguousSpectreClasspathException; createAutomatorReflectively throws
-        // ReflectiveOperationException. Both propagate to the JVM agent layer which surfaces
-        // them at the attaching `VirtualMachine.loadAgent` call site.
-        val loader = AgentBootstrap.findSpectreClassLoader(instrumentation)
-        System.err.println("[spectre-agent] found Spectre via $loader")
+        // findSpectre throws SpectreNotOnClasspathException /
+        // AmbiguousSpectreClasspathException / ComposeNotOnClasspathException;
+        // createAutomatorReflectively throws ReflectiveOperationException. Both propagate to the
+        // JVM agent layer which surfaces them at the attaching `VirtualMachine.loadAgent` call
+        // site.
+        val bootstrap = AgentBootstrap.findSpectre(instrumentation)
+        // When AgentState is published successfully, detach/shutdown owns inject cleanup.
+        // Until then (or on any failure path), we release in the finally below.
+        var injectOwnedByAgentState = false
+        try {
+            val loader = bootstrap.classLoader
+            System.err.println("[spectre-agent] found Spectre via $loader")
 
-        // Open AWT peer packages so core window-identity can resolve host HWND/NSWindow*/XID for
-        // embedded ComposePanel surfaces (Compose windowHandle is 0 there). Best-effort: failures
-        // are logged and identity falls back to null handles.
-        AwtPeerModuleOpener.openFor(loader, instrumentation)
+            // Open AWT peer packages so core window-identity can resolve host HWND/NSWindow*/XID
+            // for embedded ComposePanel surfaces (Compose windowHandle is 0 there). Best-effort:
+            // failures are logged and identity falls back to null handles.
+            AwtPeerModuleOpener.openFor(loader, instrumentation)
 
-        val automator = createAutomatorReflectively(loader)
-        System.err.println("[spectre-agent] ComposeAutomator ready: $automator")
+            val automator = createAutomatorReflectively(loader)
+            System.err.println("[spectre-agent] ComposeAutomator ready: $automator")
 
-        val udsPath = agentArgs.takeUnless { it.isNullOrBlank() }?.let(Path::of)
-        if (udsPath == null) {
-            // No UDS path means manual diagnostic mode: report window count to stderr so a user
-            // can verify Spectre is correctly on a target's classpath.
-            val count = invokeWindowsCountReflectively(automator)
+            val udsPath = agentArgs.takeUnless { it.isNullOrBlank() }?.let(Path::of)
+            if (udsPath == null) {
+                // No UDS path means manual diagnostic mode: report window count to stderr so a
+                // user can verify Spectre is correctly on a target's classpath.
+                val count = invokeWindowsCountReflectively(automator)
+                System.err.println(
+                    "[spectre-agent] no UDS path provided; spike mode reports " +
+                        "getWindows().size = $count"
+                )
+                return
+            }
+
+            // IpcServer's constructor throws IOException on bind failure (path too long,
+            // permission issue, …). Let it propagate.
+            val handler = ReflectiveAutomatorHandler(automator)
+            val server =
+                IpcServer(udsPath = udsPath, handler = handler, onDetach = ::onClientDetach)
+
+            // Register the shutdown hook BEFORE publishing AgentState so a crash between here and
+            // CAS leaves no orphans. We carry the hook Thread in AgentState so onClientDetach can
+            // unregister it.
+            val shutdownHook =
+                Thread(
+                    {
+                        // Path B — crash safety. close() handles its own idempotency.
+                        runCatching { server.close() }
+                        bootstrap.releaseInjectResources()
+                    },
+                    SHUTDOWN_HOOK_NAME,
+                )
+            Runtime.getRuntime().addShutdownHook(shutdownHook)
+
+            val newState =
+                AgentState(
+                    server = server,
+                    udsPath = udsPath,
+                    shutdownHook = shutdownHook,
+                    bootstrap = bootstrap,
+                )
+            if (!agentState.compareAndSet(null, newState)) {
+                // Idempotency race: someone bootstrapped between our earlier `get()` check and now.
+                // Roll back: close our just-created server and remove our hook so the existing
+                // state remains the source of truth.
+                runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
+                runCatching { server.close() }
+                System.err.println(
+                    "[spectre-agent] lost idempotency race; rolled back duplicate IPC server"
+                )
+                return
+            }
+
+            injectOwnedByAgentState = true
             System.err.println(
-                "[spectre-agent] no UDS path provided; spike mode reports getWindows().size = $count"
+                "[spectre-agent] IPC server listening on $udsPath — ready for client connections"
             )
-            return
+        } finally {
+            if (!injectOwnedByAgentState) {
+                bootstrap.releaseInjectResources()
+            }
         }
-
-        // IpcServer's constructor throws IOException on bind failure (path too long,
-        // permission issue, …). Let it propagate.
-        val handler = ReflectiveAutomatorHandler(automator)
-        val server = IpcServer(udsPath = udsPath, handler = handler, onDetach = ::onClientDetach)
-
-        // Register the shutdown hook BEFORE publishing AgentState so a crash between here and
-        // CAS leaves no orphans. We carry the hook Thread in AgentState so onClientDetach can
-        // unregister it.
-        val shutdownHook =
-            Thread(
-                {
-                    // Path B — crash safety. close() handles its own idempotency.
-                    runCatching { server.close() }
-                },
-                SHUTDOWN_HOOK_NAME,
-            )
-        Runtime.getRuntime().addShutdownHook(shutdownHook)
-
-        val newState = AgentState(server = server, udsPath = udsPath, shutdownHook = shutdownHook)
-        if (!agentState.compareAndSet(null, newState)) {
-            // Idempotency race: someone bootstrapped between our earlier `get()` check and now.
-            // Roll back: close our just-created server and remove our hook so the existing
-            // state remains the source of truth.
-            runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
-            runCatching { server.close() }
-            System.err.println(
-                "[spectre-agent] lost idempotency race; rolled back duplicate IPC server"
-            )
-            return
-        }
-
-        System.err.println(
-            "[spectre-agent] IPC server listening on $udsPath — ready for client connections"
-        )
     }
 
     /**
      * Called by [IpcServer] when it processes an `AgentRequest.Detach`. Performs the full D-7 Path
-     * A cleanup: clears the global slot, closes the server (idempotent), removes the shutdown hook.
+     * A cleanup: clears the global slot, closes the server (idempotent), removes the shutdown hook,
+     * and releases inject payload resources when the attach used injection (#209).
      *
      * The server has *already* set its `running` flag to false before invoking this; the `close()`
      * here ensures the ServerSocketChannel native fd is released and the UDS path unlinked. Without
@@ -153,6 +175,7 @@ public object SpectreAgent {
         val state = agentState.getAndSet(null) ?: return
         runCatching { state.server.close() }
         runCatching { Runtime.getRuntime().removeShutdownHook(state.shutdownHook) }
+        state.bootstrap.releaseInjectResources()
         System.err.println("[spectre-agent] detached cleanly; resources released")
     }
 
@@ -195,5 +218,6 @@ public object SpectreAgent {
         val server: IpcServer,
         val udsPath: Path,
         val shutdownHook: Thread,
+        val bootstrap: SpectreBootstrapResult,
     )
 }

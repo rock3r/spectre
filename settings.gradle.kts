@@ -96,6 +96,9 @@ include(":agent")
 
 include(":agent-runtime")
 
+// Relocated :core payload nested inside agent-runtime for #209 injection (no Compose bundled).
+include(":agent-inject-runtime")
+
 include(":cli")
 
 // Tiny non-publishable Compose Desktop app used only as a target for `:agent`'s integration
