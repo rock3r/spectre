@@ -69,13 +69,13 @@ class HotReloadDaemonFixtureE2eTest {
         val appScope = applicationScope()
         val appReady = CountDownLatch(1)
         val appJob = startAckingApplicationClient(port, appScope, appReady)
-        assertTrue(
-            appReady.await(15, TimeUnit.SECONDS),
-            "Application-role HR client never connected",
-        )
         val socketPath = temporarySocketPath()
         var daemon: Process? = null
         try {
+            assertTrue(
+                appReady.await(15, TimeUnit.SECONDS),
+                "Application-role HR client never connected",
+            )
             spawnComposeFixtureWithOrchestrationPort(port).use { fixture ->
                 DaemonClient(socketPath).use { client ->
                     val sessionId =
