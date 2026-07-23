@@ -79,10 +79,12 @@ class LaunchAndAttachGradleClientDeathTest {
                 // ~1s delay then exit 42; stderr via stderr stream.
                 Files.writeString(
                     it,
+                    // Prefer ping over `timeout`: under non-console redirected I/O, Windows
+                    // `timeout` can abort immediately (Bugbot/Windows CI).
                     """
                     @echo off
                     echo spectre-gradle-client-death-stderr 1>&2
-                    timeout /t 1 /nobreak >nul
+                    ping -n 2 127.0.0.1 >nul
                     exit /b 42
                     """
                         .trimIndent() + "\r\n",
