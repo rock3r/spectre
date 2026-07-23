@@ -132,6 +132,38 @@ Useful patterns to search for include `Sandbox: java(...) deny(1) mach-lookup`,
 `WMClientWindowManager: Invalid connection`, `ScreenCaptureKit`, `ReplayKit`,
 `com.apple.replayd`, and `kTCCServiceScreenCapture`.
 
+## Runtime matrix (JBR / Temurin)
+
+Per-PR CI stays on a single Temurin 21 JDK for speed. Compatibility across **JBR 21**,
+**JBR 25**, and **Temurin LTS** (toolchain major) on macOS, Linux, and Windows is covered by
+the scheduled [runtime-matrix](https://github.com/rock3r/spectre/blob/main/.github/workflows/runtime-matrix.yml)
+workflow (epic #215 / issue #216):
+
+| Dimension | Values |
+| --- | --- |
+| Runtime | JBR 21, JBR 25, Temurin LTS |
+| OS | macOS, Linux (`xvfb`), Windows |
+| Suites | Contract corpus (all OSes); agent attach same-runtime on Linux/macOS + mixed vanilla↔JBR on Linux; Linux X11 recording smoke. Agent suites are `@EnabledOnOs(LINUX, MAC)` only — Windows cells still run the non-agent corpus. |
+
+Pins live in [`.github/jbr-pins.env`](https://github.com/rock3r/spectre/blob/main/.github/jbr-pins.env)
+(JBRSDK / `jdk` package, not `jbr_jcef`). Bump procedure is in that file’s header comments.
+`actions/setup-java` caches downloads per runner OS/arch via the composite action
+`.github/actions/setup-matrix-jdk`.
+
+The matrix is **release-gated**: `release.yml` calls the same workflow via `workflow_call`
+before helper builds and publish. A red cell blocks the release; scheduled failures open
+issues labelled `runtime-matrix` rather than vanishing into Actions noise.
+
+Test/JavaExec workers are forced onto the matrix JDK via `SPECTRE_MATRIX_JAVA_HOME`
+(root `build.gradle.kts`); modules still **compile** with `jvmToolchain(21)`. Without that
+env, Gradle would execute JBR 25 cells on a toolchain-provisioned JDK 21 and the matrix
+would not prove runtime compatibility.
+
+Mixed-runtime agent attach sets `SPECTRE_FIXTURE_JAVA_HOME` (or
+`-Pspectre.agent.fixtureJavaHome=…`) so the fixture JVM can differ from the attacher; the
+`:agent:test` task forwards it as
+`-Ddev.sebastiano.spectre.agent.fixtureJavaHome=…` into the forked test JVM.
+
 ## Recording tests
 
 Keep recording tests tagged separately from normal UI tests. Linux CI can validate Xorg / `xvfb`
