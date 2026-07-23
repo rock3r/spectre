@@ -10,12 +10,19 @@ The process died before Spectre could attach. The exception message includes the
 code, paths to stdout/stderr capture files, and a stderr excerpt. Fix the app startup
 failure first (missing main class, bad classpath, AWT headless, etc.).
 
+On a **Gradle-ish** launch, if the `./gradlew` **client** exits before any app JVM is
+discovered (wrapper download failure, bad env, build script error), you get this same
+stage — often with detail that the Gradle client exited before an app JVM appeared —
+rather than a name-filter miss. Read the captured stderr first; do not assume
+`--app-name` is wrong until the client stays alive.
+
 ### "No attachable JVM … (JVM_ATTACHABLE)" on a Gradle launch
 
 `./gradlew :app:run` spawns the app JVM from the **Gradle daemon**, not the `gradlew`
-client. Pass `LaunchSpec.appJvmNameFilter` / `spectre launch --app-name <MainClass>` so
-discovery can match the app among daemon children. Never kill the Gradle daemon to "fix"
-teardown — the harness only tears down the discovered app JVM.
+client. This stage means the **client is still running** but no matching app JVM was
+found in time. Pass `LaunchSpec.appJvmNameFilter` / `spectre launch --app-name
+<MainClass>` so discovery can match the app among daemon children. Never kill the
+Gradle daemon to "fix" teardown — the harness only tears down the discovered app JVM.
 
 You will also see a loud **Gradle-ish** warning naming daemon, sandbox, and JEP 451
 caveats. Prefer a prod-like launch (`java -jar`, installDist) when you control the build.

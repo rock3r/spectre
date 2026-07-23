@@ -6,6 +6,7 @@ import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import java.nio.file.Files
 import java.nio.file.Paths
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
@@ -55,10 +56,9 @@ class LaunchAndAttachWarningTest {
             warnings.any { it.contains("daemon", ignoreCase = true) },
             "warnings should mention daemon; got $warnings",
         )
-        // Stage may be PROCESS_ALIVE (script exits) or JVM_ATTACHABLE (no matching app JVM).
-        assertTrue(
-            ex.stage == LaunchStage.PROCESS_ALIVE || ex.stage == LaunchStage.JVM_ATTACHABLE,
-            "unexpected stage ${ex.stage}: ${ex.message}",
-        )
+        // Client dies before any app JVM — should report PROCESS_ALIVE with exit, not a
+        // name-filter miss at JVM_ATTACHABLE.
+        assertEquals(LaunchStage.PROCESS_ALIVE, ex.stage, "unexpected stage: ${ex.message}")
+        assertTrue(ex is ProcessExitedBeforeAttachException, "expected process-exit taxonomy")
     }
 }
