@@ -15,18 +15,39 @@ What it does (real shipped APIs):
 
 ## Manual recipe (same components)
 
+`./gradlew :agent:attachSpike` only loads the agent in diagnostic mode (window count on the
+**target** stderr) — it does **not** return an `AttachedAutomator` or print a tree. Prefer the
+Gradle e2e above for a full tree dump. For an interactive attach that queries the tree:
+
 ```bash
-# Terminal A — target without spectre-core (filter core off the classpath yourself,
-# or run a Compose app that does not depend on spectre-core):
-./gradlew :agent-test-fixture:jar :agent-inject-runtime:shadowJar :agent-runtime:jar
-# Construct a CP of Compose + agent-test-fixture classes only, then:
+# Terminal A — target without spectre-core:
+./gradlew :agent-test-fixture:jar :agent-runtime:jar
+# Build a classpath of Compose + agent-test-fixture only (no spectre-core), then:
 java -cp "$COMPOSE_AND_FIXTURE_CP" \
   -XX:+EnableDynamicAgentLoading \
   dev.sebastiano.spectre.agent.fixture.InjectComposeFixtureMainKt
+```
 
-# Terminal B — attach with the agent runtime that embeds inject-runtime:
-./gradlew :agent:attachSpike -Ppid=<pid-from-jps>
-# or from a test/tool using AgentAttach.attach(pid, AttachOptions(agentJarPath = ...))
+```kotlin
+// Terminal B — attacher JVM (spectre-agent + spectre-agent-runtime on CP):
+@file:OptIn(ExperimentalSpectreAgentApi::class)
+
+import dev.sebastiano.spectre.agent.AgentAttach
+import dev.sebastiano.spectre.agent.AttachOptions
+import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import java.nio.file.Path
+
+AgentAttach.attach(
+    pid = targetPid, // from jps / SpectreProcesses
+    options =
+        AttachOptions(
+            agentJarPath = Path.of("agent-runtime/build/libs/…spectre-agent-runtime….jar"),
+        ),
+).use { automator ->
+    println(automator.windows())
+    println(automator.allNodes().map { it.testTag })
+    println(automator.findByTestTag("agent-fixture-label"))
+}
 ```
 
 Success signal: non-empty `windows()` / `allNodes()` / fixture tags. Failure signal: bootstrap

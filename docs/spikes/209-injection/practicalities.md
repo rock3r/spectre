@@ -42,22 +42,27 @@ and bootstrap against the project's pinned Compose Desktop line.
 
 ## 3. Detach / classloader-leak acceptability (inspect mode)
 
-Injected classes **cannot be unloaded** once defined. Spectre now:
+Spectre:
 
 - extracts inject jar to a temp file
 - closes `SpectreInjectClassLoader` and deletes the temp jar on detach / failed bootstrap
-  (handles/files reclaimable)
+  (file handles reclaimable)
 
-But **loaded classes remain in Metaspace** for the target process lifetime. For **inspect-mode**
-(attach, dump tree, detach) on a long-lived IDE:
+Injected classes are defined by that **child** `URLClassLoader`. After detach releases the
+loader (and no other strong references remain), those classes are **eligible for unloading**
+when the GC reclaims the loader — timing is **not guaranteed**, and any retained reference
+(stale automator, IDE-held stack frame, etc.) can keep the loader alive.
 
-- **Acceptable** if attach is rare (debug sessions): small metaspace growth per attach cycle
-  that used a new inject loader.
-- **Not acceptable** as an unbounded attach loop without process restart.
+For **inspect-mode** (attach, dump tree, detach) on a long-lived IDE:
 
-**Implication for 1.0:** prefer **instrumented-only** (preinstalled core) for production CI
-targets; treat injection as **experimental inspect** with documented leak semantics — or
-instrument once via `-javaagent` at IDE start to avoid repeated inject classloader creation.
+- **Usually fine** for rare debug sessions: close/delete of the inject jar is deterministic;
+  metaspace retention is GC-dependent, not a guaranteed permanent per-attach leak.
+- **Still prefer instrumented-only** for high-frequency CI attach loops so product behaviour
+  does not depend on GC class-unloading behaviour.
+
+**Implication for 1.0:** keep injection as **experimental inspect**; production CI targets
+should keep preinstalled core (or a single `-javaagent` at process start) rather than
+relying on unbounded inject attach/detach cycles.
 
 ## 4. Stock IDE proving status
 
