@@ -1,9 +1,20 @@
 package dev.sebastiano.spectre.agent.runtime
 
 import java.lang.instrument.Instrumentation
+import java.nio.file.Path
 
 internal const val COMPOSE_AUTOMATOR_FQN = "dev.sebastiano.spectre.core.ComposeAutomator"
 internal const val PLUGIN_CLASS_LOADER_FQN = "com.intellij.ide.plugins.cl.PluginClassLoader"
+
+/**
+ * Public Compose Desktop markers used to locate a host classloader when Spectre is not installed.
+ */
+internal val COMPOSE_HOST_MARKER_FQNS: List<String> =
+    listOf(
+        "androidx.compose.ui.awt.ComposeWindow",
+        "androidx.compose.ui.awt.ComposePanel",
+        "androidx.compose.ui.semantics.SemanticsOwner",
+    )
 
 /**
  * Locates the Spectre `core` library on the target JVM's classpath and returns the [ClassLoader]
@@ -14,6 +25,10 @@ internal const val PLUGIN_CLASS_LOADER_FQN = "com.intellij.ide.plugins.cl.Plugin
  * inside a plugin's [PLUGIN_CLASS_LOADER_FQN]), the plugin's loader wins. If no clear winner
  * exists, fail loudly with [AmbiguousSpectreClasspathException] rather than silently picking the
  * wrong one.
+ *
+ * **Injection (#209):** when `ComposeAutomator` is absent, [findSpectreClassLoader] falls back to
+ * loading the nested inject-runtime jar (relocated kotlinx + core, no Compose) against a Compose
+ * host classloader discovered via [COMPOSE_HOST_MARKER_FQNS] / D-14.
  *
  * Designed as `internal object` so callers go through the agent entry points ([SpectreAgent])
  * rather than reaching directly into the bootstrap machinery.
@@ -29,8 +44,13 @@ internal object AgentBootstrap {
      * hands-off UI app that doesn't itself call `ComposeAutomator.inProcess()`). Sample-desktop is
      * the canonical example.
      *
-     * @throws SpectreNotOnClasspathException when neither the loaded-class scan nor the force-load
-     *   fallback turns up `ComposeAutomator`.
+     * If that also fails, attempts **injection**: extract the nested inject-runtime jar and load
+     * Spectre core via [SpectreInjectClassLoader] parented on a Compose host loader.
+     *
+     * @throws SpectreNotOnClasspathException when neither preinstalled core nor inject payload can
+     *   supply `ComposeAutomator` (e.g. inject resource missing).
+     * @throws ComposeNotOnClasspathException when inject is attempted but the target has no
+     *   Compose.
      * @throws AmbiguousSpectreClasspathException when multiple candidates exist and no winner
      *   emerges from the selection rule.
      */
@@ -38,7 +58,55 @@ internal object AgentBootstrap {
         val initialCandidates = collectCandidateClassLoaders(instrumentation, COMPOSE_AUTOMATOR_FQN)
         if (initialCandidates.isNotEmpty()) return selectClassLoader(initialCandidates)
 
-        return forceLoadFromSystemLoader() ?: throw SpectreNotOnClasspathException()
+        forceLoadFromSystemLoader()?.let {
+            return it
+        }
+
+        return injectSpectreClassLoader(instrumentation) ?: throw SpectreNotOnClasspathException()
+    }
+
+    /**
+     * Builds an inject [ClassLoader] that owns Spectre core from [injectJar] while resolving
+     * Compose against [composeHost]. Exposed for unit tests.
+     */
+    fun openInjectClassLoader(injectJar: Path, composeHost: ClassLoader): ClassLoader {
+        val urls = arrayOf(injectJar.toUri().toURL())
+        return SpectreInjectClassLoader(urls, composeHost)
+    }
+
+    /**
+     * Locates a Compose-capable host classloader for injection (D-14 when multiple).
+     *
+     * @throws ComposeNotOnClasspathException when no Compose marker class is loadable.
+     * @throws AmbiguousSpectreClasspathException when multiple hosts match and D-14 cannot pick
+     *   one.
+     */
+    fun findComposeHostClassLoader(instrumentation: Instrumentation): ClassLoader {
+        val candidates =
+            COMPOSE_HOST_MARKER_FQNS.flatMap { fqn ->
+                    collectCandidateClassLoaders(instrumentation, fqn)
+                }
+                .distinct()
+        if (candidates.isNotEmpty()) {
+            return selectClassLoader(candidates) { throw ComposeNotOnClasspathException() }
+        }
+        forceLoadComposeHostFromSystemLoader()?.let {
+            return it
+        }
+        throw ComposeNotOnClasspathException()
+    }
+
+    private fun injectSpectreClassLoader(instrumentation: Instrumentation): ClassLoader? {
+        val injectJar = InjectRuntimeLocator.extractInjectJar() ?: return null
+        System.err.println(
+            "[spectre-agent] spectre-core not on target classpath; injecting from $injectJar"
+        )
+        val composeHost = findComposeHostClassLoader(instrumentation)
+        System.err.println("[spectre-agent] Compose host classloader: $composeHost")
+        val injectLoader = openInjectClassLoader(injectJar, composeHost)
+        // Prove ComposeAutomator resolves from the inject jar before returning.
+        injectLoader.loadClass(COMPOSE_AUTOMATOR_FQN)
+        return injectLoader
     }
 }
 
@@ -67,6 +135,21 @@ private fun forceLoadFromSystemLoader(): ClassLoader? =
         null
     }
 
+private fun forceLoadComposeHostFromSystemLoader(): ClassLoader? {
+    val system = ClassLoader.getSystemClassLoader()
+    for (fqn in COMPOSE_HOST_MARKER_FQNS) {
+        try {
+            val loaded = Class.forName(fqn, false, system)
+            return loaded.classLoader ?: system
+        } catch (_: ClassNotFoundException) {
+            // try next marker
+        } catch (_: NoClassDefFoundError) {
+            // try next marker
+        }
+    }
+    return null
+}
+
 /**
  * Filters [Instrumentation.getAllLoadedClasses] down to classes whose [Class.getName] equals
  * [targetFqn], then collects the distinct [ClassLoader]s that own them.
@@ -88,7 +171,7 @@ internal fun collectCandidateClassLoaders(
 /**
  * Applies the D-14 selection rule to the [candidates] list:
  *
- * 1. If [candidates] is empty → throw [SpectreNotOnClasspathException].
+ * 1. If [candidates] is empty → throw via [onEmpty].
  * 2. If [candidates] has exactly one entry → return it.
  * 3. If multiple candidates exist, prefer the one whose class-loader hierarchy chain reaches
  *    [PLUGIN_CLASS_LOADER_FQN].
@@ -99,8 +182,11 @@ internal fun collectCandidateClassLoaders(
  * wrong loader would produce confusing downstream bugs (the agent's reflective calls would target a
  * `ComposeAutomator` the app isn't actually using).
  */
-internal fun selectClassLoader(candidates: List<ClassLoader>): ClassLoader {
-    if (candidates.isEmpty()) throw SpectreNotOnClasspathException()
+internal fun selectClassLoader(
+    candidates: List<ClassLoader>,
+    onEmpty: () -> Nothing = { throw SpectreNotOnClasspathException() },
+): ClassLoader {
+    if (candidates.isEmpty()) onEmpty()
     if (candidates.size == 1) return candidates.single()
 
     val pluginCandidates = candidates.filter { it.hasPluginClassLoaderInHierarchy() }

@@ -20,11 +20,25 @@ internal sealed class SpectreAgentBootstrapException(message: String) : RuntimeE
 internal class SpectreNotOnClasspathException :
     SpectreAgentBootstrapException(
         "No `dev.sebastiano.spectre.core.ComposeAutomator` class found in the target JVM's " +
-            "loaded classes. The Spectre agent requires the target application to include " +
-            "`dev.sebastiano.spectre:spectre-core` on its classpath. The agent JAR itself is " +
-            "supplied by the attaching JVM via `VirtualMachine.loadAgent`, not added as a target-side " +
-            "dependency. See https://github.com/rock3r/spectre/issues/153 for the thin-agent " +
-            "design rationale."
+            "loaded classes, and inject-runtime bootstrap was unavailable or failed to load " +
+            "core. Either add `dev.sebastiano.spectre:spectre-core` to the target classpath, " +
+            "or use a spectre-agent-runtime build that embeds META-INF/spectre/inject-runtime.jar " +
+            "(#209). The agent JAR itself is supplied by the attaching JVM via " +
+            "`VirtualMachine.loadAgent`. See https://github.com/rock3r/spectre/issues/209."
+    )
+
+/**
+ * Thrown when injection is attempted but the target JVM has no loadable Compose Desktop types
+ * (`ComposeWindow` / `ComposePanel` / `SemanticsOwner`). Injection resolves Compose against the
+ * target's classloaders and cannot proceed without them.
+ */
+internal class ComposeNotOnClasspathException :
+    SpectreAgentBootstrapException(
+        "No Compose Desktop host types " +
+            "(ComposeWindow / ComposePanel / SemanticsOwner) were found in the target JVM. " +
+            "Agent injection (#209) requires the target to already load Compose so injected " +
+            "spectre-core can resolve UI types against the target's classloaders. Compose is " +
+            "never bundled in the inject jar."
     )
 
 /**
