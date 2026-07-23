@@ -4,6 +4,7 @@ package dev.sebastiano.spectre.agent.launch
 
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.Paths
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -15,28 +16,19 @@ import kotlin.test.assertTrue
  * When a Gradle-ish `./gradlew` client dies before any app JVM is discovered (wrapper download
  * failure, bad env, etc.), the failure must surface client exit + stderr — not a misleading
  * [JvmNotAttachableException] / name-filter miss.
+ *
+ * Discovery still polls for the full [LaunchStageTimeouts.jvmAttachableMs] after the client exits
+ * (daemon-spawned apps), then classifies dead-client + no match as PROCESS_ALIVE.
  */
 class LaunchAndAttachGradleClientDeathTest {
 
     @Test
     fun `gradle client death during discovery is PROCESS_ALIVE with exit and stderr not name-filter`() {
         val captureDir = Files.createTempDirectory("spectre-launch-gradle-client-death-")
-        // Survive PROCESS_ALIVE settle (250ms), then die during JVM_ATTACHABLE discovery with
-        // a distinctive stderr line so we prove capture is surfaced.
-        val fakeGradlew =
-            Paths.get(captureDir.toString(), "gradlew").also {
-                Files.writeString(
-                    it,
-                    """
-                    #!/bin/sh
-                    echo 'spectre-gradle-client-death-stderr' 1>&2
-                    sleep 1
-                    exit 42
-                    """
-                        .trimIndent() + "\n",
-                )
-                it.toFile().setExecutable(true)
-            }
+        // Survive PROCESS_ALIVE settle (~250ms), die during discovery with distinctive stderr.
+        // jvmAttachable budget is intentionally longer than the client lifetime so classification
+        // happens after discovery had a chance to find a (non-matching) app JVM.
+        val fakeGradlew = writeFakeGradlewClient(captureDir)
 
         val ex =
             assertFailsWith<ProcessExitedBeforeAttachException> {
@@ -49,10 +41,7 @@ class LaunchAndAttachGradleClientDeathTest {
                         stageTimeouts =
                             LaunchStageTimeouts(
                                 processAliveMs = 500,
-                                // Short discovery budget: client dies at ~1s; we still poll until
-                                // this timeout before classifying (daemon apps may appear after
-                                // client exit — but with an impossible nameFilter none will).
-                                jvmAttachableMs = 1_500,
+                                jvmAttachableMs = 4_000,
                                 agentBootstrapMs = 2_000,
                                 firstWindowMs = 2_000,
                             ),
@@ -72,7 +61,6 @@ class LaunchAndAttachGradleClientDeathTest {
                 ex.message!!.contains("app JVM", ignoreCase = true),
             "message should explain gradle client died before app JVM; got: ${ex.message}",
         )
-        // Must not look like a name-filter miss on JVM_ATTACHABLE.
         assertFalse(
             ex.message!!.contains("nameFilter", ignoreCase = true),
             "must not blame nameFilter when the Gradle client already exited; got: ${ex.message}",
@@ -81,5 +69,39 @@ class LaunchAndAttachGradleClientDeathTest {
             ex.message!!.contains("JVM_ATTACHABLE", ignoreCase = true),
             "must not report stage JVM_ATTACHABLE; got: ${ex.message}",
         )
+    }
+
+    private fun writeFakeGradlewClient(captureDir: Path): Path {
+        val windows =
+            System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
+        return if (windows) {
+            Paths.get(captureDir.toString(), "gradlew.bat").also {
+                // ~1s delay then exit 42; stderr via stderr stream.
+                Files.writeString(
+                    it,
+                    """
+                    @echo off
+                    echo spectre-gradle-client-death-stderr 1>&2
+                    timeout /t 1 /nobreak >nul
+                    exit /b 42
+                    """
+                        .trimIndent() + "\r\n",
+                )
+            }
+        } else {
+            Paths.get(captureDir.toString(), "gradlew").also {
+                Files.writeString(
+                    it,
+                    """
+                    #!/bin/sh
+                    echo 'spectre-gradle-client-death-stderr' 1>&2
+                    sleep 1
+                    exit 42
+                    """
+                        .trimIndent() + "\n",
+                )
+                it.toFile().setExecutable(true)
+            }
+        }
     }
 }
