@@ -158,16 +158,22 @@ public class LaunchAndAttachExtension(
         fun isSoleRegisteredExtension(context: ExtensionContext): Boolean {
             val testClass = context.testClass.orElse(null) ?: return true
             var count = 0
-            var cls: Class<*>? = testClass
-            while (cls != null && cls != Any::class.java) {
-                for (field in cls.declaredFields) {
-                    if (!field.isAnnotationPresent(RegisterExtension::class.java)) continue
-                    if (LaunchAndAttachExtension::class.java.isAssignableFrom(field.type)) {
-                        count++
-                        if (count > 1) return false
+            // Walk this class, superclasses, and enclosing outer classes (@Nested inherits
+            // parent @RegisterExtension fields that still participate in resolution).
+            var nest: Class<*>? = testClass
+            while (nest != null && nest != Any::class.java) {
+                var cls: Class<*>? = nest
+                while (cls != null && cls != Any::class.java) {
+                    for (field in cls.declaredFields) {
+                        if (!field.isAnnotationPresent(RegisterExtension::class.java)) continue
+                        if (LaunchAndAttachExtension::class.java.isAssignableFrom(field.type)) {
+                            count++
+                            if (count > 1) return false
+                        }
                     }
+                    cls = cls.superclass
                 }
-                cls = cls.superclass
+                nest = nest.enclosingClass
             }
             return true
         }
