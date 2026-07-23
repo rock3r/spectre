@@ -135,12 +135,14 @@ subprojects {
         }
     tasks.withType<Test>().configureEach {
         if (matrixJavaHome.isPresent) {
-            executable = matrixJavaExecutable.get()
+            // Test.executable is a Property<String> on modern Gradle; setExecutable keeps
+            // older accessors happy too.
+            setExecutable(matrixJavaExecutable.get())
         }
     }
     tasks.withType<JavaExec>().configureEach {
         if (matrixJavaHome.isPresent) {
-            executable = matrixJavaExecutable.get()
+            setExecutable(matrixJavaExecutable.get())
         }
     }
 
