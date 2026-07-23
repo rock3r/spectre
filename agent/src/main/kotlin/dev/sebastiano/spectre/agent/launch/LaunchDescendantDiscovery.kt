@@ -9,15 +9,15 @@ import kotlin.streams.asSequence
  * Locates the real app JVM for Gradle-ish launches (readiness + teardown).
  *
  * Layout reality: `./gradlew :app:run` typically has the **Gradle daemon** spawn the app JVM, so
- * the app is **not** a ProcessHandle descendant of the gradlew client. Discovery therefore
- * combines:
- * 1. optional [nameFilter] against [JvmProcessInfo.displayName] (required for daemon-child apps
- *    when the client graph does not contain the app)
- * 2. JVMs parented by a known Gradle daemon (from the attach list)
- * 3. ProcessHandle descendants of the client (covers `--no-daemon` / rare layouts)
+ * the app is **not** a ProcessHandle descendant of the gradlew client.
  *
- * Never returns a Gradle daemon display-name match, and never falls back to an arbitrary
- * machine-wide JVM without one of the signals above.
+ * Safety rules:
+ * - Never returns a Gradle daemon display-name match.
+ * - Never returns an arbitrary machine-wide JVM.
+ * - Daemon-child candidates are only considered when [nameFilter] is set (shared daemons often host
+ *   unrelated app JVMs).
+ * - Without [nameFilter], only ProcessHandle descendants of the client are considered
+ *   (`--no-daemon` and rare layouts).
  */
 @ExperimentalSpectreAgentApi
 public object LaunchDescendantDiscovery {
@@ -25,9 +25,8 @@ public object LaunchDescendantDiscovery {
     /**
      * Find an attachable app JVM for a Gradle-ish launch started as [clientPid].
      *
-     * @param nameFilter optional case-insensitive substring of the app's main-class display name.
-     *   Strongly recommended for multi-project machines. When set and no listed JVM matches,
-     *   returns null (does not fall through to unrelated JVMs).
+     * @param nameFilter case-insensitive substring of the app's main-class display name. Required
+     *   to safely pick among daemon children on machines with concurrent Gradle apps.
      */
     public fun discoverAppJvm(clientPid: Long, nameFilter: String?): Long? {
         val listed = runCatching { SpectreProcesses.listJvmProcesses() }.getOrDefault(emptyList())
@@ -51,18 +50,15 @@ public object LaunchDescendantDiscovery {
                 it.displayName.contains(nameFilter, ignoreCase = true)
             }
             if (nameMatched.isEmpty()) return null
-            // Restrict to structural signals only — never fall back to an arbitrary
-            // machine-wide name match (could be another developer's IDE / leftover process).
-            val structuralNameMatches = nameMatched.filter { info ->
+            val structural = nameMatched.filter { info ->
                 info.pid in childOfDaemon.map(JvmProcessInfo::pid).toSet() ||
                     info.pid in clientDescendants
             }
-            return structuralNameMatches.maxByOrNull { it.pid }?.pid
+            return structural.maxByOrNull { it.pid }?.pid
         }
 
-        // No name filter: only structural signals (never "any non-daemon JVM").
-        val structural = childOfDaemon + nonDaemon.filter { it.pid in clientDescendants }
-        return structural.distinctBy { it.pid }.maxByOrNull { it.pid }?.pid
+        // No name filter: only client descendants (never unfiltered daemon children).
+        return nonDaemon.filter { it.pid in clientDescendants }.maxByOrNull { it.pid }?.pid
     }
 
     /** True when [displayName] looks like a Gradle daemon JVM banner from `jps` / Attach list. */
@@ -74,13 +70,7 @@ public object LaunchDescendantDiscovery {
             lower.contains("gradle-daemon")
     }
 
-    /**
-     * True when [pid] is visible to the Attach API via `VirtualMachine.list()`.
-     *
-     * Intentionally does **not** treat a mere live `java` ProcessHandle as attach-ready — that
-     * races with hsperfdata registration and turns early attach failures into bootstrap errors
-     * instead of waiting out the JVM-attachable stage.
-     */
+    /** True when [pid] is visible to the Attach API via `VirtualMachine.list()`. */
     internal fun isJvmAttachable(pid: Long): Boolean {
         val listed = runCatching { SpectreProcesses.listJvmProcesses() }.getOrDefault(emptyList())
         return listed.any { it.pid == pid }
