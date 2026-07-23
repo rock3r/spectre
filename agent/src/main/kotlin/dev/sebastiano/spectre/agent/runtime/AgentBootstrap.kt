@@ -122,10 +122,11 @@ internal object AgentBootstrap {
         System.err.println(
             "[spectre-agent] spectre-core not on target classpath; injecting from $injectJar"
         )
+        var injectLoader: SpectreInjectClassLoader? = null
         return try {
             val composeHost = findComposeHostClassLoader(instrumentation)
             System.err.println("[spectre-agent] Compose host classloader: $composeHost")
-            val injectLoader = openInjectClassLoader(injectJar, composeHost)
+            injectLoader = openInjectClassLoader(injectJar, composeHost)
             // Prove ComposeAutomator resolves from the inject jar before returning.
             injectLoader.loadClass(COMPOSE_AUTOMATOR_FQN)
             SpectreBootstrapResult(
@@ -134,6 +135,8 @@ internal object AgentBootstrap {
                 injectClassLoader = injectLoader,
             )
         } catch (t: Throwable) {
+            // Close loader before delete so Windows can unlink the jar file.
+            runCatching { injectLoader?.close() }
             runCatching { java.nio.file.Files.deleteIfExists(injectJar) }
             throw t
         }
