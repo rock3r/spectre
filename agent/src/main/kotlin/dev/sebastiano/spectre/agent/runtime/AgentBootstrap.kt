@@ -134,7 +134,10 @@ internal object AgentBootstrap {
                 injectJar = injectJar,
                 injectClassLoader = injectLoader,
             )
-        } catch (error: Exception) {
+        } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
+            // Cleanup must run for any failure after extract (classloader open, Compose host
+            // selection, loadClass). Specific typed catches would miss LinkageError-derived
+            // RuntimeExceptions from the target Compose stack.
             // Close loader before delete so Windows can unlink the jar file.
             runCatching { injectLoader?.close() }
             runCatching { java.nio.file.Files.deleteIfExists(injectJar) }
