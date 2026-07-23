@@ -127,6 +127,9 @@ The extension implements `ParameterResolver`, so when a class registers **one**
 `AttachedAutomator` as method parameters (resolved from the per-invocation store):
 
 ```kotlin
+import dev.sebastiano.spectre.agent.AttachedAutomator
+import dev.sebastiano.spectre.agent.launch.LaunchedSession
+
 @Test
 fun exercise(session: LaunchedSession) {
     session.automator.windows()
