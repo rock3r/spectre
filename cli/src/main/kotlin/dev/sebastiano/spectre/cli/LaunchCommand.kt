@@ -86,12 +86,14 @@ internal class LaunchCommand(private val output: Appendable, private val errorOu
             // Released CLI packages embed agent-runtime; ensure AttachOptions can resolve it.
             // Kept inside try so install I/O failures report as launch I/O, not daemon errors.
             installEmbeddedAgentRuntimeForLaunch()
+            // Publish into sessionRef in the same expression as launch returns so a Ctrl-C
+            // between "launch completed" and "ref assigned" cannot skip hook teardown.
             val session =
                 LaunchAndAttach.launch(spec) { warning ->
-                    errorOutput.append(warning)
-                    errorOutput.appendLine()
-                }
-            sessionRef.set(session)
+                        errorOutput.append(warning)
+                        errorOutput.appendLine()
+                    }
+                    .also { sessionRef.set(it) }
             try {
                 output.append("launchedPid=${session.launchedPid}")
                 output.append(" attachedPid=${session.attachedPid}")
