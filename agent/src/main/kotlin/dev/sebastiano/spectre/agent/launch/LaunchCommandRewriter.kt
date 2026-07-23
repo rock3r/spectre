@@ -119,7 +119,11 @@ public object LaunchCommandRewriter {
                 return it
             }
             when {
-                token == "-jar" -> return null
+                token == "-jar" ||
+                    token == "-m" ||
+                    token == "--module" ||
+                    token.startsWith("-m=") ||
+                    token.startsWith("--module=") -> return null // app boundary
                 isLauncherOptionTakingValue(token) -> i += 2
                 token.startsWith("-") -> i++
                 else -> return null // main class — end of launcher options
