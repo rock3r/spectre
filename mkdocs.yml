@@ -77,6 +77,7 @@ markdown_extensions:
 
 exclude_docs: |
   DOCS-STYLE.md
+  spikes/**
 
 plugins:
   - search
