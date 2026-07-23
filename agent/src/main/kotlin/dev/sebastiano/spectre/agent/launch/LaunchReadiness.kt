@@ -58,7 +58,11 @@ internal object LaunchReadiness {
             val pid =
                 if (gradleish) {
                     LaunchDescendantDiscovery.discoverAppJvm(launchedPid, nameFilter)
-                } else if (LaunchDescendantDiscovery.isJvmAttachable(launchedPid)) {
+                } else if (isDirectJvmReady(launchedPid, process)) {
+                    // Direct launches already know the target PID. Prefer VirtualMachine.list()
+                    // when available; if the process is still alive accept the launched PID even
+                    // when -XX:-UsePerfData hides it from list() (attach by explicit pid still
+                    // works — see SpectreProcesses docs).
                     launchedPid
                 } else {
                     null
@@ -76,12 +80,21 @@ internal object LaunchReadiness {
             stderrPath = stderrPath,
             detail =
                 if (gradleish) {
-                    "Gradle-ish launch: no descendant app JVM matched" +
+                    "Gradle-ish launch: no daemon-child/client-descendant app JVM matched" +
                         (nameFilter?.let { " nameFilter='$it'" }.orEmpty())
                 } else {
-                    "pid $launchedPid never appeared in VirtualMachine.list()"
+                    "pid $launchedPid is not attachable (process dead or not a live JVM)"
                 },
         )
+    }
+
+    /**
+     * Direct path: listed in Attach API, or still-alive process (covers -XX:-UsePerfData where
+     * list() omits the target but attach-by-pid still works).
+     */
+    private fun isDirectJvmReady(launchedPid: Long, process: Process): Boolean {
+        if (LaunchDescendantDiscovery.isJvmAttachable(launchedPid)) return true
+        return process.isAlive && ProcessHandle.of(launchedPid).map { it.isAlive }.orElse(false)
     }
 
     /**

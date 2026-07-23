@@ -51,12 +51,13 @@ public object LaunchDescendantDiscovery {
                 it.displayName.contains(nameFilter, ignoreCase = true)
             }
             if (nameMatched.isEmpty()) return null
-            // Prefer daemon children and client descendants among name matches.
-            val preferred =
-                nameMatched.filter { it.pid in childOfDaemon.map(JvmProcessInfo::pid).toSet() } +
-                    nameMatched.filter { it.pid in clientDescendants } +
-                    nameMatched
-            return preferred.distinctBy { it.pid }.maxByOrNull { it.pid }?.pid
+            // Restrict to structural signals only — never fall back to an arbitrary
+            // machine-wide name match (could be another developer's IDE / leftover process).
+            val structuralNameMatches = nameMatched.filter { info ->
+                info.pid in childOfDaemon.map(JvmProcessInfo::pid).toSet() ||
+                    info.pid in clientDescendants
+            }
+            return structuralNameMatches.maxByOrNull { it.pid }?.pid
         }
 
         // No name filter: only structural signals (never "any non-daemon JVM").
