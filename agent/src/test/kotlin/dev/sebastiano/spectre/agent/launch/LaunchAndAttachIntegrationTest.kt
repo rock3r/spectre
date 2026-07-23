@@ -83,15 +83,10 @@ class LaunchAndAttachIntegrationTest {
     @Test
     fun `command that exits immediately fails stage PROCESS_ALIVE with exit code and stderr`() {
         val captureDir = Files.createTempDirectory("spectre-launch-e2e-fail-")
-        val javaBin = javaBin()
-        // Force a non-zero exit with a diagnostic on stderr.
+        // Use a non-JVM binary that exits immediately with stderr — avoids races where a dying
+        // HotSpot process is briefly attachable and fails as bootstrap instead of PROCESS_ALIVE.
         val command =
-            listOf(
-                javaBin,
-                "-cp",
-                "this-classpath-does-not-exist-xyz",
-                "dev.sebastiano.spectre.DoesNotExistMain",
-            )
+            listOf("/bin/sh", "-c", "echo 'spectre-launch-fail-fast-stderr' 1>&2; exit 17")
 
         val ex =
             assertFailsWith<ProcessExitedBeforeAttachException> {
@@ -99,8 +94,6 @@ class LaunchAndAttachIntegrationTest {
                     LaunchSpec(
                         command = command,
                         captureDirectory = captureDir,
-                        // Disable injection so the failure is purely "bad classpath / exit".
-                        injectDynamicAgentLoading = true,
                         stageTimeouts =
                             LaunchStageTimeouts(
                                 processAliveMs = 5_000,
@@ -113,7 +106,7 @@ class LaunchAndAttachIntegrationTest {
             }
 
         assertEquals(LaunchStage.PROCESS_ALIVE, ex.stage)
-        assertTrue(ex.exitCode != 0, "expected non-zero exit, got ${ex.exitCode}")
+        assertEquals(17, ex.exitCode)
         assertTrue(
             Files.isRegularFile(ex.stdoutPath),
             "stdout capture file must exist: ${ex.stdoutPath}",
@@ -122,14 +115,14 @@ class LaunchAndAttachIntegrationTest {
             Files.isRegularFile(ex.stderrPath),
             "stderr capture file must exist: ${ex.stderrPath}",
         )
-        // JVM writes Error: Could not find or load main class… to stderr for bad main/cp.
         val stderr = Files.readString(ex.stderrPath)
         assertTrue(
-            stderr.isNotBlank() || ex.stderrExcerpt.isNotBlank(),
+            stderr.contains("spectre-launch-fail-fast-stderr") ||
+                ex.stderrExcerpt.contains("spectre-launch-fail-fast-stderr"),
             "expected captured stderr content; path=${ex.stderrPath} excerpt='${ex.stderrExcerpt}'",
         )
         assertTrue(
-            ex.message!!.contains("exit") || ex.message!!.contains("${ex.exitCode}"),
+            ex.message!!.contains("17") || ex.message!!.contains("exit"),
             "message should carry exit code: ${ex.message}",
         )
         assertTrue(
