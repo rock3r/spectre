@@ -61,8 +61,22 @@ jobs:
       - name: Install Linux display + native build deps
         if: runner.os == 'Linux'
         run: |
+          # xvfb: display for Compose/Robot. libdbus/pkg-config: Wayland helper Rust build.
+          # GStreamer + x11-utils: required by :recording:runLinuxX11RecordingSmoke
+          # (gst-launch-1.0 + ximagesrc/x264enc stack — see docs/guide/recording.md).
+          # Without these packages the smoke fails with gst-launch ENOENT after agent suites
+          # already passed (first dispatch 30049909702 / issue #326).
           sudo apt-get update
-          sudo apt-get install -y xvfb libdbus-1-dev pkg-config
+          sudo apt-get install -y \
+            xvfb \
+            libdbus-1-dev \
+            pkg-config \
+            gstreamer1.0-tools \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-ugly \
+            gstreamer1.0-plugins-bad \
+            x11-utils
 
       - name: Set up Rust (Linux Wayland helper)
         if: runner.os == 'Linux'
@@ -75,6 +89,14 @@ jobs:
           echo "JAVA_HOME=$JAVA_HOME"
           java -version
           echo "runtime-label=${{ steps.jdk.outputs.runtime-label }}"
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            command -v gst-launch-1.0
+            gst-launch-1.0 --version | head -n1
+            # Fail early if the X11 recording pipeline elements are missing (h264parse
+            # ships in plugins-bad; x264enc in plugins-ugly).
+            gst-inspect-1.0 h264parse >/dev/null
+            gst-inspect-1.0 x264enc >/dev/null
+          fi
 
       # Force Test/JavaExec workers onto the matrix JDK (see root build.gradle.kts). Modules
       # still compile with jvmToolchain(21); SPECTRE_MATRIX_JAVA_HOME makes JBR 25 cells
