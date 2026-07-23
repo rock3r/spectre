@@ -49,6 +49,7 @@ public class LaunchAndAttachRule(
 
     /** Starts the launch session (same as JUnit 4 `before`). Exposed for tests. */
     public fun startSession() {
+        stopSession()
         session = LaunchAndAttach.launch(spec, warningSink)
     }
 

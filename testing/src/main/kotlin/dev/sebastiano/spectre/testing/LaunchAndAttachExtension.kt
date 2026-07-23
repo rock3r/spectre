@@ -39,28 +39,39 @@ public class LaunchAndAttachExtension(
     private val warningSink: (String) -> Unit = LaunchAndAttach.DEFAULT_WARNING_SINK,
 ) : BeforeEachCallback, AfterEachCallback {
 
-    @Volatile private var session: LaunchedSession? = null
-
-    /** Live session for the current test; throws if accessed outside before/after. */
+    /**
+     * Live session for the **most recent** sequential `@RegisterExtension` test. Prefer
+     * [launchedFrom] when running tests in parallel.
+     */
     public val launched: LaunchedSession
         get() =
-            checkNotNull(session) {
+            checkNotNull(lastSequentialSession) {
                 "LaunchAndAttachExtension.launched accessed outside of a running test"
             }
 
-    /** Attached automator for the current test (same lifetime as [launched]). */
+    /** Attached automator for the current sequential test (same lifetime as [launched]). */
     public val automator: AttachedAutomator
         get() = launched.automator
+
+    @Volatile private var lastSequentialSession: LaunchedSession? = null
+
+    /** Per-invocation session from [context] (parallel-safe). */
+    public fun launchedFrom(context: ExtensionContext): LaunchedSession =
+        checkNotNull(context.getStore(NAMESPACE).get(STORE_KEY, LaunchedSession::class.java)) {
+            "No LaunchAndAttach session registered for this test invocation"
+        }
 
     override fun beforeEach(context: ExtensionContext) {
         val launchedSession = LaunchAndAttach.launch(spec, warningSink)
         context.getStore(NAMESPACE).put(STORE_KEY, launchedSession)
-        session = launchedSession
+        lastSequentialSession = launchedSession
     }
 
     override fun afterEach(context: ExtensionContext) {
         val stored = context.getStore(NAMESPACE).remove(STORE_KEY, LaunchedSession::class.java)
-        session = null
+        if (lastSequentialSession === stored) {
+            lastSequentialSession = null
+        }
         stored?.close()
     }
 

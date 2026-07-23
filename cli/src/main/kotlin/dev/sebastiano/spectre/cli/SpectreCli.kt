@@ -941,6 +941,8 @@ private class LaunchCommand(private val output: Appendable, private val errorOut
         if (command.isEmpty()) {
             throw CliktError("launch requires a command after --")
         }
+        // Released CLI packages embed agent-runtime; ensure AttachOptions can resolve it.
+        installEmbeddedAgentRuntimeForLaunch()
         val spec =
             LaunchSpec(
                 command = command,
@@ -981,7 +983,19 @@ private class LaunchCommand(private val output: Appendable, private val errorOut
             errorOutput.append("Spectre launch error [${ex.stage}]: ${ex.message}")
             errorOutput.appendLine()
             throw ProgramResult(EXIT_ATTACH_FAILURE)
+        } catch (ex: IOException) {
+            errorOutput.append("Spectre launch I/O error: ${ex.message}")
+            errorOutput.appendLine()
+            throw ProgramResult(EXIT_ATTACH_FAILURE)
         }
+    }
+}
+
+private fun installEmbeddedAgentRuntimeForLaunch() {
+    val prop = "dev.sebastiano.spectre.agent.runtimeJar"
+    if (System.getProperty(prop) != null) return
+    dev.sebastiano.spectre.cli.daemon.EmbeddedAgentRuntime.install()?.let { runtime ->
+        System.setProperty(prop, runtime.toString())
     }
 }
 

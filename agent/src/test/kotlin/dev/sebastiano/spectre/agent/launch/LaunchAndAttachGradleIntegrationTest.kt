@@ -39,7 +39,11 @@ class LaunchAndAttachGradleIntegrationTest {
         val repoRoot = locateRepoRootOrSkip()
         val gradlew = repoRoot.resolve("gradlew")
         assumeTrue(Files.isRegularFile(gradlew), "gradlew not found at $gradlew")
-        assumeTrue(Files.isExecutable(gradlew) || true, "gradlew present")
+        assumeTrue(
+            Files.isExecutable(gradlew) ||
+                System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true),
+            "gradlew not executable at $gradlew",
+        )
 
         val daemonsBefore = gradleDaemonPids()
         val captureDir = Files.createTempDirectory("spectre-launch-e2e-gradle-")
