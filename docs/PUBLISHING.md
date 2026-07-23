@@ -23,11 +23,16 @@ published library module.
 
 [release-yml]: https://github.com/rock3r/spectre/blob/main/.github/workflows/release.yml
 
-Five jobs run on tag push:
+Jobs on tag push (order simplified; see the workflow for the full graph):
 
-1. **`release-gate`** (Linux runner) — validates the tag shape, runs
-   `./gradlew check`, installs the docs dependencies, and runs
-   `mkdocs build --strict`. Nothing else starts until this gate passes.
+0. **`runtime-matrix`** (reusable workflow) — full
+   `{JBR 21, JBR 25, Temurin LTS} × {macOS, Linux, Windows}` compatibility matrix.
+   A red matrix **blocks** the release; this is the executable evidence for the
+   supported JVM set in [Stability policy](STABILITY.md). Per-PR CI stays on
+   single-JDK Temurin 21.
+1. **`release-gate`** (Linux runner, depends on `runtime-matrix`) — validates the tag
+   shape, runs `./gradlew check`, installs the docs dependencies, and runs
+   `mkdocs build --strict`. Helper builds and publish wait for this gate.
 2. **`mac-helper`** (macOS runner, depends on `release-gate`) — builds the
    arm64+x86_64 universal
    `SpectreScreenCapture` Swift helper, codesigns it with the Developer ID, runs

@@ -103,10 +103,11 @@ Two heavier checks live outside `:check`:
 
 ## Supported JVMs
 
-JBR 21 is the dev-loop default. JBR 25 and Temurin LTS (toolchain major) are exercised by the
-scheduled [runtime matrix](.github/workflows/runtime-matrix.yml) (epic #215 / #216) and re-run
-as a **release gate**. Per-PR CI stays on Temurin 21 for speed. Any JDK 21+ works for the
-non-IDE modules; pins and the bump procedure live in [`.github/jbr-pins.env`](.github/jbr-pins.env).
+JBR 21 (dev-loop default), JBR 25, and Temurin LTS (toolchain major) are the codified
+supported set — see [docs/STABILITY.md](docs/STABILITY.md#jvm-runtime-support-tiers).
+They are exercised by the scheduled [runtime matrix](.github/workflows/runtime-matrix.yml)
+and re-run as a **release gate**. Per-PR CI stays on Temurin 21 for speed. Pins and the
+bump procedure live in [`.github/jbr-pins.env`](.github/jbr-pins.env).
 
 ## CI
 

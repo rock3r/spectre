@@ -142,6 +142,43 @@ Spectre is JVM-first and targets desktop OSes.
 | **Linux Wayland** | Best-effort | Portal-mediated capture via `WaylandPortalRecorder`, `WaylandPortalWindowRecorder`, and `LinuxNativeScreenshotter`. **Validated on GNOME/Mutter only**; KDE / sway / wlroots compositors may behave differently and are not exercised in CI. Real Robot input is unavailable on Wayland — use the synthetic adapter for tests. |
 | **BSD** | Unsupported | Not built or tested. |
 
+## JVM runtime support tiers
+
+Spectre is a JVM library and CLI. **Supported JVM runtimes** are the set we claim work
+for non-IDE modules; claims are fail-closed on **executable evidence** (same rule as the
+[capability matrix](guide/capability-matrix.md)).
+
+| Runtime | Tier | Evidence / notes |
+| --- | --- | --- |
+| **JBR 21** (JetBrains Runtime, JBRSDK pin) | Primary (dev-loop default) | Local default; scheduled [runtime matrix](https://github.com/rock3r/spectre/blob/main/.github/workflows/runtime-matrix.yml) cell. Pins: [`.github/jbr-pins.env`](https://github.com/rock3r/spectre/blob/main/.github/jbr-pins.env). |
+| **JBR 25** | Full | Runtime matrix cell; IntelliJ-hosted validation on platform **262** / IDEA 2026.2 (IDE-bundled JBR 25). |
+| **Temurin LTS** (Eclipse Temurin at project toolchain major, currently **21**) | Full | Per-PR CI (`ci.yml` / macos-check / windows) and runtime matrix vanilla cell. |
+| **Other vanilla LTS JDKs ≥ toolchain** (e.g. other Temurin/Zulu majors ≥ 21) | Best-effort | Not every vendor/major is matrixed. Expect to work for non-IDE modules; regressions should be filed. |
+| **JVM &lt; 21** | Unsupported | Toolchain and published bytecode target 21. |
+
+### What “supported” means operationally
+
+1. **Exercised** by the scheduled + release-gated runtime matrix
+   (`runtime-matrix.yml`: contract corpus, agent attach where applicable, Linux recording
+   smoke under xvfb) and/or by the IDE UI test path for JBR 25 in the IDE process.
+2. **Release-blocking**: a red matrix **blocks** the tag-driven release pipeline
+   (`release.yml` calls the matrix via `workflow_call` before helper builds / publish).
+3. **Not per-PR**: everyday PRs stay on single-JDK Temurin 21 for speed. Compatibility
+   signal is scheduled + release-gated, not every PR.
+4. **Failures are triaged, not silent**: scheduled cell failures open issues labelled
+   `runtime-matrix` rather than vanishing into Actions noise.
+
+### Adding or dropping a runtime
+
+- **Add**: pin the runtime in `.github/jbr-pins.env` (or Temurin major), extend the matrix
+  include list, prove the cell green (or open a tracked triage issue), then document it
+  here as Supported only when evidence exists.
+- **Drop**: remove matrix cells first (or mark them Unsupported with a linked issue), then
+  update this table. Do not claim Supported without a green (or explicitly triaged)
+  matrix path.
+- **Bump JBR pins**: follow the bump procedure in `.github/jbr-pins.env` and re-run the
+  matrix via `workflow_dispatch`.
+
 ## AndroidX-style stability expectations
 
 Spectre adopts the cultural convention pioneered by [AndroidX](https://developer.android.com/jetpack/androidx):

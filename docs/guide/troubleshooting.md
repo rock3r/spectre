@@ -395,15 +395,22 @@ returns a human-readable diagnostic without throwing.
 
 ## "JBR vs Temurin: which JDK should I use?"
 
-- **Locally**: JBR 21 is the dev-loop default. JBR 25 also gets exercised via the
-  IDE-hosted UI test (it's bundled with IntelliJ 2026.2 / JBR 25).
-- **On CI**: Temurin 21. `actions/setup-java` does support the `jetbrains`
-  distribution if you'd rather mirror the local toolchain — the choice here is
-  pragmatic, not a constraint.
-- **For consumers**: any JDK 21+ works for the non-IDE modules.
+- **Locally**: JBR 21 is the dev-loop default. JBR 25 is exercised by the scheduled
+  [runtime matrix](https://github.com/rock3r/spectre/blob/main/.github/workflows/runtime-matrix.yml)
+  and by the IDE-hosted UI test (IntelliJ 2026.2 / platform 262 bundles JBR 25).
+- **On CI (per-PR)**: Temurin 21 for speed. The full JBR/Temurin × OS matrix is
+  scheduled and **release-gated**, not per-PR.
+- **For consumers**: any JDK **21+** works for non-IDE modules. The codified supported
+  set and what “supported” means operationally live in
+  [Stability policy — JVM runtime support tiers](../STABILITY.md#jvm-runtime-support-tiers).
 
-The IntelliJ plugin module needs JBR specifically for its sandbox JDK; the Gradle build
-configures that automatically.
+**Agent attach** needs a real JDK (with `jdk.attach`) on the **attacher** process; the
+target only needs to allow dynamic agent loading. **IntelliJ-hosted Compose** always
+implies the IDE’s bundled JBR — do not ship a second skiko into the plugin classloader
+(see [IntelliJ guide](intellij.md)).
+
+The sample IntelliJ plugin module configures its sandbox JDK via the IntelliJ Platform
+Gradle plugin; you do not pick Temurin for that path.
 
 ## Still stuck?
 
