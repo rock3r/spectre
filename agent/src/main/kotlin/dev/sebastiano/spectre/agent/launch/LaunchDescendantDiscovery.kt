@@ -49,18 +49,23 @@ public object LaunchDescendantDiscovery {
             val nameMatched = nonDaemon.filter {
                 it.displayName.contains(nameFilter, ignoreCase = true)
             }
-            val structural = nameMatched.filter { info ->
-                info.pid in childOfDaemon.map(JvmProcessInfo::pid).toSet() ||
-                    info.pid in clientDescendants
-            }
-            structural
+            // Prefer client descendants over arbitrary daemon children so concurrent Gradle
+            // apps with the same main class are not stolen from another launch.
+            nameMatched
+                .filter { it.pid in clientDescendants }
                 .maxByOrNull { it.pid }
                 ?.pid
                 ?.let {
                     return it
                 }
-            // Native process-tree fallback: hsperfdata/list can lag behind spawn. Walk daemon
-            // children and client descendants via ProcessHandle and match command/args.
+            nameMatched
+                .filter { it.pid in childOfDaemon.map(JvmProcessInfo::pid).toSet() }
+                .maxByOrNull { it.pid }
+                ?.pid
+                ?.let {
+                    return it
+                }
+            // Native process-tree fallback: hsperfdata/list can lag behind spawn.
             return discoverByNativeTree(
                 clientPid = clientPid,
                 daemonPids = daemonPids,
