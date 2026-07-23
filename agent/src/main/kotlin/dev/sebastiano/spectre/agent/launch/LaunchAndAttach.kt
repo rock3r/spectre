@@ -26,14 +26,26 @@ public object LaunchAndAttach {
     /**
      * Start [spec], run staged readiness, and attach. On any stage failure the launched process
      * tree (or discovered app JVM for Gradle) is torn down before the exception propagates.
+     *
+     * @param warningSink receives loud operational warnings (e.g. Gradle-ish launch caveats).
+     *   Defaults to [System.err]. Warnings are also stored on [LaunchedSession.warnings].
      */
     @Throws(LaunchException::class, IOException::class)
-    public fun launch(spec: LaunchSpec): LaunchedSession {
+    public fun launch(
+        spec: LaunchSpec,
+        warningSink: (String) -> Unit = DEFAULT_WARNING_SINK,
+    ): LaunchedSession {
         require(spec.command.isNotEmpty()) { "command must not be empty" }
         val prepared = prepareLaunch(spec)
+        for (warning in prepared.warnings) {
+            warningSink(warning)
+        }
         val process = startProcess(prepared.command, spec, prepared.stdoutPath, prepared.stderrPath)
         return attachAfterStart(process, prepared, spec)
     }
+
+    /** Default warning destination — stderr so interactive tools and CI logs surface it. */
+    public val DEFAULT_WARNING_SINK: (String) -> Unit = { message -> System.err.println(message) }
 
     private data class PreparedLaunch(
         val command: List<String>,

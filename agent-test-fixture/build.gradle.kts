@@ -23,10 +23,17 @@ dependencies {
     detektPlugins(libs.compose.rules.detekt)
 }
 
-// `./gradlew :agent-test-fixture:run` is intended only for manual verification of the
-// fixture — `AgentAttachIntegrationTest` spawns the fixture itself via `ProcessBuilder`.
+// `./gradlew :agent-test-fixture:run` is intended for manual verification and for the
+// launch-and-attach Gradle-path e2e (`LaunchAndAttachGradleIntegrationTest`). Direct
+// ProcessBuilder spawns in other agent tests still set their own JVM flags.
 // The `compose.desktop.application` block wires up the `run` task with the same JVM args
 // Compose Desktop would inject for a packaged native distribution.
 compose.desktop {
-    application { mainClass = "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt" }
+    application {
+        mainClass = "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt"
+        // So agent attach works without relying on JEP 451 stderr warnings when the
+        // launch harness drives `:agent-test-fixture:run` (Gradle cannot inject JVM args
+        // from outside the build).
+        jvmArgs += listOf("-XX:+EnableDynamicAgentLoading", "-Djava.awt.headless=false")
+    }
 }
