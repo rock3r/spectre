@@ -138,10 +138,16 @@ empty result as “no nodes”.
 ## Launching under Hot Reload
 
 Prefer a **prod-like** launch for everyday automation (`installDist`, packaged app, plain
-`java -jar`) when you do not need HR. For the edit–reload–inspect loop, start the app under
-Compose Hot Reload yourself (IDE run configuration or Gradle `hotRun`), confirm
-`spectre attach` succeeds, arm `wait --reload-settled` **before** each reload, then re-query
-the tree afterward.
+`java -jar`) when you do not need HR — including [`spectre launch`](cli.md#launch-and-attach).
+Gradle `run` / `hotRun` work via launch with warnings and `--app-name` when the app JVM is
+daemon-spawned.
+
+For the edit–reload–inspect loop:
+
+1. Start the app under Compose Hot Reload (IDE run configuration or Gradle `hotRun`).
+2. `spectre attach <pid>` (daemon session — HR wait is on the CLI/daemon path, not the in-process
+   launch automator).
+3. Arm `spectre wait --reload-settled <session>` **before** each reload, then re-query the tree.
 
 ## Manual dual-MCP recipe
 
