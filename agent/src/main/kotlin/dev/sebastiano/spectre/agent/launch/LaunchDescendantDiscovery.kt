@@ -92,17 +92,13 @@ public object LaunchDescendantDiscovery {
                 addAll(daemonPids)
             }
         }
-        val candidates = mutableListOf<Long>()
-        for (root in roots) {
-            for (pid in descendantPidsOf(root)) {
-                if (pid == clientPid) continue
-                if (!looksLikeJavaProcess(pid)) continue
-                if (nameFilter.isNullOrBlank() || commandLineContains(pid, nameFilter)) {
-                    candidates.add(pid)
-                }
-            }
-        }
-        return candidates.maxOrNull()
+        return roots
+            .asSequence()
+            .flatMap { root -> descendantPidsOf(root).asSequence() }
+            .filter { pid -> pid != clientPid }
+            .filter { pid -> looksLikeJavaProcess(pid) }
+            .filter { pid -> nameFilter.isNullOrBlank() || commandLineContains(pid, nameFilter) }
+            .maxOrNull()
     }
 
     private fun looksLikeJavaProcess(pid: Long): Boolean {
