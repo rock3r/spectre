@@ -12,9 +12,11 @@ import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.launch.LaunchAndAttach
 import dev.sebastiano.spectre.agent.launch.LaunchException
 import dev.sebastiano.spectre.agent.launch.LaunchSpec
+import dev.sebastiano.spectre.agent.launch.LaunchedSession
 import dev.sebastiano.spectre.cli.daemon.EmbeddedAgentRuntime
 import java.io.IOException
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Launch a command, wait through staged readiness, attach Spectre, print a summary, then tear down
@@ -64,39 +66,52 @@ internal class LaunchCommand(private val output: Appendable, private val errorOu
                 workingDirectory = workingDirectory,
                 appJvmNameFilter = nameFilter,
             )
+        val sessionRef = AtomicReference<LaunchedSession?>(null)
+        val shutdownHook =
+            Thread(
+                {
+                    // Ctrl-C / JVM exit: do not rely on use{} unwinding during halt.
+                    sessionRef.getAndSet(null)?.let { runCatching { it.close() } }
+                },
+                "spectre-launch-teardown",
+            )
         try {
             // Released CLI packages embed agent-runtime; ensure AttachOptions can resolve it.
             // Kept inside try so install I/O failures report as launch I/O, not daemon errors.
             installEmbeddedAgentRuntimeForLaunch()
-            LaunchAndAttach.launch(spec) { warning ->
+            val session =
+                LaunchAndAttach.launch(spec) { warning ->
                     errorOutput.append(warning)
                     errorOutput.appendLine()
                 }
-                .use { session ->
-                    output.append("launchedPid=${session.launchedPid}")
-                    output.append(" attachedPid=${session.attachedPid}")
-                    output.append(" gradleish=${session.gradleish}")
+            sessionRef.set(session)
+            Runtime.getRuntime().addShutdownHook(shutdownHook)
+            try {
+                output.append("launchedPid=${session.launchedPid}")
+                output.append(" attachedPid=${session.attachedPid}")
+                output.append(" gradleish=${session.gradleish}")
+                output.appendLine()
+                output.append("stdout=${session.stdoutPath}")
+                output.appendLine()
+                output.append("stderr=${session.stderrPath}")
+                output.appendLine()
+                val windows = session.automator.windows()
+                output.append("windows=${windows.size}")
+                output.appendLine()
+                if (!once) {
+                    output.append("Session open — press Enter or send EOF to detach and tear down.")
                     output.appendLine()
-                    output.append("stdout=${session.stdoutPath}")
-                    output.appendLine()
-                    output.append("stderr=${session.stderrPath}")
-                    output.appendLine()
-                    val windows = session.automator.windows()
-                    output.append("windows=${windows.size}")
-                    output.appendLine()
-                    if (!once) {
-                        output.append(
-                            "Session open — press Enter or send EOF to detach and tear down."
-                        )
-                        output.appendLine()
-                        // Hold the session for interactive use; teardown on close.
-                        try {
-                            System.`in`.read()
-                        } catch (_: IOException) {
-                            // stdin closed
-                        }
+                    // Hold the session for interactive use; teardown on close or Ctrl-C.
+                    try {
+                        System.`in`.read()
+                    } catch (_: IOException) {
+                        // stdin closed
                     }
                 }
+            } finally {
+                sessionRef.getAndSet(null)?.let { runCatching { it.close() } }
+                runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
+            }
         } catch (ex: LaunchException) {
             errorOutput.append("Spectre launch error [${ex.stage}]: ${ex.message}")
             errorOutput.appendLine()
