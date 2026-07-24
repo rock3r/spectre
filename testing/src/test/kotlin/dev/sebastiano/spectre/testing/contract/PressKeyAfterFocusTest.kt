@@ -42,10 +42,9 @@ class PressKeyAfterFocusTest {
     }
 
     @Test
-    fun `exhausts retries and surfaces last focus rejection when not on CI`() {
-        val previousCi = System.getenv("CI")
-        // Force non-CI path: isCi() also checks GITHUB_ACTIONS; when running under GHA this
-        // test still soft-passes — assert either hard-fail (local) or soft-skip detail (CI).
+    fun `exhausts retries and soft-skips only on macOS CI`() {
+        // Soft-skip is macOS CI only (Experimental PressKey cell). Linux CI and all local
+        // runs hard-fail so Supported Linux evidence stays fail-closed.
         val driver = RecordingDriver(failFocusTimes = 100)
         val result = runCatching {
             PressKeyAfterFocus.run(
@@ -55,7 +54,7 @@ class PressKeyAfterFocusTest {
                 sleeper = {},
             )
         }
-        if (PressKeyAfterFocus.isCi()) {
+        if (PressKeyAfterFocus.isCi() && PressKeyAfterFocus.isMacOs()) {
             val detail = result.getOrThrow()
             assertTrue(detail.startsWith("skipped:os-keyboard-focus-after-3-attempts"), detail)
         } else {
@@ -68,8 +67,6 @@ class PressKeyAfterFocusTest {
         }
         assertEquals(3, driver.clickCount)
         assertEquals(3, driver.pressKeyCount)
-        // silence unused warning if previousCi is ever used for restore
-        previousCi.let {}
     }
 
     @Test

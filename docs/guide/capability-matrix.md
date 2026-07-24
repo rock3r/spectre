@@ -71,10 +71,13 @@ boundary without a different design:
 
 Remote **waits** (`waitForNode` over agent — #201, also CLI `wait-for-node` / MCP
 `wait_for_node`), **selectors** (`findByText` / role / content-description — #202), and **input
-verbs** (`doubleClick` / `swipe` / `scrollWheel` / `pressKey` — #203) are **Supported** on agent
-under Linux Xvfb and macOS desktop via `AgentContractCorpusTest` against `agent-test-fixture`.
-HTTP selector entry points are covered by headless `HttpContractCorpusTest`. Some HTTP
-input/wait cells and agent `longClick` / `waitForVisualIdle` remain **Not yet CI-executed**.
+verbs** (`doubleClick` / `swipe` / `scrollWheel` — #203) are **Supported** on agent under Linux
+Xvfb and macOS desktop via `AgentContractCorpusTest` against `agent-test-fixture`. Agent
+`pressKey` is **Supported** on Linux Xvfb (fail-closed after focus retries) and
+**Experimental** on macOS desktop (hosted runners may soft-skip OS keyboard focus loss after
+retries — same class as `typeText`). HTTP selector entry points are covered by headless
+`HttpContractCorpusTest`. Some HTTP input/wait cells and agent `longClick` /
+`waitForVisualIdle` remain **Not yet CI-executed**.
 
 ## How to read a cell
 

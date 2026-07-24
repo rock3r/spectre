@@ -451,7 +451,7 @@ public object CapabilityMatrix {
         // #201–#203 agent fixture-backed cells (AgentContractCorpusTest under Xvfb/macOS).
         // PressKey is Supported on Linux Xvfb only: macOS hosted runners (esp. JBR) often
         // fail OS keyboard focus after click the same way typeText does; corpus soft-skips
-        // that scenario on CI after retries (PressKeyAfterFocus).
+        // that scenario on macOS CI after retries (PressKeyAfterFocus) — never on Linux.
         for (op in
             listOf(
                 AutomatorOperation.WaitForNode,
@@ -500,7 +500,8 @@ public object CapabilityMatrix {
                 rationale =
                     "AgentContractCorpus exercises pressKey after click; hosted macOS (JBR and " +
                         "sometimes Temurin) may soft-skip on OS keyboard focus loss after retries " +
-                        "(same class as typeText). Not Supported until fail-closed without skip.",
+                        "on macOS CI only (same class as typeText). Linux stays fail-closed. " +
+                        "Not Supported until fail-closed without skip.",
             )
         )
         // HTTP selector routes exist; headless HttpContractCorpusTest only proves entry points
