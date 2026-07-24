@@ -403,12 +403,17 @@ public object AutomatorContractCorpus {
         out +=
             scenario("press-key-tab-after-focus", driver.transport) {
                 // Focus the text field first so OS keyboard focus is on the target JVM.
+                // Retry click+pressKey: macOS JBR often needs a settle window after click
+                // (see PressKeyAfterFocus / matrix residuals on jbr-21/jbr-25 macos).
                 val field =
                     driver.findByTestTag(ContractFixtureTags.TEXT_FIELD).firstOrNull()
                         ?: error("fixture text field missing")
-                driver.click(field.key)
-                driver.pressKey(keyCode = 9, modifiers = 0) // VK_TAB
-                "pressKey=VK_TAB"
+                PressKeyAfterFocus.run(
+                    driver = driver,
+                    fieldKey = field.key,
+                    keyCode = PressKeyAfterFocus.DEFAULT_KEY_CODE_TAB,
+                    modifiers = 0,
+                )
             }
         return out
     }

@@ -217,7 +217,9 @@ internal class InputOpsReflectiveMapper(
         }
         val method = pressKeyMethod ?: return unsupported("pressKey(keyCode, modifiers)")
         // Real OS key events require the target JVM to own keyboard focus (same guard as typeText).
-        if (!isTargetJvmFocused()) {
+        // On macOS/JBR a Robot click can update Compose focus while AWT active/focused windows
+        // lag; try a best-effort toFront/requestFocus before refusing.
+        if (!ensureTargetJvmKeyboardFocus()) {
             return AgentResponse.Error(
                 message =
                     "Refusing pressKey because the target JVM does not currently own OS keyboard " +
@@ -228,6 +230,22 @@ internal class InputOpsReflectiveMapper(
         refreshWindows()
         suspendInvoker.invoke(method, automator, request.keyCode, request.modifiers)
         return AgentResponse.Ok
+    }
+
+    private fun ensureTargetJvmKeyboardFocus(): Boolean {
+        if (isTargetJvmFocused()) return true
+        bringShowingWindowsToFront()
+        return isTargetJvmFocused()
+    }
+
+    private fun bringShowingWindowsToFront() {
+        for (window in java.awt.Window.getWindows()) {
+            if (!window.isShowing) continue
+            runCatching {
+                window.toFront()
+                window.requestFocus()
+            }
+        }
     }
 
     private fun invokeOnNode(nodeKey: String, opName: String, method: Method?): AgentResponse {

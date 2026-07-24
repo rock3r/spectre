@@ -449,6 +449,9 @@ public object CapabilityMatrix {
         )
 
         // #201–#203 agent fixture-backed cells (AgentContractCorpusTest under Xvfb/macOS).
+        // PressKey is Supported on Linux Xvfb only: macOS hosted runners (esp. JBR) often
+        // fail OS keyboard focus after click the same way typeText does; corpus soft-skips
+        // that scenario on CI after retries (PressKeyAfterFocus).
         for (op in
             listOf(
                 AutomatorOperation.WaitForNode,
@@ -458,7 +461,6 @@ public object CapabilityMatrix {
                 AutomatorOperation.DoubleClick,
                 AutomatorOperation.Swipe,
                 AutomatorOperation.ScrollWheel,
-                AutomatorOperation.PressKey,
             )) {
             add(
                 CapabilityCell(
@@ -479,6 +481,28 @@ public object CapabilityMatrix {
                 )
             )
         }
+        add(
+            CapabilityCell(
+                operation = AutomatorOperation.PressKey,
+                transport = AutomatorTransport.Agent,
+                platform = PlatformPrerequisite.LinuxXvfb,
+                state = CellState.Supported,
+                evidence = listOf(agentLinuxXvfb),
+            )
+        )
+        add(
+            CapabilityCell(
+                operation = AutomatorOperation.PressKey,
+                transport = AutomatorTransport.Agent,
+                platform = PlatformPrerequisite.MacOsDesktop,
+                state = CellState.Experimental,
+                evidence = listOf(agentMacOs),
+                rationale =
+                    "AgentContractCorpus exercises pressKey after click; hosted macOS (JBR and " +
+                        "sometimes Temurin) may soft-skip on OS keyboard focus loss after retries " +
+                        "(same class as typeText). Not Supported until fail-closed without skip.",
+            )
+        )
         // HTTP selector routes exist; headless HttpContractCorpusTest only proves entry points
         // with empty trees (expectsFixtureSemantics=false), not fixture-backed matches.
         for (op in
