@@ -3,10 +3,10 @@
 ## Automated path (CI / developer)
 
 **Prerequisites:** Linux or macOS with a non-headless display (or `xvfb-run -a` on Linux). The test
-assumes `!GraphicsEnvironment.isHeadless()`. On **Windows**, inject e2e is **opt-in** (hosted CI
-has no reliable interactive desktop): pass
-`-Ddev.sebastiano.spectre.agent.injectE2e.allowWindows=true` on a physical desktop. Headless or
-non-opt-in runs **skip** — do not treat a skip as inject proof.
+is `@EnabledOnOs(LINUX, MAC)` and assumes `!GraphicsEnvironment.isHeadless()` — headless CI
+**skips** (not inject proof). Physical **Windows** was validated on Mattone; the default test
+stays off hosted Windows CI (same policy as the non-inject attach e2e). Windows path stripping is
+covered by `InjectClasspathStripTest`.
 
 ```bash
 # macOS / interactive Linux:
@@ -14,10 +14,6 @@ non-opt-in runs **skip** — do not treat a skip as inject proof.
 
 # headless Linux with a virtual display:
 xvfb-run -a ./gradlew :agent:test --tests '*AgentInjectAttachIntegrationTest*'
-
-# physical Windows desktop only (opt-in; not default CI):
-./gradlew :agent:test --tests '*AgentInjectAttachIntegrationTest*' \
-  -Pspectre.agent.injectE2e.allowWindows=true
 ```
 
 What it does when it **runs** (real shipped APIs):
