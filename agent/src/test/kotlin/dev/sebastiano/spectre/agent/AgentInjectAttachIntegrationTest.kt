@@ -28,7 +28,9 @@ import org.junit.jupiter.api.condition.OS
  *
  * Drives the real attach/UDS path ([AgentAttach.attach]) — not a re-implementation.
  */
-@EnabledOnOs(OS.LINUX, OS.MAC)
+// Physical Windows desktops can exercise inject; CI Windows runners stay unreliable for Robot UI
+// and will still skip on headless GraphicsEnvironment.
+@EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)
 class AgentInjectAttachIntegrationTest {
 
     @Test
@@ -142,20 +144,12 @@ class AgentInjectAttachIntegrationTest {
     /**
      * Spectre `:core` module outputs only — never `kotlinx-coroutines-core` or other `*-core`
      * artifacts.
+     *
+     * Uses [java.io.File.invariantSeparatorsPath] so Windows `\` classpaths match the same
+     * `/core/build/...` markers as POSIX (inject e2e on physical Windows).
      */
-    private fun isSpectreCoreClasspathEntry(entry: String): Boolean {
-        val n = entry.replace('\\', '/')
-        val base = n.substringAfterLast('/')
-        // Compiled classes / resources of the :core project (any checkout path).
-        if (n.contains("/core/build/classes/") || n.contains("/core/build/resources/")) return true
-        // Project jar under core/build/libs/core-*.jar (not kotlinx-coroutines-core-*.jar).
-        if (n.contains("/core/build/libs/") && base.startsWith("core-") && base.endsWith(".jar")) {
-            return true
-        }
-        if (base.startsWith("spectre-core-") && base.endsWith(".jar")) return true
-        if (base == "spectre-core.jar") return true
-        return false
-    }
+    private fun isSpectreCoreClasspathEntry(entry: String): Boolean =
+        InjectClasspathStrip.isSpectreCoreClasspathEntry(entry)
 
     private class FixtureProcess(
         private val process: Process,
