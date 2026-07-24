@@ -175,11 +175,7 @@ class AgentInjectAttachIntegrationTest {
         }
     }
 
-    private fun isWindows(): Boolean =
-        System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
-
     private companion object {
         const val FIXTURE_READY_TIMEOUT_MS: Long = 30_000
-        const val ALLOW_WINDOWS_PROP: String = "dev.sebastiano.spectre.agent.injectE2e.allowWindows"
     }
 }
