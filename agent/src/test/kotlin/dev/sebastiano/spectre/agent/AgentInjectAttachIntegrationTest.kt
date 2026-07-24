@@ -18,6 +18,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeFalse
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
 
@@ -27,9 +28,11 @@ import org.junit.jupiter.api.condition.OS
  * `META-INF/spectre/inject-runtime.jar`.
  *
  * Drives the real attach/UDS path ([AgentAttach.attach]) — not a re-implementation.
+ *
+ * **OS gate:** default is Linux/macOS. Hosted Windows CI lacks a reliable interactive desktop (same
+ * as [AgentAttachIntegrationTest]); set
+ * `-Ddev.sebastiano.spectre.agent.injectE2e.allowWindows=true` for physical Windows desktops.
  */
-// Physical Windows desktops can exercise inject; CI Windows runners stay unreliable for Robot UI
-// and will still skip on headless GraphicsEnvironment.
 @EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)
 class AgentInjectAttachIntegrationTest {
 
@@ -39,6 +42,13 @@ class AgentInjectAttachIntegrationTest {
             GraphicsEnvironment.isHeadless(),
             "Requires non-headless JVM for Compose Desktop",
         )
+        if (isWindows()) {
+            assumeTrue(
+                System.getProperty(ALLOW_WINDOWS_PROP) == "true",
+                "Windows inject e2e is opt-in (hosted CI has no reliable interactive desktop). " +
+                    "Pass -D$ALLOW_WINDOWS_PROP=true on a physical desktop.",
+            )
+        }
         val agentJar = locateAgentJarOrSkip()
 
         spawnInjectFixture().use { fixture ->
@@ -165,7 +175,11 @@ class AgentInjectAttachIntegrationTest {
         }
     }
 
+    private fun isWindows(): Boolean =
+        System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
+
     private companion object {
         const val FIXTURE_READY_TIMEOUT_MS: Long = 30_000
+        const val ALLOW_WINDOWS_PROP: String = "dev.sebastiano.spectre.agent.injectE2e.allowWindows"
     }
 }
