@@ -266,6 +266,17 @@ public final class dev/sebastiano/spectre/testing/contract/PlatformPrerequisite 
 	public static fun values ()[Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;
 }
 
+public final class dev/sebastiano/spectre/testing/contract/PressKeyAfterFocus {
+	public static final field DEFAULT_KEY_CODE_TAB I
+	public static final field INSTANCE Ldev/sebastiano/spectre/testing/contract/PressKeyAfterFocus;
+	public static final field OS_KEYBOARD_FOCUS_MARKER Ljava/lang/String;
+	public final fun isCi ()Z
+	public final fun isMacOs ()Z
+	public final fun isOsKeyboardFocusRejection (Ljava/lang/Throwable;)Z
+	public final fun run (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;IIILkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;)Ljava/lang/String;
+	public static synthetic fun run$default (Ldev/sebastiano/spectre/testing/contract/PressKeyAfterFocus;Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;IIILkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Ljava/lang/String;
+}
+
 public final class dev/sebastiano/spectre/testing/contract/ScreenshotProbe {
 	public fun <init> (ILjava/lang/String;)V
 	public synthetic fun <init> (ILjava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V

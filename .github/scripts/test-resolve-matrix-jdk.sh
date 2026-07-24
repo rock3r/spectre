@@ -66,6 +66,10 @@ done
 grep -q "SPECTRE_MATRIX_JAVA_HOME" "$script_dir/../../build.gradle.kts" ||
   fail "root build.gradle.kts must honour SPECTRE_MATRIX_JAVA_HOME for matrix Test workers"
 
+# JBR install must retry (ECONNRESET on mixed fixture cells).
+grep -q "Install JDK (JetBrains JBR) attempt 3" "$action" ||
+  fail "setup-matrix-jdk must retry JetBrains JBR install (attempt 3 step missing)"
+
 # Release workflow must depend on the matrix gate.
 release="$script_dir/../workflows/release.yml"
 grep -q 'runtime-matrix.yml' "$release" || fail "release.yml must call runtime-matrix.yml"

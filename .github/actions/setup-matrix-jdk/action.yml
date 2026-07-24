@@ -40,9 +40,38 @@ runs:
         bash .github/scripts/resolve-matrix-jdk.sh "${{ inputs.runtime }}" >> "$GITHUB_OUTPUT"
         echo "Resolved ${{ inputs.runtime }} → $(bash .github/scripts/resolve-matrix-jdk.sh "${{ inputs.runtime }}" | tr '\n' ' ')"
 
-    - name: Install JDK (JetBrains JBR)
-      id: install-jbr
+    # JetBrains JBR downloads go through GitHub releases / cache-redirector and occasionally
+    # die with ECONNRESET on GHA (mixed-runtime fixture installs). Retry the action up to 3
+    # times without dropping mixed-runtime coverage.
+    - name: Install JDK (JetBrains JBR) attempt 1
+      id: install-jbr-1
       if: steps.resolve.outputs.distribution == 'jetbrains'
+      continue-on-error: true
+      uses: actions/setup-java@v5
+      with:
+        distribution: jetbrains
+        java-version: ${{ steps.resolve.outputs.java-version }}
+        java-package: ${{ steps.resolve.outputs.java-package }}
+        set-default: ${{ inputs.set-default }}
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+
+    - name: Install JDK (JetBrains JBR) attempt 2
+      id: install-jbr-2
+      if: steps.resolve.outputs.distribution == 'jetbrains' && steps.install-jbr-1.outcome != 'success'
+      continue-on-error: true
+      uses: actions/setup-java@v5
+      with:
+        distribution: jetbrains
+        java-version: ${{ steps.resolve.outputs.java-version }}
+        java-package: ${{ steps.resolve.outputs.java-package }}
+        set-default: ${{ inputs.set-default }}
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+
+    - name: Install JDK (JetBrains JBR) attempt 3
+      id: install-jbr-3
+      if: steps.resolve.outputs.distribution == 'jetbrains' && steps.install-jbr-1.outcome != 'success' && steps.install-jbr-2.outcome != 'success'
       uses: actions/setup-java@v5
       with:
         distribution: jetbrains
@@ -67,7 +96,13 @@ runs:
       run: |
         set -euo pipefail
         if [[ "${{ steps.resolve.outputs.distribution }}" == "jetbrains" ]]; then
-          echo "path=${{ steps.install-jbr.outputs.path }}" >> "$GITHUB_OUTPUT"
+          if [[ "${{ steps.install-jbr-1.outcome }}" == "success" ]]; then
+            echo "path=${{ steps.install-jbr-1.outputs.path }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ steps.install-jbr-2.outcome }}" == "success" ]]; then
+            echo "path=${{ steps.install-jbr-2.outputs.path }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=${{ steps.install-jbr-3.outputs.path }}" >> "$GITHUB_OUTPUT"
+          fi
         else
           echo "path=${{ steps.install-temurin.outputs.path }}" >> "$GITHUB_OUTPUT"
         fi
