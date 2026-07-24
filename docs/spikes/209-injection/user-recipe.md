@@ -2,18 +2,22 @@
 
 ## Automated path (CI / developer)
 
-**Prerequisites:** Linux, macOS, or **Windows** with a non-headless display (or `xvfb-run -a` on
-Linux). The test is `@EnabledOnOs(LINUX, MAC, WINDOWS)` and assumes
-`!GraphicsEnvironment.isHeadless()` — headless CI (including Linux without Xvfb and Windows
-runners without an interactive desktop) **skips** (green Gradle with no attach/tree evidence).
-Do not treat a skipped run as inject proof.
+**Prerequisites:** Linux or macOS with a non-headless display (or `xvfb-run -a` on Linux). The test
+assumes `!GraphicsEnvironment.isHeadless()`. On **Windows**, inject e2e is **opt-in** (hosted CI
+has no reliable interactive desktop): pass
+`-Ddev.sebastiano.spectre.agent.injectE2e.allowWindows=true` on a physical desktop. Headless or
+non-opt-in runs **skip** — do not treat a skip as inject proof.
 
 ```bash
-# macOS / interactive Linux / interactive Windows:
+# macOS / interactive Linux:
 ./gradlew :agent:test --tests '*AgentInjectAttachIntegrationTest*'
 
 # headless Linux with a virtual display:
 xvfb-run -a ./gradlew :agent:test --tests '*AgentInjectAttachIntegrationTest*'
+
+# physical Windows desktop only (opt-in; not default CI):
+./gradlew :agent:test --tests '*AgentInjectAttachIntegrationTest*' \
+  -Pspectre.agent.injectE2e.allowWindows=true
 ```
 
 What it does when it **runs** (real shipped APIs):
