@@ -41,6 +41,18 @@ class InjectClasspathStripTest {
     }
 
     @Test
+    fun `detects windows paths with doubled backslashes from Gradle workers`() {
+        // Real java.class.path shape observed on physical Windows (code points 92,92).
+        val doubled =
+            "C:\\\\Users\\\\rock3r\\\\src\\\\spectre\\\\core\\\\build\\\\libs\\\\core-0.1.0-SNAPSHOT.jar"
+        assertTrue(InjectClasspathStrip.isSpectreCoreClasspathEntry(doubled))
+        assertEquals(
+            "C:/Users/rock3r/src/spectre/core/build/libs/core-0.1.0-SNAPSHOT.jar",
+            InjectClasspathStrip.normalizeClasspathEntry(doubled),
+        )
+    }
+
+    @Test
     fun `does not match kotlinx coroutines core jar`() {
         assertFalse(
             InjectClasspathStrip.isSpectreCoreClasspathEntry(

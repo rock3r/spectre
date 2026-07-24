@@ -31,5 +31,10 @@ internal object InjectClasspathStrip {
     fun isCoreProjectJarName(base: String): Boolean =
         base == "core.jar" || (base.startsWith("core-") && base.endsWith(".jar"))
 
-    fun normalizeClasspathEntry(entry: String): String = entry.trim().replace('\\', '/')
+    /**
+     * Windows Gradle worker classpaths sometimes embed doubled backslashes (`C:\\Users\\...`).
+     * After `\`→`/` that becomes `//`, which would miss `/core/build/libs/` markers — collapse.
+     */
+    fun normalizeClasspathEntry(entry: String): String =
+        entry.trim().replace('\\', '/').replace(Regex("/+"), "/")
 }
