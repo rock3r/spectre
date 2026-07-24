@@ -218,7 +218,8 @@ internal class InputOpsReflectiveMapper(
         val method = pressKeyMethod ?: return unsupported("pressKey(keyCode, modifiers)")
         // Real OS key events require the target JVM to own keyboard focus (same guard as typeText).
         // On macOS/JBR a Robot click can update Compose focus while AWT active/focused windows
-        // lag; try a best-effort toFront/requestFocus before refusing.
+        // lag; nudge only the unambiguous KFM focused/active window before refusing — never
+        // cycle every showing window (would re-target dialogs/popups for a node-less pressKey).
         if (!ensureTargetJvmKeyboardFocus()) {
             return AgentResponse.Error(
                 message =
@@ -234,17 +235,19 @@ internal class InputOpsReflectiveMapper(
 
     private fun ensureTargetJvmKeyboardFocus(): Boolean {
         if (isTargetJvmFocused()) return true
-        bringShowingWindowsToFront()
+        nudgeKeyboardFocusOwner()
         return isTargetJvmFocused()
     }
 
-    private fun bringShowingWindowsToFront() {
-        for (window in java.awt.Window.getWindows()) {
-            if (!window.isShowing) continue
-            runCatching {
-                window.toFront()
-                window.requestFocus()
-            }
+    private fun nudgeKeyboardFocusOwner() {
+        val focusManager = java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager()
+        val owner =
+            listOfNotNull(focusManager.focusedWindow, focusManager.activeWindow).firstOrNull {
+                it.isShowing
+            } ?: return
+        runCatching {
+            owner.toFront()
+            owner.requestFocus()
         }
     }
 
