@@ -134,9 +134,26 @@ internal object LaunchReadiness {
         }
         // Pin UDS path for the whole stage (including pre-load retries).
         val udsPath = attachOptions.udsPath ?: AttachOptions.defaultUdsPath(attachedPid)
-        val options = attachOptions.copy(udsPath = udsPath, attachTimeoutMs = bootstrapTimeoutMs)
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(bootstrapTimeoutMs)
+        var lastAttachFailure: SpectreAttachException? = null
         while (true) {
+            val remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())
+            if (remainingMs <= 0L) {
+                throw LaunchAgentBootstrapException(
+                    attachedPid = attachedPid,
+                    stdoutPath = stdoutPath,
+                    stderrPath = stderrPath,
+                    cause =
+                        lastAttachFailure
+                            ?: IllegalStateException(
+                                "Agent bootstrap budget ${bootstrapTimeoutMs}ms exhausted " +
+                                    "before attach for pid=$attachedPid"
+                            ),
+                )
+            }
+            // Bound each attempt by remaining stage budget so pre-load retries cannot
+            // stack a full attachTimeoutMs UDS wait after the stage deadline.
+            val options = attachOptions.copy(udsPath = udsPath, attachTimeoutMs = remainingMs)
             try {
                 return AgentAttach.attach(attachedPid, options)
             } catch (ex: AttachInterruptedException) {
@@ -157,6 +174,7 @@ internal object LaunchReadiness {
                 )
             } catch (ex: SpectreAttachException) {
                 rethrowIfProcessDied(process, gradleish, stdoutPath, stderrPath)
+                lastAttachFailure = ex
                 if (!isPreLoadAttachRetryable(ex) || System.nanoTime() >= deadline) {
                     throw LaunchAgentBootstrapException(
                         attachedPid = attachedPid,

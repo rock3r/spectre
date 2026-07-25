@@ -24,13 +24,12 @@ name: Validation tests (Linux)
 # Counterpart to `validation-windows.yml`. Historically both workflows carried a
 # fail-tolerant + XML-source-of-truth pattern to ride out a Gradle test-executor protocol race
 # (Windows shape `Could not write '/127.0.0.1:NNNN'` originally tracked at #72; Linux shape
-# "No tests found for given includes" first observed 2026-05-11 in run 25697771548). The race
-# is now suppressed at its source by serialising the validation Test tasks via a
-# `ValidationTestSerialiser` BuildService in `sample-desktop/build.gradle.kts` — see the
-# comment block there for the full mechanism. The XML verifier downstream stays as plain test
-# hygiene (required-set existence + discovered-set inspection); the previous flake-tolerance
-# layer (`continue-on-error` on the Gradle step + `::warning::` envelope-detection branch) is
-# gone so a recurrence fails the workflow loudly instead of being hidden behind a warning.
+# "No tests found for given includes" first observed 2026-05-11 in run 25697771548). Most of
+# the race is suppressed by serialising validation Test tasks via `ValidationTestSerialiser`
+# in `sample-desktop/build.gradle.kts`, but residual cold-daemon / Skiko-fork cases still leave
+# a class only in the synthetic Gradle envelope (main AtomicCaptureValidationTest under Xvfb).
+# Keep `continue-on-error` on the Gradle step + envelope soft-path in the verifier so those
+# protocol flakes warn rather than red the job; real assertion failures still fail via XML.
 #
 # Local invocation (with a working DISPLAY):
 #   ./gradlew :sample-desktop:validationTest :sample-desktop:validationTestPopupLayers
@@ -117,17 +116,17 @@ jobs:
         # requested task gets a fair chance to produce its JUnit XML, and the verification
         # step below sees the full picture instead of cascade-skips.
         #
-        # The Gradle test-executor protocol race that historically motivated a
-        # `continue-on-error: true` belt-and-braces here is suppressed at its source by
-        # serialising the validation Test tasks via a `ValidationTestSerialiser`
-        # `BuildService` in `sample-desktop/build.gradle.kts` — see the comment block there.
-        # If a Gradle-side problem ever surfaces from these invocations again, we want it to
-        # fail the workflow loudly so we know to investigate, not be absorbed silently.
+        # `continue-on-error: true` matches validation-windows.yml: residual Gradle executor
+        # / envelope-only flakes (#72 shape) make the Gradle step non-zero even when the
+        # XML verifier can soft-pass via envelope detection. Without this, the soft path is
+        # dead because the earlier failed step keeps the job red. Real test failures still
+        # fail the job via the verifier's failures/errors pass.
         #
         # Screen size 1280x1024 is xvfb-run's default; explicitly setting it via
         # `--server-args` would let us bump it for a denser virtual desktop, but the
         # validation tests don't need that and the default keeps the diff with
         # validation-windows.yml's runner config minimal.
+        continue-on-error: true
         id: gradle
         run: |
           xvfb-run -a ./gradlew \
