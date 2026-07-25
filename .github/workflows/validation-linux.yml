@@ -323,6 +323,17 @@ jobs:
             echo "::error::Validation tests reported $fail_total failure(s) and $err_total error(s) across ${#all_xml[@]} XML report(s)."
             exit 1
           fi
+          # continue-on-error on the Gradle step is only for the known envelope flake.
+          # If Gradle failed for any other reason (executor shutdown, finalize, compile),
+          # require envelope evidence before accepting a green verifier.
+          if [ "${{ steps.gradle.outcome }}" != "success" ]; then
+            if [ "${#flaked[@]}" -gt 0 ]; then
+              echo "::warning::Gradle step outcome=${{ steps.gradle.outcome }} accepted because envelope flakes were detected: ${flaked[*]}"
+            else
+              echo "::error::Gradle step outcome=${{ steps.gradle.outcome }} with no envelope-flake evidence — not soft-passing."
+              exit 1
+            fi
+          fi
           echo "All required classes present; ${#all_xml[@]} discovered XML report(s) clean."
         shell: bash
 

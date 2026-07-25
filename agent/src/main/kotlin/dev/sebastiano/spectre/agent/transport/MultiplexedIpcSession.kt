@@ -378,6 +378,10 @@ internal class MultiplexedIpcSession(
         }
 
         fun abortRunningWork() {
+            // If the worker already claimed the response slot it is about to write (or is
+            // writing). Interrupting it mid-write can close the shared InterruptibleChannel
+            // and kill subsequent ops — cancel already lost tryClaimResponse in that case.
+            if (responseClaimed.get()) return
             aborted.set(true)
             future.get()?.cancel(/* mayInterruptIfRunning= */ true)
         }
