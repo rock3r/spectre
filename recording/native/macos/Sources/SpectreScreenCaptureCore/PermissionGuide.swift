@@ -95,10 +95,8 @@ enum PermissionGuideApp {
         model.onFinished = { granted in
             let result = ScreenCaptureAccess.result(granted: granted, binaryPath: binaryPath)
             FileHandle.standardOutput.write(Data(result.jsonLine.utf8))
-            // Exit after the current runloop turn so the UI can dismiss cleanly.
-            DispatchQueue.main.async {
-                exit(granted ? 0 : 6)
-            }
+            // Exit synchronously on the AppKit run-loop thread (no nested main.async).
+            exit(granted ? 0 : 6)
         }
 
         NotificationCenter.default.addObserver(
@@ -117,18 +115,21 @@ enum PermissionGuideApp {
         exit(6)
     }
 
-    /// Entry from the async CLI main: hop to the main actor if needed, then never return.
+    /// Entry from the async CLI main. Never wraps `NSApplication.run()` in
+    /// `DispatchQueue.main.sync` (that would block timers / UI callbacks).
     nonisolated static func runAndExit(binaryPath: String, reapproval: Bool) -> Never {
-        if Thread.isMainThread {
+        let start: () -> Void = {
             MainActor.assumeIsolated {
                 run(binaryPath: binaryPath, reapproval: reapproval)
             }
+        }
+        if Thread.isMainThread {
+            start()
         } else {
-            DispatchQueue.main.sync {
-                MainActor.assumeIsolated {
-                    run(binaryPath: binaryPath, reapproval: reapproval)
-                }
-            }
+            // Schedule onto the main queue without holding it in a sync block, then
+            // become the main queue processor so AppKit timers and buttons can run.
+            DispatchQueue.main.async(execute: start)
+            dispatchMain()
         }
         exit(6)
     }
@@ -164,8 +165,9 @@ final class PermissionGuideModel: ObservableObject {
         timer?.invalidate()
         // Immediate check, then every 500ms until granted.
         tick()
+        // Timer already fires on the main run loop — call tick() directly (no Task hop).
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
+            self?.tick()
         }
     }
 
