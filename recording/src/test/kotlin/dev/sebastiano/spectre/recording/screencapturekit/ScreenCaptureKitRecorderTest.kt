@@ -29,7 +29,7 @@ class ScreenCaptureKitRecorderTest {
         val extractor =
             HelperBinaryExtractor(
                 materialLocator = {
-                    HelperAppBundleMaterial(
+                    helperAppBundleMaterial(
                         executable = byteArrayOf(0x01),
                         infoPlist = byteArrayOf(),
                     )

@@ -1,10 +1,17 @@
 package dev.sebastiano.spectre.recording.screencapturekit
 
 import dev.sebastiano.spectre.recording.HelperExtractionPaths
+import java.net.JarURLConnection
+import java.net.URI
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.PosixFilePermissions
 import java.security.MessageDigest
+import java.util.jar.JarFile
+import kotlin.io.path.isRegularFile
 
 /**
  * Extracts the bundled `SpectreCaptureHelper.app` ScreenCaptureKit helper out of the recording
@@ -17,9 +24,10 @@ import java.security.MessageDigest
  * 1. First [extract] call checks for the [OVERRIDE_ENV] env var and returns that path directly if
  *    set (dev-iteration escape hatch, skips JAR extraction). Accepts either a nested executable
  *    path or a path to the `.app` bundle itself.
- * 2. Otherwise it loads the staged bundle resources, copies them to [HELPER_DIR_PROPERTY] (if set)
- *    or [targetDirProvider]'s directory under a fixed [HelperAppBundle.APP_DIR_NAME], and chmods
- *    the executable.
+ * 2. Otherwise it loads **every** file under the staged app resource tree (including
+ *    `Contents/_CodeSignature/` when present), copies them byte-for-byte to a fixed install path,
+ *    and chmods the executable. The sealed signature and any stapled ticket payload travel with the
+ *    tree; extraction must not rewrite sealed contents.
  * 3. Subsequent calls return the cached executable path without re-extracting.
  * 4. Caller is responsible for the lifetime of the files. By default the helper lands in Spectre's
  *    stable per-user helper directory so macOS TCC can keep recognising the same bundle path and
@@ -95,6 +103,8 @@ internal class HelperBinaryExtractor(
         val extracted =
             HelperExtractionPaths.withExtractionLock(appRoot.parent) {
                 writeBundleIfNeeded(appRoot, material)
+                // Mode bits are not part of the code signature hash; ensure the nested Mach-O
+                // is executable after extract without rewriting sealed file contents.
                 markExecutable(executable)
                 executable
             }
@@ -103,12 +113,8 @@ internal class HelperBinaryExtractor(
     }
 
     private fun writeBundleIfNeeded(appRoot: Path, material: HelperAppBundleMaterial) {
-        val executable = appRoot.resolve(HelperAppBundle.EXECUTABLE_RELATIVE_PATH)
-        val infoPlist = appRoot.resolve("Contents/Info.plist")
-        val pkgInfo = appRoot.resolve("Contents/PkgInfo")
-        val icon = appRoot.resolve("Contents/Resources/AppIcon.icns")
-        val fingerprintFile = appRoot.resolve(ContentsRelative.FINGERPRINT_FILE)
-
+        // Fingerprint lives *outside* the .app so we never mutate sealed Resources/CodeSignature.
+        val fingerprintFile = appRoot.parent.resolve(".${HelperAppBundle.APP_DIR_NAME}.fingerprint")
         val desiredFingerprint = material.contentFingerprint()
         val currentFingerprint =
             if (Files.isRegularFile(fingerprintFile)) {
@@ -116,25 +122,23 @@ internal class HelperBinaryExtractor(
             } else {
                 null
             }
+        val executable = appRoot.resolve(HelperAppBundle.EXECUTABLE_RELATIVE_PATH)
         val upToDate =
             currentFingerprint == desiredFingerprint &&
                 Files.isRegularFile(executable) &&
-                Files.isRegularFile(infoPlist) &&
-                Files.isRegularFile(pkgInfo) &&
-                (material.iconIcns == null || Files.isRegularFile(icon))
+                material.files.keys.all { rel -> Files.isRegularFile(appRoot.resolve(rel)) }
 
         if (upToDate) return
 
-        Files.createDirectories(executable.parent)
-        Files.createDirectories(icon.parent)
-        Files.write(executable, material.executable)
-        Files.write(infoPlist, material.infoPlist)
-        Files.write(pkgInfo, material.pkgInfo)
-        if (material.iconIcns != null) {
-            Files.write(icon, material.iconIcns)
-        } else if (Files.exists(icon)) {
-            Files.delete(icon)
+        if (Files.exists(appRoot)) {
+            appRoot.toFile().deleteRecursively()
         }
+        for ((relative, bytes) in material.files) {
+            val target = appRoot.resolve(relative)
+            Files.createDirectories(target.parent)
+            Files.write(target, bytes)
+        }
+        Files.createDirectories(fingerprintFile.parent)
         Files.writeString(fingerprintFile, desiredFingerprint)
     }
 
@@ -171,36 +175,67 @@ internal class HelperBinaryExtractor(
 
         @JvmStatic
         fun defaultMaterialLookup(): HelperAppBundleMaterial? {
-            val executable =
-                HelperBinaryExtractor::class
-                    .java
-                    .classLoader
-                    .getResourceAsStream(HelperAppBundle.EXECUTABLE_RESOURCE_PATH)
-                    ?.use { it.readBytes() } ?: return null
-            val infoPlist =
-                HelperBinaryExtractor::class
-                    .java
-                    .classLoader
-                    .getResourceAsStream(HelperAppBundle.INFO_PLIST_RESOURCE_PATH)
-                    ?.use { it.readBytes() } ?: return null
-            val pkgInfo =
-                HelperBinaryExtractor::class
-                    .java
-                    .classLoader
-                    .getResourceAsStream(HelperAppBundle.PKG_INFO_RESOURCE_PATH)
-                    ?.use { it.readBytes() } ?: "APPL????".toByteArray(Charsets.US_ASCII)
-            val iconIcns =
-                HelperBinaryExtractor::class
-                    .java
-                    .classLoader
-                    .getResourceAsStream(HelperAppBundle.ICON_RESOURCE_PATH)
-                    ?.use { it.readBytes() }
-            return HelperAppBundleMaterial(
-                executable = executable,
-                infoPlist = infoPlist,
-                pkgInfo = pkgInfo,
-                iconIcns = iconIcns,
+            val classLoader = HelperBinaryExtractor::class.java.classLoader
+            val sample =
+                classLoader.getResource(HelperAppBundle.INFO_PLIST_RESOURCE_PATH) ?: return null
+            val files =
+                when (sample.protocol) {
+                    "file" -> loadFromFilesystem(sample.toURI())
+                    "jar" -> loadFromJar(sample)
+                    else -> return null
+                }
+            if (files.isEmpty()) return null
+            if (!files.containsKey(HelperAppBundle.EXECUTABLE_RELATIVE_PATH)) return null
+            return HelperAppBundleMaterial(files = files)
+        }
+
+        private fun loadFromFilesystem(infoPlistUri: URI): Map<String, ByteArray> {
+            val infoPlist = Path.of(infoPlistUri)
+            // …/SpectreCaptureHelper.app/Contents/Info.plist → app root
+            val appRoot = infoPlist.parent.parent
+            val files = linkedMapOf<String, ByteArray>()
+            Files.walkFileTree(
+                appRoot,
+                object : SimpleFileVisitor<Path>() {
+                    override fun visitFile(
+                        file: Path,
+                        attrs: BasicFileAttributes,
+                    ): FileVisitResult {
+                        if (file.isRegularFile()) {
+                            val rel = appRoot.relativize(file).toString().replace('\\', '/')
+                            files[rel] = Files.readAllBytes(file)
+                        }
+                        return FileVisitResult.CONTINUE
+                    }
+                },
             )
+            return files
+        }
+
+        private fun loadFromJar(sample: java.net.URL): Map<String, ByteArray> {
+            val connection = sample.openConnection() as JarURLConnection
+            // Prefer the shared JarFile from the connection when available.
+            @Suppress("TooGenericExceptionCaught")
+            val jarFile: JarFile =
+                try {
+                    connection.jarFile
+                } catch (_: Exception) {
+                    val jarUrl = sample.toString().substringBefore("!/")
+                    val jarPath = jarUrl.removePrefix("jar:file:").let { URI(it).path }
+                    JarFile(jarPath)
+                }
+            val prefix = HelperAppBundle.RESOURCE_ROOT.trimEnd('/') + "/"
+            val files = linkedMapOf<String, ByteArray>()
+            val entries = jarFile.entries()
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement()
+                if (entry.isDirectory) continue
+                if (!entry.name.startsWith(prefix)) continue
+                val rel = entry.name.removePrefix(prefix)
+                if (rel.isEmpty()) continue
+                jarFile.getInputStream(entry).use { stream -> files[rel] = stream.readBytes() }
+            }
+            return files
         }
 
         @JvmStatic
@@ -211,8 +246,6 @@ internal class HelperBinaryExtractor(
             if (Files.isDirectory(override) && override.fileName.toString().endsWith(".app")) {
                 return override.resolve(HelperAppBundle.EXECUTABLE_RELATIVE_PATH)
             }
-            // If the override is the app root named without trailing check, still try nested path
-            // when the bare path is not executable.
             if (!Files.isExecutable(override)) {
                 val nested = override.resolve(HelperAppBundle.EXECUTABLE_RELATIVE_PATH)
                 if (Files.isExecutable(nested)) return nested
@@ -223,21 +256,20 @@ internal class HelperBinaryExtractor(
 }
 
 /**
- * In-memory material for staging [HelperAppBundle.APP_DIR_NAME] on disk. Test seams inject this
- * instead of jar resources.
+ * Full on-disk material for [HelperAppBundle.APP_DIR_NAME]. Keys are paths relative to the `.app`
+ * root (e.g. `Contents/MacOS/spectre-screencapture`, `Contents/_CodeSignature/CodeResources`).
+ *
+ * Must include every sealed file from the staged jar so Developer ID signatures and stapled tickets
+ * survive extraction (#191).
  */
-internal data class HelperAppBundleMaterial(
-    val executable: ByteArray,
-    val infoPlist: ByteArray,
-    val pkgInfo: ByteArray = "APPL????".toByteArray(Charsets.US_ASCII),
-    val iconIcns: ByteArray? = null,
-) {
+internal data class HelperAppBundleMaterial(val files: Map<String, ByteArray>) {
     fun contentFingerprint(): String {
         val digest = MessageDigest.getInstance("SHA-256")
-        digest.update(executable)
-        digest.update(infoPlist)
-        digest.update(pkgInfo)
-        iconIcns?.let { digest.update(it) }
+        for (key in files.keys.sorted()) {
+            digest.update(key.toByteArray(Charsets.UTF_8))
+            digest.update(0)
+            digest.update(files.getValue(key))
+        }
         return digest.digest().joinToString("") { byte ->
             (byte.toInt() and BYTE_MASK).toString(HEX_RADIX).padStart(HEX_BYTE_WIDTH, '0')
         }
@@ -246,20 +278,20 @@ internal data class HelperAppBundleMaterial(
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is HelperAppBundleMaterial) return false
-        return executable.contentEquals(other.executable) &&
-            infoPlist.contentEquals(other.infoPlist) &&
-            pkgInfo.contentEquals(other.pkgInfo) &&
-            ((iconIcns == null && other.iconIcns == null) ||
-                (iconIcns != null &&
-                    other.iconIcns != null &&
-                    iconIcns.contentEquals(other.iconIcns)))
+        if (files.size != other.files.size) return false
+        for ((key, value) in files) {
+            val otherValue = other.files[key] ?: return false
+            if (!value.contentEquals(otherValue)) return false
+        }
+        return true
     }
 
     override fun hashCode(): Int {
-        var result = executable.contentHashCode()
-        result = HASH_PRIME * result + infoPlist.contentHashCode()
-        result = HASH_PRIME * result + pkgInfo.contentHashCode()
-        result = HASH_PRIME * result + (iconIcns?.contentHashCode() ?: 0)
+        var result = files.size
+        for ((key, value) in files) {
+            result = HASH_PRIME * result + key.hashCode()
+            result = HASH_PRIME * result + value.contentHashCode()
+        }
         return result
     }
 
@@ -271,7 +303,23 @@ internal data class HelperAppBundleMaterial(
     }
 }
 
-/** Relative paths written under the extracted `.app` that are not part of the public bundle API. */
-private object ContentsRelative {
-    const val FINGERPRINT_FILE: String = "Contents/Resources/.spectre-helper-fingerprint"
+/** Test helper: build material for a minimal app tree (no code signature). */
+internal fun helperAppBundleMaterial(
+    executable: ByteArray,
+    infoPlist: ByteArray,
+    pkgInfo: ByteArray = "APPL????".toByteArray(Charsets.US_ASCII),
+    iconIcns: ByteArray? = null,
+    extraFiles: Map<String, ByteArray> = emptyMap(),
+): HelperAppBundleMaterial {
+    val files =
+        linkedMapOf(
+            HelperAppBundle.EXECUTABLE_RELATIVE_PATH to executable,
+            "Contents/Info.plist" to infoPlist,
+            "Contents/PkgInfo" to pkgInfo,
+        )
+    if (iconIcns != null) {
+        files["Contents/Resources/AppIcon.icns"] = iconIcns
+    }
+    files.putAll(extraFiles)
+    return HelperAppBundleMaterial(files = files)
 }
