@@ -115,9 +115,10 @@ public object MacOsRecordingPermissions {
 
     private const val GUIDANCE: String =
         "If Screen Recording is Denied, run `spectre permissions request` with a human present,\n" +
-            "or open ${MacOsScreenCaptureAccess.SETTINGS_PATH}\n" +
-            "(${MacOsScreenCaptureAccess.DEEP_LINK}) and enable the spectre-screencapture helper\n" +
-            "and/or the host JVM. Restart the process after granting.\n" +
+            "or open System Settings → Privacy & Security → Screen & System Audio Recording\n" +
+            "(x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture) " +
+            "and enable Spectre Capture Helper " +
+            "(bundle id dev.sebastiano.spectre.screencapture). Restart after granting.\n" +
             "Accessibility is required for Robot mouse/keyboard control."
 }
 

@@ -67,30 +67,38 @@ tasks.withType<Test>().configureEach {
     }
 }
 
-// --- ScreenCaptureKit helper binary (issue #18) ----------------------------------------------
+// --- ScreenCaptureKit helper app bundle (issue #18 / #190) ----------------------------------
 //
-// The JVM-side `ScreenCaptureKitRecorder` ships a small Swift CLI (`recording/native/macos/`)
+// The JVM-side `ScreenCaptureKitRecorder` ships a small Swift helper (`recording/native/macos/`)
 // that owns the actual `SCStream` + `AVAssetWriter` lifecycle. Reasons for the out-of-process
 // shape are written up in `.plans/v2-screencapturekit-bridge.md`. Build pipeline:
 //
 //   1. `swift build -c release` produces a host-arch binary at
 //      `recording/native/macos/.build/release/SpectreScreenCapture`.
-//   2. `assembleScreenCaptureKitHelper` copies it into
-//      `build/generated/screenCaptureHelper/native/macos/spectre-screencapture` and wires that
-//      directory as generated resources, so the resource path is stable regardless of where
-//      SwiftPM lays out its output across versions.
+//   2. `assembleScreenCaptureKitHelper` wraps it in `SpectreCaptureHelper.app` (Info.plist,
+//      LSUIElement, icon, nested MacOS executable) under
+//      `build/generated/screenCaptureHelper/native/macos/SpectreCaptureHelper.app/` so the jar
+//      resource path is a stable app bundle for TCC identity (#190).
 //   3. `processResources` depends on the assemble task (only on macOS), so the JAR carries
-//      the helper transparently and `ScreenCaptureKitRecorder.extractHelper()` finds it via
-//      the classloader.
+//      the helper transparently and `HelperBinaryExtractor` finds the bundle via the classloader.
 //
 // Non-macOS hosts skip the build entirely — the helper is only meaningful on macOS, and the
 // JVM-side recorder gates on `os.name` before attempting extraction.
 val swiftHelperSource = layout.projectDirectory.dir("native/macos")
 val swiftHelperBuildDir = swiftHelperSource.dir(".build/release")
 val swiftHelperBinary = swiftHelperBuildDir.file("SpectreScreenCapture")
-val helperResourcePath = "native/macos/spectre-screencapture"
+val helperAppBundleName = "SpectreCaptureHelper.app"
+val helperAppBundleResourceRoot = "native/macos/$helperAppBundleName"
+// Legacy single-file path kept only so comments/search still find the executable name; the
+// staged tree lives under helperAppBundleStagingRoot.
+val helperResourcePath = "$helperAppBundleResourceRoot/Contents/MacOS/spectre-screencapture"
+val helperAppBundleStagingRoot =
+    layout.buildDirectory.dir("generated/screenCaptureHelper/$helperAppBundleResourceRoot")
 val helperResourceDest =
     layout.buildDirectory.file("generated/screenCaptureHelper/$helperResourcePath")
+val helperAppBundleTemplateDir = swiftHelperSource.dir("AppBundle")
+val helperAppBundleTemplateAbsolutePath = helperAppBundleTemplateDir.asFile.absolutePath
+val helperAppBundleStagingAbsolutePath = helperAppBundleStagingRoot.get().asFile.absolutePath
 
 // macOS deployment target for the helper. Lines up with `Package.swift`'s
 // `platforms: [.macOS(.v13)]`. The triple form (with explicit version) is required by
@@ -356,31 +364,110 @@ val verifyNotarizedScreenCaptureKitHelper by
         inputs.file(universalHelperBinary)
     }
 
-val assembleScreenCaptureKitHelper by
-    tasks.registering(Copy::class) {
-        description = "Stages the ScreenCaptureKit helper binary into the resources tree."
-        group = "build"
-        onlyIf { OperatingSystem.current().isMacOsX }
-        dependsOn(buildScreenCaptureKitHelper)
-        from(swiftHelperBinary) { rename { "spectre-screencapture" } }
-        into(helperResourceDest.get().asFile.parentFile)
-    }
+// Absolute template paths — config-cache safe (plain String/File, no script captures).
+val helperAppInfoPlistAbsolutePath =
+    File(helperAppBundleTemplateAbsolutePath, "Info.plist").absolutePath
+val helperAppPkgInfoAbsolutePath = File(helperAppBundleTemplateAbsolutePath, "PkgInfo").absolutePath
+val helperAppIconAbsolutePath =
+    File(helperAppBundleTemplateAbsolutePath, "Resources/AppIcon.icns").absolutePath
+val hostHelperBinaryAbsolutePath = swiftHelperBinary.asFile.absolutePath
+val isMacOsHost = OperatingSystem.current().isMacOsX
 
-val assembleScreenCaptureKitHelperUniversal by
-    tasks.registering(Copy::class) {
-        description =
-            "Stages the universal arm64+x86_64 ScreenCaptureKit helper into resources " +
-                "(opt-in for distribution builds; slower than the host-arch task). Wire into " +
-                "processResources by passing -PuniversalHelper at invocation time."
-        group = "build"
-        onlyIf { OperatingSystem.current().isMacOsX }
-        dependsOn(
-            if (shouldNotarizeScreenCaptureKitHelper) verifyNotarizedScreenCaptureKitHelper
-            else verifyUniversalScreenCaptureKitHelper
-        )
-        from(universalHelperBinary) { rename { "spectre-screencapture" } }
-        into(helperResourceDest.get().asFile.parentFile)
+// Layout (must match HelperAppBundle Kotlin constants):
+// SpectreCaptureHelper.app/Contents/{Info.plist,PkgInfo,MacOS/spectre-screencapture,Resources/AppIcon.icns}
+// Local builds ad-hoc sign (`codesign -s -`). Full Developer ID on the .app is #191.
+
+val assembleScreenCaptureKitHelper by tasks.registering {
+    description = "Stages the host-arch ScreenCaptureKit helper as SpectreCaptureHelper.app."
+    group = "build"
+    // `enabled =` not `onlyIf { }` — config-cache safe (see stagePrebuiltMacHelper note).
+    enabled = isMacOsHost
+    dependsOn(buildScreenCaptureKitHelper)
+    inputs.file(hostHelperBinaryAbsolutePath)
+    inputs.file(helperAppInfoPlistAbsolutePath)
+    inputs.file(helperAppPkgInfoAbsolutePath)
+    inputs.file(helperAppIconAbsolutePath)
+    outputs.dir(helperAppBundleStagingAbsolutePath)
+    val destPath = helperAppBundleStagingAbsolutePath
+    val binaryPath = hostHelperBinaryAbsolutePath
+    val infoPlistPath = helperAppInfoPlistAbsolutePath
+    val pkgInfoPath = helperAppPkgInfoAbsolutePath
+    val iconPath = helperAppIconAbsolutePath
+    val signOnMac = isMacOsHost
+    doLast {
+        val dest = File(destPath)
+        if (dest.exists()) dest.deleteRecursively()
+        val contents = File(dest, "Contents")
+        File(contents, "MacOS").mkdirs()
+        File(contents, "Resources").mkdirs()
+        File(infoPlistPath).copyTo(File(contents, "Info.plist"), overwrite = true)
+        File(pkgInfoPath).copyTo(File(contents, "PkgInfo"), overwrite = true)
+        File(iconPath).copyTo(File(contents, "Resources/AppIcon.icns"), overwrite = true)
+        File(binaryPath).copyTo(File(contents, "MacOS/spectre-screencapture"), overwrite = true)
+        File(contents, "MacOS/spectre-screencapture").setExecutable(true, false)
+        if (signOnMac) {
+            val process =
+                ProcessBuilder("codesign", "--force", "--deep", "--sign", "-", destPath)
+                    .redirectErrorStream(true)
+                    .start()
+            val output = process.inputStream.bufferedReader().readText()
+            val exit = process.waitFor()
+            if (exit != 0) {
+                System.err.println("Ad-hoc codesign of $destPath failed (exit $exit): $output")
+            }
+        }
     }
+}
+
+val assembleScreenCaptureKitHelperUniversal by tasks.registering {
+    description =
+        "Stages the universal arm64+x86_64 ScreenCaptureKit helper as " +
+            "SpectreCaptureHelper.app (opt-in for distribution builds; slower than the " +
+            "host-arch task). Wire into processResources by passing -PuniversalHelper."
+    group = "build"
+    enabled = isMacOsHost
+    dependsOn(
+        if (shouldNotarizeScreenCaptureKitHelper) verifyNotarizedScreenCaptureKitHelper
+        else verifyUniversalScreenCaptureKitHelper
+    )
+    inputs.file(universalHelperAbsolutePath)
+    inputs.file(helperAppInfoPlistAbsolutePath)
+    inputs.file(helperAppPkgInfoAbsolutePath)
+    inputs.file(helperAppIconAbsolutePath)
+    outputs.dir(helperAppBundleStagingAbsolutePath)
+    val destPath = helperAppBundleStagingAbsolutePath
+    val binaryPath = universalHelperAbsolutePath
+    val infoPlistPath = helperAppInfoPlistAbsolutePath
+    val pkgInfoPath = helperAppPkgInfoAbsolutePath
+    val iconPath = helperAppIconAbsolutePath
+    // Never ad-hoc re-sign after Developer ID notarization — that would wipe the nested
+    // Mach-O ticket. Full `.app` Developer ID sign is #191; until then the nested binary
+    // keeps its notarized signature and the app shell stays unsigned on the release path.
+    val adHocSign = isMacOsHost && !shouldNotarizeScreenCaptureKitHelper
+    doLast {
+        val dest = File(destPath)
+        if (dest.exists()) dest.deleteRecursively()
+        val contents = File(dest, "Contents")
+        File(contents, "MacOS").mkdirs()
+        File(contents, "Resources").mkdirs()
+        File(infoPlistPath).copyTo(File(contents, "Info.plist"), overwrite = true)
+        File(pkgInfoPath).copyTo(File(contents, "PkgInfo"), overwrite = true)
+        File(iconPath).copyTo(File(contents, "Resources/AppIcon.icns"), overwrite = true)
+        File(binaryPath).copyTo(File(contents, "MacOS/spectre-screencapture"), overwrite = true)
+        File(contents, "MacOS/spectre-screencapture").setExecutable(true, false)
+        if (adHocSign) {
+            val process =
+                ProcessBuilder("codesign", "--force", "--deep", "--sign", "-", destPath)
+                    .redirectErrorStream(true)
+                    .start()
+            val output = process.inputStream.bufferedReader().readText()
+            val exit = process.waitFor()
+            if (exit != 0) {
+                System.err.println("Ad-hoc codesign of $destPath failed (exit $exit): $output")
+            }
+        }
+    }
+}
 
 // Whether `processResources` (and therefore `jar` / distribution) bundles the host-arch helper
 // or the universal one is controlled by a project property. Two reasons for this design over
@@ -753,38 +840,54 @@ val useAllLinuxArches = providers.gradleProperty("allLinuxArches").isPresent
 // `rootProject` is not config-cache-serialisable, so resolve to a plain File at config time
 // and capture only that into the `from(...)` provider mapping.
 val rootProjectDir: File = rootProject.projectDir
-val macHelperDestDir: File = helperResourceDest.get().asFile.parentFile
+val prebuiltMacHelperAbsolutePath: String =
+    prebuiltMacHelperPath.orNull?.let { path ->
+        val asIs = File(path)
+        if (asIs.isAbsolute) asIs.absolutePath else File(rootProjectDir, path).absolutePath
+    } ?: ""
 
-// `enabled = <captured Boolean>` is the configuration-cache-friendly equivalent of
-// `onlyIf { propertyVal }`: the value is captured at config time so the runtime task
-// state has no lingering reference to the build-script class. (Gradle's config cache
-// rejects `onlyIf { ... }` lambdas that capture script-level vals — see Gradle 9 docs
-// on "cannot serialize script object references".)
-val stagePrebuiltMacHelper by
-    tasks.registering(Copy::class) {
-        description =
-            "Stages a pre-built (typically notarised universal) macOS ScreenCaptureKit " +
-                "helper into the resources tree. Sourced from -PprebuiltMacHelperPath. Used " +
-                "by the release CI's publish job — its host doesn't rebuild the helper."
-        group = "build"
-        enabled = prebuiltMacHelperPath.isPresent
-        // Resolve absolute paths (like `$RUNNER_TEMP/...` on a GitHub Actions runner) as
-        // they are, and treat relative paths as rooted at `rootProjectDir` so a contributor
-        // can pass `./local-helpers/...` from their checkout. Inlined rather than going
-        // through `File(rootProjectDir, path)` because Java's `File(File, String)` does NOT
-        // treat an absolute child as overriding the parent — it concatenates them
-        // (`/parent/home/runner/work/_temp/...`), which would silently break the Copy task's
-        // `from(...)` resolution against real CI paths.
-        from(
-            prebuiltMacHelperPath.map { path ->
-                val asIs = File(path)
-                if (asIs.isAbsolute) asIs else File(rootProjectDir, path)
-            }
-        ) {
-            rename { "spectre-screencapture" }
+// Prebuilt path may be either a bare Mach-O helper (release CI today, wrapped into the app
+// shell here) or a complete `SpectreCaptureHelper.app` directory (after #191 ships signed
+// bundles).
+val stagePrebuiltMacHelper by tasks.registering {
+    description =
+        "Stages a pre-built (typically notarised universal) macOS ScreenCaptureKit " +
+            "helper as SpectreCaptureHelper.app. Sourced from -PprebuiltMacHelperPath " +
+            "(bare binary or .app). Used by the release CI publish job."
+    group = "build"
+    enabled = prebuiltMacHelperPath.isPresent
+    inputs.property("prebuiltMacHelperPath", prebuiltMacHelperAbsolutePath)
+    inputs.file(helperAppInfoPlistAbsolutePath)
+    inputs.file(helperAppPkgInfoAbsolutePath)
+    inputs.file(helperAppIconAbsolutePath)
+    outputs.dir(helperAppBundleStagingAbsolutePath)
+    val sourcePath = prebuiltMacHelperAbsolutePath
+    val destPath = helperAppBundleStagingAbsolutePath
+    val infoPlistPath = helperAppInfoPlistAbsolutePath
+    val pkgInfoPath = helperAppPkgInfoAbsolutePath
+    val iconPath = helperAppIconAbsolutePath
+    doLast {
+        val source = File(sourcePath)
+        if (!source.exists()) {
+            throw GradleException("prebuiltMacHelperPath does not exist: $sourcePath")
         }
-        into(macHelperDestDir)
+        val dest = File(destPath)
+        if (dest.exists()) dest.deleteRecursively()
+        dest.mkdirs()
+        if (source.isDirectory && source.name.endsWith(".app")) {
+            source.copyRecursively(dest, overwrite = true)
+        } else {
+            val contents = File(dest, "Contents")
+            File(contents, "MacOS").mkdirs()
+            File(contents, "Resources").mkdirs()
+            File(infoPlistPath).copyTo(File(contents, "Info.plist"), overwrite = true)
+            File(pkgInfoPath).copyTo(File(contents, "PkgInfo"), overwrite = true)
+            File(iconPath).copyTo(File(contents, "Resources/AppIcon.icns"), overwrite = true)
+            source.copyTo(File(contents, "MacOS/spectre-screencapture"), overwrite = true)
+            File(contents, "MacOS/spectre-screencapture").setExecutable(true, false)
+        }
     }
+}
 
 // The Mach-O fat stub used by the publication-shape test is a checked-in binary fixture at
 // `build-fixtures/stub-mac-helper`. Generating it inside a `doLast { ... }` here would
@@ -793,18 +896,50 @@ val stagePrebuiltMacHelper by
 // `build-fixtures/stub-mac-helper.README.md` for the layout and a one-liner to regenerate.
 val stubMacHelperFixture: File =
     layout.projectDirectory.file("build-fixtures/stub-mac-helper").asFile
+val stubMacHelperAbsolutePath: String = stubMacHelperFixture.absolutePath
 
-val stageStubMacHelper by
-    tasks.registering(Copy::class) {
-        description =
-            "Stages the checked-in Mach-O fat-binary stub into the resources tree for " +
-                "publication-shape testing. Wire in via -PstubMacHelperForTesting. " +
-                "Never use for a real release — see build-fixtures/stub-mac-helper.README.md."
-        group = "build"
-        enabled = useStubMacHelperForTesting
-        from(stubMacHelperFixture) { rename { "spectre-screencapture" } }
-        into(macHelperDestDir)
+val stageStubMacHelper by tasks.registering {
+    description =
+        "Stages the checked-in Mach-O fat-binary stub as SpectreCaptureHelper.app for " +
+            "publication-shape testing. Wire in via -PstubMacHelperForTesting. " +
+            "Never use for a real release — see build-fixtures/stub-mac-helper.README.md."
+    group = "build"
+    enabled = useStubMacHelperForTesting
+    inputs.file(stubMacHelperAbsolutePath)
+    inputs.file(helperAppInfoPlistAbsolutePath)
+    inputs.file(helperAppPkgInfoAbsolutePath)
+    inputs.file(helperAppIconAbsolutePath)
+    outputs.dir(helperAppBundleStagingAbsolutePath)
+    val destPath = helperAppBundleStagingAbsolutePath
+    val binaryPath = stubMacHelperAbsolutePath
+    val infoPlistPath = helperAppInfoPlistAbsolutePath
+    val pkgInfoPath = helperAppPkgInfoAbsolutePath
+    val iconPath = helperAppIconAbsolutePath
+    val signOnMac = isMacOsHost
+    doLast {
+        val dest = File(destPath)
+        if (dest.exists()) dest.deleteRecursively()
+        val contents = File(dest, "Contents")
+        File(contents, "MacOS").mkdirs()
+        File(contents, "Resources").mkdirs()
+        File(infoPlistPath).copyTo(File(contents, "Info.plist"), overwrite = true)
+        File(pkgInfoPath).copyTo(File(contents, "PkgInfo"), overwrite = true)
+        File(iconPath).copyTo(File(contents, "Resources/AppIcon.icns"), overwrite = true)
+        File(binaryPath).copyTo(File(contents, "MacOS/spectre-screencapture"), overwrite = true)
+        File(contents, "MacOS/spectre-screencapture").setExecutable(true, false)
+        if (signOnMac) {
+            val process =
+                ProcessBuilder("codesign", "--force", "--deep", "--sign", "-", destPath)
+                    .redirectErrorStream(true)
+                    .start()
+            val output = process.inputStream.bufferedReader().readText()
+            val exit = process.waitFor()
+            if (exit != 0) {
+                System.err.println("Ad-hoc codesign of $destPath failed (exit $exit): $output")
+            }
+        }
     }
+}
 
 // Linux helpers don't need a stub equivalent: a Linux publish host can rebuild both arches
 // locally (the `assembleWaylandHelperAllArches` path already lives in CI), and the test-on-

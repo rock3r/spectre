@@ -109,7 +109,7 @@ Manual promotion checklist:
   POM metadata, sources jars, javadoc jars, and Gradle module metadata.
 - Confirm `spectre-recording-<version>.jar` contains no `native/...` entries.
 - Confirm `spectre-recording-macos-<version>.jar` contains
-  `native/macos/spectre-screencapture`.
+  `native/macos/SpectreCaptureHelper.app`.
 - Confirm `spectre-recording-linux-<version>.jar` contains
   `native/linux/x86_64/spectre-wayland-helper` and
   `native/linux/aarch64/spectre-wayland-helper`.
@@ -182,7 +182,7 @@ It additionally asserts:
 
 - every sources jar is free of generated `native/...` helper resources
 - `:recording` is API/common-only and contains no `native/...` resources
-- `:recording-macos` contains `native/macos/spectre-screencapture`
+- `:recording-macos` contains `native/macos/SpectreCaptureHelper.app`
 - `:recording-linux` contains `native/linux/x86_64/spectre-wayland-helper` and
   `native/linux/aarch64/spectre-wayland-helper` when built with release helper inputs
 - `:recording-windows` contains `native/windows/x64/spectre-window-capture.exe` and

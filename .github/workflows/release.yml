@@ -200,12 +200,11 @@ jobs:
           API_KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_API_KEY_ID}.p8"
           echo "$APPLE_NOTARY_API_KEY" | base64 --decode > "$API_KEY_PATH"
 
-          # `:recording:assembleScreenCaptureKitHelperUniversal` produces the binary at
-          # `recording/build/generated/screenCaptureHelper/native/macos/spectre-screencapture`.
-          # `-PnotarizeScreenCaptureKitHelper` wires the codesign + notarytool + verify
-          # steps into the dependency chain. The publish job downloads the artefact and
-          # stages it via `-PprebuiltMacHelperPath` so the resulting
-          # spectre-recording-macos jar is consumable without redoing notarisation.
+          # `:recording:assembleScreenCaptureKitHelperUniversal` stages
+          # `SpectreCaptureHelper.app` (nested universal binary + Info.plist + icon).
+          # `-PnotarizeScreenCaptureKitHelper` still signs/notarizes the bare universal
+          # Mach-O before wrap (#191 will sign the whole .app). The publish job downloads
+          # the artefact and stages it via `-PprebuiltMacHelperPath`.
           APPLE_NOTARY_API_KEY_PATH="$API_KEY_PATH" \
             ./gradlew :recording:assembleScreenCaptureKitHelperUniversal \
               -PuniversalHelper \
@@ -215,10 +214,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mac-helper
-          # Single binary file — the upload-artifact action zips it under the hood for
-          # transit; the download step in `publish` un-zips automatically. Net result is a
-          # single `SpectreScreenCapture` Mach-O fat binary on disk in the publish job.
-          path: recording/build/generated/screenCaptureHelper/native/macos/spectre-screencapture
+          # Upload the parent `macos/` directory so the artefact root keeps the
+          # `SpectreCaptureHelper.app` name. Passing the `.app` path itself makes
+          # upload-artifact@v4 strip that directory name (Contents/ lands at the
+          # root), which would break `-PprebuiltMacHelperPath=.../SpectreCaptureHelper.app`.
+          path: recording/build/generated/screenCaptureHelper/native/macos/
           if-no-files-found: error
           retention-days: 7
 
@@ -318,7 +318,7 @@ jobs:
             :cli:packageMacosX64 \
             :cli:packageMacosArm64 \
             -PVERSION_NAME="$RELEASE_VERSION" \
-            -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/spectre-screencapture"
+            -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/SpectreCaptureHelper.app"
 
           for target in macosX64 macosArm64; do
             archive="cli/build/construo/distributions/spectre-${target}.zip"
@@ -621,7 +621,7 @@ jobs:
         run: |
           ./gradlew verifyMavenLocalPublication \
             -PVERSION_NAME="$RELEASE_VERSION" \
-            -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/spectre-screencapture" \
+            -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/SpectreCaptureHelper.app" \
             -PprebuiltLinuxHelpersDir="$RUNNER_TEMP/linux-helpers" \
             -PprebuiltWindowsHelpersDir="$RUNNER_TEMP/windows-helper"
 
@@ -632,7 +632,7 @@ jobs:
             :cli:packageLinuxArm64 \
             :cli:packageWindowsX64 \
             -PVERSION_NAME="$RELEASE_VERSION" \
-            -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/spectre-screencapture" \
+            -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/SpectreCaptureHelper.app" \
             -PprebuiltLinuxHelpersDir="$RUNNER_TEMP/linux-helpers" \
             -PprebuiltWindowsHelpersDir="$RUNNER_TEMP/windows-helper"
 
@@ -658,7 +658,7 @@ jobs:
             :agent-runtime:publishToMavenCentral \
             :testing:publishToMavenCentral \
             -PVERSION_NAME="$RELEASE_VERSION" \
-            -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/spectre-screencapture" \
+            -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/SpectreCaptureHelper.app" \
             -PprebuiltLinuxHelpersDir="$RUNNER_TEMP/linux-helpers" \
             -PprebuiltWindowsHelpersDir="$RUNNER_TEMP/windows-helper"
 

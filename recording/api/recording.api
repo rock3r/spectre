@@ -181,6 +181,20 @@ public final class dev/sebastiano/spectre/recording/portal/WaylandWindowSourceRe
 	public static synthetic fun start$default (Ldev/sebastiano/spectre/recording/portal/WaylandWindowSourceRecorder;Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;Ljava/awt/Rectangle;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;ILjava/lang/Object;)Ldev/sebastiano/spectre/recording/RecordingHandle;
 }
 
+public final class dev/sebastiano/spectre/recording/screencapturekit/HelperAppBundle {
+	public static final field APP_DIR_NAME Ljava/lang/String;
+	public static final field BUNDLE_ID Ljava/lang/String;
+	public static final field DISPLAY_NAME Ljava/lang/String;
+	public static final field EXECUTABLE_NAME Ljava/lang/String;
+	public static final field EXECUTABLE_RELATIVE_PATH Ljava/lang/String;
+	public static final field EXECUTABLE_RESOURCE_PATH Ljava/lang/String;
+	public static final field ICON_RESOURCE_PATH Ljava/lang/String;
+	public static final field INFO_PLIST_RESOURCE_PATH Ljava/lang/String;
+	public static final field INSTANCE Ldev/sebastiano/spectre/recording/screencapturekit/HelperAppBundle;
+	public static final field PKG_INFO_RESOURCE_PATH Ljava/lang/String;
+	public static final field RESOURCE_ROOT Ljava/lang/String;
+}
+
 public final class dev/sebastiano/spectre/recording/screencapturekit/HelperNotBundledException : java/lang/IllegalStateException {
 }
 

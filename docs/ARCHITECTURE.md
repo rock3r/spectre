@@ -114,7 +114,7 @@ Expected long-term responsibilities:
 - publish runtime-only helper resources for the recording API
 - keep native binary payloads out of `spectre-recording` and its sources jar
 - mirror the runtime resource paths the extractors probe:
-  `native/macos/spectre-screencapture`,
+  `native/macos/SpectreCaptureHelper.app`,
   `native/linux/<arch>/spectre-wayland-helper`, and
   `native/windows/<arch>/spectre-window-capture.exe`
 

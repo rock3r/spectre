@@ -28,7 +28,12 @@ class ScreenCaptureKitRecorderTest {
         val factory = RecordingProcessFactory(process)
         val extractor =
             HelperBinaryExtractor(
-                resourceLocator = { ByteArrayInputStream(byteArrayOf(0x01)) },
+                materialLocator = {
+                    HelperAppBundleMaterial(
+                        executable = byteArrayOf(0x01),
+                        infoPlist = byteArrayOf(),
+                    )
+                },
                 targetDirProvider = { helperPath.parent ?: Path.of("/tmp") },
             )
         return ScreenCaptureKitRecorder(

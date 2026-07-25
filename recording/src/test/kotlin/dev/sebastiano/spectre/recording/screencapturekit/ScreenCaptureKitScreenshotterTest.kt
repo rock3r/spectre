@@ -22,7 +22,12 @@ class ScreenCaptureKitScreenshotterTest {
         val factory = ScreenshotHelperProcessFactory()
         val extractor =
             HelperBinaryExtractor(
-                resourceLocator = { ByteArrayInputStream(byteArrayOf(0x01)) },
+                materialLocator = {
+                    HelperAppBundleMaterial(
+                        executable = byteArrayOf(0x01),
+                        infoPlist = byteArrayOf(),
+                    )
+                },
                 targetDirProvider = { Path.of("/tmp") },
             )
         val screenshotter =
@@ -55,7 +60,12 @@ class ScreenCaptureKitScreenshotterTest {
         val factory = ScreenshotHelperProcessFactory(process)
         val extractor =
             HelperBinaryExtractor(
-                resourceLocator = { ByteArrayInputStream(byteArrayOf(0x01)) },
+                materialLocator = {
+                    HelperAppBundleMaterial(
+                        executable = byteArrayOf(0x01),
+                        infoPlist = byteArrayOf(),
+                    )
+                },
                 targetDirProvider = { Path.of("/tmp") },
             )
         val screenshotter =

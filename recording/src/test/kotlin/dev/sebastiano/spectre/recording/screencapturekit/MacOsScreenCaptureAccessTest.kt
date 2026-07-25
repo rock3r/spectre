@@ -97,7 +97,7 @@ class MacOsScreenCaptureAccessTest {
                 if (key == "SPECTRE_SCREENCAPTURE_HELPER") helper.toString() else null
             },
             sysPropLookup = { null },
-            resourceLocator = { null },
+            materialLocator = { null },
             targetDirProvider = { dir },
         )
     }

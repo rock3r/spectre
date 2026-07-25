@@ -1,9 +1,13 @@
 # Notarization
 
-Spectre ships the macOS ScreenCaptureKit recorder as a small Swift command-line helper inside
-the `spectre-recording-macos` jar. Distribution builds must Developer ID sign and notarize that
-helper before the jar is published, otherwise macOS Gatekeeper can reject the extracted helper
-when a consumer starts `ScreenCaptureKitRecorder`.
+Spectre ships the macOS ScreenCaptureKit recorder as a small Swift helper packaged as
+`SpectreCaptureHelper.app` inside the `spectre-recording-macos` jar. Distribution builds must
+Developer ID sign and notarize that helper before the jar is published, otherwise macOS
+Gatekeeper can reject the extracted helper when a consumer starts `ScreenCaptureKitRecorder`.
+
+Issue #190 wraps the helper in a stable app bundle for TCC identity. Issue #191 extends
+signing/notarization/stapling to the full `.app` (today the pipeline still signs the universal
+Mach-O, then stages it into the app shell).
 
 Local development builds do not need Apple credentials. The notarization path is opt-in and is
 only intended for release builds.
@@ -23,7 +27,7 @@ Gradle then:
 3. Submits the archive with `xcrun notarytool submit`.
 4. Waits for Apple to finish processing, bounded by a 30 minute timeout.
 5. Verifies the resulting Developer ID signature with `codesign --verify --strict --verbose=4`
-   before staging it into `native/macos/spectre-screencapture` in the
+   before staging it into `native/macos/SpectreCaptureHelper.app` in the
    `spectre-recording-macos` jar resources.
 
 Apple's notary service can issue a ticket for a standalone binary inside the submitted archive,

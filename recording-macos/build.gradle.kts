@@ -68,12 +68,28 @@ tasks.register("verifyRecordingMacosHelpers") {
     val jarFile = tasks.named<Jar>("jar").flatMap { it.archiveFile }
     doLast {
         val jar = jarFile.get().asFile
-        val containsHelper =
-            ZipFile(jar).use { zip -> zip.getEntry("native/macos/spectre-screencapture") != null }
-        if (!containsHelper) {
-            throw GradleException(
-                "spectre-recording-macos jar is missing native/macos/spectre-screencapture"
+        val requiredEntries =
+            listOf(
+                "native/macos/SpectreCaptureHelper.app/Contents/MacOS/spectre-screencapture",
+                "native/macos/SpectreCaptureHelper.app/Contents/Info.plist",
+                "native/macos/SpectreCaptureHelper.app/Contents/PkgInfo",
+                "native/macos/SpectreCaptureHelper.app/Contents/Resources/AppIcon.icns",
             )
+        ZipFile(jar).use { zip ->
+            val missing = requiredEntries.filter { zip.getEntry(it) == null }
+            if (missing.isNotEmpty()) {
+                throw GradleException(
+                    "spectre-recording-macos jar is missing SpectreCaptureHelper.app " +
+                        "entries: ${missing.joinToString()}"
+                )
+            }
+            // Legacy bare-binary resource must not ship alongside the app bundle.
+            if (zip.getEntry("native/macos/spectre-screencapture") != null) {
+                throw GradleException(
+                    "spectre-recording-macos jar still contains bare native/macos/spectre-screencapture; " +
+                        "the helper must ship only as SpectreCaptureHelper.app (#190)"
+                )
+            }
         }
     }
 }
