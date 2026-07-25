@@ -311,44 +311,38 @@ macOS has the most involved setup; the others are short. macOS first:
 ### macOS
 
 - Add `dev.sebastiano.spectre:spectre-recording-macos:<version>` as a runtime-only
-  dependency. Its jar carries the notarized universal ScreenCaptureKit helper at
-  `native/macos/spectre-screencapture`; the base `spectre-recording` artifact does not
-  bundle this helper.
+  dependency. Its jar carries the notarized universal ScreenCaptureKit helper as an app
+  bundle at `native/macos/SpectreCaptureHelper.app/…`; the base `spectre-recording`
+  artifact does not bundle this helper.
 - **Screen Recording TCC permission**, granted under System Settings → Privacy &
-  Security → Screen Recording.
+  Security → Screen & System Audio Recording to **Spectre Capture Helper** (bundle id
+  `dev.sebastiano.spectre.screencapture`), not the terminal or JVM that launched Spectre.
 - **An unlocked console session.** A locked macOS screen can make screenshots or
   recordings fail, or produce black frames, even when Screen Recording TCC is already
   granted.
 
-macOS attributes TCC to the **responsible parent process** — the binary that
-launched the JVM, not `java` itself. Grant the permission to whichever app opened
-the test JVM:
+macOS attributes Screen Recording for the capture helper to the **helper app bundle**
+when preflight/capture run the nested executable under
+`SpectreCaptureHelper.app/Contents/MacOS/`. Settings should show **Spectre Capture Helper**
+with the Spectre icon. Use `spectre permissions check` / `spectre permissions request`
+to verify or re-trigger the grant (agents cannot click TCC prompts).
 
-- Running tests from IntelliJ IDEA → grant **IntelliJ IDEA**.
-- `./gradlew test` from a terminal → grant **Terminal.app** (or **iTerm**, etc.).
-- A standalone `java` invocation from a third-party launcher → grant **that
-  launcher**.
-- On CI (e.g., GitHub Actions macOS runners) → the runner image either needs to be
-  pre-granted or use a notarised wrapper that has its own TCC entry.
-
-macOS doesn't refresh TCC for already-running processes, so after granting, fully
-quit and relaunch the parent app — not just the JVM child — for the permission to
-take effect. The typical first-time flow is "run, fail, grant, relaunch parent app,
-run again". See
+If you still see a grant attached only to Terminal/IntelliJ/java, you are on a pre-bundle
+helper build or an override path — upgrade Spectre and unset `SPECTRE_SCREENCAPTURE_HELPER`
+so the bundled app is used. See
 [Troubleshooting](troubleshooting.md#macos-recording-errors-out-or-produces-no-file)
-for failure modes when permission is missing or attached to the wrong binary.
+for failure modes when permission is missing.
 
-Spectre extracts the ScreenCaptureKit helper from `spectre-recording-macos` before running
-it. By default, it uses a stable per-user path:
+Spectre extracts the helper app from `spectre-recording-macos` before running it. By default
+it uses a fixed per-user path (updated in place when the helper content changes):
 
 ```text
-~/Library/Application Support/spectre/helpers/spectre-screencapture/<helper-hash>/spectre-screencapture
+~/Library/Application Support/spectre/helpers/spectre-screencapture/SpectreCaptureHelper.app
 ```
 
-Grant Screen Recording to that helper once in System Settings. Spectre includes a short helper
-content hash in the path, so native-helper fixes in future Spectre versions get a fresh extracted
-binary instead of silently reusing stale bytes. Later runs of the same helper binary re-extract to
-the same path, so macOS continues to recognise it.
+Grant Screen Recording to **Spectre Capture Helper** once in System Settings. Later Spectre
+versions overwrite the same app path so the stable bundle id keeps the grant (when the
+helper is Developer ID signed with the same identity).
 
 If you prefer a project-specific helper location, set the extraction directory before the test JVM
 starts:
@@ -360,9 +354,7 @@ systemProperty(
 )
 ```
 
-Then grant Screen Recording to `<helperDir>/spectre-screencapture` instead. If `./gradlew clean`
-removes that file, the TCC grant still applies the next time Spectre extracts the helper to the
-same path.
+Then grant Screen Recording to `<helperDir>/SpectreCaptureHelper.app` instead.
 
 `apple.awt.UIElement=true` helper/test JVMs are useful with `RobotDriver.synthetic(...)`
 for focus-safe per-character `typeText`, but clipboard-backed `pasteText` and recording

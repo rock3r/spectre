@@ -146,7 +146,7 @@ which binary ends up bundled. The universal task pipeline:
 3. Verifies the result via `lipo -verify_arch arm64 x86_64` — exits non-zero (fails the
    build) if any expected arch isn't present, so a thin binary can never sneak through.
 4. Stages the universal binary into generated resources at
-   `native/macos/spectre-screencapture`.
+   `native/macos/SpectreCaptureHelper.app`.
 
 **Both paths only need the macOS Command Line Tools.** The `--triple` + `lipo` recipe
 deliberately avoids `swift build --arch arm64 --arch x86_64` (which delegates to `xcbuild`
@@ -298,7 +298,7 @@ needs is missing.
 
 | Host                | Default platform-helper build                                        | `-PuniversalHelper`               | `-PallLinuxArches`                                      |
 | ------------------- | -------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------- |
-| macOS (arm64)       | host-arch SCK (`native/macos/spectre-screencapture` thin arm64)      | universal SCK (arm64 + x86_64)    | no-op (host can't build Linux helper)                   |
+| macOS (arm64)       | host-arch SCK (`native/macos/SpectreCaptureHelper.app` thin arm64)      | universal SCK (arm64 + x86_64)    | no-op (host can't build Linux helper)                   |
 | macOS (x86_64)      | host-arch SCK (thin x86_64)                                          | universal SCK (arm64 + x86_64)    | no-op (same)                                            |
 | Linux x86_64        | host-arch Linux helper (`native/linux/x86_64/spectre-wayland-helper`) | no-op (host can't build SCK)      | x86_64 + aarch64 Linux helpers                          |
 | Linux aarch64       | host-arch Linux helper (`native/linux/aarch64/spectre-wayland-helper`) | no-op (same)                      | x86_64 + aarch64 Linux helpers                          |
@@ -326,7 +326,7 @@ platform helper jars, not the API-only `:recording` jar. `./gradlew :recording-w
 does the same for the Windows helper artifact. Each helper module packages the
 generated resources staged by `:recording`'s native build tasks:
 
-- `:recording-macos` expects `native/macos/spectre-screencapture` when a mac helper can
+- `:recording-macos` expects `native/macos/SpectreCaptureHelper.app` when a mac helper can
   be produced or provided.
 - `:recording-linux` expects `native/linux/<arch>/spectre-wayland-helper` on Linux.
 - `:recording-windows` expects both `native/windows/x64/spectre-window-capture.exe` and
