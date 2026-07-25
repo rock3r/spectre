@@ -117,6 +117,16 @@ val uiElementMode: Provider<String> =
 val applyValidationJvmArgs: Test.() -> Unit = {
     systemProperty("apple.awt.UIElement", uiElementMode.get())
     systemProperty("spectre.sample.fixture.uiElement", uiElementMode.get())
+    // Xvfb / headless-CI hosts often lack a working GL stack; Skiko then logs
+    // "Cannot create Linux GL context" and can hang or abandon a forked validation JVM
+    // without writing per-class JUnit XML (AtomicCaptureValidationTest envelope-only skip).
+    // Default SOFTWARE_COMPAT matches the Linux Robot smoke path, but honor a caller
+    // override (e.g. -Dskiko.renderApi=OPENGL) so local GPU/fidelity work is not forced
+    // through the software renderer.
+    if (OperatingSystem.current().isLinux) {
+        val renderApi = providers.systemProperty("skiko.renderApi").orElse("SOFTWARE_COMPAT").get()
+        systemProperty("skiko.renderApi", renderApi)
+    }
 }
 
 val validationTest by

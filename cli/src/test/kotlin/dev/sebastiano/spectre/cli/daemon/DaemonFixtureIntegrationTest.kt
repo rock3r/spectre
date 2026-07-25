@@ -491,30 +491,46 @@ private fun attachWithRetry(
     startDaemon: () -> Unit,
 ): DaemonResponse.Attached {
     var lastError: DaemonResponse.Error? = null
-    repeat(ATTACH_RETRY_ATTEMPTS) { attempt ->
+    val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ATTACH_RETRY_BUDGET_MS)
+    var attempt = 0
+    while (System.nanoTime() < deadline) {
         val response = client.requestOrStart(DaemonRequest.Attach(targetPid), start = startDaemon)
         when (response) {
             is DaemonResponse.Attached -> return response
             is DaemonResponse.Error -> {
                 lastError = response
-                val retryable =
-                    response.message.contains("not ready to participate in attach handshake") ||
-                        response.message.contains("No such process") ||
-                        response.message.contains("AttachNotSupportedException")
-                if (!retryable || attempt == ATTACH_RETRY_ATTEMPTS - 1) {
+                if (!isRetryableAttachFailure(response.message)) {
                     return requireAttached(response)
                 }
-                Thread.sleep(ATTACH_RETRY_BACKOFF_MS * (attempt + 1L))
+                attempt++
+                Thread.sleep(ATTACH_RETRY_BACKOFF_MS * minOf(attempt, 8).toLong())
             }
             else -> return requireAttached(response)
         }
     }
-    return requireAttached(lastError ?: error("attach retry loop exited without a response"))
+    return requireAttached(
+        lastError
+            ?: error("attach retry budget ${ATTACH_RETRY_BUDGET_MS}ms exhausted without a response")
+    )
 }
 
-private const val ATTACH_RETRY_ATTEMPTS: Int = 8
+/** Transient HotSpot attach races observed on macOS/Linux CI under load. */
+private fun isRetryableAttachFailure(message: String): Boolean {
+    val m = message.lowercase()
+    return "not ready to participate in attach handshake" in m ||
+        "no such process" in m ||
+        "attachnotsupportedexception" in m ||
+        "connectexception" in m ||
+        "connection refused" in m ||
+        "resource temporarily unavailable" in m ||
+        // Target briefly missing from Attach list / hsperfdata race.
+        "does not exist" in m ||
+        "no process" in m
+}
+
+private const val ATTACH_RETRY_BUDGET_MS: Long = 20_000
 private const val ATTACH_RETRY_BACKOFF_MS: Long = 400
-private const val FIXTURE_ATTACH_SETTLE_MS: Long = 750
+private const val FIXTURE_ATTACH_SETTLE_MS: Long = 1_500
 private const val FIXTURE_SPAWN_ATTEMPTS: Int = 3
 
 private suspend fun mcpText(client: Client, tool: String, arguments: Map<String, Any?>): String {

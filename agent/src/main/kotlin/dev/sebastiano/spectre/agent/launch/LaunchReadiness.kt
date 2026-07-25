@@ -111,13 +111,14 @@ internal object LaunchReadiness {
     }
 
     /**
-     * Stage [LaunchStage.AGENT_BOOTSTRAP]: a **single** [AgentAttach.attach] with the stage budget
-     * as `attachTimeoutMs`.
+     * Stage [LaunchStage.AGENT_BOOTSTRAP]: [AgentAttach.attach] with the stage budget as
+     * `attachTimeoutMs`.
      *
-     * Retries are intentionally avoided: each attach call may `loadAgent` with a UDS path, and a
-     * second attempt with a freshly generated path would wait forever while the already-loaded
-     * agent remains bound to the first socket (Codex P1). Stage 2 already waits for the JVM to
-     * appear in the Attach list before we get here.
+     * **UDS path is pinned** for the whole stage: once `loadAgent` has bound an agent to a socket,
+     * a second attempt with a different path would wait forever (Codex P1). Retries are limited to
+     * pre-load failures where HotSpot refuses attach ("state is not ready…") — common on macOS CI
+     * when `VirtualMachine.list()` surfaces a JVM a few hundred ms before the attach handshake is
+     * open. Those retries never reach `loadAgent`, so the pinned path stays safe.
      */
     fun awaitAgentBootstrap(
         process: Process,
@@ -131,44 +132,94 @@ internal object LaunchReadiness {
         if (!process.isAlive && !gradleish) {
             throw processExited(process, stdoutPath, stderrPath)
         }
-        // Pin UDS path for the whole stage (even if a future retry is reintroduced).
+        // Pin UDS path for the whole stage (including pre-load retries).
         val udsPath = attachOptions.udsPath ?: AttachOptions.defaultUdsPath(attachedPid)
-        val options = attachOptions.copy(udsPath = udsPath, attachTimeoutMs = bootstrapTimeoutMs)
-        return try {
-            AgentAttach.attach(attachedPid, options)
-        } catch (ex: AttachInterruptedException) {
-            Thread.currentThread().interrupt()
-            throw LaunchAgentBootstrapException(
-                attachedPid = attachedPid,
-                stdoutPath = stdoutPath,
-                stderrPath = stderrPath,
-                cause = ex,
-            )
-        } catch (ex: SpectreAgentException) {
-            rethrowIfProcessDied(process, gradleish, stdoutPath, stderrPath)
-            throw LaunchAgentBootstrapException(
-                attachedPid = attachedPid,
-                stdoutPath = stdoutPath,
-                stderrPath = stderrPath,
-                cause = ex,
-            )
-        } catch (ex: SpectreAttachException) {
-            rethrowIfProcessDied(process, gradleish, stdoutPath, stderrPath)
-            throw LaunchAgentBootstrapException(
-                attachedPid = attachedPid,
-                stdoutPath = stdoutPath,
-                stderrPath = stderrPath,
-                cause = ex,
-            )
-        } catch (ex: IOException) {
-            rethrowIfProcessDied(process, gradleish, stdoutPath, stderrPath)
-            throw LaunchAgentBootstrapException(
-                attachedPid = attachedPid,
-                stdoutPath = stdoutPath,
-                stderrPath = stderrPath,
-                cause = ex,
-            )
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(bootstrapTimeoutMs)
+        var lastAttachFailure: SpectreAttachException? = null
+        while (true) {
+            val remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())
+            if (remainingMs <= 0L) {
+                throw LaunchAgentBootstrapException(
+                    attachedPid = attachedPid,
+                    stdoutPath = stdoutPath,
+                    stderrPath = stderrPath,
+                    cause =
+                        lastAttachFailure
+                            ?: IllegalStateException(
+                                "Agent bootstrap budget ${bootstrapTimeoutMs}ms exhausted " +
+                                    "before attach for pid=$attachedPid"
+                            ),
+                )
+            }
+            // Bound each attempt by remaining stage budget so pre-load retries cannot
+            // stack a full attachTimeoutMs UDS wait after the stage deadline.
+            val options = attachOptions.copy(udsPath = udsPath, attachTimeoutMs = remainingMs)
+            try {
+                return AgentAttach.attach(attachedPid, options)
+            } catch (ex: AttachInterruptedException) {
+                Thread.currentThread().interrupt()
+                throw LaunchAgentBootstrapException(
+                    attachedPid = attachedPid,
+                    stdoutPath = stdoutPath,
+                    stderrPath = stderrPath,
+                    cause = ex,
+                )
+            } catch (ex: SpectreAgentException) {
+                rethrowIfProcessDied(process, gradleish, stdoutPath, stderrPath)
+                throw LaunchAgentBootstrapException(
+                    attachedPid = attachedPid,
+                    stdoutPath = stdoutPath,
+                    stderrPath = stderrPath,
+                    cause = ex,
+                )
+            } catch (ex: SpectreAttachException) {
+                rethrowIfProcessDied(process, gradleish, stdoutPath, stderrPath)
+                lastAttachFailure = ex
+                if (!isPreLoadAttachRetryable(ex) || System.nanoTime() >= deadline) {
+                    throw LaunchAgentBootstrapException(
+                        attachedPid = attachedPid,
+                        stdoutPath = stdoutPath,
+                        stderrPath = stderrPath,
+                        cause = ex,
+                    )
+                }
+                try {
+                    sleepQuietly(POLL_MS)
+                } catch (interrupted: InterruptedException) {
+                    // Preserve AGENT_BOOTSTRAP taxonomy when backoff is interrupted
+                    // (same wrapping as AttachInterruptedException during attach).
+                    Thread.currentThread().interrupt()
+                    throw LaunchAgentBootstrapException(
+                        attachedPid = attachedPid,
+                        stdoutPath = stdoutPath,
+                        stderrPath = stderrPath,
+                        cause = AttachInterruptedException(udsPath, interrupted),
+                    )
+                }
+            } catch (ex: IOException) {
+                rethrowIfProcessDied(process, gradleish, stdoutPath, stderrPath)
+                throw LaunchAgentBootstrapException(
+                    attachedPid = attachedPid,
+                    stdoutPath = stdoutPath,
+                    stderrPath = stderrPath,
+                    cause = ex,
+                )
+            }
         }
+    }
+
+    /**
+     * True when [ex] is a **short** pre-`loadAgent` HotSpot race (safe to retry with the same UDS
+     * path).
+     *
+     * Deliberately does **not** treat every `AttachNotSupportedException` as retryable: HotSpot
+     * also uses that type for its independent attach-socket wait timeout (~10s). Retrying after
+     * that terminal timeout would start another full JDK handshake and blow the stage budget. Only
+     * the documented "state is not ready…" race (and "no such process" pid churn) retries.
+     */
+    private fun isPreLoadAttachRetryable(ex: SpectreAttachException): Boolean {
+        val msg = (ex.message.orEmpty() + " " + (ex.cause?.message.orEmpty())).lowercase()
+        return "not ready to participate in attach handshake" in msg || "no such process" in msg
     }
 
     /** Prefer stage PROCESS_ALIVE when the process died during attach (race with early exit). */

@@ -24,13 +24,12 @@ name: Validation tests (Linux)
 # Counterpart to `validation-windows.yml`. Historically both workflows carried a
 # fail-tolerant + XML-source-of-truth pattern to ride out a Gradle test-executor protocol race
 # (Windows shape `Could not write '/127.0.0.1:NNNN'` originally tracked at #72; Linux shape
-# "No tests found for given includes" first observed 2026-05-11 in run 25697771548). The race
-# is now suppressed at its source by serialising the validation Test tasks via a
-# `ValidationTestSerialiser` BuildService in `sample-desktop/build.gradle.kts` — see the
-# comment block there for the full mechanism. The XML verifier downstream stays as plain test
-# hygiene (required-set existence + discovered-set inspection); the previous flake-tolerance
-# layer (`continue-on-error` on the Gradle step + `::warning::` envelope-detection branch) is
-# gone so a recurrence fails the workflow loudly instead of being hidden behind a warning.
+# "No tests found for given includes" first observed 2026-05-11 in run 25697771548). Most of
+# the race is suppressed by serialising validation Test tasks via `ValidationTestSerialiser`
+# in `sample-desktop/build.gradle.kts`, but residual cold-daemon / Skiko-fork cases still leave
+# a class only in the synthetic Gradle envelope (main AtomicCaptureValidationTest under Xvfb).
+# Keep `continue-on-error` on the Gradle step + envelope soft-path in the verifier so those
+# protocol flakes warn rather than red the job; real assertion failures still fail via XML.
 #
 # Local invocation (with a working DISPLAY):
 #   ./gradlew :sample-desktop:validationTest :sample-desktop:validationTestPopupLayers
@@ -117,17 +116,17 @@ jobs:
         # requested task gets a fair chance to produce its JUnit XML, and the verification
         # step below sees the full picture instead of cascade-skips.
         #
-        # The Gradle test-executor protocol race that historically motivated a
-        # `continue-on-error: true` belt-and-braces here is suppressed at its source by
-        # serialising the validation Test tasks via a `ValidationTestSerialiser`
-        # `BuildService` in `sample-desktop/build.gradle.kts` — see the comment block there.
-        # If a Gradle-side problem ever surfaces from these invocations again, we want it to
-        # fail the workflow loudly so we know to investigate, not be absorbed silently.
+        # `continue-on-error: true` matches validation-windows.yml: residual Gradle executor
+        # / envelope-only flakes (#72 shape) make the Gradle step non-zero even when the
+        # XML verifier can soft-pass via envelope detection. Without this, the soft path is
+        # dead because the earlier failed step keeps the job red. Real test failures still
+        # fail the job via the verifier's failures/errors pass.
         #
         # Screen size 1280x1024 is xvfb-run's default; explicitly setting it via
         # `--server-args` would let us bump it for a denser virtual desktop, but the
         # validation tests don't need that and the default keeps the diff with
         # validation-windows.yml's runner config minimal.
+        continue-on-error: true
         id: gradle
         run: |
           xvfb-run -a ./gradlew \
@@ -232,20 +231,16 @@ jobs:
         shell: bash
 
       - name: Verify validation tests passed via JUnit XML
-        # Plain two-pass test-hygiene verifier (no longer compensating for the
-        # protocol-flake — see workflow header):
+        # Two-pass test-hygiene verifier with envelope-detection safety net (same as
+        # validation-windows.yml / issue #72). ValidationTestSerialiser suppresses most
+        # parallel races, but residual cold-daemon / Skiko forks can still leave a class
+        # only in the synthetic Gradle envelope (no per-class TEST-*.xml) — seen on main
+        # for AtomicCaptureValidationTest under Xvfb.
         #
-        # 1. **Required-set existence pass**: an explicit list of expected (task, class) pairs
-        #    must each have a corresponding TEST-<fqn>.xml. A mid-class JVM crash that skipped
-        #    writing one XML, or a Gradle compile / dependency-resolution failure that
-        #    produced no XMLs at all, fails the verification with a clear error pointing at
-        #    the missing entry.
-        # 2. **Discovered-set inspection pass**: every TEST-*.xml found under any of the four
-        #    validation task directories — including ones NOT in the required set, e.g. a new
-        #    ValidationTest class added without updating this workflow — is parsed for
-        #    `failures="N"` / `errors="N"`. Any non-zero count fails the step. Missing or
-        #    unparsable attributes are treated as malformation (truncated XML, wrong schema)
-        #    and also fail the step.
+        # 1. **Required-set existence pass**: each expected (task, class) pair must have a
+        #    TEST-<fqn>.xml, OR appear as a skipped testcase in the Gradle envelope (warn).
+        # 2. **Discovered-set inspection pass**: every TEST-*.xml under validation dirs is
+        #    parsed for failures/errors; missing attributes are malformation.
         if: always()
         run: |
           set -euo pipefail
@@ -261,19 +256,29 @@ jobs:
           # parallel list — see validation-windows.yml for the rationale.
           task_dirs=("${!required_classes_by_task[@]}")
 
-          # Pass 1: required-set existence.
+          # Pass 1: required-set existence + protocol-flake distinction.
           missing=()
+          flaked=()
           for task_dir in "${!required_classes_by_task[@]}"; do
+            envelope="sample-desktop/build/test-results/$task_dir/TEST-Gradle-Test-Run--sample-desktop-${task_dir}.xml"
             for class_name in ${required_classes_by_task[$task_dir]}; do
               xml="sample-desktop/build/test-results/$task_dir/TEST-dev.sebastiano.spectre.sample.validation.${class_name}.xml"
-              if [ ! -f "$xml" ]; then
+              if [ -f "$xml" ]; then
+                continue
+              fi
+              if [ -f "$envelope" ] && grep -qE "<testcase name=\"${class_name}\"" "$envelope"; then
+                flaked+=("$task_dir/${class_name}")
+              else
                 missing+=("$task_dir/${class_name}")
               fi
             done
           done
           if [ "${#missing[@]}" -gt 0 ]; then
-            echo "::error::Missing JUnit XML reports for: ${missing[*]}. Gradle step outcome: ${{ steps.gradle.outcome }}"
+            echo "::error::Missing JUnit XML reports (no Gradle envelope mention either) for: ${missing[*]}. Gradle step outcome: ${{ steps.gradle.outcome }}"
             exit 1
+          fi
+          if [ "${#flaked[@]}" -gt 0 ]; then
+            echo "::warning::Protocol-flake skipped per-class XMLs (Gradle envelope confirms the class was enrolled): ${flaked[*]}. Tracked at https://github.com/rock3r/spectre/issues/72."
           fi
 
           # Pass 2: discovered-set inspection.
@@ -317,6 +322,17 @@ jobs:
           if [ "$fail_total" -gt 0 ] || [ "$err_total" -gt 0 ]; then
             echo "::error::Validation tests reported $fail_total failure(s) and $err_total error(s) across ${#all_xml[@]} XML report(s)."
             exit 1
+          fi
+          # continue-on-error on the Gradle step is only for the known envelope flake.
+          # If Gradle failed for any other reason (executor shutdown, finalize, compile),
+          # require envelope evidence before accepting a green verifier.
+          if [ "${{ steps.gradle.outcome }}" != "success" ]; then
+            if [ "${#flaked[@]}" -gt 0 ]; then
+              echo "::warning::Gradle step outcome=${{ steps.gradle.outcome }} accepted because envelope flakes were detected: ${flaked[*]}"
+            else
+              echo "::error::Gradle step outcome=${{ steps.gradle.outcome }} with no envelope-flake evidence — not soft-passing."
+              exit 1
+            fi
           fi
           echo "All required classes present; ${#all_xml[@]} discovered XML report(s) clean."
         shell: bash
