@@ -209,14 +209,17 @@ internal object LaunchReadiness {
     }
 
     /**
-     * True when [ex] is a HotSpot attach-handshake race that never reached `loadAgent` (safe to
-     * retry with the same UDS path).
+     * True when [ex] is a **short** pre-`loadAgent` HotSpot race (safe to retry with the same UDS
+     * path).
+     *
+     * Deliberately does **not** treat every `AttachNotSupportedException` as retryable: HotSpot
+     * also uses that type for its independent attach-socket wait timeout (~10s). Retrying after
+     * that terminal timeout would start another full JDK handshake and blow the stage budget. Only
+     * the documented "state is not ready…" race (and "no such process" pid churn) retries.
      */
     private fun isPreLoadAttachRetryable(ex: SpectreAttachException): Boolean {
         val msg = (ex.message.orEmpty() + " " + (ex.cause?.message.orEmpty())).lowercase()
-        return "not ready to participate in attach handshake" in msg ||
-            "attachnotsupportedexception" in msg ||
-            "no such process" in msg
+        return "not ready to participate in attach handshake" in msg || "no such process" in msg
     }
 
     /** Prefer stage PROCESS_ALIVE when the process died during attach (race with early exit). */
