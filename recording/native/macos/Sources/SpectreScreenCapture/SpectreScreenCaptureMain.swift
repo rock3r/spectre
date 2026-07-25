@@ -8,10 +8,12 @@ enum SpectreScreenCapture {
         let argv = CommandLine.arguments
         if isGuidePermissionsInvocation(argv) {
             // @main without `async` is already on the main thread — safe for NSApplication.
-            PermissionGuideApp.run(
-                binaryPath: argv.first ?? "spectre-screencapture",
-                reapproval: argv.contains("--reapproval")
-            )
+            MainActor.assumeIsolated {
+                PermissionGuideApp.run(
+                    binaryPath: argv.first ?? "spectre-screencapture",
+                    reapproval: argv.contains("--reapproval")
+                )
+            }
             return
         }
         let group = DispatchGroup()

@@ -56,9 +56,10 @@ public struct PermissionGuidePollState: Equatable {
     }
 }
 
-@MainActor
 enum PermissionGuideApp {
     /// Runs the guide UI on the main thread until the user finishes, then exits the process.
+    /// Caller must be on the AppKit main thread (`@main` without async).
+    @MainActor
     static func run(binaryPath: String, reapproval: Bool) {
         let app = NSApplication.shared
         // LSUIElement is set in Info.plist; accessory keeps us out of the Dock.
@@ -147,9 +148,10 @@ final class PermissionGuideModel: ObservableObject {
         timer?.invalidate()
         // Immediate check, then every 500ms until granted.
         tick()
-        // Timer already fires on the main run loop — call tick() directly (no Task hop).
+        // Timer fires on the main run loop; hop explicitly for MainActor isolation.
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            self?.tick()
+            guard let self else { return }
+            MainActor.assumeIsolated { self.tick() }
         }
     }
 

@@ -69,13 +69,14 @@ public enum SpectreScreenCaptureCommand {
                 FileHandle.standardOutput.write(Data(result.jsonLine.utf8))
                 exit(result.granted ? 0 : 6)
             case .guidePermissions:
-                // Guide mode is handled in SpectreScreenCaptureMain before this async path
-                // so AppKit always starts on the real main thread. Keep a defensive fallback.
-                PermissionGuideApp.run(
-                    binaryPath: argv.first ?? "spectre-screencapture",
-                    reapproval: args.reapproval
+                // Handled in SpectreScreenCaptureMain on the real main thread before any Task.
+                FileHandle.standardError.write(
+                    Data(
+                        "spectre-screencapture: guide-permissions must be entered from the process main thread\n"
+                            .utf8
+                    )
                 )
-                exit(6)
+                exit(2)
             case .recording, .screenshot:
                 let recorder = Recorder(arguments: args)
                 try await recorder.run()
