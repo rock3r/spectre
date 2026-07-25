@@ -40,8 +40,13 @@ class HelperAppBundleContractTest {
         assertTrue(text.contains(HelperAppBundle.BUNDLE_ID), text)
         assertTrue(text.contains(HelperAppBundle.DISPLAY_NAME), text)
         assertTrue(text.contains(HelperAppBundle.EXECUTABLE_NAME), text)
-        assertTrue(text.contains("<key>LSUIElement</key>"), text)
-        assertTrue(text.contains("<true/>"), "LSUIElement must be true")
+        // Bind LSUIElement true specifically — do not just look for any <true/> in the plist
+        // (NSHighResolutionCapable is also true).
+        assertTrue(
+            Regex("""<key>LSUIElement</key>\s*<true\s*/>""", RegexOption.MULTILINE)
+                .containsMatchIn(text),
+            "LSUIElement must be true; got:\n$text",
+        )
         assertTrue(text.contains("AppIcon"), "Icon file entry required for Settings row")
     }
 }

@@ -226,15 +226,15 @@ internal class HelperBinaryExtractor(
                 }
             val prefix = HelperAppBundle.RESOURCE_ROOT.trimEnd('/') + "/"
             val files = linkedMapOf<String, ByteArray>()
-            val entries = jarFile.entries()
-            while (entries.hasMoreElements()) {
-                val entry = entries.nextElement()
-                if (entry.isDirectory) continue
-                if (!entry.name.startsWith(prefix)) continue
-                val rel = entry.name.removePrefix(prefix)
-                if (rel.isEmpty()) continue
-                jarFile.getInputStream(entry).use { stream -> files[rel] = stream.readBytes() }
-            }
+            jarFile
+                .entries()
+                .asSequence()
+                .filter { !it.isDirectory && it.name.startsWith(prefix) }
+                .map { entry -> entry to entry.name.removePrefix(prefix) }
+                .filter { (_, rel) -> rel.isNotEmpty() }
+                .forEach { (entry, rel) ->
+                    jarFile.getInputStream(entry).use { stream -> files[rel] = stream.readBytes() }
+                }
             return files
         }
 
