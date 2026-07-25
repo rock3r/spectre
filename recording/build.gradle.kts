@@ -979,6 +979,8 @@ val stagePrebuiltMacHelper by tasks.registering {
     val infoPlistPath = helperAppInfoPlistAbsolutePath
     val pkgInfoPath = helperAppPkgInfoAbsolutePath
     val iconPath = helperAppIconAbsolutePath
+    // Capture Boolean into task action (config-cache safe; do not close over script receiver).
+    val hostIsMac = isMacOsHost
     doLast {
         val source = File(sourcePath)
         if (!source.exists()) {
@@ -991,7 +993,7 @@ val stagePrebuiltMacHelper by tasks.registering {
             // Prefer ditto on macOS (preserves Apple-specific metadata). Linux publish hosts
             // do not have ditto — walk/copy every regular file so Contents/CodeResources
             // (staple ticket) and _CodeSignature stay intact.
-            if (isMacOsHost) {
+            if (hostIsMac) {
                 val process =
                     ProcessBuilder("ditto", source.absolutePath, destPath)
                         .redirectErrorStream(true)
