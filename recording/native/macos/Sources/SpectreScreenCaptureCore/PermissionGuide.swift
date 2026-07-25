@@ -56,11 +56,11 @@ public struct PermissionGuidePollState: Equatable {
     }
 }
 
-enum PermissionGuideApp {
+public enum PermissionGuideApp {
     /// Runs the guide UI on the main thread until the user finishes, then exits the process.
     /// Caller must be on the AppKit main thread (`@main` without async).
     @MainActor
-    static func run(binaryPath: String, reapproval: Bool) {
+    public static func run(binaryPath: String, reapproval: Bool) {
         let app = NSApplication.shared
         // LSUIElement is set in Info.plist; accessory keeps us out of the Dock.
         app.setActivationPolicy(.accessory)

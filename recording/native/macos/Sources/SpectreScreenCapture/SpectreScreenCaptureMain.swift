@@ -1,3 +1,5 @@
+import Dispatch
+import Foundation
 import SpectreScreenCaptureCore
 
 @main
