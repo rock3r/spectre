@@ -987,16 +987,34 @@ val stagePrebuiltMacHelper by tasks.registering {
         val dest = File(destPath)
         if (dest.exists()) dest.deleteRecursively()
         if (source.isDirectory && source.name.endsWith(".app")) {
-            // ditto preserves staple ticket (Contents/CodeResources) and sealed metadata.
             dest.parentFile?.mkdirs()
-            val process =
-                ProcessBuilder("ditto", source.absolutePath, destPath)
-                    .redirectErrorStream(true)
-                    .start()
-            val output = process.inputStream.bufferedReader().readText()
-            val exit = process.waitFor()
-            if (exit != 0) {
-                throw GradleException("ditto copy of prebuilt app failed (exit $exit): $output")
+            // Prefer ditto on macOS (preserves Apple-specific metadata). Linux publish hosts
+            // do not have ditto — walk/copy every regular file so Contents/CodeResources
+            // (staple ticket) and _CodeSignature stay intact.
+            if (isMacOsHost) {
+                val process =
+                    ProcessBuilder("ditto", source.absolutePath, destPath)
+                        .redirectErrorStream(true)
+                        .start()
+                val output = process.inputStream.bufferedReader().readText()
+                val exit = process.waitFor()
+                if (exit != 0) {
+                    throw GradleException("ditto copy of prebuilt app failed (exit $exit): $output")
+                }
+            } else {
+                source.walkTopDown().forEach { file ->
+                    val rel = file.relativeTo(source)
+                    val target = dest.resolve(rel.path)
+                    if (file.isDirectory) {
+                        target.mkdirs()
+                    } else {
+                        target.parentFile?.mkdirs()
+                        file.copyTo(target, overwrite = true)
+                        if (file.canExecute()) {
+                            target.setExecutable(true, false)
+                        }
+                    }
+                }
             }
         } else {
             dest.mkdirs()
