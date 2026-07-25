@@ -34,10 +34,10 @@ Jobs on tag push (order simplified; see the workflow for the full graph):
    shape, runs `./gradlew check`, installs the docs dependencies, and runs
    `mkdocs build --strict`. Helper builds and publish wait for this gate.
 2. **`mac-helper`** (macOS runner, depends on `release-gate`) — builds the
-   arm64+x86_64 universal
-   `SpectreScreenCapture` Swift helper, codesigns it with the Developer ID, runs
-   `notarytool submit --wait`, and uploads the notarised binary as a GitHub
-   Actions artefact.
+   arm64+x86_64 universal helper, packages it as `SpectreCaptureHelper.app`,
+   Developer ID signs the **bundle**, runs `notarytool submit --wait`, staples
+   the ticket, verifies `codesign --deep --strict` + `stapler validate`, and
+   uploads the app as a GitHub Actions artefact (see [NOTARIZATION.md](NOTARIZATION.md)).
 3. **`linux-helpers`** (Linux runner, depends on `release-gate`) — cross-builds the
    `spectre-wayland-helper` Rust binary for `x86_64` and `aarch64` (same
    toolchain dance documented in [`ci.yml`][ci-yml]: dpkg multi-arch +
@@ -182,7 +182,8 @@ It additionally asserts:
 
 - every sources jar is free of generated `native/...` helper resources
 - `:recording` is API/common-only and contains no `native/...` resources
-- `:recording-macos` contains `native/macos/SpectreCaptureHelper.app`
+- `:recording-macos` contains the full `native/macos/SpectreCaptureHelper.app/` tree
+  (executable, Info.plist, PkgInfo, AppIcon.icns)
 - `:recording-linux` contains `native/linux/x86_64/spectre-wayland-helper` and
   `native/linux/aarch64/spectre-wayland-helper` when built with release helper inputs
 - `:recording-windows` contains `native/windows/x64/spectre-window-capture.exe` and
@@ -195,7 +196,7 @@ previous release-CI run), point at it instead of the stub:
 
 ```shell
 ./gradlew verifyMavenLocalPublication \
-    -PprebuiltMacHelperPath=/path/to/SpectreScreenCapture \
+    -PprebuiltMacHelperPath=/path/to/SpectreCaptureHelper.app \
     -PprebuiltLinuxHelpersDir=/path/to/linux-helpers \
     -PprebuiltWindowsHelpersDir=/path/to/windows-helpers
 ```

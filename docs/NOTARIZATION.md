@@ -1,40 +1,53 @@
 # Notarization
 
-Spectre ships the macOS ScreenCaptureKit recorder as a small Swift helper packaged as
-`SpectreCaptureHelper.app` inside the `spectre-recording-macos` jar. Distribution builds must
-Developer ID sign and notarize that helper before the jar is published, otherwise macOS
-Gatekeeper can reject the extracted helper when a consumer starts `ScreenCaptureKitRecorder`.
+Spectre ships the macOS ScreenCaptureKit recorder as `SpectreCaptureHelper.app` inside the
+`spectre-recording-macos` jar. Distribution builds must **Developer ID sign, notarize, and
+staple the full app bundle** before the jar is published, otherwise macOS Gatekeeper can reject
+the extracted helper when a consumer starts `ScreenCaptureKitRecorder`.
 
-Issue #190 wraps the helper in a stable app bundle for TCC identity. Issue #191 extends
-signing/notarization/stapling to the full `.app` (today the pipeline still signs the universal
-Mach-O, then stages it into the app shell).
+TCC Screen Recording grants pin to **bundle ID + code signature**. Ad-hoc-signed local builds
+lose Settings grants on every rebuild; release builds keep the grant across versions when the
+same Developer ID identity and bundle id (`dev.sebastiano.spectre.screencapture`) are used.
 
 Local development builds do not need Apple credentials. The notarization path is opt-in and is
 only intended for release builds.
 
 ## What gets notarized
 
-The release build creates a universal `arm64` + `x86_64` helper binary at:
+The release build creates a universal `arm64` + `x86_64` helper binary, packages it as:
 
 ```text
-recording/build/generated/screenCaptureHelperUniversal/SpectreScreenCapture
+recording/build/generated/screenCaptureHelperUniversal/SpectreCaptureHelper.app
 ```
 
 Gradle then:
 
-1. Signs the helper with `codesign --options runtime --timestamp --force`.
-2. Archives the signed helper with `ditto -c -k --keepParent`.
-3. Submits the archive with `xcrun notarytool submit`.
-4. Waits for Apple to finish processing, bounded by a 30 minute timeout.
-5. Verifies the resulting Developer ID signature with `codesign --verify --strict --verbose=4`
-   before staging it into `native/macos/SpectreCaptureHelper.app` in the
-   `spectre-recording-macos` jar resources.
+1. Packages the universal Mach-O into `SpectreCaptureHelper.app` (Info.plist, `LSUIElement`,
+   icon, nested `Contents/MacOS/spectre-screencapture`).
+2. Developer ID signs the **bundle** with
+   `codesign --sign <identity> --options runtime --timestamp --force --deep`.
+3. Archives the signed app with `ditto -c -k --keepParent`.
+4. Submits the archive with `xcrun notarytool submit --wait` (30 minute timeout).
+5. Staples the ticket with `xcrun stapler staple` onto the `.app`.
+6. Verifies with `codesign --verify --deep --strict` and `xcrun stapler validate`.
+7. Best-effort `spctl -a -vv --type execute` (warn-only if the host policy database rejects it).
+8. Stages the signed+stapled app into
+   `native/macos/SpectreCaptureHelper.app` in the `spectre-recording-macos` jar resources.
 
-Apple's notary service can issue a ticket for a standalone binary inside the submitted archive,
-but `xcrun stapler` cannot currently staple tickets directly to bare command-line executables,
-and `spctl --assess --type execute` reports bare tools as valid code that is not an app.
-Spectre therefore notarizes the helper and verifies the Developer ID signature locally, but does
-not run `stapler` or use `spctl` as the Gradle gate for `SpectreScreenCapture`.
+Unlike bare command-line tools, app bundles support stapling and Gatekeeper assessment of the
+distributed artifact.
+
+## Local-dev signing story (ad-hoc vs release)
+
+| Build | Signature | TCC behaviour | When to use |
+|---|---|---|---|
+| Default `./gradlew :recording:jar` | Ad-hoc (`codesign -s -`) on the host-arch app | Grant may bind to path/ad-hoc identity; re-grant after clean rebuilds | Day-to-day development |
+| `-PuniversalHelper` without notarize | Ad-hoc universal app | Same as above | Fat-binary packaging smoke |
+| `-PuniversalHelper -PnotarizeScreenCaptureKitHelper` | Developer ID + notary + staple | Stable Settings row for **Spectre Capture Helper**; grant survives updates with the same identity | Release / release smoke |
+
+**Do not** Developer ID sign local iteration builds with a personal cert and then ship an ad-hoc
+rebuild under the same install path without expecting a re-prompt — keep release identity on the
+release path only.
 
 ## Local setup
 
@@ -83,15 +96,31 @@ compose.desktop.mac.notarization.keychainProfile=<notary-profile>
 Then run:
 
 ```bash
-./gradlew :recording-macos:jar -PuniversalHelper -PnotarizeScreenCaptureKitHelper
+./gradlew :recording:assembleScreenCaptureKitHelperUniversal \
+  -PuniversalHelper \
+  -PnotarizeScreenCaptureKitHelper
 ```
 
-If Apple accepts the submission, the build verifies the helper's signature and packages the jar.
-If Apple keeps the submission in `In Progress` past the timeout, the Gradle task fails locally but
-the submission continues processing on Apple's side. Query it with:
+If Apple accepts the submission, the build staples the ticket, verifies the app signature, and
+stages the app into jar resources. If Apple keeps the submission in `In Progress` past the
+timeout, the Gradle task fails locally but the submission continues processing on Apple's side.
+Query it with:
 
 ```bash
 xcrun notarytool info <submission-id> --keychain-profile <notary-profile>
+```
+
+### Quarantined Gatekeeper check
+
+After a successful local or CI notarization, validate as a user would:
+
+```bash
+APP=recording/build/generated/screenCaptureHelper/native/macos/SpectreCaptureHelper.app
+# Simulate download quarantine
+xattr -w com.apple.quarantine "0081;00000000;Safari;..." "$APP"   # or copy via browser/zip
+codesign --verify --deep --strict --verbose=2 "$APP"
+xcrun stapler validate "$APP"
+spctl -a -vv --type execute "$APP"
 ```
 
 ## CI release workflow
@@ -99,8 +128,8 @@ xcrun notarytool info <submission-id> --keychain-profile <notary-profile>
 The tag workflow at
 [`.github/workflows/release.yml`](https://github.com/rock3r/spectre/blob/main/.github/workflows/release.yml)
 builds the universal helper on `macos-latest`, imports the Developer ID certificate into a
-temporary keychain, signs and notarizes the helper, and uploads the notarized helper artifact
-for the publish job to package into `spectre-recording-macos`.
+temporary keychain, signs / notarizes / staples `SpectreCaptureHelper.app`, and uploads the
+notarized app artifact for the publish job to package into `spectre-recording-macos`.
 
 Set these repository secrets:
 
@@ -127,6 +156,8 @@ To rotate the Developer ID certificate:
 3. Base64-encode it with `base64 -i DeveloperID.p12 | pbcopy`.
 4. Update `APPLE_DEVELOPER_ID_P12`, `APPLE_DEVELOPER_ID_P12_PASSWORD`, and
    `APPLE_DEVELOPER_IDENTITY` in the repository secrets.
+5. Note: TCC grants bound to the old Team ID may require users to re-approve once after a
+   Team ID change.
 
 To rotate notarization credentials:
 
@@ -134,16 +165,18 @@ To rotate notarization credentials:
 2. Base64-encode the `.p8` file.
 3. Update `APPLE_NOTARY_API_KEY`, `APPLE_NOTARY_API_KEY_ID`, and
    `APPLE_NOTARY_API_ISSUER`.
-4. Push a test tag and verify the release workflow reaches the `codesign --verify` step.
+4. Push a test tag and verify the release workflow reaches the `stapler validate` step.
 
 ## Validation
 
 After a notarized release, validate on a fresh macOS user or machine:
 
 ```bash
-codesign --verify --strict --verbose=2 spectre-screencapture
+codesign --verify --deep --strict --verbose=2 SpectreCaptureHelper.app
+xcrun stapler validate SpectreCaptureHelper.app
+spctl -a -vv --type execute SpectreCaptureHelper.app
 ```
 
-Then run a small `ScreenCaptureKitRecorder` scenario from the released jar. The expected user
-experience is a normal Screen Recording permission prompt if the host process is not already
-trusted, and no Gatekeeper rejection for the extracted helper.
+Then run a small `ScreenCaptureKitRecorder` scenario (or `spectre permissions check`) from the
+released jar. The Settings row should show **Spectre Capture Helper**, and Gatekeeper should not
+reject the extracted app.

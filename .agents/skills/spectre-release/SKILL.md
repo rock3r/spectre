@@ -64,6 +64,17 @@ If the release changes `CaptureDocument.SCHEMA_VERSION` / `capture.json`, bump t
 **`spectre-capture`** skill (`skills/spectre-capture/SKILL.md` + `package.json`) and the
 user-guide page `docs/guide/capture.md` in the same release.
 
+## macOS helper bundle signing (#191)
+
+Release tags must produce a **Developer ID signed, notarized, and stapled**
+`SpectreCaptureHelper.app` (not a bare Mach-O). Confirm:
+
+- [ ] `mac-helper` job ran with `-PnotarizeScreenCaptureKitHelper`
+- [ ] Artifact is the app tree under `SpectreCaptureHelper.app/`
+- [ ] Local or CI log shows `stapler staple` / `stapler validate` success
+- [ ] `codesign --verify --deep --strict` on the app
+- [ ] Docs: [docs/NOTARIZATION.md](../../../docs/NOTARIZATION.md) local-dev vs release table still accurate
+
 ## Finish
 
 After Central reports `PUBLISHED`, undraft the GitHub release:

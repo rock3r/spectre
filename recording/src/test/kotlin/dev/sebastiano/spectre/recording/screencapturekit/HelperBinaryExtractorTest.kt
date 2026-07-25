@@ -203,9 +203,42 @@ class HelperBinaryExtractorTest {
             path.toString().contains(HelperAppBundle.APP_DIR_NAME),
             "Default extract must route through the app bundle; got: $path",
         )
-        val infoPlist = path.parent.parent.resolve("Info.plist") // MacOS -> Contents -> Info.plist
+        val appRoot = path.parent.parent.parent // MacOS -> Contents -> .app
+        val infoPlist = appRoot.resolve("Contents/Info.plist")
         assertTrue(Files.isRegularFile(infoPlist), "Bundled app must include Info.plist")
         assertTrue(infoPlist.readText().contains(HelperAppBundle.BUNDLE_ID))
+        // Fingerprint must live outside the .app so sealed Resources/_CodeSignature stay intact.
+        assertTrue(
+            Files.isRegularFile(tempRoot.resolve(".${HelperAppBundle.APP_DIR_NAME}.fingerprint")),
+            "Staleness fingerprint must not be written inside the sealed app tree",
+        )
+    }
+
+    @Test
+    fun `extraction preserves sealed CodeSignature files byte-for-byte`() {
+        val codeResources = byteArrayOf(0x43, 0x6f, 0x64, 0x65)
+        val material =
+            helperAppBundleMaterial(
+                executable = byteArrayOf(0x7f, 0x45),
+                infoPlist = byteArrayOf(0x3c),
+                extraFiles = mapOf("Contents/_CodeSignature/CodeResources" to codeResources),
+            )
+        val path =
+            HelperBinaryExtractor(
+                    envLookup = { null },
+                    materialLocator = { material },
+                    targetDirProvider = { tempRoot },
+                )
+                .extract()
+        val appRoot = path.parent.parent.parent
+        assertContentEquals(
+            codeResources,
+            appRoot.resolve("Contents/_CodeSignature/CodeResources").readBytes(),
+        )
+        assertTrue(
+            !Files.exists(appRoot.resolve("Contents/Resources/.spectre-helper-fingerprint")),
+            "Must not write fingerprint inside sealed Resources",
+        )
     }
 
     // ── SPECTRE_SCREENCAPTURE_HELPER env-var override ────────────────────────
@@ -410,7 +443,7 @@ class HelperBinaryExtractorTest {
     }
 
     private fun material(executable: ByteArray): HelperAppBundleMaterial =
-        HelperAppBundleMaterial(
+        helperAppBundleMaterial(
             executable = executable,
             infoPlist =
                 """

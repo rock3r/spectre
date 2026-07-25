@@ -166,8 +166,13 @@ val perArchSwiftBuildTasks = universalArchitectures.map { arch ->
 // vals that goes with it (Gradle's configuration cache refuses to serialise that).
 val universalHelperBinary =
     layout.buildDirectory.file("generated/screenCaptureHelperUniversal/SpectreScreenCapture")
+// Release path packages + signs + notarizes the full app bundle (issue #191), not a bare Mach-O.
+val universalHelperAppBundle =
+    layout.buildDirectory.dir("generated/screenCaptureHelperUniversal/SpectreCaptureHelper.app")
 val universalHelperNotaryArchive =
-    layout.buildDirectory.file("generated/screenCaptureHelperUniversal/SpectreScreenCapture.zip")
+    layout.buildDirectory.file(
+        "generated/screenCaptureHelperUniversal/SpectreCaptureHelper.app.zip"
+    )
 
 // Precompute everything as plain String/File outside the task action bodies. Capturing
 // `swiftHelperSource` / `universalHelperBinary` (which are Gradle Layout types) inside an
@@ -180,6 +185,7 @@ val perArchOutputFiles = universalArchitectures.map { arch ->
 }
 val perArchOutputAbsolutePaths = perArchOutputFiles.map { it.asFile.absolutePath }
 val universalHelperAbsolutePath = universalHelperBinary.get().asFile.absolutePath
+val universalHelperAppBundleAbsolutePath = universalHelperAppBundle.get().asFile.absolutePath
 val universalHelperNotaryArchiveAbsolutePath =
     universalHelperNotaryArchive.get().asFile.absolutePath
 val shouldNotarizeScreenCaptureKitHelper =
@@ -297,12 +303,57 @@ val verifyUniversalScreenCaptureKitHelper by
         inputs.file(universalHelperBinary)
     }
 
+// Absolute template paths used by both host-arch assemble and the release app package
+// (declared early so notarization tasks can reference them without forward refs).
+val helperAppInfoPlistAbsolutePathEarly =
+    File(helperAppBundleTemplateAbsolutePath, "Info.plist").absolutePath
+val helperAppPkgInfoAbsolutePathEarly =
+    File(helperAppBundleTemplateAbsolutePath, "PkgInfo").absolutePath
+val helperAppIconAbsolutePathEarly =
+    File(helperAppBundleTemplateAbsolutePath, "Resources/AppIcon.icns").absolutePath
+
+/**
+ * Packages the universal Mach-O into an unsigned SpectreCaptureHelper.app ready for Developer ID
+ * signing. Used only on the `-PnotarizeScreenCaptureKitHelper` path; local host-arch builds keep
+ * the ad-hoc-signed assemble task.
+ */
+val packageUniversalHelperAppBundle by tasks.registering {
+    description =
+        "Packages the universal helper binary as an unsigned SpectreCaptureHelper.app " +
+            "for Developer ID signing and notarization (#191)."
+    group = "build"
+    enabled = notarizationTaskEnabled
+    dependsOn(verifyUniversalScreenCaptureKitHelper)
+    inputs.file(universalHelperAbsolutePath)
+    inputs.file(helperAppInfoPlistAbsolutePathEarly)
+    inputs.file(helperAppPkgInfoAbsolutePathEarly)
+    inputs.file(helperAppIconAbsolutePathEarly)
+    outputs.dir(universalHelperAppBundleAbsolutePath)
+    val destPath = universalHelperAppBundleAbsolutePath
+    val binaryPath = universalHelperAbsolutePath
+    val infoPlistPath = helperAppInfoPlistAbsolutePathEarly
+    val pkgInfoPath = helperAppPkgInfoAbsolutePathEarly
+    val iconPath = helperAppIconAbsolutePathEarly
+    doLast {
+        val dest = File(destPath)
+        if (dest.exists()) dest.deleteRecursively()
+        val contents = File(dest, "Contents")
+        File(contents, "MacOS").mkdirs()
+        File(contents, "Resources").mkdirs()
+        File(infoPlistPath).copyTo(File(contents, "Info.plist"), overwrite = true)
+        File(pkgInfoPath).copyTo(File(contents, "PkgInfo"), overwrite = true)
+        File(iconPath).copyTo(File(contents, "Resources/AppIcon.icns"), overwrite = true)
+        File(binaryPath).copyTo(File(contents, "MacOS/spectre-screencapture"), overwrite = true)
+        File(contents, "MacOS/spectre-screencapture").setExecutable(true, false)
+    }
+}
+
 val signScreenCaptureKitHelper by
     tasks.registering(Exec::class) {
-        description = "Codesigns the universal ScreenCaptureKit helper for distribution."
+        description = "Developer ID codesigns SpectreCaptureHelper.app for distribution (#191)."
         group = "build"
         enabled = notarizationTaskEnabled
-        dependsOn(verifyUniversalScreenCaptureKitHelper)
+        dependsOn(packageUniversalHelperAppBundle)
         commandLine(
             "codesign",
             "--sign",
@@ -311,15 +362,16 @@ val signScreenCaptureKitHelper by
             "runtime",
             "--timestamp",
             "--force",
-            universalHelperAbsolutePath,
+            "--deep",
+            universalHelperAppBundleAbsolutePath,
         )
-        inputs.file(universalHelperBinary)
-        outputs.file(universalHelperBinary)
+        inputs.dir(universalHelperAppBundleAbsolutePath)
+        outputs.dir(universalHelperAppBundleAbsolutePath)
     }
 
 val zipScreenCaptureKitHelperForNotarization by
     tasks.registering(Exec::class) {
-        description = "Archives the signed ScreenCaptureKit helper for Apple notarization."
+        description = "Archives the signed SpectreCaptureHelper.app for Apple notarization."
         group = "build"
         enabled = notarizationTaskEnabled
         dependsOn(signScreenCaptureKitHelper)
@@ -328,16 +380,16 @@ val zipScreenCaptureKitHelperForNotarization by
             "-c",
             "-k",
             "--keepParent",
-            universalHelperAbsolutePath,
+            universalHelperAppBundleAbsolutePath,
             universalHelperNotaryArchiveAbsolutePath,
         )
-        inputs.file(universalHelperBinary)
+        inputs.dir(universalHelperAppBundleAbsolutePath)
         outputs.file(universalHelperNotaryArchive)
     }
 
 val notarizeScreenCaptureKitHelper by
     tasks.registering(Exec::class) {
-        description = "Submits the signed ScreenCaptureKit helper archive to Apple notarization."
+        description = "Submits the signed SpectreCaptureHelper.app archive to Apple notarization."
         group = "build"
         enabled = notarizationTaskEnabled
         dependsOn(zipScreenCaptureKitHelperForNotarization)
@@ -354,28 +406,69 @@ val notarizeScreenCaptureKitHelper by
         inputs.file(universalHelperNotaryArchive)
     }
 
-val verifyNotarizedScreenCaptureKitHelper by
+val stapleScreenCaptureKitHelper by
     tasks.registering(Exec::class) {
-        description = "Verifies the signed and notarized ScreenCaptureKit helper's code signature."
-        group = "verification"
+        description = "Staples the Apple notarization ticket to SpectreCaptureHelper.app (#191)."
+        group = "build"
         enabled = notarizationTaskEnabled
         dependsOn(notarizeScreenCaptureKitHelper)
-        commandLine("codesign", "--verify", "--strict", "--verbose=4", universalHelperAbsolutePath)
-        inputs.file(universalHelperBinary)
+        commandLine("xcrun", "stapler", "staple", universalHelperAppBundleAbsolutePath)
+        inputs.dir(universalHelperAppBundleAbsolutePath)
+        outputs.dir(universalHelperAppBundleAbsolutePath)
     }
 
+val verifyNotarizedScreenCaptureKitHelper by tasks.registering {
+    description = "Verifies Developer ID signature + staple on SpectreCaptureHelper.app (#191)."
+    group = "verification"
+    enabled = notarizationTaskEnabled
+    dependsOn(stapleScreenCaptureKitHelper)
+    inputs.dir(universalHelperAppBundleAbsolutePath)
+    val appPath = universalHelperAppBundleAbsolutePath
+    doLast {
+        fun runOrFail(vararg args: String) {
+            val process = ProcessBuilder(*args).redirectErrorStream(true).start()
+            val output = process.inputStream.bufferedReader().readText()
+            val exit = process.waitFor()
+            if (exit != 0) {
+                throw GradleException(
+                    "Command failed (exit $exit): ${args.joinToString(" ")}\n$output"
+                )
+            }
+            logger.lifecycle(output.trim())
+        }
+        runOrFail("codesign", "--verify", "--deep", "--strict", "--verbose=4", appPath)
+        runOrFail("xcrun", "stapler", "validate", appPath)
+        // spctl assess is best-effort: some CI images lack a full Gatekeeper policy
+        // database. Prefer success; warn-and-continue only if spctl is missing.
+        val spctl =
+            ProcessBuilder("spctl", "-a", "-vv", "--type", "execute", appPath)
+                .redirectErrorStream(true)
+                .start()
+        val spctlOut = spctl.inputStream.bufferedReader().readText()
+        val spctlExit = spctl.waitFor()
+        if (spctlExit != 0) {
+            logger.warn(
+                "spctl assessment did not pass (exit $spctlExit); " +
+                    "codesign+stapler already verified. Output:\n$spctlOut"
+            )
+        } else {
+            logger.lifecycle(spctlOut.trim())
+        }
+    }
+}
+
 // Absolute template paths — config-cache safe (plain String/File, no script captures).
-val helperAppInfoPlistAbsolutePath =
-    File(helperAppBundleTemplateAbsolutePath, "Info.plist").absolutePath
-val helperAppPkgInfoAbsolutePath = File(helperAppBundleTemplateAbsolutePath, "PkgInfo").absolutePath
-val helperAppIconAbsolutePath =
-    File(helperAppBundleTemplateAbsolutePath, "Resources/AppIcon.icns").absolutePath
+// Reuse the early paths declared for the notarization package task.
+val helperAppInfoPlistAbsolutePath = helperAppInfoPlistAbsolutePathEarly
+val helperAppPkgInfoAbsolutePath = helperAppPkgInfoAbsolutePathEarly
+val helperAppIconAbsolutePath = helperAppIconAbsolutePathEarly
 val hostHelperBinaryAbsolutePath = swiftHelperBinary.asFile.absolutePath
 val isMacOsHost = OperatingSystem.current().isMacOsX
 
 // Layout (must match HelperAppBundle Kotlin constants):
 // SpectreCaptureHelper.app/Contents/{Info.plist,PkgInfo,MacOS/spectre-screencapture,Resources/AppIcon.icns}
-// Local builds ad-hoc sign (`codesign -s -`). Full Developer ID on the .app is #191.
+// Local builds ad-hoc sign (`codesign -s -`). Release builds Developer ID sign + notarize +
+// staple the full .app (#191).
 
 val assembleScreenCaptureKitHelper by tasks.registering {
     description = "Stages the host-arch ScreenCaptureKit helper as SpectreCaptureHelper.app."
@@ -423,30 +516,50 @@ val assembleScreenCaptureKitHelperUniversal by tasks.registering {
     description =
         "Stages the universal arm64+x86_64 ScreenCaptureKit helper as " +
             "SpectreCaptureHelper.app (opt-in for distribution builds; slower than the " +
-            "host-arch task). Wire into processResources by passing -PuniversalHelper."
+            "host-arch task). Wire into processResources by passing -PuniversalHelper. " +
+            "With -PnotarizeScreenCaptureKitHelper, copies the Developer ID signed, " +
+            "notarized, and stapled app bundle (#191)."
     group = "build"
     enabled = isMacOsHost
     dependsOn(
         if (shouldNotarizeScreenCaptureKitHelper) verifyNotarizedScreenCaptureKitHelper
         else verifyUniversalScreenCaptureKitHelper
     )
-    inputs.file(universalHelperAbsolutePath)
     inputs.file(helperAppInfoPlistAbsolutePath)
     inputs.file(helperAppPkgInfoAbsolutePath)
     inputs.file(helperAppIconAbsolutePath)
+    if (shouldNotarizeScreenCaptureKitHelper) {
+        inputs.dir(universalHelperAppBundleAbsolutePath)
+    } else {
+        inputs.file(universalHelperAbsolutePath)
+    }
     outputs.dir(helperAppBundleStagingAbsolutePath)
     val destPath = helperAppBundleStagingAbsolutePath
     val binaryPath = universalHelperAbsolutePath
     val infoPlistPath = helperAppInfoPlistAbsolutePath
     val pkgInfoPath = helperAppPkgInfoAbsolutePath
     val iconPath = helperAppIconAbsolutePath
-    // Never ad-hoc re-sign after Developer ID notarization — that would wipe the nested
-    // Mach-O ticket. Full `.app` Developer ID sign is #191; until then the nested binary
-    // keeps its notarized signature and the app shell stays unsigned on the release path.
+    val notarizedAppPath = universalHelperAppBundleAbsolutePath
+    val copyNotarizedApp = shouldNotarizeScreenCaptureKitHelper
     val adHocSign = isMacOsHost && !shouldNotarizeScreenCaptureKitHelper
     doLast {
         val dest = File(destPath)
         if (dest.exists()) dest.deleteRecursively()
+        if (copyNotarizedApp) {
+            // ditto preserves the stapled ticket file (Contents/CodeResources) and code
+            // signature metadata that Java File.copyRecursively can drop.
+            dest.parentFile?.mkdirs()
+            val process =
+                ProcessBuilder("ditto", notarizedAppPath, destPath)
+                    .redirectErrorStream(true)
+                    .start()
+            val output = process.inputStream.bufferedReader().readText()
+            val exit = process.waitFor()
+            if (exit != 0) {
+                throw GradleException("ditto copy of notarized app failed (exit $exit): $output")
+            }
+            return@doLast
+        }
         val contents = File(dest, "Contents")
         File(contents, "MacOS").mkdirs()
         File(contents, "Resources").mkdirs()
@@ -866,6 +979,8 @@ val stagePrebuiltMacHelper by tasks.registering {
     val infoPlistPath = helperAppInfoPlistAbsolutePath
     val pkgInfoPath = helperAppPkgInfoAbsolutePath
     val iconPath = helperAppIconAbsolutePath
+    // Capture Boolean into task action (config-cache safe; do not close over script receiver).
+    val hostIsMac = isMacOsHost
     doLast {
         val source = File(sourcePath)
         if (!source.exists()) {
@@ -873,10 +988,38 @@ val stagePrebuiltMacHelper by tasks.registering {
         }
         val dest = File(destPath)
         if (dest.exists()) dest.deleteRecursively()
-        dest.mkdirs()
         if (source.isDirectory && source.name.endsWith(".app")) {
-            source.copyRecursively(dest, overwrite = true)
+            dest.parentFile?.mkdirs()
+            // Prefer ditto on macOS (preserves Apple-specific metadata). Linux publish hosts
+            // do not have ditto — walk/copy every regular file so Contents/CodeResources
+            // (staple ticket) and _CodeSignature stay intact.
+            if (hostIsMac) {
+                val process =
+                    ProcessBuilder("ditto", source.absolutePath, destPath)
+                        .redirectErrorStream(true)
+                        .start()
+                val output = process.inputStream.bufferedReader().readText()
+                val exit = process.waitFor()
+                if (exit != 0) {
+                    throw GradleException("ditto copy of prebuilt app failed (exit $exit): $output")
+                }
+            } else {
+                source.walkTopDown().forEach { file ->
+                    val rel = file.relativeTo(source)
+                    val target = dest.resolve(rel.path)
+                    if (file.isDirectory) {
+                        target.mkdirs()
+                    } else {
+                        target.parentFile?.mkdirs()
+                        file.copyTo(target, overwrite = true)
+                        if (file.canExecute()) {
+                            target.setExecutable(true, false)
+                        }
+                    }
+                }
+            }
         } else {
+            dest.mkdirs()
             val contents = File(dest, "Contents")
             File(contents, "MacOS").mkdirs()
             File(contents, "Resources").mkdirs()

@@ -23,7 +23,7 @@ class ScreenCaptureKitScreenshotterTest {
         val extractor =
             HelperBinaryExtractor(
                 materialLocator = {
-                    HelperAppBundleMaterial(
+                    helperAppBundleMaterial(
                         executable = byteArrayOf(0x01),
                         infoPlist = byteArrayOf(),
                     )
@@ -61,7 +61,7 @@ class ScreenCaptureKitScreenshotterTest {
         val extractor =
             HelperBinaryExtractor(
                 materialLocator = {
-                    HelperAppBundleMaterial(
+                    helperAppBundleMaterial(
                         executable = byteArrayOf(0x01),
                         infoPlist = byteArrayOf(),
                     )
