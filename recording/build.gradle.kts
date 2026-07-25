@@ -986,10 +986,20 @@ val stagePrebuiltMacHelper by tasks.registering {
         }
         val dest = File(destPath)
         if (dest.exists()) dest.deleteRecursively()
-        dest.mkdirs()
         if (source.isDirectory && source.name.endsWith(".app")) {
-            source.copyRecursively(dest, overwrite = true)
+            // ditto preserves staple ticket (Contents/CodeResources) and sealed metadata.
+            dest.parentFile?.mkdirs()
+            val process =
+                ProcessBuilder("ditto", source.absolutePath, destPath)
+                    .redirectErrorStream(true)
+                    .start()
+            val output = process.inputStream.bufferedReader().readText()
+            val exit = process.waitFor()
+            if (exit != 0) {
+                throw GradleException("ditto copy of prebuilt app failed (exit $exit): $output")
+            }
         } else {
+            dest.mkdirs()
             val contents = File(dest, "Contents")
             File(contents, "MacOS").mkdirs()
             File(contents, "Resources").mkdirs()
