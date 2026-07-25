@@ -124,8 +124,7 @@ val applyValidationJvmArgs: Test.() -> Unit = {
     // override (e.g. -Dskiko.renderApi=OPENGL) so local GPU/fidelity work is not forced
     // through the software renderer.
     if (OperatingSystem.current().isLinux) {
-        val renderApi =
-            providers.systemProperty("skiko.renderApi").orElse("SOFTWARE_COMPAT").get()
+        val renderApi = providers.systemProperty("skiko.renderApi").orElse("SOFTWARE_COMPAT").get()
         systemProperty("skiko.renderApi", renderApi)
     }
 }

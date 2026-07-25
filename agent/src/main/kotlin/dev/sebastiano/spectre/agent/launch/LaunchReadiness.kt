@@ -183,7 +183,19 @@ internal object LaunchReadiness {
                         cause = ex,
                     )
                 }
-                sleepQuietly(POLL_MS)
+                try {
+                    sleepQuietly(POLL_MS)
+                } catch (interrupted: InterruptedException) {
+                    // Preserve AGENT_BOOTSTRAP taxonomy when backoff is interrupted
+                    // (same wrapping as AttachInterruptedException during attach).
+                    Thread.currentThread().interrupt()
+                    throw LaunchAgentBootstrapException(
+                        attachedPid = attachedPid,
+                        stdoutPath = stdoutPath,
+                        stderrPath = stderrPath,
+                        cause = AttachInterruptedException(udsPath, interrupted),
+                    )
+                }
             } catch (ex: IOException) {
                 rethrowIfProcessDied(process, gradleish, stdoutPath, stderrPath)
                 throw LaunchAgentBootstrapException(
