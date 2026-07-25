@@ -115,24 +115,6 @@ enum PermissionGuideApp {
         exit(6)
     }
 
-    /// Entry from the async CLI main. Never wraps `NSApplication.run()` in
-    /// `DispatchQueue.main.sync` (that would block timers / UI callbacks).
-    nonisolated static func runAndExit(binaryPath: String, reapproval: Bool) -> Never {
-        let start: () -> Void = {
-            MainActor.assumeIsolated {
-                run(binaryPath: binaryPath, reapproval: reapproval)
-            }
-        }
-        if Thread.isMainThread {
-            start()
-        } else {
-            // Schedule onto the main queue without holding it in a sync block, then
-            // become the main queue processor so AppKit timers and buttons can run.
-            DispatchQueue.main.async(execute: start)
-            dispatchMain()
-        }
-        exit(6)
-    }
 }
 
 @MainActor

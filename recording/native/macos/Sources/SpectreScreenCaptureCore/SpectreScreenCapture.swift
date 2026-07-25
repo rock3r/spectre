@@ -69,11 +69,13 @@ public enum SpectreScreenCaptureCommand {
                 FileHandle.standardOutput.write(Data(result.jsonLine.utf8))
                 exit(result.granted ? 0 : 6)
             case .guidePermissions:
-                // Blocks on NSApplication run loop until the user finishes the guide.
-                PermissionGuideApp.runAndExit(
+                // Guide mode is handled in SpectreScreenCaptureMain before this async path
+                // so AppKit always starts on the real main thread. Keep a defensive fallback.
+                PermissionGuideApp.run(
                     binaryPath: argv.first ?? "spectre-screencapture",
                     reapproval: args.reapproval
                 )
+                exit(6)
             case .recording, .screenshot:
                 let recorder = Recorder(arguments: args)
                 try await recorder.run()
