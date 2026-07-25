@@ -1,30 +1,17 @@
-import Foundation
 import SpectreScreenCaptureCore
 
 @main
 enum SpectreScreenCapture {
-    /// Async entry for capture modes. Guide mode transfers permanently to the AppKit main
-    /// run loop without parking `DispatchGroup.wait()` on the main actor (Codex P1).
+    /// Async entry for capture modes. Guide mode hops to `@MainActor` and enters
+    /// `NSApplication.run()` there (process exits from the guide UI — no main-thread
+    /// `DispatchGroup.wait()` parking for normal modes).
     static func main() async {
         let argv = CommandLine.arguments
         if isGuidePermissionsInvocation(argv) {
             let binary = argv.first ?? "spectre-screencapture"
             let reapproval = argv.contains("--reapproval")
-            if Thread.isMainThread {
-                MainActor.assumeIsolated {
-                    PermissionGuideApp.run(binaryPath: binary, reapproval: reapproval)
-                }
-            } else {
-                // Hand off to the main queue and never return; guide exits the process.
-                await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-                    DispatchQueue.main.async {
-                        // cont intentionally never resumed — PermissionGuideApp.run ends in exit().
-                        _ = cont
-                        MainActor.assumeIsolated {
-                            PermissionGuideApp.run(binaryPath: binary, reapproval: reapproval)
-                        }
-                    }
-                }
+            await MainActor.run {
+                PermissionGuideApp.run(binaryPath: binary, reapproval: reapproval)
             }
             return
         }
