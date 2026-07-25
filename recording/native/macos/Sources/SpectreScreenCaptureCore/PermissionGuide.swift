@@ -103,11 +103,6 @@ public enum PermissionGuideApp {
         // LSUIElement is set in Info.plist; accessory keeps us out of the Dock.
         app.setActivationPolicy(.accessory)
 
-        // Register a TCC / Settings row for this helper identity. Without a request,
-        // ad-hoc helpers often never appear in the Screen Recording list (preflight alone
-        // does not create a row; parent terminal grants can also make preflight true).
-        _ = CGRequestScreenCaptureAccess()
-
         let appURL = Bundle.main.bundleURL
         let model = PermissionGuideModel(
             binaryPath: binaryPath,
@@ -123,7 +118,6 @@ public enum PermissionGuideApp {
             },
             appURL: appURL
         )
-        model.startPolling()
 
         let rootView = PermissionGuideView(model: model)
         let hosting = NSHostingController(rootView: rootView)
@@ -137,8 +131,17 @@ public enum PermissionGuideApp {
         window.contentViewController = hosting
         window.isReleasedWhenClosed = false
         window.center()
+        // Show + activate the guide *before* CGRequest. That call may block on the system
+        // consent sheet; if the user opens System Settings from it, we must not activate
+        // over Settings afterward (Codex P2 on #334).
         window.makeKeyAndOrderFront(nil)
         app.activate(ignoringOtherApps: true)
+
+        // Register a TCC / Settings row for this helper identity. Without a request,
+        // ad-hoc helpers often never appear in the Screen Recording list (preflight alone
+        // does not create a row; parent terminal grants can also make preflight true).
+        _ = CGRequestScreenCaptureAccess()
+        model.startPolling()
 
         model.onFinished = { granted in
             let result = ScreenCaptureAccess.result(granted: granted, binaryPath: binaryPath)
