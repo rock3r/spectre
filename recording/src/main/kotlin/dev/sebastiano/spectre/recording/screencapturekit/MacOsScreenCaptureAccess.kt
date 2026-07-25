@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.recording.screencapturekit
 
 import java.io.IOException
+import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import kotlinx.serialization.SerialName
@@ -73,16 +74,25 @@ public object MacOsScreenCaptureAccess {
     ): ScreenCaptureAccessResult {
         if (!isMacOs()) return ScreenCaptureAccessResult.notApplicable()
         // Prefer the guided SwiftUI flow (#192). If already granted, skip the window.
+        val helperPath = helperExtractor.extract()
         val existing = preflight(helperExtractor, processFactory, isMacOs)
-        if (existing.granted) return existing
-        return runHelper(
-            mode = GUIDE_MODE,
-            helperPath = helperExtractor.extract(),
-            processFactory = processFactory,
-            // Guide window blocks until the human closes it or grants permission.
-            timeoutSeconds = REQUEST_TIMEOUT_SECONDS,
-            extraArgs = emptyList(),
-        )
+        if (existing.granted) {
+            markPreviouslyGranted(helperPath)
+            return existing
+        }
+        // Re-approval copy when a prior successful grant was recorded for this helper install.
+        val reapproval = wasPreviouslyGranted(helperPath)
+        val result =
+            runHelper(
+                mode = GUIDE_MODE,
+                helperPath = helperPath,
+                processFactory = processFactory,
+                // Guide window blocks until the human closes it or grants permission.
+                timeoutSeconds = REQUEST_TIMEOUT_SECONDS,
+                extraArgs = if (reapproval) listOf("--reapproval") else emptyList(),
+            )
+        if (result.granted) markPreviouslyGranted(helperPath)
+        return result
     }
 
     /**
@@ -208,6 +218,29 @@ public object MacOsScreenCaptureAccess {
 
     /** Helper mode for the SwiftUI guide (#192). Never used by capture fail-fast preflight. */
     internal const val GUIDE_MODE: String = "guide-permissions"
+
+    /**
+     * Sidecar next to the extracted helper executable: records that Screen Recording was once
+     * granted so a later lapsed grant can open the guide with re-approval copy (#192).
+     */
+    private fun grantMarker(helperPath: Path): Path =
+        helperPath.parent.resolve(".spectre-screen-recording-granted")
+
+    private fun wasPreviouslyGranted(helperPath: Path): Boolean =
+        try {
+            Files.isRegularFile(grantMarker(helperPath))
+        } catch (_: Exception) {
+            false
+        }
+
+    private fun markPreviouslyGranted(helperPath: Path) {
+        try {
+            Files.createDirectories(helperPath.parent)
+            Files.writeString(grantMarker(helperPath), "1")
+        } catch (_: Exception) {
+            // Best-effort; missing marker only affects copy choice, not grant itself.
+        }
+    }
 }
 
 /** Result of a Screen Recording TCC preflight or request. */
