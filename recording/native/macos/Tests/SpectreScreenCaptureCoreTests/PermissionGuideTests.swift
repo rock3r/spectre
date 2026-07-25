@@ -36,6 +36,36 @@ final class PermissionGuideTests: XCTestCase {
         XCTAssertFalse(PermissionGuideCopy.grantedLabel.isEmpty)
     }
 
+    func testGuideCopyTeachesPlusButtonAndShowInFinder() {
+        // System Settings' Screen Recording list uses + to add apps; drag is best-effort.
+        XCTAssertTrue(
+            PermissionGuideCopy.addSteps.contains("+")
+                || PermissionGuideCopy.addSteps.lowercased().contains("plus"),
+            "addSteps must mention the Settings + control"
+        )
+        XCTAssertFalse(PermissionGuideCopy.showInFinderLabel.isEmpty)
+        XCTAssertTrue(
+            PermissionGuideCopy.dragHint.lowercased().contains("drag")
+                || PermissionGuideCopy.dragHint.contains("+"),
+            "dragHint must explain drag and/or + fallback"
+        )
+        // Users must enable this helper by name — not only their terminal.
+        XCTAssertTrue(
+            PermissionGuideCopy.firstRunBody.contains("Spectre Capture Helper"),
+            "body must name the helper app for Settings list matching"
+        )
+    }
+
+    func testItemProviderRegistersApplicationBundleTypes() throws {
+        let appURL = URL(fileURLWithPath: "/Applications/Safari.app")
+        let provider = PermissionGuideDragPayload.itemProvider(for: appURL)
+        let ids = Set(provider.registeredTypeIdentifiers)
+        XCTAssertTrue(
+            ids.contains("com.apple.application-bundle") || ids.contains("public.file-url"),
+            "expected app-bundle or file-url types, got \(ids)"
+        )
+    }
+
     func testPollStateMachineFlipsToGranted() {
         var state = PermissionGuidePollState()
         state.applyPreflight(false)
