@@ -132,10 +132,37 @@ class AgentContractCorpusTest {
                     enteredWaitCall.await(3, TimeUnit.SECONDS),
                     "wait thread never entered waitForNode",
                 )
-                // AttachedAutomator is not thread-safe for concurrent callers. Give the agent
-                // a short settle so WaitForNode is accepted and polling before we interrupt —
-                // stronger than racing a second windows() on the same client.
-                Thread.sleep(WAIT_IN_FLIGHT_SETTLE_MS)
+                // Multiplexed IPC: prove WaitForNode is accepted and in flight by completing
+                // a concurrent windows() on the same session before interrupt. IpcClient is
+                // designed for concurrent ops; production cancel/interrupt paths now clear
+                // interrupt around shared-channel writes so this probe cannot close the UDS.
+                val inFlight = CountDownLatch(1)
+                val probe =
+                    Thread({
+                            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+                            while (System.nanoTime() < deadline && waiter.isAlive) {
+                                try {
+                                    if (automator.windows().isNotEmpty()) {
+                                        inFlight.countDown()
+                                        return@Thread
+                                    }
+                                } catch (_: Exception) {
+                                    // Brief write contention while the wait frame is in flight.
+                                }
+                                Thread.sleep(20)
+                            }
+                        })
+                        .apply {
+                            isDaemon = true
+                            name = "fixture-wait-inflight-probe"
+                            start()
+                        }
+                assertTrue(
+                    inFlight.await(5, TimeUnit.SECONDS),
+                    "concurrent windows() never succeeded while waitForNode was running — " +
+                        "wait may not have been in flight on the agent",
+                )
+                probe.join(1_000)
                 assertTrue(waiter.isAlive, "wait thread exited before interrupt")
 
                 waiter.interrupt()
@@ -348,7 +375,5 @@ class AgentContractCorpusTest {
         const val ATTACH_TIMEOUT_MS: Long = 15_000
         const val FIXTURE_READY_TIMEOUT_MS: Long = 30_000
         const val FIXTURE_ATTACH_SETTLE_MS: Long = 750
-        /** Time for WaitForNode to be accepted and enter the agent poll loop. */
-        const val WAIT_IN_FLIGHT_SETTLE_MS: Long = 250
     }
 }
