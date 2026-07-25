@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Guided Screen Recording permission UI (#192)
 //
@@ -18,14 +19,21 @@ public enum PermissionGuideCopy {
 
     public static let firstRunBody =
         "Spectre uses this helper only when you or an agent asks to capture a window or screen. "
-        + "Grant Screen & System Audio Recording to Spectre Capture Helper in System Settings."
+        + "In System Settings, enable Screen & System Audio Recording for "
+        + "Spectre Capture Helper (the helper app — not only your terminal)."
 
     public static let reapprovalBody =
         "macOS sometimes asks again after updates or when a previous grant lapses. "
         + "Turn Spectre Capture Helper back on in System Settings (same list as first-time setup)."
 
     public static let openSettingsLabel = "Open Settings"
-    public static let dragHint = "Drag this icon into the Screen Recording list if it is missing."
+    public static let showInFinderLabel = "Show in Finder"
+    /// Primary path on modern macOS: Settings list has + / − under the app rows.
+    public static let addSteps =
+        "If Spectre Capture Helper is missing from the list, click + under the list and choose "
+        + "this app (Show in Finder helps you locate it). You can also try dragging the icon."
+    public static let dragHint =
+        "Drag this icon into the Screen Recording list, or use + in System Settings."
     public static let waitingLabel = "Waiting for permission…"
     public static let grantedLabel = "Done ✓ Screen Recording granted"
     public static let closeLabel = "Close"
@@ -37,6 +45,38 @@ public enum PermissionGuideCopy {
 
     public static func body(reapproval: Bool) -> String {
         reapproval ? reapprovalBody : firstRunBody
+    }
+}
+
+/// Builds the pasteboard payload for dragging the helper `.app` into System Settings.
+public enum PermissionGuideDragPayload {
+    /// File representations Settings accepts when adding apps via drop or similar gestures.
+    public static func itemProvider(for appURL: URL) -> NSItemProvider {
+        let provider = NSItemProvider()
+        provider.suggestedName = appURL.deletingPathExtension().lastPathComponent
+
+        // Prefer application-bundle UTI (what Finder uses for .app drops).
+        // coordinatedRead: true = in-place URL (must match .openInPlace). Passing false would
+        // tell the system the file is a disposable copy and can delete Bundle.main.bundleURL.
+        provider.registerFileRepresentation(
+            forTypeIdentifier: UTType.applicationBundle.identifier,
+            fileOptions: [.openInPlace],
+            visibility: .all
+        ) { completion in
+            completion(appURL, true, nil)
+            return nil
+        }
+
+        // public.file-url fallback for destinations that only accept file URLs.
+        provider.registerDataRepresentation(
+            forTypeIdentifier: UTType.fileURL.identifier,
+            visibility: .all
+        ) { completion in
+            completion(appURL.dataRepresentation, nil)
+            return nil
+        }
+
+        return provider
     }
 }
 
@@ -65,6 +105,7 @@ public enum PermissionGuideApp {
         // LSUIElement is set in Info.plist; accessory keeps us out of the Dock.
         app.setActivationPolicy(.accessory)
 
+        let appURL = Bundle.main.bundleURL
         let model = PermissionGuideModel(
             binaryPath: binaryPath,
             reapproval: reapproval,
@@ -74,14 +115,16 @@ public enum PermissionGuideApp {
                     NSWorkspace.shared.open(url)
                 }
             },
-            appURL: Bundle.main.bundleURL
+            showInFinder: {
+                NSWorkspace.shared.activateFileViewerSelecting([appURL])
+            },
+            appURL: appURL
         )
-        model.startPolling()
 
         let rootView = PermissionGuideView(model: model)
         let hosting = NSHostingController(rootView: rootView)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 440, height: 360),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 400),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -90,8 +133,17 @@ public enum PermissionGuideApp {
         window.contentViewController = hosting
         window.isReleasedWhenClosed = false
         window.center()
+        // Show + activate the guide *before* CGRequest. That call may block on the system
+        // consent sheet; if the user opens System Settings from it, we must not activate
+        // over Settings afterward (Codex P2 on #334).
         window.makeKeyAndOrderFront(nil)
         app.activate(ignoringOtherApps: true)
+
+        // Register a TCC / Settings row for this helper identity. Without a request,
+        // ad-hoc helpers often never appear in the Screen Recording list (preflight alone
+        // does not create a row; parent terminal grants can also make preflight true).
+        _ = CGRequestScreenCaptureAccess()
+        model.startPolling()
 
         model.onFinished = { granted in
             let result = ScreenCaptureAccess.result(granted: granted, binaryPath: binaryPath)
@@ -128,6 +180,7 @@ final class PermissionGuideModel: ObservableObject {
 
     private let preflight: () -> Bool
     private let openSettings: () -> Void
+    private let showInFinder: () -> Void
     private var timer: Timer?
 
     init(
@@ -135,12 +188,14 @@ final class PermissionGuideModel: ObservableObject {
         reapproval: Bool,
         preflight: @escaping () -> Bool,
         openSettings: @escaping () -> Void,
+        showInFinder: @escaping () -> Void,
         appURL: URL
     ) {
         self.binaryPath = binaryPath
         self.reapproval = reapproval
         self.preflight = preflight
         self.openSettings = openSettings
+        self.showInFinder = showInFinder
         self.appURL = appURL
     }
 
@@ -168,6 +223,10 @@ final class PermissionGuideModel: ObservableObject {
         openSettings()
     }
 
+    func revealInFinder() {
+        showInFinder()
+    }
+
     func finish() {
         timer?.invalidate()
         timer = nil
@@ -189,12 +248,25 @@ struct PermissionGuideView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .foregroundStyle(.primary)
 
-            Button(PermissionGuideCopy.openSettingsLabel) {
-                model.openSystemSettings()
+            HStack(spacing: 8) {
+                Button(PermissionGuideCopy.openSettingsLabel) {
+                    model.openSystemSettings()
+                }
+                .keyboardShortcut(.defaultAction)
+                .accessibilityLabel(PermissionGuideCopy.openSettingsLabel)
+                .accessibilityHint("Opens System Settings to Screen Recording privacy")
+
+                Button(PermissionGuideCopy.showInFinderLabel) {
+                    model.revealInFinder()
+                }
+                .accessibilityLabel(PermissionGuideCopy.showInFinderLabel)
+                .accessibilityHint("Reveals Spectre Capture Helper.app so you can add it with +")
             }
-            .keyboardShortcut(.defaultAction)
-            .accessibilityLabel(PermissionGuideCopy.openSettingsLabel)
-            .accessibilityHint("Opens System Settings to Screen Recording privacy")
+
+            Text(PermissionGuideCopy.addSteps)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 12) {
                 AppIconDragView(appURL: model.appURL)
@@ -233,7 +305,7 @@ struct PermissionGuideView: View {
             }
         }
         .padding(24)
-        .frame(minWidth: 400, minHeight: 320)
+        .frame(minWidth: 420, minHeight: 360)
     }
 }
 
@@ -246,8 +318,7 @@ struct AppIconDragView: View {
             .resizable()
             .aspectRatio(contentMode: .fit)
             .onDrag {
-                NSItemProvider(contentsOf: appURL) ?? NSItemProvider()
+                PermissionGuideDragPayload.itemProvider(for: appURL)
             }
     }
 }
-
