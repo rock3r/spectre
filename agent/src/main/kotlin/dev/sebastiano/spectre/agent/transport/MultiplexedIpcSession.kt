@@ -172,6 +172,31 @@ internal class MultiplexedIpcSession(
                     val response = executeOp(body, op.deadlineEpochMs)
                     // Only the winner of tryClaimResponse may write (cancel/deadline may have won).
                     slot.cancelDeadlineTask()
+                    // Cancel/deadline may have interrupted this worker mid-op. Do not write a
+                    // success payload while interrupted — NIO SocketChannel is interruptible and
+                    // a write with interrupt status set can close the *shared* client channel
+                    // (ClosedByInterruptException), killing subsequent ops (LongOp Ping flake).
+                    if (slot.isAborted || Thread.currentThread().isInterrupted) {
+                        // Prefer taxonomy cancelled when we still own the response claim.
+                        if (slot.tryClaimResponse()) {
+                            inFlight.remove(op.opId, slot)
+                            writeOpResponse(
+                                output,
+                                writeLock,
+                                op.opId,
+                                AgentResponse.Error(
+                                    message = "Operation cancelled",
+                                    category = AgentErrorCategory.Cancelled.wireName,
+                                ),
+                            )
+                        } else {
+                            inFlight.remove(op.opId, slot)
+                        }
+                        // Clear poison interrupt so this worker cannot close the shared channel
+                        // if anything runs after the claim path (thread returns to the pool).
+                        Thread.interrupted()
+                        return@submit
+                    }
                     if (slot.tryClaimResponse()) {
                         inFlight.remove(op.opId, slot)
                         writeOpResponse(output, writeLock, op.opId, response)
@@ -306,7 +331,17 @@ internal class MultiplexedIpcSession(
                     )
                 )
             }
-        synchronized(writeLock) { Framing.writeFrame(output, toWrite) }
+        // SocketChannel is an InterruptibleChannel: a write from a thread with interrupt
+        // status set can close the shared client socket. Cancel paths interrupt workers, so
+        // clear interrupt only for the duration of the write and restore afterward.
+        val wasInterrupted = Thread.interrupted()
+        try {
+            synchronized(writeLock) { Framing.writeFrame(output, toWrite) }
+        } finally {
+            if (wasInterrupted) {
+                Thread.currentThread().interrupt()
+            }
+        }
     }
 
     /**

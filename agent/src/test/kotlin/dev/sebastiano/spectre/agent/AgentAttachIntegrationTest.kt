@@ -335,6 +335,12 @@ class AgentAttachIntegrationTest {
                 "Compose fixture did not emit $READY_SENTINEL within ${FIXTURE_READY_TIMEOUT_MS} ms"
             )
         }
+        // READY is printed before VirtualMachine.attach is always accepted (macOS CI race).
+        Thread.sleep(FIXTURE_ATTACH_SETTLE_MS)
+        check(process.isAlive) {
+            process.destroyForcibly()
+            "Compose fixture exited immediately after $READY_SENTINEL"
+        }
 
         return FixtureProcess(process, process.pid(), reader, drainerThread)
     }
@@ -486,6 +492,7 @@ class AgentAttachIntegrationTest {
         const val REPEAT_CYCLES: Int = 3
         const val ATTACH_TIMEOUT_MS: Long = 15_000
         const val FIXTURE_READY_TIMEOUT_MS: Long = 30_000
+        const val FIXTURE_ATTACH_SETTLE_MS: Long = 750
         const val FOCUS_TIMEOUT_MS: Long = 2_000
         const val FOCUS_POLL_INTERVAL_MS: Long = 50
         const val TYPED_CHARACTER: Char = 'x'

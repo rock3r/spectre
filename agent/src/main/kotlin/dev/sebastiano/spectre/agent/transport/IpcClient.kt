@@ -131,20 +131,45 @@ internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) 
         } catch (ex: InterruptedException) {
             // Caller thread interrupted while waiting — cancel the remote op so UI work stops
             // (Codex P2).
-            pending.remove(opId)
-            runCatching { cancel(opId) }
-            Thread.currentThread().interrupt()
-            throw SpectreAgentException(
-                category = AgentErrorCategory.Cancelled,
-                message = "Interrupted while waiting for ${request.logLabel} (opId=$opId)",
-                cause = ex,
-            )
+            throw cancelDueToInterrupt(opId, request, ex)
+        } catch (ex: java.util.concurrent.CancellationException) {
+            // CompletableFuture can surface local cancellation as CancellationException rather
+            // than InterruptedException on some paths; keep the same cancelled taxonomy.
+            throw cancelDueToInterrupt(opId, request, ex)
         } catch (ex: java.util.concurrent.ExecutionException) {
             pending.remove(opId)
+            // Race: peer EOF while this thread was interrupted should still report cancelled
+            // (interrupt is the caller's intent) rather than a bare IOException.
+            if (Thread.currentThread().isInterrupted) {
+                runCatching { cancel(opId) }
+                Thread.currentThread().interrupt()
+                throw SpectreAgentException(
+                    category = AgentErrorCategory.Cancelled,
+                    message =
+                        "Interrupted while waiting for ${request.logLabel} (opId=$opId); " +
+                            "peer closed during cancel race: ${ex.cause?.message ?: ex.message}",
+                    cause = ex,
+                )
+            }
             throw unwrapExecutionFailure(opId, ex)
         } finally {
             pending.remove(opId)
         }
+    }
+
+    private fun cancelDueToInterrupt(
+        opId: Long,
+        request: AgentRequest,
+        cause: Exception,
+    ): SpectreAgentException {
+        pending.remove(opId)
+        runCatching { cancel(opId) }
+        Thread.currentThread().interrupt()
+        return SpectreAgentException(
+            category = AgentErrorCategory.Cancelled,
+            message = "Interrupted while waiting for ${request.logLabel} (opId=$opId)",
+            cause = cause,
+        )
     }
 
     /** Explicit cancel for [opId] (#200). Best-effort; safe if the op already completed. */

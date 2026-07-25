@@ -249,7 +249,7 @@ class HotReloadDaemonFixtureE2eTest {
             "Compose fixture did not emit $READY_SENTINEL"
         }
         // READY is printed before the JVM is always attachable.
-        Thread.sleep(750)
+        Thread.sleep(1_500)
         check(process.isAlive) {
             process.destroyForcibly()
             "Compose fixture exited after READY"
@@ -263,28 +263,35 @@ class HotReloadDaemonFixtureE2eTest {
         startDaemon: () -> Unit,
     ): DaemonResponse.Attached {
         var lastError: DaemonResponse.Error? = null
-        repeat(8) { attempt ->
+        val deadline =
+            System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(20_000)
+        var attempt = 0
+        while (System.nanoTime() < deadline) {
             val response =
                 client.requestOrStart(DaemonRequest.Attach(targetPid), start = startDaemon)
             when (response) {
                 is DaemonResponse.Attached -> return response
                 is DaemonResponse.Error -> {
                     lastError = response
+                    val m = response.message.lowercase()
                     val retryable =
-                        response.message.contains("not ready to participate in attach handshake") ||
-                            response.message.contains("No such process") ||
-                            response.message.contains("AttachNotSupportedException")
-                    if (!retryable || attempt == 7) {
+                        "not ready to participate in attach handshake" in m ||
+                            "no such process" in m ||
+                            "attachnotsupportedexception" in m ||
+                            "connection refused" in m ||
+                            "resource temporarily unavailable" in m
+                    if (!retryable) {
                         error(
                             "daemon attach failed: code=${response.code} message=${response.message}"
                         )
                     }
-                    Thread.sleep(400L * (attempt + 1))
+                    attempt++
+                    Thread.sleep(400L * minOf(attempt, 8))
                 }
                 else -> error("unexpected attach response: $response")
             }
         }
-        error("attach retry exhausted: ${lastError?.message}")
+        error("attach retry budget exhausted: ${lastError?.message}")
     }
 
     private fun daemonRuntimeClasspath(): String =

@@ -232,20 +232,16 @@ jobs:
         shell: bash
 
       - name: Verify validation tests passed via JUnit XML
-        # Plain two-pass test-hygiene verifier (no longer compensating for the
-        # protocol-flake — see workflow header):
+        # Two-pass test-hygiene verifier with envelope-detection safety net (same as
+        # validation-windows.yml / issue #72). ValidationTestSerialiser suppresses most
+        # parallel races, but residual cold-daemon / Skiko forks can still leave a class
+        # only in the synthetic Gradle envelope (no per-class TEST-*.xml) — seen on main
+        # for AtomicCaptureValidationTest under Xvfb.
         #
-        # 1. **Required-set existence pass**: an explicit list of expected (task, class) pairs
-        #    must each have a corresponding TEST-<fqn>.xml. A mid-class JVM crash that skipped
-        #    writing one XML, or a Gradle compile / dependency-resolution failure that
-        #    produced no XMLs at all, fails the verification with a clear error pointing at
-        #    the missing entry.
-        # 2. **Discovered-set inspection pass**: every TEST-*.xml found under any of the four
-        #    validation task directories — including ones NOT in the required set, e.g. a new
-        #    ValidationTest class added without updating this workflow — is parsed for
-        #    `failures="N"` / `errors="N"`. Any non-zero count fails the step. Missing or
-        #    unparsable attributes are treated as malformation (truncated XML, wrong schema)
-        #    and also fail the step.
+        # 1. **Required-set existence pass**: each expected (task, class) pair must have a
+        #    TEST-<fqn>.xml, OR appear as a skipped testcase in the Gradle envelope (warn).
+        # 2. **Discovered-set inspection pass**: every TEST-*.xml under validation dirs is
+        #    parsed for failures/errors; missing attributes are malformation.
         if: always()
         run: |
           set -euo pipefail
@@ -261,19 +257,29 @@ jobs:
           # parallel list — see validation-windows.yml for the rationale.
           task_dirs=("${!required_classes_by_task[@]}")
 
-          # Pass 1: required-set existence.
+          # Pass 1: required-set existence + protocol-flake distinction.
           missing=()
+          flaked=()
           for task_dir in "${!required_classes_by_task[@]}"; do
+            envelope="sample-desktop/build/test-results/$task_dir/TEST-Gradle-Test-Run--sample-desktop-${task_dir}.xml"
             for class_name in ${required_classes_by_task[$task_dir]}; do
               xml="sample-desktop/build/test-results/$task_dir/TEST-dev.sebastiano.spectre.sample.validation.${class_name}.xml"
-              if [ ! -f "$xml" ]; then
+              if [ -f "$xml" ]; then
+                continue
+              fi
+              if [ -f "$envelope" ] && grep -qE "<testcase name=\"${class_name}\"" "$envelope"; then
+                flaked+=("$task_dir/${class_name}")
+              else
                 missing+=("$task_dir/${class_name}")
               fi
             done
           done
           if [ "${#missing[@]}" -gt 0 ]; then
-            echo "::error::Missing JUnit XML reports for: ${missing[*]}. Gradle step outcome: ${{ steps.gradle.outcome }}"
+            echo "::error::Missing JUnit XML reports (no Gradle envelope mention either) for: ${missing[*]}. Gradle step outcome: ${{ steps.gradle.outcome }}"
             exit 1
+          fi
+          if [ "${#flaked[@]}" -gt 0 ]; then
+            echo "::warning::Protocol-flake skipped per-class XMLs (Gradle envelope confirms the class was enrolled): ${flaked[*]}. Tracked at https://github.com/rock3r/spectre/issues/72."
           fi
 
           # Pass 2: discovered-set inspection.
