@@ -56,12 +56,14 @@ public enum PermissionGuideDragPayload {
         provider.suggestedName = appURL.deletingPathExtension().lastPathComponent
 
         // Prefer application-bundle UTI (what Finder uses for .app drops).
+        // coordinatedRead: true = in-place URL (must match .openInPlace). Passing false would
+        // tell the system the file is a disposable copy and can delete Bundle.main.bundleURL.
         provider.registerFileRepresentation(
             forTypeIdentifier: UTType.applicationBundle.identifier,
             fileOptions: [.openInPlace],
             visibility: .all
         ) { completion in
-            completion(appURL, false, nil)
+            completion(appURL, true, nil)
             return nil
         }
 
