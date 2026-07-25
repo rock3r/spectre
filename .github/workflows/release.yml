@@ -214,9 +214,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mac-helper
-          # App bundle directory — upload-artifact zips the tree; download restores
-          # SpectreCaptureHelper.app for `-PprebuiltMacHelperPath`.
-          path: recording/build/generated/screenCaptureHelper/native/macos/SpectreCaptureHelper.app
+          # Upload the parent `macos/` directory so the artefact root keeps the
+          # `SpectreCaptureHelper.app` name. Passing the `.app` path itself makes
+          # upload-artifact@v4 strip that directory name (Contents/ lands at the
+          # root), which would break `-PprebuiltMacHelperPath=.../SpectreCaptureHelper.app`.
+          path: recording/build/generated/screenCaptureHelper/native/macos/
           if-no-files-found: error
           retention-days: 7
 

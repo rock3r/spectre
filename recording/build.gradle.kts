@@ -440,7 +440,10 @@ val assembleScreenCaptureKitHelperUniversal by tasks.registering {
     val infoPlistPath = helperAppInfoPlistAbsolutePath
     val pkgInfoPath = helperAppPkgInfoAbsolutePath
     val iconPath = helperAppIconAbsolutePath
-    val signOnMac = isMacOsHost
+    // Never ad-hoc re-sign after Developer ID notarization — that would wipe the nested
+    // Mach-O ticket. Full `.app` Developer ID sign is #191; until then the nested binary
+    // keeps its notarized signature and the app shell stays unsigned on the release path.
+    val adHocSign = isMacOsHost && !shouldNotarizeScreenCaptureKitHelper
     doLast {
         val dest = File(destPath)
         if (dest.exists()) dest.deleteRecursively()
@@ -452,7 +455,7 @@ val assembleScreenCaptureKitHelperUniversal by tasks.registering {
         File(iconPath).copyTo(File(contents, "Resources/AppIcon.icns"), overwrite = true)
         File(binaryPath).copyTo(File(contents, "MacOS/spectre-screencapture"), overwrite = true)
         File(contents, "MacOS/spectre-screencapture").setExecutable(true, false)
-        if (signOnMac) {
+        if (adHocSign) {
             val process =
                 ProcessBuilder("codesign", "--force", "--deep", "--sign", "-", destPath)
                     .redirectErrorStream(true)
