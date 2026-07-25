@@ -546,8 +546,18 @@ val assembleScreenCaptureKitHelperUniversal by tasks.registering {
         val dest = File(destPath)
         if (dest.exists()) dest.deleteRecursively()
         if (copyNotarizedApp) {
-            // Preserve Developer ID signature + staple; do not re-sign.
-            File(notarizedAppPath).copyRecursively(dest, overwrite = true)
+            // ditto preserves the stapled ticket file (Contents/CodeResources) and code
+            // signature metadata that Java File.copyRecursively can drop.
+            dest.parentFile?.mkdirs()
+            val process =
+                ProcessBuilder("ditto", notarizedAppPath, destPath)
+                    .redirectErrorStream(true)
+                    .start()
+            val output = process.inputStream.bufferedReader().readText()
+            val exit = process.waitFor()
+            if (exit != 0) {
+                throw GradleException("ditto copy of notarized app failed (exit $exit): $output")
+            }
             return@doLast
         }
         val contents = File(dest, "Contents")
