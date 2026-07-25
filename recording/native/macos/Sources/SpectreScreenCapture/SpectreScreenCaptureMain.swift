@@ -1,30 +1,34 @@
-import Dispatch
 import Foundation
 import SpectreScreenCaptureCore
 
 @main
 enum SpectreScreenCapture {
-    /// Sync entry so guide mode runs on the real AppKit main thread.
-    /// Capture/recording still use the async CLI path via a Task.
-    static func main() {
+    /// Async entry for capture modes. Guide mode transfers permanently to the AppKit main
+    /// run loop without parking `DispatchGroup.wait()` on the main actor (Codex P1).
+    static func main() async {
         let argv = CommandLine.arguments
         if isGuidePermissionsInvocation(argv) {
-            // @main without `async` is already on the main thread — safe for NSApplication.
-            MainActor.assumeIsolated {
-                PermissionGuideApp.run(
-                    binaryPath: argv.first ?? "spectre-screencapture",
-                    reapproval: argv.contains("--reapproval")
-                )
+            let binary = argv.first ?? "spectre-screencapture"
+            let reapproval = argv.contains("--reapproval")
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    PermissionGuideApp.run(binaryPath: binary, reapproval: reapproval)
+                }
+            } else {
+                // Hand off to the main queue and never return; guide exits the process.
+                await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                    DispatchQueue.main.async {
+                        // cont intentionally never resumed — PermissionGuideApp.run ends in exit().
+                        _ = cont
+                        MainActor.assumeIsolated {
+                            PermissionGuideApp.run(binaryPath: binary, reapproval: reapproval)
+                        }
+                    }
+                }
             }
             return
         }
-        let group = DispatchGroup()
-        group.enter()
-        Task {
-            defer { group.leave() }
-            await SpectreScreenCaptureCommand.main(argv)
-        }
-        group.wait()
+        await SpectreScreenCaptureCommand.main(argv)
     }
 
     private static func isGuidePermissionsInvocation(_ argv: [String]) -> Bool {
