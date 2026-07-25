@@ -82,6 +82,39 @@ class MacOsScreenCaptureAccessTest {
         assertEquals(2, argvs.size)
         assertEquals("preflight", argvs[0][argvs[0].indexOf("--mode") + 1])
         assertEquals(MacOsScreenCaptureAccess.GUIDE_MODE, argvs[1][argvs[1].indexOf("--mode") + 1])
+        assertFalse(argvs[1].contains("--reapproval"), "first grant must not use reapproval copy")
+    }
+
+    @Test
+    fun `request passes reapproval after a prior grant marker exists`() {
+        val denied =
+            """{"granted":false,"api":"CGPreflightScreenCaptureAccess","binary":"/h","settings_path":"s","deep_link":"d","guidance":"denied"}"""
+        val granted =
+            """{"granted":true,"api":"CGPreflightScreenCaptureAccess","binary":"/h","settings_path":"s","deep_link":"d","guidance":"ok"}"""
+        val extractor = stubExtractor()
+        // Seed a prior grant so the guide uses re-approval copy.
+        MacOsScreenCaptureAccess.request(
+            helperExtractor = extractor,
+            processFactory = { FakeProcess(stdout = granted + "\n", exitCode = 0) },
+            isMacOs = { true },
+        )
+        val argvs = mutableListOf<List<String>>()
+        var call = 0
+        MacOsScreenCaptureAccess.request(
+            helperExtractor = extractor,
+            processFactory = { args ->
+                argvs += args
+                call += 1
+                if (call == 1) FakeProcess(stdout = denied + "\n", exitCode = 6)
+                else FakeProcess(stdout = granted + "\n", exitCode = 0)
+            },
+            isMacOs = { true },
+        )
+        assertEquals(2, argvs.size)
+        assertTrue(
+            argvs[1].contains("--reapproval"),
+            "lapsed grant must pass --reapproval to the guide",
+        )
     }
 
     @Test

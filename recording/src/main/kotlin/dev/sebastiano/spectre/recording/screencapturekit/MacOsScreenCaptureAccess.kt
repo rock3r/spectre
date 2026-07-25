@@ -220,11 +220,22 @@ public object MacOsScreenCaptureAccess {
     internal const val GUIDE_MODE: String = "guide-permissions"
 
     /**
-     * Sidecar next to the extracted helper executable: records that Screen Recording was once
-     * granted so a later lapsed grant can open the guide with re-approval copy (#192).
+     * Sidecar **outside** the `.app` tree: records that Screen Recording was once granted so a
+     * later lapsed grant can open the guide with re-approval copy (#192). Must not write inside
+     * `Contents/` or codesign/staple is invalidated.
      */
-    private fun grantMarker(helperPath: Path): Path =
-        helperPath.parent.resolve(".spectre-screen-recording-granted")
+    private fun grantMarker(helperPath: Path): Path {
+        var cursor: Path? = helperPath
+        while (cursor != null) {
+            val name = cursor.fileName?.toString().orEmpty()
+            if (name.endsWith(".app")) {
+                return cursor.parent.resolve(".$name.screen-recording-granted")
+            }
+            cursor = cursor.parent
+        }
+        // Bare-binary override path: marker next to the executable is fine.
+        return helperPath.parent.resolve(".spectre-screen-recording-granted")
+    }
 
     private fun wasPreviouslyGranted(helperPath: Path): Boolean =
         try {
@@ -235,8 +246,9 @@ public object MacOsScreenCaptureAccess {
 
     private fun markPreviouslyGranted(helperPath: Path) {
         try {
-            Files.createDirectories(helperPath.parent)
-            Files.writeString(grantMarker(helperPath), "1")
+            val marker = grantMarker(helperPath)
+            Files.createDirectories(marker.parent)
+            Files.writeString(marker, "1")
         } catch (_: Exception) {
             // Best-effort; missing marker only affects copy choice, not grant itself.
         }
