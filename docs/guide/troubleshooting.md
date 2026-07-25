@@ -321,18 +321,24 @@ Look for patterns such as `Sandbox: java(...) deny(1) mach-lookup`,
 
 ## "macOS recording errors out or produces no file"
 
-- **Screen Recording permission.** macOS gates screen capture behind an explicit
-  grant. Open System Settings → Privacy & Security → Screen Recording and toggle on
-  the responsible parent process — see the next bullet for what that actually means.
-- **TCC attaches to the launching app, not to `java`.** macOS attributes
-  Screen Recording (and Accessibility) to whichever binary opened the JVM
-  process: IntelliJ IDEA when you run tests from the IDE, Terminal.app or iTerm
-  when you `./gradlew test` from a shell, a third-party launcher otherwise. If
-  the wrong app is granted, capture still fails. Check the entry that's actually
-  ticked in the Screen Recording list; it should match the icon you launched.
-- **TCC doesn't refresh live.** After granting, fully quit and relaunch the
-  parent app — not just the JVM child. macOS only picks up the new entitlement on
-  process start.
+- **Screen Recording permission for Spectre Capture Helper.** Capture uses the
+  bundled helper app (`SpectreCaptureHelper.app`, display name **Spectre Capture
+  Helper**). With a human present, run:
+
+  ```bash
+  spectre permissions check
+  spectre permissions request   # guided window if not granted
+  ```
+
+  The request command opens a small guide: Open Settings (Screen Recording deep
+  link), drag the helper icon into the list if missing, wait until the UI shows
+  **Done ✓**, then close. Capture/record paths never open this guide themselves —
+  they fail fast with a structured error agents can relay.
+- **Settings row should say Spectre Capture Helper**, not Terminal/IntelliJ/java.
+  If you only see the spawning app, upgrade Spectre and unset
+  `SPECTRE_SCREENCAPTURE_HELPER` so the bundled app is used.
+- **macOS may re-prompt after updates.** Run `spectre permissions request` again;
+  the guide uses re-approval copy when you re-open it after a prior grant lapsed.
 - **The SCK helper artifact is missing.** If `spectre-recording-macos` is not on the
   runtime classpath, the Swift helper is not present and `AutoRecorder.startWindow(...)`
   throws instead of silently switching capture modes. Add the helper artifact as

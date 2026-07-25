@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.recording.screencapturekit
 
 import java.io.IOException
+import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import kotlinx.serialization.SerialName
@@ -31,8 +32,9 @@ public object MacOsScreenCaptureAccess {
         preflight(HelperBinaryExtractor(), DefaultProcessFactory)
 
     /**
-     * Trigger the system permission flow (may prompt). **Human-invoked only** — never call from
-     * automated capture/recording paths.
+     * Human-only guided permission flow (#192). Launches the helper's SwiftUI guide window when
+     * Screen Recording is missing; returns immediately if already granted. **Never call from
+     * automated capture/recording paths** — those must use [requireGranted] / [preflight] only.
      */
     public fun request(): ScreenCaptureAccessResult =
         request(HelperBinaryExtractor(), DefaultProcessFactory)
@@ -71,11 +73,42 @@ public object MacOsScreenCaptureAccess {
         isMacOs: () -> Boolean = ::isMacOs,
     ): ScreenCaptureAccessResult {
         if (!isMacOs()) return ScreenCaptureAccessResult.notApplicable()
+        // Prefer the guided SwiftUI flow (#192). If already granted, skip the window.
+        val helperPath = helperExtractor.extract()
+        val existing = preflight(helperExtractor, processFactory, isMacOs)
+        if (existing.granted) {
+            markPreviouslyGranted(helperPath)
+            return existing
+        }
+        // Re-approval copy when a prior successful grant was recorded for this helper install.
+        val reapproval = wasPreviouslyGranted(helperPath)
+        val result =
+            runHelper(
+                mode = GUIDE_MODE,
+                helperPath = helperPath,
+                processFactory = processFactory,
+                // Guide window blocks until the human closes it or grants permission.
+                timeoutSeconds = REQUEST_TIMEOUT_SECONDS,
+                extraArgs = if (reapproval) listOf("--reapproval") else emptyList(),
+            )
+        if (result.granted) markPreviouslyGranted(helperPath)
+        return result
+    }
+
+    /**
+     * Explicit legacy system-dialog path (CGRequestScreenCaptureAccess). Prefer [request] which
+     * opens the guided Settings flow. Kept for tests that inject a fake helper.
+     */
+    internal fun requestSystemDialog(
+        helperExtractor: HelperBinaryExtractor,
+        processFactory: ProcessFactory,
+        isMacOs: () -> Boolean = ::isMacOs,
+    ): ScreenCaptureAccessResult {
+        if (!isMacOs()) return ScreenCaptureAccessResult.notApplicable()
         return runHelper(
             mode = "request",
             helperPath = helperExtractor.extract(),
             processFactory = processFactory,
-            // CGRequestScreenCaptureAccess blocks on the system dialog until a human responds.
             timeoutSeconds = REQUEST_TIMEOUT_SECONDS,
         )
     }
@@ -95,8 +128,14 @@ public object MacOsScreenCaptureAccess {
         helperPath: Path,
         processFactory: ProcessFactory,
         timeoutSeconds: Long,
+        extraArgs: List<String> = emptyList(),
     ): ScreenCaptureAccessResult {
-        val argv = listOf(helperPath.toString(), "--mode", mode)
+        val argv = buildList {
+            add(helperPath.toString())
+            add("--mode")
+            add(mode)
+            addAll(extraArgs)
+        }
         val process =
             try {
                 processFactory.start(argv)
@@ -172,10 +211,48 @@ public object MacOsScreenCaptureAccess {
     private const val PREFLIGHT_TIMEOUT_SECONDS: Long = 15
 
     /**
-     * Request may block on the TCC system dialog until a human responds. Five minutes is long
+     * Guided permission window may stay open until a human finishes Settings. Five minutes is long
      * enough for a deliberate grant without hanging CI forever if a fake process never exits.
      */
     private const val REQUEST_TIMEOUT_SECONDS: Long = 300
+
+    /** Helper mode for the SwiftUI guide (#192). Never used by capture fail-fast preflight. */
+    internal const val GUIDE_MODE: String = "guide-permissions"
+
+    /**
+     * Sidecar **outside** the `.app` tree: records that Screen Recording was once granted so a
+     * later lapsed grant can open the guide with re-approval copy (#192). Must not write inside
+     * `Contents/` or codesign/staple is invalidated.
+     */
+    private fun grantMarker(helperPath: Path): Path {
+        var cursor: Path? = helperPath
+        while (cursor != null) {
+            val name = cursor.fileName?.toString().orEmpty()
+            if (name.endsWith(".app")) {
+                return cursor.parent.resolve(".$name.screen-recording-granted")
+            }
+            cursor = cursor.parent
+        }
+        // Bare-binary override path: marker next to the executable is fine.
+        return helperPath.parent.resolve(".spectre-screen-recording-granted")
+    }
+
+    private fun wasPreviouslyGranted(helperPath: Path): Boolean =
+        try {
+            Files.isRegularFile(grantMarker(helperPath))
+        } catch (_: Exception) {
+            false
+        }
+
+    private fun markPreviouslyGranted(helperPath: Path) {
+        try {
+            val marker = grantMarker(helperPath)
+            Files.createDirectories(marker.parent)
+            Files.writeString(marker, "1")
+        } catch (_: Exception) {
+            // Best-effort; missing marker only affects copy choice, not grant itself.
+        }
+    }
 }
 
 /** Result of a Screen Recording TCC preflight or request. */

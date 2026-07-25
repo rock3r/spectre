@@ -38,13 +38,14 @@ routers that pick the right one per call.
     actionable error. `ffmpeg` on `PATH` is only relevant if you instantiate the explicit
     legacy ffmpeg backends.
 
-!!! note "macOS TCC preflight (v1)"
-    Capture and recording **never** pop the Screen Recording TCC prompt implicitly.
-    The helper preflights with `CGPreflightScreenCaptureAccess` and fails fast with a
-    structured error (Settings path + deep link) when access is missing. Agents cannot
-    click TCC prompts. With a human present, run `spectre permissions check` or
-    `spectre permissions request` (the only path that may call
-    `CGRequestScreenCaptureAccess`).
+!!! note "macOS TCC preflight + guided grant"
+    Capture and recording **never** open the Screen Recording prompt or guide UI
+    implicitly. They preflight with `CGPreflightScreenCaptureAccess` and fail fast with a
+    structured error when access is missing. Agents cannot click TCC prompts.
+    With a human present, run `spectre permissions check` or
+    `spectre permissions request` — **request** opens the Spectre Capture Helper guide
+    window (explain → Open Settings → drag icon → live re-check) when the grant is
+    missing.
 
 ## Still Window Screenshots
 
