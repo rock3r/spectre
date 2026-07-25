@@ -2,10 +2,11 @@
 
 ## Automated path (CI / developer)
 
-**Prerequisites:** Linux or macOS with a non-headless display (or `xvfb-run -a` on Linux).
-The test is `@EnabledOnOs(LINUX, MAC)` and assumes `!GraphicsEnvironment.isHeadless()` — on
-Windows and headless Linux CI it **skips** (green Gradle with no attach/tree evidence). Do not
-treat a skipped run as inject proof.
+**Prerequisites:** Linux or macOS with a non-headless display (or `xvfb-run -a` on Linux). The test
+is `@EnabledOnOs(LINUX, MAC)` and assumes `!GraphicsEnvironment.isHeadless()` — headless CI
+**skips** (not inject proof). Physical **Windows** was validated on Mattone; the default test
+stays off hosted Windows CI (same policy as the non-inject attach e2e). Windows path stripping is
+covered by `InjectClasspathStripTest`.
 
 ```bash
 # macOS / interactive Linux:
