@@ -11,10 +11,11 @@ import UniformTypeIdentifiers
 // MARK: - CLI contract
 //
 // spectre-screencapture
-//   --mode <recording|screenshot|preflight|request>
+//   --mode <recording|screenshot|preflight|request|guide-permissions>
 //                              Optional. Default recording.
 //                              preflight: CGPreflightScreenCaptureAccess only (never prompts).
 //                              request:   CGRequestScreenCaptureAccess (human-invoked only).
+//                              guide-permissions: SwiftUI guided Settings flow (#192).
 //   --source <window|region>   Optional. Default window. Ignored for preflight/request.
 //   --pid <jvm pid>            Required for window source. Filters CGWindowList by owner PID so we never
 //                              capture another process's window matching the discriminator.
@@ -67,6 +68,12 @@ public enum SpectreScreenCaptureCommand {
                 let result = ScreenCaptureAccess.request(binaryPath: argv.first ?? "spectre-screencapture")
                 FileHandle.standardOutput.write(Data(result.jsonLine.utf8))
                 exit(result.granted ? 0 : 6)
+            case .guidePermissions:
+                // Blocks on NSApplication run loop until the user finishes the guide.
+                PermissionGuideApp.runAndExit(
+                    binaryPath: argv.first ?? "spectre-screencapture",
+                    reapproval: args.reapproval
+                )
             case .recording, .screenshot:
                 let recorder = Recorder(arguments: args)
                 try await recorder.run()
@@ -131,7 +138,7 @@ enum ScreenCaptureAccess {
         return result(granted: granted, binaryPath: binaryPath)
     }
 
-    private static func result(granted: Bool, binaryPath: String) -> ScreenCaptureAccessResult {
+    static func result(granted: Bool, binaryPath: String) -> ScreenCaptureAccessResult {
         let guidance: String
         if granted {
             guidance =
@@ -173,6 +180,8 @@ struct Arguments {
     let captureCursor: Bool
     let fileType: RecordingFileType
     let discoveryTimeoutMs: Int
+    /// When true, guide UI uses re-approval copy (#192).
+    let reapproval: Bool
 
     static func parse(_ argv: [String]) throws -> Arguments {
         var mode = CaptureMode.recording
@@ -187,6 +196,7 @@ struct Arguments {
         var cursor = true
         var fileType: RecordingFileType?
         var discoveryTimeoutMs = 2000
+        var reapproval = false
 
         var i = 1
         while i < argv.count {
@@ -202,6 +212,16 @@ struct Arguments {
                 i += 1
                 continue
             }
+            if key == "--guide-permissions" {
+                mode = .guidePermissions
+                i += 1
+                continue
+            }
+            if key == "--reapproval" {
+                reapproval = true
+                i += 1
+                continue
+            }
             guard i + 1 < argv.count else {
                 throw CLIError(code: 2, message: "missing value for \(key)")
             }
@@ -211,7 +231,9 @@ struct Arguments {
                 guard let parsed = CaptureMode(rawValue: value) else {
                     throw CLIError(
                         code: 2,
-                        message: "--mode must be recording, screenshot, preflight, or request")
+                        message:
+                            "--mode must be recording, screenshot, preflight, request, or guide-permissions"
+                    )
                 }
                 mode = parsed
             case "--source":
@@ -263,8 +285,8 @@ struct Arguments {
             i += 2
         }
 
-        if mode == .preflight || mode == .request {
-            // Dummy output — preflight/request never open the file.
+        if mode == .preflight || mode == .request || mode == .guidePermissions {
+            // Dummy output — preflight/request/guide never open the file.
             let dummy = URL(fileURLWithPath: "/dev/null")
             return Arguments(
                 mode: mode,
@@ -278,7 +300,8 @@ struct Arguments {
                 fps: fps,
                 captureCursor: cursor,
                 fileType: fileType ?? .mp4,
-                discoveryTimeoutMs: discoveryTimeoutMs
+                discoveryTimeoutMs: discoveryTimeoutMs,
+                reapproval: reapproval
             )
         }
 
@@ -316,7 +339,8 @@ struct Arguments {
             fps: fps,
             captureCursor: cursor,
             fileType: fileType ?? RecordingFileType.forOutput(outputUrl),
-            discoveryTimeoutMs: discoveryTimeoutMs
+            discoveryTimeoutMs: discoveryTimeoutMs,
+            reapproval: reapproval
         )
     }
 }
@@ -326,6 +350,7 @@ enum CaptureMode: String {
     case screenshot
     case preflight
     case request
+    case guidePermissions = "guide-permissions"
 }
 
 enum CaptureSource: String {

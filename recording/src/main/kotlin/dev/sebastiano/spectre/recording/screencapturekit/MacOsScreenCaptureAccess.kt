@@ -31,8 +31,9 @@ public object MacOsScreenCaptureAccess {
         preflight(HelperBinaryExtractor(), DefaultProcessFactory)
 
     /**
-     * Trigger the system permission flow (may prompt). **Human-invoked only** — never call from
-     * automated capture/recording paths.
+     * Human-only guided permission flow (#192). Launches the helper's SwiftUI guide window when
+     * Screen Recording is missing; returns immediately if already granted. **Never call from
+     * automated capture/recording paths** — those must use [requireGranted] / [preflight] only.
      */
     public fun request(): ScreenCaptureAccessResult =
         request(HelperBinaryExtractor(), DefaultProcessFactory)
@@ -71,11 +72,33 @@ public object MacOsScreenCaptureAccess {
         isMacOs: () -> Boolean = ::isMacOs,
     ): ScreenCaptureAccessResult {
         if (!isMacOs()) return ScreenCaptureAccessResult.notApplicable()
+        // Prefer the guided SwiftUI flow (#192). If already granted, skip the window.
+        val existing = preflight(helperExtractor, processFactory, isMacOs)
+        if (existing.granted) return existing
+        return runHelper(
+            mode = GUIDE_MODE,
+            helperPath = helperExtractor.extract(),
+            processFactory = processFactory,
+            // Guide window blocks until the human closes it or grants permission.
+            timeoutSeconds = REQUEST_TIMEOUT_SECONDS,
+            extraArgs = emptyList(),
+        )
+    }
+
+    /**
+     * Explicit legacy system-dialog path (CGRequestScreenCaptureAccess). Prefer [request] which
+     * opens the guided Settings flow. Kept for tests that inject a fake helper.
+     */
+    internal fun requestSystemDialog(
+        helperExtractor: HelperBinaryExtractor,
+        processFactory: ProcessFactory,
+        isMacOs: () -> Boolean = ::isMacOs,
+    ): ScreenCaptureAccessResult {
+        if (!isMacOs()) return ScreenCaptureAccessResult.notApplicable()
         return runHelper(
             mode = "request",
             helperPath = helperExtractor.extract(),
             processFactory = processFactory,
-            // CGRequestScreenCaptureAccess blocks on the system dialog until a human responds.
             timeoutSeconds = REQUEST_TIMEOUT_SECONDS,
         )
     }
@@ -95,8 +118,14 @@ public object MacOsScreenCaptureAccess {
         helperPath: Path,
         processFactory: ProcessFactory,
         timeoutSeconds: Long,
+        extraArgs: List<String> = emptyList(),
     ): ScreenCaptureAccessResult {
-        val argv = listOf(helperPath.toString(), "--mode", mode)
+        val argv = buildList {
+            add(helperPath.toString())
+            add("--mode")
+            add(mode)
+            addAll(extraArgs)
+        }
         val process =
             try {
                 processFactory.start(argv)
@@ -172,10 +201,13 @@ public object MacOsScreenCaptureAccess {
     private const val PREFLIGHT_TIMEOUT_SECONDS: Long = 15
 
     /**
-     * Request may block on the TCC system dialog until a human responds. Five minutes is long
+     * Guided permission window may stay open until a human finishes Settings. Five minutes is long
      * enough for a deliberate grant without hanging CI forever if a fake process never exits.
      */
     private const val REQUEST_TIMEOUT_SECONDS: Long = 300
+
+    /** Helper mode for the SwiftUI guide (#192). Never used by capture fail-fast preflight. */
+    internal const val GUIDE_MODE: String = "guide-permissions"
 }
 
 /** Result of a Screen Recording TCC preflight or request. */

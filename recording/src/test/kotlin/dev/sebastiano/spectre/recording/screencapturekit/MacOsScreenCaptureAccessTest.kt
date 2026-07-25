@@ -56,20 +56,71 @@ class MacOsScreenCaptureAccessTest {
     }
 
     @Test
-    fun `request mode invokes helper with --mode request`() {
+    fun `request launches guide-permissions when preflight is denied`() {
+        val denied =
+            """{"granted":false,"api":"CGPreflightScreenCaptureAccess","binary":"/h","settings_path":"s","deep_link":"d","guidance":"denied"}"""
+        val granted =
+            """{"granted":true,"api":"CGPreflightScreenCaptureAccess","binary":"/h","settings_path":"s","deep_link":"d","guidance":"ok"}"""
+        val argvs = mutableListOf<List<String>>()
+        var call = 0
+        val factory = MacOsScreenCaptureAccess.ProcessFactory { args ->
+            argvs += args
+            call += 1
+            if (call == 1) {
+                FakeProcess(stdout = denied + "\n", exitCode = 6)
+            } else {
+                FakeProcess(stdout = granted + "\n", exitCode = 0)
+            }
+        }
+        val result =
+            MacOsScreenCaptureAccess.request(
+                helperExtractor = stubExtractor(),
+                processFactory = factory,
+                isMacOs = { true },
+            )
+        assertTrue(result.granted)
+        assertEquals(2, argvs.size)
+        assertEquals("preflight", argvs[0][argvs[0].indexOf("--mode") + 1])
+        assertEquals(MacOsScreenCaptureAccess.GUIDE_MODE, argvs[1][argvs[1].indexOf("--mode") + 1])
+    }
+
+    @Test
+    fun `request skips guide when preflight already granted`() {
+        val granted =
+            """{"granted":true,"api":"CGPreflightScreenCaptureAccess","binary":"/h","settings_path":"s","deep_link":"d","guidance":"ok"}"""
+        var calls = 0
+        val factory = MacOsScreenCaptureAccess.ProcessFactory {
+            calls += 1
+            FakeProcess(stdout = granted + "\n", exitCode = 0)
+        }
+        val result =
+            MacOsScreenCaptureAccess.request(
+                helperExtractor = stubExtractor(),
+                processFactory = factory,
+                isMacOs = { true },
+            )
+        assertTrue(result.granted)
+        assertEquals(1, calls, "must not open the guide window when already granted")
+    }
+
+    @Test
+    fun `capture fail-fast never uses guide-permissions mode`() {
+        val denied =
+            """{"granted":false,"api":"CGPreflightScreenCaptureAccess","binary":"/h","settings_path":"s","deep_link":"d","guidance":"denied"}"""
         var argv: List<String> = emptyList()
-        val json =
-            """{"granted":true,"api":"CGPreflightScreenCaptureAccess","binary":"/h","settings_path":"s","deep_link":"d","guidance":"g"}"""
         val factory = MacOsScreenCaptureAccess.ProcessFactory { args ->
             argv = args
-            FakeProcess(stdout = json + "\n", exitCode = 0)
+            FakeProcess(stdout = denied + "\n", exitCode = 6)
         }
-        MacOsScreenCaptureAccess.request(
-            helperExtractor = stubExtractor(),
-            processFactory = factory,
-            isMacOs = { true },
-        )
-        assertEquals("request", argv[argv.indexOf("--mode") + 1])
+        assertFailsWith<ScreenCaptureAccessDeniedException> {
+            MacOsScreenCaptureAccess.requireGranted(
+                helperExtractor = stubExtractor(),
+                processFactory = factory,
+                isMacOs = { true },
+            )
+        }
+        assertEquals("preflight", argv[argv.indexOf("--mode") + 1])
+        assertFalse(argv.contains(MacOsScreenCaptureAccess.GUIDE_MODE))
     }
 
     @Test
