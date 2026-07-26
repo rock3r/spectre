@@ -54,25 +54,36 @@ public object FailureArtifactCapture {
     }
 
     private fun clearStaleWindowDirectories(methodDirectory: Path) {
-        for (dir in listWindowDirectories(methodDirectory)) {
+        for (dir in listStaleArtifactDirectories(methodDirectory)) {
             deleteRecursivelyQuietly(dir)
         }
     }
 
-    private fun listWindowDirectories(methodDirectory: Path): List<Path> {
+    /**
+     * Prior capture slots under a method directory: top-level `window-*` and any leftover `run-*`
+     * isolation trees from earlier lock-conflict captures.
+     */
+    private fun listStaleArtifactDirectories(methodDirectory: Path): List<Path> {
         if (!methodDirectory.exists()) return emptyList()
         return runCatching {
                 Files.list(methodDirectory).use { stream ->
                     stream
                         .asSequence()
-                        .filter {
-                            Files.isDirectory(it) && it.fileName.toString().startsWith("window-")
+                        .filter { path ->
+                            if (!Files.isDirectory(path)) return@filter false
+                            val name = path.fileName.toString()
+                            name.startsWith("window-") || name.startsWith("run-")
                         }
                         .toList()
                 }
             }
             .getOrDefault(emptyList())
     }
+
+    private fun listWindowDirectories(methodDirectory: Path): List<Path> =
+        listStaleArtifactDirectories(methodDirectory).filter {
+            it.fileName.toString().startsWith("window-")
+        }
 
     /**
      * Convenience for production: capture every currently tracked window via [ComposeAutomator].
