@@ -1,5 +1,8 @@
 # #209 user-like inject attach recipe (M3)
 
+Stock IntelliJ (vmoptions + Jewel tags): [stock-intellij-recipe.md](stock-intellij-recipe.md).  
+1.0 packaging fate: [packaging-1.0-decision.md](packaging-1.0-decision.md).
+
 ## Automated path (CI / developer)
 
 **Prerequisites:** Linux or macOS with a non-headless display (or `xvfb-run -a` on Linux). The test

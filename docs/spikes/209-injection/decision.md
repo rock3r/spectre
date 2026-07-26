@@ -40,9 +40,11 @@
 
 Filed after decision (not before):
 
-1. **#320** — Stock IDE attach recipe + QA (vmoptions + IntelliJ 2026.2 Jewel tags).
-2. **#321** — Decide 1.0 fate of nested inject-runtime packaging (promote / keep experimental / strip).
-3. **#322** — OverlayLayerInspector multi-version adapter policy.
+1. **#320** — Stock IDE attach recipe + QA — **closed** via
+   [stock-intellij-recipe.md](stock-intellij-recipe.md).
+2. **#321** — Nested inject-runtime 1.0 fate — **closed** via
+   [packaging-1.0-decision.md](packaging-1.0-decision.md) (**keep**, experimental).
+3. **#322** — OverlayLayerInspector multi-version adapter policy (still open).
 
 ## Closes
 

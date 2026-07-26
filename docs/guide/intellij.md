@@ -207,6 +207,41 @@ on project open without needing a human at the keyboard. Spectre's own
 `sample-intellij-plugin` follows this shape and runs that way under
 `-PspectreAutorun=true`.
 
+## External attach without spectre-core
+
+When you need to inspect Jewel-hosted Compose from a **sister process** and the IDE (or
+plugin) does **not** ship `spectre-core`, use [agent attach](agent.md) with the experimental
+**inject** bootstrap (nested inject-runtime inside `spectre-agent-runtime`).
+
+1. Add **`-XX:+EnableDynamicAgentLoading`** via **Help → Edit Custom VM Options…**, then
+   fully restart the IDE. Without it, JDK 21+ warns (JEP 451) and a future JDK may reject
+   attach. Config example on macOS:
+   `~/Library/Application Support/JetBrains/IntelliJIdea2026.2/idea.vmoptions`
+2. Ensure a Compose surface is showing. Spectre's sample plugin tags tool-window nodes as
+   `ide.counter.*` and `ide.popup.*` (`SpectreSampleToolWindowContent`) — useful proving
+   tags when that plugin is installed.
+3. Find the IDE PID (`jps -l`), then from an attacher JVM with `spectre-agent` +
+   `spectre-agent-runtime`:
+
+```kotlin
+@file:OptIn(ExperimentalSpectreAgentApi::class)
+
+import dev.sebastiano.spectre.agent.AgentAttach
+import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+
+AgentAttach.attach(idePid).use { automator ->
+    println(automator.findByTestTag("ide.counter.text"))
+    println(automator.allNodes().mapNotNull { it.testTag })
+}
+```
+
+If the sample plugin is on the classpath **with** `spectre-core`, attach uses the
+instrumented path instead of inject — same API either way. Prefer in-process
+`ComposeAutomator` (sections above) when your code already runs inside the IDE.
+
+Maintainer spike notes (recipe + evidence chain, not on the public site nav):
+[`docs/spikes/209-injection/stock-intellij-recipe.md`](https://github.com/rock3r/spectre/blob/main/docs/spikes/209-injection/stock-intellij-recipe.md).
+
 ## Validating from a separate test JVM
 
 When you want a CI-friendly automated test that boots the IDE, installs your plugin,
