@@ -116,7 +116,7 @@ quietly skip the bounded worker that enforces their timeout, so they raise
 `IllegalStateException` up front. The wait name in the message tells you which call
 to wrap.
 
-JUnit test methods don't run on the EDT, so a plain `runBlocking { … }` body is all you
+JUnit test methods don't run on the EDT, so a a `runSpectreTest { … }` body is all you
 need — no extra `withContext` required. Only add `withContext(Dispatchers.Default)` if
 your test body runs inside a coroutine already dispatched on `Dispatchers.Main` or any
 other Swing-backed dispatcher.

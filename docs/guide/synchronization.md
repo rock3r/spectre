@@ -31,7 +31,7 @@ needed:
 
 ```kotlin
 @Test
-fun mySpec(): Unit = runBlocking {
+fun mySpec(): Unit = runSpectreTest {
     launchApp()
     automator.waitForNode(tag = "Root")
     // ...your test body
@@ -45,7 +45,7 @@ around the offending call — see
 
 ## JUnit expression-body return types
 
-When you write Spectre tests as `fun mySpec(): Unit = runBlocking { ... }`, the explicit
+When you write Spectre tests as `fun mySpec(): Unit = runSpectreTest { ... }`, the explicit
 `: Unit` matters. JUnit 5.14 and newer reject `@Test` methods whose JVM return type is
 not `void`, and Kotlin expression-body functions infer their return type from the last
 expression in the body. Some assertion helpers return the asserted value, not `Unit`, so

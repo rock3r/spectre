@@ -55,8 +55,8 @@ class MyTest {
 !!! warning "Expression-body tests should declare `: Unit`"
     JUnit 5.14 and newer reject `@Test` methods whose JVM return type is not `void`.
     Kotlin expression-body tests infer the return type from the last expression in the
-    `runBlocking { ... }` body; some assertions, including `assertNotNull`, return the
-    asserted value. Prefer `fun mySpec(): Unit = runBlocking { ... }` for Spectre tests.
+    `runSpectreTest { ... }` body; some assertions, including `assertNotNull`, return the
+    asserted value. Prefer `fun mySpec(): Unit = runSpectreTest { ... }` for Spectre tests.
 
 ## JUnit 4: `ComposeAutomatorRule`
 

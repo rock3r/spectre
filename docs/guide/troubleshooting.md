@@ -54,7 +54,7 @@ bounded worker that enforces the timeout, so the helpers raise
 `IllegalStateException` instead. The exact wait name in the message tells you which
 call to wrap.
 
-JUnit test methods don't run on the EDT, so a plain `runBlocking { … }` body is fine
+JUnit test methods don't run on the EDT, so a a `runSpectreTest { … }` body is fine (or plain `runBlocking` as a fallback)
 there — no `withContext` needed. The error appears when the call originates from a
 coroutine on `Dispatchers.Main` or any Swing-backed dispatcher, e.g.:
 

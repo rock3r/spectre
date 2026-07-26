@@ -24,7 +24,7 @@ If you're testing an individual composable in isolation → use `ComposeTestRule
 
 ## Gotchas
 
-- **Use `runBlocking`, not `runTest`.** `runTest` collapses `delay()` to zero, which silently breaks `longClick` hold durations, `swipe` step pacing, and clipboard-settle polling inside `typeText`. This breaks Spectre's internal delays.
+- **Use `runSpectreTest`, not `runTest`.** `runTest` collapses `delay()` to zero, which silently breaks `longClick` hold durations, `swipe` step pacing, and clipboard-settle polling. Prefer `runSpectreTest` from the testing module (real wall time + leak detection); plain `runBlocking` is a fallback.
 - **Selectors are non-waiting.** Every `findBy...` / `findOneBy...` call reads the semantics tree once. Call `waitForNode` before querying any node that might not exist yet.
 - **EDT rule.** `waitForIdle` and `waitForVisualIdle` throw `IllegalStateException` when called from the AWT event dispatch thread. Standard JUnit test methods run off the EDT so this isn't normally an issue; if you call them from the EDT, wrap with `withContext(Dispatchers.Default)`.
 
@@ -50,7 +50,7 @@ Sequential tests — own the extension on the class:
 
 ```kotlin
 import dev.sebastiano.spectre.testing.ComposeAutomatorExtension
-import kotlinx.coroutines.runBlocking
+import dev.sebastiano.spectre.testing.runSpectreTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 
@@ -59,7 +59,7 @@ class MyTest {
     val automatorExt = ComposeAutomatorExtension()
 
     @Test
-    fun myTest() = runBlocking {
+    fun myTest() = runSpectreTest {
         launchMyApp()  // your responsibility — Spectre manages the automator, not the window
         val automator = automatorExt.automator
         automator.waitForNode(tag = "root-content")
@@ -75,14 +75,14 @@ class MyTest {
 ```kotlin
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.testing.ComposeAutomatorExtension
-import kotlinx.coroutines.runBlocking
+import dev.sebastiano.spectre.testing.runSpectreTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
 
 @ExtendWith(ComposeAutomatorExtension::class)
 class MyTest {
     @Test
-    fun myTest(automator: ComposeAutomator) = runBlocking {
+    fun myTest(automator: ComposeAutomator) = runSpectreTest {
         launchMyApp()
         automator.waitForNode(tag = "root-content")
         // interact and assert
@@ -109,7 +109,7 @@ Key `AutomatorNode` properties: `testTag`, `text`, `texts`, `contentDescription`
 
 ## Interactions
 
-All interaction methods are `suspend` — they must be called from inside `runBlocking { ... }`.
+All interaction methods are `suspend` — they must be called from inside `runSpectreTest { ... }` (or `runBlocking` as a fallback).
 
 ```kotlin
 automator.click(node)

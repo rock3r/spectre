@@ -47,7 +47,7 @@ A test owns three things, in this order:
    it discovers Compose surfaces and reads their semantics.
 3. **Suspending input + synchronization calls** against that automator. All
    input methods (`click`, `typeText`, etc.) and waits are `suspend` functions
-   — wrap the test body in `runBlocking { ... }`.
+   — wrap the test body in `runSpectreTest { ... }` (from `dev.sebastiano.spectre.testing`).
 
 There is no `compose-test` style auto-wait. Every `findBy…` call is a single
 read against current state. **You wait explicitly**, then you query.
@@ -56,7 +56,7 @@ read against current state. **You wait explicitly**, then you query.
 
 ```kotlin
 import dev.sebastiano.spectre.testing.ComposeAutomatorExtension
-import kotlinx.coroutines.runBlocking
+import dev.sebastiano.spectre.testing.runSpectreTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 
@@ -66,7 +66,7 @@ class CounterTest {
     val automatorExt = ComposeAutomatorExtension()
 
     @Test
-    fun `clicking increment bumps the counter`(): Unit = runBlocking {
+    fun `clicking increment bumps the counter`(): Unit = runSpectreTest {
         launchCounterApp() // your harness — opens the Compose window
 
         val automator = automatorExt.automator
@@ -223,18 +223,18 @@ custom `Swing` dispatcher, etc.), wrap the wait in
 wait suspends off-thread. The user docs you may have read elsewhere have an
 older carve-out for `waitForNode` — that exception is gone in current code.
 
-### Rule 4: use `runBlocking`, not `runTest`
+### Rule 4: use `runSpectreTest`, not `runTest`
 
 `kotlinx-coroutines-test`'s `runTest` skips `delay()`. That collapses
 `longClick` hold durations, `swipe` pacing, and the macOS clipboard-settle
-poll inside `pasteText` to zero, breaking them all. Use `runBlocking { ... }`
+poll inside `pasteText` to zero, breaking them all. Use `runSpectreTest { ... }`
 in the test body.
 
 ### Rule 4b: force expression-body tests to return `Unit`
 
-Write `@Test fun mySpec(): Unit = runBlocking { ... }`. JUnit 5.14+ rejects
+Write `@Test fun mySpec(): Unit = runSpectreTest { ... }`. JUnit 5.14+ rejects
 non-void test methods during discovery, and Kotlin infers an expression-body
-function's return type from the last expression in the `runBlocking` body. Some
+function's return type from the last expression in the `runSpectreTest` body. Some
 assertions return the asserted value, not `Unit`.
 
 ### Custom idling resources
@@ -314,7 +314,7 @@ touches that area*; they are not needed for the common case.
 |---|---|---|
 | `findOneBy…` returns `null` right after an interaction | Selectors don't wait | Add `waitForNode(...)` or `waitForVisualIdle()` first |
 | Test deadlocks or throws inside any `waitFor…` | Called from the AWT EDT | Wrap in `withContext(Dispatchers.Default) { … }` — applies to all three waits, including `waitForNode` |
-| `longClick`/`swipe`/`typeText` complete instantly and miss | Test body uses `runTest` | Switch to `runBlocking` |
+| `longClick`/`swipe`/`typeText` complete instantly and miss | Test body uses `runTest` | Switch to `runSpectreTest` |
 | Two parallel test JVMs steal focus from each other | Both use real `RobotDriver()` | Use `RobotDriver.synthetic(rootWindow)` |
 | Cmd+Tab or OS shortcuts don't work under synthetic driver | Synthetic events bypass HID | Use real `RobotDriver()` for those tests |
 | Screenshot is blurry / mid-animation | Captured before frame stabilised | `waitForVisualIdle()` first |

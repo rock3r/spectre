@@ -15,7 +15,7 @@ than parking the worker thread until the hold completes.
 behind a coroutine boundary.
 
 The snippets below are written as if they sit inside a suspend block (e.g. a JUnit
-test wrapped in `runBlocking { … }`).
+test wrapped in `runSpectreTest { … }`).
 
 ## Mouse: clicks and drags
 
