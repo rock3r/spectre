@@ -69,20 +69,22 @@ class IpcIoTimeoutTest {
                 output.flush()
 
                 val deadline = System.currentTimeMillis() + frameTimeoutMs + 1_500
-                var sawPeerClose = false
-                while (System.currentTimeMillis() < deadline) {
-                    try {
-                        // Server deadline closes its end; reads eventually EOF.
-                        if (input.read() == -1) {
-                            sawPeerClose = true
-                            break
+                // Server deadline closes its end; reads eventually EOF or throw.
+                val sawPeerClose =
+                    generateSequence {
+                            if (System.currentTimeMillis() >= deadline) null
+                            else
+                                try {
+                                    if (input.read() == -1) true
+                                    else {
+                                        Thread.sleep(20)
+                                        false
+                                    }
+                                } catch (_: Exception) {
+                                    true
+                                }
                         }
-                    } catch (_: Exception) {
-                        sawPeerClose = true
-                        break
-                    }
-                    Thread.sleep(20)
-                }
+                        .any { it }
                 assertTrue(
                     sawPeerClose,
                     "server should close the stalled mid-frame peer within the I/O budget",
