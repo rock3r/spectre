@@ -240,6 +240,14 @@ class FailureArtifactsValidationTest {
                     ?: System.getenv("SPECTRE_205_EVIDENCE_DIR")?.takeIf { it.isNotBlank() })
                 ?.let { Path.of(it) } ?: return
         val out = evidenceRoot.resolve(label)
+        // Refresh each label dir so a second evidence run does not hit FileAlreadyExistsException.
+        if (Files.exists(out)) {
+            Files.walk(out).use { stream ->
+                stream.sorted(Comparator.reverseOrder()).forEach { path ->
+                    runCatching { Files.deleteIfExists(path) }
+                }
+            }
+        }
         Files.createDirectories(out)
         // Copy whole reports tree
         Files.walk(reportsRoot).use { stream ->
