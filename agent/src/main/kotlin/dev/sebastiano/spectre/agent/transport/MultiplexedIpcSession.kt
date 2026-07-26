@@ -26,6 +26,8 @@ internal class MultiplexedIpcSession(
     private val handler: AgentRequestHandler,
     private val running: AtomicBoolean,
     private val onDetach: () -> Unit,
+    private val channel: java.nio.channels.Channel,
+    private val frameIoTimeoutMs: Long = FrameIoDeadline.DEFAULT_TIMEOUT_MS,
 ) {
     fun run(input: InputStream, output: OutputStream) {
         // Bound threads *and* queue so a buggy client cannot OOM the agent with enqueued ops.
@@ -65,7 +67,24 @@ internal class MultiplexedIpcSession(
         writeLock: Any,
     ) {
         while (running.get()) {
-            val requestBytes = Framing.readFrame(input) ?: return
+            // Channel-close deadlines may surface as SocketTimeoutException or as a
+            // ClosedChannelException / AsynchronousCloseException on some platforms.
+            @Suppress("TooGenericExceptionCaught")
+            val requestBytes =
+                try {
+                    // Idle between requests is allowed; mid-frame stalls time out.
+                    FrameIoDeadline.readFrameAllowingIdle(input, channel, frameIoTimeoutMs)
+                        ?: return
+                } catch (ex: Exception) {
+                    if (FrameIoDeadline.isTimeout(ex) || !channel.isOpen) {
+                        System.err.println(
+                            "[spectre-agent] frame I/O timed out or peer closed " +
+                                "(${ex.javaClass.simpleName}: ${ex.message}); closing connection"
+                        )
+                        return
+                    }
+                    throw ex
+                }
             val op = decodeOpOrReport(requestBytes, output, writeLock) ?: continue
             when (val body = op.body) {
                 is AgentRequest.Cancel -> handleCancel(body, op.opId, output, writeLock, inFlight)
@@ -336,7 +355,11 @@ internal class MultiplexedIpcSession(
         // clear interrupt only for the duration of the write and restore afterward.
         val wasInterrupted = Thread.interrupted()
         try {
-            synchronized(writeLock) { Framing.writeFrame(output, toWrite) }
+            synchronized(writeLock) {
+                FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
+                    Framing.writeFrame(output, toWrite)
+                }
+            }
         } finally {
             if (wasInterrupted) {
                 Thread.currentThread().interrupt()

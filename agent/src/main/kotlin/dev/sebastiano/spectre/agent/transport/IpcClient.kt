@@ -29,7 +29,13 @@ import java.util.concurrent.atomic.AtomicLong
  * intentional agent teardown (see [dev.sebastiano.spectre.agent.AttachedAutomator.close]); a plain
  * client close must leave the server free to accept another connection (e.g. reconnect / tests).
  */
-internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) : AutoCloseable {
+internal class IpcClient
+@Throws(IOException::class)
+constructor(
+    udsPath: Path,
+    /** Per-frame read/write deadline; `<= 0` disables (tests only). */
+    private val frameIoTimeoutMs: Long = FrameIoDeadline.DEFAULT_TIMEOUT_MS,
+) : AutoCloseable {
     private val channel: SocketChannel =
         SocketChannel.open(StandardProtocolFamily.UNIX).also { channel ->
             var success = false
@@ -112,7 +118,7 @@ internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) 
         pending[opId] = future
         try {
             val frame = OpRequest(opId = opId, deadlineEpochMs = deadlineEpochMs, body = request)
-            synchronized(writeLock) { Framing.writeFrame(output, WireCodec.encode(frame)) }
+            writeFrameInterruptSafe(WireCodec.encode(frame))
             // No client-side deadline: wait indefinitely for the server (matches pre-#200
             // blocking read). With a deadline: pad so server taxonomy timeout can still arrive.
             return if (deadlineEpochMs == null) {
@@ -181,7 +187,7 @@ internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) 
         pending[cancelId] = future
         try {
             val frame = OpRequest(opId = cancelId, body = AgentRequest.Cancel(opId = opId))
-            synchronized(writeLock) { Framing.writeFrame(output, WireCodec.encode(frame)) }
+            writeFrameInterruptSafe(WireCodec.encode(frame))
             future.get(CANCEL_ACK_WAIT_MS, TimeUnit.MILLISECONDS)
         } catch (_: java.util.concurrent.TimeoutException) {
             // Best-effort: cancel ack lag is non-fatal.
@@ -214,15 +220,30 @@ internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) 
     internal fun lastOpId(): Long = nextOpId.get() - 1
 
     private fun readerLoop() {
+        var terminal: Exception =
+            EOFException("Agent closed the connection while waiting for a response")
+        // Framing/I/O failures are not a closed set of types (timeout, EOF, channel close, …).
+        @Suppress("TooGenericExceptionCaught")
         try {
             while (!closed.get()) {
-                val bytes = Framing.readFrame(input) ?: break
+                // Idle between responses is allowed; mid-frame stalls time out.
+                val bytes =
+                    FrameIoDeadline.readFrameAllowingIdle(input, channel, frameIoTimeoutMs) ?: break
                 dispatchOpResponse(bytes)
             }
-        } catch (_: Exception) {
-            // Channel closed or transport error — complete outstanding futures below.
+        } catch (ex: Exception) {
+            // Channel closed, I/O timeout, or transport error — complete outstanding futures.
+            terminal =
+                if (FrameIoDeadline.isTimeout(ex)) {
+                    FrameIoDeadline.asTimeoutIoException(ex)
+                } else {
+                    EOFException(
+                            "Agent closed the connection while waiting for a response: ${ex.message}"
+                        )
+                        .apply { initCause(ex) }
+                }
         } finally {
-            failAllPending(EOFException("Agent closed the connection while waiting for a response"))
+            failAllPending(terminal)
         }
     }
 
@@ -243,12 +264,33 @@ internal class IpcClient @Throws(IOException::class) constructor(udsPath: Path) 
         pending.clear()
     }
 
+    /**
+     * SocketChannel is interruptible: a write from a thread with interrupt status set can close the
+     * shared client socket. Cancel/interrupt paths call [cancel] while interrupted, so clear
+     * interrupt only for the duration of the write and restore afterward (mirrors the server write
+     * path in MultiplexedIpcSession).
+     */
+    private fun writeFrameInterruptSafe(payload: ByteArray) {
+        val wasInterrupted = Thread.interrupted()
+        try {
+            synchronized(writeLock) {
+                FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
+                    Framing.writeFrame(output, payload)
+                }
+            }
+        } finally {
+            if (wasInterrupted) {
+                Thread.currentThread().interrupt()
+            }
+        }
+    }
+
     /** Bare (pre-envelope) exchange used only for Hello / best-effort Detach on failed Hello. */
     @Throws(IOException::class)
     private fun exchangeBare(request: AgentRequest): AgentResponse {
-        Framing.writeFrame(output, WireCodec.encode(request))
+        writeFrameInterruptSafe(WireCodec.encode(request))
         val responseBytes =
-            Framing.readFrame(input)
+            FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) { Framing.readFrame(input) }
                 ?: throw EOFException(
                     "Agent closed the connection before sending a response to ${request.logLabel}"
                 )
