@@ -86,6 +86,11 @@ class WindowsGraphicsCaptureHelperPackagingContractTest {
                   "SpectreWindowCapture/1.0.0": {
                     "runtime": { "SpectreWindowCapture.dll": {} }
                   }
+                },
+                ".NETCoreApp,Version=v8.0/win-arm64": {
+                  "SpectreWindowCapture/1.0.0": {
+                    "runtime": { "SpectreWindowCapture.dll": {} }
+                  }
                 }
               }
             }
@@ -138,9 +143,14 @@ class WindowsGraphicsCaptureHelperPackagingContractTest {
                 .toMap()
         val depsBody =
             """
-            {"targets":{".NETCoreApp,Version=v8.0/win-x64":{
-              "SpectreWindowCapture/1.0.0":{"runtime":{"SpectreWindowCapture.dll":{}}}
-            }}}
+            {"targets":{
+              ".NETCoreApp,Version=v8.0/win-x64":{
+                "SpectreWindowCapture/1.0.0":{"runtime":{"SpectreWindowCapture.dll":{}}}
+              },
+              ".NETCoreApp,Version=v8.0/win-arm64":{
+                "SpectreWindowCapture/1.0.0":{"runtime":{"SpectreWindowCapture.dll":{}}}
+              }
+            }}
             """
                 .trimIndent()
         val withDeps =
@@ -236,6 +246,81 @@ class WindowsGraphicsCaptureHelperPackagingContractTest {
         assertTrue(
             arm64.contains("OnlyArm64.dll") && !arm64.contains("OnlyX64.dll"),
             arm64.toString(),
+        )
+    }
+
+    @Test
+    fun `wrong-arch-only deps json is rejected for the directory arch`() {
+        val x64OnlyDeps =
+            """
+            {
+              "targets": {
+                ".NETCoreApp,Version=v8.0/win-x64": {
+                  "pkg/1": {
+                    "native": { "runtimes/win-x64/native/OnlyX64.dll": {} }
+                  }
+                }
+              }
+            }
+            """
+                .trimIndent()
+        val files = completeFixedRequiredFiles()
+        val entrySizes =
+            files.mapKeys { "native/windows/arm64/${it.key}" } +
+                files.mapKeys { "native/windows/x64/${it.key}" }
+        val errors =
+            WindowsGraphicsCaptureHelperPackagingContract.validateJarEntries(
+                entrySizes,
+                // arm64 directory claims a win-x64-only deps.json
+                depsJsonByArch = mapOf("arm64" to x64OnlyDeps, "x64" to x64OnlyDeps),
+            )
+        assertTrue(
+            errors.any { it.contains("arch-mismatched") && it.contains("arm64") },
+            "expected arch mismatch for arm64; errors=$errors",
+        )
+    }
+
+    @Test
+    fun `runtimeTargets assets are required by the deps closure`() {
+        val deps =
+            """
+            {
+              "targets": {
+                ".NETCoreApp,Version=v8.0/win-x64": {
+                  "pkg/1": {
+                    "runtimeTargets": {
+                      "runtimes/win-x64/native/FromRuntimeTargets.dll": {}
+                    }
+                  }
+                },
+                ".NETCoreApp,Version=v8.0/win-arm64": {
+                  "pkg/1": {
+                    "runtimeTargets": {
+                      "runtimes/win-arm64/native/FromRuntimeTargets.dll": {}
+                    }
+                  }
+                }
+              }
+            }
+            """
+                .trimIndent()
+        val files = completeFixedRequiredFiles()
+        // No FromRuntimeTargets.dll in the tree.
+        val entrySizes =
+            WindowsGraphicsCaptureHelperPackagingContract.ARCHES.flatMap { arch ->
+                    files.map { (base, size) -> "native/windows/$arch/$base" to size }
+                }
+                .toMap()
+        val errors =
+            WindowsGraphicsCaptureHelperPackagingContract.validateJarEntries(
+                entrySizes,
+                depsJsonByArch = mapOf("x64" to deps, "arm64" to deps),
+            )
+        assertTrue(
+            errors.any {
+                it.contains("FromRuntimeTargets.dll") && it.contains("required by")
+            },
+            "expected runtimeTargets companion to be required; errors=$errors",
         )
     }
 

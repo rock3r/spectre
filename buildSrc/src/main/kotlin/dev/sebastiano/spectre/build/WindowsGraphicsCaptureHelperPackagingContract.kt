@@ -145,6 +145,10 @@ object WindowsGraphicsCaptureHelperPackagingContract {
             val requiredFromDeps =
                 try {
                     runtimeAssetBaseNames(depsJson, arch)
+                } catch (e: WrongArchDepsException) {
+                    errors +=
+                        "arch-mismatched $pathPrefix$DEPS_JSON for arch $arch: " + e.message
+                    emptySet()
                 } catch (e: Exception) {
                     errors +=
                         "invalid $pathPrefix$DEPS_JSON for arch $arch: " +
@@ -169,8 +173,12 @@ object WindowsGraphicsCaptureHelperPackagingContract {
     }
 
     /**
-     * Collects basenames of runtime and native assets from a .NET deps.json document
-     * for the Windows RID target matching [arch] (`x64` → `win-x64`, `arm64` → `win-arm64`).
+     * Collects basenames of runtime, native, and runtimeTargets assets from a .NET
+     * deps.json document for the Windows RID target matching [arch]
+     * (`x64` → `win-x64`, `arm64` → `win-arm64`).
+     *
+     * Throws [WrongArchDepsException] when the file only declares other Windows RIDs
+     * (e.g. win-x64 deps under an arm64 directory).
      */
     @Suppress("UNCHECKED_CAST")
     fun runtimeAssetBaseNames(depsJson: String, arch: String = "x64"): Set<String> {
@@ -178,29 +186,49 @@ object WindowsGraphicsCaptureHelperPackagingContract {
         val targets = root["targets"] as? Map<String, Any?> ?: return emptySet()
         val assetNames = linkedSetOf<String>()
         val targetKeys = targets.keys.toList()
-        val ridToken =
-            when (arch.lowercase()) {
-                "x64",
-                "amd64",
-                "x86_64" -> "/win-x64"
-                "arm64",
-                "aarch64" -> "/win-arm64"
-                else -> "/win-"
+        val ridToken = ridTokenForArch(arch)
+        val preferred = targetKeys.filter { it.contains(ridToken, ignoreCase = true) }
+        if (preferred.isEmpty()) {
+            val otherWin =
+                targetKeys.filter { it.contains("/win-", ignoreCase = true) &&
+                    !it.contains(ridToken, ignoreCase = true) }
+            if (otherWin.isNotEmpty()) {
+                throw WrongArchDepsException(
+                    "expected target containing '$ridToken' but found only " +
+                        otherWin.joinToString()
+                )
             }
-        val preferred =
-            targetKeys.filter { it.contains(ridToken, ignoreCase = true) }.ifEmpty {
-                // Fall back to any win RID, then to all targets (framework-only deps).
-                targetKeys.filter { it.contains("/win-", ignoreCase = true) }.ifEmpty { targetKeys }
+            // Framework-only deps (no RID target): use all targets.
+            for (targetKey in targetKeys) {
+                collectFromTarget(targets[targetKey], assetNames)
             }
+            return assetNames
+        }
         for (targetKey in preferred) {
-            val packages = targets[targetKey] as? Map<String, Any?> ?: continue
-            for ((_, metaAny) in packages) {
-                val meta = metaAny as? Map<String, Any?> ?: continue
-                collectAssetBasenames(meta["runtime"] as? Map<String, Any?>, assetNames)
-                collectAssetBasenames(meta["native"] as? Map<String, Any?>, assetNames)
-            }
+            collectFromTarget(targets[targetKey], assetNames)
         }
         return assetNames
+    }
+
+    fun ridTokenForArch(arch: String): String =
+        when (arch.lowercase()) {
+            "x64",
+            "amd64",
+            "x86_64" -> "/win-x64"
+            "arm64",
+            "aarch64" -> "/win-arm64"
+            else -> "/win-"
+        }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun collectFromTarget(targetAny: Any?, into: MutableSet<String>) {
+        val packages = targetAny as? Map<String, Any?> ?: return
+        for ((_, metaAny) in packages) {
+            val meta = metaAny as? Map<String, Any?> ?: continue
+            collectAssetBasenames(meta["runtime"] as? Map<String, Any?>, into)
+            collectAssetBasenames(meta["native"] as? Map<String, Any?>, into)
+            collectAssetBasenames(meta["runtimeTargets"] as? Map<String, Any?>, into)
+        }
     }
 
     private fun collectAssetBasenames(assets: Map<String, Any?>?, into: MutableSet<String>) {
@@ -212,4 +240,7 @@ object WindowsGraphicsCaptureHelperPackagingContract {
             }
         }
     }
+
+    /** deps.json only contains Windows RID targets for a different architecture. */
+    class WrongArchDepsException(message: String) : IllegalArgumentException(message)
 }
