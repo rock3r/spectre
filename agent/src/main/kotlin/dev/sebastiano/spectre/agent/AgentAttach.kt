@@ -75,37 +75,16 @@ public object AgentAttach {
      * 2. The system property `dev.sebastiano.spectre.agent.runtimeJar`.
      * 3. A `spectre-agent-runtime-<version>.jar` or `agent-runtime-<version>.jar` entry on the
      *    attacher's `java.class.path`.
-     * 4. `<cwd>/agent-runtime/build/libs/agent-runtime-*.jar` (any match).
+     * 4. In-repo fallback at `<spectre-checkout>/agent-runtime/build/libs/agent-runtime-*.jar`,
+     *    only when the current working directory is inside a Spectre source checkout.
      */
-    @Suppress("ReturnCount")
-    private fun resolveAgentJar(options: AttachOptions): Path {
-        val tried = mutableListOf<Path>()
-
-        options.agentJarPath?.let { path ->
-            tried.add(path)
-            if (Files.isRegularFile(path)) return path
-        }
-
-        val sysProp = System.getProperty(AGENT_JAR_PROPERTY)?.takeIf { it.isNotBlank() }
-        if (sysProp != null) {
-            val path = Paths.get(sysProp)
-            tried.add(path)
-            if (Files.isRegularFile(path)) return path
-        }
-
-        val classpathRuntime =
-            AgentJarResolution.findRuntimeJarOnClasspath(System.getProperty("java.class.path"))
-        if (classpathRuntime != null) return classpathRuntime
-
-        val cwdGuess = Paths.get(System.getProperty("user.dir")).resolve("agent-runtime/build/libs")
-        if (Files.isDirectory(cwdGuess)) {
-            val match = AgentJarResolution.findRuntimeJarInDirectory(cwdGuess)
-            if (match != null) return match
-            tried.add(cwdGuess.resolve("agent-runtime-*.jar"))
-        }
-
-        throw AgentJarNotFoundException(tried)
-    }
+    private fun resolveAgentJar(options: AttachOptions): Path =
+        AgentJarResolution.resolveRuntimeJar(
+            agentJarPath = options.agentJarPath,
+            runtimeJarSystemProperty = System.getProperty(AGENT_JAR_PROPERTY),
+            classPath = System.getProperty("java.class.path").orEmpty(),
+            cwd = Paths.get(System.getProperty("user.dir")),
+        )
 
     /**
      * Resolves the public `com.sun.tools.attach.VirtualMachine` class and calls its static
