@@ -25,22 +25,17 @@ import org.opentest4j.TestAbortedException
  * Drives the real [ComposeAutomatorExtension] failure-artifact callbacks
  * ([AfterTestExecutionCallback], lifecycle handlers) via a recording [ExtensionContext].
  *
- * Headless automators have zero windows, so these tests pin control-plane behaviour (when capture
- * runs / is skipped / is once-per-invocation) rather than PNG bytes. Live capture.json + report
- * entries are covered by sample-desktop `FailureArtifactsValidationTest`.
+ * Live capture.json + `spectre.failureArtifact` report entries (with real windows) are covered by
+ * sample-desktop `FailureArtifactsValidationTest`, which also calls `afterTestExecution` on the
+ * production extension with a live SampleAppFixture automator.
  */
 class ComposeAutomatorExtensionFailureArtifactsTest {
 
     @Test
-    fun `afterTestExecution captures once then lifecycle handler does not recapture`(
+    fun `afterTestExecution sets once-per-invocation flag so lifecycle handler is a no-op`(
         @TempDir temp: Path
     ) {
-        val config = FailureArtifactsConfig(reportsRoot = temp)
-        val extension =
-            ComposeAutomatorExtension(
-                factory = { ComposeAutomator.inProcess(robotDriver = RobotDriver.headless()) },
-                failureArtifacts = config,
-            )
+        val extension = headlessExtension(temp)
         val context =
             RecordingExtensionContext(
                 failure = AssertionError("boom"),
@@ -50,32 +45,27 @@ class ComposeAutomatorExtensionFailureArtifactsTest {
 
         extension.beforeEach(context)
         extension.afterTestExecution(context)
-        // Second path that would fire after a later @AfterEach failure must be a no-op.
+        assertEquals(true, context.storeValue("failureArtifactsCaptured"))
+
+        // A later @AfterEach failure re-enters captureFailureArtifacts; CAPTURED_KEY must short-
+        // circuit before another recordFailure (would still rethrow the AfterEach throwable).
         try {
             extension.handleAfterEachMethodExecutionException(
                 context,
                 IllegalStateException("afterEach also failed"),
             )
-        } catch (_: IllegalStateException) {
-            // expected rethrow
+            error("expected rethrow")
+        } catch (expected: IllegalStateException) {
+            assertEquals("afterEach also failed", expected.message)
         }
-
         assertEquals(true, context.storeValue("failureArtifactsCaptured"))
-        // Headless: zero windows → no files, but capture was attempted (captured flag set).
-        assertFalse(
-            Files.walk(temp).use { s -> s.anyMatch { Files.isRegularFile(it) } },
-            "headless capture writes nothing under $temp",
-        )
+        // Headless: zero windows → nothing on disk either way; flag is the control-plane proof.
+        assertFalse(Files.walk(temp).use { s -> s.anyMatch { Files.isRegularFile(it) } })
     }
 
     @Test
     fun `afterTestExecution skips TestAbortedException`(@TempDir temp: Path) {
-        val config = FailureArtifactsConfig(reportsRoot = temp)
-        val extension =
-            ComposeAutomatorExtension(
-                factory = { ComposeAutomator.inProcess(robotDriver = RobotDriver.headless()) },
-                failureArtifacts = config,
-            )
+        val extension = headlessExtension(temp)
         val context =
             RecordingExtensionContext(
                 failure = TestAbortedException("assumption"),
@@ -85,16 +75,12 @@ class ComposeAutomatorExtensionFailureArtifactsTest {
         extension.beforeEach(context)
         extension.afterTestExecution(context)
         assertEquals(null, context.storeValue("failureArtifactsCaptured"))
+        assertTrue(context.reportEntries.isEmpty())
     }
 
     @Test
     fun `lifecycle handler skips TestAbortedException`(@TempDir temp: Path) {
-        val config = FailureArtifactsConfig(reportsRoot = temp)
-        val extension =
-            ComposeAutomatorExtension(
-                factory = { ComposeAutomator.inProcess(robotDriver = RobotDriver.headless()) },
-                failureArtifacts = config,
-            )
+        val extension = headlessExtension(temp)
         val context =
             RecordingExtensionContext(
                 failure = null,
@@ -107,19 +93,20 @@ class ComposeAutomatorExtensionFailureArtifactsTest {
                 context,
                 TestAbortedException("skip before"),
             )
+            error("expected rethrow")
         } catch (_: TestAbortedException) {
-            // expected rethrow
+            // expected
         }
         assertEquals(null, context.storeValue("failureArtifactsCaptured"))
+        assertTrue(context.reportEntries.isEmpty())
     }
 
     @Test
-    fun `opt-out does not mark capture or write files`(@TempDir temp: Path) {
-        val config = FailureArtifactsConfig(enabled = false, reportsRoot = temp)
+    fun `opt-out writes no report files`(@TempDir temp: Path) {
         val extension =
             ComposeAutomatorExtension(
                 factory = { ComposeAutomator.inProcess(robotDriver = RobotDriver.headless()) },
-                failureArtifacts = config,
+                failureArtifacts = FailureArtifactsConfig(enabled = false, reportsRoot = temp),
             )
         val context =
             RecordingExtensionContext(
@@ -129,24 +116,28 @@ class ComposeAutomatorExtensionFailureArtifactsTest {
             )
         extension.beforeEach(context)
         extension.afterTestExecution(context)
-        // Captured flag is still set after recordFailure returns empty — wait, recordFailure
-        // returns early when disabled BEFORE capture, but extension still puts CAPTURED_KEY after
-        // recordFailure. Check source...
-        // Extension always store.put(CAPTURED_KEY, true) after recordFailure. So flag is set.
-        // Files must not exist.
         assertFalse(Files.walk(temp).use { s -> s.anyMatch { Files.isRegularFile(it) } })
         assertTrue(context.reportEntries.isEmpty())
     }
 
-    /** Marker class so [ExtensionContext.getTestClass]/[getTestMethod] resolve. */
+    private fun headlessExtension(temp: Path): ComposeAutomatorExtension =
+        ComposeAutomatorExtension(
+            factory = { ComposeAutomator.inProcess(robotDriver = RobotDriver.headless()) },
+            failureArtifacts = FailureArtifactsConfig(reportsRoot = temp),
+        )
+
+    /**
+     * Reflective targets for [ExtensionContext.getTestMethod]. Bodies touch [System.nanoTime] so
+     * detekt does not flag EmptyFunctionBlock / FunctionOnlyReturningConstant.
+     */
     class Sample {
-        fun fails() {}
+        fun fails(): Long = System.nanoTime()
 
-        fun assumed() {}
+        fun assumed(): Long = System.nanoTime()
 
-        fun beforeAssumed() {}
+        fun beforeAssumed(): Long = System.nanoTime()
 
-        fun optOut() {}
+        fun optOut(): Long = System.nanoTime()
     }
 }
 
@@ -251,10 +242,7 @@ private class MapBackedStore : ExtensionContext.Store {
         key: K,
         defaultCreator: Function<K, V>,
         requiredType: Class<V>,
-    ): V {
-        val value = getOrComputeIfAbsent(key, defaultCreator)
-        return requiredType.cast(value)
-    }
+    ): V = requiredType.cast(getOrComputeIfAbsent(key, defaultCreator))
 
     override fun put(key: Any, value: Any?) {
         if (value == null) map.remove(key) else map[key] = value
