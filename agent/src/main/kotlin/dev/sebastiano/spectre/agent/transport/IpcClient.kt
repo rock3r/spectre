@@ -234,10 +234,9 @@ constructor(
         @Suppress("TooGenericExceptionCaught")
         try {
             while (!closed.get()) {
+                // Idle between responses is allowed; mid-frame stalls time out.
                 val bytes =
-                    FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
-                        Framing.readFrame(input)
-                    } ?: break
+                    FrameIoDeadline.readFrameAllowingIdle(input, channel, frameIoTimeoutMs) ?: break
                 dispatchOpResponse(bytes)
             }
         } catch (ex: Exception) {

@@ -51,13 +51,19 @@ class IpcIoTimeoutTest {
         IpcServer(udsPath, stubHandler(), frameIoTimeoutMs = frameTimeoutMs).use {
             awaitSocket(udsPath)
 
-            // Write a partial frame header and stop — server must not block the accept loop.
+            // Complete Hello, then write a partial next-frame header and stall so the deadline
+            // applies to mid-frame completion (idle between frames is intentionally unbounded).
             SocketChannel.open(StandardProtocolFamily.UNIX).use { raw ->
                 raw.connect(UnixDomainSocketAddress.of(udsPath))
                 val output = Channels.newOutputStream(raw)
-                output.write(byteArrayOf(0x00, 0x00)) // 2 of 4 length bytes
+                val input = Channels.newInputStream(raw)
+                Framing.writeFrame(
+                    output,
+                    WireCodec.encode(AgentRequest.Hello(protocolVersion = ProtocolVersion.CURRENT)),
+                )
+                Framing.readFrame(input) // HelloAck
+                output.write(byteArrayOf(0x00, 0x00)) // 2 of 4 length bytes of next frame
                 output.flush()
-                // Hold the socket open past the server's frame deadline.
                 Thread.sleep(frameTimeoutMs + 200)
             }
 
@@ -69,6 +75,24 @@ class IpcIoTimeoutTest {
                         "accept loop must survive a mid-frame stall",
                     )
                 }
+            }
+        }
+    }
+
+    @Test
+    fun `idle between frames does not time out a live session`() {
+        // Budget shorter than the intentional idle gap.
+        val frameTimeoutMs = 200L
+        IpcServer(udsPath, stubHandler(), frameIoTimeoutMs = frameTimeoutMs).use {
+            awaitSocket(udsPath)
+            IpcClient(udsPath, frameIoTimeoutMs = frameTimeoutMs).use { client ->
+                assertEquals(AgentResponse.Pong, client.send(AgentRequest.Ping))
+                Thread.sleep(frameTimeoutMs * 3)
+                assertEquals(
+                    AgentResponse.Pong,
+                    client.send(AgentRequest.Ping),
+                    "session must survive idle longer than the mid-frame budget",
+                )
             }
         }
     }

@@ -69,9 +69,9 @@ internal class MultiplexedIpcSession(
         while (running.get()) {
             val requestBytes =
                 try {
-                    FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
-                        Framing.readFrame(input)
-                    } ?: return
+                    // Idle between requests is allowed; mid-frame stalls time out.
+                    FrameIoDeadline.readFrameAllowingIdle(input, channel, frameIoTimeoutMs)
+                        ?: return
                 } catch (ex: java.net.SocketTimeoutException) {
                     // Stalled peer mid-frame — drop this connection; accept loop continues.
                     System.err.println(
