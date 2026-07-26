@@ -30,10 +30,18 @@ public object FailureArtifactCapture {
         // Drop every prior window-* under this method dir (including higher indices than the
         // current windowCount) so CI cannot publish stale captures from a previous failure.
         clearStaleWindowDirectories(methodDirectory)
+        // If OS locks prevent full cleanup, write under a unique run-* subdir so this attempt's
+        // artifacts cannot interleave with undeletable leftovers.
+        val writeRoot =
+            if (listWindowDirectories(methodDirectory).isEmpty()) {
+                methodDirectory
+            } else {
+                methodDirectory.resolve("run-${System.nanoTime()}")
+            }
         if (windowCount <= 0) return emptyList()
         val written = ArrayList<CaptureArtifactPaths>(windowCount)
         for (index in 0 until windowCount) {
-            val directory = FailureArtifactPaths.windowDirectory(methodDirectory, index)
+            val directory = FailureArtifactPaths.windowDirectory(writeRoot, index)
             val paths =
                 runCatching {
                         val capture = captureWindow(index)
@@ -46,17 +54,24 @@ public object FailureArtifactCapture {
     }
 
     private fun clearStaleWindowDirectories(methodDirectory: Path) {
-        if (!methodDirectory.exists()) return
-        runCatching {
-            Files.list(methodDirectory).use { stream ->
-                stream
-                    .asSequence()
-                    .filter {
-                        Files.isDirectory(it) && it.fileName.toString().startsWith("window-")
-                    }
-                    .forEach { deleteRecursivelyQuietly(it) }
-            }
+        for (dir in listWindowDirectories(methodDirectory)) {
+            deleteRecursivelyQuietly(dir)
         }
+    }
+
+    private fun listWindowDirectories(methodDirectory: Path): List<Path> {
+        if (!methodDirectory.exists()) return emptyList()
+        return runCatching {
+                Files.list(methodDirectory).use { stream ->
+                    stream
+                        .asSequence()
+                        .filter {
+                            Files.isDirectory(it) && it.fileName.toString().startsWith("window-")
+                        }
+                        .toList()
+                }
+            }
+            .getOrDefault(emptyList())
     }
 
     /**
