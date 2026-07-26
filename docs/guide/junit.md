@@ -88,8 +88,10 @@ When the UI under test is a **separate JVM** (prod-like `java -jar`, installDist
 `./gradlew :app:run` with warnings), use `LaunchAndAttachExtension` (JUnit 5) or
 `LaunchAndAttachRule` (JUnit 4) from `:testing`. They call the shared agent launch core
 before each test and tear the process tree down after — the same lifecycle window
-`ComposeAutomatorExtension` / `ComposeAutomatorRule` use, so future failure-artifact
-hooks can compose freely.
+`ComposeAutomatorExtension` / `ComposeAutomatorRule` use. Failure-artifact capture is
+wired into those automator wrappers (see [Failure artifacts](#failure-artifacts)); keep
+the automator rule/extension innermost if you also use launch-and-attach so capture still
+sees open windows.
 
 ```kotlin
 import dev.sebastiano.spectre.agent.launch.LaunchSpec
@@ -243,6 +245,78 @@ Compose's AWT key listener even when macOS never grants the window an AWT focus 
 Do not rely on UI-element mode for clipboard-backed `pasteText`; that path still goes
 through macOS clipboard services outside the synthetic key-event path. Run recording tests
 as a separate, foreground-capable task while establishing Screen Recording TCC grants.
+
+## Failure artifacts
+
+When a Spectre-driven test **fails**, `ComposeAutomatorExtension` and `ComposeAutomatorRule`
+capture an [atomic capture](capture.md) (PNG + `capture.json`) for every window the automator
+knows about. Capture runs **after** the failure and **before** the wrapper tears down the
+automator, so windows are still open.
+
+Default is **on**. Opt out when constructing the wrapper:
+
+```kotlin
+import dev.sebastiano.spectre.testing.ComposeAutomatorExtension
+import dev.sebastiano.spectre.testing.FailureArtifactsConfig
+import org.junit.jupiter.api.extension.RegisterExtension
+
+@JvmField
+@RegisterExtension
+val automatorExt =
+    ComposeAutomatorExtension(
+        failureArtifacts = FailureArtifactsConfig(enabled = false),
+    )
+```
+
+```kotlin
+import dev.sebastiano.spectre.testing.ComposeAutomatorRule
+import dev.sebastiano.spectre.testing.FailureArtifactsConfig
+import org.junit.Rule
+
+@get:Rule
+val automatorRule =
+    ComposeAutomatorRule(
+        failureArtifacts = FailureArtifactsConfig(enabled = false),
+    )
+```
+
+### Layout
+
+Artifacts land under Gradle’s reports tree (cleaned by `clean`), not under the CLI/agent
+`$TMPDIR` capture root:
+
+```text
+build/reports/spectre/<test-class>/<test-method>[/<invocation>][/attempt-N]/run-*/window-<i>/
+  capture.json
+  screenshot.png
+```
+
+- **`<test-class>` / `<test-method>`** — sanitized FQCN and method name.
+- **`<invocation>`** — distinguishes parallel or repeated runs of the same method (JUnit 5
+  unique id by default; JUnit 4 synthesizes one).
+- **`attempt-N`** — only when you set `FailureArtifactsConfig.attemptIndex` to a value greater
+  than 1 (1-based). Use this with retry runners so attempt 2 does not overwrite attempt 1.
+- **`run-*` / `window-<i>`** — one isolation tree per capture attempt; window index matches the
+  automator’s known windows. Same on-disk shape as a manual atomic capture, so the shipped
+  **`spectre-capture`** skill’s `jq` recipes work unchanged.
+
+Passing tests write nothing. Aborted tests (JUnit 5 assumptions / JUnit 4 `Assume`) also write
+nothing — they are skips, not failures.
+
+On JUnit 5, each written window directory is published as a report entry under the key
+`spectre.failureArtifact` (path string). JUnit 4 has no report-entry API; inspect disk under
+`build/reports/spectre/` (or your custom `reportsRoot`).
+
+### Caveats
+
+- Capture happens **after** the exception. Animations may advance a few frames past the failing
+  assertion; treat the PNG as “state at capture time,” not a perfect freeze of the assert line.
+- Capture is **best-effort**. A secondary capture error must never replace the original test
+  failure; if capture cannot run, you still see the real failure in the test report.
+- With multiple JUnit rules, keep `ComposeAutomatorRule` **innermost** (last `.around(...)` in
+  a `RuleChain`) so outer rules do not close UI or process state before capture runs.
+
+Point CI at the reports tree with a single upload glob — see [Running on CI](ci.md#failure-artifacts).
 
 ## Custom `AutomatorFactory`
 

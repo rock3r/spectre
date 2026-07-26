@@ -46,6 +46,8 @@ dependencies {
 
     "validationImplementation"(libs.kotlin.testJunit5)
     "validationImplementation"(libs.junit5.api)
+    "validationImplementation"(libs.junit4)
+    "validationImplementation"(projects.testing)
     "validationRuntimeOnly"(libs.junit5.engine)
 }
 

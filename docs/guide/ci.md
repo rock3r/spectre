@@ -209,6 +209,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y xvfb
       - name: Run Spectre UI tests
         run: xvfb-run --auto-servernum ./gradlew spectreTest
+      - name: Upload Spectre failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spectre-failure-artifacts
+          path: "**/build/reports/spectre/**"
+          if-no-files-found: ignore
 ```
 
 ```kotlin
@@ -222,3 +229,24 @@ val spectreTest by tasks.registering(Test::class) {
     }
 }
 ```
+
+## Failure artifacts
+
+When a Spectre JUnit test fails, the extension/rule writes atomic captures under
+`build/reports/spectre/` (see [JUnit integration](junit.md#failure-artifacts)). Upload that
+tree on CI failure so you can open `capture.json` + `screenshot.png` without re-running the
+suite:
+
+```yaml
+- name: Upload Spectre failure artifacts
+  if: failure()
+  uses: actions/upload-artifact@v4
+  with:
+    name: spectre-failure-artifacts
+    path: "**/build/reports/spectre/**"
+    if-no-files-found: ignore
+```
+
+`if-no-files-found: ignore` keeps the step green when every test passed or opt-out produced
+no files. Prefer a multi-module glob (`**/build/reports/spectre/**`) over a single module path
+when several projects run Spectre tests in one job.
