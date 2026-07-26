@@ -15,11 +15,16 @@ import java.nio.file.Path
  * [attemptIndex] is **1-based**. When greater than 1, artifacts nest under an `attempt-<n>`
  * directory so retries do not overwrite prior attempt captures and do not collide with a test
  * literally named `…-attempt-N` (see #110 / future `runSpectreTest`).
+ *
+ * [invocationId] distinguishes parallel or repeated invocations of the same class/method that share
+ * a null attempt index (JUnit 5 unique id / display name). When non-null/blank it becomes an extra
+ * path segment under the method directory.
  */
 public data class FailureArtifactsConfig(
     public val enabled: Boolean = true,
     public val reportsRoot: Path = FailureArtifactPaths.defaultReportsRoot(),
     public val attemptIndex: Int? = null,
+    public val invocationId: String? = null,
 ) {
     init {
         require(attemptIndex == null || attemptIndex >= 1) {

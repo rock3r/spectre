@@ -45,6 +45,20 @@ class FailureArtifactPathsTest {
     }
 
     @Test
+    fun `invocationId nests under the method directory`(@TempDir temp: Path) {
+        val config =
+            FailureArtifactsConfig(reportsRoot = temp, invocationId = "invocation-unique-1")
+        val dir =
+            FailureArtifactPaths.methodDirectory(
+                testClassName = "com.example.T",
+                testMethodName = "parallel",
+                config = config,
+            )
+        assertTrue(dir.parent.fileName.toString().startsWith("parallel"))
+        assertTrue(dir.fileName.toString().startsWith("invocation-unique-1"))
+    }
+
+    @Test
     fun `attempt nest does not collide with a literal attempt method name`(@TempDir temp: Path) {
         val config = FailureArtifactsConfig(reportsRoot = temp, attemptIndex = 2)
         val retryDir =

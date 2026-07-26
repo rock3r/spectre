@@ -30,7 +30,11 @@ public object FailureArtifactPaths {
     ): Path {
         val classSeg = sanitizePathSegment(testClassName)
         val methodSeg = sanitizePathSegment(testMethodName)
-        val methodDir = config.reportsRoot.resolve(classSeg).resolve(methodSeg)
+        var methodDir = config.reportsRoot.resolve(classSeg).resolve(methodSeg)
+        val invocation = config.invocationId?.takeIf { it.isNotBlank() }
+        if (invocation != null) {
+            methodDir = methodDir.resolve(sanitizePathSegment(invocation))
+        }
         val attempt = config.attemptIndex
         return if (attempt != null && attempt > 1) {
             methodDir.resolve("attempt-$attempt")
