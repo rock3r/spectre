@@ -4,6 +4,10 @@ Test ergonomics for Spectre.
 
 ## Public API
 
+- `runSpectreTest` — preferred entry for Spectre UI test bodies. Real wall-clock `delay` (so
+  `longClick` / `swipe` / paste settle work), structured scope, and unfinished-child leak
+  detection. Prefer over bare `runBlocking`; do **not** use `kotlinx.coroutines.test.runTest`
+  for Spectre interactions (virtual time collapses internal delays).
 - `ComposeAutomatorRule` — JUnit 4 rule that owns a per-test `ComposeAutomator` instance.
 - `ComposeAutomatorExtension` — JUnit 5 extension with the same lifecycle plus parameter
   resolution for `ComposeAutomator` test method parameters.
@@ -13,6 +17,15 @@ Test ergonomics for Spectre.
 Both wrappers default to `ComposeAutomator.inProcess()`. Tests that need a stub for headless CI
 or focused unit testing can pass a custom factory built around `RobotDriver.headless()` (see the
 `newHeadlessAutomator()` fixture in this module's tests for the recipe).
+
+Typical test shape:
+
+```kotlin
+@Test
+fun `clicking increment bumps the counter`(): Unit = runSpectreTest {
+    // suspend automator calls…
+}
+```
 
 ## JUnit dependency model
 

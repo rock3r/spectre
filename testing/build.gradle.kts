@@ -20,6 +20,9 @@ dependencies {
     // Launch-and-attach JUnit surface (#208) composes over the experimental agent launch API.
     // Kept as `api` so consumers see `LaunchSpec` / `LaunchedSession` types from the extension.
     api(projects.agent)
+    // Public runSpectreTest surface exposes CoroutineScope / CoroutineContext; core only
+    // implementation()-depends on coroutines, so re-export here for consumers of :testing.
+    api(libs.kotlinx.coroutines.core)
     // JUnit 4 and JUnit Jupiter are compileOnly so consumers pick whichever they're already
     // using; the testing module itself only references their public APIs.
     compileOnly(libs.junit4)

@@ -77,6 +77,12 @@ public final class dev/sebastiano/spectre/testing/LaunchAndAttachRule : org/juni
 	public final fun stopSession ()V
 }
 
+public final class dev/sebastiano/spectre/testing/RunSpectreTestKt {
+	public static final fun getDefaultSpectreTestTimeout ()J
+	public static final fun runSpectreTest-dWUq8MI (Lkotlin/coroutines/CoroutineContext;JLkotlinx/coroutines/CoroutineDispatcher;Lkotlin/jvm/functions/Function2;)Ljava/lang/Object;
+	public static synthetic fun runSpectreTest-dWUq8MI$default (Lkotlin/coroutines/CoroutineContext;JLkotlinx/coroutines/CoroutineDispatcher;Lkotlin/jvm/functions/Function2;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
 public final class dev/sebastiano/spectre/testing/contract/AutomatorContractCorpus {
 	public static final field INSTANCE Ldev/sebastiano/spectre/testing/contract/AutomatorContractCorpus;
 	public final fun run (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;)Ldev/sebastiano/spectre/testing/contract/AutomatorContractCorpus$RunResult;
