@@ -36,23 +36,26 @@ final class PermissionGuideTests: XCTestCase {
         XCTAssertFalse(PermissionGuideCopy.grantedLabel.isEmpty)
     }
 
-    func testGuideCopyTeachesPlusButtonAndShowInFinder() {
-        // System Settings' Screen Recording list uses + to add apps; drag is best-effort.
+    func testGuideCopyMatchesApprovedOpenSettingsAndDragUX() {
+        // #192 / user guide: Open Settings → drag icon if missing → live Done.
+        // Do not teach Settings + / Show in Finder as the primary path without product approval.
+        XCTAssertEqual(PermissionGuideCopy.openSettingsLabel, "Open Settings")
         XCTAssertTrue(
-            PermissionGuideCopy.addSteps.contains("+")
-                || PermissionGuideCopy.addSteps.lowercased().contains("plus"),
-            "addSteps must mention the Settings + control"
+            PermissionGuideCopy.dragHint.lowercased().contains("drag"),
+            "dragHint must teach dragging the icon"
         )
-        XCTAssertFalse(PermissionGuideCopy.showInFinderLabel.isEmpty)
-        XCTAssertTrue(
-            PermissionGuideCopy.dragHint.lowercased().contains("drag")
-                || PermissionGuideCopy.dragHint.contains("+"),
-            "dragHint must explain drag and/or + fallback"
+        XCTAssertFalse(
+            PermissionGuideCopy.dragHint.contains("+"),
+            "dragHint must not steer to Settings + as the primary affordance"
         )
-        // Users must enable this helper by name — not only their terminal.
         XCTAssertTrue(
             PermissionGuideCopy.firstRunBody.contains("Spectre Capture Helper"),
             "body must name the helper app for Settings list matching"
+        )
+        XCTAssertTrue(
+            PermissionGuideCopy.firstRunBody.contains("System Settings")
+                || PermissionGuideCopy.firstRunBody.contains("Screen"),
+            "body must point at System Settings / Screen Recording grant"
         )
     }
 
@@ -63,6 +66,17 @@ final class PermissionGuideTests: XCTestCase {
         XCTAssertTrue(
             ids.contains("com.apple.application-bundle") || ids.contains("public.file-url"),
             "expected app-bundle or file-url types, got \(ids)"
+        )
+    }
+
+    func testPasteboardWritersAreFileURLs() {
+        let appURL = URL(fileURLWithPath: "/Applications/Safari.app")
+        let writers = PermissionGuideDragPayload.pasteboardWriters(for: appURL)
+        XCTAssertFalse(writers.isEmpty)
+        let types = writers[0].writableTypes(for: NSPasteboard.general)
+        XCTAssertTrue(
+            types.contains(where: { $0.rawValue.contains("file") || $0.rawValue.contains("url") }),
+            "expected file/url pasteboard types, got \(types)"
         )
     }
 
