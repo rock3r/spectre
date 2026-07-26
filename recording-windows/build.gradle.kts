@@ -42,6 +42,17 @@ val shouldVerifyWindowsHelper =
     OperatingSystem.current().isWindows ||
         prebuiltWindowsHelperPath.isPresent ||
         prebuiltWindowsHelpersDir.isPresent
+// Legacy -PprebuiltWindowsHelperPath stages x64 only; full dual-arch contract requires
+// -PprebuiltWindowsHelpersDir or a Windows host build.
+val windowsHelperArchesToVerify: List<String> =
+    if (
+        prebuiltWindowsHelpersDir.isPresent ||
+            (!prebuiltWindowsHelperPath.isPresent && OperatingSystem.current().isWindows)
+    ) {
+        WindowsGraphicsCaptureHelperPackagingContract.ARCHES
+    } else {
+        listOf("x64")
+    }
 
 tasks.named<ProcessResources>("processResources") {
     from(recordingProject.layout.buildDirectory.dir("generated/windowsScreenshotHelper"))
@@ -56,16 +67,17 @@ tasks.register("verifyRecordingWindowsHelper") {
     group = "verification"
     description =
         "Verifies the Windows Graphics Capture helper multi-file runtime contract is packaged " +
-            "in spectre-recording-windows for x64 and arm64."
+            "in spectre-recording-windows (x64+arm64, or x64-only for legacy prebuilt path)."
     enabled = shouldVerifyWindowsHelper
     dependsOn(tasks.named("jar"))
 
     val jarFile = tasks.named<Jar>("jar").flatMap { it.archiveFile }
+    val arches = windowsHelperArchesToVerify
     doLast {
         val jar = jarFile.get().asFile
         val errors =
             ZipFile(jar).use { zip ->
-                WindowsGraphicsCaptureHelperPackagingContract.validateZip(zip)
+                WindowsGraphicsCaptureHelperPackagingContract.validateZip(zip, arches)
             }
         if (errors.isNotEmpty()) {
             throw GradleException(

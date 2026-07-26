@@ -43,9 +43,9 @@ object WindowsGraphicsCaptureHelperPackagingContract {
             "Microsoft.Graphics.Canvas.Interop.dll",
         )
 
-    /** Flat jar entry paths for every fixed required basename on both arches. */
-    fun requiredJarEntryPaths(): List<String> =
-        ARCHES.flatMap { arch -> REQUIRED_BASE_NAMES.map { base -> jarEntryPath(arch, base) } }
+    /** Flat jar entry paths for every fixed required basename on [arches]. */
+    fun requiredJarEntryPaths(arches: List<String> = ARCHES): List<String> =
+        arches.flatMap { arch -> REQUIRED_BASE_NAMES.map { base -> jarEntryPath(arch, base) } }
 
     fun jarEntryPath(arch: String, baseName: String): String = "$RESOURCE_ROOT/$arch/$baseName"
 
@@ -55,21 +55,27 @@ object WindowsGraphicsCaptureHelperPackagingContract {
      * @param entrySizes map of full jar entry path → uncompressed size
      * @param depsJsonByArch raw deps.json text per arch when available; when provided,
      *   the deps.json runtime/native asset closure is enforced for that arch
+     * @param arches which arch directories to validate (default: both x64 and arm64)
      * @return human-readable error messages (empty when the contract is satisfied)
      */
     fun validateJarEntries(
         entrySizes: Map<String, Long>,
         depsJsonByArch: Map<String, String> = emptyMap(),
+        arches: List<String> = ARCHES,
     ): List<String> {
         val errors = mutableListOf<String>()
-        for (arch in ARCHES) {
+        for (arch in arches) {
             errors += validateArch(arch, entrySizes, depsJsonByArch[arch])
         }
         return errors
     }
 
-    /** Validates an open [ZipFile] against the full contract, including deps.json closure. */
-    fun validateZip(zip: ZipFile): List<String> {
+    /**
+     * Validates an open [ZipFile] against the full contract, including deps.json closure.
+     *
+     * @param arches which arch directories to validate (default: both)
+     */
+    fun validateZip(zip: ZipFile, arches: List<String> = ARCHES): List<String> {
         val entrySizes = linkedMapOf<String, Long>()
         val depsJsonByArch = linkedMapOf<String, String>()
         zip.entries().asSequence().forEach { entry ->
@@ -77,7 +83,7 @@ object WindowsGraphicsCaptureHelperPackagingContract {
                 entrySizes[entry.name] = entry.size
             }
         }
-        for (arch in ARCHES) {
+        for (arch in arches) {
             val depsPath = jarEntryPath(arch, DEPS_JSON)
             val entry: ZipEntry? = zip.getEntry(depsPath)
             if (entry != null && !entry.isDirectory) {
@@ -85,19 +91,19 @@ object WindowsGraphicsCaptureHelperPackagingContract {
                     zip.getInputStream(entry).bufferedReader(Charsets.UTF_8).use { it.readText() }
             }
         }
-        return validateJarEntries(entrySizes, depsJsonByArch)
+        return validateJarEntries(entrySizes, depsJsonByArch, arches)
     }
 
     /**
      * Validates a staged prebuilt helpers directory shaped as
      * `<root>/<arch>/<files>` (the `prebuiltWindowsHelpersDir` layout).
      */
-    fun validatePrebuiltHelpersDir(root: File): List<String> {
+    fun validatePrebuiltHelpersDir(root: File, arches: List<String> = ARCHES): List<String> {
         if (!root.isDirectory) {
             return listOf("prebuilt Windows helpers root is not a directory: $root")
         }
         val errors = mutableListOf<String>()
-        for (arch in ARCHES) {
+        for (arch in arches) {
             val archDir = root.resolve(arch)
             if (!archDir.isDirectory) {
                 errors += "missing prebuilt Windows helper arch directory: $arch"
@@ -215,7 +221,17 @@ object WindowsGraphicsCaptureHelperPackagingContract {
             return assetNames
         }
         for (targetKey in preferred) {
-            collectFromTarget(targets[targetKey], ridName, assetNames)
+            val body = targets[targetKey]
+            if (body !is Map<*, *>) {
+                throw IllegalArgumentException(
+                    "deps.json target '$targetKey' must be a non-empty object, was " +
+                        (body?.let { it::class.java.simpleName } ?: "null")
+                )
+            }
+            if (body.isEmpty()) {
+                throw IllegalArgumentException("deps.json target '$targetKey' is an empty object")
+            }
+            collectFromTarget(body, ridName, assetNames)
         }
         return assetNames
     }

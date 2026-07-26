@@ -325,6 +325,42 @@ class WindowsGraphicsCaptureHelperPackagingContractTest {
     }
 
     @Test
+    fun `null or empty selected target body is rejected`() {
+        val nullBody =
+            """
+            {"targets":{".NETCoreApp,Version=v8.0/win-x64":null}}
+            """
+                .trimIndent()
+        val emptyBody =
+            """
+            {"targets":{".NETCoreApp,Version=v8.0/win-x64":{}}}
+            """
+                .trimIndent()
+        val files = completeFixedRequiredFiles()
+        val entrySizes = files.mapKeys { "native/windows/x64/${it.key}" }
+        val nullErrors =
+            WindowsGraphicsCaptureHelperPackagingContract.validateJarEntries(
+                entrySizes,
+                depsJsonByArch = mapOf("x64" to nullBody),
+                arches = listOf("x64"),
+            )
+        val emptyErrors =
+            WindowsGraphicsCaptureHelperPackagingContract.validateJarEntries(
+                entrySizes,
+                depsJsonByArch = mapOf("x64" to emptyBody),
+                arches = listOf("x64"),
+            )
+        assertTrue(
+            nullErrors.any { it.contains("invalid") },
+            "expected null target body to fail; errors=$nullErrors",
+        )
+        assertTrue(
+            emptyErrors.any { it.contains("invalid") },
+            "expected empty target body to fail; errors=$emptyErrors",
+        )
+    }
+
+    @Test
     fun `empty targets map in deps json is rejected`() {
         val files = completeFixedRequiredFiles()
         val entrySizes =

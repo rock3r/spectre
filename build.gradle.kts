@@ -311,6 +311,20 @@ val mavenLocalRepoRoot: String = "${System.getProperty("user.home")}/.m2/reposit
 // [WindowsGraphicsCaptureHelperPackagingContract] (shared with
 // `:recording-windows:verifyRecordingWindowsHelper`) so both verifiers enforce the same
 // multi-file helper runtime contract.
+// Windows arches expected when helpers are staged. Legacy -PprebuiltWindowsHelperPath is
+// x64-only; release/dir/host builds need both arches.
+val expectedWindowsHelperArches: List<String> = run {
+    val windowsHelpersDir = providers.gradleProperty("prebuiltWindowsHelpersDir").isPresent
+    val windowsHelperPathOnly =
+        providers.gradleProperty("prebuiltWindowsHelperPath").isPresent && !windowsHelpersDir
+    when {
+        windowsHelperPathOnly -> listOf("x64")
+        windowsHelpersDir || org.gradle.internal.os.OperatingSystem.current().isWindows ->
+            WindowsGraphicsCaptureHelperPackagingContract.ARCHES
+        else -> emptyList()
+    }
+}
+
 val expectedRecordingHelperEntriesByProject: Map<String, List<String>> =
     mutableMapOf<String, List<String>>().apply {
         val macOsExpected =
@@ -329,17 +343,15 @@ val expectedRecordingHelperEntriesByProject: Map<String, List<String>> =
                 ),
             )
         }
-        val currentOs = org.gradle.internal.os.OperatingSystem.current()
-        val windowsExpected =
-            providers.gradleProperty("prebuiltWindowsHelperPath").isPresent ||
-                providers.gradleProperty("prebuiltWindowsHelpersDir").isPresent ||
-                currentOs.isWindows
-        if (windowsExpected) {
+        if (expectedWindowsHelperArches.isNotEmpty()) {
             put(
                 ":recording-windows",
-                WindowsGraphicsCaptureHelperPackagingContract.requiredJarEntryPaths(),
+                WindowsGraphicsCaptureHelperPackagingContract.requiredJarEntryPaths(
+                    expectedWindowsHelperArches
+                ),
             )
         }
+        val currentOs = org.gradle.internal.os.OperatingSystem.current()
         val crossArchLinux =
             providers.gradleProperty("prebuiltLinuxHelpersDir").isPresent ||
                 (currentOs.isLinux && providers.gradleProperty("allLinuxArches").isPresent)
@@ -389,6 +401,7 @@ val verifyMavenLocalPublication by tasks.registering {
     val artifactIds = publishArtifactIds
     val repoRoot = file(mavenLocalRepoRoot)
     val expectedHelpersByProject = expectedRecordingHelperEntriesByProject
+    val windowsArches = expectedWindowsHelperArches
 
     doLast {
         val errors = mutableListOf<String>()
@@ -512,7 +525,10 @@ val verifyMavenLocalPublication by tasks.registering {
                         // shared with `:recording-windows:verifyRecordingWindowsHelper`.
                         ZipFile(jar).use { zip ->
                             for (gap in
-                                WindowsGraphicsCaptureHelperPackagingContract.validateZip(zip)) {
+                                WindowsGraphicsCaptureHelperPackagingContract.validateZip(
+                                    zip,
+                                    windowsArches,
+                                )) {
                                 errors += "$moduleName: published jar (${jar.name}): $gap"
                             }
                         }
