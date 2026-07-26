@@ -134,6 +134,36 @@ class AgentJarResolveTest {
         assertNull(AgentJarResolution.findRuntimeJarInRepoFallback(root))
     }
 
+    @Test
+    fun `commented spectre identity markers do not enable checkout fallback`() {
+        val root = Files.createTempDirectory("commented-identity")
+        Files.writeString(
+            root.resolve("settings.gradle.kts"),
+            """
+            // rootProject.name = "Spectre"
+            rootProject.name = "Other"
+            """
+                .trimIndent(),
+        )
+        Files.writeString(
+            root.resolve("gradle.properties"),
+            """
+            # GROUP=dev.sebastiano.spectre
+            GROUP=com.example.other
+            """
+                .trimIndent(),
+        )
+        Files.createDirectories(root.resolve("agent"))
+        Files.createFile(root.resolve("agent/build.gradle.kts"))
+        Files.createDirectories(root.resolve("agent-runtime"))
+        Files.createFile(root.resolve("agent-runtime/build.gradle.kts"))
+        val libs = Files.createDirectories(root.resolve("agent-runtime/build/libs"))
+        Files.createFile(libs.resolve("agent-runtime-0.2.0.jar"))
+
+        assertFalse(AgentJarResolution.isSpectreSourceCheckout(root))
+        assertNull(AgentJarResolution.findRuntimeJarInRepoFallback(root))
+    }
+
     private fun touchCheckoutMarkers(root: Path) {
         Files.writeString(root.resolve("settings.gradle.kts"), """rootProject.name = "Spectre"""")
         Files.createDirectories(root.resolve("agent"))
