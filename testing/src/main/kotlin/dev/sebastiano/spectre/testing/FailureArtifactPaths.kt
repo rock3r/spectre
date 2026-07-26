@@ -67,16 +67,17 @@ public object FailureArtifactPaths {
                 }
                 .joinToString("")
                 .replace(Regex("_+"), "_")
-                // Windows rejects/normalizes trailing dots and spaces; strip them so the
-                // segment is a real directory name. Lossy vs raw → hash below.
-                .trimEnd('.', ' ')
-                .trim('_')
+        val core = cleaned.trim('_')
         val base =
             when {
-                cleaned.isEmpty() -> "unnamed"
-                cleaned == "." -> "dot"
-                cleaned == ".." -> "dotdot"
-                else -> cleaned
+                core.isEmpty() -> "unnamed"
+                // Pure-dot labels (before stripping trailing dots for Windows) map to literals
+                // so they never navigate `..` out of the reports root.
+                core.all { it == '.' } -> if (core.length == 1) "dot" else "dotdot"
+                else ->
+                    // Windows rejects/normalizes trailing dots and spaces; strip them so the
+                    // segment is a real directory name. Lossy vs raw → hash below.
+                    core.trimEnd('.', ' ').trim('_').ifEmpty { "unnamed" }
             }
         val escaped = escapeReservedWindowsDeviceName(base)
         // Preserve uniqueness when the sanitize path was lossy relative to the original label.
@@ -136,8 +137,8 @@ public object FailureArtifactPaths {
                     lead and 0xF8 == 0xF0 -> 4
                     else -> 1
                 }
-            if (index + charLen > bytes.size) break
-            if (end + charLen > maxBytes) break
+            val fits = index + charLen <= bytes.size && end + charLen <= maxBytes
+            if (!fits) break
             end += charLen
             index += charLen
         }
