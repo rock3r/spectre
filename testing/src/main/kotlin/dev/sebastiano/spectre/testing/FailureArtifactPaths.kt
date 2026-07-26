@@ -121,7 +121,7 @@ public object FailureArtifactPaths {
         // distinct display names that sanitize to the same base.
         var hash = FNV_OFFSET_BASIS
         for (byte in value.toByteArray(Charsets.UTF_8)) {
-            hash = hash xor (byte.toLong() and 0xFFL)
+            hash = hash xor (byte.toLong() and BYTE_MASK)
             hash *= FNV_PRIME
         }
         return java.lang.Long.toUnsignedString(hash, HASH_RADIX).padStart(HASH_WIDTH, '0')
@@ -162,6 +162,7 @@ public object FailureArtifactPaths {
 
     private const val HASH_RADIX: Int = 16
     private const val HASH_WIDTH: Int = 16
+    private const val BYTE_MASK: Long = 0xFFL
     private const val FNV_OFFSET_BASIS: Long = -0x340d631b7bdddcdbL // 0xcbf29ce484222325
     private const val FNV_PRIME: Long = 0x100000001b3L
 }
