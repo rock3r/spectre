@@ -193,6 +193,35 @@ class FailureArtifactPathsTest {
     }
 
     @Test
+    fun `trailing dots are stripped as a lossy Windows-safe transform`(@TempDir temp: Path) {
+        val config = FailureArtifactsConfig(reportsRoot = temp)
+        val dir =
+            FailureArtifactPaths.methodDirectory(
+                testClassName = "com.example.T",
+                testMethodName = "case.",
+                config = config,
+            )
+        assertFalse(dir.fileName.toString().endsWith("."))
+        assertTrue(dir.fileName.toString().startsWith("case"))
+    }
+
+    @Test
+    fun `multibyte truncation stays within byte budget`(@TempDir temp: Path) {
+        val config = FailureArtifactsConfig(reportsRoot = temp)
+        val longName = "é".repeat(400)
+        val dir =
+            FailureArtifactPaths.methodDirectory(
+                testClassName = "com.example.T",
+                testMethodName = longName,
+                config = config,
+            )
+        assertTrue(
+            dir.fileName.toString().toByteArray(Charsets.UTF_8).size <=
+                FailureArtifactPaths.MAX_SEGMENT_BYTES
+        )
+    }
+
+    @Test
     fun `config defaults to enabled`() {
         assertTrue(FailureArtifactsConfig().enabled)
     }

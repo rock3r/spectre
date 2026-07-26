@@ -67,6 +67,9 @@ public object FailureArtifactPaths {
                 }
                 .joinToString("")
                 .replace(Regex("_+"), "_")
+                // Windows rejects/normalizes trailing dots and spaces; strip them so the
+                // segment is a real directory name. Lossy vs raw → hash below.
+                .trimEnd('.', ' ')
                 .trim('_')
         val base =
             when {
@@ -117,32 +120,28 @@ public object FailureArtifactPaths {
         Integer.toUnsignedString(value.hashCode(), HASH_RADIX).padStart(HASH_WIDTH, '0')
 
     /**
-     * Longest UTF-8 prefix of [bytes] whose length is at most [maxBytes] and ends on a char
-     * boundary.
+     * Longest UTF-8 prefix of [bytes] whose length is at most [maxBytes] and ends on a complete
+     * character boundary (never retains a multi-byte lead without its continuation bytes).
      */
     private fun utf8Prefix(bytes: ByteArray, maxBytes: Int): ByteArray {
-        var end = minOf(maxBytes, bytes.size)
-        // Walk back over UTF-8 continuation bytes (10xxxxxx).
-        while (
-            end > 0 &&
-                (bytes[end - 1].toInt() and UTF8_CONTINUATION_MASK) == UTF8_CONTINUATION_VALUE
-        ) {
-            end--
-        }
-        // If we stopped on a multi-byte lead that no longer has its full sequence, drop the lead.
-        if (end > 0) {
-            val last = bytes[end - 1].toInt() and 0xFF
-            val need =
+        var end = 0
+        var index = 0
+        while (index < bytes.size) {
+            val lead = bytes[index].toInt() and 0xFF
+            val charLen =
                 when {
-                    last and 0x80 == 0 -> 1
-                    last and 0xE0 == 0xC0 -> 2
-                    last and 0xF0 == 0xE0 -> 3
-                    last and 0xF8 == 0xF0 -> 4
+                    lead and 0x80 == 0 -> 1
+                    lead and 0xE0 == 0xC0 -> 2
+                    lead and 0xF0 == 0xE0 -> 3
+                    lead and 0xF8 == 0xF0 -> 4
                     else -> 1
                 }
-            if (end - 1 + need > maxBytes) end--
+            if (index + charLen > bytes.size) break
+            if (end + charLen > maxBytes) break
+            end += charLen
+            index += charLen
         }
-        return bytes.copyOf(end.coerceAtLeast(0))
+        return bytes.copyOf(end)
     }
 
     private val RESERVED_WINDOWS_DEVICE_NAMES: Set<String> = buildSet {
@@ -155,6 +154,4 @@ public object FailureArtifactPaths {
 
     private const val HASH_RADIX: Int = 16
     private const val HASH_WIDTH: Int = 8
-    private const val UTF8_CONTINUATION_MASK: Int = 0xC0
-    private const val UTF8_CONTINUATION_VALUE: Int = 0x80
 }
