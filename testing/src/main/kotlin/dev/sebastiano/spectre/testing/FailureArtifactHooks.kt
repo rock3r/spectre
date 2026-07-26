@@ -18,16 +18,16 @@ internal object FailureArtifactHooks {
      * True when [throwable] is a JUnit assumption / abort rather than a test failure. Aborted tests
      * must not produce failure artifacts (expensive and misleading for platform-skip suites).
      *
-     * JUnit 4 assumption types are matched by class name so this module stays usable when only
-     * JUnit 5 is on the runtime classpath (`junit:junit` is compileOnly for production).
+     * Both JUnit 4 and JUnit 5 abort types are matched by class name so a JUnit-4-only consumer
+     * never loads opentest4j (and vice versa) — production depends on each runner as `compileOnly`.
      */
     fun isNonFailureAbort(throwable: Throwable): Boolean {
-        // JUnit 5 assumptions / abort (also used when assumptions fire in lifecycle methods).
-        if (throwable is org.opentest4j.TestAbortedException) return true
-        // JUnit 4: public `org.junit.AssumptionViolatedException` extends the internal type.
         var type: Class<*>? = throwable.javaClass
         while (type != null) {
             when (type.name) {
+                // JUnit 5 assumptions / abort (also lifecycle @BeforeEach/@AfterEach aborts).
+                "org.opentest4j.TestAbortedException",
+                // JUnit 4: public type extends the internal one; match both.
                 "org.junit.AssumptionViolatedException",
                 "org.junit.internal.AssumptionViolatedException" -> return true
             }
