@@ -84,6 +84,29 @@ class FailureArtifactCaptureTest {
         assertFalse(Files.exists(methodDir))
     }
 
+    @Test
+    fun `removes partial window directory when write fails after capture`(@TempDir temp: Path) {
+        val methodDir = temp.resolve("com.example.T").resolve("partial-write")
+        // Pre-create a stale half-written capture dir that a failed write would leave behind
+        // if cleanup did not run; the capture lambda succeeds but we force write failure by
+        // making the window path a *file* so createDirectories fails.
+        val blocker = methodDir.resolve("window-0")
+        Files.createDirectories(methodDir)
+        Files.writeString(blocker, "not-a-directory")
+
+        val captures =
+            FailureArtifactCapture.captureWindows(
+                methodDirectory = methodDir,
+                windowCount = 1,
+                captureWindow = { fakeAtomicCapture(windowIndex = 0) },
+            )
+        assertTrue(captures.isEmpty())
+        // Best-effort: either the blocker file remains (mkdir never started) or a partial
+        // capture dir was removed. A half-written capture.json+png pair must not remain.
+        val json = methodDir.resolve("window-0").resolve("capture.json")
+        assertFalse(Files.isRegularFile(json))
+    }
+
     private fun fakeAtomicCapture(windowIndex: Int): AtomicCapture {
         val image = BufferedImage(4, 4, BufferedImage.TYPE_INT_ARGB)
         val pngBytes = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47) // minimal non-empty stub

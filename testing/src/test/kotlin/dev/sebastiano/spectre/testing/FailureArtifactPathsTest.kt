@@ -86,7 +86,9 @@ class FailureArtifactPathsTest {
                 testMethodName = "NUL",
                 config = config,
             )
-        assertEquals("NUL_", dir.fileName.toString())
+        // Lossy escape also appends a stable hash of the original label.
+        assertTrue(dir.fileName.toString().startsWith("NUL_"))
+        assertTrue(dir.fileName.toString().length > "NUL_".length)
 
         val com1 =
             FailureArtifactPaths.methodDirectory(
@@ -94,17 +96,84 @@ class FailureArtifactPathsTest {
                 testMethodName = "com1",
                 config = config,
             )
-        assertEquals("com1_", com1.fileName.toString())
+        assertTrue(com1.fileName.toString().startsWith("com1_"))
 
         // Windows keys off the stem before the first '.'; so the underscore must land on the
-        // stem (`nul_.txt`), not as a trailing suffix on the whole segment (`nul.txt_`).
+        // stem (`nul_.txt…`), not as a trailing suffix on the whole segment (`nul.txt_`).
         val nulTxt =
             FailureArtifactPaths.methodDirectory(
                 testClassName = "com.example.T",
                 testMethodName = "nul.txt",
                 config = config,
             )
-        assertEquals("nul_.txt", nulTxt.fileName.toString())
+        assertTrue(nulTxt.fileName.toString().startsWith("nul_.txt"))
+    }
+
+    @Test
+    fun `dot-only names do not navigate the filesystem`(@TempDir temp: Path) {
+        val config = FailureArtifactsConfig(reportsRoot = temp)
+        val dot =
+            FailureArtifactPaths.methodDirectory(
+                testClassName = "com.example.T",
+                testMethodName = ".",
+                config = config,
+            )
+        assertTrue(dot.fileName.toString().startsWith("dot"))
+        assertTrue(dot.startsWith(temp.resolve("com.example.T")))
+
+        val dotdot =
+            FailureArtifactPaths.methodDirectory(
+                testClassName = "..",
+                testMethodName = "method",
+                config = config,
+            )
+        assertTrue(dotdot.parent.fileName.toString().startsWith("dotdot"))
+        assertTrue(dotdot.startsWith(temp))
+    }
+
+    @Test
+    fun `lossy sanitization keeps distinct punctuation variants unique`(@TempDir temp: Path) {
+        val config = FailureArtifactsConfig(reportsRoot = temp)
+        val bracket =
+            FailureArtifactPaths.methodDirectory(
+                testClassName = "com.example.T",
+                testMethodName = "case[1]",
+                config = config,
+            )
+        val paren =
+            FailureArtifactPaths.methodDirectory(
+                testClassName = "com.example.T",
+                testMethodName = "case(1)",
+                config = config,
+            )
+        assertTrue(bracket.fileName != paren.fileName)
+        assertTrue(bracket.fileName.toString().startsWith("case_1_"))
+        assertTrue(paren.fileName.toString().startsWith("case_1_"))
+    }
+
+    @Test
+    fun `overlong segments are truncated under filesystem byte limit`(@TempDir temp: Path) {
+        val config = FailureArtifactsConfig(reportsRoot = temp)
+        val longName = "a".repeat(400)
+        val dir =
+            FailureArtifactPaths.methodDirectory(
+                testClassName = "com.example.T",
+                testMethodName = longName,
+                config = config,
+            )
+        val segment = dir.fileName.toString()
+        assertTrue(
+            segment.toByteArray(Charsets.UTF_8).size <= FailureArtifactPaths.MAX_SEGMENT_BYTES
+        )
+        assertTrue(segment.contains('_'), "expected hash suffix for uniqueness: $segment")
+        // Distinct long names should not collapse to the same truncated path.
+        val other =
+            FailureArtifactPaths.methodDirectory(
+                testClassName = "com.example.T",
+                testMethodName = "b".repeat(400),
+                config = config,
+            )
+        assertTrue(dir.fileName != other.fileName)
     }
 
     @Test

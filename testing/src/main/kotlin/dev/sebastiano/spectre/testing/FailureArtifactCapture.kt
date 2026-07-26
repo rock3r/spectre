@@ -4,7 +4,11 @@ import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.capture.AtomicCapture
 import dev.sebastiano.spectre.core.capture.CaptureArtifactPaths
 import dev.sebastiano.spectre.core.capture.CaptureArtifactsWriter
+import java.io.IOException
+import java.nio.file.Files
 import java.nio.file.Path
+import kotlin.io.path.exists
+import kotlin.streams.asSequence
 
 /**
  * Writes one atomic capture directory per known window under a test-method report folder.
@@ -13,7 +17,8 @@ import java.nio.file.Path
  * tests inject stubs so path + write behavior is covered without a live Compose UI.
  *
  * Capture failures for individual windows are swallowed so a flaky screenshot cannot mask the
- * original test failure. Callers still receive the successfully written paths.
+ * original test failure. Callers still receive the successfully written paths. Partial directories
+ * from a failed write are removed so CI globs never upload a half-written capture.
  */
 public object FailureArtifactCapture {
 
@@ -25,15 +30,11 @@ public object FailureArtifactCapture {
         if (windowCount <= 0) return emptyList()
         val written = ArrayList<CaptureArtifactPaths>(windowCount)
         for (index in 0 until windowCount) {
+            val directory = FailureArtifactPaths.windowDirectory(methodDirectory, index)
             val paths =
                 runCatching {
                         val capture = captureWindow(index)
-                        CaptureArtifactsWriter.write(
-                            directory =
-                                FailureArtifactPaths.windowDirectory(methodDirectory, index),
-                            document = capture.document,
-                            pngBytes = capture.pngBytes,
-                        )
+                        writeCaptureAtomically(directory, capture)
                     }
                     .getOrNull()
             if (paths != null) written += paths
@@ -43,7 +44,10 @@ public object FailureArtifactCapture {
 
     /**
      * Convenience for production: capture every currently tracked window via [ComposeAutomator].
-     * Refreshes the window list first so indices match a live UI at failure time.
+     *
+     * Snapshots [ComposeAutomator.surfaceIds] once, then re-resolves each surface by id before
+     * capturing so a window that closes mid-loop does not shift later indices onto the wrong
+     * surface (best-effort: a closed surface is skipped).
      *
      * Window discovery failures are swallowed (empty list) for the same reason as per-window
      * capture errors: the original test failure must remain the primary failure signal.
@@ -51,15 +55,27 @@ public object FailureArtifactCapture {
     public fun captureAllWindows(
         automator: ComposeAutomator,
         methodDirectory: Path,
-    ): List<CaptureArtifactPaths> =
-        captureFromDiscovery(
+    ): List<CaptureArtifactPaths> {
+        val surfaceIds =
+            runCatching {
+                    automator.refreshWindows()
+                    automator.surfaceIds()
+                }
+                .getOrElse {
+                    return emptyList()
+                }
+        return captureWindows(
             methodDirectory = methodDirectory,
-            discoverWindowCount = {
+            windowCount = surfaceIds.size,
+            captureWindow = { index ->
+                val surfaceId = surfaceIds[index]
                 automator.refreshWindows()
-                automator.surfaceIds().size
+                val liveIndex = automator.surfaceIds().indexOf(surfaceId)
+                check(liveIndex >= 0) { "Window surface $surfaceId no longer tracked" }
+                automator.capture(liveIndex)
             },
-            captureWindow = { index -> automator.capture(index) },
         )
+    }
 
     /**
      * Shared best-effort path for production and tests: if [discoverWindowCount] throws, returns an
@@ -79,5 +95,33 @@ public object FailureArtifactCapture {
             windowCount = count,
             captureWindow = captureWindow,
         )
+    }
+
+    private fun writeCaptureAtomically(
+        directory: Path,
+        capture: AtomicCapture,
+    ): CaptureArtifactPaths {
+        return try {
+            CaptureArtifactsWriter.write(
+                directory = directory,
+                document = capture.document,
+                pngBytes = capture.pngBytes,
+            )
+        } catch (error: IOException) {
+            deleteRecursivelyQuietly(directory)
+            throw error
+        }
+    }
+
+    private fun deleteRecursivelyQuietly(directory: Path) {
+        if (!directory.exists()) return
+        runCatching {
+            Files.walk(directory).use { stream ->
+                stream
+                    .asSequence()
+                    .sortedByDescending { it.nameCount }
+                    .forEach { path -> runCatching { Files.deleteIfExists(path) } }
+            }
+        }
     }
 }
