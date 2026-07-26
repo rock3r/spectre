@@ -211,10 +211,15 @@ object WindowsGraphicsCaptureHelperPackagingContract {
         }
         val assetNames = linkedSetOf<String>()
         val targetKeys = targets.keys.toList()
-        // Prefer the exact runtimeTarget.name when present; otherwise any target whose key
-        // contains the arch RID token.
+        // Prefer the exact runtimeTarget.name when present. If declared but missing from
+        // targets, reject — do not silently fall back to another RID-matching key.
         val preferred =
-            if (runtimeTargetName != null && targets.containsKey(runtimeTargetName)) {
+            if (runtimeTargetName != null) {
+                if (!targets.containsKey(runtimeTargetName)) {
+                    throw IllegalArgumentException(
+                        "deps.json runtimeTarget.name='$runtimeTargetName' is not present in targets"
+                    )
+                }
                 listOf(runtimeTargetName)
             } else {
                 targetKeys.filter { it.contains(ridToken, ignoreCase = true) }
