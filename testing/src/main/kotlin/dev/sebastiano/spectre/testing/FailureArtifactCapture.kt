@@ -33,7 +33,7 @@ public object FailureArtifactCapture {
         // If OS locks prevent full cleanup, write under a unique run-* subdir so this attempt's
         // artifacts cannot interleave with undeletable leftovers.
         val writeRoot =
-            if (listWindowDirectories(methodDirectory).isEmpty()) {
+            if (listStaleArtifactDirectories(methodDirectory).isEmpty()) {
                 methodDirectory
             } else {
                 methodDirectory.resolve("run-${System.nanoTime()}")
@@ -79,11 +79,6 @@ public object FailureArtifactCapture {
             }
             .getOrDefault(emptyList())
     }
-
-    private fun listWindowDirectories(methodDirectory: Path): List<Path> =
-        listStaleArtifactDirectories(methodDirectory).filter {
-            it.fileName.toString().startsWith("window-")
-        }
 
     /**
      * Convenience for production: capture every currently tracked window via [ComposeAutomator].
