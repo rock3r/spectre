@@ -109,8 +109,11 @@ public class ComposeAutomatorExtension(
     }
 
     private fun captureFailureArtifacts(context: ExtensionContext) {
-        val automator =
-            context.getStore(NAMESPACE).get(STORE_KEY, ComposeAutomator::class.java) ?: return
+        val store = context.getStore(NAMESPACE)
+        // One capture per invocation: test-method failure runs afterTestExecution, then a later
+        // @AfterEach failure must not recapture (which would clear the earlier run-* tree).
+        if (store.get(CAPTURED_KEY) == true) return
+        val automator = store.get(STORE_KEY, ComposeAutomator::class.java) ?: return
         val testClass = context.testClass.map { it.name }.orElse("UnknownClass")
         val testMethod = context.testMethod.map { it.name }.orElseGet { context.displayName }
         val config =
@@ -125,6 +128,7 @@ public class ComposeAutomatorExtension(
             testMethodName = testMethod,
             publishReport = { key, value -> context.publishReportEntry(key, value) },
         )
+        store.put(CAPTURED_KEY, true)
     }
 
     override fun afterEach(context: ExtensionContext) {
@@ -171,3 +175,4 @@ public class ComposeAutomatorExtension(
 // the companion itself is `private`. A file-level `private const val` compiles to a private
 // static field on the file's facade class and stays out of the public ABI surface.
 private const val STORE_KEY: String = "automator"
+private const val CAPTURED_KEY: String = "failureArtifactsCaptured"
