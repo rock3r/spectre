@@ -343,6 +343,16 @@ final class PermissionGuideTests: XCTestCase {
         XCTAssertTrue(
             PermissionGuidePlacement.shouldYieldToSystemUI(windows: [main, sheet])
         )
+        // Unrelated app with "quit" in the title must not hide the guide.
+        let randomQuitDoc = PermissionGuidePlacement.OnScreenWindow(
+            owner: "TextEdit",
+            name: "Untitled — quit notes",
+            layer: 0,
+            bounds: CGRect(x: 100, y: 100, width: 400, height: 300)
+        )
+        XCTAssertFalse(
+            PermissionGuidePlacement.shouldYieldToSystemUI(windows: [main, randomQuitDoc])
+        )
     }
 
     func testHelperNameInScreenRecordingLabelsAboveAudioSection() {

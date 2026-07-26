@@ -775,6 +775,13 @@ public enum PermissionGuidePlacement {
             "coreauthd",
             "localauthenticationd",
         ]
+        func isAuthOrSettingsOwner(_ owner: String) -> Bool {
+            authOwners.contains(owner)
+                || owner.localizedCaseInsensitiveContains("LocalAuthentication")
+                || owner.localizedCaseInsensitiveContains("SecurityAgent")
+                || owner == "System Settings"
+                || owner == "System Preferences"
+        }
         for w in windows {
             let owner = w.owner
             if authOwners.contains(owner)
@@ -786,12 +793,14 @@ public enum PermissionGuidePlacement {
                     return true
                 }
             }
-            // Named auth / quit-reopen surfaces (when CG exposes the title).
+            // Named auth / quit-reopen surfaces — only for Settings / auth agents.
+            // Unrelated apps with "quit" in the title must not hide the guide.
             let n = w.name
-            if n.localizedCaseInsensitiveContains("Touch ID")
-                || n.localizedCaseInsensitiveContains("Use Password")
-                || n.localizedCaseInsensitiveContains("reopen")
-                || n.localizedCaseInsensitiveContains("quit")
+            if isAuthOrSettingsOwner(owner),
+                n.localizedCaseInsensitiveContains("Touch ID")
+                    || n.localizedCaseInsensitiveContains("Use Password")
+                    || n.localizedCaseInsensitiveContains("reopen")
+                    || n.localizedCaseInsensitiveContains("quit")
             {
                 if w.bounds.width > 160, w.bounds.height > 80 {
                     return true
@@ -950,16 +959,28 @@ public enum PermissionGuideApp {
             var hiddenForSystemUI = false
             /// True when Settings is off this Space/display — bar must stay ordered out.
             var hiddenWithoutSettings = false
+            /// When Settings first disappeared (Space switch or closed).
+            var settingsMissingSince: Date?
+            var didTryReopenSettings = false
+            /// True once Settings was on-screen this session (vs never found).
+            var sawSettingsThisSession = false
+            var placementTimer: Timer?
         }
         let state = PlacementState()
+        /// Re-open Settings once after this long without it.
+        let settingsReopenAfter: TimeInterval = 5
+        /// Emit result JSON and exit if Settings stays gone this long (avoid 5 min hang).
+        let settingsGoneExitAfter: TimeInterval = 25
 
         func hideBar() {
             window.orderOut(nil)
         }
 
         /// Show without stealing z-order over system sheets (never orderFrontRegardless).
-        func showBar() {
-            window.alphaValue = 1
+        func showBar(setOpaque: Bool = true) {
+            if setOpaque {
+                window.alphaValue = 1
+            }
             window.orderFront(nil)
         }
 
@@ -980,7 +1001,8 @@ public enum PermissionGuideApp {
             if animated {
                 window.setFrame(frame.offsetBy(dx: 0, dy: -8), display: false)
                 window.alphaValue = 0
-                showBar()
+                // orderFront only — do not force opaque before the fade runs.
+                showBar(setOpaque: false)
                 NSAnimationContext.runAnimationGroup { ctx in
                     ctx.duration = 0.2
                     ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
@@ -992,7 +1014,7 @@ public enum PermissionGuideApp {
                 NSAnimationContext.current.duration = 0
                 window.setFrame(frame, display: true)
                 NSAnimationContext.endGrouping()
-                showBar()
+                showBar(setOpaque: true)
             }
         }
 
@@ -1005,7 +1027,7 @@ public enum PermissionGuideApp {
                 state.hiddenForSystemUI = false
                 if !state.hiddenWithoutSettings, let frame = state.lastAppliedFrame {
                     window.setFrame(frame, display: true)
-                    showBar()
+                    showBar(setOpaque: true)
                 }
             }
         }
@@ -1017,6 +1039,7 @@ public enum PermissionGuideApp {
             if let docked = computeDockedFrame() {
                 state.lastSettingsOrigin = docked.settingsOrigin
                 state.hiddenWithoutSettings = false
+                state.sawSettingsThisSession = true
                 applyFrame(docked.frame, animated: true, force: true)
                 placed = true
                 break
@@ -1026,6 +1049,7 @@ public enum PermissionGuideApp {
         if !placed {
             // Settings not visible yet (other Space / still launching). Stay hidden.
             state.hiddenWithoutSettings = true
+            state.settingsMissingSince = Date()
             hideBar()
         }
 
@@ -1035,6 +1059,23 @@ public enum PermissionGuideApp {
             updateSystemUIVisibility()
             guard let docked = computeDockedFrame() else {
                 // Settings gone from on-screen window list (other Space, closed, etc.).
+                if state.settingsMissingSince == nil {
+                    state.settingsMissingSince = Date()
+                }
+                let missing = Date().timeIntervalSince(state.settingsMissingSince ?? Date())
+                // After a short gap, try reopening Settings once (accidental close).
+                if missing >= settingsReopenAfter, !state.didTryReopenSettings {
+                    state.didTryReopenSettings = true
+                    model.openSystemSettings()
+                }
+                // If Settings stays gone, exit with preflight JSON so the JVM does not
+                // hang until its guide timeout with no stdout result.
+                if missing >= settingsGoneExitAfter, state.sawSettingsThisSession {
+                    state.placementTimer?.invalidate()
+                    state.placementTimer = nil
+                    model.finish()
+                    return
+                }
                 if !state.hiddenWithoutSettings {
                     state.hiddenWithoutSettings = true
                     state.lastSettingsOrigin = nil
@@ -1042,6 +1083,9 @@ public enum PermissionGuideApp {
                 }
                 return
             }
+            state.settingsMissingSince = nil
+            state.didTryReopenSettings = false
+            state.sawSettingsThisSession = true
             let wasHidden = state.hiddenWithoutSettings
             state.hiddenWithoutSettings = false
             let settingsMoved: Bool
@@ -1068,6 +1112,7 @@ public enum PermissionGuideApp {
                 state.lastSettingsOrigin = docked.settingsOrigin
             }
         }
+        state.placementTimer = poll
         RunLoop.main.add(poll, forMode: .common)
 
         app.activate(ignoringOtherApps: false)
@@ -1075,7 +1120,8 @@ public enum PermissionGuideApp {
         // Wire dismiss before startPolling so an already-granted preflight can still show
         // the bar (we already placed above) then auto-close.
         model.onFinished = { _ in
-            poll.invalidate()
+            state.placementTimer?.invalidate()
+            state.placementTimer = nil
             // Exit code / JSON always reflect real TCC preflight, not HUD state.
             let granted = CGPreflightScreenCaptureAccess()
             let result = ScreenCaptureAccess.result(granted: granted, binaryPath: binaryPath)
@@ -1096,7 +1142,8 @@ public enum PermissionGuideApp {
             object: window,
             queue: .main
         ) { _ in
-            poll.invalidate()
+            state.placementTimer?.invalidate()
+            state.placementTimer = nil
             let granted = CGPreflightScreenCaptureAccess()
             let result = ScreenCaptureAccess.result(granted: granted, binaryPath: binaryPath)
             FileHandle.standardOutput.write(Data(result.jsonLine.utf8))
