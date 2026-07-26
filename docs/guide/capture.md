@@ -62,3 +62,10 @@ val result = automator.capture(windowIndex = 0)
 ```
 
 Library details live in `:core` under `dev.sebastiano.spectre.core.capture`.
+
+## Failure artifacts from JUnit
+
+On a **failed** Spectre JUnit test, `ComposeAutomatorExtension` / `ComposeAutomatorRule`
+write the same `capture.json` + `screenshot.png` layout under `build/reports/spectre/`
+(not `$TMPDIR`). See [JUnit integration — Failure artifacts](junit.md#failure-artifacts)
+and the CI upload snippet in [Running on CI](ci.md#failure-artifacts).
