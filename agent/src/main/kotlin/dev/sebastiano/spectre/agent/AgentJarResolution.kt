@@ -40,24 +40,24 @@ internal object AgentJarResolution {
     private fun selectSingleRuntimeJar(matches: List<Path>): Path? {
         // Classpaths sometimes list the same physical jar twice (duplicate entries or
         // symlink + real path). Collapse by filesystem identity so only distinct files
-        // count as ambiguity.
+        // count as ambiguity. Preserve the original path string: lexical normalize() can
+        // break symlink + ".." classpath entries that still resolve on disk.
         val distinct = mutableListOf<Path>()
         for (candidate in matches) {
-            val normalized = candidate.toAbsolutePath().normalize()
             val alreadySeen = distinct.any { existing ->
                 try {
-                    Files.isSameFile(existing, normalized)
+                    Files.isSameFile(existing, candidate)
                 } catch (_: IOException) {
-                    existing == normalized
+                    existing.toAbsolutePath().normalize() == candidate.toAbsolutePath().normalize()
                 }
             }
-            if (!alreadySeen) distinct.add(normalized)
+            if (!alreadySeen) distinct.add(candidate)
         }
-        distinct.sortBy { it.toString() }
-        return when (distinct.size) {
+        val ordered = distinct.sortedBy { it.toString() }
+        return when (ordered.size) {
             0 -> null
-            1 -> distinct.single()
-            else -> throw AmbiguousAgentRuntimeJarException(distinct)
+            1 -> ordered.single()
+            else -> throw AmbiguousAgentRuntimeJarException(ordered)
         }
     }
 

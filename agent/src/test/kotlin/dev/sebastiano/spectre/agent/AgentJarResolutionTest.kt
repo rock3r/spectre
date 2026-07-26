@@ -111,6 +111,31 @@ class AgentJarResolutionTest {
     }
 
     @Test
+    fun `preserves original classpath path that uses symlink parent and dot-dot`() {
+        val root = Files.createTempDirectory("spectre-agent-jar-resolution")
+        val realDir = Files.createDirectory(root.resolve("real"))
+        val runtimeJar = Files.createFile(realDir.resolve("spectre-agent-runtime-0.2.0.jar"))
+        val linkDir = root.resolve("link")
+        try {
+            Files.createSymbolicLink(linkDir, realDir.fileName)
+        } catch (_: UnsupportedOperationException) {
+            return
+        } catch (_: java.nio.file.FileSystemException) {
+            return
+        }
+
+        // link/../real/jar is a valid on-disk path via the symlink parent, but lexical
+        // Path.normalize() would collapse it incorrectly on some layouts.
+        val symlinkSensitive =
+            linkDir.resolve("..").resolve("real").resolve(runtimeJar.fileName.toString())
+        assertTrue(Files.isRegularFile(symlinkSensitive))
+
+        val resolved = AgentJarResolution.findRuntimeJarOnClasspath(symlinkSensitive.toString())
+        assertEquals(symlinkSensitive, resolved)
+        assertTrue(Files.isSameFile(runtimeJar, resolved!!))
+    }
+
+    @Test
     fun `fails closed when multiple runtime jars are in a directory`() {
         val dir = Files.createTempDirectory("spectre-agent-jar-resolution")
         val first = Files.createFile(dir.resolve("agent-runtime-0.1.0.jar"))
