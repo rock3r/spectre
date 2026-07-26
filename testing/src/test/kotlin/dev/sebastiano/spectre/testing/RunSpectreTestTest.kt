@@ -114,34 +114,30 @@ class RunSpectreTestTest {
     @Test
     fun `unawaited child failure is not swallowed after the body returns`() {
         val error =
-            assertFailsWith<IllegalStateException> {
+            assertFailsWith<Throwable> {
                 runSpectreTest {
                     // UNDISPATCHED runs the child to its first suspension (or completion) before
                     // launch returns, so the failure is reported before the body returns without
                     // the body awaiting the child.
-                    launch(start = CoroutineStart.UNDISPATCHED) { error("unawaited child boom") }
+                    launch(start = CoroutineStart.UNDISPATCHED) {
+                        throw IllegalStateException("unawaited child boom")
+                    }
                 }
             }
-        assertTrue(
-            error.message?.contains("unawaited child boom") == true,
-            "expected unawaited child failure to surface, was: ${error.message}",
-        )
+        assertThrowableChainContains(error, "unawaited child boom")
     }
 
     @Test
     fun `joined launch failure is not swallowed`() {
         // join() does not rethrow child failures; the runner must still surface them.
         val error =
-            assertFailsWith<IllegalStateException> {
+            assertFailsWith<Throwable> {
                 runSpectreTest {
-                    val job = launch { error("joined child boom") }
+                    val job = launch { throw IllegalStateException("joined child boom") }
                     job.join()
                 }
             }
-        assertTrue(
-            error.message?.contains("joined child boom") == true,
-            "expected joined launch failure to surface, was: ${error.message}",
-        )
+        assertThrowableChainContains(error, "joined child boom")
     }
 
     @Test
@@ -149,16 +145,15 @@ class RunSpectreTestTest {
         // Body would otherwise sleep past a short failure; must surface the child exception,
         // not "runSpectreTest timed out after …".
         val error =
-            assertFailsWith<IllegalStateException> {
+            assertFailsWith<Throwable> {
                 runSpectreTest(timeout = 5.seconds) {
-                    launch(start = CoroutineStart.UNDISPATCHED) { error("sibling boom") }
+                    launch(start = CoroutineStart.UNDISPATCHED) {
+                        throw IllegalStateException("sibling boom")
+                    }
                     delay(30.seconds)
                 }
             }
-        assertTrue(
-            error.message?.contains("sibling boom") == true,
-            "expected sibling failure to wake the body, was: ${error.message}",
-        )
+        assertThrowableChainContains(error, "sibling boom")
     }
 
     @Test
@@ -227,5 +222,20 @@ class RunSpectreTestTest {
 
     private companion object {
         const val NANOS_PER_MILLI = 1_000_000L
+
+        /**
+         * Child failures may surface as the root exception or as a cause under a cancellation
+         * wrapper depending on dispatcher timing; accept either form.
+         */
+        fun assertThrowableChainContains(error: Throwable, fragment: String) {
+            val chain = generateSequence(error) { it.cause }.toList()
+            val hit = chain.any { t ->
+                t is IllegalStateException && t.message?.contains(fragment) == true
+            }
+            assertTrue(
+                hit,
+                "expected IllegalStateException containing '$fragment' in cause chain, was: $chain",
+            )
+        }
     }
 }
