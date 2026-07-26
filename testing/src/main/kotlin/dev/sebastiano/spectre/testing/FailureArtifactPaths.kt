@@ -78,9 +78,9 @@ public object FailureArtifactPaths {
                 // so they never navigate `..` out of the reports root.
                 core.all { it == '.' } -> if (core.length == 1) "dot" else "dotdot"
                 else ->
-                    // Windows rejects/normalizes trailing dots and spaces; strip them so the
-                    // segment is a real directory name. Lossy vs raw → hash below.
-                    core.trimEnd('.', ' ').trim('_').ifEmpty { "unnamed" }
+                    // Windows rejects/normalizes leading/trailing dots and spaces; strip them so
+                    // the segment is a real directory name. Lossy vs raw → hash below.
+                    core.trim('.', ' ').trim('_').ifEmpty { "unnamed" }
             }
         val escaped = escapeReservedWindowsDeviceName(base)
         // Always append a stable hash of the original label so distinct raw names that alias after
