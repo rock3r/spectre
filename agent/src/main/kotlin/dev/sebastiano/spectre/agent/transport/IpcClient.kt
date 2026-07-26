@@ -118,11 +118,7 @@ constructor(
         pending[opId] = future
         try {
             val frame = OpRequest(opId = opId, deadlineEpochMs = deadlineEpochMs, body = request)
-            synchronized(writeLock) {
-                FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
-                    Framing.writeFrame(output, WireCodec.encode(frame))
-                }
-            }
+            writeFrameInterruptSafe(WireCodec.encode(frame))
             // No client-side deadline: wait indefinitely for the server (matches pre-#200
             // blocking read). With a deadline: pad so server taxonomy timeout can still arrive.
             return if (deadlineEpochMs == null) {
@@ -191,11 +187,7 @@ constructor(
         pending[cancelId] = future
         try {
             val frame = OpRequest(opId = cancelId, body = AgentRequest.Cancel(opId = opId))
-            synchronized(writeLock) {
-                FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
-                    Framing.writeFrame(output, WireCodec.encode(frame))
-                }
-            }
+            writeFrameInterruptSafe(WireCodec.encode(frame))
             future.get(CANCEL_ACK_WAIT_MS, TimeUnit.MILLISECONDS)
         } catch (_: java.util.concurrent.TimeoutException) {
             // Best-effort: cancel ack lag is non-fatal.
@@ -272,12 +264,31 @@ constructor(
         pending.clear()
     }
 
+    /**
+     * SocketChannel is interruptible: a write from a thread with interrupt status set can close the
+     * shared client socket. Cancel/interrupt paths call [cancel] while interrupted, so clear
+     * interrupt only for the duration of the write and restore afterward (mirrors the server write
+     * path in MultiplexedIpcSession).
+     */
+    private fun writeFrameInterruptSafe(payload: ByteArray) {
+        val wasInterrupted = Thread.interrupted()
+        try {
+            synchronized(writeLock) {
+                FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
+                    Framing.writeFrame(output, payload)
+                }
+            }
+        } finally {
+            if (wasInterrupted) {
+                Thread.currentThread().interrupt()
+            }
+        }
+    }
+
     /** Bare (pre-envelope) exchange used only for Hello / best-effort Detach on failed Hello. */
     @Throws(IOException::class)
     private fun exchangeBare(request: AgentRequest): AgentResponse {
-        FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
-            Framing.writeFrame(output, WireCodec.encode(request))
-        }
+        writeFrameInterruptSafe(WireCodec.encode(request))
         val responseBytes =
             FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) { Framing.readFrame(input) }
                 ?: throw EOFException(
