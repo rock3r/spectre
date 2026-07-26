@@ -86,6 +86,22 @@ public class AgentJarNotFoundException(searched: List<java.nio.file.Path>) :
     )
 
 /**
+ * Thrown when more than one agent runtime JAR candidate is found during discovery.
+ *
+ * Attach refuses to guess which jar to load: classpath order and directory listing order are not
+ * stable selection keys. Pass [AttachOptions.agentJarPath] or set the
+ * `dev.sebastiano.spectre.agent.runtimeJar` system property to choose explicitly.
+ */
+@ExperimentalSpectreAgentApi
+public class AmbiguousAgentRuntimeJarException(public val candidates: List<java.nio.file.Path>) :
+    SpectreAttachException(
+        "Multiple Spectre agent runtime JARs found; refuse to guess which to load:\n" +
+            candidates.joinToString("\n") { "  - $it" } +
+            "\n\nPass AttachOptions(agentJarPath = ...) or set " +
+            "dev.sebastiano.spectre.agent.runtimeJar to select one explicitly."
+    )
+
+/**
  * Thrown when the attach process was interrupted (typically from cooperative cancellation: a test
  * runner cancelling a long-running fixture, or an interactive caller pressing Ctrl-C). Distinct
  * from [AgentBootstrapTimeoutException] (which means "the agent never came up") and from a generic

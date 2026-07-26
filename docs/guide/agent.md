@@ -111,6 +111,12 @@ listed in `java.class.path`; Spectre scans that classpath, takes the physical ja
 that path to `VirtualMachine.loadAgent(...)`. The attacher does not call classes from the runtime
 jar directly, and the target still does not need `spectre-agent-runtime` declared as a dependency.
 
+Classpath and directory discovery require exactly one runtime-jar candidate. If more than one
+`spectre-agent-runtime-*.jar` / `agent-runtime-*.jar` is present, attach fails with
+`AmbiguousAgentRuntimeJarException` naming every candidate rather than picking by classpath
+order. Use `AttachOptions.agentJarPath` or `-Ddev.sebastiano.spectre.agent.runtimeJar` to choose
+explicitly.
+
 ## How attach works
 
 `AgentAttach.attach(pid)` performs this sequence:

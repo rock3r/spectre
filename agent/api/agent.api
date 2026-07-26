@@ -12,6 +12,11 @@ public final class dev/sebastiano/spectre/agent/AgentJarNotFoundException : dev/
 	public fun <init> (Ljava/util/List;)V
 }
 
+public final class dev/sebastiano/spectre/agent/AmbiguousAgentRuntimeJarException : dev/sebastiano/spectre/agent/SpectreAttachException {
+	public fun <init> (Ljava/util/List;)V
+	public final fun getCandidates ()Ljava/util/List;
+}
+
 public final class dev/sebastiano/spectre/agent/AtomicCaptureResult {
 	public fun <init> (IILjava/lang/String;[BIIIIIJ)V
 	public final fun component1 ()I
