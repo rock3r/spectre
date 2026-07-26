@@ -10,11 +10,8 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -42,12 +39,12 @@ public val DefaultSpectreTestTimeout: Duration = 2.minutes
  *   runner fails with an [AssertionError] naming the timeout.
  * @param childDispatcher dispatcher for [CoroutineScope.launch] / [async] children started from the
  *   body. Defaults to [Dispatchers.Default] so a blocking child cannot monopolize runBlocking's
- *   single-thread event loop and defeat the outer timeout (InjectDispatcher-friendly seam).
+ *   single-thread event loop and defeat the outer timeout (InjectDispatcher-friendly seam). Always
+ *   wins over any dispatcher supplied in [context] for child work.
  * @param testBody suspend test body; [CoroutineScope.launch] children must be joined or cancelled
  *   before the body returns, or the runner reports a coroutine leak.
  * @return the body's result (use `fun mySpec(): Unit = runSpectreTest { … }` so JUnit sees `void`).
  */
-@OptIn(ExperimentalCoroutinesApi::class)
 public fun <T> runSpectreTest(
     context: CoroutineContext = EmptyCoroutineContext,
     timeout: Duration = DefaultSpectreTestTimeout,
@@ -55,16 +52,18 @@ public fun <T> runSpectreTest(
     testBody: suspend CoroutineScope.() -> T,
 ): T =
     runBlocking(context) {
-        // Free-standing supervisor: not a child of runBlocking's job (so non-cooperative children
-        // cannot hang runBlocking after the cleanup budget). Child failures are collected via
-        // CoroutineExceptionHandler / Deferred completion and rethrown after the body returns.
-        val uncaught = CopyOnWriteArrayList<Throwable>()
-        val exceptionHandler = CoroutineExceptionHandler { _, throwable -> uncaught.add(throwable) }
-        val testJob = SupervisorJob()
+        // Free-standing Job (not parented under runBlocking): non-cooperative children cannot hang
+        // runBlocking after the cleanup budget. Child failures cancel this job; invokeOnCompletion
+        // retains the cause even after completed children detach from job.children.
+        val failures = CopyOnWriteArrayList<Throwable>()
+        val testJob = Job()
+        testJob.invokeOnCompletion { cause -> if (cause != null) failures.add(cause) }
+        val exceptionHandler = CoroutineExceptionHandler { _, throwable -> failures.add(throwable) }
+        // childDispatcher is applied last so it always overrides a dispatcher in [context].
         val testScope =
             CoroutineScope(
-                childDispatcher +
-                    context.minusKey(Job) +
+                context.minusKey(Job) +
+                    childDispatcher +
                     testJob +
                     exceptionHandler +
                     CoroutineName("runSpectreTest")
@@ -83,7 +82,8 @@ public fun <T> runSpectreTest(
                 throw AssertionError("runSpectreTest timed out after $timeout")
             }
 
-            val unfinished = testJob.children.filter { it.isActive }.toList()
+            // Treat cancelling-but-not-completed children as unfinished (NonCancellable cleanup).
+            val unfinished = testJob.children.filter { !it.isCompleted }.toList()
             if (unfinished.isNotEmpty()) {
                 val detail = unfinished.joinToString(separator = "; ") { child -> child.toString() }
                 throw AssertionError(
@@ -93,16 +93,7 @@ public fun <T> runSpectreTest(
                 )
             }
 
-            // Surface failures from completed Deferred children that were never awaited.
-            for (child in testJob.children.toList()) {
-                if (child is Deferred<*> && child.isCompleted) {
-                    val failure = child.getCompletionExceptionOrNull()
-                    if (failure != null) throw failure
-                }
-            }
-
-            // launch failures under SupervisorJob land in [exceptionHandler]; rethrow the first.
-            uncaught.firstOrNull()?.let { throw it }
+            failures.firstOrNull()?.let { throw it }
 
             @Suppress("UNCHECKED_CAST")
             holder[0] as T

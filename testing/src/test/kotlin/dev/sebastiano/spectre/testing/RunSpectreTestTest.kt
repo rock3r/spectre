@@ -141,6 +141,20 @@ class RunSpectreTestTest {
     }
 
     @Test
+    fun `unawaited async failure is not swallowed after the body returns`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                runSpectreTest {
+                    async(start = CoroutineStart.UNDISPATCHED) { error("unawaited async boom") }
+                }
+            }
+        assertTrue(
+            error.message?.contains("unawaited async boom") == true,
+            "expected unawaited async failure to surface, was: ${error.message}",
+        )
+    }
+
+    @Test
     fun `returns the body result for expression-body JUnit shapes`() {
         val value: Int = runSpectreTest { 42 }
         assertEquals(42, value)
