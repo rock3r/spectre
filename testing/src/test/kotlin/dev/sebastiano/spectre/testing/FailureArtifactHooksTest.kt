@@ -133,4 +133,47 @@ class FailureArtifactHooksTest {
         val classDir = temp.resolve(FailureArtifactPaths.sanitizePathSegment("com.example.OptOut"))
         assertFalse(Files.exists(classDir))
     }
+
+    @Test
+    fun `isNonFailureAbort recognizes JUnit 5 and JUnit 4 assumption types`() {
+        assertTrue(
+            FailureArtifactHooks.isNonFailureAbort(
+                org.opentest4j.TestAbortedException("skipped by assumption")
+            )
+        )
+        assertTrue(
+            FailureArtifactHooks.isNonFailureAbort(
+                org.junit.AssumptionViolatedException("skipped by Assume")
+            )
+        )
+        assertFalse(FailureArtifactHooks.isNonFailureAbort(AssertionError("real failure")))
+        assertFalse(FailureArtifactHooks.isNonFailureAbort(IllegalStateException("boom")))
+    }
+
+    @Test
+    fun `JUnit4 rule rethrows AssumptionViolatedException without treating as failure`(
+        @TempDir temp: Path
+    ) {
+        val config = FailureArtifactsConfig(reportsRoot = temp)
+        val rule = ComposeAutomatorRule(factory = ::newHeadlessAutomator, failureArtifacts = config)
+        val statement =
+            rule.apply(
+                object : Statement() {
+                    override fun evaluate() {
+                        throw org.junit.AssumptionViolatedException("platform skip")
+                    }
+                },
+                Description.createTestDescription("com.example.Assumed", "maybe"),
+            )
+        try {
+            statement.evaluate()
+            error("expected AssumptionViolatedException")
+        } catch (expected: org.junit.AssumptionViolatedException) {
+            assertEquals("platform skip", expected.message)
+        }
+        // Headless has zero windows, so a mistaken capture still would not write files — the
+        // stronger contract is isNonFailureAbort + that the assumption still propagates above.
+        val classDir = temp.resolve(FailureArtifactPaths.sanitizePathSegment("com.example.Assumed"))
+        assertFalse(Files.exists(classDir))
+    }
 }

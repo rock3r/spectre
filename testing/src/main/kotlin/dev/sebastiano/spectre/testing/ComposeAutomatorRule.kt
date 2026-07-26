@@ -84,7 +84,12 @@ public class ComposeAutomatorRule(
                     // runCatching so both Exception and AssertionError (JUnit 4 failures) are
                     // captured without a broad catch-Throwable detekt hit at this boundary.
                     val outcome = runCatching { base.evaluate() }
-                    outcome.exceptionOrNull()?.let { captureOnFailure(description) }
+                    outcome.exceptionOrNull()?.let { failure ->
+                        // Assumptions abort without a "failure"; skip artifacts (same as JUnit 5).
+                        if (!FailureArtifactHooks.isNonFailureAbort(failure)) {
+                            captureOnFailure(description)
+                        }
+                    }
                     outcome.getOrThrow()
                 } finally {
                     after()

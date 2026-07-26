@@ -84,9 +84,7 @@ public class ComposeAutomatorExtension(
 
     override fun afterTestExecution(context: ExtensionContext) {
         val failure = context.executionException.orElse(null) ?: return
-        // Assumptions abort the test without a "failure"; do not write artifacts for those.
-        if (failure is org.opentest4j.TestAbortedException) return
-        captureFailureArtifacts(context)
+        captureFailureArtifacts(context, failure)
     }
 
     /**
@@ -97,7 +95,7 @@ public class ComposeAutomatorExtension(
         context: ExtensionContext,
         throwable: Throwable,
     ) {
-        captureFailureArtifacts(context)
+        captureFailureArtifacts(context, throwable)
         throw throwable
     }
 
@@ -106,11 +104,14 @@ public class ComposeAutomatorExtension(
         throwable: Throwable,
     ) {
         // Automator may already exist if factory ran; capture is best-effort.
-        captureFailureArtifacts(context)
+        captureFailureArtifacts(context, throwable)
         throw throwable
     }
 
-    private fun captureFailureArtifacts(context: ExtensionContext) {
+    private fun captureFailureArtifacts(context: ExtensionContext, cause: Throwable) {
+        // Assumptions abort without a "failure"; do not write artifacts for those (test method
+        // or lifecycle @BeforeEach/@AfterEach).
+        if (FailureArtifactHooks.isNonFailureAbort(cause)) return
         val store = context.getStore(NAMESPACE)
         // One capture per invocation: test-method failure runs afterTestExecution, then a later
         // @AfterEach failure must not recapture (which would clear the earlier run-* tree).

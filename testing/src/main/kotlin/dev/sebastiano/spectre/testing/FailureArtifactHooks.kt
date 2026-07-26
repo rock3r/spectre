@@ -14,6 +14,28 @@ internal object FailureArtifactHooks {
 
     const val REPORT_ENTRY_KEY: String = "spectre.failureArtifact"
 
+    /**
+     * True when [throwable] is a JUnit assumption / abort rather than a test failure. Aborted tests
+     * must not produce failure artifacts (expensive and misleading for platform-skip suites).
+     *
+     * JUnit 4 assumption types are matched by class name so this module stays usable when only
+     * JUnit 5 is on the runtime classpath (`junit:junit` is compileOnly for production).
+     */
+    fun isNonFailureAbort(throwable: Throwable): Boolean {
+        // JUnit 5 assumptions / abort (also used when assumptions fire in lifecycle methods).
+        if (throwable is org.opentest4j.TestAbortedException) return true
+        // JUnit 4: public `org.junit.AssumptionViolatedException` extends the internal type.
+        var type: Class<*>? = throwable.javaClass
+        while (type != null) {
+            when (type.name) {
+                "org.junit.AssumptionViolatedException",
+                "org.junit.internal.AssumptionViolatedException" -> return true
+            }
+            type = type.superclass
+        }
+        return false
+    }
+
     fun recordFailure(
         automator: ComposeAutomator,
         config: FailureArtifactsConfig,
