@@ -47,7 +47,8 @@ class IpcIoTimeoutTest {
 
     @Test
     fun `server times out when client stalls mid-frame and keeps accepting`() {
-        val frameTimeoutMs = 250L
+        // Slightly looser than unit-test minimum so Windows AF_UNIX scheduling still fires.
+        val frameTimeoutMs = 400L
         IpcServer(udsPath, stubHandler(), frameIoTimeoutMs = frameTimeoutMs).use {
             awaitSocket(udsPath)
 
@@ -64,17 +65,33 @@ class IpcIoTimeoutTest {
                 Framing.readFrame(input) // HelloAck
                 output.write(byteArrayOf(0x00, 0x00)) // 2 of 4 length bytes of next frame
                 output.flush()
-                Thread.sleep(frameTimeoutMs + 200)
+                Thread.sleep(frameTimeoutMs + 400)
             }
 
-            assertTimeoutPreemptively(java.time.Duration.ofSeconds(3)) {
-                IpcClient(udsPath, frameIoTimeoutMs = 5_000).use { client ->
-                    assertEquals(
-                        AgentResponse.Pong,
-                        client.send(AgentRequest.Ping),
-                        "accept loop must survive a mid-frame stall",
-                    )
+            // Give accept loop a beat after the dead peer is closed (Windows AF_UNIX).
+            Thread.sleep(100)
+
+            assertTimeoutPreemptively(java.time.Duration.ofSeconds(8)) {
+                var lastError: Exception? = null
+                repeat(5) { attempt ->
+                    try {
+                        IpcClient(udsPath, frameIoTimeoutMs = 5_000).use { client ->
+                            assertEquals(
+                                AgentResponse.Pong,
+                                client.send(AgentRequest.Ping),
+                                "accept loop must survive a mid-frame stall",
+                            )
+                        }
+                        return@assertTimeoutPreemptively
+                    } catch (ex: Exception) {
+                        lastError = ex
+                        Thread.sleep(100L * (attempt + 1))
+                    }
                 }
+                throw AssertionError(
+                    "could not re-attach after mid-frame stall: ${lastError?.message}",
+                    lastError,
+                )
             }
         }
     }

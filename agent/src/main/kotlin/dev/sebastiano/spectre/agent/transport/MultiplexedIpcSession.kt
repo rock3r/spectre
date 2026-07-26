@@ -67,17 +67,23 @@ internal class MultiplexedIpcSession(
         writeLock: Any,
     ) {
         while (running.get()) {
+            // Channel-close deadlines may surface as SocketTimeoutException or as a
+            // ClosedChannelException / AsynchronousCloseException on some platforms.
+            @Suppress("TooGenericExceptionCaught")
             val requestBytes =
                 try {
                     // Idle between requests is allowed; mid-frame stalls time out.
                     FrameIoDeadline.readFrameAllowingIdle(input, channel, frameIoTimeoutMs)
                         ?: return
-                } catch (ex: java.net.SocketTimeoutException) {
-                    // Stalled peer mid-frame — drop this connection; accept loop continues.
-                    System.err.println(
-                        "[spectre-agent] frame I/O timed out (${ex.message}); closing connection"
-                    )
-                    return
+                } catch (ex: Exception) {
+                    if (FrameIoDeadline.isTimeout(ex) || !channel.isOpen) {
+                        System.err.println(
+                            "[spectre-agent] frame I/O timed out or peer closed " +
+                                "(${ex.javaClass.simpleName}: ${ex.message}); closing connection"
+                        )
+                        return
+                    }
+                    throw ex
                 }
             val op = decodeOpOrReport(requestBytes, output, writeLock) ?: continue
             when (val body = op.body) {
