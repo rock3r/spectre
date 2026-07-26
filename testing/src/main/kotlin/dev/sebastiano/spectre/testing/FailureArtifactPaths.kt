@@ -116,8 +116,16 @@ public object FailureArtifactPaths {
         return prefix + suffix
     }
 
-    private fun shortHash(value: String): String =
-        Integer.toUnsignedString(value.hashCode(), HASH_RADIX).padStart(HASH_WIDTH, '0')
+    private fun shortHash(value: String): String {
+        // FNV-1a 64-bit hex (16 chars) — more collision-resistant than String.hashCode for
+        // distinct display names that sanitize to the same base.
+        var hash = FNV_OFFSET_BASIS
+        for (byte in value.toByteArray(Charsets.UTF_8)) {
+            hash = hash xor (byte.toLong() and 0xFFL)
+            hash *= FNV_PRIME
+        }
+        return java.lang.Long.toUnsignedString(hash, HASH_RADIX).padStart(HASH_WIDTH, '0')
+    }
 
     /**
      * Longest UTF-8 prefix of [bytes] whose length is at most [maxBytes] and ends on a complete
@@ -153,5 +161,7 @@ public object FailureArtifactPaths {
     }
 
     private const val HASH_RADIX: Int = 16
-    private const val HASH_WIDTH: Int = 8
+    private const val HASH_WIDTH: Int = 16
+    private const val FNV_OFFSET_BASIS: Long = -0x340d631b7bdddcdbL // 0xcbf29ce484222325
+    private const val FNV_PRIME: Long = 0x100000001b3L
 }

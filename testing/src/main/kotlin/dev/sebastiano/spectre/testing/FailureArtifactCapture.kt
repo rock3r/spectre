@@ -27,17 +27,11 @@ public object FailureArtifactCapture {
         windowCount: Int,
         captureWindow: (windowIndex: Int) -> AtomicCapture,
     ): List<CaptureArtifactPaths> {
-        // Drop every prior window-* under this method dir (including higher indices than the
-        // current windowCount) so CI cannot publish stale captures from a previous failure.
+        // Best-effort purge of prior window-*/run-* trees. Always write under a fresh run-*
+        // directory so this attempt cannot share or interleave paths with residual OS-locked
+        // leftovers (CI still may upload undeletable leftovers; that is an OS edge case).
         clearStaleWindowDirectories(methodDirectory)
-        // If OS locks prevent full cleanup, write under a unique run-* subdir so this attempt's
-        // artifacts cannot interleave with undeletable leftovers.
-        val writeRoot =
-            if (listStaleArtifactDirectories(methodDirectory).isEmpty()) {
-                methodDirectory
-            } else {
-                methodDirectory.resolve("run-${System.nanoTime()}")
-            }
+        val writeRoot = methodDirectory.resolve("run-${System.nanoTime()}")
         if (windowCount <= 0) return emptyList()
         val written = ArrayList<CaptureArtifactPaths>(windowCount)
         for (index in 0 until windowCount) {

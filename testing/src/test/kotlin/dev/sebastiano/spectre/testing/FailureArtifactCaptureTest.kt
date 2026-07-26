@@ -108,6 +108,22 @@ class FailureArtifactCaptureTest {
         assertFalse(Files.exists(methodDir.resolve("window-9")))
     }
 
+    @Test
+    fun `successful captures land under a run subdir`(@TempDir temp: Path) {
+        val methodDir = temp.resolve("com.example.T").resolve("ok")
+        val captures =
+            FailureArtifactCapture.captureWindows(
+                methodDirectory = methodDir,
+                windowCount = 1,
+                captureWindow = { fakeAtomicCapture(windowIndex = 0) },
+            )
+        assertEquals(1, captures.size)
+        val dir = captures.single().directory
+        assertTrue(dir.parent.fileName.toString().startsWith("run-"))
+        assertEquals("window-0", dir.fileName.toString())
+        assertTrue(Files.isRegularFile(dir.resolve("capture.json")))
+    }
+
     private fun fakeAtomicCapture(windowIndex: Int): AtomicCapture {
         val image = BufferedImage(4, 4, BufferedImage.TYPE_INT_ARGB)
         val pngBytes = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47) // minimal non-empty stub
