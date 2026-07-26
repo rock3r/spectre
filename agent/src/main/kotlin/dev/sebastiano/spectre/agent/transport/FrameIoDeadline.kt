@@ -9,8 +9,7 @@ import java.net.SocketTimeoutException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.Channel
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
@@ -29,10 +28,13 @@ internal object FrameIoDeadline {
     /** Default mid-frame / write budget for production attach sessions. */
     const val DEFAULT_TIMEOUT_MS: Long = 30_000L
 
-    private val scheduler: ScheduledExecutorService =
-        Executors.newSingleThreadScheduledExecutor { r ->
-            Thread(r, "spectre-ipc-io-deadline").apply { isDaemon = true }
-        }
+    // removeOnCancelPolicy avoids retaining every successful op's cancelled 30s deadline
+    // task in the delayed queue under sustained IPC throughput (Codex P2).
+    private val scheduler: ScheduledThreadPoolExecutor =
+        ScheduledThreadPoolExecutor(1) { r ->
+                Thread(r, "spectre-ipc-io-deadline").apply { isDaemon = true }
+            }
+            .also { it.removeOnCancelPolicy = true }
 
     private enum class RunState {
         RUNNING,
