@@ -155,6 +155,23 @@ class RunSpectreTestTest {
     }
 
     @Test
+    fun `child failure wakes a suspended body before the runner timeout`() {
+        // Body would otherwise sleep past a short failure; must surface the child exception,
+        // not "runSpectreTest timed out after …".
+        val error =
+            assertFailsWith<IllegalStateException> {
+                runSpectreTest(timeout = 5.seconds) {
+                    launch(start = CoroutineStart.UNDISPATCHED) { error("sibling boom") }
+                    delay(30.seconds)
+                }
+            }
+        assertTrue(
+            error.message?.contains("sibling boom") == true,
+            "expected sibling failure to wake the body, was: ${error.message}",
+        )
+    }
+
+    @Test
     fun `returns the body result for expression-body JUnit shapes`() {
         val value: Int = runSpectreTest { 42 }
         assertEquals(42, value)

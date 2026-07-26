@@ -6,12 +6,14 @@ import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -37,10 +39,10 @@ public val DefaultSpectreTestTimeout: Duration = 2.minutes
  *   dispatcher). Do not install a virtual-time test scheduler here if you need real delays.
  * @param timeout wall-clock budget for the entire body (including joined children). On expiry the
  *   runner fails with an [AssertionError] naming the timeout.
- * @param childDispatcher dispatcher for [CoroutineScope.launch] / [async] children started from the
- *   body. Defaults to [Dispatchers.Default] so a blocking child cannot monopolize runBlocking's
- *   single-thread event loop and defeat the outer timeout (InjectDispatcher-friendly seam). Always
- *   wins over any dispatcher supplied in [context] for child work.
+ * @param childDispatcher dispatcher for the test body coroutine and for [CoroutineScope.launch] /
+ *   [async] children started from the body. Defaults to [Dispatchers.Default] so work is off
+ *   runBlocking's single-thread event loop (InjectDispatcher-friendly seam). Always wins over any
+ *   dispatcher supplied in [context] for that work.
  * @param testBody suspend test body; [CoroutineScope.launch] children must be joined or cancelled
  *   before the body returns, or the runner reports a coroutine leak.
  * @return the body's result (use `fun mySpec(): Unit = runSpectreTest { … }` so JUnit sees `void`).
@@ -53,8 +55,8 @@ public fun <T> runSpectreTest(
 ): T =
     runBlocking(context) {
         // Free-standing Job (not parented under runBlocking): non-cooperative children cannot hang
-        // runBlocking after the cleanup budget. Child failures cancel this job; invokeOnCompletion
-        // retains the cause even after completed children detach from job.children.
+        // runBlocking after the cleanup budget. Child failures cancel this job (and thus the body
+        // async below); invokeOnCompletion retains the cause for rethrow after await.
         val failures = CopyOnWriteArrayList<Throwable>()
         val testJob = Job()
         testJob.invokeOnCompletion { cause -> if (cause != null) failures.add(cause) }
@@ -69,20 +71,36 @@ public fun <T> runSpectreTest(
                     CoroutineName("runSpectreTest")
             )
         try {
-            // Holder distinguishes "body returned null" from "outer timeout" without swallowing
-            // nested TimeoutCancellationException from waitForNode / withTimeout inside the body
-            // (withTimeoutOrNull only maps *its own* timeout to null; nested ones rethrow).
+            // Holder distinguishes "body returned null" from "outer timeout".
             val holder = arrayOfNulls<Any?>(1)
+            // Body runs as a child of [testJob] so a failing sibling cancels/wakes it, but the
+            // receiver for launch/async is [testScope] so those children are siblings of the body
+            // (not nested under it). That way the body can return while they are still running
+            // (leak detection) instead of structured-concurrency waiting for them.
+            val bodyDeferred = testScope.async {
+                // Use testScope as receiver, not this async scope.
+                testScope.testBody()
+            }
             val finished =
                 withTimeoutOrNull(timeout) {
-                    holder[0] = testScope.testBody()
-                    true
+                    try {
+                        holder[0] = bodyDeferred.await()
+                        true
+                    } catch (cancelled: CancellationException) {
+                        // Prefer the original child failure over a bare cancellation from the
+                        // structured Job when a sibling failed.
+                        failures.firstOrNull()?.let { throw it }
+                        throw cancelled
+                    }
                 }
             if (finished == null) {
+                // Prefer a recorded child failure if the body was cancelled mid-timeout wait.
+                failures.firstOrNull()?.let { throw it }
                 throw AssertionError("runSpectreTest timed out after $timeout")
             }
 
             // Treat cancelling-but-not-completed children as unfinished (NonCancellable cleanup).
+            // The bodyDeferred is already completed successfully and excluded by isCompleted.
             val unfinished = testJob.children.filter { !it.isCompleted }.toList()
             if (unfinished.isNotEmpty()) {
                 val detail = unfinished.joinToString(separator = "; ") { child -> child.toString() }
