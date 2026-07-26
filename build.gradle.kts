@@ -5,6 +5,7 @@ import com.vanniktech.maven.publish.MavenPublishBaseExtension
 import com.vanniktech.maven.publish.SourcesJar
 import dev.detekt.gradle.Detekt
 import dev.detekt.gradle.extensions.DetektExtension
+import dev.sebastiano.spectre.build.WindowsGraphicsCaptureHelperPackagingContract
 import java.util.jar.JarFile
 import java.util.zip.ZipFile
 import javax.xml.parsers.DocumentBuilderFactory
@@ -91,8 +92,32 @@ val verifyReleaseVersionScript by
         outputs.upToDateWhen { false }
     }
 
+// buildSrc is not a project of this build for `dependsOn(":buildSrc:…")`, but its tests
+// cover the shared Windows helper packaging contract. Invoke them via a nested Gradle run
+// on the buildSrc project directory (same pattern as `./gradlew -p buildSrc test`).
+val buildSrcUnitTests by
+    tasks.registering(Exec::class) {
+        group = "verification"
+        description = "Runs buildSrc unit tests (Windows helper packaging contract and related)."
+        workingDir = rootProject.layout.projectDirectory.asFile
+        commandLine(
+            rootProject.layout.projectDirectory.file("gradlew").asFile.absolutePath,
+            "-p",
+            "buildSrc",
+            "test",
+        )
+        // Nested Gradle manages its own up-to-date checks; always re-enter so check is honest.
+        outputs.upToDateWhen { false }
+    }
+
 tasks.named("check") {
-    dependsOn("detekt", "ktfmtCheck", verifyCliPackageManifests, verifyReleaseVersionScript)
+    dependsOn(
+        "detekt",
+        "ktfmtCheck",
+        verifyCliPackageManifests,
+        verifyReleaseVersionScript,
+        buildSrcUnitTests,
+    )
 }
 
 tasks.withType<Detekt>().configureEach {
@@ -283,9 +308,10 @@ val publishArtifactIds: Map<String, String> = publishedLibraryProjects.associate
 }
 val mavenLocalRepoRoot: String = "${System.getProperty("user.home")}/.m2/repository"
 
-// Recording jar entries we expect to find — keep in sync with
-// `VerifyBundledRecordingHelpers`'s expectations so a contradiction between the two surfaces
-// as a duplicate failure rather than one silently passing.
+// Recording jar entries we expect to find. Windows uses
+// [WindowsGraphicsCaptureHelperPackagingContract] (shared with
+// `:recording-windows:verifyRecordingWindowsHelper`) so both verifiers enforce the same
+// multi-file helper runtime contract.
 val expectedRecordingHelperEntriesByProject: Map<String, List<String>> =
     mutableMapOf<String, List<String>>().apply {
         val macOsExpected =
@@ -293,7 +319,16 @@ val expectedRecordingHelperEntriesByProject: Map<String, List<String>> =
                 providers.gradleProperty("stubMacHelperForTesting").isPresent ||
                 org.gradle.internal.os.OperatingSystem.current().isMacOsX
         if (macOsExpected) {
-            put(":recording-macos", listOf("native/macos/spectre-screencapture"))
+            // App-bundle layout (#190); bare native/macos/spectre-screencapture is rejected.
+            put(
+                ":recording-macos",
+                listOf(
+                    "native/macos/SpectreCaptureHelper.app/Contents/MacOS/spectre-screencapture",
+                    "native/macos/SpectreCaptureHelper.app/Contents/Info.plist",
+                    "native/macos/SpectreCaptureHelper.app/Contents/PkgInfo",
+                    "native/macos/SpectreCaptureHelper.app/Contents/Resources/AppIcon.icns",
+                ),
+            )
         }
         val currentOs = org.gradle.internal.os.OperatingSystem.current()
         val windowsExpected =
@@ -303,10 +338,7 @@ val expectedRecordingHelperEntriesByProject: Map<String, List<String>> =
         if (windowsExpected) {
             put(
                 ":recording-windows",
-                listOf(
-                    "native/windows/x64/spectre-window-capture.exe",
-                    "native/windows/arm64/spectre-window-capture.exe",
-                ),
+                WindowsGraphicsCaptureHelperPackagingContract.requiredJarEntryPaths(),
             )
         }
         val crossArchLinux =
@@ -473,15 +505,29 @@ val verifyMavenLocalPublication by tasks.registering {
                     }
                 }
                 if (jarSuffix == ".jar") {
-                    for (path in expectedHelpersByProject[moduleName].orEmpty()) {
-                        if (path !in entriesInJar) {
-                            errors +=
-                                "$moduleName: published jar (${jar.name}) is missing " +
-                                    "expected helper entry `$path`"
-                        } else if ((entrySizesInJar[path] ?: 0L) <= 0L) {
-                            errors +=
-                                "$moduleName: published jar (${jar.name}) has empty " +
-                                    "helper entry `$path`"
+                    if (
+                        moduleName == ":recording-windows" &&
+                            expectedHelpersByProject.containsKey(":recording-windows")
+                    ) {
+                        // Full multi-file contract (fixed required set + deps.json closure),
+                        // shared with `:recording-windows:verifyRecordingWindowsHelper`.
+                        ZipFile(jar).use { zip ->
+                            for (gap in
+                                WindowsGraphicsCaptureHelperPackagingContract.validateZip(zip)) {
+                                errors += "$moduleName: published jar (${jar.name}): $gap"
+                            }
+                        }
+                    } else {
+                        for (path in expectedHelpersByProject[moduleName].orEmpty()) {
+                            if (path !in entriesInJar) {
+                                errors +=
+                                    "$moduleName: published jar (${jar.name}) is missing " +
+                                        "expected helper entry `$path`"
+                            } else if ((entrySizesInJar[path] ?: 0L) <= 0L) {
+                                errors +=
+                                    "$moduleName: published jar (${jar.name}) has empty " +
+                                        "helper entry `$path`"
+                            }
                         }
                     }
                 }

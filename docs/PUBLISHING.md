@@ -113,9 +113,13 @@ Manual promotion checklist:
 - Confirm `spectre-recording-linux-<version>.jar` contains
   `native/linux/x86_64/spectre-wayland-helper` and
   `native/linux/aarch64/spectre-wayland-helper`.
-- Confirm `spectre-recording-windows-<version>.jar` contains
-  `native/windows/x64/spectre-window-capture.exe` and
-  `native/windows/arm64/spectre-window-capture.exe`.
+- Confirm `spectre-recording-windows-<version>.jar` contains a complete multi-file
+  Windows Graphics Capture helper for **both** `x64` and `arm64` under
+  `native/windows/<arch>/` — not only `spectre-window-capture.exe`. Each arch must
+  include the renamed apphost, `SpectreWindowCapture.dll`,
+  `SpectreWindowCapture.deps.json`, `SpectreWindowCapture.runtimeconfig.json`, WASDK
+  bootstrap/WinRT/Win2D core DLLs, and every runtime/native asset named by that arch's
+  deps.json (see `WindowsGraphicsCaptureHelperPackagingContract` in `buildSrc`).
 - Confirm `spectre-agent-runtime-<version>.jar` exists and its manifest declares
   `Agent-Class: dev.sebastiano.spectre.agent.runtime.SpectreAgent`.
 - Run the Central Portal deployment checker:
@@ -186,8 +190,9 @@ It additionally asserts:
   (executable, Info.plist, PkgInfo, AppIcon.icns)
 - `:recording-linux` contains `native/linux/x86_64/spectre-wayland-helper` and
   `native/linux/aarch64/spectre-wayland-helper` when built with release helper inputs
-- `:recording-windows` contains `native/windows/x64/spectre-window-capture.exe` and
-  `native/windows/arm64/spectre-window-capture.exe` when built with release helper inputs
+- `:recording-windows` contains the full multi-file Windows Graphics Capture helper
+  contract for `x64` and `arm64` under `native/windows/<arch>/` when built with release
+  helper inputs (fixed required basenames + deps.json asset closure — not exe-only)
 - `:agent-runtime` publishes the Java Agent runtime jar; it must carry the Java Agent
   manifest and must not bundle Compose, Skiko, Spectre core, or Kotlin stdlib classes
 
@@ -203,8 +208,26 @@ previous release-CI run), point at it instead of the stub:
 
 The `prebuiltLinuxHelpersDir` directory must contain
 `x86_64/spectre-wayland-helper` and `aarch64/spectre-wayland-helper`.
-The `prebuiltWindowsHelpersDir` directory must contain
-`x64/spectre-window-capture.exe` and `arm64/spectre-window-capture.exe`.
+The `prebuiltWindowsHelpersDir` directory must contain the **complete** framework-dependent
+publish output for each arch (as produced by
+`:recording:assembleWindowsScreenshotHelper` / the release `windows-helper` job), shaped as:
+
+```text
+windows-helpers/
+  x64/
+    spectre-window-capture.exe
+    SpectreWindowCapture.dll
+    SpectreWindowCapture.deps.json
+    SpectreWindowCapture.runtimeconfig.json
+    Microsoft.WindowsAppRuntime.Bootstrap.dll
+    … remaining companions from the .NET publish …
+  arm64/
+    … same multi-file tree …
+```
+
+Providing only the two renamed executables is **not** sufficient: the runtime extractor
+copies the whole arch directory, and packaging verification enforces the multi-file
+contract (fixed required set + deps.json closure) for both arches.
 
 ## Coordinates
 

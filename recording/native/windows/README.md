@@ -1,11 +1,21 @@
 # Spectre Windows Graphics Capture helper
 
 This .NET 8 Windows helper owns Spectre's native Windows window capture. It is packaged by
-`:recording-windows` as a runtime resource for both x64 and arm64:
+`:recording-windows` as a **multi-file** runtime resource directory for both x64 and arm64:
 
 ```text
 native/windows/<arch>/spectre-window-capture.exe
+native/windows/<arch>/SpectreWindowCapture.dll
+native/windows/<arch>/SpectreWindowCapture.deps.json
+native/windows/<arch>/SpectreWindowCapture.runtimeconfig.json
+native/windows/<arch>/… WASDK / Win2D / WinRT companions …
 ```
+
+The runtime extractor copies every regular file under each arch directory before launch.
+Packaging verification (`:recording-windows:verifyRecordingWindowsHelper` and
+`:verifyMavenLocalPublication`) enforces the multi-file contract — an orphan
+`spectre-window-capture.exe` without companions fails the gate. See
+`WindowsGraphicsCaptureHelperPackagingContract` in `buildSrc`.
 
 The helper is framework-dependent. Runtime machines need:
 
