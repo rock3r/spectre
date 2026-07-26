@@ -5,10 +5,11 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 
 /**
@@ -123,8 +124,28 @@ class RunSpectreTestTest {
                 message.contains("timeout", ignoreCase = true),
             "expected timeout wording, was: $message",
         )
-        // Ensure we didn't leak a CancellationException as the primary type without wrapping.
-        assertTrue(error !is CancellationException)
+    }
+
+    @Test
+    fun `nested withTimeout failures are not rewritten as runner timeout`() {
+        val error =
+            assertFailsWith<TimeoutCancellationException> {
+                runSpectreTest(timeout = 30.seconds) {
+                    // Inner budget much smaller than the runner budget — must surface as the
+                    // nested timeout, not "runSpectreTest timed out after 30s".
+                    withTimeout(50.milliseconds) { delay(5.seconds) }
+                }
+            }
+        assertTrue(
+            error.message?.contains("runSpectreTest timed out") != true,
+            "nested timeout must not be rewritten as runner timeout, was: ${error.message}",
+        )
+    }
+
+    @Test
+    fun `nullable body result is not treated as a timeout`() {
+        val value: String? = runSpectreTest { null }
+        assertEquals(null, value)
     }
 
     private companion object {

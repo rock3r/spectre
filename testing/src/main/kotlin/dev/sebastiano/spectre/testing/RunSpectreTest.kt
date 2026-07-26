@@ -8,9 +8,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -45,15 +43,24 @@ public fun <T> runSpectreTest(
     testBody: suspend CoroutineScope.() -> T,
 ): T =
     runBlocking(context) {
-        val testJob = Job(parent = coroutineContext.job)
+        // Free-standing job: not a child of runBlocking's job. That way a non-cooperative child
+        // cannot hang runBlocking after the cleanup join budget expires (structured concurrency
+        // would otherwise wait for a parented child forever).
+        val testJob = Job()
         val testScope = CoroutineScope(coroutineContext + testJob + CoroutineName("runSpectreTest"))
         try {
-            val result =
-                try {
-                    withTimeout(timeout) { testScope.testBody() }
-                } catch (timeoutError: kotlinx.coroutines.TimeoutCancellationException) {
-                    throw AssertionError("runSpectreTest timed out after $timeout", timeoutError)
+            // Holder distinguishes "body returned null" from "outer timeout" without swallowing
+            // nested TimeoutCancellationException from waitForNode / withTimeout inside the body
+            // (withTimeoutOrNull only maps *its own* timeout to null; nested ones rethrow).
+            val holder = arrayOfNulls<Any?>(1)
+            val finished =
+                withTimeoutOrNull(timeout) {
+                    holder[0] = testScope.testBody()
+                    true
                 }
+            if (finished == null) {
+                throw AssertionError("runSpectreTest timed out after $timeout")
+            }
 
             val unfinished = testJob.children.filter { it.isActive }.toList()
             if (unfinished.isNotEmpty()) {
@@ -65,16 +72,12 @@ public fun <T> runSpectreTest(
                 )
             }
 
-            // Surface completion exceptions from children that finished during the body without
-            // being awaited (structured Job will have cancelled [testJob] on failure; rethrow).
-            if (testJob.isCancelled) {
-                testJob.join()
-            }
-
-            result
+            @Suppress("UNCHECKED_CAST")
+            holder[0] as T
         } finally {
             testJob.cancel()
-            // Bound cleanup so a stuck child cannot hang the runner indefinitely.
+            // Bound cleanup so a stuck non-cooperative child cannot hang the runner; because
+            // testJob is free-standing, giving up here lets runBlocking complete.
             withTimeoutOrNull(CLEANUP_JOIN_TIMEOUT) { testJob.join() }
         }
     }
