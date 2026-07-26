@@ -253,12 +253,23 @@ object WindowsGraphicsCaptureHelperPackagingContract {
 
     @Suppress("UNCHECKED_CAST")
     private fun collectFromTarget(targetAny: Any?, ridName: String, into: MutableSet<String>) {
-        val packages = targetAny as? Map<String, Any?> ?: return
-        for ((_, metaAny) in packages) {
-            val meta = metaAny as? Map<String, Any?> ?: continue
+        val packages =
+            targetAny as? Map<String, Any?>
+                ?: throw IllegalArgumentException("deps.json target body must be an object")
+        for ((packageKey, metaAny) in packages) {
+            val meta =
+                metaAny as? Map<String, Any?>
+                    ?: throw IllegalArgumentException(
+                        "deps.json package '$packageKey' must be an object, was " +
+                            (metaAny?.let { it::class.java.simpleName } ?: "null")
+                    )
             collectAssetBasenames(meta["runtime"] as? Map<String, Any?>, into)
             collectAssetBasenames(meta["native"] as? Map<String, Any?>, into)
-            collectRuntimeTargetBasenames(meta["runtimeTargets"] as? Map<String, Any?>, ridName, into)
+            collectRuntimeTargetBasenames(
+                meta["runtimeTargets"] as? Map<String, Any?>,
+                ridName,
+                into,
+            )
         }
     }
 
