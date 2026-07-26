@@ -86,6 +86,11 @@ class RunSpectreTestValidationTest {
     @Test
     @Order(3)
     fun `pasteText under runSpectreTest drives the shipped path`(): Unit = runSpectreTest {
+        // Default validation JVM uses apple.awt.UIElement=true; NSPasteboard is restricted.
+        assumeFalse(
+            sampleFixtureRunsAsUiElement,
+            "Skipped under apple.awt.UIElement=true (NSPasteboard restricted)",
+        )
         with(fixture.automator) {
             navigateToScenario("scenario.counter")
             val field = waitForTestTag("textInput")
