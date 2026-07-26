@@ -6,11 +6,14 @@ import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
@@ -37,6 +40,9 @@ public val DefaultSpectreTestTimeout: Duration = 2.minutes
  *   dispatcher). Do not install a virtual-time test scheduler here if you need real delays.
  * @param timeout wall-clock budget for the entire body (including joined children). On expiry the
  *   runner fails with an [AssertionError] naming the timeout.
+ * @param childDispatcher dispatcher for [CoroutineScope.launch] / [async] children started from the
+ *   body. Defaults to [Dispatchers.Default] so a blocking child cannot monopolize runBlocking's
+ *   single-thread event loop and defeat the outer timeout (InjectDispatcher-friendly seam).
  * @param testBody suspend test body; [CoroutineScope.launch] children must be joined or cancelled
  *   before the body returns, or the runner reports a coroutine leak.
  * @return the body's result (use `fun mySpec(): Unit = runSpectreTest { … }` so JUnit sees `void`).
@@ -45,19 +51,23 @@ public val DefaultSpectreTestTimeout: Duration = 2.minutes
 public fun <T> runSpectreTest(
     context: CoroutineContext = EmptyCoroutineContext,
     timeout: Duration = DefaultSpectreTestTimeout,
+    childDispatcher: CoroutineDispatcher = Dispatchers.Default,
     testBody: suspend CoroutineScope.() -> T,
 ): T =
     runBlocking(context) {
         // Free-standing supervisor: not a child of runBlocking's job (so non-cooperative children
-        // cannot hang runBlocking after the cleanup budget), and child failures do not cancel
-        // siblings mid-body. Failures are collected via [CoroutineExceptionHandler] / Deferred
-        // completion and rethrown after the body returns.
+        // cannot hang runBlocking after the cleanup budget). Child failures are collected via
+        // CoroutineExceptionHandler / Deferred completion and rethrown after the body returns.
         val uncaught = CopyOnWriteArrayList<Throwable>()
         val exceptionHandler = CoroutineExceptionHandler { _, throwable -> uncaught.add(throwable) }
         val testJob = SupervisorJob()
         val testScope =
             CoroutineScope(
-                coroutineContext + testJob + exceptionHandler + CoroutineName("runSpectreTest")
+                childDispatcher +
+                    context.minusKey(Job) +
+                    testJob +
+                    exceptionHandler +
+                    CoroutineName("runSpectreTest")
             )
         try {
             // Holder distinguishes "body returned null" from "outer timeout" without swallowing
@@ -91,6 +101,7 @@ public fun <T> runSpectreTest(
                 }
             }
 
+            // launch failures under SupervisorJob land in [exceptionHandler]; rethrow the first.
             uncaught.firstOrNull()?.let { throw it }
 
             @Suppress("UNCHECKED_CAST")

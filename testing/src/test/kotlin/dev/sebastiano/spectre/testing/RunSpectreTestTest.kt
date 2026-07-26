@@ -113,14 +113,30 @@ class RunSpectreTestTest {
             assertFailsWith<IllegalStateException> {
                 runSpectreTest {
                     // UNDISPATCHED runs the child to its first suspension (or completion) before
-                    // launch returns, so the failure cancels testJob before the body returns
-                    // without the body awaiting the child.
+                    // launch returns, so the failure is reported before the body returns without
+                    // the body awaiting the child.
                     launch(start = CoroutineStart.UNDISPATCHED) { error("unawaited child boom") }
                 }
             }
         assertTrue(
             error.message?.contains("unawaited child boom") == true,
             "expected unawaited child failure to surface, was: ${error.message}",
+        )
+    }
+
+    @Test
+    fun `joined launch failure is not swallowed`() {
+        // join() does not rethrow child failures; the runner must still surface them.
+        val error =
+            assertFailsWith<IllegalStateException> {
+                runSpectreTest {
+                    val job = launch { error("joined child boom") }
+                    job.join()
+                }
+            }
+        assertTrue(
+            error.message?.contains("joined child boom") == true,
+            "expected joined launch failure to surface, was: ${error.message}",
         )
     }
 
