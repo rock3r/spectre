@@ -325,6 +325,64 @@ class WindowsGraphicsCaptureHelperPackagingContractTest {
     }
 
     @Test
+    fun `empty targets map in deps json is rejected`() {
+        val files = completeFixedRequiredFiles()
+        val entrySizes =
+            WindowsGraphicsCaptureHelperPackagingContract.ARCHES.flatMap { arch ->
+                    files.map { (base, size) -> "native/windows/$arch/$base" to size }
+                }
+                .toMap()
+        val errors =
+            WindowsGraphicsCaptureHelperPackagingContract.validateJarEntries(
+                entrySizes,
+                depsJsonByArch = mapOf("x64" to "{}", "arm64" to """{"targets":{}}"""),
+            )
+        assertTrue(
+            errors.any { it.contains("invalid") && it.contains("x64") },
+            "expected empty/missing targets to fail; errors=$errors",
+        )
+        assertTrue(
+            errors.any { it.contains("invalid") && it.contains("arm64") },
+            "expected empty targets to fail for arm64; errors=$errors",
+        )
+    }
+
+    @Test
+    fun `runtimeTargets are filtered by rid metadata`() {
+        val deps =
+            """
+            {
+              "targets": {
+                ".NETCoreApp,Version=v8.0": {
+                  "pkg/1": {
+                    "runtimeTargets": {
+                      "runtimes/win-x64/native/OnlyX64Rt.dll": {
+                        "rid": "win-x64",
+                        "assetType": "native"
+                      },
+                      "runtimes/win-arm64/native/OnlyArm64Rt.dll": {
+                        "rid": "win-arm64",
+                        "assetType": "native"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """
+                .trimIndent()
+        val x64 =
+            WindowsGraphicsCaptureHelperPackagingContract.runtimeAssetBaseNames(deps, "x64")
+        val arm64 =
+            WindowsGraphicsCaptureHelperPackagingContract.runtimeAssetBaseNames(deps, "arm64")
+        assertTrue(x64.contains("OnlyX64Rt.dll") && !x64.contains("OnlyArm64Rt.dll"), x64.toString())
+        assertTrue(
+            arm64.contains("OnlyArm64Rt.dll") && !arm64.contains("OnlyX64Rt.dll"),
+            arm64.toString(),
+        )
+    }
+
+    @Test
     fun `requiredJarEntryPaths covers both arches and core basenames`() {
         val paths = WindowsGraphicsCaptureHelperPackagingContract.requiredJarEntryPaths()
         assertTrue(paths.contains("native/windows/x64/spectre-window-capture.exe"))

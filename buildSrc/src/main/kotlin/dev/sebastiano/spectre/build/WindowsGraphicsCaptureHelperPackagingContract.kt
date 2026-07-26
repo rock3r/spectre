@@ -182,58 +182,102 @@ object WindowsGraphicsCaptureHelperPackagingContract {
      */
     @Suppress("UNCHECKED_CAST")
     fun runtimeAssetBaseNames(depsJson: String, arch: String = "x64"): Set<String> {
-        val root = JsonSlurper().parseText(depsJson) as Map<String, Any?>
-        val targets = root["targets"] as? Map<String, Any?> ?: return emptySet()
+        val root = JsonSlurper().parseText(depsJson) as? Map<*, *>
+            ?: throw IllegalArgumentException("deps.json root must be a JSON object")
+        val targets =
+            root["targets"] as? Map<String, Any?>
+                ?: throw IllegalArgumentException("deps.json is missing a non-null 'targets' map")
+        if (targets.isEmpty()) {
+            throw IllegalArgumentException("deps.json 'targets' map is empty")
+        }
         val assetNames = linkedSetOf<String>()
         val targetKeys = targets.keys.toList()
         val ridToken = ridTokenForArch(arch)
+        val ridName = ridNameForArch(arch)
         val preferred = targetKeys.filter { it.contains(ridToken, ignoreCase = true) }
         if (preferred.isEmpty()) {
             val otherWin =
-                targetKeys.filter { it.contains("/win-", ignoreCase = true) &&
-                    !it.contains(ridToken, ignoreCase = true) }
+                targetKeys.filter {
+                    it.contains("/win-", ignoreCase = true) &&
+                        !it.contains(ridToken, ignoreCase = true)
+                }
             if (otherWin.isNotEmpty()) {
                 throw WrongArchDepsException(
                     "expected target containing '$ridToken' but found only " +
                         otherWin.joinToString()
                 )
             }
-            // Framework-only deps (no RID target): use all targets.
+            // Framework-only deps (no RID target): use all targets, still filter
+            // runtimeTargets entries by RID when present.
             for (targetKey in targetKeys) {
-                collectFromTarget(targets[targetKey], assetNames)
+                collectFromTarget(targets[targetKey], ridName, assetNames)
             }
             return assetNames
         }
         for (targetKey in preferred) {
-            collectFromTarget(targets[targetKey], assetNames)
+            collectFromTarget(targets[targetKey], ridName, assetNames)
         }
         return assetNames
     }
 
-    fun ridTokenForArch(arch: String): String =
+    fun ridTokenForArch(arch: String): String = "/${ridNameForArch(arch)}"
+
+    fun ridNameForArch(arch: String): String =
         when (arch.lowercase()) {
             "x64",
             "amd64",
-            "x86_64" -> "/win-x64"
+            "x86_64" -> "win-x64"
             "arm64",
-            "aarch64" -> "/win-arm64"
-            else -> "/win-"
+            "aarch64" -> "win-arm64"
+            else -> "win-"
         }
 
     @Suppress("UNCHECKED_CAST")
-    private fun collectFromTarget(targetAny: Any?, into: MutableSet<String>) {
+    private fun collectFromTarget(targetAny: Any?, ridName: String, into: MutableSet<String>) {
         val packages = targetAny as? Map<String, Any?> ?: return
         for ((_, metaAny) in packages) {
             val meta = metaAny as? Map<String, Any?> ?: continue
             collectAssetBasenames(meta["runtime"] as? Map<String, Any?>, into)
             collectAssetBasenames(meta["native"] as? Map<String, Any?>, into)
-            collectAssetBasenames(meta["runtimeTargets"] as? Map<String, Any?>, into)
+            collectRuntimeTargetBasenames(meta["runtimeTargets"] as? Map<String, Any?>, ridName, into)
         }
     }
 
     private fun collectAssetBasenames(assets: Map<String, Any?>?, into: MutableSet<String>) {
         if (assets == null) return
         for (path in assets.keys) {
+            val base = path.substringAfterLast('/').substringAfterLast('\\')
+            if (base.isNotEmpty() && !base.endsWith(".pdb", ignoreCase = true)) {
+                into += base
+            }
+        }
+    }
+
+    /**
+     * runtimeTargets entries may carry a `rid` field. When present, only entries for
+     * [ridName] are required; path-based RID heuristics apply when metadata is absent.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun collectRuntimeTargetBasenames(
+        assets: Map<String, Any?>?,
+        ridName: String,
+        into: MutableSet<String>,
+    ) {
+        if (assets == null) return
+        for ((path, metaAny) in assets) {
+            val meta = metaAny as? Map<String, Any?>
+            val entryRid = meta?.get("rid") as? String
+            val matches =
+                when {
+                    entryRid != null -> entryRid.equals(ridName, ignoreCase = true)
+                    path.contains("/$ridName/", ignoreCase = true) ||
+                        path.contains("\\$ridName\\", ignoreCase = true) -> true
+                    // No rid metadata and path doesn't name a Windows RID → keep (portable).
+                    !path.contains("/win-", ignoreCase = true) &&
+                        !path.contains("\\win-", ignoreCase = true) -> true
+                    else -> false
+                }
+            if (!matches) continue
             val base = path.substringAfterLast('/').substringAfterLast('\\')
             if (base.isNotEmpty() && !base.endsWith(".pdb", ignoreCase = true)) {
                 into += base
