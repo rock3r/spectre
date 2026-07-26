@@ -17,6 +17,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.yield
 
 /**
  * Default wall-clock timeout for [runSpectreTest]. Generous enough for multi-window UI tests;
@@ -105,6 +106,10 @@ public fun <T> runSpectreTest(
                 throw AssertionError("runSpectreTest timed out after $timeout")
             }
 
+            // Yield so concurrent child completions (and their parent invokeOnCompletion
+            // callbacks) can land in [failures] before we declare success.
+            yield()
+
             // Treat cancelling-but-not-completed children as unfinished (NonCancellable cleanup).
             // The bodyDeferred is already completed successfully and excluded by isCompleted.
             val unfinished = testJob.children.filter { !it.isCompleted }.toList()
@@ -118,6 +123,9 @@ public fun <T> runSpectreTest(
                 )
             }
 
+            // Recheck after the child scan: a child may have completed exceptionally while we
+            // walked job.children, recording into [failures] only after isCompleted flipped.
+            yield()
             failures.firstOrNull()?.let { throw it }
 
             @Suppress("UNCHECKED_CAST")
