@@ -1,5 +1,9 @@
 package dev.sebastiano.spectre.testing
 
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+import javax.swing.SwingUtilities
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
@@ -211,6 +215,28 @@ class RunSpectreTestTest {
     fun `nullable body result is not treated as a timeout`() {
         val value: String? = runSpectreTest { null }
         assertEquals(null, value)
+    }
+
+    @Test
+    fun `calling from the EDT fails fast`() {
+        val done = CountDownLatch(1)
+        val error = AtomicReference<Throwable?>()
+        SwingUtilities.invokeLater {
+            try {
+                runSpectreTest { /* should not run */ }
+            } catch (t: Throwable) {
+                error.set(t)
+            } finally {
+                done.countDown()
+            }
+        }
+        assertTrue(done.await(5, TimeUnit.SECONDS), "EDT task did not complete")
+        val thrown = error.get()
+        assertTrue(thrown is IllegalStateException, "expected ISE, was: $thrown")
+        assertTrue(
+            thrown.message?.contains("Event Dispatch Thread") == true,
+            "expected EDT wording, was: ${thrown.message}",
+        )
     }
 
     private companion object {

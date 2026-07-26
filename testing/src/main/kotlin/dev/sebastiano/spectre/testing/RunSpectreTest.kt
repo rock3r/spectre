@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.testing
 
 import java.util.concurrent.CopyOnWriteArrayList
+import javax.swing.SwingUtilities
 import kotlin.coroutines.ContinuationInterceptor
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
@@ -57,10 +58,17 @@ public fun <T> runSpectreTest(
     timeout: Duration = DefaultSpectreTestTimeout,
     childDispatcher: CoroutineDispatcher = Dispatchers.Default,
     testBody: suspend CoroutineScope.() -> T,
-): T =
+): T {
+    // JUnit test methods already run off the EDT. Calling runBlocking on the EDT freezes the
+    // event pump that Spectre needs for focus/click/paste, so fail fast instead of hanging.
+    check(!SwingUtilities.isEventDispatchThread()) {
+        "runSpectreTest must not be called from the AWT Event Dispatch Thread. " +
+            "JUnit tests already run off the EDT; if you are driving Spectre from Swing code, " +
+            "hop to a background thread first."
+    }
     // Strip any caller dispatcher from runBlocking so we never block a single-thread dispatcher
-    // (e.g. Dispatchers.Swing / EDT) that body completion and timeout need to resume on.
-    runBlocking(context.minusKey(ContinuationInterceptor)) {
+    // (e.g. Dispatchers.Swing) that body completion and timeout need to resume on.
+    return runBlocking(context.minusKey(ContinuationInterceptor)) {
         // Free-standing Job (not parented under runBlocking): non-cooperative children cannot hang
         // runBlocking after the cleanup budget. Child failures cancel this job (and thus the body
         // async below); invokeOnCompletion retains the cause for rethrow after await.
@@ -137,5 +145,6 @@ public fun <T> runSpectreTest(
             withTimeoutOrNull(CLEANUP_JOIN_TIMEOUT) { testJob.join() }
         }
     }
+}
 
 private val CLEANUP_JOIN_TIMEOUT: Duration = 5.seconds
