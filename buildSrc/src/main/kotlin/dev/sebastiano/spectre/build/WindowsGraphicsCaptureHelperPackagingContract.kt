@@ -211,7 +211,14 @@ object WindowsGraphicsCaptureHelperPackagingContract {
         }
         val assetNames = linkedSetOf<String>()
         val targetKeys = targets.keys.toList()
-        val preferred = targetKeys.filter { it.contains(ridToken, ignoreCase = true) }
+        // Prefer the exact runtimeTarget.name when present; otherwise any target whose key
+        // contains the arch RID token.
+        val preferred =
+            if (runtimeTargetName != null && targets.containsKey(runtimeTargetName)) {
+                listOf(runtimeTargetName)
+            } else {
+                targetKeys.filter { it.contains(ridToken, ignoreCase = true) }
+            }
         if (preferred.isEmpty()) {
             val otherWin =
                 targetKeys.filter {

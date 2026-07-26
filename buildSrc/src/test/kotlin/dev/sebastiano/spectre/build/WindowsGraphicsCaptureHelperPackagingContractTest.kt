@@ -250,6 +250,85 @@ class WindowsGraphicsCaptureHelperPackagingContractTest {
     }
 
     @Test
+    fun `null package body under selected target is rejected`() {
+        val deps =
+            """
+            {
+              "targets": {
+                ".NETCoreApp,Version=v8.0/win-x64": {
+                  "SpectreWindowCapture/1.0.0": null
+                }
+              }
+            }
+            """
+                .trimIndent()
+        val files = completeFixedRequiredFiles()
+        val entrySizes = files.mapKeys { "native/windows/x64/${it.key}" }
+        val errors =
+            WindowsGraphicsCaptureHelperPackagingContract.validateJarEntries(
+                entrySizes,
+                depsJsonByArch = mapOf("x64" to deps),
+                arches = listOf("x64"),
+            )
+        assertTrue(
+            errors.any { it.contains("invalid") && it.contains("package") },
+            "expected null package body rejection; errors=$errors",
+        )
+    }
+
+    @Test
+    fun `null runtime asset table is rejected`() {
+        val deps =
+            """
+            {
+              "targets": {
+                ".NETCoreApp,Version=v8.0/win-x64": {
+                  "SpectreWindowCapture/1.0.0": {
+                    "runtime": null
+                  }
+                }
+              }
+            }
+            """
+                .trimIndent()
+        val files = completeFixedRequiredFiles()
+        val entrySizes = files.mapKeys { "native/windows/x64/${it.key}" }
+        val errors =
+            WindowsGraphicsCaptureHelperPackagingContract.validateJarEntries(
+                entrySizes,
+                depsJsonByArch = mapOf("x64" to deps),
+                arches = listOf("x64"),
+            )
+        assertTrue(
+            errors.any { it.contains("invalid") && it.contains("runtime") },
+            "expected null runtime table rejection; errors=$errors",
+        )
+    }
+
+    @Test
+    fun `runtimeTarget name selects the exact target key`() {
+        val deps =
+            """
+            {
+              "runtimeTarget": { "name": ".NETCoreApp,Version=v8.0/win-x64" },
+              "targets": {
+                ".NETCoreApp,Version=v7.0/win-x64": {
+                  "pkg/1": { "runtime": { "WrongGeneration.dll": {} } }
+                },
+                ".NETCoreApp,Version=v8.0/win-x64": {
+                  "pkg/1": { "runtime": { "RightGeneration.dll": {} } }
+                }
+              }
+            }
+            """
+                .trimIndent()
+        val names =
+            WindowsGraphicsCaptureHelperPackagingContract.runtimeAssetBaseNames(deps, "x64")
+        assertTrue(names.contains("RightGeneration.dll"), names.toString())
+        assertTrue(!names.contains("WrongGeneration.dll"), names.toString())
+    }
+
+    @Test
     fun `runtimeTarget name RID must match the directory arch`() {
         val mismatched =
             """
