@@ -40,7 +40,9 @@ public object FailureArtifactPaths {
      * Replaces characters that are hostile on common filesystems or ambiguous in shell globs.
      * Collapses runs of replacements to a single `_` and trims edges so segments stay non-empty
      * when the input had any content. Reserved Windows device names (`CON`, `NUL`, `COM1`, …) get
-     * an underscore suffix so `createDirectories` does not fail on Windows.
+     * an underscore after the **stem** so `createDirectories` does not fail on Windows — including
+     * dotted forms (`nul.txt` → `nul_.txt`), because Windows keys off the stem before the first
+     * `.`.
      */
     internal fun sanitizePathSegment(raw: String): String {
         val cleaned =
@@ -54,16 +56,19 @@ public object FailureArtifactPaths {
                 .replace(Regex("_+"), "_")
                 .trim('_')
         val base = cleaned.ifEmpty { "unnamed" }
-        return if (isReservedWindowsDeviceName(base)) "${base}_" else base
+        return escapeReservedWindowsDeviceName(base)
     }
 
     /**
-     * True when [name] is a Windows reserved device name (case-insensitive), including optional
-     * extension forms such as `nul.txt` / `COM1.anything`.
+     * If the stem (text before the first `.`) is a Windows reserved device name, insert `_` after
+     * the stem so the resulting stem is no longer reserved (`NUL` → `NUL_`, `nul.txt` →
+     * `nul_.txt`).
      */
-    private fun isReservedWindowsDeviceName(name: String): Boolean {
-        val stem = name.substringBefore('.').lowercase()
-        return stem in RESERVED_WINDOWS_DEVICE_NAMES
+    private fun escapeReservedWindowsDeviceName(name: String): String {
+        val stem = name.substringBefore('.')
+        if (stem.lowercase() !in RESERVED_WINDOWS_DEVICE_NAMES) return name
+        val extension = name.removePrefix(stem) // empty, or ".something"
+        return "${stem}_$extension"
     }
 
     private val RESERVED_WINDOWS_DEVICE_NAMES: Set<String> = buildSet {

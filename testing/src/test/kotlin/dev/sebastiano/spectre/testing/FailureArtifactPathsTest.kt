@@ -78,7 +78,7 @@ class FailureArtifactPathsTest {
     }
 
     @Test
-    fun `reserved Windows device names are suffixed`(@TempDir temp: Path) {
+    fun `reserved Windows device names are escaped after the stem`(@TempDir temp: Path) {
         val config = FailureArtifactsConfig(reportsRoot = temp)
         val dir =
             FailureArtifactPaths.methodDirectory(
@@ -96,13 +96,15 @@ class FailureArtifactPathsTest {
             )
         assertEquals("com1_", com1.fileName.toString())
 
+        // Windows keys off the stem before the first '.'; so the underscore must land on the
+        // stem (`nul_.txt`), not as a trailing suffix on the whole segment (`nul.txt_`).
         val nulTxt =
             FailureArtifactPaths.methodDirectory(
                 testClassName = "com.example.T",
                 testMethodName = "nul.txt",
                 config = config,
             )
-        assertEquals("nul.txt_", nulTxt.fileName.toString())
+        assertEquals("nul_.txt", nulTxt.fileName.toString())
     }
 
     @Test
