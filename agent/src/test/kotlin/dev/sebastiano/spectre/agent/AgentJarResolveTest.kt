@@ -119,8 +119,23 @@ class AgentJarResolveTest {
         }
     }
 
+    @Test
+    fun `layout alone without spectre identity is not a checkout`() {
+        val root = Files.createTempDirectory("lookalike")
+        Files.writeString(root.resolve("settings.gradle.kts"), """rootProject.name = "Other"""")
+        Files.createDirectories(root.resolve("agent"))
+        Files.createFile(root.resolve("agent/build.gradle.kts"))
+        Files.createDirectories(root.resolve("agent-runtime"))
+        Files.createFile(root.resolve("agent-runtime/build.gradle.kts"))
+        val libs = Files.createDirectories(root.resolve("agent-runtime/build/libs"))
+        Files.createFile(libs.resolve("agent-runtime-0.2.0.jar"))
+
+        assertFalse(AgentJarResolution.isSpectreSourceCheckout(root))
+        assertNull(AgentJarResolution.findRuntimeJarInRepoFallback(root))
+    }
+
     private fun touchCheckoutMarkers(root: Path) {
-        Files.createFile(root.resolve("settings.gradle.kts"))
+        Files.writeString(root.resolve("settings.gradle.kts"), """rootProject.name = "Spectre"""")
         Files.createDirectories(root.resolve("agent"))
         Files.createFile(root.resolve("agent/build.gradle.kts"))
         Files.createDirectories(root.resolve("agent-runtime"))

@@ -38,15 +38,31 @@ internal object AgentJarResolution {
     }
 
     /**
-     * True when [directory] is the root of a Spectre monorepo checkout (settings + agent modules).
+     * True when [directory] is the root of a Spectre monorepo checkout.
      *
-     * Used to gate the in-repo `agent-runtime/build/libs` fallback so published consumers never
-     * silently load jars from a coincidental path under their application cwd.
+     * Requires the agent module layout **and** a Spectre-specific marker (`rootProject.name =
+     * "Spectre"` in settings, or `GROUP=dev.sebastiano.spectre` in `gradle.properties`) so
+     * unrelated projects that happen to have `agent` / `agent-runtime` subprojects are not treated
+     * as Spectre checkouts.
      */
-    fun isSpectreSourceCheckout(directory: Path): Boolean =
-        Files.isRegularFile(directory.resolve("settings.gradle.kts")) &&
-            Files.isRegularFile(directory.resolve("agent/build.gradle.kts")) &&
-            Files.isRegularFile(directory.resolve("agent-runtime/build.gradle.kts"))
+    fun isSpectreSourceCheckout(directory: Path): Boolean {
+        if (!Files.isRegularFile(directory.resolve("settings.gradle.kts"))) return false
+        if (!Files.isRegularFile(directory.resolve("agent/build.gradle.kts"))) return false
+        if (!Files.isRegularFile(directory.resolve("agent-runtime/build.gradle.kts"))) return false
+        return hasSpectreIdentityMarker(directory)
+    }
+
+    private fun hasSpectreIdentityMarker(directory: Path): Boolean {
+        val settings =
+            runCatching { Files.readString(directory.resolve("settings.gradle.kts")) }.getOrNull()
+        if (settings != null && settings.contains("""rootProject.name = "Spectre"""")) {
+            return true
+        }
+        val propsPath = directory.resolve("gradle.properties")
+        if (!Files.isRegularFile(propsPath)) return false
+        val props = runCatching { Files.readString(propsPath) }.getOrNull() ?: return false
+        return props.lineSequence().any { it.trim() == "GROUP=dev.sebastiano.spectre" }
+    }
 
     /** Walk parents from [start] and return the nearest Spectre source checkout root, if any. */
     fun findSpectreSourceCheckoutRoot(start: Path): Path? {
