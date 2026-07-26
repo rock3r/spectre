@@ -44,10 +44,10 @@ Filed after decision (not before):
    [stock-intellij-recipe.md](stock-intellij-recipe.md).
 2. **#321** — Nested inject-runtime 1.0 fate — **closed** via
    [packaging-1.0-decision.md](packaging-1.0-decision.md) (**keep**, experimental).
-3. **#322** — OverlayLayerInspector multi-version adapter policy (still open).
+3. **#322** — OverlayLayerInspector multi-version adapter policy — **closed** via
+   [overlay-adapter-policy.md](overlay-adapter-policy.md) (**degrade-to-empty**, no matrix for 1.0).
 
 ## Closes
 
-This decision, the API audit, practicalities, packaging prototype, and fixture e2e evidence
-together **close spike #209** even without a stock-IDE screenshot: negative stock-IDE automation
-is environmental and documented.
+This decision, the API audit, practicalities, packaging prototype, fixture e2e evidence, and
+follow-ups #320–#322 together **close the #209 epic**.

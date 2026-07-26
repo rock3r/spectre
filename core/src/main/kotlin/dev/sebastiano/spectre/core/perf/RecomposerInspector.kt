@@ -13,7 +13,9 @@ import java.awt.Window
  *
  * The traversal mirrors `OverlayLayerInspector`: walk the private CMP host chain by field name, so
  * a renamed internal field degrades gracefully (returns `null`) instead of crashing the rest of the
- * automator. The chain is:
+ * automator. Same multi-version policy as overlays (#322): single pinned-Compose chain,
+ * degrade-to-empty/null — no adapter matrix for 1.0
+ * (`docs/spikes/209-injection/overlay-adapter-policy.md`). The chain is:
  * ```
  * ComposeWindow.composePanel  (ComposeWindowPanel)
  *   ._composeContainer         (ComposeContainer)
