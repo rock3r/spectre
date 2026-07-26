@@ -12,7 +12,8 @@ import java.util.UUID
  *    integration tests so they don't have to know the absolute build path).
  * 2. A `spectre-agent-runtime-<version>.jar` or `agent-runtime-<version>.jar` entry on the
  *    attacher's `java.class.path`.
- * 3. `<cwd>/agent-runtime/build/libs/agent-runtime-<version>.jar` if the worktree layout matches.
+ * 3. `<spectre-checkout>/agent-runtime/build/libs/agent-runtime-<version>.jar` only when the
+ *    current working directory is inside a Spectre source checkout (not for published consumers).
  *
  * The fallback throws when none of the candidates exist, with a message pointing the user at
  * `./gradlew :agent-runtime:jar` to produce the JAR.

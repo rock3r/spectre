@@ -104,7 +104,9 @@ dependencies {
 1. `AttachOptions.agentJarPath`
 2. `-Ddev.sebastiano.spectre.agent.runtimeJar=<path>`
 3. Classpath auto-discovery of a physical `spectre-agent-runtime-<version>.jar`
-4. The in-repo fallback at `<cwd>/agent-runtime/build/libs/agent-runtime-*.jar`
+4. In-repo fallback at `<spectre-checkout>/agent-runtime/build/libs/agent-runtime-*.jar`,
+   **only when the attacher cwd is inside a Spectre source checkout** (detected via monorepo
+   markers). Published consumers should use options 1–3; the fallback is a Spectre-dev convenience.
 
 In normal Gradle usage, `runtimeOnly(...)` makes Gradle launch the attacher with the runtime jar
 listed in `java.class.path`; Spectre scans that classpath, takes the physical jar path, and passes
@@ -176,9 +178,12 @@ AgentAttach.attach(
 
 Equivalent: set `-Ddev.sebastiano.spectre.agent.runtimeJar=<path>` on the attacher's JVM.
 
-When working inside the Spectre repo, `AgentAttach` also falls back to
-`<cwd>/agent-runtime/build/libs/agent-runtime-*.jar` so local manual recipes keep working after
-`./gradlew :agent-runtime:jar`.
+When the attacher process is running from inside a Spectre source checkout (or a subdirectory of
+one), `AgentAttach` also falls back to
+`<checkout>/agent-runtime/build/libs/agent-runtime-*.jar` so local manual recipes keep working after
+`./gradlew :agent-runtime:jar`. That path is **not** enabled for arbitrary application working
+directories — published consumers should put `spectre-agent-runtime` on the attacher classpath or
+pass an explicit path/system property.
 
 Consumers that cannot use the published Maven coordinate still have two supported paths:
 

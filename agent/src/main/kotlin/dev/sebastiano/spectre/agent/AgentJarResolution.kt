@@ -37,6 +37,121 @@ internal object AgentJarResolution {
         return selectSingleRuntimeJar(matches)
     }
 
+    /**
+     * True when [directory] is the root of a Spectre monorepo checkout.
+     *
+     * Requires the agent module layout **and** a Spectre-specific marker (`rootProject.name =
+     * "Spectre"` in settings, or `GROUP=dev.sebastiano.spectre` in `gradle.properties`) so
+     * unrelated projects that happen to have `agent` / `agent-runtime` subprojects are not treated
+     * as Spectre checkouts.
+     */
+    fun isSpectreSourceCheckout(directory: Path): Boolean {
+        if (!Files.isRegularFile(directory.resolve("settings.gradle.kts"))) return false
+        if (!Files.isRegularFile(directory.resolve("agent/build.gradle.kts"))) return false
+        if (!Files.isRegularFile(directory.resolve("agent-runtime/build.gradle.kts"))) return false
+        return hasSpectreIdentityMarker(directory)
+    }
+
+    private fun hasSpectreIdentityMarker(directory: Path): Boolean {
+        val settings =
+            runCatching { Files.readString(directory.resolve("settings.gradle.kts")) }.getOrNull()
+        if (
+            settings != null &&
+                ACTIVE_SPECTRE_ROOT_NAME.containsMatchIn(stripKotlinLikeNonCode(settings))
+        ) {
+            return true
+        }
+        val propsPath = directory.resolve("gradle.properties")
+        if (!Files.isRegularFile(propsPath)) return false
+        val props = runCatching { Files.readString(propsPath) }.getOrNull() ?: return false
+        return props.lineSequence().any { line ->
+            val trimmed = line.trim()
+            !trimmed.startsWith("#") &&
+                !trimmed.startsWith("!") &&
+                trimmed == "GROUP=dev.sebastiano.spectre"
+        }
+    }
+
+    /**
+     * Best-effort removal of non-executable regions from settings.gradle.kts so identity markers
+     * inside block comments or triple-quoted strings cannot enable the fallback.
+     */
+    private fun stripKotlinLikeNonCode(source: String): String {
+        var text = BLOCK_COMMENT.replace(source, " ")
+        text = TRIPLE_QUOTE_STRING.replace(text, " ")
+        return text.lineSequence().joinToString("\n") { line -> line.substringBefore("//") }
+    }
+
+    /** Active assignment only — comments/strings must not enable the fallback. */
+    private val ACTIVE_SPECTRE_ROOT_NAME =
+        Regex("""(?m)^\s*rootProject\.name\s*=\s*"Spectre"\s*$""")
+
+    private val BLOCK_COMMENT = Regex("""/\*.*?\*/""", setOf(RegexOption.DOT_MATCHES_ALL))
+    private val TRIPLE_QUOTE_STRING = Regex("\"\"\".*?\"\"\"", setOf(RegexOption.DOT_MATCHES_ALL))
+
+    /** Walk parents from [start] and return the nearest Spectre source checkout root, if any. */
+    fun findSpectreSourceCheckoutRoot(start: Path): Path? {
+        var dir: Path? = start.toAbsolutePath().normalize()
+        while (dir != null) {
+            if (isSpectreSourceCheckout(dir)) return dir
+            dir = dir.parent
+        }
+        return null
+    }
+
+    /**
+     * In-repo fallback: only when [cwd] is inside a Spectre source checkout, look under
+     * `<checkout>/agent-runtime/build/libs` for a single runtime jar.
+     */
+    fun findRuntimeJarInRepoFallback(cwd: Path): Path? {
+        val root = findSpectreSourceCheckoutRoot(cwd) ?: return null
+        val libs = root.resolve("agent-runtime/build/libs")
+        if (!Files.isDirectory(libs)) return null
+        return findRuntimeJarInDirectory(libs)
+    }
+
+    /**
+     * Resolve the agent runtime jar using the public attach lookup order.
+     *
+     * 1. [agentJarPath] if present and a regular file
+     * 2. [runtimeJarSystemProperty] path if present and a regular file
+     * 3. Classpath auto-discovery
+     * 4. In-repo fallback gated on Spectre source-checkout detection from [cwd]
+     */
+    fun resolveRuntimeJar(
+        agentJarPath: Path?,
+        runtimeJarSystemProperty: String?,
+        classPath: String,
+        cwd: Path,
+    ): Path {
+        val tried = mutableListOf<Path>()
+
+        agentJarPath?.let { path ->
+            tried.add(path)
+            if (Files.isRegularFile(path)) return path
+        }
+
+        val sysProp = runtimeJarSystemProperty?.takeIf { it.isNotBlank() }
+        if (sysProp != null) {
+            val path = Path.of(sysProp)
+            tried.add(path)
+            if (Files.isRegularFile(path)) return path
+        }
+
+        val classpathRuntime = findRuntimeJarOnClasspath(classPath)
+        if (classpathRuntime != null) return classpathRuntime
+
+        val repoFallback = findRuntimeJarInRepoFallback(cwd)
+        if (repoFallback != null) return repoFallback
+
+        val checkoutRoot = findSpectreSourceCheckoutRoot(cwd)
+        if (checkoutRoot != null) {
+            tried.add(checkoutRoot.resolve("agent-runtime/build/libs/agent-runtime-*.jar"))
+        }
+
+        throw AgentJarNotFoundException(tried)
+    }
+
     private fun selectSingleRuntimeJar(matches: List<Path>): Path? {
         // Classpaths sometimes list the same physical jar twice (duplicate entries or
         // symlink + real path). Collapse by filesystem identity so only distinct files
