@@ -15,7 +15,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.yield
 import org.junit.jupiter.api.Test
 
 /**
