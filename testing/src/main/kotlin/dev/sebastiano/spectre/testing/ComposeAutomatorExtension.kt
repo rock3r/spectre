@@ -6,6 +6,7 @@ import org.junit.jupiter.api.extension.AfterEachCallback
 import org.junit.jupiter.api.extension.AfterTestExecutionCallback
 import org.junit.jupiter.api.extension.BeforeEachCallback
 import org.junit.jupiter.api.extension.ExtensionContext
+import org.junit.jupiter.api.extension.LifecycleMethodExecutionExceptionHandler
 import org.junit.jupiter.api.extension.ParameterContext
 import org.junit.jupiter.api.extension.ParameterResolver
 
@@ -51,7 +52,12 @@ import org.junit.jupiter.api.extension.ParameterResolver
 public class ComposeAutomatorExtension(
     private val factory: AutomatorFactory,
     private val failureArtifacts: FailureArtifactsConfig = FailureArtifactsConfig(),
-) : BeforeEachCallback, AfterEachCallback, AfterTestExecutionCallback, ParameterResolver {
+) :
+    BeforeEachCallback,
+    AfterEachCallback,
+    AfterTestExecutionCallback,
+    LifecycleMethodExecutionExceptionHandler,
+    ParameterResolver {
 
     // Explicit no-arg secondary constructor so JUnit 5's @ExtendWith — which reflectively
     // calls the no-arg constructor — can instantiate the extension. Kotlin's default-parameter
@@ -78,6 +84,31 @@ public class ComposeAutomatorExtension(
 
     override fun afterTestExecution(context: ExtensionContext) {
         if (!context.executionException.isPresent) return
+        captureFailureArtifacts(context)
+    }
+
+    /**
+     * Also capture when `@AfterEach` / `@BeforeEach` lifecycle methods fail (not covered by
+     * [afterTestExecution], which only sees the test method's exception).
+     */
+    override fun handleAfterEachMethodExecutionException(
+        context: ExtensionContext,
+        throwable: Throwable,
+    ) {
+        captureFailureArtifacts(context)
+        throw throwable
+    }
+
+    override fun handleBeforeEachMethodExecutionException(
+        context: ExtensionContext,
+        throwable: Throwable,
+    ) {
+        // Automator may already exist if factory ran; capture is best-effort.
+        captureFailureArtifacts(context)
+        throw throwable
+    }
+
+    private fun captureFailureArtifacts(context: ExtensionContext) {
         val automator =
             context.getStore(NAMESPACE).get(STORE_KEY, ComposeAutomator::class.java) ?: return
         val testClass = context.testClass.map { it.name }.orElse("UnknownClass")

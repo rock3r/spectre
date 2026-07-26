@@ -1,4 +1,4 @@
-public final class dev/sebastiano/spectre/testing/ComposeAutomatorExtension : org/junit/jupiter/api/extension/AfterEachCallback, org/junit/jupiter/api/extension/AfterTestExecutionCallback, org/junit/jupiter/api/extension/BeforeEachCallback, org/junit/jupiter/api/extension/ParameterResolver {
+public final class dev/sebastiano/spectre/testing/ComposeAutomatorExtension : org/junit/jupiter/api/extension/AfterEachCallback, org/junit/jupiter/api/extension/AfterTestExecutionCallback, org/junit/jupiter/api/extension/BeforeEachCallback, org/junit/jupiter/api/extension/LifecycleMethodExecutionExceptionHandler, org/junit/jupiter/api/extension/ParameterResolver {
 	public fun <init> ()V
 	public fun <init> (Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;)V
 	public fun <init> (Lkotlin/jvm/functions/Function0;Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;)V
@@ -7,6 +7,8 @@ public final class dev/sebastiano/spectre/testing/ComposeAutomatorExtension : or
 	public fun afterTestExecution (Lorg/junit/jupiter/api/extension/ExtensionContext;)V
 	public fun beforeEach (Lorg/junit/jupiter/api/extension/ExtensionContext;)V
 	public final fun getAutomator ()Ldev/sebastiano/spectre/core/ComposeAutomator;
+	public fun handleAfterEachMethodExecutionException (Lorg/junit/jupiter/api/extension/ExtensionContext;Ljava/lang/Throwable;)V
+	public fun handleBeforeEachMethodExecutionException (Lorg/junit/jupiter/api/extension/ExtensionContext;Ljava/lang/Throwable;)V
 	public fun resolveParameter (Lorg/junit/jupiter/api/extension/ParameterContext;Lorg/junit/jupiter/api/extension/ExtensionContext;)Ljava/lang/Object;
 	public fun supportsParameter (Lorg/junit/jupiter/api/extension/ParameterContext;Lorg/junit/jupiter/api/extension/ExtensionContext;)Z
 }
