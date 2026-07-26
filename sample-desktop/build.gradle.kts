@@ -147,14 +147,6 @@ val validationTest by
         // Re-render the picker / spawn the window inside each test method via the fixture's poll
         // loop. The 10-second startupTimeout is enough headroom for cold JVM warmup on CI hardware.
         applyValidationJvmArgs()
-        // Evidence packaging for failure-artifact validation (optional, local only). When set,
-        // force the task to re-execute so the worker actually writes/refreshes the export dir
-        // instead of being UP-TO-DATE / FROM-CACHE.
-        val evidenceDir = providers.environmentVariable("SPECTRE_205_EVIDENCE_DIR")
-        inputs.property("spectre205EvidenceDir", evidenceDir).optional(true)
-        if (evidenceDir.isPresent) {
-            outputs.upToDateWhen { false }
-        }
     }
 
 // Compose Desktop reads `compose.layers.type` once at composition init, so popup-layer-variant

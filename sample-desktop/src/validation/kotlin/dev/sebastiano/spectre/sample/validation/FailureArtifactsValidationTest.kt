@@ -13,7 +13,6 @@ import java.util.Optional
 import java.util.concurrent.ConcurrentHashMap
 import java.util.function.Function
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.writeText
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -37,10 +36,7 @@ import org.junit.runners.model.Statement
  * - [ComposeAutomatorExtension] `afterTestExecution` + report entries (JUnit 5)
  *
  * Uses a real sample Compose window so capture writes non-empty `capture.json` + `screenshot.png`
- * while windows remain open. Optional env `SPECTRE_205_EVIDENCE_DIR` copies artifacts and a
- * manifest into that directory for manual-evidence packaging (verification scratch). The
- * `validationTest` task treats that env as an input and disables up-to-date when set so evidence is
- * not skipped via Gradle cache.
+ * while windows remain open.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class FailureArtifactsValidationTest {
@@ -82,12 +78,11 @@ class FailureArtifactsValidationTest {
             assertEquals("intentional failure for artifact capture", expected.message)
         }
 
-        val jsonFiles = assertArtifactsOnDisk(reportsRoot)
+        assertArtifactsOnDisk(reportsRoot)
         assertTrue(
             fixture.automator.surfaceIds().isNotEmpty(),
             "fixture windows must remain open after rule after()",
         )
-        maybeExportEvidence("junit4-rule", reportsRoot, jsonFiles, reportEntries = emptyList())
     }
 
     @Test
@@ -110,14 +105,14 @@ class FailureArtifactsValidationTest {
         extension.afterTestExecution(context)
         extension.afterEach(context)
 
-        val jsonFiles = assertArtifactsOnDisk(reportsRoot)
+        assertArtifactsOnDisk(reportsRoot)
         assertTrue(
             context.reportEntries.isNotEmpty(),
             "JUnit 5 must publish spectre.failureArtifact report entries, got ${context.reportEntries}",
         )
         for (entry in context.reportEntries) {
             // Public contract: ComposeAutomatorExtension publishes under this key (see KDoc).
-            assertEquals(JUNIT5_FAILURE_ARTIFACT_REPORT_KEY, entry.keys.single())
+            assertEquals("spectre.failureArtifact", entry.keys.single())
             val path = Path.of(entry.values.single())
             assertTrue(Files.isDirectory(path), "report entry must be a window directory: $path")
             assertTrue(
@@ -133,7 +128,6 @@ class FailureArtifactsValidationTest {
             fixture.automator.surfaceIds().isNotEmpty(),
             "fixture windows must remain open after extension afterEach",
         )
-        maybeExportEvidence("junit5-extension", reportsRoot, jsonFiles, context.reportEntries)
     }
 
     @Test
@@ -197,7 +191,7 @@ class FailureArtifactsValidationTest {
         assertTrue(fixture.automator.surfaceIds().isNotEmpty(), "fixture must track a window")
     }
 
-    private fun assertArtifactsOnDisk(reportsRoot: Path): List<Path> {
+    private fun assertArtifactsOnDisk(reportsRoot: Path) {
         val jsonFiles =
             Files.walk(reportsRoot).use { stream ->
                 stream
@@ -220,79 +214,6 @@ class FailureArtifactsValidationTest {
             assertTrue(Files.size(json) > 0, "empty $json")
             assertTrue(Files.size(png) > 0, "empty $png")
         }
-        return jsonFiles
-    }
-
-    /**
-     * When `SPECTRE_205_EVIDENCE_DIR` is set, copy the artifact tree + a manifest for verification
-     * packaging. No-op during normal CI runs. Env is used (not a system property) so forked test
-     * JVMs inherit it without extra Gradle `systemProperty` wiring.
-     */
-    private fun maybeExportEvidence(
-        label: String,
-        reportsRoot: Path,
-        jsonFiles: List<Path>,
-        reportEntries: List<Map<String, String>>,
-    ) {
-        val evidenceRoot =
-            System.getenv("SPECTRE_205_EVIDENCE_DIR")
-                ?.takeIf { it.isNotBlank() }
-                ?.let { Path.of(it) } ?: return
-        val out = evidenceRoot.resolve(label)
-        // Refresh each label dir so a second evidence run does not hit FileAlreadyExistsException.
-        if (Files.exists(out)) {
-            Files.walk(out).use { stream ->
-                stream.sorted(Comparator.reverseOrder()).forEach { path ->
-                    runCatching { Files.deleteIfExists(path) }
-                }
-            }
-        }
-        Files.createDirectories(out)
-        // Copy whole reports tree
-        Files.walk(reportsRoot).use { stream ->
-            stream.forEach { src ->
-                val rel = reportsRoot.relativize(src)
-                val dest = out.resolve("reports").resolve(rel.toString())
-                if (Files.isDirectory(src)) {
-                    Files.createDirectories(dest)
-                } else if (Files.isRegularFile(src)) {
-                    Files.createDirectories(dest.parent)
-                    Files.copy(src, dest)
-                }
-            }
-        }
-        val firstJson = jsonFiles.first()
-        val firstPng = firstJson.parent.resolve(CaptureArtifactsWriter.SCREENSHOT_PNG_NAME)
-        val jsonText = Files.readString(firstJson)
-        val excerpt =
-            if (jsonText.length <= EVIDENCE_EXCERPT_CHARS) jsonText
-            else jsonText.take(EVIDENCE_EXCERPT_CHARS) + "\n… [truncated]"
-        val tree =
-            Files.walk(out.resolve("reports")).use { stream ->
-                stream.map { out.resolve("reports").relativize(it).toString() }.sorted().toList()
-            }
-        out.resolve("MANIFEST.txt")
-            .writeText(
-                buildString {
-                    appendLine("label=$label")
-                    appendLine("reportsRoot=$reportsRoot")
-                    appendLine("capture.json=$firstJson size=${Files.size(firstJson)}")
-                    appendLine("screenshot.png=$firstPng size=${Files.size(firstPng)}")
-                    appendLine("reportEntries=$reportEntries")
-                    appendLine("tree:")
-                    tree.forEach { appendLine("  $it") }
-                    appendLine("--- capture.json excerpt ---")
-                    appendLine(excerpt)
-                }
-            )
-    }
-
-    private companion object {
-        const val EVIDENCE_EXCERPT_CHARS: Int = 2_000
-        /**
-         * Mirrors internal FailureArtifactHooks.REPORT_ENTRY_KEY (public report-entry contract).
-         */
-        const val JUNIT5_FAILURE_ARTIFACT_REPORT_KEY: String = "spectre.failureArtifact"
     }
 }
 
