@@ -15,6 +15,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import org.junit.jupiter.api.Test
 
 /**
@@ -149,7 +150,12 @@ class RunSpectreTestTest {
         val error =
             assertFailsWith<IllegalStateException> {
                 runSpectreTest {
-                    async(start = CoroutineStart.UNDISPATCHED) { error("unawaited async boom") }
+                    val deferred = async { throw IllegalStateException("unawaited async boom") }
+                    // Wait until the deferred has completed without awaiting it (await would
+                    // rethrow here). Deterministic on CI; runner must still surface the failure.
+                    while (!deferred.isCompleted) {
+                        yield()
+                    }
                 }
             }
         assertTrue(
