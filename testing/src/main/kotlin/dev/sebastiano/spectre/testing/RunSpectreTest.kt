@@ -1,13 +1,17 @@
 package dev.sebastiano.spectre.testing
 
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -37,17 +41,24 @@ public val DefaultSpectreTestTimeout: Duration = 2.minutes
  *   before the body returns, or the runner reports a coroutine leak.
  * @return the body's result (use `fun mySpec(): Unit = runSpectreTest { … }` so JUnit sees `void`).
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 public fun <T> runSpectreTest(
     context: CoroutineContext = EmptyCoroutineContext,
     timeout: Duration = DefaultSpectreTestTimeout,
     testBody: suspend CoroutineScope.() -> T,
 ): T =
     runBlocking(context) {
-        // Free-standing job: not a child of runBlocking's job. That way a non-cooperative child
-        // cannot hang runBlocking after the cleanup join budget expires (structured concurrency
-        // would otherwise wait for a parented child forever).
-        val testJob = Job()
-        val testScope = CoroutineScope(coroutineContext + testJob + CoroutineName("runSpectreTest"))
+        // Free-standing supervisor: not a child of runBlocking's job (so non-cooperative children
+        // cannot hang runBlocking after the cleanup budget), and child failures do not cancel
+        // siblings mid-body. Failures are collected via [CoroutineExceptionHandler] / Deferred
+        // completion and rethrown after the body returns.
+        val uncaught = CopyOnWriteArrayList<Throwable>()
+        val exceptionHandler = CoroutineExceptionHandler { _, throwable -> uncaught.add(throwable) }
+        val testJob = SupervisorJob()
+        val testScope =
+            CoroutineScope(
+                coroutineContext + testJob + exceptionHandler + CoroutineName("runSpectreTest")
+            )
         try {
             // Holder distinguishes "body returned null" from "outer timeout" without swallowing
             // nested TimeoutCancellationException from waitForNode / withTimeout inside the body
@@ -71,6 +82,16 @@ public fun <T> runSpectreTest(
                         "before returning. Active: $detail"
                 )
             }
+
+            // Surface failures from completed Deferred children that were never awaited.
+            for (child in testJob.children.toList()) {
+                if (child is Deferred<*> && child.isCompleted) {
+                    val failure = child.getCompletionExceptionOrNull()
+                    if (failure != null) throw failure
+                }
+            }
+
+            uncaught.firstOrNull()?.let { throw it }
 
             @Suppress("UNCHECKED_CAST")
             holder[0] as T

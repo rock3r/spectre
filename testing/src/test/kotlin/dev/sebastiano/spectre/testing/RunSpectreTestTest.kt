@@ -5,6 +5,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -104,6 +105,23 @@ class RunSpectreTestTest {
                 }
             }
         assertTrue(error.message?.contains("child failed") == true)
+    }
+
+    @Test
+    fun `unawaited child failure is not swallowed after the body returns`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                runSpectreTest {
+                    // UNDISPATCHED runs the child to its first suspension (or completion) before
+                    // launch returns, so the failure cancels testJob before the body returns
+                    // without the body awaiting the child.
+                    launch(start = CoroutineStart.UNDISPATCHED) { error("unawaited child boom") }
+                }
+            }
+        assertTrue(
+            error.message?.contains("unawaited child boom") == true,
+            "expected unawaited child failure to surface, was: ${error.message}",
+        )
     }
 
     @Test
