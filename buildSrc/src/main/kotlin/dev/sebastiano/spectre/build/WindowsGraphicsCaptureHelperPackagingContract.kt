@@ -144,7 +144,7 @@ object WindowsGraphicsCaptureHelperPackagingContract {
         if (depsJson != null) {
             val requiredFromDeps =
                 try {
-                    runtimeAssetBaseNames(depsJson)
+                    runtimeAssetBaseNames(depsJson, arch)
                 } catch (e: Exception) {
                     errors +=
                         "invalid $pathPrefix$DEPS_JSON for arch $arch: " +
@@ -170,16 +170,28 @@ object WindowsGraphicsCaptureHelperPackagingContract {
 
     /**
      * Collects basenames of runtime and native assets from a .NET deps.json document
-     * for the Windows RID target present in the file.
+     * for the Windows RID target matching [arch] (`x64` → `win-x64`, `arm64` → `win-arm64`).
      */
     @Suppress("UNCHECKED_CAST")
-    fun runtimeAssetBaseNames(depsJson: String): Set<String> {
+    fun runtimeAssetBaseNames(depsJson: String, arch: String = "x64"): Set<String> {
         val root = JsonSlurper().parseText(depsJson) as Map<String, Any?>
         val targets = root["targets"] as? Map<String, Any?> ?: return emptySet()
         val assetNames = linkedSetOf<String>()
         val targetKeys = targets.keys.toList()
+        val ridToken =
+            when (arch.lowercase()) {
+                "x64",
+                "amd64",
+                "x86_64" -> "/win-x64"
+                "arm64",
+                "aarch64" -> "/win-arm64"
+                else -> "/win-"
+            }
         val preferred =
-            targetKeys.filter { it.contains("/win-", ignoreCase = true) }.ifEmpty { targetKeys }
+            targetKeys.filter { it.contains(ridToken, ignoreCase = true) }.ifEmpty {
+                // Fall back to any win RID, then to all targets (framework-only deps).
+                targetKeys.filter { it.contains("/win-", ignoreCase = true) }.ifEmpty { targetKeys }
+            }
         for (targetKey in preferred) {
             val packages = targets[targetKey] as? Map<String, Any?> ?: continue
             for ((_, metaAny) in packages) {

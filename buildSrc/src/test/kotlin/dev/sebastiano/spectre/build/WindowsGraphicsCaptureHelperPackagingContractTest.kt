@@ -201,10 +201,42 @@ class WindowsGraphicsCaptureHelperPackagingContractTest {
             }
             """
                 .trimIndent()
-        val names = WindowsGraphicsCaptureHelperPackagingContract.runtimeAssetBaseNames(deps)
+        val names =
+            WindowsGraphicsCaptureHelperPackagingContract.runtimeAssetBaseNames(deps, "x64")
         assertTrue(names.contains("Foo.dll"), names.toString())
         assertTrue(names.contains("Bar.dll"), names.toString())
         assertTrue(!names.contains("Foo.pdb"), names.toString())
+    }
+
+    @Test
+    fun `runtimeAssetBaseNames prefers RID matching the requested arch`() {
+        val deps =
+            """
+            {
+              "targets": {
+                ".NETCoreApp,Version=v8.0/win-x64": {
+                  "pkg/1": {
+                    "native": { "runtimes/win-x64/native/OnlyX64.dll": {} }
+                  }
+                },
+                ".NETCoreApp,Version=v8.0/win-arm64": {
+                  "pkg/1": {
+                    "native": { "runtimes/win-arm64/native/OnlyArm64.dll": {} }
+                  }
+                }
+              }
+            }
+            """
+                .trimIndent()
+        val x64 =
+            WindowsGraphicsCaptureHelperPackagingContract.runtimeAssetBaseNames(deps, "x64")
+        val arm64 =
+            WindowsGraphicsCaptureHelperPackagingContract.runtimeAssetBaseNames(deps, "arm64")
+        assertTrue(x64.contains("OnlyX64.dll") && !x64.contains("OnlyArm64.dll"), x64.toString())
+        assertTrue(
+            arm64.contains("OnlyArm64.dll") && !arm64.contains("OnlyX64.dll"),
+            arm64.toString(),
+        )
     }
 
     @Test
