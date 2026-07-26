@@ -100,12 +100,11 @@ val buildSrcUnitTests by
         group = "verification"
         description = "Runs buildSrc unit tests (Windows helper packaging contract and related)."
         workingDir = rootProject.layout.projectDirectory.asFile
-        commandLine(
-            rootProject.layout.projectDirectory.file("gradlew").asFile.absolutePath,
-            "-p",
-            "buildSrc",
-            "test",
-        )
+        val isWindows = System.getProperty("os.name").orEmpty().startsWith("Windows")
+        val wrapperName = if (isWindows) "gradlew.bat" else "gradlew"
+        val wrapper = rootProject.layout.projectDirectory.file(wrapperName).asFile.absolutePath
+        // On Windows, Exec launches the .bat directly. On Unix, the shell script is executable.
+        commandLine(wrapper, "-p", "buildSrc", "test")
         // Nested Gradle manages its own up-to-date checks; always re-enter so check is honest.
         outputs.upToDateWhen { false }
     }
