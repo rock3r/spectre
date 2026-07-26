@@ -329,8 +329,10 @@ generated resources staged by `:recording`'s native build tasks:
 - `:recording-macos` expects `native/macos/SpectreCaptureHelper.app` when a mac helper can
   be produced or provided.
 - `:recording-linux` expects `native/linux/<arch>/spectre-wayland-helper` on Linux.
-- `:recording-windows` expects both `native/windows/x64/spectre-window-capture.exe` and
-  `native/windows/arm64/spectre-window-capture.exe` on Windows.
+- `:recording-windows` expects a complete multi-file Windows Graphics Capture helper for
+  both `x64` and `arm64` under `native/windows/<arch>/` (exe + managed assembly + deps/
+  runtimeconfig + WASDK/Win2D companions; see
+  `WindowsGraphicsCaptureHelperPackagingContract`) when helpers are expected.
 
 When `-PallLinuxArches` is set the task expects both `x86_64` and `aarch64` Linux
 helpers. CI invokes it as

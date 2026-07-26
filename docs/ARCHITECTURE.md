@@ -116,7 +116,8 @@ Expected long-term responsibilities:
 - mirror the runtime resource paths the extractors probe:
   `native/macos/SpectreCaptureHelper.app`,
   `native/linux/<arch>/spectre-wayland-helper`, and
-  `native/windows/<arch>/spectre-window-capture.exe`
+  `native/windows/<arch>/` multi-file Windows Graphics Capture helper tree
+  (exe + companions; framework-dependent)
 
 Current backends:
 

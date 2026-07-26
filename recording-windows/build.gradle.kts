@@ -1,3 +1,4 @@
+import dev.sebastiano.spectre.build.WindowsGraphicsCaptureHelperPackagingContract
 import java.util.zip.ZipFile
 import org.gradle.api.GradleException
 import org.gradle.internal.os.OperatingSystem
@@ -41,6 +42,17 @@ val shouldVerifyWindowsHelper =
     OperatingSystem.current().isWindows ||
         prebuiltWindowsHelperPath.isPresent ||
         prebuiltWindowsHelpersDir.isPresent
+// Legacy -PprebuiltWindowsHelperPath stages x64 only; full dual-arch contract requires
+// -PprebuiltWindowsHelpersDir or a Windows host build.
+val windowsHelperArchesToVerify: List<String> =
+    if (
+        prebuiltWindowsHelpersDir.isPresent ||
+            (!prebuiltWindowsHelperPath.isPresent && OperatingSystem.current().isWindows)
+    ) {
+        WindowsGraphicsCaptureHelperPackagingContract.ARCHES
+    } else {
+        listOf("x64")
+    }
 
 tasks.named<ProcessResources>("processResources") {
     from(recordingProject.layout.buildDirectory.dir("generated/windowsScreenshotHelper"))
@@ -54,23 +66,24 @@ tasks.named<ProcessResources>("processResources") {
 tasks.register("verifyRecordingWindowsHelper") {
     group = "verification"
     description =
-        "Verifies the Windows Graphics Capture helper resource is packaged in spectre-recording-windows."
+        "Verifies the Windows Graphics Capture helper multi-file runtime contract is packaged " +
+            "in spectre-recording-windows (x64+arm64, or x64-only for legacy prebuilt path)."
     enabled = shouldVerifyWindowsHelper
     dependsOn(tasks.named("jar"))
 
     val jarFile = tasks.named<Jar>("jar").flatMap { it.archiveFile }
+    val arches = windowsHelperArchesToVerify
     doLast {
         val jar = jarFile.get().asFile
-        val containsHelpers =
+        val errors =
             ZipFile(jar).use { zip ->
-                val x64 = zip.getEntry("native/windows/x64/spectre-window-capture.exe")
-                val arm64 = zip.getEntry("native/windows/arm64/spectre-window-capture.exe")
-                x64 != null && x64.size > 0 && arm64 != null && arm64.size > 0
+                WindowsGraphicsCaptureHelperPackagingContract.validateZip(zip, arches)
             }
-        if (!containsHelpers) {
+        if (errors.isNotEmpty()) {
             throw GradleException(
-                "spectre-recording-windows jar is missing non-empty x64 and/or arm64 " +
-                    "Windows Graphics Capture helpers"
+                "spectre-recording-windows jar fails the Windows Graphics Capture helper " +
+                    "packaging contract:\n" +
+                    errors.joinToString("\n") { "  - $it" }
             )
         }
     }
