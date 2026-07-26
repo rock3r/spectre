@@ -198,9 +198,26 @@ object WindowsGraphicsCaptureHelperPackagingContract {
         }
         val ridToken = ridTokenForArch(arch)
         val ridName = ridNameForArch(arch)
-        // When runtimeTarget.name declares a Windows RID, it must match the directory arch.
-        val runtimeTarget = root["runtimeTarget"] as? Map<*, *>
-        val runtimeTargetName = runtimeTarget?.get("name") as? String
+        // When runtimeTarget is present, it must be an object with a string name.
+        // Omitted runtimeTarget is allowed (framework-only / incomplete host metadata).
+        val runtimeTargetName: String? =
+            if (root.containsKey("runtimeTarget")) {
+                val runtimeTarget =
+                    root["runtimeTarget"] as? Map<*, *>
+                        ?: throw IllegalArgumentException(
+                            "deps.json runtimeTarget must be an object, was " +
+                                (root["runtimeTarget"]?.let { it::class.java.simpleName }
+                                    ?: "null")
+                        )
+                val name = runtimeTarget["name"]
+                name as? String
+                    ?: throw IllegalArgumentException(
+                        "deps.json runtimeTarget.name must be a string, was " +
+                            (name?.let { it::class.java.simpleName } ?: "null")
+                    )
+            } else {
+                null
+            }
         if (runtimeTargetName != null &&
             runtimeTargetName.contains("/win-", ignoreCase = true) &&
             !runtimeTargetName.contains(ridToken, ignoreCase = true)
