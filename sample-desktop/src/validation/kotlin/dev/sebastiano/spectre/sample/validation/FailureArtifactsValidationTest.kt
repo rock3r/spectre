@@ -38,7 +38,9 @@ import org.junit.runners.model.Statement
  *
  * Uses a real sample Compose window so capture writes non-empty `capture.json` + `screenshot.png`
  * while windows remain open. Optional system property `spectre.205.evidenceDir` copies artifacts
- * and a manifest into that directory for manual-evidence packaging (verification scratch).
+ * and a manifest into that directory for manual-evidence packaging (verification scratch). The
+ * `validationTest` task treats that env as an input and disables up-to-date when set so evidence is
+ * not skipped via Gradle cache.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class FailureArtifactsValidationTest {
