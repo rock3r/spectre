@@ -68,25 +68,32 @@ class IpcIoTimeoutTest {
                 output.write(byteArrayOf(0x00, 0x00)) // 2 of 4 length bytes of next frame
                 output.flush()
 
-                val deadline = System.currentTimeMillis() + frameTimeoutMs + 1_500
-                // Server deadline closes its end; reads eventually EOF or throw.
-                val sawPeerClose =
-                    generateSequence {
-                            if (System.currentTimeMillis() >= deadline) null
-                            else
+                // Server deadline closes its end; reads eventually EOF or throw. Watch from a
+                // helper thread so a non-firing timeout cannot hang the test on blocking read.
+                val sawPeerClose = java.util.concurrent.atomic.AtomicBoolean(false)
+                val watcher =
+                    Thread(
+                            {
                                 try {
-                                    if (input.read() == -1) true
-                                    else {
-                                        Thread.sleep(20)
-                                        false
+                                    while (!sawPeerClose.get()) {
+                                        if (input.read() == -1) {
+                                            sawPeerClose.set(true)
+                                            return@Thread
+                                        }
                                     }
                                 } catch (_: Exception) {
-                                    true
+                                    sawPeerClose.set(true)
                                 }
+                            },
+                            "stall-peer-close-watch",
+                        )
+                        .apply {
+                            isDaemon = true
+                            start()
                         }
-                        .any { it }
+                watcher.join(frameTimeoutMs + 1_500)
                 assertTrue(
-                    sawPeerClose,
+                    sawPeerClose.get(),
                     "server should close the stalled mid-frame peer within the I/O budget",
                 )
 
