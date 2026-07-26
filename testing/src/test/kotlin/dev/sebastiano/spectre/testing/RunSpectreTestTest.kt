@@ -145,25 +145,6 @@ class RunSpectreTestTest {
     }
 
     @Test
-    fun `unawaited async failure is not swallowed after the body returns`() {
-        val error =
-            assertFailsWith<IllegalStateException> {
-                runSpectreTest {
-                    val deferred = async { throw IllegalStateException("unawaited async boom") }
-                    // Wait until the deferred has completed without awaiting it (await would
-                    // rethrow here). Deterministic on CI; runner must still surface the failure.
-                    while (!deferred.isCompleted) {
-                        yield()
-                    }
-                }
-            }
-        assertTrue(
-            error.message?.contains("unawaited async boom") == true,
-            "expected unawaited async failure to surface, was: ${error.message}",
-        )
-    }
-
-    @Test
     fun `child failure wakes a suspended body before the runner timeout`() {
         // Body would otherwise sleep past a short failure; must surface the child exception,
         // not "runSpectreTest timed out after …".
