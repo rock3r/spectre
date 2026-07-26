@@ -224,12 +224,9 @@ class FailureArtifactsValidationTest {
     }
 
     /**
-     * When evidence export is requested, copy the artifact tree + a manifest for verification
-     * packaging. No-op during normal CI runs.
-     *
-     * Resolve order:
-     * 1. System property `spectre.205.evidenceDir` (if the Test task forwards it)
-     * 2. Environment variable `SPECTRE_205_EVIDENCE_DIR` (inherited by forked test JVMs)
+     * When `SPECTRE_205_EVIDENCE_DIR` is set, copy the artifact tree + a manifest for verification
+     * packaging. No-op during normal CI runs. Env is used (not a system property) so forked test
+     * JVMs inherit it without extra Gradle `systemProperty` wiring.
      */
     private fun maybeExportEvidence(
         label: String,
@@ -238,8 +235,8 @@ class FailureArtifactsValidationTest {
         reportEntries: List<Map<String, String>>,
     ) {
         val evidenceRoot =
-            (System.getProperty("spectre.205.evidenceDir")?.takeIf { it.isNotBlank() }
-                    ?: System.getenv("SPECTRE_205_EVIDENCE_DIR")?.takeIf { it.isNotBlank() })
+            System.getenv("SPECTRE_205_EVIDENCE_DIR")
+                ?.takeIf { it.isNotBlank() }
                 ?.let { Path.of(it) } ?: return
         val out = evidenceRoot.resolve(label)
         // Refresh each label dir so a second evidence run does not hit FileAlreadyExistsException.
