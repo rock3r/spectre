@@ -77,11 +77,11 @@ public object FailureArtifactPaths {
                     core.trimEnd('.', ' ').trim('_').ifEmpty { "unnamed" }
             }
         val escaped = escapeReservedWindowsDeviceName(base)
-        // Preserve uniqueness when the sanitize path was lossy relative to the original label,
-        // or when the label has uppercase letters (case-insensitive volumes would otherwise alias
-        // `caseA` and `CaseA` onto the same directory).
-        val needsHash = escaped != raw || raw.any { it.isUpperCase() }
-        val unique = if (needsHash) "${escaped}_${shortHash(raw)}" else escaped
+        // Always append a stable hash of the original label so distinct raw names that alias after
+        // sanitize (punctuation, case folding, Unicode case folds on case-insensitive volumes)
+        // never
+        // share a directory.
+        val unique = "${escaped}_${shortHash(raw)}"
         return boundSegmentLength(unique)
     }
 

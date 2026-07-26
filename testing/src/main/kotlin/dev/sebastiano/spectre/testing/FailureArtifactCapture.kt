@@ -79,6 +79,9 @@ public object FailureArtifactCapture {
                     automator.surfaceIds()
                 }
                 .getOrElse {
+                    // Still purge prior window-* so discovery failure cannot leave stale captures
+                    // looking like evidence for this failure.
+                    clearStaleWindowDirectories(methodDirectory)
                     return emptyList()
                 }
         return captureWindows(

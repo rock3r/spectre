@@ -70,7 +70,7 @@ class FailureArtifactPathsTest {
     }
 
     @Test
-    fun `case-only differences get distinct directories`(@TempDir temp: Path) {
+    fun `case-only and unicode case-fold aliases get distinct directories`(@TempDir temp: Path) {
         val config = FailureArtifactsConfig(reportsRoot = temp)
         val a =
             FailureArtifactPaths.methodDirectory(
@@ -85,6 +85,20 @@ class FailureArtifactPathsTest {
                 config = config,
             )
         assertTrue(a.fileName != b.fileName)
+        // Greek final sigma / sigma fold on case-insensitive volumes
+        val sigma =
+            FailureArtifactPaths.methodDirectory(
+                testClassName = "com.example.T",
+                testMethodName = "σ",
+                config = config,
+            )
+        val finalSigma =
+            FailureArtifactPaths.methodDirectory(
+                testClassName = "com.example.T",
+                testMethodName = "ς",
+                config = config,
+            )
+        assertTrue(sigma.fileName != finalSigma.fileName)
     }
 
     @Test
