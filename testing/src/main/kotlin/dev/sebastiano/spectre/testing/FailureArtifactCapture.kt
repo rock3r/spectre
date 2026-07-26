@@ -27,13 +27,13 @@ public object FailureArtifactCapture {
         windowCount: Int,
         captureWindow: (windowIndex: Int) -> AtomicCapture,
     ): List<CaptureArtifactPaths> {
+        // Drop every prior window-* under this method dir (including higher indices than the
+        // current windowCount) so CI cannot publish stale captures from a previous failure.
+        clearStaleWindowDirectories(methodDirectory)
         if (windowCount <= 0) return emptyList()
         val written = ArrayList<CaptureArtifactPaths>(windowCount)
         for (index in 0 until windowCount) {
             val directory = FailureArtifactPaths.windowDirectory(methodDirectory, index)
-            // Drop any stale window-N from a prior failure in the same method dir so a capture
-            // failure later cannot leave old artifacts looking like this attempt's evidence.
-            deleteRecursivelyQuietly(directory)
             val paths =
                 runCatching {
                         val capture = captureWindow(index)
@@ -43,6 +43,20 @@ public object FailureArtifactCapture {
             if (paths != null) written += paths
         }
         return written
+    }
+
+    private fun clearStaleWindowDirectories(methodDirectory: Path) {
+        if (!methodDirectory.exists()) return
+        runCatching {
+            Files.list(methodDirectory).use { stream ->
+                stream
+                    .asSequence()
+                    .filter {
+                        Files.isDirectory(it) && it.fileName.toString().startsWith("window-")
+                    }
+                    .forEach { deleteRecursivelyQuietly(it) }
+            }
+        }
     }
 
     /**

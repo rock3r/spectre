@@ -85,14 +85,16 @@ class FailureArtifactCaptureTest {
     }
 
     @Test
-    fun `clears stale window dir before capturing`(@TempDir temp: Path) {
+    fun `clears all stale window dirs before capturing`(@TempDir temp: Path) {
         val methodDir = temp.resolve("com.example.T").resolve("stale")
-        val windowDir = methodDir.resolve("window-0")
-        Files.createDirectories(windowDir)
-        val stale = windowDir.resolve("capture.json")
-        Files.writeString(stale, "stale-from-previous-failure")
+        val stale0 = methodDir.resolve("window-0").resolve("capture.json")
+        val stale9 = methodDir.resolve("window-9").resolve("capture.json")
+        Files.createDirectories(stale0.parent)
+        Files.createDirectories(stale9.parent)
+        Files.writeString(stale0, "stale-0")
+        Files.writeString(stale9, "stale-9")
 
-        // Capture fails before write — stale dir must still be gone so CI cannot publish it.
+        // Only one window this run — higher-index leftovers must still be purged.
         val captures =
             FailureArtifactCapture.captureWindows(
                 methodDirectory = methodDir,
@@ -100,8 +102,10 @@ class FailureArtifactCaptureTest {
                 captureWindow = { error("capture boom") },
             )
         assertTrue(captures.isEmpty())
-        assertFalse(Files.exists(stale))
-        assertFalse(Files.exists(windowDir))
+        assertFalse(Files.exists(stale0))
+        assertFalse(Files.exists(stale9))
+        assertFalse(Files.exists(methodDir.resolve("window-0")))
+        assertFalse(Files.exists(methodDir.resolve("window-9")))
     }
 
     private fun fakeAtomicCapture(windowIndex: Int): AtomicCapture {
