@@ -31,14 +31,19 @@ edited by the user/operator.
 
 - **Read-only main scene:** expect **0–1 adapter** if experimental public API stays stable; otherwise
   a thin shims package per Compose Desktop line used by an IDE major.
-- **Overlay popups + recomposer:** **1–3 reflective adapter variants** over that window if full
-  parity is required — concentrate in `OverlayLayerInspector` / `RecomposerInspector` only.
+- **Overlay popups + recomposer:** **1–3 reflective adapter variants** *if* full parity across that
+  window were a 1.0 goal — concentrate in `OverlayLayerInspector` / `RecomposerInspector` only.
 - **Jewel version:** Jewel is theming/UI; Spectre reads semantics, not Jewel widgets. Jewel skew
   does not require Spectre adapters unless Jewel embeds Compose through a non-standard host
   (none known for stock tool windows).
 
-Spike prototype does **not** ship a multi-version adapter matrix; it validates the inject packaging
-and bootstrap against the project's pinned Compose Desktop line.
+### Decided policy (#322)
+
+**Degrade-to-empty on a single pinned Compose Desktop chain — no multi-version adapter matrix
+for 1.0.** Full write-up: [overlay-adapter-policy.md](overlay-adapter-policy.md).
+
+Spike / 1.0 ship shape validates inject packaging and bootstrap (and overlay discovery) against
+the project's **pinned** Compose Desktop line only.
 
 ## 3. Detach / classloader-leak acceptability (inspect mode)
 

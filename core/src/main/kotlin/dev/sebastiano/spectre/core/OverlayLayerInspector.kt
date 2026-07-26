@@ -19,10 +19,12 @@ import java.awt.Window
  *   `attachLayer` / `detachLayer`) Each `WindowComposeSceneLayer` then exposes a private `mediator:
  *   ComposeSceneMediator?` whose `semanticsOwners` collection is what we want.
  *
- * Tracked as #39. The reflection is purposely concentrated here so a future change in Compose's
- * internals can be adapted in one place — `findOverlayLayerWindows` returns an empty list rather
- * than throwing if any field is missing or renamed, so the rest of the automator keeps working
- * against newer Compose versions while a contributor updates this file.
+ * Tracked as #39. Policy for multi-version support is **degrade-to-empty on a single chain**
+ * matching Spectre's pinned Compose Desktop line — no multi-version adapter matrix for 1.0 (see
+ * `docs/spikes/209-injection/overlay-adapter-policy.md`, #322). Reflection stays concentrated here
+ * so a future Compose rename is adapted in one place: [findOverlayLayerWindows] returns an empty
+ * list rather than throwing if any field is missing or renamed, so main-scene automation keeps
+ * working while a contributor updates this file (or adds a post-1.0 chain try-order).
  */
 internal object OverlayLayerInspector {
 
