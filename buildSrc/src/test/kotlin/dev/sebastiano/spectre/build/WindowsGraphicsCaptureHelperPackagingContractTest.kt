@@ -250,6 +250,38 @@ class WindowsGraphicsCaptureHelperPackagingContractTest {
     }
 
     @Test
+    fun `runtimeTarget name RID must match the directory arch`() {
+        val mismatched =
+            """
+            {
+              "runtimeTarget": { "name": ".NETCoreApp,Version=v8.0/win-x64" },
+              "targets": {
+                ".NETCoreApp,Version=v8.0/win-arm64": {
+                  "pkg/1": {
+                    "runtime": { "SpectreWindowCapture.dll": {} }
+                  }
+                }
+              }
+            }
+            """
+                .trimIndent()
+        val files = completeFixedRequiredFiles()
+        val entrySizes = files.mapKeys { "native/windows/arm64/${it.key}" }
+        val errors =
+            WindowsGraphicsCaptureHelperPackagingContract.validateJarEntries(
+                entrySizes,
+                depsJsonByArch = mapOf("arm64" to mismatched),
+                arches = listOf("arm64"),
+            )
+        assertTrue(
+            errors.any {
+                it.contains("arch-mismatched") && it.contains("runtimeTarget.name")
+            },
+            "expected runtimeTarget RID mismatch rejection; errors=$errors",
+        )
+    }
+
+    @Test
     fun `wrong-arch-only deps json is rejected for the directory arch`() {
         val x64OnlyDeps =
             """
