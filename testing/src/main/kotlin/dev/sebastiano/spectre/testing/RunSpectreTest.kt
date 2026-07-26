@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.testing
 
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.coroutines.ContinuationInterceptor
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Duration
@@ -35,16 +36,19 @@ public val DefaultSpectreTestTimeout: Duration = 2.minutes
  * collapses those delays to zero, so holds never hold, swipes jump, and paste can race. This runner
  * keeps the system clock for every `delay` in the body and in Spectre.
  *
- * @param context additional coroutine context elements (combined with the real-time [runBlocking]
- *   dispatcher). Do not install a virtual-time test scheduler here if you need real delays.
+ * @param context additional coroutine context elements for the body/children scope. A dispatcher in
+ *   [context] is stripped from the outer [runBlocking] (so the caller thread is never blocked on a
+ *   single-thread dispatcher such as Swing) and is also overridden by [childDispatcher] for
+ *   body/child work. Do not install a virtual-time test scheduler here if you need real delays.
  * @param timeout wall-clock budget for the entire body (including joined children). On expiry the
  *   runner fails with an [AssertionError] naming the timeout.
  * @param childDispatcher dispatcher for the test body coroutine and for [CoroutineScope.launch] /
  *   [async] children started from the body. Defaults to [Dispatchers.Default] so work is off
  *   runBlocking's single-thread event loop (InjectDispatcher-friendly seam). Always wins over any
  *   dispatcher supplied in [context] for that work.
- * @param testBody suspend test body; [CoroutineScope.launch] children must be joined or cancelled
- *   before the body returns, or the runner reports a coroutine leak.
+ * @param testBody suspend test body; [CoroutineScope.launch] children must be joined or
+ *   `cancelAndJoin`'d before the body returns, or the runner reports a coroutine leak (`cancel()`
+ *   alone is not enough while NonCancellable cleanup is still running).
  * @return the body's result (use `fun mySpec(): Unit = runSpectreTest { … }` so JUnit sees `void`).
  */
 public fun <T> runSpectreTest(
@@ -53,7 +57,9 @@ public fun <T> runSpectreTest(
     childDispatcher: CoroutineDispatcher = Dispatchers.Default,
     testBody: suspend CoroutineScope.() -> T,
 ): T =
-    runBlocking(context) {
+    // Strip any caller dispatcher from runBlocking so we never block a single-thread dispatcher
+    // (e.g. Dispatchers.Swing / EDT) that body completion and timeout need to resume on.
+    runBlocking(context.minusKey(ContinuationInterceptor)) {
         // Free-standing Job (not parented under runBlocking): non-cooperative children cannot hang
         // runBlocking after the cleanup budget. Child failures cancel this job (and thus the body
         // async below); invokeOnCompletion retains the cause for rethrow after await.
@@ -106,8 +112,9 @@ public fun <T> runSpectreTest(
                 val detail = unfinished.joinToString(separator = "; ") { child -> child.toString() }
                 throw AssertionError(
                     "runSpectreTest detected ${unfinished.size} unfinished coroutine(s) after " +
-                        "the test body returned (coroutine leak). Join or cancel launched work " +
-                        "before returning. Active: $detail"
+                        "the test body returned (coroutine leak). Join or cancelAndJoin launched " +
+                        "work before returning (cancel() alone is not enough during " +
+                        "NonCancellable cleanup). Unfinished: $detail"
                 )
             }
 
