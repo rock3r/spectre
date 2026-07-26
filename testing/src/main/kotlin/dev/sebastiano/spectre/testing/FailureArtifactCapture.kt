@@ -72,7 +72,14 @@ public object FailureArtifactCapture {
                 automator.refreshWindows()
                 val liveIndex = automator.surfaceIds().indexOf(surfaceId)
                 check(liveIndex >= 0) { "Window surface $surfaceId no longer tracked" }
-                automator.capture(liveIndex)
+                val capture = automator.capture(liveIndex)
+                // capture() refreshes again; reject a drifted surface so we never write the wrong
+                // window into window-N (skip this slot via runCatching instead).
+                check(capture.document.window.surfaceId == surfaceId) {
+                    "Capture drifted to surface ${capture.document.window.surfaceId}, " +
+                        "wanted $surfaceId"
+                }
+                capture
             },
         )
     }

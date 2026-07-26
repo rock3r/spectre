@@ -28,11 +28,17 @@ public object FailureArtifactPaths {
         config: FailureArtifactsConfig,
     ): Path {
         val classSeg = sanitizePathSegment(testClassName)
-        val methodSeg =
-            sanitizePathSegment(testMethodName).let { base ->
-                val attempt = config.attemptIndex
-                if (attempt != null && attempt > 1) "$base-attempt-$attempt" else base
+        // Fold attempt into the label *before* sanitize/bound so `-attempt-N` cannot push a
+        // max-length method segment over the filesystem component limit.
+        val methodLabel = buildString {
+            append(testMethodName)
+            val attempt = config.attemptIndex
+            if (attempt != null && attempt > 1) {
+                append("-attempt-")
+                append(attempt)
             }
+        }
+        val methodSeg = sanitizePathSegment(methodLabel)
         return config.reportsRoot.resolve(classSeg).resolve(methodSeg)
     }
 

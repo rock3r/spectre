@@ -177,6 +177,22 @@ class FailureArtifactPathsTest {
     }
 
     @Test
+    fun `attempt suffix does not exceed segment byte limit`(@TempDir temp: Path) {
+        val longName = "m".repeat(400)
+        val config = FailureArtifactsConfig(reportsRoot = temp, attemptIndex = 12)
+        val dir =
+            FailureArtifactPaths.methodDirectory(
+                testClassName = "com.example.T",
+                testMethodName = longName,
+                config = config,
+            )
+        assertTrue(
+            dir.fileName.toString().toByteArray(Charsets.UTF_8).size <=
+                FailureArtifactPaths.MAX_SEGMENT_BYTES
+        )
+    }
+
+    @Test
     fun `config defaults to enabled`() {
         assertTrue(FailureArtifactsConfig().enabled)
     }
