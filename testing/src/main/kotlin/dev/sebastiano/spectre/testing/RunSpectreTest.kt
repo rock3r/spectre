@@ -117,9 +117,9 @@ public fun <T> runSpectreTest(
                         true
                     } catch (cancelled: CancellationException) {
                         // Prefer the original child failure over a bare cancellation from the
-                        // structured Job when a sibling failed.
-                        failures.firstOrNull()?.let { throw it }
-                        throw cancelled
+                        // structured Job when a sibling failed. Failures may not yet be in the
+                        // list if a NonCancellable sibling is still completing the parent job.
+                        throw preferredFailure(failures, cancelled)
                     }
                 }
             if (finished == null) {
@@ -159,6 +159,25 @@ public fun <T> runSpectreTest(
             withTimeoutOrNull(CLEANUP_JOIN_TIMEOUT) { testJob.join() }
         }
     }
+}
+
+/**
+ * Prefer a recorded child failure, then [CancellationException.cause], then the cancellation itself
+ * — so callers see the original boom even when parent completion has not yet drained into the
+ * failure list (e.g. NonCancellable sibling cleanup still in flight).
+ */
+private fun preferredFailure(
+    failures: List<Throwable>,
+    cancelled: CancellationException,
+): Throwable {
+    failures.firstOrNull()?.let {
+        return it
+    }
+    val root = cancelled.cause
+    if (root != null && root !is CancellationException) {
+        return root
+    }
+    return cancelled
 }
 
 private val CLEANUP_JOIN_TIMEOUT: Duration = 5.seconds
