@@ -32,6 +32,9 @@ public enum PermissionGuideCopy {
     /// Compact bar line (Codex-style): drag into the list Settings is showing.
     public static let dragHint =
         "Drag Spectre Capture Helper to the list above to allow Screen Recording"
+    /// When the helper row already exists but is off (reapproval / re-enable).
+    public static let reapprovalDragHint =
+        "Turn Spectre Capture Helper back on in the list above to allow Screen Recording"
     public static let dragSlotAccessibility = "Drag Spectre Capture Helper.app"
     public static let waitingLabel = "Waiting…"
     public static let grantedLabel = "Done ✓"
@@ -44,6 +47,10 @@ public enum PermissionGuideCopy {
 
     public static func body(reapproval: Bool) -> String {
         reapproval ? reapprovalBody : firstRunBody
+    }
+
+    public static func dragHint(reapproval: Bool) -> String {
+        reapproval ? reapprovalDragHint : dragHint
     }
 }
 
@@ -685,6 +692,25 @@ public enum PermissionGuidePlacement {
 
     // MARK: CGWindowList fallback
 
+    /// Whether System Settings / Preferences is still running (any Space).
+    /// `optionOnScreenOnly` window list misses other Spaces — use this to distinguish
+    /// Space switch (keep waiting) from the user quitting Settings (recover / exit).
+    public static func isSystemSettingsRunning() -> Bool {
+        if !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.SystemSettings")
+            .isEmpty
+        {
+            return true
+        }
+        if !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.systempreferences")
+            .isEmpty
+        {
+            return true
+        }
+        return NSWorkspace.shared.runningApplications.contains {
+            $0.localizedName == "System Settings" || $0.localizedName == "System Preferences"
+        }
+    }
+
     public static func systemSettingsWindowBoundsFromCG() -> CGRect? {
         guard
             let infoList = CGWindowListCopyWindowInfo(
@@ -1058,28 +1084,36 @@ public enum PermissionGuideApp {
         let poll = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { _ in
             updateSystemUIVisibility()
             guard let docked = computeDockedFrame() else {
-                // Settings gone from on-screen window list (other Space, closed, etc.).
-                if state.settingsMissingSince == nil {
-                    state.settingsMissingSince = Date()
-                }
-                let missing = Date().timeIntervalSince(state.settingsMissingSince ?? Date())
-                // After a short gap, try reopening Settings once (accidental close).
-                if missing >= settingsReopenAfter, !state.didTryReopenSettings {
-                    state.didTryReopenSettings = true
-                    model.openSystemSettings()
-                }
-                // If Settings stays gone, exit with preflight JSON so the JVM does not
-                // hang until its guide timeout with no stdout result.
-                if missing >= settingsGoneExitAfter, state.sawSettingsThisSession {
-                    state.placementTimer?.invalidate()
-                    state.placementTimer = nil
-                    model.finish()
-                    return
-                }
+                // No on-screen Settings window. Either other Space (process still
+                // running — hide and wait) or Settings was quit (recover / exit).
                 if !state.hiddenWithoutSettings {
                     state.hiddenWithoutSettings = true
                     state.lastSettingsOrigin = nil
                     hideBar()
+                }
+                if PermissionGuidePlacement.isSystemSettingsRunning() {
+                    // Off-space or minimized: do not reopen/finish — re-dock when back.
+                    state.settingsMissingSince = nil
+                    state.didTryReopenSettings = false
+                    return
+                }
+                // Process gone — Settings was closed.
+                if state.settingsMissingSince == nil {
+                    state.settingsMissingSince = Date()
+                }
+                let missing = Date().timeIntervalSince(state.settingsMissingSince ?? Date())
+                // After a short gap, try reopening Settings once (accidental quit).
+                if missing >= settingsReopenAfter, !state.didTryReopenSettings {
+                    state.didTryReopenSettings = true
+                    model.openSystemSettings()
+                }
+                // If Settings stays gone (closed, or never launched), exit with preflight
+                // JSON so the JVM does not hang until its guide timeout with no stdout.
+                if missing >= settingsGoneExitAfter {
+                    state.placementTimer?.invalidate()
+                    state.placementTimer = nil
+                    model.finish()
+                    return
                 }
                 return
             }
@@ -1268,7 +1302,7 @@ struct PermissionGuideBarView: View {
                     .padding(.top, 1)
                     .accessibilityHidden(true)
 
-                Text(PermissionGuideCopy.dragHint)
+                Text(PermissionGuideCopy.dragHint(reapproval: model.reapproval))
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)

@@ -31,6 +31,14 @@ final class PermissionGuideTests: XCTestCase {
             PermissionGuideCopy.body(reapproval: false),
             PermissionGuideCopy.body(reapproval: true)
         )
+        XCTAssertNotEqual(
+            PermissionGuideCopy.dragHint(reapproval: false),
+            PermissionGuideCopy.dragHint(reapproval: true)
+        )
+        XCTAssertTrue(
+            PermissionGuideCopy.dragHint(reapproval: true).lowercased().contains("turn")
+                || PermissionGuideCopy.dragHint(reapproval: true).lowercased().contains("back on")
+        )
         XCTAssertFalse(PermissionGuideCopy.dragHint.isEmpty)
         XCTAssertFalse(PermissionGuideCopy.grantedLabel.isEmpty)
     }
@@ -302,6 +310,12 @@ final class PermissionGuideTests: XCTestCase {
                 sawPreflightDenied: false
             )
         )
+    }
+
+    func testSystemSettingsRunningDetectsKnownBundleIds() {
+        // Pure smoke: API is callable without throwing. Runtime may or may not
+        // have Settings open during unit tests.
+        _ = PermissionGuidePlacement.isSystemSettingsRunning()
     }
 
     func testShouldYieldToSystemUIForAuthAndSettingsSheets() {
