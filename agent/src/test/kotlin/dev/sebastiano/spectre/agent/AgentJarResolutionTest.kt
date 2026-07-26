@@ -93,6 +93,24 @@ class AgentJarResolutionTest {
     }
 
     @Test
+    fun `treats symlink and real path of the same jar as a single candidate`() {
+        val dir = Files.createTempDirectory("spectre-agent-jar-resolution")
+        val runtimeJar = Files.createFile(dir.resolve("spectre-agent-runtime-0.2.0.jar"))
+        val link = dir.resolve("spectre-agent-runtime-link.jar")
+        try {
+            Files.createSymbolicLink(link, runtimeJar.fileName)
+        } catch (_: UnsupportedOperationException) {
+            return // platform without symlink support
+        } catch (_: java.nio.file.FileSystemException) {
+            return // sandbox / privilege may refuse symlink creation
+        }
+
+        val classPath = listOf(runtimeJar, link).joinToString(File.pathSeparator)
+        val resolved = AgentJarResolution.findRuntimeJarOnClasspath(classPath)
+        assertTrue(Files.isSameFile(runtimeJar, resolved!!))
+    }
+
+    @Test
     fun `fails closed when multiple runtime jars are in a directory`() {
         val dir = Files.createTempDirectory("spectre-agent-jar-resolution")
         val first = Files.createFile(dir.resolve("agent-runtime-0.1.0.jar"))
