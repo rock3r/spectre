@@ -1327,10 +1327,10 @@ struct PermissionGuideBarView: View {
 
             // Drop-slot with real draggable app.
             HStack(spacing: 10) {
-                AppIconDragView(appURL: model.appURL)
+                AppIconDragView(appURL: model.appURL, reapproval: model.reapproval)
                     .frame(width: 32, height: 32)
                     .accessibilityLabel(PermissionGuideCopy.dragSlotAccessibility)
-                    .accessibilityHint(PermissionGuideCopy.dragHint)
+                    .accessibilityHint(PermissionGuideCopy.dragHint(reapproval: model.reapproval))
 
                 Text(PermissionGuideCopy.windowTitle)
                     .font(.system(size: 12, weight: .medium))
@@ -1379,15 +1379,16 @@ struct PermissionGuideBarView: View {
 /// AppKit-backed draggable icon so Privacy Settings receives a real `.app` file URL.
 struct AppIconDragView: NSViewRepresentable {
     let appURL: URL
+    var reapproval: Bool = false
 
     func makeNSView(context: Context) -> DraggableAppIconNSView {
         let view = DraggableAppIconNSView()
-        view.configure(appURL: appURL)
+        view.configure(appURL: appURL, reapproval: reapproval)
         return view
     }
 
     func updateNSView(_ nsView: DraggableAppIconNSView, context: Context) {
-        nsView.configure(appURL: appURL)
+        nsView.configure(appURL: appURL, reapproval: reapproval)
     }
 }
 
@@ -1406,10 +1407,10 @@ final class DraggableAppIconNSView: NSImageView {
         isEditable = false
     }
 
-    func configure(appURL: URL) {
+    func configure(appURL: URL, reapproval: Bool = false) {
         self.appURL = appURL
         image = NSWorkspace.shared.icon(forFile: appURL.path)
-        toolTip = PermissionGuideCopy.dragHint
+        toolTip = PermissionGuideCopy.dragHint(reapproval: reapproval)
     }
 
     override var mouseDownCanMoveWindow: Bool { false }
