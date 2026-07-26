@@ -54,6 +54,8 @@ class IpcIoTimeoutTest {
 
             // Complete Hello, then write a partial next-frame header and stall so the deadline
             // applies to mid-frame completion (idle between frames is intentionally unbounded).
+            // Keep the stalled peer open past the deadline so recovery cannot be explained by
+            // client-side close alone — the server must have timed out and dropped the connection.
             SocketChannel.open(StandardProtocolFamily.UNIX).use { raw ->
                 raw.connect(UnixDomainSocketAddress.of(udsPath))
                 val output = Channels.newOutputStream(raw)
@@ -65,33 +67,38 @@ class IpcIoTimeoutTest {
                 Framing.readFrame(input) // HelloAck
                 output.write(byteArrayOf(0x00, 0x00)) // 2 of 4 length bytes of next frame
                 output.flush()
-                Thread.sleep(frameTimeoutMs + 400)
-            }
 
-            // Give accept loop a beat after the dead peer is closed (Windows AF_UNIX).
-            Thread.sleep(100)
-
-            assertTimeoutPreemptively(java.time.Duration.ofSeconds(8)) {
-                var lastError: Exception? = null
-                repeat(5) { attempt ->
+                val deadline = System.currentTimeMillis() + frameTimeoutMs + 1_500
+                var sawPeerClose = false
+                while (System.currentTimeMillis() < deadline) {
                     try {
-                        IpcClient(udsPath, frameIoTimeoutMs = 5_000).use { client ->
-                            assertEquals(
-                                AgentResponse.Pong,
-                                client.send(AgentRequest.Ping),
-                                "accept loop must survive a mid-frame stall",
-                            )
+                        // Server deadline closes its end; reads eventually EOF.
+                        if (input.read() == -1) {
+                            sawPeerClose = true
+                            break
                         }
-                        return@assertTimeoutPreemptively
-                    } catch (ex: Exception) {
-                        lastError = ex
-                        Thread.sleep(100L * (attempt + 1))
+                    } catch (_: Exception) {
+                        sawPeerClose = true
+                        break
+                    }
+                    Thread.sleep(20)
+                }
+                assertTrue(
+                    sawPeerClose,
+                    "server should close the stalled mid-frame peer within the I/O budget",
+                )
+
+                // Re-attach while the old peer socket is still open to prove accept loop recovery
+                // is not just "client left".
+                assertTimeoutPreemptively(java.time.Duration.ofSeconds(8)) {
+                    IpcClient(udsPath, frameIoTimeoutMs = 5_000).use { client ->
+                        assertEquals(
+                            AgentResponse.Pong,
+                            client.send(AgentRequest.Ping),
+                            "accept loop must survive a mid-frame stall",
+                        )
                     }
                 }
-                throw AssertionError(
-                    "could not re-attach after mid-frame stall: ${lastError?.message}",
-                    lastError,
-                )
             }
         }
     }
