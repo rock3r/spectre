@@ -58,7 +58,10 @@ Three experimental markers exist today:
   surface — `AgentAttach`, `AttachedAutomator`, `AttachOptions`, `SpectreProcesses`, and the
   wire DTOs. Tracked under #153; the marker stays in place while the attach UX, streaming wire
   ops (`waitForVisualIdle` etc.), and automated IntelliJ-hosted Compose attach tests settle.
-  The transport itself runs on Linux, macOS, and Windows (native `AF_UNIX`).
+  The transport itself runs on Linux, macOS, and Windows (native `AF_UNIX`). Nested
+  inject-runtime packaging (attach when the target has no preinstalled `spectre-core`) is
+  **experimental inspect only** for 1.0 — keep the marker; do not treat inject as a stable
+  production attach mode.
 
 Consumers opt in either at file level or call site:
 

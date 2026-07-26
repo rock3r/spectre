@@ -46,9 +46,11 @@ executable CI evidence.
 - **JDK 21+** on both the attaching and target JVMs.
 - The attaching JVM must be a **JDK** (not a JRE) with the `jdk.attach` module on the
   module graph.
-- The target JVM must include **Spectre `:core`** on its classpath. The agent does not
-  inject Spectre into the target; it reflectively bootstraps off the `:core` that's
-  already loaded. The agent JAR itself is supplied by the attaching JVM at attach time.
+- The target JVM needs a **Compose Desktop host** (so Spectre can find semantics owners).
+  Prefer a **preinstalled** `spectre-core` dependency on the target for production-style
+  attach. If core is absent, the agent runtime can **inject** a nested
+  `META-INF/spectre/inject-runtime.jar` payload (experimental inspect path — see
+  [Injection without preinstalled core](#injection-without-preinstalled-core)).
 - **Linux, macOS, and Windows.** The transport uses native Unix Domain Sockets (`AF_UNIX`) on all
   three — no named pipes, no extra dependencies. Windows requires **Windows 10 version 1803 /
   Windows Server 2019 or newer**, when native `AF_UNIX` landed; older Windows fails the attach
@@ -56,7 +58,8 @@ executable CI evidence.
 - The target JVM should be started with **`-XX:+EnableDynamicAgentLoading`**. Without it,
   attach prints a stderr warning per
   [JEP 451](https://openjdk.org/jeps/451) and a future JDK will reject the attach
-  entirely.
+  entirely. Spectre's launch harness adds the flag for processes it starts; stock apps and
+  IDEs need it in their own VM options (see [IntelliJ-hosted Compose](intellij.md#external-attach-without-spectre-core)).
 
 ## Artifact roles
 
@@ -65,9 +68,8 @@ Agent attach involves two JVMs:
 - **Target JVM** — the Compose app you want to inspect or drive.
 - **Attacher JVM** — the test, inspector, or tool process that calls `AgentAttach.attach(pid)`.
 
-The target JVM must already have Spectre `:core` on its classpath. The agent runtime does
-not inject `:core`; it reflectively locates `ComposeAutomator` in the target's classloader
-after it has been loaded into that JVM.
+**Preferred target shape** — preinstall Spectre core so bootstrap uses the instrumented path
+(no inject classloader):
 
 ```kotlin
 // build.gradle.kts of the target application
@@ -77,6 +79,9 @@ dependencies {
     // The attacher supplies the runtime jar to the JDK Attach API.
 }
 ```
+
+If the target cannot take that dependency (stock IDE, third-party binary), attach still works
+when Compose is present and the runtime jar carries the nested inject payload — see below.
 
 The attacher JVM usually needs two artifacts:
 
@@ -115,13 +120,32 @@ jar directly, and the target still does not need `spectre-agent-runtime` declare
 3. Run attach preflights, including the same-OS-user check.
 4. Call `VirtualMachine.attach(pid).loadAgent(runtimeJarPath, udsPath)`.
 5. The target JVM loads the runtime jar and invokes `SpectreAgent.agentmain(...)`.
-6. Inside the target JVM, `SpectreAgent` finds `ComposeAutomator` from the target's existing
-   `:core` dependency, creates an in-process automator, and starts an IPC server on the UDS path.
+6. Inside the target JVM, bootstrap locates or injects `ComposeAutomator` (see below), creates
+   an in-process automator, and starts an IPC server on the UDS path.
 7. The attacher connects an `IpcClient` to that socket and returns `AttachedAutomator`.
 
 After that, calls such as `windows()`, `findByTestTag(...)`, `click(...)`, and `screenshot()` are
 small CBOR requests over the socket. They execute inside the target JVM against the in-process
 automator, then return DTOs or bytes to the attacher.
+
+### Injection without preinstalled core
+
+Bootstrap order inside the target:
+
+1. Prefer a **preinstalled** `ComposeAutomator` already on the target classpath
+   (instrumented attach).
+2. Else extract the nested **`META-INF/spectre/inject-runtime.jar`** from the agent runtime
+   jar, open a child classloader parented at a Compose host loader, and load Spectre core
+   from that payload (inject attach). Compose / Skiko stay on the target; only Spectre core
+   and relocated kotlinx bits come from the inject jar.
+
+Inject is an **experimental inspect** path: fine for rare attach → dump → detach sessions,
+not for high-frequency CI attach loops. Prefer preinstalled core when you control the target
+build. Class unload after detach is GC-dependent; do not treat inject as a leak-free
+production mode.
+
+The same `AgentAttach.attach(pid)` API is used for both paths — there is no separate
+“inject flag” on the public attach surface.
 
 ## Custom runtime jar path
 

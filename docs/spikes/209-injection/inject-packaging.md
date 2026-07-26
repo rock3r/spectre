@@ -28,3 +28,9 @@ Compose / Skiko / Kotlin stdlib are excluded from the inject jar and resolve aga
 - `:agent-inject-runtime:verifyInjectRuntimeJarContents`
 - `:agent-runtime:verifyAgentRuntimeJarContents` (nested resource present; no exploded core)
 - `AgentInjectAttachIntegrationTest` — attach + tree dump with spectre-core stripped from target CP
+
+## 1.0 packaging fate (#321)
+
+**Keep** nested inject-runtime for 1.0 as an **experimental** inspect path. Do not promote to a
+stable product surface; do not strip for instrumented-only 1.0. Full decision:
+[packaging-1.0-decision.md](packaging-1.0-decision.md).

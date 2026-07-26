@@ -66,11 +66,14 @@ relying on unbounded inject attach/detach cycles.
 
 ## 4. Stock IDE proving status
 
-Automated stock IntelliJ 2026.2 attach was **not** executed in the agent delivery environment
-(no reliable stock IDE launch path). Evidence path used instead:
+Full operator recipe, tag table, and evidence chain: **[stock-intellij-recipe.md](stock-intellij-recipe.md)**
+(#320).
 
-- `AgentInjectAttachIntegrationTest` — real attach + UDS + tree dump against Compose fixture
-  **without** preinstalled `spectre-core` on the target classpath (injection exercised).
+| Layer | Status |
+| --- | --- |
+| Inject packaging + no-core fixture attach | Automated (`AgentInjectAttachIntegrationTest`, jar verify tasks) |
+| Jewel `ide.counter.*` / `ide.popup.*` in IDEA 2026.2 | Automated via `:sample-intellij-plugin:uiTest` (instrumented sample) |
+| Stock IDE + inject when no `spectre-core` | Documented manual / release-QA recipe (vmoptions + attach dump) |
 
-Stock-IDE gap is environmental, not a prototype packaging failure. Optional remote
-Windows/Linux hosts were not required for packaging validation.
+Stock no-core inject remains **experimental inspect**, not a PR-blocking CI gate
+(see packaging-1.0-decision.md).
