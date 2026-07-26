@@ -83,7 +83,9 @@ public class ComposeAutomatorExtension(
     }
 
     override fun afterTestExecution(context: ExtensionContext) {
-        if (!context.executionException.isPresent) return
+        val failure = context.executionException.orElse(null) ?: return
+        // Assumptions abort the test without a "failure"; do not write artifacts for those.
+        if (failure is org.opentest4j.TestAbortedException) return
         captureFailureArtifacts(context)
     }
 
