@@ -283,7 +283,11 @@ object WindowsGraphicsCaptureHelperPackagingContract {
     private fun requireAssetTable(meta: Map<String, Any?>, key: String): Map<String, Any?>? {
         if (!meta.containsKey(key)) return null
         val value = meta[key]
-        if (value == null) return null
+        if (value == null) {
+            throw IllegalArgumentException(
+                "deps.json package asset table '$key' must be an object, was null"
+            )
+        }
         @Suppress("UNCHECKED_CAST")
         return value as? Map<String, Any?>
             ?: throw IllegalArgumentException(
