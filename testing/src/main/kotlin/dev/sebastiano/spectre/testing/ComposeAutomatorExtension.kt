@@ -83,11 +83,10 @@ public class ComposeAutomatorExtension(
         val testClass = context.testClass.map { it.name }.orElse("UnknownClass")
         val testMethod = context.testMethod.map { it.name }.orElseGet { context.displayName }
         val config =
-            if (failureArtifacts.invocationId != null) {
-                failureArtifacts
-            } else {
-                failureArtifacts.copy(invocationId = context.uniqueId)
-            }
+            failureArtifacts.copy(
+                invocationId =
+                    failureArtifacts.invocationId?.takeIf { it.isNotBlank() } ?: context.uniqueId
+            )
         FailureArtifactHooks.recordFailure(
             automator = automator,
             config = config,

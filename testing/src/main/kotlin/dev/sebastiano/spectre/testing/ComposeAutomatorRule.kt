@@ -107,9 +107,17 @@ public class ComposeAutomatorRule(
         val automator = instance ?: return
         val testClass = description.className ?: "UnknownClass"
         val testMethod = description.methodName ?: description.displayName
+        // JUnit 4 has no ExtensionContext.uniqueId; synthesize an invocation id so parallel or
+        // repeated runs of the same method do not share artifact directories.
+        val config =
+            failureArtifacts.copy(
+                invocationId =
+                    failureArtifacts.invocationId?.takeIf { it.isNotBlank() }
+                        ?: "${testClass}#${testMethod}#${System.nanoTime()}"
+            )
         FailureArtifactHooks.recordFailure(
             automator = automator,
-            config = failureArtifacts,
+            config = config,
             testClassName = testClass,
             testMethodName = testMethod,
             publishReport = { _, _ ->
