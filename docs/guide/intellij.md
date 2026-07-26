@@ -41,7 +41,7 @@ class RunSpectreAction : AnAction() {
 ```
 
 `printTree()` is synchronous. Interaction and wait methods (`waitForNode`, `click`, `typeText`,
-etc.) are `suspend` — wrap them in `runBlocking { … }` inside the pooled thread:
+etc.) are `suspend` — wrap them in `runBlocking { … }` inside the pooled thread (for JUnit tests prefer `runSpectreTest` instead):
 
 ```kotlin
 ApplicationManager.getApplication().executeOnPooledThread {

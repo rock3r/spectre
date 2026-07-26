@@ -12,7 +12,7 @@ field at runtime):
 
 ```kotlin
 import dev.sebastiano.spectre.testing.ComposeAutomatorExtension
-import kotlinx.coroutines.runBlocking
+import dev.sebastiano.spectre.testing.runSpectreTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 
@@ -22,7 +22,7 @@ class DialogTest {
     val automatorExt = ComposeAutomatorExtension()
 
     @Test
-    fun `opens settings dialog`() = runBlocking {
+    fun `opens settings dialog`() = runSpectreTest {
         launchHarness()
         val automator = automatorExt.automator
         // ...
@@ -35,7 +35,7 @@ automator can be injected as a test parameter:
 
 ```kotlin
 @Test
-fun example(automator: ComposeAutomator) = runBlocking {
+fun example(automator: ComposeAutomator) = runSpectreTest {
     // ...
 }
 ```
@@ -47,7 +47,7 @@ helpers.
 
 ```kotlin
 import dev.sebastiano.spectre.testing.ComposeAutomatorRule
-import kotlinx.coroutines.runBlocking
+import dev.sebastiano.spectre.testing.runSpectreTest
 import org.junit.Rule
 import org.junit.Test
 
@@ -56,7 +56,7 @@ class DialogTest {
     val automatorRule = ComposeAutomatorRule()
 
     @Test
-    fun `opens settings dialog`() = runBlocking {
+    fun `opens settings dialog`() = runSpectreTest {
         launchHarness()
         val automator = automatorRule.automator
         // ...
@@ -101,6 +101,6 @@ The JUnit 4 rule is identical: `ComposeAutomatorRule { ComposeAutomator.inProces
 - The extension/rule does **not** open a Compose window for you. Launch your
   app or harness in `@BeforeEach`/`@Before`, or at the top of each test.
 - Each test gets a fresh `ComposeAutomator`. Don't cache one across tests.
-- The test body must still be wrapped in `runBlocking { ... }` because input
-  and wait calls are `suspend`. `runTest` will break timing — see the main
+- The test body must still be wrapped in `runSpectreTest { ... }` because input
+  and wait calls are `suspend`. `runTest` will break timing — use `runSpectreTest` instead; see the main
   SKILL.md.

@@ -46,7 +46,7 @@ description, or role — see [Finding nodes](selectors.md).
 
     ```kotlin
     import dev.sebastiano.spectre.testing.ComposeAutomatorExtension
-    import kotlinx.coroutines.runBlocking
+    import dev.sebastiano.spectre.testing.runSpectreTest
     import org.junit.jupiter.api.Test
     import org.junit.jupiter.api.extension.RegisterExtension
 
@@ -57,7 +57,7 @@ description, or role — see [Finding nodes](selectors.md).
         val automatorExt = ComposeAutomatorExtension()
 
         @Test
-        fun `clicking increment bumps the counter`(): Unit = runBlocking {
+        fun `clicking increment bumps the counter`(): Unit = runSpectreTest {
             launchCounterApp() // your harness — opens the Compose window
 
             val automator = automatorExt.automator
@@ -84,7 +84,7 @@ description, or role — see [Finding nodes](selectors.md).
 
     ```kotlin
     import dev.sebastiano.spectre.testing.ComposeAutomatorRule
-    import kotlinx.coroutines.runBlocking
+    import dev.sebastiano.spectre.testing.runSpectreTest
     import org.junit.Rule
     import org.junit.Test
 
@@ -94,7 +94,7 @@ description, or role — see [Finding nodes](selectors.md).
         val automatorRule = ComposeAutomatorRule()
 
         @Test
-        fun clickingIncrementBumpsTheCounter(): Unit = runBlocking {
+        fun clickingIncrementBumpsTheCounter(): Unit = runSpectreTest {
             launchCounterApp()
 
             val automator = automatorRule.automator
@@ -134,20 +134,20 @@ description, or role — see [Finding nodes](selectors.md).
 
 All interaction methods (`click`, `doubleClick`, `swipe`, `typeText`, `pasteText`, …) and all wait
 helpers (`waitForNode`, `waitForIdle`, `waitForVisualIdle`) are `suspend`, so the test
-body runs inside `runBlocking { … }`. JUnit test methods don't run on the AWT event
-dispatch thread, so no extra `withContext` is needed here. If you ever call wait helpers
-from a coroutine on `Dispatchers.Main` (Swing EDT), wrap them in
+body runs inside `runSpectreTest { … }` from the testing module. JUnit test methods don't
+run on the AWT event dispatch thread, so no extra `withContext` is needed here. If you
+ever call wait helpers from a coroutine on `Dispatchers.Main` (Swing EDT), wrap them in
 `withContext(Dispatchers.Default)` — they reject EDT callers at runtime. See
 [Synchronization](synchronization.md).
 
 !!! warning "Force JUnit expression-body tests to return `Unit`"
     In JUnit 5.14 and newer, `@Test` methods whose JVM return type is not `void` are
     rejected during discovery. Kotlin expression-body tests infer their return type from
-    the last expression inside `runBlocking { ... }`; assertions such as `assertNotNull`
-    return the asserted value, not `Unit`. Write `fun mySpec(): Unit = runBlocking { ... }`
+    the last expression inside `runSpectreTest { ... }`; assertions such as `assertNotNull`
+    return the asserted value, not `Unit`. Write `fun mySpec(): Unit = runSpectreTest { ... }`
     so the JVM signature stays `void` regardless of the last assertion.
 
-!!! warning "Use `runBlocking`, not `runTest`"
+!!! warning "Use `runSpectreTest`, not `runTest`"
     `runTest` from `kotlinx-coroutines-test` controls time via a virtual scheduler and
     skips `delay()` calls, advancing the clock instantly. Spectre uses `delay` internally
     for timing-sensitive operations — `longClick` hold durations, `swipe` step pacing, and
@@ -155,7 +155,9 @@ from a coroutine on `Dispatchers.Main` (Swing EDT), wrap them in
     those pauses to zero. The result is that `longClick` doesn't actually hold, `swipe`
     jumps to the end position instantly, and clipboard operations may race.
 
-    Stick with `runBlocking` for Spectre tests.
+    Prefer `runSpectreTest` from `dev.sebastiano.spectre.testing`: real wall-clock delays,
+    structured concurrency, and unfinished-child leak detection. Plain `runBlocking` remains
+    a valid fallback when you do not need leak reporting.
 
 ## Where to go next
 

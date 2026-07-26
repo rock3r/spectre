@@ -76,7 +76,11 @@ for a change, note it explicitly in the final report.
 
 ## Coroutine Testing
 
-- Prefer `runTest` for coroutine-based logic.
+- Prefer `runTest` for coroutine-based logic **that is not Spectre UI automation**.
+- Prefer `runSpectreTest` (from `:testing`) for Spectre UI tests: real wall-clock `delay`
+  for longClick/swipe/paste settle, plus unfinished-child leak detection. Do **not** use
+  `runTest` for Spectre interaction tests (virtual time collapses internal delays).
+  Plain `runBlocking` remains a valid fallback.
 - Avoid real sleeps when a deterministic scheduler or fake clock will do.
 - Cancel/close long-lived scopes created in tests.
 - If asynchronous behaviour cannot be made deterministic, isolate the nondeterminism behind a small
