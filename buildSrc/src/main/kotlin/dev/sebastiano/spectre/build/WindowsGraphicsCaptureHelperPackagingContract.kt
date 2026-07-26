@@ -196,10 +196,21 @@ object WindowsGraphicsCaptureHelperPackagingContract {
         if (targets.isEmpty()) {
             throw IllegalArgumentException("deps.json 'targets' map is empty")
         }
-        val assetNames = linkedSetOf<String>()
-        val targetKeys = targets.keys.toList()
         val ridToken = ridTokenForArch(arch)
         val ridName = ridNameForArch(arch)
+        // When runtimeTarget.name declares a Windows RID, it must match the directory arch.
+        val runtimeTarget = root["runtimeTarget"] as? Map<*, *>
+        val runtimeTargetName = runtimeTarget?.get("name") as? String
+        if (runtimeTargetName != null &&
+            runtimeTargetName.contains("/win-", ignoreCase = true) &&
+            !runtimeTargetName.contains(ridToken, ignoreCase = true)
+        ) {
+            throw WrongArchDepsException(
+                "runtimeTarget.name='$runtimeTargetName' does not match arch RID '$ridName'"
+            )
+        }
+        val assetNames = linkedSetOf<String>()
+        val targetKeys = targets.keys.toList()
         val preferred = targetKeys.filter { it.contains(ridToken, ignoreCase = true) }
         if (preferred.isEmpty()) {
             val otherWin =
@@ -263,14 +274,22 @@ object WindowsGraphicsCaptureHelperPackagingContract {
                         "deps.json package '$packageKey' must be an object, was " +
                             (metaAny?.let { it::class.java.simpleName } ?: "null")
                     )
-            collectAssetBasenames(meta["runtime"] as? Map<String, Any?>, into)
-            collectAssetBasenames(meta["native"] as? Map<String, Any?>, into)
-            collectRuntimeTargetBasenames(
-                meta["runtimeTargets"] as? Map<String, Any?>,
-                ridName,
-                into,
-            )
+            collectAssetBasenames(requireAssetTable(meta, "runtime"), into)
+            collectAssetBasenames(requireAssetTable(meta, "native"), into)
+            collectRuntimeTargetBasenames(requireAssetTable(meta, "runtimeTargets"), ridName, into)
         }
+    }
+
+    private fun requireAssetTable(meta: Map<String, Any?>, key: String): Map<String, Any?>? {
+        if (!meta.containsKey(key)) return null
+        val value = meta[key]
+        if (value == null) return null
+        @Suppress("UNCHECKED_CAST")
+        return value as? Map<String, Any?>
+            ?: throw IllegalArgumentException(
+                "deps.json package asset table '$key' must be an object, was " +
+                    value::class.java.simpleName
+            )
     }
 
     private fun collectAssetBasenames(assets: Map<String, Any?>?, into: MutableSet<String>) {
