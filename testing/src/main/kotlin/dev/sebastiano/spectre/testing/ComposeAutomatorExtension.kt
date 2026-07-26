@@ -3,8 +3,10 @@ package dev.sebastiano.spectre.testing
 import dev.sebastiano.spectre.core.ComposeAutomator
 import java.lang.reflect.Method
 import org.junit.jupiter.api.extension.AfterEachCallback
+import org.junit.jupiter.api.extension.AfterTestExecutionCallback
 import org.junit.jupiter.api.extension.BeforeEachCallback
 import org.junit.jupiter.api.extension.ExtensionContext
+import org.junit.jupiter.api.extension.LifecycleMethodExecutionExceptionHandler
 import org.junit.jupiter.api.extension.ParameterContext
 import org.junit.jupiter.api.extension.ParameterResolver
 
@@ -30,6 +32,14 @@ import org.junit.jupiter.api.extension.ParameterResolver
  * }
  * ```
  *
+ * ## Failure artifacts (#205)
+ *
+ * When a test fails, this extension captures atomic screenshots + semantics for every known window
+ * **after** the failure and **before** [afterEach] tears down the automator (via
+ * [AfterTestExecutionCallback]). Default-on; opt out with `FailureArtifactsConfig(enabled =
+ * false)`. Paths are published as JUnit report entries under
+ * [FailureArtifactHooks.REPORT_ENTRY_KEY].
+ *
  * The [factory] defaults to `ComposeAutomator.inProcess()`. Tests that need a stub for headless CI
  * or focused unit testing can supply their own factory.
  *
@@ -39,13 +49,24 @@ import org.junit.jupiter.api.extension.ParameterResolver
  * typical sequential `@RegisterExtension` flow; callers running tests in parallel should rely on
  * parameter injection instead.
  */
-public class ComposeAutomatorExtension(private val factory: AutomatorFactory) :
-    BeforeEachCallback, AfterEachCallback, ParameterResolver {
+public class ComposeAutomatorExtension(
+    private val factory: AutomatorFactory,
+    private val failureArtifacts: FailureArtifactsConfig = FailureArtifactsConfig(),
+) :
+    BeforeEachCallback,
+    AfterEachCallback,
+    AfterTestExecutionCallback,
+    LifecycleMethodExecutionExceptionHandler,
+    ParameterResolver {
 
     // Explicit no-arg secondary constructor so JUnit 5's @ExtendWith — which reflectively
     // calls the no-arg constructor — can instantiate the extension. Kotlin's default-parameter
     // primary constructor does not emit a true JVM no-arg overload without @JvmOverloads.
     public constructor() : this({ ComposeAutomator.inProcess() })
+
+    public constructor(
+        failureArtifacts: FailureArtifactsConfig
+    ) : this({ ComposeAutomator.inProcess() }, failureArtifacts)
 
     @Volatile private var lastInstance: ComposeAutomator? = null
 
@@ -59,6 +80,58 @@ public class ComposeAutomatorExtension(private val factory: AutomatorFactory) :
         val automator = factory()
         context.getStore(NAMESPACE).put(STORE_KEY, automator)
         lastInstance = automator
+    }
+
+    override fun afterTestExecution(context: ExtensionContext) {
+        val failure = context.executionException.orElse(null) ?: return
+        captureFailureArtifacts(context, failure)
+    }
+
+    /**
+     * Also capture when `@AfterEach` / `@BeforeEach` lifecycle methods fail (not covered by
+     * [afterTestExecution], which only sees the test method's exception).
+     */
+    override fun handleAfterEachMethodExecutionException(
+        context: ExtensionContext,
+        throwable: Throwable,
+    ) {
+        captureFailureArtifacts(context, throwable)
+        throw throwable
+    }
+
+    override fun handleBeforeEachMethodExecutionException(
+        context: ExtensionContext,
+        throwable: Throwable,
+    ) {
+        // Automator may already exist if factory ran; capture is best-effort.
+        captureFailureArtifacts(context, throwable)
+        throw throwable
+    }
+
+    private fun captureFailureArtifacts(context: ExtensionContext, cause: Throwable) {
+        // Assumptions abort without a "failure"; do not write artifacts for those (test method
+        // or lifecycle @BeforeEach/@AfterEach).
+        if (FailureArtifactHooks.isNonFailureAbort(cause)) return
+        val store = context.getStore(NAMESPACE)
+        // One capture per invocation: test-method failure runs afterTestExecution, then a later
+        // @AfterEach failure must not recapture (which would clear the earlier run-* tree).
+        if (store.get(CAPTURED_KEY) == true) return
+        val automator = store.get(STORE_KEY, ComposeAutomator::class.java) ?: return
+        val testClass = context.testClass.map { it.name }.orElse("UnknownClass")
+        val testMethod = context.testMethod.map { it.name }.orElseGet { context.displayName }
+        val config =
+            failureArtifacts.copy(
+                invocationId =
+                    failureArtifacts.invocationId?.takeIf { it.isNotBlank() } ?: context.uniqueId
+            )
+        FailureArtifactHooks.recordFailure(
+            automator = automator,
+            config = config,
+            testClassName = testClass,
+            testMethodName = testMethod,
+            publishReport = { key, value -> context.publishReportEntry(key, value) },
+        )
+        store.put(CAPTURED_KEY, true)
     }
 
     override fun afterEach(context: ExtensionContext) {
@@ -105,3 +178,4 @@ public class ComposeAutomatorExtension(private val factory: AutomatorFactory) :
 // the companion itself is `private`. A file-level `private const val` compiles to a private
 // static field on the file's facade class and stays out of the public ABI surface.
 private const val STORE_KEY: String = "automator"
+private const val CAPTURED_KEY: String = "failureArtifactsCaptured"
