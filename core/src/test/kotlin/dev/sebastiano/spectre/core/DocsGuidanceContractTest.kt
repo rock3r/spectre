@@ -23,7 +23,7 @@ class DocsGuidanceContractTest {
         assertContains(docs, "apple.awt.UIElement=true")
         assertContains(docs, "pasteText")
         assertContains(docs, "java.awt.headless")
-        assertContains(docs, "fun mySpec(): Unit = runBlocking")
+        assertContains(docs, "fun mySpec(): Unit = runSpectreTest")
         assertContains(docs, "printTree()` returns an empty string")
         assertContains(docs, "No Component provided")
         assertContains(docs, "RobotDriver.synthetic(rootWindow =")
