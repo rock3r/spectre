@@ -26,6 +26,8 @@ internal class MultiplexedIpcSession(
     private val handler: AgentRequestHandler,
     private val running: AtomicBoolean,
     private val onDetach: () -> Unit,
+    private val channel: java.nio.channels.Channel,
+    private val frameIoTimeoutMs: Long = FrameIoDeadline.DEFAULT_TIMEOUT_MS,
 ) {
     fun run(input: InputStream, output: OutputStream) {
         // Bound threads *and* queue so a buggy client cannot OOM the agent with enqueued ops.
@@ -65,7 +67,18 @@ internal class MultiplexedIpcSession(
         writeLock: Any,
     ) {
         while (running.get()) {
-            val requestBytes = Framing.readFrame(input) ?: return
+            val requestBytes =
+                try {
+                    FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
+                        Framing.readFrame(input)
+                    } ?: return
+                } catch (ex: java.net.SocketTimeoutException) {
+                    // Stalled peer mid-frame — drop this connection; accept loop continues.
+                    System.err.println(
+                        "[spectre-agent] frame I/O timed out (${ex.message}); closing connection"
+                    )
+                    return
+                }
             val op = decodeOpOrReport(requestBytes, output, writeLock) ?: continue
             when (val body = op.body) {
                 is AgentRequest.Cancel -> handleCancel(body, op.opId, output, writeLock, inFlight)
@@ -336,7 +349,11 @@ internal class MultiplexedIpcSession(
         // clear interrupt only for the duration of the write and restore afterward.
         val wasInterrupted = Thread.interrupted()
         try {
-            synchronized(writeLock) { Framing.writeFrame(output, toWrite) }
+            synchronized(writeLock) {
+                FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
+                    Framing.writeFrame(output, toWrite)
+                }
+            }
         } finally {
             if (wasInterrupted) {
                 Thread.currentThread().interrupt()

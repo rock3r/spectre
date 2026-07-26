@@ -36,6 +36,8 @@ constructor(
     private val udsPath: Path,
     private val handler: AgentRequestHandler,
     private val onDetach: () -> Unit = {},
+    /** Per-frame read/write deadline; `<= 0` disables (not for production). */
+    private val frameIoTimeoutMs: Long = FrameIoDeadline.DEFAULT_TIMEOUT_MS,
 ) : AutoCloseable {
     private var createdParentDir: Path? = null
 
@@ -136,19 +138,32 @@ constructor(
             val input = Channels.newInputStream(socket)
             val output = Channels.newOutputStream(socket)
             // Phase 1: bare Hello (#199).
-            if (!performHandshake(input, output)) return
+            if (!performHandshake(socket, input, output)) return
             // Phase 2: multiplexed OpRequest frames on a worker pool (#200).
-            MultiplexedIpcSession(handler, running, onDetach).run(input, output)
+            MultiplexedIpcSession(
+                    handler = handler,
+                    running = running,
+                    onDetach = onDetach,
+                    channel = socket,
+                    frameIoTimeoutMs = frameIoTimeoutMs,
+                )
+                .run(input, output)
         }
     }
 
     /** Bare Hello handshake. Returns false if the connection should end. */
-    private fun performHandshake(input: InputStream, output: OutputStream): Boolean {
+    private fun performHandshake(
+        channel: SocketChannel,
+        input: InputStream,
+        output: OutputStream,
+    ): Boolean {
         var handshakeComplete = false
         while (running.get() && !handshakeComplete) {
             val requestBytes =
                 try {
-                    Framing.readFrame(input) ?: return false
+                    FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
+                        Framing.readFrame(input)
+                    } ?: return false
                 } catch (ex: IllegalStateException) {
                     running.set(false)
                     onDetach()
@@ -158,16 +173,16 @@ constructor(
                 try {
                     WireCodec.decodeRequest(requestBytes)
                 } catch (ex: kotlinx.serialization.SerializationException) {
-                    respondDecodeFailure(output, ex, handshakeComplete = false)
+                    respondDecodeFailure(channel, output, ex, handshakeComplete = false)
                     return false
                 }
             when (request) {
                 is AgentRequest.Hello -> {
-                    val ok = respondHello(output, request) { handshakeComplete = it }
+                    val ok = respondHello(channel, output, request) { handshakeComplete = it }
                     if (!ok) return false
                 }
                 else -> {
-                    rejectPreHandshake(output, request)
+                    rejectPreHandshake(channel, output, request)
                     return false
                 }
             }
@@ -177,6 +192,7 @@ constructor(
 
     /** Decode failure response; pre-handshake failures tear down agent state (#199). */
     private fun respondDecodeFailure(
+        channel: SocketChannel,
         output: OutputStream,
         ex: kotlinx.serialization.SerializationException,
         handshakeComplete: Boolean,
@@ -189,15 +205,17 @@ constructor(
             }
         val tearDown = !handshakeComplete
         try {
-            Framing.writeFrame(
-                output,
-                WireCodec.encode(
-                    AgentResponse.Error(
-                        message = "Malformed or unsupported request: ${ex.message}",
-                        category = category.wireName,
-                    )
-                ),
-            )
+            FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
+                Framing.writeFrame(
+                    output,
+                    WireCodec.encode(
+                        AgentResponse.Error(
+                            message = "Malformed or unsupported request: ${ex.message}",
+                            category = category.wireName,
+                        )
+                    ),
+                )
+            }
         } finally {
             if (tearDown) {
                 running.set(false)
@@ -209,32 +227,39 @@ constructor(
 
     /** Hello handshake; mismatch tears down agent state so re-attach can re-bootstrap (#199). */
     private fun respondHello(
+        channel: SocketChannel,
         output: OutputStream,
         request: AgentRequest.Hello,
         setHandshakeComplete: (Boolean) -> Unit,
     ): Boolean {
         if (request.protocolVersion == ProtocolVersion.CURRENT) {
             setHandshakeComplete(true)
-            Framing.writeFrame(
-                output,
-                WireCodec.encode(AgentResponse.HelloAck(protocolVersion = ProtocolVersion.CURRENT)),
-            )
+            FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
+                Framing.writeFrame(
+                    output,
+                    WireCodec.encode(
+                        AgentResponse.HelloAck(protocolVersion = ProtocolVersion.CURRENT)
+                    ),
+                )
+            }
             return true
         }
         setHandshakeComplete(false)
         try {
-            Framing.writeFrame(
-                output,
-                WireCodec.encode(
-                    AgentResponse.Error(
-                        message =
-                            "Protocol version mismatch: client=${request.protocolVersion}, " +
-                                "runtime=${ProtocolVersion.CURRENT} (exact-match required " +
-                                "while agent API is experimental)",
-                        category = AgentErrorCategory.ProtocolMismatch.wireName,
-                    )
-                ),
-            )
+            FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
+                Framing.writeFrame(
+                    output,
+                    WireCodec.encode(
+                        AgentResponse.Error(
+                            message =
+                                "Protocol version mismatch: client=${request.protocolVersion}, " +
+                                    "runtime=${ProtocolVersion.CURRENT} (exact-match required " +
+                                    "while agent API is experimental)",
+                            category = AgentErrorCategory.ProtocolMismatch.wireName,
+                        )
+                    ),
+                )
+            }
         } finally {
             running.set(false)
             onDetach()
@@ -243,18 +268,24 @@ constructor(
     }
 
     /** Non-Hello first frame (pre-#199 attacher); tear down and close the connection (#199). */
-    private fun rejectPreHandshake(output: OutputStream, request: AgentRequest): Boolean {
+    private fun rejectPreHandshake(
+        channel: SocketChannel,
+        output: OutputStream,
+        request: AgentRequest,
+    ): Boolean {
         try {
-            Framing.writeFrame(
-                output,
-                WireCodec.encode(
-                    AgentResponse.Error(
-                        message =
-                            "Protocol handshake required: send Hello before ${request.logLabel}",
-                        category = AgentErrorCategory.ProtocolMismatch.wireName,
-                    )
-                ),
-            )
+            FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
+                Framing.writeFrame(
+                    output,
+                    WireCodec.encode(
+                        AgentResponse.Error(
+                            message =
+                                "Protocol handshake required: send Hello before ${request.logLabel}",
+                            category = AgentErrorCategory.ProtocolMismatch.wireName,
+                        )
+                    ),
+                )
+            }
         } finally {
             running.set(false)
             onDetach()
