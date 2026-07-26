@@ -216,24 +216,27 @@ object WindowsGraphicsCaptureHelperPackagingContract {
             // Framework-only deps (no RID target): use all targets, still filter
             // runtimeTargets entries by RID when present.
             for (targetKey in targetKeys) {
-                collectFromTarget(targets[targetKey], ridName, assetNames)
+                collectFromTarget(requireTargetBody(targetKey, targets[targetKey]), ridName, assetNames)
             }
             return assetNames
         }
         for (targetKey in preferred) {
-            val body = targets[targetKey]
-            if (body !is Map<*, *>) {
-                throw IllegalArgumentException(
-                    "deps.json target '$targetKey' must be a non-empty object, was " +
-                        (body?.let { it::class.java.simpleName } ?: "null")
-                )
-            }
-            if (body.isEmpty()) {
-                throw IllegalArgumentException("deps.json target '$targetKey' is an empty object")
-            }
-            collectFromTarget(body, ridName, assetNames)
+            collectFromTarget(requireTargetBody(targetKey, targets[targetKey]), ridName, assetNames)
         }
         return assetNames
+    }
+
+    private fun requireTargetBody(targetKey: String, body: Any?): Map<*, *> {
+        if (body !is Map<*, *>) {
+            throw IllegalArgumentException(
+                "deps.json target '$targetKey' must be a non-empty object, was " +
+                    (body?.let { it::class.java.simpleName } ?: "null")
+            )
+        }
+        if (body.isEmpty()) {
+            throw IllegalArgumentException("deps.json target '$targetKey' is an empty object")
+        }
+        return body
     }
 
     fun ridTokenForArch(arch: String): String = "/${ridNameForArch(arch)}"
