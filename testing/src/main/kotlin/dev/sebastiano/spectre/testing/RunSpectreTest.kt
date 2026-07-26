@@ -74,7 +74,21 @@ public fun <T> runSpectreTest(
         // async below); invokeOnCompletion retains the cause for rethrow after await.
         val failures = CopyOnWriteArrayList<Throwable>()
         val testJob = Job()
-        testJob.invokeOnCompletion { cause -> if (cause != null) failures.add(cause) }
+        testJob.invokeOnCompletion { cause ->
+            // Parent cancellation is always a CancellationException; surface the original child
+            // failure (its cause) so callers see IllegalStateException/"boom" rather than a bare
+            // "Job was cancelled". Skip cause-less cancellations from normal cleanup.
+            when (cause) {
+                null -> Unit
+                is CancellationException -> {
+                    val root = cause.cause
+                    if (root != null && root !is CancellationException) {
+                        failures.add(root)
+                    }
+                }
+                else -> failures.add(cause)
+            }
+        }
         val exceptionHandler = CoroutineExceptionHandler { _, throwable -> failures.add(throwable) }
         // childDispatcher is applied last so it always overrides a dispatcher in [context].
         val testScope =
