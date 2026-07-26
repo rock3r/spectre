@@ -29,14 +29,15 @@ class FailureArtifactCaptureTest {
 
         assertEquals(2, captures.size)
         for (index in 0..1) {
-            val windowDir = methodDir.resolve("window-$index")
+            val windowDir = captures[index].directory
+            assertTrue(windowDir.parent.fileName.toString().startsWith("run-"))
+            assertEquals("window-$index", windowDir.fileName.toString())
             val json = windowDir.resolve(CaptureArtifactsWriter.CAPTURE_JSON_NAME)
             val png = windowDir.resolve(CaptureArtifactsWriter.SCREENSHOT_PNG_NAME)
             assertTrue(Files.isRegularFile(json), "missing $json")
             assertTrue(Files.isRegularFile(png), "missing $png")
             assertTrue(Files.size(json) > 0)
             assertTrue(Files.size(png) > 0)
-            assertEquals(windowDir, captures[index].directory)
         }
     }
 
@@ -66,9 +67,11 @@ class FailureArtifactCaptureTest {
                 },
             )
         assertEquals(2, captures.size)
-        assertTrue(Files.isRegularFile(methodDir.resolve("window-0").resolve("capture.json")))
-        assertFalse(Files.exists(methodDir.resolve("window-1")))
-        assertTrue(Files.isRegularFile(methodDir.resolve("window-2").resolve("capture.json")))
+        val runDir = captures.first().directory.parent
+        assertTrue(runDir.fileName.toString().startsWith("run-"))
+        assertTrue(Files.isRegularFile(runDir.resolve("window-0").resolve("capture.json")))
+        assertFalse(Files.exists(runDir.resolve("window-1")))
+        assertTrue(Files.isRegularFile(runDir.resolve("window-2").resolve("capture.json")))
     }
 
     @Test
