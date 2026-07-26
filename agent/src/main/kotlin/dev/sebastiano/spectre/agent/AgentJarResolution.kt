@@ -55,7 +55,10 @@ internal object AgentJarResolution {
     private fun hasSpectreIdentityMarker(directory: Path): Boolean {
         val settings =
             runCatching { Files.readString(directory.resolve("settings.gradle.kts")) }.getOrNull()
-        if (settings != null && ACTIVE_SPECTRE_ROOT_NAME.containsMatchIn(settings)) {
+        if (
+            settings != null &&
+                ACTIVE_SPECTRE_ROOT_NAME.containsMatchIn(stripKotlinLikeNonCode(settings))
+        ) {
             return true
         }
         val propsPath = directory.resolve("gradle.properties")
@@ -63,13 +66,28 @@ internal object AgentJarResolution {
         val props = runCatching { Files.readString(propsPath) }.getOrNull() ?: return false
         return props.lineSequence().any { line ->
             val trimmed = line.trim()
-            !trimmed.startsWith("#") && trimmed == "GROUP=dev.sebastiano.spectre"
+            !trimmed.startsWith("#") &&
+                !trimmed.startsWith("!") &&
+                trimmed == "GROUP=dev.sebastiano.spectre"
         }
     }
 
-    /** Active (non-commented) assignment only — comments must not enable the fallback. */
+    /**
+     * Best-effort removal of non-executable regions from settings.gradle.kts so identity markers
+     * inside block comments or triple-quoted strings cannot enable the fallback.
+     */
+    private fun stripKotlinLikeNonCode(source: String): String {
+        var text = BLOCK_COMMENT.replace(source, " ")
+        text = TRIPLE_QUOTE_STRING.replace(text, " ")
+        return text.lineSequence().joinToString("\n") { line -> line.substringBefore("//") }
+    }
+
+    /** Active assignment only — comments/strings must not enable the fallback. */
     private val ACTIVE_SPECTRE_ROOT_NAME =
-        Regex("""(?m)^\s*rootProject\.name\s*=\s*"Spectre"\s*(//.*)?$""")
+        Regex("""(?m)^\s*rootProject\.name\s*=\s*"Spectre"\s*$""")
+
+    private val BLOCK_COMMENT = Regex("""/\*.*?\*/""", setOf(RegexOption.DOT_MATCHES_ALL))
+    private val TRIPLE_QUOTE_STRING = Regex("\"\"\".*?\"\"\"", setOf(RegexOption.DOT_MATCHES_ALL))
 
     /** Walk parents from [start] and return the nearest Spectre source checkout root, if any. */
     fun findSpectreSourceCheckoutRoot(start: Path): Path? {

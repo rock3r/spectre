@@ -141,6 +141,10 @@ class AgentJarResolveTest {
             root.resolve("settings.gradle.kts"),
             """
             // rootProject.name = "Spectre"
+            /* rootProject.name = "Spectre" */
+            val docs = ${"\"\"\""}
+                rootProject.name = "Spectre"
+            ${"\"\"\""}
             rootProject.name = "Other"
             """
                 .trimIndent(),
