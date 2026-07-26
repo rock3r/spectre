@@ -316,6 +316,23 @@ final class PermissionGuideTests: XCTestCase {
         // Pure smoke: API is callable without throwing. Runtime may or may not
         // have Settings open during unit tests.
         _ = PermissionGuidePlacement.isSystemSettingsRunning()
+        _ = PermissionGuidePlacement.systemSettingsProcessIDs()
+    }
+
+    func testIsSystemSettingsWindowPrefersPID() {
+        // English name still works as fallback.
+        XCTAssertTrue(
+            PermissionGuidePlacement.isSystemSettingsWindow(
+                ownerName: "System Settings",
+                ownerPID: nil
+            )
+        )
+        XCTAssertFalse(
+            PermissionGuidePlacement.isSystemSettingsWindow(
+                ownerName: "TextEdit",
+                ownerPID: nil
+            )
+        )
     }
 
     func testShouldYieldToSystemUIForAuthAndSettingsSheets() {

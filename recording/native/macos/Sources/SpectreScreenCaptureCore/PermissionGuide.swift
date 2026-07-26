@@ -692,23 +692,43 @@ public enum PermissionGuidePlacement {
 
     // MARK: CGWindowList fallback
 
+    /// PIDs for System Settings / Preferences (bundle-ID based — locale-safe).
+    public static func systemSettingsProcessIDs() -> Set<pid_t> {
+        var pids = Set<pid_t>()
+        for app in NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.SystemSettings")
+        {
+            pids.insert(app.processIdentifier)
+        }
+        for app in NSRunningApplication.runningApplications(
+            withBundleIdentifier: "com.apple.systempreferences"
+        ) {
+            pids.insert(app.processIdentifier)
+        }
+        // English-name fallback when bundle queries are empty (older OS edge cases).
+        if pids.isEmpty {
+            for app in NSWorkspace.shared.runningApplications
+            where app.localizedName == "System Settings" || app.localizedName == "System Preferences"
+            {
+                pids.insert(app.processIdentifier)
+            }
+        }
+        return pids
+    }
+
+    /// Whether a CG window belongs to System Settings (prefer PID over localized owner name).
+    public static func isSystemSettingsWindow(ownerName: String, ownerPID: pid_t?) -> Bool {
+        if let ownerPID, systemSettingsProcessIDs().contains(ownerPID) {
+            return true
+        }
+        // Fallback for tests / when process list is empty mid-launch.
+        return ownerName == "System Settings" || ownerName == "System Preferences"
+    }
+
     /// Whether System Settings / Preferences is still running (any Space).
     /// `optionOnScreenOnly` window list misses other Spaces — use this to distinguish
     /// Space switch (keep waiting) from the user quitting Settings (recover / exit).
     public static func isSystemSettingsRunning() -> Bool {
-        if !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.SystemSettings")
-            .isEmpty
-        {
-            return true
-        }
-        if !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.systempreferences")
-            .isEmpty
-        {
-            return true
-        }
-        return NSWorkspace.shared.runningApplications.contains {
-            $0.localizedName == "System Settings" || $0.localizedName == "System Preferences"
-        }
+        !systemSettingsProcessIDs().isEmpty
     }
 
     public static func systemSettingsWindowBoundsFromCG() -> CGRect? {
@@ -721,9 +741,18 @@ public enum PermissionGuidePlacement {
             return nil
         }
 
+        let settingsPIDs = systemSettingsProcessIDs()
         for info in infoList {
             let owner = info[kCGWindowOwnerName as String] as? String ?? ""
-            guard owner == "System Settings" || owner == "System Preferences" else { continue }
+            let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t
+            // Prefer PID match (works when kCGWindowOwnerName is localized).
+            let isSettings: Bool
+            if let ownerPID, settingsPIDs.contains(ownerPID) {
+                isSettings = true
+            } else {
+                isSettings = owner == "System Settings" || owner == "System Preferences"
+            }
+            guard isSettings else { continue }
             let layer = info[kCGWindowLayer as String] as? Int ?? 0
             guard layer == 0 else { continue }
             guard let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
@@ -751,12 +780,20 @@ public enum PermissionGuidePlacement {
         public var name: String
         public var layer: Int
         public var bounds: CGRect
+        public var ownerPID: pid_t?
 
-        public init(owner: String, name: String = "", layer: Int = 0, bounds: CGRect) {
+        public init(
+            owner: String,
+            name: String = "",
+            layer: Int = 0,
+            bounds: CGRect,
+            ownerPID: pid_t? = nil
+        ) {
             self.owner = owner
             self.name = name
             self.layer = layer
             self.bounds = bounds
+            self.ownerPID = ownerPID
         }
     }
 
@@ -779,6 +816,7 @@ public enum PermissionGuidePlacement {
             let owner = info[kCGWindowOwnerName as String] as? String ?? ""
             let name = info[kCGWindowName as String] as? String ?? ""
             let layer = info[kCGWindowLayer as String] as? Int ?? 0
+            let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t
             guard let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
                 let cgRect = CGRect(dictionaryRepresentation: boundsDict),
                 cgRect.width > 2,
@@ -787,7 +825,13 @@ public enum PermissionGuidePlacement {
                 continue
             }
             result.append(
-                OnScreenWindow(owner: owner, name: name, layer: layer, bounds: cgRect)
+                OnScreenWindow(
+                    owner: owner,
+                    name: name,
+                    layer: layer,
+                    bounds: cgRect,
+                    ownerPID: ownerPID
+                )
             )
         }
         return result
@@ -801,19 +845,17 @@ public enum PermissionGuidePlacement {
             "coreauthd",
             "localauthenticationd",
         ]
-        func isAuthOrSettingsOwner(_ owner: String) -> Bool {
+        func isAuthOwner(_ owner: String) -> Bool {
             authOwners.contains(owner)
                 || owner.localizedCaseInsensitiveContains("LocalAuthentication")
                 || owner.localizedCaseInsensitiveContains("SecurityAgent")
-                || owner == "System Settings"
-                || owner == "System Preferences"
+        }
+        func isSettingsWindow(_ w: OnScreenWindow) -> Bool {
+            isSystemSettingsWindow(ownerName: w.owner, ownerPID: w.ownerPID)
         }
         for w in windows {
             let owner = w.owner
-            if authOwners.contains(owner)
-                || owner.localizedCaseInsensitiveContains("LocalAuthentication")
-                || owner.localizedCaseInsensitiveContains("SecurityAgent")
-            {
+            if isAuthOwner(owner) {
                 // Ignore tiny helper surfaces; real auth sheets are sizable.
                 if w.bounds.width > 160, w.bounds.height > 80 {
                     return true
@@ -822,7 +864,7 @@ public enum PermissionGuidePlacement {
             // Named auth / quit-reopen surfaces — only for Settings / auth agents.
             // Unrelated apps with "quit" in the title must not hide the guide.
             let n = w.name
-            if isAuthOrSettingsOwner(owner),
+            if (isAuthOwner(owner) || isSettingsWindow(w)),
                 n.localizedCaseInsensitiveContains("Touch ID")
                     || n.localizedCaseInsensitiveContains("Use Password")
                     || n.localizedCaseInsensitiveContains("reopen")
@@ -836,9 +878,7 @@ public enum PermissionGuidePlacement {
 
         // System Settings sheets / alerts: extra windows or elevated layer.
         // Touch ID and "quit & reopen" are Settings-owned dialogs, not always SecurityAgent.
-        let settings = windows.filter {
-            $0.owner == "System Settings" || $0.owner == "System Preferences"
-        }
+        let settings = windows.filter { isSettingsWindow($0) }
         if settings.contains(where: { $0.layer != 0 }) {
             return true
         }
