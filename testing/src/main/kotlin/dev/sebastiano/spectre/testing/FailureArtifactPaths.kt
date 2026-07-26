@@ -8,11 +8,12 @@ import kotlin.io.path.absolute
  *
  * Layout:
  * ```
- * <reportsRoot>/<test-class>/<test-method>[-attempt-N]/window-<i>/{capture.json,screenshot.png}
+ * <reportsRoot>/<test-class>/<test-method>[/attempt-N]/window-<i>/{capture.json,screenshot.png}
  * ```
  *
  * Each `window-<i>` directory matches the atomic-capture layout from #181 so `spectre-capture` `jq`
- * recipes work unchanged.
+ * recipes work unchanged. Retry attempts use a nested `attempt-N` directory (not a method-name
+ * suffix) so they cannot collide with a test literally named `…-attempt-N`.
  */
 public object FailureArtifactPaths {
 
@@ -28,18 +29,14 @@ public object FailureArtifactPaths {
         config: FailureArtifactsConfig,
     ): Path {
         val classSeg = sanitizePathSegment(testClassName)
-        // Fold attempt into the label *before* sanitize/bound so `-attempt-N` cannot push a
-        // max-length method segment over the filesystem component limit.
-        val methodLabel = buildString {
-            append(testMethodName)
-            val attempt = config.attemptIndex
-            if (attempt != null && attempt > 1) {
-                append("-attempt-")
-                append(attempt)
-            }
+        val methodSeg = sanitizePathSegment(testMethodName)
+        val methodDir = config.reportsRoot.resolve(classSeg).resolve(methodSeg)
+        val attempt = config.attemptIndex
+        return if (attempt != null && attempt > 1) {
+            methodDir.resolve("attempt-$attempt")
+        } else {
+            methodDir
         }
-        val methodSeg = sanitizePathSegment(methodLabel)
-        return config.reportsRoot.resolve(classSeg).resolve(methodSeg)
     }
 
     public fun windowDirectory(methodDirectory: Path, windowIndex: Int): Path =
@@ -80,13 +77,11 @@ public object FailureArtifactPaths {
                     core.trimEnd('.', ' ').trim('_').ifEmpty { "unnamed" }
             }
         val escaped = escapeReservedWindowsDeviceName(base)
-        // Preserve uniqueness when the sanitize path was lossy relative to the original label.
-        val unique =
-            if (escaped == raw) {
-                escaped
-            } else {
-                "${escaped}_${shortHash(raw)}"
-            }
+        // Preserve uniqueness when the sanitize path was lossy relative to the original label,
+        // or when the label has uppercase letters (case-insensitive volumes would otherwise alias
+        // `caseA` and `CaseA` onto the same directory).
+        val needsHash = escaped != raw || raw.any { it.isUpperCase() }
+        val unique = if (needsHash) "${escaped}_${shortHash(raw)}" else escaped
         return boundSegmentLength(unique)
     }
 

@@ -31,6 +31,9 @@ public object FailureArtifactCapture {
         val written = ArrayList<CaptureArtifactPaths>(windowCount)
         for (index in 0 until windowCount) {
             val directory = FailureArtifactPaths.windowDirectory(methodDirectory, index)
+            // Drop any stale window-N from a prior failure in the same method dir so a capture
+            // failure later cannot leave old artifacts looking like this attempt's evidence.
+            deleteRecursivelyQuietly(directory)
             val paths =
                 runCatching {
                         val capture = captureWindow(index)

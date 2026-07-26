@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.testing
 import java.nio.file.Path
 import kotlin.io.path.createTempDirectory
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
@@ -25,11 +26,13 @@ class FailureArtifactPathsTest {
                 testMethodName = "waitForNodeFails",
                 config = config,
             )
-        assertEquals(temp.resolve("com.example.MyTest").resolve("waitForNodeFails"), dir)
+        assertTrue(dir.startsWith(temp))
+        assertTrue(dir.parent.fileName.toString().startsWith("com.example.MyTest"))
+        assertTrue(dir.fileName.toString().startsWith("waitForNodeFails"))
     }
 
     @Test
-    fun `attempt index greater than 1 suffixes the method directory`(@TempDir temp: Path) {
+    fun `attempt index greater than 1 nests under attempt-N`(@TempDir temp: Path) {
         val config = FailureArtifactsConfig(reportsRoot = temp, attemptIndex = 2)
         val dir =
             FailureArtifactPaths.methodDirectory(
@@ -37,11 +40,55 @@ class FailureArtifactPathsTest {
                 testMethodName = "flaky",
                 config = config,
             )
-        assertEquals(temp.resolve("com.example.MyTest").resolve("flaky-attempt-2"), dir)
+        assertEquals("attempt-2", dir.fileName.toString())
+        assertTrue(dir.parent.fileName.toString().startsWith("flaky"))
     }
 
     @Test
-    fun `attempt index 1 does not suffix the method directory`(@TempDir temp: Path) {
+    fun `attempt nest does not collide with a literal attempt method name`(@TempDir temp: Path) {
+        val config = FailureArtifactsConfig(reportsRoot = temp, attemptIndex = 2)
+        val retryDir =
+            FailureArtifactPaths.methodDirectory(
+                testClassName = "com.example.T",
+                testMethodName = "flaky",
+                config = config,
+            )
+        val literal =
+            FailureArtifactPaths.methodDirectory(
+                testClassName = "com.example.T",
+                testMethodName = "flaky-attempt-2",
+                config = FailureArtifactsConfig(reportsRoot = temp),
+            )
+        assertTrue(retryDir != literal)
+        assertEquals("attempt-2", retryDir.fileName.toString())
+    }
+
+    @Test
+    fun `non-positive attempt index is rejected`() {
+        assertFailsWith<IllegalArgumentException> { FailureArtifactsConfig(attemptIndex = 0) }
+        assertFailsWith<IllegalArgumentException> { FailureArtifactsConfig(attemptIndex = -1) }
+    }
+
+    @Test
+    fun `case-only differences get distinct directories`(@TempDir temp: Path) {
+        val config = FailureArtifactsConfig(reportsRoot = temp)
+        val a =
+            FailureArtifactPaths.methodDirectory(
+                testClassName = "com.example.T",
+                testMethodName = "caseA",
+                config = config,
+            )
+        val b =
+            FailureArtifactPaths.methodDirectory(
+                testClassName = "com.example.T",
+                testMethodName = "CaseA",
+                config = config,
+            )
+        assertTrue(a.fileName != b.fileName)
+    }
+
+    @Test
+    fun `attempt index 1 does not nest attempt directory`(@TempDir temp: Path) {
         val config = FailureArtifactsConfig(reportsRoot = temp, attemptIndex = 1)
         val dir =
             FailureArtifactPaths.methodDirectory(
@@ -49,7 +96,8 @@ class FailureArtifactPathsTest {
                 testMethodName = "once",
                 config = config,
             )
-        assertEquals(temp.resolve("com.example.MyTest").resolve("once"), dir)
+        assertTrue(dir.fileName.toString().startsWith("once"))
+        assertFalse(dir.fileName.toString().startsWith("attempt-"))
     }
 
     @Test
@@ -119,7 +167,9 @@ class FailureArtifactPathsTest {
                 config = config,
             )
         assertTrue(dot.fileName.toString().startsWith("dot"))
-        assertTrue(dot.startsWith(temp.resolve("com.example.T")))
+        assertTrue(
+            dot.startsWith(temp.resolve(FailureArtifactPaths.sanitizePathSegment("com.example.T")))
+        )
 
         val dotdot =
             FailureArtifactPaths.methodDirectory(
@@ -186,10 +236,12 @@ class FailureArtifactPathsTest {
                 testMethodName = longName,
                 config = config,
             )
+        // Nested attempt-N is short; method segment itself must stay in bound.
         assertTrue(
-            dir.fileName.toString().toByteArray(Charsets.UTF_8).size <=
+            dir.parent.fileName.toString().toByteArray(Charsets.UTF_8).size <=
                 FailureArtifactPaths.MAX_SEGMENT_BYTES
         )
+        assertEquals("attempt-12", dir.fileName.toString())
     }
 
     @Test
