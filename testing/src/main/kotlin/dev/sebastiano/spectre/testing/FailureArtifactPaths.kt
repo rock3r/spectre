@@ -6,14 +6,16 @@ import kotlin.io.path.absolute
 /**
  * Path layout for JUnit failure artifacts under `build/reports/spectre/`.
  *
- * Layout:
+ * Layout (as written by [FailureArtifactCapture]):
  * ```
- * <reportsRoot>/<test-class>/<test-method>[/attempt-N]/window-<i>/{capture.json,screenshot.png}
+ * <reportsRoot>/<test-class>/<test-method>[/<invocationId>][/attempt-N]/run-<nano>/window-<i>/{capture.json,screenshot.png}
  * ```
  *
  * Each `window-<i>` directory matches the atomic-capture layout from #181 so `spectre-capture` `jq`
  * recipes work unchanged. Retry attempts use a nested `attempt-N` directory (not a method-name
- * suffix) so they cannot collide with a test literally named `…-attempt-N`.
+ * suffix) so they cannot collide with a test literally named `…-attempt-N`. Optional
+ * [FailureArtifactsConfig.invocationId] distinguishes parallel invocations. Captures always land
+ * under a unique `run-*` tree so concurrent/locked leftovers cannot interleave files.
  */
 public object FailureArtifactPaths {
 
