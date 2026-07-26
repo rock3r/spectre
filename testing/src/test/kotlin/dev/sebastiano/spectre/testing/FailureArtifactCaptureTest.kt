@@ -71,6 +71,19 @@ class FailureArtifactCaptureTest {
         assertTrue(Files.isRegularFile(methodDir.resolve("window-2").resolve("capture.json")))
     }
 
+    @Test
+    fun `returns empty list when window discovery throws`(@TempDir temp: Path) {
+        val methodDir = temp.resolve("com.example.T").resolve("discovery")
+        val captures =
+            FailureArtifactCapture.captureFromDiscovery(
+                methodDirectory = methodDir,
+                discoverWindowCount = { error("EDT died during refresh") },
+                captureWindow = { error("should not capture") },
+            )
+        assertTrue(captures.isEmpty())
+        assertFalse(Files.exists(methodDir))
+    }
+
     private fun fakeAtomicCapture(windowIndex: Int): AtomicCapture {
         val image = BufferedImage(4, 4, BufferedImage.TYPE_INT_ARGB)
         val pngBytes = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47) // minimal non-empty stub

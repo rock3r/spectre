@@ -44,17 +44,40 @@ public object FailureArtifactCapture {
     /**
      * Convenience for production: capture every currently tracked window via [ComposeAutomator].
      * Refreshes the window list first so indices match a live UI at failure time.
+     *
+     * Window discovery failures are swallowed (empty list) for the same reason as per-window
+     * capture errors: the original test failure must remain the primary failure signal.
      */
     public fun captureAllWindows(
         automator: ComposeAutomator,
         methodDirectory: Path,
+    ): List<CaptureArtifactPaths> =
+        captureFromDiscovery(
+            methodDirectory = methodDirectory,
+            discoverWindowCount = {
+                automator.refreshWindows()
+                automator.surfaceIds().size
+            },
+            captureWindow = { index -> automator.capture(index) },
+        )
+
+    /**
+     * Shared best-effort path for production and tests: if [discoverWindowCount] throws, returns an
+     * empty list instead of propagating.
+     */
+    internal fun captureFromDiscovery(
+        methodDirectory: Path,
+        discoverWindowCount: () -> Int,
+        captureWindow: (windowIndex: Int) -> AtomicCapture,
     ): List<CaptureArtifactPaths> {
-        automator.refreshWindows()
-        val count = automator.surfaceIds().size
+        val count =
+            runCatching(discoverWindowCount).getOrElse {
+                return emptyList()
+            }
         return captureWindows(
             methodDirectory = methodDirectory,
             windowCount = count,
-            captureWindow = { index -> automator.capture(index) },
+            captureWindow = captureWindow,
         )
     }
 }

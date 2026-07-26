@@ -39,7 +39,8 @@ public object FailureArtifactPaths {
     /**
      * Replaces characters that are hostile on common filesystems or ambiguous in shell globs.
      * Collapses runs of replacements to a single `_` and trims edges so segments stay non-empty
-     * when the input had any content.
+     * when the input had any content. Reserved Windows device names (`CON`, `NUL`, `COM1`, …) get
+     * an underscore suffix so `createDirectories` does not fail on Windows.
      */
     internal fun sanitizePathSegment(raw: String): String {
         val cleaned =
@@ -52,6 +53,24 @@ public object FailureArtifactPaths {
                 .joinToString("")
                 .replace(Regex("_+"), "_")
                 .trim('_')
-        return cleaned.ifEmpty { "unnamed" }
+        val base = cleaned.ifEmpty { "unnamed" }
+        return if (isReservedWindowsDeviceName(base)) "${base}_" else base
+    }
+
+    /**
+     * True when [name] is a Windows reserved device name (case-insensitive), including optional
+     * extension forms such as `nul.txt` / `COM1.anything`.
+     */
+    private fun isReservedWindowsDeviceName(name: String): Boolean {
+        val stem = name.substringBefore('.').lowercase()
+        return stem in RESERVED_WINDOWS_DEVICE_NAMES
+    }
+
+    private val RESERVED_WINDOWS_DEVICE_NAMES: Set<String> = buildSet {
+        addAll(listOf("con", "prn", "aux", "nul"))
+        for (n in 0..9) {
+            add("com$n")
+            add("lpt$n")
+        }
     }
 }

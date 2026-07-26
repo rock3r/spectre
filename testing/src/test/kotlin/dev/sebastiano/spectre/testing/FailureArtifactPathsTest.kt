@@ -78,6 +78,34 @@ class FailureArtifactPathsTest {
     }
 
     @Test
+    fun `reserved Windows device names are suffixed`(@TempDir temp: Path) {
+        val config = FailureArtifactsConfig(reportsRoot = temp)
+        val dir =
+            FailureArtifactPaths.methodDirectory(
+                testClassName = "com.example.T",
+                testMethodName = "NUL",
+                config = config,
+            )
+        assertEquals("NUL_", dir.fileName.toString())
+
+        val com1 =
+            FailureArtifactPaths.methodDirectory(
+                testClassName = "com.example.T",
+                testMethodName = "com1",
+                config = config,
+            )
+        assertEquals("com1_", com1.fileName.toString())
+
+        val nulTxt =
+            FailureArtifactPaths.methodDirectory(
+                testClassName = "com.example.T",
+                testMethodName = "nul.txt",
+                config = config,
+            )
+        assertEquals("nul.txt_", nulTxt.fileName.toString())
+    }
+
+    @Test
     fun `config defaults to enabled`() {
         assertTrue(FailureArtifactsConfig().enabled)
     }
