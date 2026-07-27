@@ -62,17 +62,45 @@ MIN_MAIN_JAR_SIZES = {
     "spectre-testing": 1_000,
 }
 
+# Aligns with :verifyMavenLocalPublication / WindowsGraphicsCaptureHelperPackagingContract
+# fixed basenames (deps.json asset closure remains Gradle-owned).
+WINDOWS_HELPER_ARCHES = ("x64", "arm64")
+WINDOWS_HELPER_REQUIRED_BASE_NAMES = (
+    "spectre-window-capture.exe",
+    "SpectreWindowCapture.dll",
+    "SpectreWindowCapture.deps.json",
+    "SpectreWindowCapture.runtimeconfig.json",
+    "Microsoft.WindowsAppRuntime.Bootstrap.dll",
+    "Microsoft.WindowsAppRuntime.Bootstrap.Net.dll",
+    "WinRT.Runtime.dll",
+    "Microsoft.Windows.SDK.NET.dll",
+    "Microsoft.Graphics.Canvas.dll",
+    "Microsoft.Graphics.Canvas.Interop.dll",
+)
+
+MACOS_HELPER_APP_ENTRIES = (
+    "native/macos/SpectreCaptureHelper.app/Contents/MacOS/spectre-screencapture",
+    "native/macos/SpectreCaptureHelper.app/Contents/Info.plist",
+    "native/macos/SpectreCaptureHelper.app/Contents/PkgInfo",
+    "native/macos/SpectreCaptureHelper.app/Contents/Resources/AppIcon.icns",
+)
+# Rejected bare layout superseded by SpectreCaptureHelper.app (#190).
+MACOS_HELPER_BARE_EXECUTABLE = "native/macos/spectre-screencapture"
+
 HELPER_ENTRIES = {
     "spectre-recording-linux": (
         "native/linux/x86_64/spectre-wayland-helper",
         "native/linux/aarch64/spectre-wayland-helper",
     ),
-    "spectre-recording-macos": ("native/macos/spectre-screencapture",),
-    "spectre-recording-windows": (
-        "native/windows/x64/spectre-window-capture.exe",
-        "native/windows/arm64/spectre-window-capture.exe",
+    "spectre-recording-macos": MACOS_HELPER_APP_ENTRIES,
+    "spectre-recording-windows": tuple(
+        f"native/windows/{arch}/{base}"
+        for arch in WINDOWS_HELPER_ARCHES
+        for base in WINDOWS_HELPER_REQUIRED_BASE_NAMES
     ),
 }
+
+AGENT_RUNTIME_INJECT_JAR = "META-INF/spectre/inject-runtime.jar"
 
 FORBIDDEN_AGENT_RUNTIME_PREFIXES = (
     "androidx/compose/",
@@ -324,6 +352,14 @@ def validate_jar(component: str, jar_path: Path) -> list[str]:
             elif entries[helper] <= 0:
                 errors.append(f"{component} helper entry {helper} is empty")
 
+        if component == "spectre-recording-macos":
+            if MACOS_HELPER_BARE_EXECUTABLE in entries:
+                errors.append(
+                    "spectre-recording-macos still contains bare "
+                    f"{MACOS_HELPER_BARE_EXECUTABLE}; helper must ship only as "
+                    "SpectreCaptureHelper.app (#190)"
+                )
+
         if component == "spectre-agent":
             spike_entries = sorted(
                 name for name in entries if name.startswith("dev/sebastiano/spectre/agent/spike/")
@@ -346,6 +382,17 @@ def validate_jar(component: str, jar_path: Path) -> list[str]:
             )
             if leaks:
                 errors.append("spectre-agent-runtime contains forbidden classes: " + ", ".join(leaks))
+            # Nested inject-runtime jar (#209). Full payload shape remains Gradle-owned
+            # (:agent-runtime:verifyAgentRuntimeJarContents / :agent-inject-runtime).
+            inject_size = entries.get(AGENT_RUNTIME_INJECT_JAR)
+            if inject_size is None:
+                errors.append(
+                    f"spectre-agent-runtime is missing nested {AGENT_RUNTIME_INJECT_JAR}"
+                )
+            elif inject_size <= 0:
+                errors.append(
+                    f"spectre-agent-runtime nested {AGENT_RUNTIME_INJECT_JAR} is empty"
+                )
 
     return errors
 
