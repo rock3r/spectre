@@ -421,7 +421,17 @@ jobs:
             ditto -x -k "$archive" "$extracted"
             published_launcher="$extracted/spectre-cli-$RELEASE_VERSION/Spectre.app/Contents/MacOS/spectre"
             test -x "$published_launcher"
-            "$published_launcher" --help | grep -q 'Usage: spectre'
+            # Run --help only for the host-native arch. GHA macOS runners are arm64; the
+            # macosX64 bundle is signed/notarized here but may not execute without Rosetta
+            # (exit 1 would abort the whole dual-arch loop after a successful x64 notary).
+            host_arch="$(uname -m)"
+            if { [[ "$target" == "macosArm64" && "$host_arch" == "arm64" ]]; } ||
+               { [[ "$target" == "macosX64" && ( "$host_arch" == "x86_64" || "$host_arch" == "i386" ) ]]; }; then
+              "$published_launcher" --help | grep -q 'Usage: spectre'
+            else
+              echo "Skipping native --help for $target on host $host_arch (cross-arch package)."
+              file "$published_launcher"
+            fi
           done
 
       - name: Upload signed and notarised macOS CLI bundles
