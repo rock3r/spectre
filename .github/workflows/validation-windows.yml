@@ -164,7 +164,7 @@ jobs:
           shopt -s globstar nullglob
 
           declare -A required_classes_by_task=(
-            ["validationTest"]="Issue7CompletionValidationTest Issue8CompletionValidationTest Issue8FidelityValidationTest Issue14PerfValidationTest MultiWindowAndPopupValidationTest PopupLayerVariantsValidationTest RecompositionMonitorValidationTest AtomicCaptureValidationTest FailureArtifactsValidationTest"
+            ["validationTest"]="Issue7CompletionValidationTest Issue8CompletionValidationTest Issue8FidelityValidationTest Issue14PerfValidationTest MultiWindowAndPopupValidationTest PopupLayerVariantsValidationTest RecompositionMonitorValidationTest AtomicCaptureValidationTest FailureArtifactsValidationTest RunSpectreTestValidationTest"
             ["validationTestLayerComponent"]="PopupLayerVariantsValidationTest"
             ["validationTestLayerSameCanvas"]="PopupLayerVariantsValidationTest"
             ["validationTestLayerWindow"]="PopupLayerVariantsValidationTest"
