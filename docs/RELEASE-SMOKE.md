@@ -67,26 +67,31 @@ These are structural, not one-release accidents:
 
 | Surface | Hosted CI | Physical smoke |
 | --- | --- | --- |
-| Agent attach + contract corpus (live UI) | Linux Xvfb + macOS desktop | **Windows desktop** (interactive session) |
+| Agent attach + contract corpus (live UI) | Linux Xvfb + macOS desktop; Windows **transport/ACL** unit tests | **Windows headed desktop** (not SSH-only for capture) |
+| Agent Windows UI e2e | Opt-in only: `-Pspectre.agent.attachE2e.allowWindows=true` | Run that property on Mattone-class boxes |
 | Agent **inject** attach | Linux + macOS e2e | **Windows** inject fixture (no preinstalled core) |
 | Launch-and-attach e2e | Linux + macOS | **Windows** direct `java` (and Gradle if claimed) |
 | CLI daemon + live fixture | Linux + macOS | **Windows** release-shaped CLI binary |
-| Daemon-owned window **recording** | macOS e2e when TCC allows; heavy unit mocks elsewhere | **macOS** live record; **Windows** WGC if display allows |
-| macOS `SpectreCaptureHelper.app` + TCC row | Helper build on PR; notary on **tag** | Extract from jar; `permissions check`; one SCK capture |
-| Windows multi-file WGC helper | Packaging contract in Gradle | Extract from jar; region/window smoke |
+| Daemon-owned window **recording** | macOS e2e when TCC allows; heavy unit mocks elsewhere | **macOS** live record; **Windows WGC** only from an **interactive console** (SSH sessions fail WGC / black pixels) |
+| macOS `SpectreCaptureHelper.app` + TCC row | Helper build on PR; **notary on tag** | Extract from jar; `permissions check`; one SCK capture; notarize remains CI |
+| Windows multi-file WGC helper | Packaging contract in Gradle + portal checker | Extract from jar; live capture from interactive console |
 | Stock IntelliJ **inject** (no spectre-core in IDE) | Recipe + instrumented ide-uitest only | Manual recipe when that path is in release notes |
 | Popup `compose.layers.type=WINDOW` on Windows | Skipped (upstream skiko) | Do not claim; optional recheck after runtime bumps |
+
+**Windows session note:** A box can be “interactive” for console login yet still fail Screen
+Capture / WGC under **SSH** (e.g. `0x80070424`, black Skiko pixels). Treat attach (semantics)
+as SSH-safe when proven; treat **pixel capture / WGC** as requiring a local interactive
+desktop session (RDP console or physical).
 
 ## Environments
 
 | Host | Role |
 | --- | --- |
 | **macOS** (dev machine) | Primary: library, agent, CLI, SCK helper, permissions |
-| **Windows** (`ssh mattone` or equivalent headed box) | Agent attach/inject/launch, CLI package, WGC helper |
+| **Windows** (`ssh mattone` for attach/package; **local console** for WGC/UI capture) | Agent attach/inject/launch, CLI package; WGC only on interactive console |
 | **Linux** (Hyper-V VM from Windows host, or native) | Agent attach under Xvfb or real display; package smoke; Wayland only if session is real |
 
-Use an interactive desktop on Windows for agent/CLI UI smokes. Headless
-`windows-latest` is **not** a substitute.
+Headless `windows-latest` is **not** a substitute for B9–B13.
 
 Prefer **release-shaped** artifacts:
 
@@ -115,11 +120,11 @@ Run these for **every** release unless a cell is explicitly N/A with reason
 | B6 | macOS | Agent inject | Compose-only target; inject bootstrap; non-empty tree; detach |
 | B7 | macOS | CLI daemon fixture | `spectre attach` (or package binary) → tree/capture against live fixture |
 | B8 | macOS | Capture helper + TCC | Helper is app-bundle identity; `spectre permissions check`; one screenshot/record |
-| B9 | Windows | Agent attach (core) | Same as B5 on headed desktop |
+| B9 | Windows | Agent attach (core) | Same as B5; prefer opt-in e2e (recipe below). SSH OK if semantics-only. |
 | B10 | Windows | Agent inject | Same as B6 — **does not ship “three OS agent” without this** |
 | B11 | Windows | Launch-and-attach | Direct `java` launch + attach (Gradle optional) |
 | B12 | Windows | CLI package + attach | Packaged `spectre` (or `packageWindowsX64`) attaches to fixture |
-| B13 | Windows | WGC helper | Multi-file extract from jar; one region or window capture if display allows |
+| B13 | Windows | WGC helper | Multi-file extract (SSH OK) **and** live capture from **interactive console** (not SSH) |
 | B14 | Linux | Agent attach | Xvfb or real display; non-empty tree |
 | B15 | any | Publication shape | `verifyMavenLocalPublication` (and portal checker once deployment exists) |
 
@@ -160,6 +165,25 @@ Empty hard cells or `n/a` for “no display” on a claimed platform **block the
 
 ## Recipes (common hard cells)
 
+### Agent attach on Windows (product + opt-in e2e)
+
+Product path (all OSes including Windows 10 1803+):
+
+```kotlin
+AgentAttach.attach(pid) // %TEMP% UDS + owner ACL on Windows; no named pipes
+```
+
+Optional **full UI e2e** on a physical Windows desktop (not hosted CI default):
+
+```shell
+./gradlew :agent:test \
+  -Pspectre.agent.attachE2e.allowWindows=true \
+  --tests '*AgentAttachIntegration*'
+```
+
+See [Agent attach](guide/agent.md). Do not enable this property on headless
+`windows-latest` as a fail-closed gate without a headed runner story.
+
 ### Agent inject (Linux / macOS / Windows)
 
 Same intent as `AgentInjectAttachIntegrationTest`:
@@ -172,9 +196,8 @@ Same intent as `AgentInjectAttachIntegrationTest`:
 5. Assert fixture window, non-empty nodes / test tag, clean detach.
 6. Prefer stderr line that core was injected (not found preinstalled).
 
-On Windows, prefer running the real test class with a **local-only** OS gate
-override for smoke; do not commit enabling Windows on headless hosted CI without
-a headed runner story.
+On Windows, prefer the opt-in attach e2e property for instrumented attach, and a
+manual inject fixture path for B10 until inject has the same opt-in gate.
 
 ### Launch-and-attach
 
@@ -193,9 +216,12 @@ automator. Separate failures: process death vs attach vs empty tree.
 ### Windows WGC helper
 
 1. Open `spectre-recording-windows` jar; confirm dual-arch multi-file layout
-   (see packaging contract in `buildSrc` / [Publishing](PUBLISHING.md)).
-2. Extract and run a short region or window capture
-   (`:recording:runWindowsGraphicsCaptureRegionSmoke` or equivalent consumer path).
+   (see packaging contract in `buildSrc` / [Publishing](PUBLISHING.md)). Portal
+   checker and Gradle both assert multi-file basenames.
+2. **Packaging** may be verified over SSH (extract + list files).
+3. **Live capture** must run on an **interactive console** session (not SSH):
+   `:recording:runWindowsGraphicsCaptureRegionSmoke` or equivalent. SSH often
+   yields WGC `0x80070424` or black Skiko frames even when attach works.
 
 ## After a successful smoke
 

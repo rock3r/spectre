@@ -135,10 +135,12 @@ public object CapabilityMatrix {
                     operation = op,
                     transport = AutomatorTransport.Agent,
                     platform = PlatformPrerequisite.WindowsDesktop,
-                    state = CellState.NotYetCiExecuted,
+                    state = CellState.Experimental,
                     rationale =
-                        "Agent UDS transport works on Windows 10 1803+; full attach+UI " +
-                            "fixture CI is tracked with platform validation (#193 lineage).",
+                        "Native AF_UNIX + owner ACL on Windows 10 1803+ (no named pipes). " +
+                            "Full attach→UI fixture e2e is opt-in on physical desktops " +
+                            "(-Pspectre.agent.attachE2e.allowWindows=true); not fail-closed on " +
+                            "hosted windows-latest. Pre-tag release smoke covers headed boxes.",
                 )
             )
             add(
@@ -198,8 +200,10 @@ public object CapabilityMatrix {
                 operation = AutomatorOperation.Click,
                 transport = AutomatorTransport.Agent,
                 platform = PlatformPrerequisite.WindowsDesktop,
-                state = CellState.NotYetCiExecuted,
-                rationale = "Windows interactive agent UI fixture not yet on CI.",
+                state = CellState.Experimental,
+                rationale =
+                    "Same physical-desktop / opt-in e2e story as agent Windows surface " +
+                        "listing; not fail-closed on hosted Windows CI.",
             )
         )
 

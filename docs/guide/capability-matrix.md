@@ -43,7 +43,7 @@ Corpus runners today:
 | --- | --- | --- |
 | In-process | `InProcessContractCorpusTest` | `.github/workflows/ci.yml` (`./gradlew check`) |
 | HTTP | `HttpContractCorpusTest` | `.github/workflows/ci.yml` |
-| Agent | `AgentContractCorpusTest` (+ `AgentAttachIntegrationTest`) | `.github/workflows/validation-linux.yml` (Xvfb, fail-closed JUnit XML), `.github/workflows/macos-check.yml` |
+| Agent | `AgentContractCorpusTest` (+ `AgentAttachIntegrationTest`) | `.github/workflows/validation-linux.yml` (Xvfb, fail-closed JUnit XML), `.github/workflows/macos-check.yml`. Windows: transport/ACL tests on hosted CI; full UI attach e2e is **opt-in** on physical desktops (`-Pspectre.agent.attachE2e.allowWindows=true`) and pre-tag [release smoke](../RELEASE-SMOKE.md). |
 
 ## Intersection ops (current shared surface)
 
@@ -56,7 +56,9 @@ These operations exist on all three clients and are the corpus core:
 
 Headless CI exercises **transport liveness** (empty trees OK; unknown-key click must fail).
 Fixture-backed semantics (non-empty windows, known tags, click/type/screenshot) are claimed
-for the **agent** transport under Linux Xvfb and macOS desktop.
+for the **agent** transport under Linux Xvfb and macOS desktop. Windows agent surface listing
+and click are **Experimental** (native AF_UNIX works; UI e2e is physical/opt-in, not hosted
+fail-closed).
 
 ## Deliberate exclusions
 
