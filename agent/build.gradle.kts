@@ -110,7 +110,7 @@ tasks.withType<Test>().configureEach {
                 if (home != null) {
                     add("-Ddev.sebastiano.spectre.agent.fixtureJavaHome=$home")
                 }
-                val allowWin = allowWindowsAttachE2e.orNull.takeIf { it.isNotBlank() }
+                val allowWin = allowWindowsAttachE2e.get().takeIf { it.isNotBlank() }
                 if (allowWin != null) {
                     add("-Ddev.sebastiano.spectre.agent.attachE2e.allowWindows=$allowWin")
                 }
