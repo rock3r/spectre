@@ -88,7 +88,7 @@ desktop session (RDP console or physical).
 | Host | Role |
 | --- | --- |
 | **macOS** (dev machine) | Primary: library, agent, CLI, SCK helper, permissions |
-| **Windows** (`ssh mattone` for attach/package; **local console** for WGC/UI capture) | Agent attach/inject/launch, CLI package; WGC only on interactive console |
+| **Windows** (logged-in desktop; optional `ssh` for non-WGC) | Prefer one-liner [Windows smoke script](#windows-one-liner-script) on the console user session |
 | **Linux** (Hyper-V VM from Windows host, or native) | Agent attach under Xvfb or real display; package smoke; Wayland only if session is real |
 
 Headless `windows-latest` is **not** a substitute for B9–B13.
@@ -163,6 +163,42 @@ Soft notes: …
 Result values: `pass` | `fail` | `n/a` (with reason).  
 Empty hard cells or `n/a` for “no display” on a claimed platform **block the tag**.
 
+## Windows one-liner script
+
+When you have a Windows desktop for a few minutes, run **one** command from the repo
+root (interactive logon session preferred):
+
+```powershell
+.\scripts\windows-release-smoke.ps1
+```
+
+Or from anywhere:
+
+```powershell
+pwsh -NoProfile -File C:\src\spectre\scripts\windows-release-smoke.ps1
+```
+
+What it does (no second terminal):
+
+1. Opt-in agent UI e2e: attach + inject + launch-and-attach  
+   (`-Pspectre.agent.attachE2e.allowWindows=true`, properly quoted for PowerShell)
+2. WGC region smoke (`:recording:runWindowsGraphicsCaptureRegionSmoke`)
+3. `:cli:packageWindowsX64` then packaged `spectre launch --once --app-name ComposeFixtureMain -- gradlew :agent-test-fixture:run`
+
+Writes `build/smoke/windows-release-smoke.json` and exits non-zero on any failed step.
+
+Flags:
+
+| Flag | Effect |
+| --- | --- |
+| `-SkipAgentE2e` | Skip Gradle attach/inject/launch tests |
+| `-SkipWgc` | Skip region recording smoke |
+| `-SkipCli` | Skip package + `spectre launch` |
+| `-SkipPackageCli` | Reuse existing `spectre.exe` (still runs launch) |
+
+This is **manual, operator-driven** automation — not hosted CI. Use it so release smoke is
+not multi-terminal faff.
+
 ## Recipes (common hard cells)
 
 ### Agent attach on Windows (product + opt-in e2e)
@@ -204,14 +240,15 @@ Same intent as `AgentInjectAttachIntegrationTest`:
 5. Assert fixture window, non-empty nodes / test tag, clean detach.
 6. Prefer stderr line that core was injected (not found preinstalled).
 
-On Windows, prefer the opt-in attach e2e property for instrumented attach, and a
-manual inject fixture path for B10 until inject has the same opt-in gate.
+On Windows, attach, inject, and launch UI e2e share
+`-Pspectre.agent.attachE2e.allowWindows=true` (or the [one-liner script](#windows-one-liner-script)).
 
 ### Launch-and-attach
 
 `LaunchAndAttach` / `spectre launch` with a short-lived Compose fixture or
 `java -jar`. Assert readiness stages complete and attach returns a usable
-automator. Separate failures: process death vs attach vs empty tree.
+automator. Separate failures: process death vs attach vs empty tree. Covered by the
+Windows smoke script’s agent e2e + packaged `spectre launch --once` step.
 
 ### macOS Capture Helper
 
@@ -227,9 +264,9 @@ automator. Separate failures: process death vs attach vs empty tree.
    (see packaging contract in `buildSrc` / [Publishing](PUBLISHING.md)). Portal
    checker and Gradle both assert multi-file basenames.
 2. **Packaging** may be verified over SSH (extract + list files).
-3. **Live capture** must run on an **interactive console** session (not SSH):
-   `:recording:runWindowsGraphicsCaptureRegionSmoke` or equivalent. SSH often
-   yields WGC `0x80070424` or black Skiko frames even when attach works.
+3. **Live capture:** prefer the [Windows smoke script](#windows-one-liner-script) or
+   `:recording:runWindowsGraphicsCaptureRegionSmoke` on a logged-in desktop. SSH can
+   work but sometimes yields WGC `0x80070424` or black frames.
 
 ## After a successful smoke
 

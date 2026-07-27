@@ -16,9 +16,11 @@ promotion, and undrafting.
 [docs/RELEASE-SMOKE.md](../../../docs/RELEASE-SMOKE.md):
 
 1. Diff since previous tag + capability matrix → baseline hard cells + **delta** hard cells.
-2. Run hard cells on macOS, headed Windows (`ssh mattone` or equivalent), and Linux as scoped.
-3. Produce a results table. **Hard red or empty hard cells → do not tag.**
-4. Soft cells (Experimental matrix, focus flakes, Hot Reload) may be notes only.
+2. Run hard cells on macOS, headed Windows, and Linux as scoped.
+3. On Windows, prefer the one-liner (interactive logon session):
+   `.\scripts\windows-release-smoke.ps1` — see [docs/RELEASE-SMOKE.md](../../../docs/RELEASE-SMOKE.md).
+4. Produce a results table. **Hard red or empty hard cells → do not tag.**
+5. Soft cells (Experimental matrix, focus flakes, Hot Reload) may be notes only.
 
 Every release needs its own scoped plan (new features + permanent CI gaps such as
 Windows agent inject). Do not skip smoke because `main` CI is green.
