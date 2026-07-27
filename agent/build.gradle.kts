@@ -90,10 +90,14 @@ tasks.withType<Test>().configureEach {
     // Physical Windows desktop attach UI e2e opt-in (#194). Hosted windows-latest stays
     // skip-safe; Mattone-style desktops pass -Pspectre.agent.attachE2e.allowWindows=true.
     // Gradle CLI `-D` alone does not reach Test workers — forward via this provider.
+    // Declared as a task input so toggling the flag invalidates `:agent:test` (otherwise a
+    // prior assumption-skipped run can stay UP-TO-DATE and never re-launch workers).
     val allowWindowsAttachE2e =
         providers
             .gradleProperty("spectre.agent.attachE2e.allowWindows")
             .orElse(providers.systemProperty("dev.sebastiano.spectre.agent.attachE2e.allowWindows"))
+            .orElse("")
+    inputs.property("spectre.agent.attachE2e.allowWindows", allowWindowsAttachE2e)
 
     jvmArgumentProviders.add(
         CommandLineArgumentProvider {
@@ -106,7 +110,7 @@ tasks.withType<Test>().configureEach {
                 if (home != null) {
                     add("-Ddev.sebastiano.spectre.agent.fixtureJavaHome=$home")
                 }
-                val allowWin = allowWindowsAttachE2e.orNull?.takeIf { it.isNotBlank() }
+                val allowWin = allowWindowsAttachE2e.orNull.takeIf { it.isNotBlank() }
                 if (allowWin != null) {
                     add("-Ddev.sebastiano.spectre.agent.attachE2e.allowWindows=$allowWin")
                 }
