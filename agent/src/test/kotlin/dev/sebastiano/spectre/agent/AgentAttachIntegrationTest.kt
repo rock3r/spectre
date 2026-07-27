@@ -24,6 +24,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeFalse
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
 
@@ -62,10 +63,12 @@ import org.junit.jupiter.api.condition.OS
  * developers can diagnose real keyboard regressions.
  *
  * Gating:
- * - **Runs on Linux and macOS** via `@EnabledOnOs(OS.LINUX, OS.MAC)`. The hosted Windows runner
- *   does not provide a reliable interactive desktop for this Robot-backed fixture; its Windows
- *   transport and ACL contracts are covered by dedicated non-UI tests instead. Linux's Xvfb
- *   validation workflow is the authoritative full attach-to-UI end-to-end gate.
+ * - **Runs on Linux, macOS, and Windows** via `@EnabledOnOs`. Hosted GitHub `windows-latest` lacks
+ *   a reliable interactive desktop for this Robot-backed fixture, so Windows additionally requires
+ *   the opt-in [WindowsAttachE2eGate] property (physical desktops / Mattone). Without it, Windows
+ *   methods are assumption-skipped and stay green under `:check`. Non-UI Windows transport and ACL
+ *   contracts always run. Linux Xvfb validation remains the hosted full attach-to-UI gate; physical
+ *   Windows is the authorized Windows UI proof path (#194).
  * - Skipped on headless JVMs (`java.awt.GraphicsEnvironment.isHeadless()`). Compose Desktop refuses
  *   to create a `JFrame + ComposePanel` without a display.
  * - Skipped when `dev.sebastiano.spectre.agent.runtimeJar` isn't set. Gradle's `:agent:test` task
@@ -73,7 +76,7 @@ import org.junit.jupiter.api.condition.OS
  * - Real-keyboard `typeText` tolerates a CI-only loss of OS keyboard focus on any platform (see
  *   `typeTextOrSkipCiFocusLoss`); the attach/click/focus contract is still asserted.
  */
-@EnabledOnOs(OS.LINUX, OS.MAC)
+@EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)
 class AgentAttachIntegrationTest {
     private val orphanUdsFiles = mutableListOf<Path>()
 
@@ -84,6 +87,7 @@ class AgentAttachIntegrationTest {
 
     @Test
     fun `attach exercise detach cycle works against a real Compose fixture`() {
+        assumeWindowsAttachE2eAllowed()
         assumeFalse(
             GraphicsEnvironment.isHeadless(),
             "Requires non-headless JVM for Compose Desktop + java.awt.Robot",
@@ -99,6 +103,7 @@ class AgentAttachIntegrationTest {
 
     @Test
     fun `attach explains when the target JVM disables dynamic agent loading`() {
+        assumeWindowsAttachE2eAllowed()
         assumeFalse(
             GraphicsEnvironment.isHeadless(),
             "Requires non-headless JVM for the Compose Desktop fixture",
@@ -343,6 +348,16 @@ class AgentAttachIntegrationTest {
         }
 
         return FixtureProcess(process, process.pid(), reader, drainerThread)
+    }
+
+    private fun assumeWindowsAttachE2eAllowed() {
+        assumeTrue(
+            WindowsAttachE2eGate.isAllowed(),
+            "Windows attach UI e2e is opt-in (hosted CI has no reliable interactive desktop). " +
+                "On a physical Windows desktop pass " +
+                "-Pspectre.agent.attachE2e.allowWindows=true (or " +
+                "-D${WindowsAttachE2eGate.ALLOW_PROP}=true on the test JVM).",
+        )
     }
 
     private fun locateAgentJarOrSkip(): Path {

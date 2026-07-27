@@ -425,7 +425,11 @@ Not additive-safe without a version bump:
 ## Current limitations
 
 - **Windows needs 10 version 1803 / Server 2019 or newer.** That's when native `AF_UNIX` landed;
-  older Windows fails the attach preflight with `AttachPlatformUnsupportedException`.
+  older Windows fails the attach preflight with `AttachPlatformUnsupportedException`. Hosted
+  GitHub `windows-latest` is not a reliable interactive desktop for the Robot-backed attach
+  fixture; the full attach → exercise → detach UI e2e is opt-in on physical Windows desktops
+  via `-Pspectre.agent.attachE2e.allowWindows=true` (non-UI transport/ACL tests still run on
+  every Windows CI job).
 - **Wait ops.** `waitForNode` / `waitForVisualIdle` are supported over agent IPC (#201) with
   shared deadline budgets and cancel. Idling-resource `waitForIdle` stays in-process only.
 - **IntelliJ-hosted Compose**: the classloader-disambiguation rule (D-14 in the plan) was
