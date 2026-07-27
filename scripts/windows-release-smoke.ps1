@@ -29,7 +29,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-Set-StrictMode -Version Latest
+# Avoid StrictMode edge cases with dynamic PSCustomObject / native interop on WinPS 5.1.
+Set-StrictMode -Version 1
 
 function Get-RepoRoot {
     $here = $PSScriptRoot
@@ -41,21 +42,35 @@ function Get-RepoRoot {
     return $root
 }
 
-function Write-LogLines {
-    param([string[]] $Paths)
-    foreach ($p in $Paths) {
-        if (-not (Test-Path $p)) { continue }
-        Get-Content -LiteralPath $p -ErrorAction SilentlyContinue | ForEach-Object {
-            # Write-Host does not pollute the success stream (unlike bare pipeline output).
-            Write-Host $_
+function ConvertTo-ArgString {
+    # Start-Process on Windows PowerShell 5.1 is unreliable with string[] ArgumentList
+    # ("argument types do not match"). Build one escaped argument string instead.
+    param([Parameter(Mandatory = $true)][string[]] $Args)
+    $parts = foreach ($a in $Args) {
+        if ($null -eq $a) { '""'; continue }
+        $s = [string]$a
+        if ($s -match '[\s"]') {
+            '"' + ($s.Replace('"', '\"')) + '"'
         }
+        else {
+            $s
+        }
+    }
+    return ($parts -join ' ')
+}
+
+function Write-LogFile {
+    param([string] $Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue | ForEach-Object {
+        Write-Host $_
     }
 }
 
 function Invoke-Native {
     param(
         [Parameter(Mandatory = $true)][string] $FilePath,
-        [Parameter(Mandatory = $true)][string[]] $ArgumentList,
+        [Parameter(Mandatory = $true)][string[]] $Arguments,
         [Parameter(Mandatory = $true)][string] $WorkingDirectory,
         [string] $LogName = "smoke"
     )
@@ -64,16 +79,15 @@ function Invoke-Native {
     }
     $logDir = Join-Path $WorkingDirectory "build\smoke"
     New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-    $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-    $stdout = Join-Path $logDir "$LogName-$stamp.out.log"
-    $stderr = Join-Path $logDir "$LogName-$stamp.err.log"
+    $stamp = Get-Date -Format "yyyyMMdd-HHmmssfff"
+    $stdout = Join-Path $logDir ("{0}-{1}.out.log" -f $LogName, $stamp)
+    $stderr = Join-Path $logDir ("{0}-{1}.err.log" -f $LogName, $stamp)
 
-    Write-Host ("> $FilePath $($ArgumentList -join ' ')") -ForegroundColor DarkGray
+    $argString = ConvertTo-ArgString -Args $Arguments
+    Write-Host ("> {0} {1}" -f $FilePath, $argString) -ForegroundColor DarkGray
 
-    # Start-Process keeps native stdout off PowerShell's success stream (avoids
-    # polluting function return values under Set-StrictMode).
     $p = Start-Process -FilePath $FilePath `
-        -ArgumentList $ArgumentList `
+        -ArgumentList $argString `
         -WorkingDirectory $WorkingDirectory `
         -NoNewWindow `
         -Wait `
@@ -81,13 +95,15 @@ function Invoke-Native {
         -RedirectStandardOutput $stdout `
         -RedirectStandardError $stderr
 
-    Write-LogLines -Paths @($stdout, $stderr)
+    Write-LogFile -Path $stdout
+    Write-LogFile -Path $stderr
 
-    if ($null -eq $p.ExitCode) {
-        throw "Process did not report an exit code: $FilePath"
+    $code = 0
+    if ($null -ne $p -and $null -ne $p.ExitCode) {
+        $code = [int]$p.ExitCode
     }
-    if ($p.ExitCode -ne 0) {
-        throw ("{0} exited with code {1} (logs: {2}, {3})" -f $FilePath, $p.ExitCode, $stdout, $stderr)
+    if ($code -ne 0) {
+        throw ("{0} exited with code {1} (logs: {2} ; {3})" -f $FilePath, $code, $stdout, $stderr)
     }
 }
 
@@ -99,9 +115,23 @@ function Invoke-Gradle {
     )
     $gradlew = Join-Path $RepoRoot "gradlew.bat"
     if (-not (Test-Path -LiteralPath $gradlew)) { throw "gradlew.bat not found at $gradlew" }
-    # Always append --console=plain for readable redirected logs.
-    $args = @($GradleArgs) + @("--console=plain")
-    Invoke-Native -FilePath $gradlew -ArgumentList $args -WorkingDirectory $RepoRoot -LogName $LogName
+    $allArgs = [string[]](@($GradleArgs) + @("--console=plain"))
+    Invoke-Native -FilePath $gradlew -Arguments $allArgs -WorkingDirectory $RepoRoot -LogName $LogName
+}
+
+function New-StepResult {
+    param(
+        [string] $Name,
+        [string] $Result,
+        [int] $Seconds,
+        [string] $Detail = ""
+    )
+    $o = New-Object PSObject
+    Add-Member -InputObject $o -MemberType NoteProperty -Name "Name" -Value $Name
+    Add-Member -InputObject $o -MemberType NoteProperty -Name "Result" -Value $Result
+    Add-Member -InputObject $o -MemberType NoteProperty -Name "Seconds" -Value $Seconds
+    Add-Member -InputObject $o -MemberType NoteProperty -Name "Detail" -Value $Detail
+    return $o
 }
 
 function Invoke-Step {
@@ -110,36 +140,23 @@ function Invoke-Step {
         [Parameter(Mandatory = $true)][scriptblock] $Action
     )
     Write-Host ""
-    Write-Host "==== $Name ====" -ForegroundColor Cyan
+    Write-Host ("==== {0} ====" -f $Name) -ForegroundColor Cyan
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    # Do not use `return` with pipeline-prone actions: capture a single result object only.
-    $result = $null
     try {
-        # Discard any accidental success-stream output from the action.
-        $null = & $Action 6>&1
+        # Swallow success-stream noise from the action so it cannot become our return value.
+        $null = . $Action
         $sw.Stop()
-        Write-Host ("PASS  {0}  ({1}s)" -f $Name, [int]$sw.Elapsed.TotalSeconds) -ForegroundColor Green
-        $result = [pscustomobject]@{
-            Name    = $Name
-            Result  = "pass"
-            Seconds = [int]$sw.Elapsed.TotalSeconds
-            Detail  = ""
-        }
+        $secs = [int]$sw.Elapsed.TotalSeconds
+        Write-Host ("PASS  {0}  ({1}s)" -f $Name, $secs) -ForegroundColor Green
+        return (New-StepResult -Name $Name -Result "pass" -Seconds $secs)
     }
     catch {
         $sw.Stop()
-        $msg = $_.Exception.Message
-        Write-Host ("FAIL  {0}  ({1}s): {2}" -f $Name, [int]$sw.Elapsed.TotalSeconds, $msg) -ForegroundColor Red
-        $result = [pscustomobject]@{
-            Name    = $Name
-            Result  = "fail"
-            Seconds = [int]$sw.Elapsed.TotalSeconds
-            Detail  = $msg
-        }
+        $secs = [int]$sw.Elapsed.TotalSeconds
+        $msg = [string]$_.Exception.Message
+        Write-Host ("FAIL  {0}  ({1}s): {2}" -f $Name, $secs, $msg) -ForegroundColor Red
+        return (New-StepResult -Name $Name -Result "fail" -Seconds $secs -Detail $msg)
     }
-    # Single object only — callers assign to a variable (do not use unary comma; that
-    # wraps in Object[] and breaks $r.Result under Set-StrictMode).
-    return $result
 }
 
 function Get-PackagedSpectre {
@@ -149,121 +166,149 @@ function Get-PackagedSpectre {
         (Join-Path $RepoRoot "cli\build\construo\windowsX64\roast\Spectre.exe")
     )
     foreach ($c in $candidates) {
-        if (Test-Path -LiteralPath $c) { return (Resolve-Path -LiteralPath $c).Path }
+        if (Test-Path -LiteralPath $c) {
+            return [string]((Resolve-Path -LiteralPath $c).Path)
+        }
     }
     return $null
 }
 
+function Save-SmokeReport {
+    param(
+        [Parameter(Mandatory = $true)][System.Collections.IList] $Results,
+        [Parameter(Mandatory = $true)][string] $Path
+    )
+    $dir = Split-Path -Parent $Path
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    }
+    # -InputObject with a plain array avoids pipeline enumeration quirks on WinPS 5.1.
+    $payload = @($Results)
+    $json = ConvertTo-Json -InputObject $payload -Depth 6
+    # .NET write avoids Set-Content -Encoding differences between 5.1 and 7+.
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($Path, $json, $utf8NoBom)
+}
+
 # --- main ---
 
-if ($env:OS -ne "Windows_NT") {
-    throw "This script is Windows-only (current OS: $([System.Environment]::OSVersion.VersionString))"
-}
-
-$repoRoot = Get-RepoRoot
-Set-Location $repoRoot
-Write-Host "Windows release smoke" -ForegroundColor White
-Write-Host "Repo: $repoRoot"
 try {
-    $sha = git -C $repoRoot rev-parse --short HEAD 2>$null
-    Write-Host "SHA:  $sha"
-}
-catch {
-    Write-Host "SHA:  (unknown)"
-}
-Write-Host "Host: $env:COMPUTERNAME  User: $env:USERNAME"
-
-$results = New-Object System.Collections.Generic.List[object]
-
-if (-not $SkipAgentE2e) {
-    $step = Invoke-Step "Agent UI e2e (attach + inject + launch)" {
-        Invoke-Gradle -RepoRoot $repoRoot -LogName "agent-e2e" -GradleArgs @(
-            ":agent:test",
-            "-Pspectre.agent.attachE2e.allowWindows=true",
-            "--tests", "*AgentAttachIntegration*",
-            "--tests", "*AgentInjectAttachIntegration*",
-            "--tests", "*LaunchAndAttachIntegration*"
-        )
+    if ($env:OS -ne "Windows_NT") {
+        throw "This script is Windows-only (current OS: $([System.Environment]::OSVersion.VersionString))"
     }
-    [void]$results.Add($step)
-}
 
-if (-not $SkipWgc) {
-    $step = Invoke-Step "WGC region smoke" {
-        Invoke-Gradle -RepoRoot $repoRoot -LogName "wgc-region" -GradleArgs @(
-            ":recording:runWindowsGraphicsCaptureRegionSmoke"
-        )
-        $mp4 = Join-Path $env:TEMP "spectre-wgc-region-smoke.mp4"
-        if (-not (Test-Path -LiteralPath $mp4)) { throw "Expected output missing: $mp4" }
-        $len = (Get-Item -LiteralPath $mp4).Length
-        if ($len -lt 8192) { throw "MP4 too small ($len bytes): $mp4" }
-        Write-Host "  mp4: $mp4 ($len bytes)" -ForegroundColor DarkGray
-    }
-    [void]$results.Add($step)
-}
+    $repoRoot = Get-RepoRoot
+    Set-Location $repoRoot
+    Write-Host "Windows release smoke" -ForegroundColor White
+    Write-Host ("Repo: {0}" -f $repoRoot)
+    $sha = ""
+    try { $sha = [string](git -C $repoRoot rev-parse --short HEAD 2>$null) } catch { $sha = "" }
+    if ($sha) { Write-Host ("SHA:  {0}" -f $sha) }
+    Write-Host ("Host: {0}  User: {1}" -f $env:COMPUTERNAME, $env:USERNAME)
 
-if (-not $SkipCli) {
-    if (-not $SkipPackageCli) {
-        $step = Invoke-Step "Package Windows CLI" {
-            Invoke-Gradle -RepoRoot $repoRoot -LogName "package-cli" -GradleArgs @(
-                ":cli:packageWindowsX64"
+    $results = New-Object System.Collections.ArrayList
+
+    if (-not $SkipAgentE2e) {
+        $step = Invoke-Step -Name "Agent UI e2e (attach + inject + launch)" -Action {
+            Invoke-Gradle -RepoRoot $repoRoot -LogName "agent-e2e" -GradleArgs @(
+                ":agent:test",
+                "-Pspectre.agent.attachE2e.allowWindows=true",
+                "--tests", "*AgentAttachIntegration*",
+                "--tests", "*AgentInjectAttachIntegration*",
+                "--tests", "*LaunchAndAttachIntegration*"
             )
         }
         [void]$results.Add($step)
     }
 
-    $step = Invoke-Step "Packaged spectre launch --once (fixture)" {
-        $spectre = Get-PackagedSpectre -RepoRoot $repoRoot
-        if (-not $spectre) {
-            throw "spectre.exe not found under cli\build\construo\windowsX64\roast\ — run without -SkipPackageCli"
+    if (-not $SkipWgc) {
+        $step = Invoke-Step -Name "WGC region smoke" -Action {
+            Invoke-Gradle -RepoRoot $repoRoot -LogName "wgc-region" -GradleArgs @(
+                ":recording:runWindowsGraphicsCaptureRegionSmoke"
+            )
+            $mp4 = Join-Path $env:TEMP "spectre-wgc-region-smoke.mp4"
+            if (-not (Test-Path -LiteralPath $mp4)) { throw "Expected output missing: $mp4" }
+            $len = [int64](Get-Item -LiteralPath $mp4).Length
+            if ($len -lt 8192) { throw ("MP4 too small ({0} bytes): {1}" -f $len, $mp4) }
+            Write-Host ("  mp4: {0} ({1} bytes)" -f $mp4, $len) -ForegroundColor DarkGray
         }
-        Write-Host "  using $spectre" -ForegroundColor DarkGray
-        Write-Host "  note: Gradle-ish launch warning is expected for ':agent-test-fixture:run'" -ForegroundColor DarkGray
-        $gradlew = Join-Path $repoRoot "gradlew.bat"
-        # spectre launch --once --app-name ComposeFixtureMain -- gradlew.bat :agent-test-fixture:run
-        Invoke-Native -FilePath $spectre -WorkingDirectory $repoRoot -LogName "spectre-launch" -ArgumentList @(
-            "launch",
-            "--once",
-            "--app-name", "ComposeFixtureMain",
-            "--",
-            $gradlew,
-            ":agent-test-fixture:run"
-        )
+        [void]$results.Add($step)
     }
-    [void]$results.Add($step)
-}
 
-Write-Host ""
-Write-Host "==== Summary ====" -ForegroundColor White
-$failCount = 0
-foreach ($r in $results) {
-    if ($null -eq $r) {
-        Write-Host "FAIL   <null step result>" -ForegroundColor Red
-        $failCount++
-        continue
+    if (-not $SkipCli) {
+        if (-not $SkipPackageCli) {
+            $step = Invoke-Step -Name "Package Windows CLI" -Action {
+                Invoke-Gradle -RepoRoot $repoRoot -LogName "package-cli" -GradleArgs @(
+                    ":cli:packageWindowsX64"
+                )
+            }
+            [void]$results.Add($step)
+        }
+
+        $step = Invoke-Step -Name "Packaged spectre launch --once (fixture)" -Action {
+            $spectre = Get-PackagedSpectre -RepoRoot $repoRoot
+            if (-not $spectre) {
+                throw "spectre.exe not found under cli\build\construo\windowsX64\roast\ — run without -SkipPackageCli"
+            }
+            Write-Host ("  using {0}" -f $spectre) -ForegroundColor DarkGray
+            Write-Host "  note: Gradle-ish launch warning is expected for ':agent-test-fixture:run'" -ForegroundColor DarkGray
+            $gradlew = Join-Path $repoRoot "gradlew.bat"
+            Invoke-Native -FilePath $spectre -WorkingDirectory $repoRoot -LogName "spectre-launch" -Arguments @(
+                "launch",
+                "--once",
+                "--app-name", "ComposeFixtureMain",
+                "--",
+                $gradlew,
+                ":agent-test-fixture:run"
+            )
+        }
+        [void]$results.Add($step)
     }
-    $props = @($r.PSObject.Properties | ForEach-Object { $_.Name })
-    if ($props -notcontains "Result" -or $props -notcontains "Name") {
-        Write-Host ("FAIL   <malformed step: {0}>" -f $r) -ForegroundColor Red
-        $failCount++
-        continue
+
+    Write-Host ""
+    Write-Host "==== Summary ====" -ForegroundColor White
+    $failCount = 0
+    foreach ($r in $results) {
+        if ($null -eq $r) {
+            Write-Host "FAIL   <null step result>" -ForegroundColor Red
+            $failCount++
+            continue
+        }
+        $name = [string]$r.Name
+        $result = [string]$r.Result
+        $secs = [int]$r.Seconds
+        $detail = [string]$r.Detail
+        if ($result -ne "pass") { $failCount++ }
+        $status = $result.ToUpper()
+        $line = "{0,-6} {1,-48} {2,4}s" -f $status, $name, $secs
+        if ($detail) { $line = $line + "  " + $detail }
+        if ($result -eq "pass") {
+            Write-Host $line -ForegroundColor Green
+        }
+        else {
+            Write-Host $line -ForegroundColor Red
+        }
     }
-    if ($r.Result -ne "pass") { $failCount++ }
-    $line = "{0,-6} {1,-48} {2,4}s" -f $r.Result.ToUpperInvariant(), $r.Name, $r.Seconds
-    if ($r.Detail) { $line += "  $($r.Detail)" }
-    Write-Host $line -ForegroundColor $(if ($r.Result -eq "pass") { "Green" } else { "Red" })
-}
 
-$outDir = Join-Path $repoRoot "build\smoke"
-New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-$reportPath = Join-Path $outDir "windows-release-smoke.json"
-@($results) | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $reportPath -Encoding UTF8
-Write-Host "Report: $reportPath"
-Write-Host "Logs:   $outDir\*.log"
+    $outDir = Join-Path $repoRoot "build\smoke"
+    $reportPath = Join-Path $outDir "windows-release-smoke.json"
+    Save-SmokeReport -Results $results -Path $reportPath
+    Write-Host ("Report: {0}" -f $reportPath)
+    Write-Host ("Logs:   {0}" -f $outDir)
 
-if ($failCount -gt 0) {
-    Write-Host "FAILED ($failCount step(s))" -ForegroundColor Red
-    exit 1
+    if ($failCount -gt 0) {
+        Write-Host ("FAILED ({0} step(s))" -f $failCount) -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "ALL PASSED" -ForegroundColor Green
+    exit 0
 }
-Write-Host "ALL PASSED" -ForegroundColor Green
-exit 0
+catch {
+    Write-Host ""
+    Write-Host ("SMOKE SCRIPT ERROR: {0}" -f $_.Exception.Message) -ForegroundColor Red
+    if ($_.Exception.InnerException) {
+        Write-Host ("  inner: {0}" -f $_.Exception.InnerException.Message) -ForegroundColor Red
+    }
+    Write-Host ("  type: {0}" -f $_.Exception.GetType().FullName) -ForegroundColor DarkGray
+    exit 2
+}
