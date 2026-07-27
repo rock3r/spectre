@@ -19,10 +19,14 @@ on:
   workflow_dispatch:
   workflow_call:
 
+# Top-level permissions stay minimal so this workflow can be `workflow_call`ed from
+# `release.yml` (which only grants `contents: read` at the workflow level). Jobs that
+# open GitHub issues on scheduled failures opt up to `issues: write` individually —
+# elevating permissions only on the reusable workflow root made tag-driven Release
+# runs fail at startup with zero jobs (caller cannot satisfy callee's top-level
+# `issues: write`).
 permissions:
   contents: read
-  # Scheduled failure routing opens/labels issues (#216).
-  issues: write
 
 jobs:
   pin-selftest:
@@ -39,6 +43,11 @@ jobs:
     name: ${{ matrix.runtime }} / ${{ matrix.os }}
     needs: pin-selftest
     runs-on: ${{ matrix.os }}
+    # Scheduled failure routing opens issues (#216); harmless under workflow_call (step is
+    # gated on github.event_name == 'schedule').
+    permissions:
+      contents: read
+      issues: write
     strategy:
       fail-fast: false
       matrix:
@@ -206,6 +215,9 @@ jobs:
     name: mixed ${{ matrix.attacher }}→${{ matrix.fixture }} / ${{ matrix.os }}
     needs: pin-selftest
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      issues: write
     strategy:
       fail-fast: false
       matrix:

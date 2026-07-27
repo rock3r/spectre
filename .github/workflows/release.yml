@@ -70,15 +70,23 @@ on:
     tags:
       - "v*"
 
-# Top-level permissions stay read-only. The `publish` job opts up to `contents: write` for
-# the `gh release create / upload` calls; the helper-build jobs only need read access (their
-# checkouts and artefact uploads don't touch the GitHub release surface).
+# Top-level: contents read + issues write (issues needed so the `runtime-matrix` reusable
+# workflow can be called without a permissions mismatch; scheduled matrix failure routing
+# uses issues: write on those jobs). The `publish` job opts up to `contents: write` for
+# `gh release create / upload`. Helper-build jobs only need read for checkout/artifacts.
 permissions:
   contents: read
+  issues: write
 
 jobs:
   runtime-matrix:
     name: Runtime compatibility matrix
+    # Explicit permissions for the reusable workflow call. Keep aligned with
+    # runtime-matrix.yml job-level needs (contents + issues for scheduled-only
+    # failure routing when that workflow is also used on schedule).
+    permissions:
+      contents: read
+      issues: write
     uses: ./.github/workflows/runtime-matrix.yml
 
   release-gate:
