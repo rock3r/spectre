@@ -4,6 +4,7 @@ package dev.sebastiano.spectre.agent.launch
 
 import dev.sebastiano.spectre.agent.AttachOptions
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.WindowsAttachE2eGate
 import dev.sebastiano.spectre.agent.fixture.TAG_LABEL
 import java.awt.GraphicsEnvironment
 import java.nio.file.Files
@@ -15,6 +16,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeFalse
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
 
@@ -24,14 +26,16 @@ import org.junit.jupiter.api.condition.OS
  * (a) Direct `java` launch of `:agent-test-fixture` — staged readiness, exercise, teardown. (c)
  * Binary that exits immediately → stage-1 taxonomy error with exit code + stderr.
  *
- * Gating matches [dev.sebastiano.spectre.agent.AgentAttachIntegrationTest]: Linux/macOS,
- * non-headless, agent runtime jar property set by `:agent:test`.
+ * Gating matches [dev.sebastiano.spectre.agent.AgentAttachIntegrationTest]: Linux/macOS/Windows,
+ * non-headless, agent runtime jar property set by `:agent:test`. Windows UI path is opt-in via
+ * [WindowsAttachE2eGate].
  */
-@EnabledOnOs(OS.LINUX, OS.MAC)
+@EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)
 class LaunchAndAttachIntegrationTest {
 
     @Test
     fun `direct java launch of fixture completes staged readiness exercise and tears down`() {
+        assumeWindowsAttachE2eAllowed()
         assumeFalse(
             GraphicsEnvironment.isHeadless(),
             "Requires non-headless JVM for Compose Desktop fixture",
@@ -82,11 +86,16 @@ class LaunchAndAttachIntegrationTest {
 
     @Test
     fun `command that exits immediately fails stage PROCESS_ALIVE with exit code and stderr`() {
+        // No Compose/Robot — safe on Windows without the UI e2e opt-in.
         val captureDir = Files.createTempDirectory("spectre-launch-e2e-fail-")
         // Use a non-JVM binary that exits immediately with stderr — avoids races where a dying
         // HotSpot process is briefly attachable and fails as bootstrap instead of PROCESS_ALIVE.
         val command =
-            listOf("/bin/sh", "-c", "echo 'spectre-launch-fail-fast-stderr' 1>&2; exit 17")
+            if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)) {
+                listOf("cmd.exe", "/c", "echo spectre-launch-fail-fast-stderr 1>&2 & exit /b 17")
+            } else {
+                listOf("/bin/sh", "-c", "echo 'spectre-launch-fail-fast-stderr' 1>&2; exit 17")
+            }
 
         val ex =
             assertFailsWith<ProcessExitedBeforeAttachException> {
@@ -181,6 +190,17 @@ class LaunchAndAttachIntegrationTest {
                 "java"
             }
         return Paths.get(System.getProperty("java.home"), "bin", exe).toString()
+    }
+
+    private fun assumeWindowsAttachE2eAllowed() {
+        assumeTrue(
+            WindowsAttachE2eGate.isAllowed(),
+            "Windows launch-and-attach UI e2e is opt-in (hosted CI has no reliable interactive " +
+                "desktop). On a physical Windows desktop pass " +
+                "\"-Pspectre.agent.attachE2e.allowWindows=true\" " +
+                "(PowerShell: quote the -P arg) or " +
+                "-D${WindowsAttachE2eGate.ALLOW_PROP}=true on the test JVM).",
+        )
     }
 
     private fun locateAgentJarOrSkip(): Path {

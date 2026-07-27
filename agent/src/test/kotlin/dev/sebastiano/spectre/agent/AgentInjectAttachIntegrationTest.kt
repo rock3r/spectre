@@ -18,6 +18,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeFalse
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
 
@@ -28,15 +29,17 @@ import org.junit.jupiter.api.condition.OS
  *
  * Drives the real attach/UDS path ([AgentAttach.attach]) — not a re-implementation.
  *
- * **OS gate:** Linux and macOS via `@EnabledOnOs` (same policy as [AgentAttachIntegrationTest]).
- * Hosted Windows CI has no reliable interactive desktop; physical Windows inject e2e was validated
- * on Mattone. Windows classpath shapes are covered by [InjectClasspathStripTest].
+ * **OS gate:** Linux, macOS, and Windows via `@EnabledOnOs`. Hosted Windows CI has no reliable
+ * interactive desktop; physical Windows inject e2e uses the same opt-in as
+ * [AgentAttachIntegrationTest] (`-Pspectre.agent.attachE2e.allowWindows=true`). Classpath shapes
+ * are covered by [InjectClasspathStripTest] on all OSes.
  */
-@EnabledOnOs(OS.LINUX, OS.MAC)
+@EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)
 class AgentInjectAttachIntegrationTest {
 
     @Test
     fun `inject attach dumps semantics tree without preinstalled spectre-core`() {
+        assumeWindowsAttachE2eAllowed()
         assumeFalse(
             GraphicsEnvironment.isHeadless(),
             "Requires non-headless JVM for Compose Desktop",
@@ -110,6 +113,17 @@ class AgentInjectAttachIntegrationTest {
         }
 
         return FixtureProcess(process, process.pid(), reader, drainerThread)
+    }
+
+    private fun assumeWindowsAttachE2eAllowed() {
+        assumeTrue(
+            WindowsAttachE2eGate.isAllowed(),
+            "Windows inject attach UI e2e is opt-in (hosted CI has no reliable interactive " +
+                "desktop). On a physical Windows desktop pass " +
+                "\"-Pspectre.agent.attachE2e.allowWindows=true\" " +
+                "(PowerShell: quote the -P arg) or " +
+                "-D${WindowsAttachE2eGate.ALLOW_PROP}=true on the test JVM).",
+        )
     }
 
     private fun locateAgentJarOrSkip(): Path {
