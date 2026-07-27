@@ -1,7 +1,10 @@
 # #320: Stock IntelliJ inject attach recipe (post-#209)
 
-**Status:** documented + evidence chain recorded (closes #320)  
-**Date:** 2026-07-26  
+**Status:** documented + evidence chain recorded (closes #320).  
+**0.4.0 ship note:** fixture inject e2e is proven; **stock/no-core IDE inject + Jewel tags
+is not re-verified as a release gate** — tracked as a known incomplete for **0.4.1**
+([#353](https://github.com/rock3r/spectre/issues/353)).  
+**Date:** 2026-07-26 (recipe); 2026-07-27 (0.4.0 honesty note)  
 **Depends on:** inject packaging (#319), practicalities.md §1 (vmoptions)
 
 ## Goal

@@ -76,8 +76,9 @@ Full operator recipe, tag table, and evidence chain: **[stock-intellij-recipe.md
 
 | Layer | Status |
 | --- | --- |
-| Inject packaging + no-core fixture attach | Automated (`AgentInjectAttachIntegrationTest`, jar verify tasks) |
-| Jewel `ide.counter.*` / `ide.popup.*` in IDEA 2026.2 | Automated via `:sample-intellij-plugin:uiTest` (instrumented sample) |
+| Inject packaging + no-core fixture attach | Automated (`AgentInjectAttachIntegrationTest`, jar verify tasks; Windows opt-in e2e) |
+| Jewel `ide.counter.*` / `ide.popup.*` in IDEA 2026.2 | Automated via `:sample-intellij-plugin:uiTest` (**instrumented** sample — ships core) |
+| Stock IDE + inject (no preinstalled core) | **Not a 0.4.0 release gate** — recipe exists; full QA deferred to **0.4.1** ([#353](https://github.com/rock3r/spectre/issues/353)) |
 | Stock IDE + inject when no `spectre-core` | Documented manual / release-QA recipe (vmoptions + attach dump) |
 
 Stock no-core inject remains **experimental inspect**, not a PR-blocking CI gate
