@@ -93,6 +93,7 @@ class CentralPortalCheckTest(unittest.TestCase):
                     "\n"
                 ),
                 "dev/sebastiano/spectre/agent/runtime/SpectreAgent.class": b"class",
+                "META-INF/spectre/inject-runtime.jar": b"nested-inject",
             }
         )
 
@@ -109,6 +110,7 @@ class CentralPortalCheckTest(unittest.TestCase):
                     "Premain-Class: dev.sebastiano.spectre.agent.runtime.SpectreAgent\n"
                     "\n"
                 ),
+                "META-INF/spectre/inject-runtime.jar": b"nested-inject",
                 "kotlinx/coroutines/Job.class": b"class",
             }
         )
@@ -117,7 +119,24 @@ class CentralPortalCheckTest(unittest.TestCase):
 
         self.assertIn("forbidden classes", "\n".join(errors))
 
-    def test_recording_helper_validation(self):
+    def test_agent_runtime_requires_nested_inject_runtime_jar(self):
+        jar = self._jar(
+            {
+                "META-INF/MANIFEST.MF": (
+                    "Manifest-Version: 1.0\n"
+                    "Agent-Class: dev.sebastiano.spectre.agent.runtime.SpectreAgent\n"
+                    "Premain-Class: dev.sebastiano.spectre.agent.runtime.SpectreAgent\n"
+                    "\n"
+                ),
+                "dev/sebastiano/spectre/agent/runtime/SpectreAgent.class": b"class",
+            }
+        )
+
+        errors = central.validate_jar("spectre-agent-runtime", jar)
+
+        self.assertIn("inject-runtime.jar", "\n".join(errors))
+
+    def test_recording_helper_validation_linux(self):
         jar = self._jar(
             {
                 "native/linux/x86_64/spectre-wayland-helper": b"x64",
@@ -128,6 +147,77 @@ class CentralPortalCheckTest(unittest.TestCase):
         errors = central.validate_jar("spectre-recording-linux", jar)
 
         self.assertEqual(errors, [])
+
+    def test_recording_helper_validation_macos_app_bundle(self):
+        entries = {path: b"helper" for path in central.MACOS_HELPER_APP_ENTRIES}
+        jar = self._jar(entries)
+
+        errors = central.validate_jar("spectre-recording-macos", jar)
+
+        self.assertEqual(errors, [])
+
+    def test_recording_helper_rejects_bare_macos_executable(self):
+        entries = {path: b"helper" for path in central.MACOS_HELPER_APP_ENTRIES}
+        entries[central.MACOS_HELPER_BARE_EXECUTABLE] = b"legacy"
+        jar = self._jar(entries)
+
+        errors = central.validate_jar("spectre-recording-macos", jar)
+
+        self.assertIn("bare", "\n".join(errors))
+        self.assertIn("SpectreCaptureHelper.app", "\n".join(errors))
+
+    def test_recording_helper_validation_windows_multi_file(self):
+        entries = {
+            path: b"helper" for path in central.HELPER_ENTRIES["spectre-recording-windows"]
+        }
+        jar = self._jar(entries)
+
+        errors = central.validate_jar("spectre-recording-windows", jar)
+
+        self.assertEqual(errors, [])
+
+    def test_recording_helper_rejects_windows_exe_only(self):
+        jar = self._jar(
+            {
+                "native/windows/x64/spectre-window-capture.exe": b"x64",
+                "native/windows/arm64/spectre-window-capture.exe": b"arm64",
+            }
+        )
+
+        errors = central.validate_jar("spectre-recording-windows", jar)
+        joined = "\n".join(errors)
+
+        self.assertIn("SpectreWindowCapture.deps.json", joined)
+        self.assertIn("SpectreWindowCapture.dll", joined)
+        self.assertGreater(len(errors), 2)
+
+    def test_helper_entries_match_app_bundle_and_wgc_contract(self):
+        self.assertEqual(
+            central.HELPER_ENTRIES["spectre-recording-macos"],
+            central.MACOS_HELPER_APP_ENTRIES,
+        )
+        self.assertIn(
+            "native/macos/SpectreCaptureHelper.app/Contents/MacOS/spectre-screencapture",
+            central.HELPER_ENTRIES["spectre-recording-macos"],
+        )
+        self.assertNotIn(
+            "native/macos/spectre-screencapture",
+            central.HELPER_ENTRIES["spectre-recording-macos"],
+        )
+        windows = central.HELPER_ENTRIES["spectre-recording-windows"]
+        self.assertEqual(
+            len(windows),
+            len(central.WINDOWS_HELPER_ARCHES)
+            * len(central.WINDOWS_HELPER_REQUIRED_BASE_NAMES),
+        )
+        self.assertIn(
+            "native/windows/x64/SpectreWindowCapture.deps.json",
+            windows,
+        )
+        self.assertIn(
+            "native/windows/arm64/Microsoft.WindowsAppRuntime.Bootstrap.dll",
+            windows,
+        )
 
     def test_agent_rejects_spike_class(self):
         jar = self._jar({"dev/sebastiano/spectre/agent/spike/AttachSpike.class": b"class"})
