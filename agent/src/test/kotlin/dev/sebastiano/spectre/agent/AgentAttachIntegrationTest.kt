@@ -355,7 +355,8 @@ class AgentAttachIntegrationTest {
             WindowsAttachE2eGate.isAllowed(),
             "Windows attach UI e2e is opt-in (hosted CI has no reliable interactive desktop). " +
                 "On a physical Windows desktop pass " +
-                "-Pspectre.agent.attachE2e.allowWindows=true (or " +
+                "\"-Pspectre.agent.attachE2e.allowWindows=true\" " +
+                "(PowerShell: quote the -P arg) or " +
                 "-D${WindowsAttachE2eGate.ALLOW_PROP}=true on the test JVM).",
         )
     }

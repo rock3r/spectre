@@ -428,8 +428,17 @@ Not additive-safe without a version bump:
   older Windows fails the attach preflight with `AttachPlatformUnsupportedException`. Hosted
   GitHub `windows-latest` is not a reliable interactive desktop for the Robot-backed attach
   fixture; the full attach → exercise → detach UI e2e is opt-in on physical Windows desktops
-  via `-Pspectre.agent.attachE2e.allowWindows=true` (non-UI transport/ACL tests still run on
-  every Windows CI job).
+  (non-UI transport/ACL tests still run on every Windows CI job):
+
+  ```shell
+  # bash / zsh / cmd
+  ./gradlew :agent:test -Pspectre.agent.attachE2e.allowWindows=true --tests '*AgentAttachIntegration*'
+  ```
+
+  ```powershell
+  # PowerShell: quote -P… so the shell does not split on the property name
+  ./gradlew :agent:test "-Pspectre.agent.attachE2e.allowWindows=true" --tests '*AgentAttachIntegration*'
+  ```
 - **Wait ops.** `waitForNode` / `waitForVisualIdle` are supported over agent IPC (#201) with
   shared deadline budgets and cancel. Idling-resource `waitForIdle` stays in-process only.
 - **IntelliJ-hosted Compose**: the classloader-disambiguation rule (D-14 in the plan) was

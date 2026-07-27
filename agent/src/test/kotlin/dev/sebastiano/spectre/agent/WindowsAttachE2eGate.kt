@@ -12,6 +12,9 @@ package dev.sebastiano.spectre.agent
  *   -Pspectre.agent.attachE2e.allowWindows=true
  * ```
  *
+ * **PowerShell:** quote the property so the shell does not treat `.agent…` as a separate task:
+ * `./gradlew :agent:test "-Pspectre.agent.attachE2e.allowWindows=true" --tests '*…*'`
+ *
  * or `-Ddev.sebastiano.spectre.agent.attachE2e.allowWindows=true` on the test JVM (Gradle forwards
  * the `-P` form via [agent/build.gradle.kts]).
  */

@@ -176,8 +176,16 @@ AgentAttach.attach(pid) // %TEMP% UDS + owner ACL on Windows; no named pipes
 Optional **full UI e2e** on a physical Windows desktop (not hosted CI default):
 
 ```shell
+# bash / zsh / cmd
 ./gradlew :agent:test \
   -Pspectre.agent.attachE2e.allowWindows=true \
+  --tests '*AgentAttachIntegration*'
+```
+
+```powershell
+# PowerShell: quote the -P argument (otherwise PS splits on dots after -Pspectre)
+./gradlew :agent:test `
+  "-Pspectre.agent.attachE2e.allowWindows=true" `
   --tests '*AgentAttachIntegration*'
 ```
 
