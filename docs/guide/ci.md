@@ -143,7 +143,7 @@ workflow (epic #215 / issue #216):
 | --- | --- |
 | Runtime | JBR 21, JBR 25, Temurin LTS |
 | OS | macOS, Linux (`xvfb`), Windows |
-| Suites | Contract corpus (all OSes); agent attach same-runtime on Linux/macOS + mixed vanilla↔JBR on Linux; Linux X11 recording smoke. Agent suites are `@EnabledOnOs(LINUX, MAC)` only — Windows cells still run the non-agent corpus. |
+| Suites | Contract corpus (all OSes); agent attach same-runtime on Linux/macOS + mixed vanilla↔JBR on Linux; Linux X11 recording smoke. Full attach UI e2e is hosted on Linux/macOS; Windows cells run non-UI transport/ACL agent tests (UI attach e2e is opt-in on physical desktops via `-Pspectre.agent.attachE2e.allowWindows=true`). |
 
 Pins live in [`.github/jbr-pins.env`](https://github.com/rock3r/spectre/blob/main/.github/jbr-pins.env)
 (JBRSDK / `jdk` package, not `jbr_jcef`). Bump procedure is in that file’s header comments.
