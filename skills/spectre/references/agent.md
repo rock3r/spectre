@@ -57,8 +57,10 @@ is the loadable Java-agent runtime, not the normal API jar.
 
 1. Resolves the loadable `spectre-agent-runtime-<version>.jar`.
 2. Creates a fresh Unix Domain Socket path such as
-   `/tmp/sp-a-<pid>-<8char-uuid>/agent.sock`.
-3. Runs attach preflights such as platform support and same-OS-user checks.
+   `/tmp/sp-a-<pid>-<8char-uuid>/agent.sock` on Linux/macOS, or under `%TEMP%` /
+   `java.io.tmpdir` on Windows (`…\sp-a-<pid>-<8char-uuid>\agent.sock`).
+3. Runs attach preflights such as platform support (native `AF_UNIX`, including
+   Windows 10 1803+ / Server 2019+) and same-OS-user checks.
 4. Calls `VirtualMachine.attach(pid).loadAgent(runtimeJarPath, udsPath)`.
 5. Lets the target JVM invoke `SpectreAgent.agentmain(...)`.
 6. In the target JVM, finds `ComposeAutomator` from the target's existing `spectre-core`
@@ -95,7 +97,9 @@ Or set this on the attacher JVM:
 
 ## Caveats to mention
 
-- Current preview support is macOS and Linux only.
+- Supported on Linux, macOS, and Windows (native `AF_UNIX`; Windows needs 10 version
+  1803 / Server 2019 or newer). No named-pipe transport.
 - The attacher and target must run as the same OS user.
 - The target should start with `-XX:+EnableDynamicAgentLoading`.
 - Communication is local UDS IPC, unauthenticated, and intended for trusted dev/test machines.
+  Trust is filesystem ownership (POSIX 0700/0600 or Windows owner-only ACL).
