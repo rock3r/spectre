@@ -32,6 +32,7 @@ Keep this file focused on operating rules. Use the docs below for implementation
 | [docs/STATIC-ANALYSIS.md](docs/STATIC-ANALYSIS.md) | Detekt, ktfmt, and CI-backed quality expectations |
 | [docs/RECORDING-LIMITATIONS.md](docs/RECORDING-LIMITATIONS.md) | Per-platform recording trade-offs, frame drop behaviour, audio caveats |
 | [docs/PUBLISHING.md](docs/PUBLISHING.md) | Tag-driven release pipeline, Sonatype Central wiring, required secrets, local `:verifyMavenLocalPublication` smoke |
+| [docs/RELEASE-SMOKE.md](docs/RELEASE-SMOKE.md) | Pre-tag multi-OS smoke (baseline + delta); required before every `v*` tag |
 | [docs/DOCS-STYLE.md](docs/DOCS-STYLE.md) | Style guide and verification checklist for the user-facing docs site (excluded from the published site itself) |
 | [Compose Desktop automator spike gist](https://gist.github.com/rock3r/8e520bb3fe8fe5886367d5e22cefbab8) | External design notes and open spike questions |
 

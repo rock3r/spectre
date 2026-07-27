@@ -116,5 +116,6 @@ nav:
       - Recording limitations: RECORDING-LIMITATIONS.md
       - Notarization: NOTARIZATION.md
       - Publishing: PUBLISHING.md
+      - Release smoke: RELEASE-SMOKE.md
       - Security notes: SECURITY.md
       - Stability policy: STABILITY.md

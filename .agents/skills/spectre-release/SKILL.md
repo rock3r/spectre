@@ -7,7 +7,21 @@ metadata:
 
 # Spectre Release
 
-Use this skill for Spectre release work after the tag-driven release workflow has run.
+Use this skill for Spectre release work: pre-tag smoke, tag-driven workflow, Central
+promotion, and undrafting.
+
+## Pre-tag release smoke (required)
+
+**Before** `git tag` / pushing a `v*` tag, complete a scoped smoke per
+[docs/RELEASE-SMOKE.md](../../../docs/RELEASE-SMOKE.md):
+
+1. Diff since previous tag + capability matrix → baseline hard cells + **delta** hard cells.
+2. Run hard cells on macOS, headed Windows (`ssh mattone` or equivalent), and Linux as scoped.
+3. Produce a results table. **Hard red or empty hard cells → do not tag.**
+4. Soft cells (Experimental matrix, focus flakes, Hot Reload) may be notes only.
+
+Every release needs its own scoped plan (new features + permanent CI gaps such as
+Windows agent inject). Do not skip smoke because `main` CI is green.
 
 ## Central Portal Check
 
@@ -77,7 +91,8 @@ Release tags must produce a **Developer ID signed, notarized, and stapled**
 
 ## Finish
 
-After Central reports `PUBLISHED`, undraft the GitHub release:
+After Central reports `PUBLISHED`, undraft the GitHub release (only after smoke +
+workflow green + portal validate):
 
 ```bash
 gh release edit v<version> --draft=false

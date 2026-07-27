@@ -97,14 +97,32 @@ promotion** mode (`automaticRelease=false` in `build.gradle.kts`, `--draft` on
 not promote either surface until the release workflow is green and you've
 sanity-checked the artefacts side-by-side.
 
-Manual promotion checklist:
+## Pre-tag release smoke (required)
+
+Hosted CI does not fail-closed every surface Spectre ships (notably full agent
+attach / inject / CLI daemon e2e on Windows, live recording helpers, and
+release-shaped native packaging). **Before tagging**, complete a **scoped release
+smoke** on real desktops:
+
+1. Inventory the delta since the previous tag and the [capability matrix](guide/capability-matrix.md).
+2. Always run the **baseline hard cells** (library, attach, inject, CLI, helpers).
+3. Add **delta hard cells** for new or changed paths that lack multi-OS CI evidence.
+4. Record a results table; hard failures block the tag.
+
+Full process, environments (`ssh` Windows host, Linux VM), recipes, and the
+baseline matrix: **[Release smoke](RELEASE-SMOKE.md)**.
+
+Do not treat green `main` alone as “ready to tag.”
+
+Manual promotion checklist (after the tag workflow is green):
 
 - If this release changes the atomic capture schema (`CaptureDocument.SCHEMA_VERSION` /
   `capture.json`), bump the **`spectre-capture`** agent skill
   (`skills/spectre-capture/SKILL.md` + `package.json`) and the capture user-guide page in the
   same release.
 
-- Confirm the tag points at the intended, already-reviewed `main` SHA.
+- Confirm the tag points at the intended, already-reviewed `main` SHA that completed
+  [release smoke](RELEASE-SMOKE.md) (results table on file).
 - Inspect the Central Portal staging deployment for all nine modules, including
   POM metadata, sources jars, javadoc jars, and Gradle module metadata.
 - Confirm `spectre-recording-<version>.jar` contains no `native/...` entries.
