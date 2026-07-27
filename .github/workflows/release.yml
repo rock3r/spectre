@@ -420,6 +420,11 @@ jobs:
             extracted="$workspace/published"
             ditto -x -k "$archive" "$extracted"
             published_launcher="$extracted/spectre-cli-$RELEASE_VERSION/Spectre.app/Contents/MacOS/spectre"
+            # ZIP round-trips can drop the executable bit; restore before --help (same as
+            # pre-sign chmod above). Local reproduction: extracted spectre is mode 644 → 126.
+            chmod 755 "$published_launcher"
+            find "$extracted/spectre-cli-$RELEASE_VERSION/Spectre.app/Contents/MacOS/runtime/bin" \
+              -type f -exec chmod 755 {} + 2>/dev/null || true
             test -x "$published_launcher"
             # Run --help only for the host-native arch. GHA macOS runners are arm64; the
             # macosX64 bundle is signed/notarized here but may not execute without Rosetta
