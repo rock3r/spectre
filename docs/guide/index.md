@@ -16,7 +16,7 @@ The guide walks through using Spectre end-to-end:
 9. **[Recording and screenshots](recording.md)** — region capture, window-targeted video,
    and native still-window screenshots.
 10. **[Cross-JVM access](cross-jvm.md)** — driving a UI hosted in another JVM.
-11. **[Agent attach](agent.md)** — attach to a running Spectre-instrumented JVM.
+11. **[Agent attach](agent.md)** — attach to a running Compose JVM (preinstalled core or inject).
 12. **[Capability matrix](capability-matrix.md)** — ops × transports × platforms, with
     fail-closed CI evidence for every Supported cell.
 13. **[CLI](cli.md)** — interactive `spectre` command and MCP server.

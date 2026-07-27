@@ -1,17 +1,30 @@
 # Agent attach (experimental)
 
-Spectre's `:agent` module lets you attach to a **running**, Spectre-instrumented JVM and
-drive its UI from a separate process — no need to mount routes at startup, no HTTP, no
-network listener.
+Spectre's `:agent` module lets you attach to a **running Compose Desktop JVM** and drive
+its UI from a separate process — no HTTP listener, no network port, no need to mount routes
+at target startup.
+
+**Target shape (two paths, one API):**
+
+1. **Preferred — preinstalled `spectre-core`** on the target (instrumented attach). Bootstrap
+   finds `ComposeAutomator` on the app classpath. Use this whenever you control the target
+   build.
+2. **Inject — no preinstalled core** (experimental inspect). The loadable
+   `spectre-agent-runtime` jar carries a nested `META-INF/spectre/inject-runtime.jar`;
+   bootstrap loads Spectre core from that payload when the target only has Compose/Skiko.
+   Same `AgentAttach.attach(pid)` call — no separate “inject flag”. Fine for attach → dump →
+   detach (e.g. stock IntelliJ); prefer preinstalled core for sustained or high-frequency use.
+   Details: [Injection without preinstalled core](#injection-without-preinstalled-core).
 
 This is the right transport when:
 
 - Your test JVM and the UI JVM are different processes by design, but you don't want to
   modify the UI app's startup wiring.
-- You want to inspect a long-running Spectre-aware app interactively through the
+- You want to inspect a long-running Compose Desktop app interactively through the
   `spectre` CLI or an MCP client.
-- You're driving an IntelliJ-hosted Compose surface from a sister process. *Note: see the
-  current limitations below — IntelliJ support is gated until further validation.*
+- You're attaching to an IntelliJ-hosted Compose surface from a sister process (often via
+  inject when the IDE build does not ship Spectre). See [IntelliJ-hosted Compose](intellij.md)
+  for VM options and the stock-IDE recipe.
 
 For comparison with the other transports, see [Cross-JVM access](cross-jvm.md) (HTTP) and
 [IntelliJ-hosted Compose](intellij.md) (in-process via `intellij-ide-starter`). Which
@@ -426,7 +439,7 @@ Not additive-safe without a version bump:
 ## Manual verification recipe
 
 ```bash
-# Terminal A — start a Spectre-instrumented app
+# Terminal A — start a Compose app that depends on spectre-core (preferred path)
 ./gradlew :sample-desktop:run
 
 # Find its PID (cross-platform: jps ships with the JDK)

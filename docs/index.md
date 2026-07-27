@@ -42,7 +42,11 @@ familiar — Spectre brings the same "find a node, do a thing, assert" loop to C
   capture on Linux). The
   [`AutoRecorder` and `AutoScreenshotter`](guide/recording.md) pick the right backend.
 - **JUnit-friendly.** Drop-in extension and rule for JUnit 5 and JUnit 4 manage a per-test
-  automator instance for you.
+  automator instance for you — including failure artifacts (screenshot + semantics tree)
+  and optional launch-and-attach.
+- **CLI and agent attach.** Drive or inspect a live app without writing a test first via the
+  `spectre` CLI / MCP, or attach from another JVM with the experimental agent transport
+  (preinstalled `spectre-core` preferred; inject when the target has no core).
 
 ## Where to start
 
@@ -61,6 +65,14 @@ familiar — Spectre brings the same "find a node, do a thing, assert" loop to C
 - :material-video: **[Recording and screenshots](guide/recording.md)** — Region,
   window-targeted video, and native still-window screenshots across macOS, Windows,
   and Linux.
+- :material-camera: **[Atomic capture](guide/capture.md)** — Window PNG + versioned
+  `capture.json` for agents, CLI, and JUnit failure artifacts.
+- :material-console: **[CLI](guide/cli.md)** — Attach, inspect, click, capture, and record
+  from the `spectre` command (and MCP).
+- :material-link-variant: **[Agent attach](guide/agent.md)** — Drive a running Compose JVM
+  from another process (experimental; inject when core is not preinstalled).
+- :material-refresh: **[Compose Hot Reload](guide/hot-reload.md)** — Optional
+  `waitForReloadSettled` when the target runs under Hot Reload (CLI/MCP).
 - :material-server: **[Cross-JVM](guide/cross-jvm.md)** — Drive a UI hosted in another JVM
   process via the embedded HTTP transport (experimental; see [Security notes](SECURITY.md)).
 
