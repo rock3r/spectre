@@ -33,6 +33,12 @@ configurations["validationRuntimeOnly"].extendsFrom(configurations.runtimeOnly.g
 
 dependencies {
     implementation(projects.core)
+    // Keep core dependency-rooted while exercising its optional native window-capture bridge in
+    // the live sample validation suite.
+    runtimeOnly(projects.recording)
+    runtimeOnly(projects.recordingLinux)
+    runtimeOnly(projects.recordingMacos)
+    runtimeOnly(projects.recordingWindows)
     implementation(compose.desktop.currentOs)
     implementation(libs.compose.runtime)
     implementation(libs.compose.foundation)

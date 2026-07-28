@@ -7,10 +7,27 @@ import java.awt.Rectangle
 import java.awt.image.BufferedImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class ScreenCaptureBackendTest {
+
+    @Test
+    fun `optional native bridge is absent without recording on the classpath`() {
+        val recordingFreeLoader =
+            object : ClassLoader(null) {
+                override fun loadClass(name: String, resolve: Boolean): Class<*> =
+                    throw ClassNotFoundException(name)
+            }
+
+        assertNull(nativeWindowCaptureFor(recordingFreeLoader))
+    }
+
+    @Test
+    fun `optional native bridge is discovered without a core compile dependency`() {
+        assertTrue(nativeWindowCaptureFor(javaClass.classLoader) != null)
+    }
 
     @Test
     fun `tracked Frame capture prefers the native window backend`() {

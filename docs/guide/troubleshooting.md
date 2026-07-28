@@ -221,7 +221,8 @@ wrapper when your UI reads Jewel locals such as `LocalComponent`.
 ## "Captured screenshot pixels look slightly off"
 
 `screenshot(windowIndex)`, `screenshot(node)`, and `capture()` prefer the platform
-window-capture backend, so an occluding window does not normally alter their pixels. When native
+window-capture backend when `spectre-recording` is on the runtime classpath, so an occluding
+window does not normally alter their pixels. When native
 capture is unavailable (for example an embedded non-`Frame` host or an unsupported platform),
 Spectre falls back to a screen-region capture; then bring the target to the front and keep it
 visible, because overlapping windows and off-screen portions are part of the captured framebuffer.

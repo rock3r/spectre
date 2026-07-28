@@ -2,11 +2,10 @@
 
 package dev.sebastiano.spectre.core
 
-import dev.sebastiano.spectre.recording.AutoScreenshotter
-import dev.sebastiano.spectre.recording.screencapturekit.asTitledWindow
 import java.awt.Frame
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
+import java.lang.reflect.InvocationTargetException
 
 /** Internal capture seam: native window pixels when available, Robot regions otherwise. */
 internal interface ScreenCaptureBackend {
@@ -72,14 +71,57 @@ internal class PlatformScreenCaptureBackend(
 
     private companion object {
         fun defaultNativeCapture(): (Frame) -> BufferedImage {
-            val screenshotter = AutoScreenshotter()
-            return { frame -> screenshotter.captureWindow(frame.asTitledWindow()) }
+            return nativeWindowCaptureFor(PlatformScreenCaptureBackend::class.java.classLoader)
+                ?: {
+                    throw UnsupportedOperationException(
+                        "Native window capture bridge is unavailable"
+                    )
+                }
         }
 
         fun defaultNativeCaptureDisambiguatesTitles(): Boolean =
             System.getProperty("os.name").contains("mac", ignoreCase = true)
     }
 }
+
+/**
+ * Loads the optional recording-owned native capture bridge without linking it into core.
+ *
+ * The injected core payload intentionally excludes recording and its transitive dependencies;
+ * absence of the bridge must therefore remain a normal Robot-fallback condition.
+ */
+internal fun nativeWindowCaptureFor(classLoader: ClassLoader): ((Frame) -> BufferedImage)? {
+    val bridge =
+        try {
+            Class.forName(NATIVE_WINDOW_CAPTURE_BRIDGE, false, classLoader)
+        } catch (_: ClassNotFoundException) {
+            return null
+        }
+    val capture =
+        try {
+            bridge.getMethod("captureWindow", Frame::class.java)
+        } catch (_: NoSuchMethodException) {
+            return null
+        }
+    return { frame ->
+        try {
+            capture.invoke(null, frame) as BufferedImage
+        } catch (e: InvocationTargetException) {
+            val cause = e.cause ?: e
+            if (cause is RuntimeException) throw cause
+            if (cause is LinkageError) {
+                throw UnsupportedOperationException(
+                    "Native window capture bridge is unavailable",
+                    cause,
+                )
+            }
+            throw IllegalStateException("Native window capture bridge failed", cause)
+        }
+    }
+}
+
+private const val NATIVE_WINDOW_CAPTURE_BRIDGE: String =
+    "dev.sebastiano.spectre.recording.NativeWindowCaptureBridge"
 
 internal fun shouldFallBackToRegionCapture(error: RuntimeException): Boolean =
     error is UnsupportedOperationException ||
