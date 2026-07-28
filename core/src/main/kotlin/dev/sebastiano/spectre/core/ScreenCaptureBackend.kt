@@ -28,7 +28,9 @@ internal class PlatformScreenCaptureBackend(
 
     override fun captureWindow(window: TrackedWindow): BufferedImage {
         val frame = window.window as? Frame ?: return captureRegion(window.window.bounds)
-        if (!nativeCaptureEnabled()) return captureRegion(window.window.bounds)
+        if (!nativeCaptureEnabled() || hasAmbiguousNativeIdentity(frame)) {
+            return captureRegion(window.window.bounds)
+        }
         return try {
             nativeCapture(frame)
         } catch (e: IllegalStateException) {
@@ -57,14 +59,20 @@ internal class PlatformScreenCaptureBackend(
                 (error.message?.contains(" is unavailable") == true ||
                     error.message?.let(::isMissingPlatformHelper) == true)) ||
             (error is IllegalArgumentException &&
-                error.message?.startsWith(
-                    "AutoScreenshotter.captureWindow requires a non-blank window title"
-                ) == true)
+                error.message?.contains("requires a non-blank window title") == true)
 
     private fun isMissingPlatformHelper(message: String): Boolean =
         message.contains("helper", ignoreCase = true) &&
             (message.contains("not found", ignoreCase = true) ||
                 message.contains("not bundled", ignoreCase = true))
+
+    private fun hasAmbiguousNativeIdentity(frame: Frame): Boolean {
+        val title = frame.title
+        return title.isNullOrBlank() ||
+            Frame.getFrames().any { other ->
+                other !== frame && other.isDisplayable && other.title == title
+            }
+    }
 
     private companion object {
         fun defaultNativeCapture(): (Frame) -> BufferedImage {
