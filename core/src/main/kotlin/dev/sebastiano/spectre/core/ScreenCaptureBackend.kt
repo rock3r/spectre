@@ -197,6 +197,7 @@ internal fun shouldFallBackToRegionCapture(error: RuntimeException): Boolean =
                 error.message?.let(::isMissingPlatformHelper) == true ||
                 error.message?.let(::isMissingLinuxScreenshotPipeline) == true ||
                 error.message?.let(::isTimedOutNativeScreenshot) == true ||
+                error.message?.let(::isUndiscoverableNativeWindow) == true ||
                 error.message?.let(::isUnavailableLinuxNativeScreenshot) == true ||
                 error.message?.let(::isUnavailableMacosNativeScreenshot) == true ||
                 error.message?.let(::isUnavailableWindowsNativeScreenshot) == true ||
@@ -216,6 +217,10 @@ private fun isMissingLinuxScreenshotPipeline(message: String): Boolean =
 
 private fun isTimedOutNativeScreenshot(message: String): Boolean =
     message.contains("Timed out waiting for spectre-window-capture to capture a window")
+
+private fun isUndiscoverableNativeWindow(message: String): Boolean =
+    message.contains("spectre-screencapture could not find", ignoreCase = true) ||
+        message.contains("spectre-window-capture could not find", ignoreCase = true)
 
 private fun isUnavailableLinuxNativeScreenshot(message: String): Boolean =
     message == "Linux screenshot helper failed" ||

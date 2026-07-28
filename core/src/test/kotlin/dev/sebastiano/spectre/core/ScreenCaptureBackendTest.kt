@@ -227,6 +227,17 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
+    fun `native screenshot helper that cannot find its window falls back to the full window region`() {
+        listOf(
+                "spectre-screencapture could not find a window named 'fixture'",
+                "spectre-window-capture could not find a window named 'fixture'",
+            )
+            .forEach { message ->
+                assertTrue(shouldFallBackToRegionCapture(IllegalStateException(message)), message)
+            }
+    }
+
+    @Test
     fun `unavailable Linux native screenshot helper falls back to the full window region`() {
         listOf(
                 "Linux screenshot helper failed",
