@@ -105,7 +105,7 @@ internal suspend fun waitForVisualIdleInternal(
     timeout: Duration,
     stableFrames: Int,
     pollInterval: Duration,
-    frameHash: (remainingMs: Long) -> Int,
+    frameHash: suspend (remainingMs: Long) -> Int,
     clock: MonotonicClock = SystemClock(),
     sleep: suspend (Duration) -> Unit = { delay(it) },
 ) {
@@ -143,12 +143,12 @@ internal suspend fun waitForVisualIdleInternal(
  */
 internal class BoundedFrameHasher(
     private val steadyStateBudgetMs: Long,
-    private val sample: (budgetMs: Long) -> Int?,
+    private val sample: suspend (budgetMs: Long) -> Int?,
     private val unsampledHash: () -> Int,
 ) {
     private val hasSuccessfulSample = AtomicBoolean(false)
 
-    fun hash(remainingMs: Long): Int {
+    suspend fun hash(remainingMs: Long): Int {
         val budgetMs =
             if (hasSuccessfulSample.get()) {
                 remainingMs.coerceAtMost(steadyStateBudgetMs)

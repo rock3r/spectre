@@ -6,9 +6,26 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 
 class WaitForVisualIdleTest {
+
+    @Test
+    fun `visual idle cancellation interrupts a cold capture wait`() = runTest {
+        assertFailsWith<TimeoutCancellationException> {
+            withTimeout(100.milliseconds) {
+                waitForVisualIdleInternal(
+                    timeout = 5.seconds,
+                    stableFrames = 1,
+                    pollInterval = 1.milliseconds,
+                    frameHash = { awaitCancellation() },
+                )
+            }
+        }
+    }
 
     @Test
     fun `cold frame capture receives the remaining wait budget before steady state cap`() =
@@ -43,6 +60,37 @@ class WaitForVisualIdleTest {
 
             assertEquals(listOf(5_000L, 500L, 500L), budgets)
         }
+
+    @Test
+    fun `each visual-idle wait gets an independent cold capture budget`() = runTest {
+        val firstBudgets = mutableListOf<Long>()
+        val secondBudgets = mutableListOf<Long>()
+        val firstWait =
+            BoundedFrameHasher(
+                steadyStateBudgetMs = 500,
+                sample = { budgetMs ->
+                    firstBudgets += budgetMs
+                    1
+                },
+                unsampledHash = { Int.MIN_VALUE },
+            )
+        val secondWait =
+            BoundedFrameHasher(
+                steadyStateBudgetMs = 500,
+                sample = { budgetMs ->
+                    secondBudgets += budgetMs
+                    1
+                },
+                unsampledHash = { Int.MIN_VALUE },
+            )
+
+        firstWait.hash(5_000)
+        firstWait.hash(4_000)
+        secondWait.hash(5_000)
+
+        assertEquals(listOf(5_000L, 500L), firstBudgets)
+        assertEquals(listOf(5_000L), secondBudgets)
+    }
 
     @Test
     fun `waitForVisualIdle returns when stableFrames consecutive hashes match`() = runTest {
