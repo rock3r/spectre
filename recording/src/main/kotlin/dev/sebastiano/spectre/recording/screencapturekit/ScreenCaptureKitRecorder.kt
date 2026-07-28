@@ -550,7 +550,7 @@ private const val DEFAULT_DISCOVERY_TIMEOUT_MS: Int = 2000
 // for the first frame to be appended, and a small allowance for process/SCK startup overhead.
 // Discovery still reports a missing window promptly; this only prevents start() from
 // force-killing a healthy helper while its stream comes online.
-private const val READY_WAIT_MILLIS: Long = 13_000
+private const val READY_WAIT_MILLIS: Long = 15_000
 
 // Single-line marker the helper writes to stdout once SCK + AVAssetWriter are running.
 // start() blocks until either this line appears (success) or the helper exits (failure
