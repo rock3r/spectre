@@ -7,6 +7,7 @@ import java.awt.Frame
 import java.awt.Insets
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
+import java.io.IOException
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -278,6 +279,29 @@ class ScreenCaptureBackendTest {
             shouldFallBackToRegionCapture(
                 IllegalStateException(
                     "Could not determine WM frame extents for window 'fixture' on this Wayland session"
+                )
+            )
+        )
+    }
+
+    @Test
+    fun `failed macOS screenshot pipeline falls back to the full window region`() {
+        assertTrue(
+            shouldFallBackToRegionCapture(
+                IllegalStateException(
+                    "spectre-screencapture's screenshot pipeline failed (exit 5)."
+                )
+            )
+        )
+    }
+
+    @Test
+    fun `native bridge temporary file failure falls back to the full window region`() {
+        assertTrue(
+            shouldFallBackToRegionCapture(
+                IllegalStateException(
+                    "Native window capture bridge failed",
+                    IOException("No space left"),
                 )
             )
         )

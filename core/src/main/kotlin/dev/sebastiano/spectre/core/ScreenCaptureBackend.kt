@@ -5,6 +5,7 @@ package dev.sebastiano.spectre.core
 import java.awt.Frame
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
+import java.io.IOException
 import java.lang.reflect.InvocationTargetException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -201,7 +202,9 @@ internal fun shouldFallBackToRegionCapture(error: RuntimeException): Boolean =
                 error.message?.let(::isUnavailableLinuxNativeScreenshot) == true ||
                 error.message?.let(::isUnavailableMacosNativeScreenshot) == true ||
                 error.message?.let(::isUnavailableWindowsNativeScreenshot) == true ||
-                error.message?.contains("Could not determine WM frame extents") == true)) ||
+                error.message?.contains("Could not determine WM frame extents") == true ||
+                (error.message == "Native window capture bridge failed" &&
+                    error.cause is IOException))) ||
         (error is IllegalArgumentException &&
             error.message?.contains("requires a non-blank window title") == true)
 
@@ -229,6 +232,7 @@ private fun isUnavailableLinuxNativeScreenshot(message: String): Boolean =
 
 private fun isUnavailableMacosNativeScreenshot(message: String): Boolean =
     message == "spectre-screencapture screenshot failed" ||
+        message.startsWith("spectre-screencapture's screenshot pipeline failed") ||
         message.startsWith("failed to start spectre-screencapture for TCC preflight:") ||
         message.startsWith("Screen Recording: DENIED")
 
