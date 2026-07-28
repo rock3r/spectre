@@ -258,7 +258,7 @@ private constructor(
      * assertions.
      */
     public fun screenshot(node: AutomatorNode): BufferedImage =
-        screenshotTrackedRegionCapture(node.trackedWindow, node.boundsOnScreen).image
+        screenshotTrackedRegion(node.trackedWindow, node.boundsOnScreen)
 
     /**
      * Captures the Compose surface bounds of the tracked window at [windowIndex] as an sRGB
@@ -270,11 +270,7 @@ private constructor(
         val trackedWindow =
             windows.getOrNull(windowIndex)
                 ?: error("No tracked window at index $windowIndex (have ${windows.size})")
-        return screenshotTrackedRegionCapture(
-                trackedWindow,
-                trackedWindow.composeSurfaceBoundsOnScreen,
-            )
-            .image
+        return screenshotTrackedRegion(trackedWindow, trackedWindow.composeSurfaceBoundsOnScreen)
     }
 
     /**
@@ -621,6 +617,39 @@ private constructor(
             thread.interrupt()
             throw e
         }
+    }
+
+    private fun screenshotTrackedRegion(
+        trackedWindow: TrackedWindow,
+        region: Rectangle,
+    ): BufferedImage {
+        val capture = screenshotTrackedRegionCapture(trackedWindow, region)
+        if (
+            capture.image.width == capture.boundsOnScreen.width &&
+                capture.image.height == capture.boundsOnScreen.height
+        ) {
+            return capture.image
+        }
+        return BufferedImage(
+                capture.boundsOnScreen.width,
+                capture.boundsOnScreen.height,
+                BufferedImage.TYPE_INT_ARGB,
+            )
+            .also { logicalImage ->
+                val graphics = logicalImage.createGraphics()
+                try {
+                    graphics.drawImage(
+                        capture.image,
+                        0,
+                        0,
+                        logicalImage.width,
+                        logicalImage.height,
+                        null,
+                    )
+                } finally {
+                    graphics.dispose()
+                }
+            }
     }
 
     private fun screenshotTrackedRegionCapture(
