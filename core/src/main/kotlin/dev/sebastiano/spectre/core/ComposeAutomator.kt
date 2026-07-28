@@ -291,10 +291,11 @@ private constructor(
     /**
      * Atomic capture of one window: semantics tree snapshot + window PNG taken back-to-back.
      *
-     * The tree (including node geometry) is read first; the window screenshot follows immediately
-     * without returning control to the caller between the two. True single-frame Robot capture is
-     * not available on the EDT; this method is the best-effort same-tick pair agents should use
-     * instead of separate `allNodes()` + `screenshot()` calls that can straddle a recomposition.
+     * The tree (including node geometry) is read first; an immediate Robot region screenshot
+     * follows without returning control to the caller between the two. This method is the
+     * best-effort same-tick pair agents should use instead of separate `allNodes()` +
+     * `screenshot()` calls that can straddle a recomposition. It intentionally does not use a
+     * one-shot native helper, whose startup time would invalidate this adjacency guarantee.
      *
      * Node bounds in the returned document use **image-pixel space of the PNG as primary** and
      * screen space as secondary. Callers that want files on disk should pass the result through
@@ -313,18 +314,15 @@ private constructor(
         // *before* taking the PNG so JSON and pixels cannot describe different window layouts.
         data class PreCaptureSnapshot(
             val captureRegion: Rectangle,
-            val windowBounds: Rectangle,
             val densityScaleX: Double,
             val densityScaleY: Double,
             val nodeSnapshots: List<CaptureNodeSnapshot>,
         )
         val pre = readOnEdt {
             val region = trackedWindow.composeSurfaceBoundsOnScreen
-            val windowBounds = trackedWindow.window.bounds
             val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
             PreCaptureSnapshot(
                 captureRegion = region,
-                windowBounds = windowBounds,
                 densityScaleX = transform.scaleX,
                 densityScaleY = transform.scaleY,
                 nodeSnapshots =
@@ -346,14 +344,13 @@ private constructor(
                     },
             )
         }
-        val capture =
-            screenshotTrackedRegionCapture(trackedWindow, pre.captureRegion, pre.windowBounds)
+        val image = screenCaptureBackend.captureRegion(pre.captureRegion)
         return AtomicCaptureBuilder.build(
             windowIndex = windowIndex,
             trackedWindow = trackedWindow,
             nodeSnapshots = pre.nodeSnapshots,
-            image = capture.image,
-            captureRegion = capture.boundsOnScreen,
+            image = image,
+            captureRegion = pre.captureRegion,
             densityScaleX = pre.densityScaleX,
             densityScaleY = pre.densityScaleY,
             startedAt = startedAt,
