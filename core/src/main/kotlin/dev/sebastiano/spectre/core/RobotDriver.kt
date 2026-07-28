@@ -29,6 +29,10 @@ internal constructor(
     private val screenCapture: ScreenCaptureAdapter = robot,
 ) {
 
+    /** Whether callers may use a platform capture backend instead of this driver's adapter. */
+    internal val allowsPlatformCapture: Boolean
+        get() = screenCapture !== HeadlessThrowingScreenCaptureAdapter
+
     // Public surface: callers may instantiate without arguments (defaults to a fresh
     // AWT Robot + system clipboard) or hand in an existing Robot. The internal
     // adapter-injecting constructor is reserved for tests within this module.

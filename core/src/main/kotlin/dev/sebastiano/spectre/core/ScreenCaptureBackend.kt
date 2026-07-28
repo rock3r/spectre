@@ -18,15 +18,17 @@ internal interface ScreenCaptureBackend {
 internal class PlatformScreenCaptureBackend(
     private val regionCapture: (Rectangle?) -> BufferedImage,
     private val nativeCapture: (Frame) -> BufferedImage,
+    private val nativeCaptureEnabled: () -> Boolean = { true },
 ) : ScreenCaptureBackend {
     internal constructor(
         robotDriver: RobotDriver
-    ) : this(robotDriver::screenshot, defaultNativeCapture())
+    ) : this(robotDriver::screenshot, defaultNativeCapture(), { robotDriver.allowsPlatformCapture })
 
     override fun captureRegion(region: Rectangle?): BufferedImage = regionCapture(region)
 
     override fun captureWindow(window: TrackedWindow): BufferedImage {
         val frame = window.window as? Frame ?: return captureRegion(window.window.bounds)
+        if (!nativeCaptureEnabled()) return captureRegion(window.window.bounds)
         return try {
             nativeCapture(frame)
         } catch (e: IllegalStateException) {
@@ -52,11 +54,17 @@ internal class PlatformScreenCaptureBackend(
     private fun shouldFallBackToRegionCapture(error: RuntimeException): Boolean =
         error is UnsupportedOperationException ||
             (error is IllegalStateException &&
-                error.message?.contains(" is unavailable") == true) ||
+                (error.message?.contains(" is unavailable") == true ||
+                    error.message?.let(::isMissingPlatformHelper) == true)) ||
             (error is IllegalArgumentException &&
                 error.message?.startsWith(
                     "AutoScreenshotter.captureWindow requires a non-blank window title"
                 ) == true)
+
+    private fun isMissingPlatformHelper(message: String): Boolean =
+        message.contains("helper", ignoreCase = true) &&
+            (message.contains("not found", ignoreCase = true) ||
+                message.contains("not bundled", ignoreCase = true))
 
     private companion object {
         fun defaultNativeCapture(): (Frame) -> BufferedImage {

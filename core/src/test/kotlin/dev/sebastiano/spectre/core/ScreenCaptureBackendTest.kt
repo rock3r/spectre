@@ -71,6 +71,29 @@ class ScreenCaptureBackendTest {
         )
     }
 
+    @Test
+    fun `missing platform helper falls back to the full window region`() {
+        assertFallbackFor(IllegalStateException("Windows capture helper not found"))
+    }
+
+    @Test
+    fun `disabled native capture delegates to the configured region backend`() {
+        assumeLiveAwtAvailable()
+        val frame = Frame().apply { setBounds(40, 50, 300, 200) }
+        val expected = BufferedImage(300, 200, BufferedImage.TYPE_INT_ARGB)
+        val backend =
+            PlatformScreenCaptureBackend(
+                regionCapture = { expected },
+                nativeCapture = { error("native capture should be disabled") },
+                nativeCaptureEnabled = { false },
+            )
+        try {
+            assertSame(expected, backend.captureWindow(tracked(frame)))
+        } finally {
+            frame.dispose()
+        }
+    }
+
     private fun assertFallbackFor(error: RuntimeException) {
         assumeLiveAwtAvailable()
         val frame = Frame().apply { setBounds(40, 50, 300, 200) }
