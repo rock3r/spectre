@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.recording
 import dev.sebastiano.spectre.recording.screencapturekit.asTitledWindow
 import java.awt.Frame
 import java.awt.image.BufferedImage
+import java.util.WeakHashMap
 
 /**
  * Optional runtime bridge for core's window-scoped still capture route.
@@ -12,9 +13,13 @@ import java.awt.image.BufferedImage
  */
 internal object NativeWindowCaptureBridge {
     private val screenshotter: AutoScreenshotter by lazy(::AutoScreenshotter)
+    private val captureLocks = WeakHashMap<Frame, Any>()
 
     @JvmStatic
     @JvmName("captureWindow")
     internal fun captureWindow(frame: Frame): BufferedImage =
-        synchronized(frame) { screenshotter.captureWindow(frame.asTitledWindow()) }
+        synchronized(captureLockFor(frame)) { screenshotter.captureWindow(frame.asTitledWindow()) }
+
+    internal fun captureLockFor(frame: Frame): Any =
+        synchronized(captureLocks) { captureLocks.getOrPut(frame, ::Any) }
 }
