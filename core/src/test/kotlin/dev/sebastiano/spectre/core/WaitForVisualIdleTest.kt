@@ -11,6 +11,40 @@ import kotlinx.coroutines.test.runTest
 class WaitForVisualIdleTest {
 
     @Test
+    fun `cold frame capture receives the remaining wait budget before steady state cap`() =
+        runTest {
+            val clock = FakeClock()
+            val budgets = mutableListOf<Long>()
+            var captures = 0
+            val hasher =
+                BoundedFrameHasher(
+                    steadyStateBudgetMs = 500,
+                    sample = { budgetMs ->
+                        budgets += budgetMs
+                        val captureDurationMs = if (captures++ == 0) 3_600L else 100L
+                        if (budgetMs < captureDurationMs) {
+                            null
+                        } else {
+                            clock.advance(captureDurationMs.milliseconds)
+                            7
+                        }
+                    },
+                    unsampledHash = { Int.MIN_VALUE },
+                )
+
+            waitForVisualIdleInternal(
+                timeout = 5.seconds,
+                stableFrames = 3,
+                pollInterval = 100.milliseconds,
+                frameHash = hasher::hash,
+                clock = clock,
+                sleep = clock::advance,
+            )
+
+            assertEquals(listOf(5_000L, 500L, 500L), budgets)
+        }
+
+    @Test
     fun `waitForVisualIdle returns when stableFrames consecutive hashes match`() = runTest {
         val clock = FakeClock()
         val frames = ArrayDeque(listOf(1, 2, 3, 3, 3))

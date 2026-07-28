@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.core
 
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration
 import kotlinx.coroutines.delay
 
@@ -130,6 +131,31 @@ internal suspend fun waitForVisualIdleInternal(
             )
         }
         sleep(pollInterval)
+    }
+}
+
+/**
+ * Applies the visual-idle capture budget without treating a cold native capture like a changed
+ * frame. The first successful capture is allowed to use the caller's remaining timeout, because
+ * platform capture paths can have a one-off startup cost. Once one sample has completed, every
+ * later sample is capped at [steadyStateBudgetMs] so a stuck capture still cannot overrun the
+ * public wait timeout.
+ */
+internal class BoundedFrameHasher(
+    private val steadyStateBudgetMs: Long,
+    private val sample: (budgetMs: Long) -> Int?,
+    private val unsampledHash: () -> Int,
+) {
+    private val hasSuccessfulSample = AtomicBoolean(false)
+
+    fun hash(remainingMs: Long): Int {
+        val budgetMs =
+            if (hasSuccessfulSample.get()) {
+                remainingMs.coerceAtMost(steadyStateBudgetMs)
+            } else {
+                remainingMs
+            }
+        return sample(budgetMs)?.also { hasSuccessfulSample.set(true) } ?: unsampledHash()
     }
 }
 

@@ -343,6 +343,13 @@ private constructor(
     // that fits their test.
     private val idlingResources = CopyOnWriteArrayList<AutomatorIdlingResource>()
 
+    private val visualFrameHasher =
+        BoundedFrameHasher(
+            steadyStateBudgetMs = FRAME_HASH_BUDGET_MS,
+            sample = ::sampleFrameHash,
+            unsampledHash = { System.nanoTime().toInt() },
+        )
+
     public fun registerIdlingResource(resource: AutomatorIdlingResource) {
         idlingResources.addIfAbsent(resource)
     }
@@ -512,21 +519,25 @@ private constructor(
         //   deliberately return a value that differs every call so the streak never completes
         //   — waitForVisualIdle keeps waiting (or times out) rather than declaring success
         //   against an unsampleable UI.
-        // The sampling itself runs on a worker thread bounded by FRAME_HASH_BUDGET_MS so a
-        // hung EDT or stuck Robot.createScreenCapture cannot out-block the wait loop's
-        // overall timeout enforcement.
-        val budget = remainingMs.coerceAtMost(FRAME_HASH_BUDGET_MS).coerceAtLeast(0)
-        return runBoundedOnWorker(budget) {
+        return visualFrameHasher.hash(remainingMs.coerceAtLeast(0))
+    }
+
+    private fun sampleFrameHash(budgetMs: Long): Int? {
+        // Native capture can take seconds on its first use, so BoundedFrameHasher gives the cold
+        // sample the wait's remaining budget. After the first completed sample, this worker is
+        // capped at FRAME_HASH_BUDGET_MS: an unexpectedly hung EDT or capture API still cannot
+        // out-block waitForVisualIdle's overall deadline.
+        return runBoundedOnWorker(budgetMs) {
             refreshWindows()
             val rects = composeSurfaceRects()
             if (rects.isEmpty()) {
-                System.nanoTime().toInt()
+                null
             } else {
                 val hashes = IntArray(rects.size)
                 for (i in rects.indices) hashes[i] = hashScreenRegion(rects[i])
                 hashes.contentHashCode()
             }
-        } ?: System.nanoTime().toInt()
+        }
     }
 
     private fun <T> runBoundedOnWorker(budgetMs: Long, block: () -> T): T? {
