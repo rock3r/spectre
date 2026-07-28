@@ -36,6 +36,7 @@ internal class PlatformScreenCaptureBackend(
                 isWayland = isWaylandSession(),
             )
         },
+    private val visibleDesktopBounds: () -> Rectangle = ::virtualDesktopBounds,
 ) : ScreenCaptureBackend {
     internal constructor(
         robotDriver: RobotDriver
@@ -54,7 +55,7 @@ internal class PlatformScreenCaptureBackend(
             !nativeCaptureEnabled() ||
                 (!nativeCaptureDisambiguatesTitles() && hasAmbiguousNativeIdentity(frame))
         ) {
-            return regionCapture(windowBounds)
+            return regionCapture(visibleWindowCaptureBounds(windowBounds, visibleDesktopBounds()))
         }
         return try {
             val image = normalizeNativeImage(nativeCapture(frame))
@@ -76,7 +77,7 @@ internal class PlatformScreenCaptureBackend(
         // Keep the fallback image in the same coordinate system as a native window image.
         // Compose content can be inset from a decorated Frame, so capturing only the surface
         // would make callers crop the title-bar offset a second time.
-        return regionCapture(windowBounds)
+        return regionCapture(visibleWindowCaptureBounds(windowBounds, visibleDesktopBounds()))
     }
 
     private fun regionCapture(bounds: Rectangle): WindowCapture =
@@ -134,6 +135,11 @@ internal fun isWaylandSession(
         runCatching { runtimeDirHasWaylandSocket(it) }.getOrDefault(false)
     } == true
 }
+
+internal fun visibleWindowCaptureBounds(
+    windowBounds: Rectangle,
+    desktopBounds: Rectangle,
+): Rectangle = windowBounds.intersection(desktopBounds)
 
 private fun runtimeDirHasWaylandSocket(runtimeDir: Path): Boolean =
     Files.isDirectory(runtimeDir) &&

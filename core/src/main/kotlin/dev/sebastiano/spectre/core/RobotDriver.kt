@@ -751,7 +751,7 @@ internal fun interpolateSwipePoints(
 
 internal fun detectMacOs(): Boolean = System.getProperty("os.name").lowercase().contains("mac")
 
-private fun virtualDesktopBounds(): Rectangle {
+internal fun virtualDesktopBounds(): Rectangle {
     // GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices throws HeadlessException
     // when the JVM is running with -Djava.awt.headless=true (e.g. CI). Fall back to a 1×1
     // rectangle here so the bounds lookup itself doesn't throw; the underlying adapter's

@@ -276,6 +276,16 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
+    fun `window fallback is clipped to the visible desktop`() {
+        val windowBounds = Rectangle(-20, 30, 300, 200)
+
+        assertEquals(
+            Rectangle(0, 30, 280, 200),
+            visibleWindowCaptureBounds(windowBounds, Rectangle(0, 0, 1920, 1080)),
+        )
+    }
+
+    @Test
     fun `duplicate window titles use the region fallback`() {
         assumeLiveAwtAvailable()
         val first = Frame("same title").apply { addNotify() }
