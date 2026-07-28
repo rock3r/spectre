@@ -259,8 +259,12 @@ private constructor(
      * first. If native capture is unavailable, falls back to [RobotDriver.screenshot]; its KDoc
      * describes the visibility and platform-permission constraints that apply to that fallback.
      */
-    public fun screenshot(node: AutomatorNode): BufferedImage =
-        screenshotTrackedRegion(node.trackedWindow, node.boundsOnScreen)
+    public fun screenshot(node: AutomatorNode): BufferedImage {
+        val geometry = readOnEdt {
+            ScreenshotGeometry(node.boundsOnScreen, node.trackedWindow.window.bounds)
+        }
+        return screenshotTrackedRegion(node.trackedWindow, geometry.region, geometry.windowBounds)
+    }
 
     /**
      * Captures the Compose surface bounds of the tracked window at [windowIndex] as an sRGB
@@ -275,7 +279,13 @@ private constructor(
         val trackedWindow =
             windows.getOrNull(windowIndex)
                 ?: error("No tracked window at index $windowIndex (have ${windows.size})")
-        return screenshotTrackedRegion(trackedWindow, trackedWindow.composeSurfaceBoundsOnScreen)
+        val geometry = readOnEdt {
+            ScreenshotGeometry(
+                trackedWindow.composeSurfaceBoundsOnScreen,
+                trackedWindow.window.bounds,
+            )
+        }
+        return screenshotTrackedRegion(trackedWindow, geometry.region, geometry.windowBounds)
     }
 
     /**
@@ -627,8 +637,9 @@ private constructor(
     private fun screenshotTrackedRegion(
         trackedWindow: TrackedWindow,
         region: Rectangle,
+        windowBounds: Rectangle,
     ): BufferedImage {
-        val capture = screenshotTrackedRegionCapture(trackedWindow, region)
+        val capture = screenshotTrackedRegionCapture(trackedWindow, region, windowBounds)
         if (
             capture.image.width == capture.boundsOnScreen.width &&
                 capture.image.height == capture.boundsOnScreen.height
@@ -656,6 +667,8 @@ private constructor(
                 }
             }
     }
+
+    private data class ScreenshotGeometry(val region: Rectangle, val windowBounds: Rectangle)
 
     private fun screenshotTrackedRegionCapture(
         trackedWindow: TrackedWindow,
