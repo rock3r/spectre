@@ -50,7 +50,11 @@ internal class PlatformScreenCaptureBackend(
     override fun captureRegion(region: Rectangle?): BufferedImage = regionCapture(region)
 
     override fun captureWindow(window: TrackedWindow, windowBounds: Rectangle): WindowCapture {
-        val frame = window.window as? Frame ?: return regionCapture(windowBounds)
+        val frame =
+            window.window as? Frame
+                ?: return regionCapture(
+                    visibleWindowCaptureBounds(windowBounds, visibleDesktopBounds())
+                )
         if (
             !nativeCaptureEnabled() ||
                 (!nativeCaptureDisambiguatesTitles() && hasAmbiguousNativeIdentity(frame))
