@@ -57,6 +57,7 @@ class WindowsWindowScreenshotterTest {
             listOf("--owner-pid", ProcessHandle.current().pid().toString()),
         )
         assertContains(factory.lastArgv, "--output")
+        assertContainsSequence(factory.lastArgv, listOf("--cursor", "false"))
     }
 
     @Test

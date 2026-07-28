@@ -33,7 +33,7 @@ internal constructor(
                     ownerPid = windowOwnerPid,
                     output = output,
                     fps = 30,
-                    captureCursor = true,
+                    captureCursor = false,
                 )
                 .toArgv(helperPath)
         try {
