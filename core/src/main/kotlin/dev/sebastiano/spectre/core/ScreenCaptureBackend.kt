@@ -227,7 +227,8 @@ private fun isMissingPlatformHelper(message: String): Boolean =
 private fun isMissingLinuxScreenshotPipeline(message: String): Boolean =
     (message.contains("spawning gst-launch", ignoreCase = true) &&
         message.contains("No such file or directory", ignoreCase = true)) ||
-        message.contains("gst-launch screenshot pipeline exited with status", ignoreCase = true)
+        message.contains("gst-launch screenshot pipeline exited with status", ignoreCase = true) ||
+        message.contains("gst-launch did not exit within", ignoreCase = true)
 
 private fun isTimedOutNativeScreenshot(message: String): Boolean =
     message.contains("Timed out waiting for spectre-window-capture to capture a window")

@@ -253,6 +253,7 @@ class ScreenCaptureBackendTest {
     fun `unavailable Linux native screenshot helper falls back to the full window region`() {
         listOf(
                 "Linux screenshot helper failed",
+                "spectre-wayland-helper reported an error: gst-launch did not exit within 30s",
                 "Timed out after 10000ms waiting for Linux screenshot helper",
                 "spectre-wayland-helper did not exit within 500ms after screenshot capture",
                 "spectre-wayland-helper exited with non-zero status 1 after screenshot capture",
