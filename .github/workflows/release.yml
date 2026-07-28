@@ -389,9 +389,8 @@ jobs:
               --sign "$APPLE_DEVELOPER_IDENTITY" "$app"
             codesign --verify --strict --verbose=4 "$app"
 
-            # Notarytool receives an app-root archive; the published archive keeps the outer
-            # version directory that the other platform bundles use. Staple first, then rebuild
-            # that published archive so users receive an offline-verifiable ticket.
+            # Notarytool receives an app-root archive. The published ZIP keeps its version
+            # directory so Homebrew does not strip the application bundle itself on install.
             notarization_archive="$workspace/Spectre.app.zip"
             ditto -c -k --sequesterRsrc --keepParent "$app" "$notarization_archive"
             notarization_output=$(xcrun notarytool submit "$notarization_archive" \
@@ -421,19 +420,12 @@ jobs:
             ditto -x -k "$archive" "$extracted"
             published_app="$extracted/spectre-cli-$RELEASE_VERSION/Spectre.app"
             published_launcher="$published_app/Contents/MacOS/spectre"
-            # ZIP round-trips can drop +x (local repro: mode 644 → exit 126).
-            chmod 755 "$published_launcher"
-            if [ -d "$published_app/Contents/MacOS/runtime/bin" ]; then
-              find "$published_app/Contents/MacOS/runtime/bin" -type f -exec chmod 755 {} +
-            fi
-            if [ -e "$published_app/Contents/MacOS/runtime/lib/jspawnhelper" ]; then
-              chmod 755 "$published_app/Contents/MacOS/runtime/lib/jspawnhelper"
-            fi
             test -f "$published_launcher"
             test -x "$published_launcher"
-            # Notary already accepted the app; avoid executing the launcher in CI.
-            # Host-native --help was flaky after the MacOS→Resources relocate (and macosX64
-            # cannot run on arm64 runners without Rosetta). Layout + notary + staple is enough.
+            .github/scripts/verify-macos-cli-bundle.sh "$archive" "$RELEASE_VERSION"
+            # Do not execute the launcher in CI: macosX64 cannot run on arm64 runners without
+            # Rosetta. The verifier above checks the final extracted archive with codesign,
+            # stapler, and Gatekeeper instead.
             file "$published_launcher"
             ls -la "$published_app/Contents/MacOS/"
           done
