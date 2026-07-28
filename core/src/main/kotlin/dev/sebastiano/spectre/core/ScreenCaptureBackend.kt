@@ -31,6 +31,7 @@ internal class PlatformScreenCaptureBackend(
                 osName = System.getProperty("os.name"),
                 windowBounds = windowBounds,
                 insets = frame.insets,
+                isWayland = isWaylandSession(),
             )
         },
 ) : ScreenCaptureBackend {
@@ -110,8 +111,9 @@ internal fun nativeWindowCaptureBounds(
     osName: String,
     windowBounds: Rectangle,
     insets: java.awt.Insets,
+    isWayland: Boolean,
 ): Rectangle {
-    if (!osName.contains("linux", ignoreCase = true)) return Rectangle(windowBounds)
+    if (!osName.contains("linux", ignoreCase = true) || isWayland) return Rectangle(windowBounds)
     return Rectangle(
         windowBounds.x + insets.left,
         windowBounds.y + insets.top,
@@ -119,6 +121,10 @@ internal fun nativeWindowCaptureBounds(
         windowBounds.height - insets.top - insets.bottom,
     )
 }
+
+private fun isWaylandSession(): Boolean =
+    System.getenv("XDG_SESSION_TYPE").equals("wayland", ignoreCase = true) ||
+        !System.getenv("WAYLAND_DISPLAY").isNullOrBlank()
 
 /**
  * Loads the optional recording-owned native capture bridge without linking it into core.

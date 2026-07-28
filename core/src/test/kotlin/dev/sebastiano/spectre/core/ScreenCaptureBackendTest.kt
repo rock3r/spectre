@@ -66,6 +66,7 @@ class ScreenCaptureBackendTest {
                 osName = "Linux",
                 windowBounds = windowBounds,
                 insets = Insets(24, 0, 0, 0),
+                isWayland = false,
             )
         val image = BufferedImage(600, 352, BufferedImage.TYPE_INT_ARGB)
         image.setRGB(20, 20, 0xFF112233.toInt())
@@ -74,6 +75,21 @@ class ScreenCaptureBackendTest {
 
         assertEquals(Rectangle(20, 54, 300, 176), clientBounds)
         assertEquals(0xFF112233.toInt(), crop.getRGB(0, 0))
+    }
+
+    @Test
+    fun `Wayland native images retain full-frame coordinates`() {
+        val windowBounds = Rectangle(20, 30, 300, 200)
+
+        assertEquals(
+            windowBounds,
+            nativeWindowCaptureBounds(
+                osName = "Linux",
+                windowBounds = windowBounds,
+                insets = Insets(24, 0, 0, 0),
+                isWayland = true,
+            ),
+        )
     }
 
     @Test
