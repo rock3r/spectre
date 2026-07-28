@@ -4,6 +4,7 @@ import java.awt.Rectangle
 import java.awt.image.BufferedImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class ImageSpaceBoundsTest {
 
@@ -83,5 +84,18 @@ class ImageSpaceBoundsTest {
 
         assertEquals(1, crop.width)
         assertEquals(2, crop.height)
+    }
+
+    @Test
+    fun `crop rejects an empty screen region`() {
+        val image = BufferedImage(100, 100, BufferedImage.TYPE_INT_ARGB)
+
+        assertFailsWith<IllegalArgumentException> {
+            cropImageToScreenRegion(
+                image = image,
+                screenRegion = Rectangle(/* x= */ 120, /* y= */ 120, /* w= */ 0, /* h= */ 0),
+                captureBounds = Rectangle(/* x= */ 100, /* y= */ 100, /* w= */ 100, /* h= */ 100),
+            )
+        }
     }
 }
