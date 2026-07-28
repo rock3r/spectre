@@ -18,6 +18,7 @@ kotlin {
 }
 
 dependencies {
+    implementation(projects.recording)
     implementation(libs.compose.runtime)
     implementation(libs.compose.foundation)
     // compose-ui is `api` because the public AutomatorNode surface exposes its types

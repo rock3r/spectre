@@ -42,6 +42,9 @@ private constructor(
     private val robotDriver: RobotDriver,
 ) {
 
+    private val screenCaptureBackend: ScreenCaptureBackend =
+        PlatformScreenCaptureBackend(robotDriver)
+
     /**
      * Snapshot of the currently tracked windows. Returns the live `TrackedWindow` collaborator
      * type, which is part of Spectre's internal escape hatch — typical users should call
@@ -246,7 +249,8 @@ private constructor(
      * KDoc for colour-space, focus-overlay, and per-platform TCC / Wayland gotchas before using the
      * result for pixel-level assertions.
      */
-    public fun screenshot(region: Rectangle? = null): BufferedImage = robotDriver.screenshot(region)
+    public fun screenshot(region: Rectangle? = null): BufferedImage =
+        screenCaptureBackend.captureRegion(region)
 
     /**
      * Captures the on-screen bounds of [node] as an sRGB [BufferedImage]. Delegates to
@@ -254,7 +258,7 @@ private constructor(
      * assertions.
      */
     public fun screenshot(node: AutomatorNode): BufferedImage =
-        robotDriver.screenshot(node.boundsOnScreen)
+        screenshotTrackedRegion(node.trackedWindow, node.boundsOnScreen)
 
     /**
      * Captures the Compose surface bounds of the tracked window at [windowIndex] as an sRGB
@@ -266,7 +270,7 @@ private constructor(
         val trackedWindow =
             windows.getOrNull(windowIndex)
                 ?: error("No tracked window at index $windowIndex (have ${windows.size})")
-        return robotDriver.screenshot(trackedWindow.composeSurfaceBoundsOnScreen)
+        return screenshotTrackedRegion(trackedWindow, trackedWindow.composeSurfaceBoundsOnScreen)
     }
 
     /**
@@ -324,7 +328,7 @@ private constructor(
                     },
             )
         }
-        val image = robotDriver.screenshot(pre.captureRegion)
+        val image = screenshotTrackedRegion(trackedWindow, pre.captureRegion)
         return AtomicCaptureBuilder.build(
             windowIndex = windowIndex,
             trackedWindow = trackedWindow,
@@ -519,12 +523,21 @@ private constructor(
         return runInterruptible {
             runBoundedOnWorker(budgetMs) {
                 refreshWindows()
-                val rects = composeSurfaceRects()
-                if (rects.isEmpty()) {
+                val tracked = windows
+                if (tracked.isEmpty()) {
                     null
                 } else {
-                    val hashes = IntArray(rects.size)
-                    for (i in rects.indices) hashes[i] = hashScreenRegion(rects[i])
+                    val hashes = IntArray(tracked.size)
+                    for (i in tracked.indices) {
+                        val surface = tracked[i]
+                        hashes[i] =
+                            hashImage(
+                                screenshotTrackedRegion(
+                                    surface,
+                                    surface.composeSurfaceBoundsOnScreen,
+                                )
+                            )
+                    }
                     hashes.contentHashCode()
                 }
             }
@@ -595,14 +608,23 @@ private constructor(
         }
     }
 
-    private fun composeSurfaceRects(): List<Rectangle> = readOnEdt {
-        windows.mapNotNull { window ->
-            runCatching { window.composeSurfaceBoundsOnScreen }.getOrNull()?.takeIf { !it.isEmpty }
-        }
+    private fun screenshotTrackedRegion(
+        trackedWindow: TrackedWindow,
+        region: Rectangle,
+    ): BufferedImage {
+        val image = screenCaptureBackend.captureWindow(trackedWindow)
+        val windowBounds = trackedWindow.window.bounds
+        if (image.width == region.width && image.height == region.height) return image
+        val scaleX = image.width.toDouble() / windowBounds.width.coerceAtLeast(1)
+        val scaleY = image.height.toDouble() / windowBounds.height.coerceAtLeast(1)
+        val x = ((region.x - windowBounds.x) * scaleX).toInt().coerceIn(0, image.width - 1)
+        val y = ((region.y - windowBounds.y) * scaleY).toInt().coerceIn(0, image.height - 1)
+        val width = (region.width * scaleX).toInt().coerceIn(1, image.width - x)
+        val height = (region.height * scaleY).toInt().coerceIn(1, image.height - y)
+        return image.getSubimage(x, y, width, height)
     }
 
-    private fun hashScreenRegion(region: Rectangle): Int {
-        val image = robotDriver.screenshot(region)
+    private fun hashImage(image: BufferedImage): Int {
         val raster = image.raster
         val buffer = raster.dataBuffer
         return if (buffer is DataBufferInt) {

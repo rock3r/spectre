@@ -220,14 +220,12 @@ wrapper when your UI reads Jewel locals such as `LocalComponent`.
 
 ## "Captured screenshot pixels look slightly off"
 
-First check whether the capture saw the target window itself. Spectre screenshots are
-currently screen-region captures: the requested window or node bounds are converted to
-a rectangle on the desktop, then the OS framebuffer is captured for that rectangle.
-Bring the target window to the front before capture. If another window overlaps it,
-or if the target is partly off-screen, the returned image reflects those visible
-screen pixels rather than an isolated window backing store. Native window-capture
-backends are tracked in
-[issue #147](https://github.com/rock3r/spectre/issues/147).
+`screenshot(windowIndex)`, `screenshot(node)`, `capture()`, and `waitForVisualIdle()`
+prefer the platform window-capture backend, so an occluding window does not normally alter
+their pixels. When native capture is unavailable (for example an embedded non-`Frame` host or
+an unsupported platform), Spectre falls back to a screen-region capture; then bring the target
+to the front and keep it visible, because overlapping windows and off-screen portions are part
+of the captured framebuffer.
 
 **Rule of thumb: when you're validating colours from a `screenshot()`, always think
 about the node's interaction state first.** If the node is currently focused,
