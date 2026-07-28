@@ -63,10 +63,24 @@ internal fun cropImageToScreenRegion(
     require(intersection.width > 0 && intersection.height > 0) {
         "Screenshot region does not intersect the captured image"
     }
-    return image.getSubimage(
-        intersection.x,
-        intersection.y,
-        intersection.width,
-        intersection.height,
-    )
+    return BufferedImage(intersection.width, intersection.height, BufferedImage.TYPE_INT_ARGB)
+        .also { cropped ->
+            val graphics = cropped.createGraphics()
+            try {
+                graphics.drawImage(
+                    image,
+                    0,
+                    0,
+                    cropped.width,
+                    cropped.height,
+                    intersection.x,
+                    intersection.y,
+                    intersection.x + intersection.width,
+                    intersection.y + intersection.height,
+                    null,
+                )
+            } finally {
+                graphics.dispose()
+            }
+        }
 }
