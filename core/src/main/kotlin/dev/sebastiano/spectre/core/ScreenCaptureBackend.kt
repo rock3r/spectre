@@ -26,7 +26,13 @@ internal class PlatformScreenCaptureBackend(
     private val nativeCaptureEnabled: () -> Boolean = { true },
     private val nativeCaptureDisambiguatesTitles: () -> Boolean = { false },
     private val nativeCaptureBounds: (Frame, BufferedImage, Rectangle) -> Rectangle =
-        ::defaultNativeCaptureBounds,
+        { frame, _, windowBounds ->
+            nativeWindowCaptureBounds(
+                osName = System.getProperty("os.name"),
+                windowBounds = windowBounds,
+                insets = frame.insets,
+            )
+        },
 ) : ScreenCaptureBackend {
     internal constructor(
         robotDriver: RobotDriver
@@ -93,30 +99,25 @@ internal class PlatformScreenCaptureBackend(
 
         fun defaultNativeCaptureDisambiguatesTitles(): Boolean =
             System.getProperty("os.name").contains("mac", ignoreCase = true)
-
-        fun defaultNativeCaptureBounds(
-            frame: Frame,
-            image: BufferedImage,
-            windowBounds: Rectangle,
-        ): Rectangle {
-            if (!System.getProperty("os.name").contains("linux", ignoreCase = true)) {
-                return Rectangle(windowBounds)
-            }
-            val insets = frame.insets
-            val clientBounds =
-                Rectangle(
-                    windowBounds.x + insets.left,
-                    windowBounds.y + insets.top,
-                    windowBounds.width - insets.left - insets.right,
-                    windowBounds.height - insets.top - insets.bottom,
-                )
-            return if (image.width == clientBounds.width && image.height == clientBounds.height) {
-                clientBounds
-            } else {
-                Rectangle(windowBounds)
-            }
-        }
     }
+}
+
+/**
+ * The Linux native helper captures a Frame's client area. Its pixels can be scaled to the display's
+ * device resolution, but their screen coordinates remain in AWT logical units.
+ */
+internal fun nativeWindowCaptureBounds(
+    osName: String,
+    windowBounds: Rectangle,
+    insets: java.awt.Insets,
+): Rectangle {
+    if (!osName.contains("linux", ignoreCase = true)) return Rectangle(windowBounds)
+    return Rectangle(
+        windowBounds.x + insets.left,
+        windowBounds.y + insets.top,
+        windowBounds.width - insets.left - insets.right,
+        windowBounds.height - insets.top - insets.bottom,
+    )
 }
 
 /**

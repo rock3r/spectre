@@ -4,6 +4,7 @@ package dev.sebastiano.spectre.core
 
 import dev.sebastiano.spectre.core.capture.cropImageToScreenRegion
 import java.awt.Frame
+import java.awt.Insets
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
 import kotlin.test.Test
@@ -55,6 +56,24 @@ class ScreenCaptureBackendTest {
         } finally {
             frame.dispose()
         }
+    }
+
+    @Test
+    fun `scaled Linux native client images retain client-window coordinates`() {
+        val windowBounds = Rectangle(20, 30, 300, 200)
+        val clientBounds =
+            nativeWindowCaptureBounds(
+                osName = "Linux",
+                windowBounds = windowBounds,
+                insets = Insets(24, 0, 0, 0),
+            )
+        val image = BufferedImage(600, 352, BufferedImage.TYPE_INT_ARGB)
+        image.setRGB(20, 20, 0xFF112233.toInt())
+
+        val crop = cropImageToScreenRegion(image, Rectangle(30, 64, 1, 1), clientBounds)
+
+        assertEquals(Rectangle(20, 54, 300, 176), clientBounds)
+        assertEquals(0xFF112233.toInt(), crop.getRGB(0, 0))
     }
 
     @Test
