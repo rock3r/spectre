@@ -6,9 +6,88 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 
 class WaitForVisualIdleTest {
+
+    @Test
+    fun `visual idle cancellation interrupts a cold capture wait`() = runTest {
+        assertFailsWith<TimeoutCancellationException> {
+            withTimeout(100.milliseconds) {
+                waitForVisualIdleInternal(
+                    timeout = 5.seconds,
+                    stableFrames = 1,
+                    pollInterval = 1.milliseconds,
+                    frameHash = { awaitCancellation() },
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `cold frame capture receives the remaining wait budget before steady state cap`() =
+        runTest {
+            val clock = FakeClock()
+            val budgets = mutableListOf<Long>()
+            var captures = 0
+            val hasher =
+                BoundedFrameHasher(
+                    steadyStateBudgetMs = 500,
+                    sample = { budgetMs ->
+                        budgets += budgetMs
+                        val captureDurationMs = if (captures++ == 0) 3_600L else 100L
+                        if (budgetMs < captureDurationMs) {
+                            null
+                        } else {
+                            clock.advance(captureDurationMs.milliseconds)
+                            7
+                        }
+                    },
+                )
+
+            waitForVisualIdleInternal(
+                timeout = 5.seconds,
+                stableFrames = 3,
+                pollInterval = 100.milliseconds,
+                frameHash = hasher::hash,
+                clock = clock,
+                sleep = clock::advance,
+            )
+
+            assertEquals(listOf(5_000L, 500L, 500L), budgets)
+        }
+
+    @Test
+    fun `each visual-idle wait gets an independent cold capture budget`() = runTest {
+        val firstBudgets = mutableListOf<Long>()
+        val secondBudgets = mutableListOf<Long>()
+        val firstWait =
+            BoundedFrameHasher(
+                steadyStateBudgetMs = 500,
+                sample = { budgetMs ->
+                    firstBudgets += budgetMs
+                    1
+                },
+            )
+        val secondWait =
+            BoundedFrameHasher(
+                steadyStateBudgetMs = 500,
+                sample = { budgetMs ->
+                    secondBudgets += budgetMs
+                    1
+                },
+            )
+
+        firstWait.hash(5_000)
+        firstWait.hash(4_000)
+        secondWait.hash(5_000)
+
+        assertEquals(listOf(5_000L, 500L), firstBudgets)
+        assertEquals(listOf(5_000L), secondBudgets)
+    }
 
     @Test
     fun `waitForVisualIdle returns when stableFrames consecutive hashes match`() = runTest {

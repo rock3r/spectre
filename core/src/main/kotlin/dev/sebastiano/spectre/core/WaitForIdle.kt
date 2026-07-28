@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.core
 
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration
 import kotlinx.coroutines.delay
 
@@ -104,7 +105,7 @@ internal suspend fun waitForVisualIdleInternal(
     timeout: Duration,
     stableFrames: Int,
     pollInterval: Duration,
-    frameHash: (remainingMs: Long) -> Int,
+    frameHash: suspend (remainingMs: Long) -> Int?,
     clock: MonotonicClock = SystemClock(),
     sleep: suspend (Duration) -> Unit = { delay(it) },
 ) {
@@ -114,12 +115,18 @@ internal suspend fun waitForVisualIdleInternal(
 
     while (true) {
         val hash = frameHash((deadline - clock.now()).coerceAtLeast(0))
-        if (window.isNotEmpty() && window.last() != hash) {
-            window.clear()
-        }
-        window.addLast(hash)
-        if (window.size > stableFrames) window.removeFirst()
-        val streakComplete = window.size == stableFrames && window.all { it == window.first() }
+        val streakComplete =
+            if (hash == null) {
+                window.clear()
+                false
+            } else {
+                if (window.isNotEmpty() && window.last() != hash) {
+                    window.clear()
+                }
+                window.addLast(hash)
+                if (window.size > stableFrames) window.removeFirst()
+                window.size == stableFrames && window.all { it == window.first() }
+            }
 
         val nowAfterSample = clock.now()
         if (streakComplete && nowAfterSample <= deadline) return
@@ -130,6 +137,30 @@ internal suspend fun waitForVisualIdleInternal(
             )
         }
         sleep(pollInterval)
+    }
+}
+
+/**
+ * Applies the visual-idle capture budget without treating a cold native capture like a changed
+ * frame. The first successful capture is allowed to use the caller's remaining timeout, because
+ * platform capture paths can have a one-off startup cost. Once one sample has completed, every
+ * later sample is capped at [steadyStateBudgetMs] so a stuck capture still cannot overrun the
+ * public wait timeout.
+ */
+internal class BoundedFrameHasher(
+    private val steadyStateBudgetMs: Long,
+    private val sample: suspend (budgetMs: Long) -> Int?,
+) {
+    private val hasSuccessfulSample = AtomicBoolean(false)
+
+    suspend fun hash(remainingMs: Long): Int? {
+        val budgetMs =
+            if (hasSuccessfulSample.get()) {
+                remainingMs.coerceAtMost(steadyStateBudgetMs)
+            } else {
+                remainingMs
+            }
+        return sample(budgetMs)?.also { hasSuccessfulSample.set(true) }
     }
 }
 

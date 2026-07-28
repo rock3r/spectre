@@ -436,6 +436,9 @@ final class Recorder {
     private var pipelineError: Error?
     private var framesSeen: Int = 0
     private var framesAppended: Int = 0
+    // Wakes startup after either its first successfully appended frame or a terminal pipeline
+    // error. The waiter inspects the protected state to distinguish the two outcomes.
+    private let firstRecordingFrameResult = DispatchSemaphore(value: 0)
     private var framesDropped: Int = 0
     private var streamDelegate: StreamLogger?
     private var frameOutput: FrameOutput?
@@ -746,6 +749,10 @@ final class Recorder {
         try await stream.startCapture()
         self.stream = stream
 
+        if args.mode == .recording {
+            try await waitForFirstRecordingFrame()
+        }
+
         // Signal the JVM-side recorder that capture is fully running. The JVM blocks on
         // reading this line from stdout in `start()` so it can return a recording handle
         // synchronously rather than racing against the helper's window-discovery + SCK init.
@@ -819,9 +826,13 @@ final class Recorder {
         }
         if adaptor.append(imageBuffer, withPresentationTime: presentationTime) {
             framesAppended += 1
+            if framesAppended == 1 {
+                firstRecordingFrameResult.signal()
+            }
         } else {
             framesDropped += 1
             if pipelineError == nil { pipelineError = writer.error }
+            firstRecordingFrameResult.signal()
         }
     }
 
@@ -874,6 +885,7 @@ final class Recorder {
         if pipelineError == nil { pipelineError = error }
         lock.unlock()
         stopRequested.signal()
+        firstRecordingFrameResult.signal()
     }
 
     /// Installs a SIGTERM handler that wakes [waitForStop] via [stopRequested]. Called from
@@ -947,6 +959,34 @@ final class Recorder {
         let didAppendFrame = framesAppended > 0
         lock.unlock()
         return didAppendFrame
+    }
+
+    private func waitForFirstRecordingFrame() async throws {
+        let completed = await withCheckedContinuation {
+            (continuation: CheckedContinuation<Bool, Never>) in
+            DispatchQueue.global(qos: .utility).async { [firstRecordingFrameResult] in
+                continuation.resume(
+                    returning: firstRecordingFrameResult.wait(timeout: .now() + 10) == .success)
+            }
+        }
+        if !completed {
+            throw CLIError(code: 5, message: "timed out waiting for first recording frame")
+        }
+        if let pipelineError = currentPipelineError() {
+            throw CLIError(
+                code: 5,
+                message: "capture pipeline failed before first recording frame: \(pipelineError.localizedDescription)")
+        }
+        if !didAppendFrame() {
+            throw CLIError(code: 5, message: "capture stopped before appending the first recording frame")
+        }
+    }
+
+    private func currentPipelineError() -> Error? {
+        lock.lock()
+        let current = pipelineError
+        lock.unlock()
+        return current
     }
 
     private func finalize() async throws {

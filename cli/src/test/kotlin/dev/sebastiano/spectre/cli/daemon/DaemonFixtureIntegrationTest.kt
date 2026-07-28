@@ -277,6 +277,7 @@ class DaemonFixtureIntegrationTest {
                     )
                 assertEquals(0, start.exitCode, start.output + start.errorOutput)
                 assertTrue(Files.exists(output) || start.output.contains("mp4"), start.output)
+                waitForNonEmptyRecording(output)
 
                 // Kill the target mid-record; daemon + SCK helper must keep running.
                 fixture.close()
@@ -323,6 +324,17 @@ private fun deleteTemporaryDaemonFixtureSocketPath(socketPath: Path) {
 private fun deleteDaemonSocketAndParent(socketPath: Path) {
     Files.deleteIfExists(socketPath)
     Files.deleteIfExists(socketPath.parent)
+}
+
+private fun waitForNonEmptyRecording(output: Path) {
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(RECORD_START_TIMEOUT_SECONDS)
+    while (System.nanoTime() < deadline) {
+        if (Files.isRegularFile(output) && Files.size(output) > 0) return
+        Thread.sleep(RECORD_START_POLL_MILLIS)
+    }
+    error(
+        "recording did not write its first frame within $RECORD_START_TIMEOUT_SECONDS seconds: $output"
+    )
 }
 
 private fun spawnComposeFixture(): FixtureProcess {
@@ -565,6 +577,8 @@ private const val FIXTURE_STOP_TIMEOUT_SECONDS: Long = 2
 private const val DRAINER_JOIN_TIMEOUT_MILLIS: Long = 500
 private const val CLI_PROCESS_TIMEOUT_SECONDS: Long = 30
 private const val MCP_CONNECTION_TIMEOUT_MILLIS: Long = 10_000
+private const val RECORD_START_TIMEOUT_SECONDS: Long = 10
+private const val RECORD_START_POLL_MILLIS: Long = 100
 private const val RECORD_AFTER_KILL_SETTLE_MILLIS: Long = 1_500
 private const val MIN_PNG_BYTES: Int = 100
 private val PNG_MAGIC: ByteArray =

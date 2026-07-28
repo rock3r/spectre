@@ -24,6 +24,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
+import kotlinx.coroutines.runInterruptible
 
 /**
  * Single user-facing entry point for driving live Compose Desktop UIs: tracked-window discovery,
@@ -416,11 +417,16 @@ private constructor(
         pollInterval: Duration = DEFAULT_POLL_INTERVAL,
     ) {
         rejectEdtCaller("waitForVisualIdle")
+        val frameHasher =
+            BoundedFrameHasher(
+                steadyStateBudgetMs = FRAME_HASH_BUDGET_MS,
+                sample = ::sampleFrameHash,
+            )
         waitForVisualIdleInternal(
             timeout = timeout,
             stableFrames = stableFrames,
             pollInterval = pollInterval,
-            frameHash = ::computeFrameHash,
+            frameHash = frameHasher::hash,
         )
     }
 
@@ -501,32 +507,28 @@ private constructor(
         }
     }
 
-    private fun computeFrameHash(remainingMs: Long): Int {
-        // Hash each tracked Compose surface independently, then combine the per-surface hashes.
-        // - Sampling the full virtual desktop would let unrelated pixel churn (notifications,
-        //   other apps, the cursor outside the app) break the stable-frame streak.
-        // - A single union rectangle would include the gap between disjoint surfaces (main
-        //   window + a popup floating elsewhere), and gap-pixel churn would still break the
-        //   streak. Per-surface hashes ignore the gap entirely.
-        // - When no surfaces are tracked, or the bounded sampling budget elapses, we
-        //   deliberately return a value that differs every call so the streak never completes
-        //   — waitForVisualIdle keeps waiting (or times out) rather than declaring success
-        //   against an unsampleable UI.
-        // The sampling itself runs on a worker thread bounded by FRAME_HASH_BUDGET_MS so a
-        // hung EDT or stuck Robot.createScreenCapture cannot out-block the wait loop's
-        // overall timeout enforcement.
-        val budget = remainingMs.coerceAtMost(FRAME_HASH_BUDGET_MS).coerceAtLeast(0)
-        return runBoundedOnWorker(budget) {
-            refreshWindows()
-            val rects = composeSurfaceRects()
-            if (rects.isEmpty()) {
-                System.nanoTime().toInt()
-            } else {
-                val hashes = IntArray(rects.size)
-                for (i in rects.indices) hashes[i] = hashScreenRegion(rects[i])
-                hashes.contentHashCode()
+    private suspend fun sampleFrameHash(budgetMs: Long): Int? {
+        // Hash tracked Compose surfaces independently: a virtual-desktop capture would let
+        // unrelated windows, notifications, or the cursor outside the app reset the streak.
+        // Returning null for no surfaces or a budget expiry makes the per-wait hasher produce a
+        // changing value, so an unsampleable UI cannot be reported as visually idle.
+        // Native capture can take seconds on its first use, so BoundedFrameHasher gives the cold
+        // sample the wait's remaining budget. After the first completed sample, this worker is
+        // capped at FRAME_HASH_BUDGET_MS: an unexpectedly hung EDT or capture API still cannot
+        // out-block waitForVisualIdle's overall deadline.
+        return runInterruptible {
+            runBoundedOnWorker(budgetMs) {
+                refreshWindows()
+                val rects = composeSurfaceRects()
+                if (rects.isEmpty()) {
+                    null
+                } else {
+                    val hashes = IntArray(rects.size)
+                    for (i in rects.indices) hashes[i] = hashScreenRegion(rects[i])
+                    hashes.contentHashCode()
+                }
             }
-        } ?: System.nanoTime().toInt()
+        }
     }
 
     private fun <T> runBoundedOnWorker(budgetMs: Long, block: () -> T): T? {
@@ -568,23 +570,28 @@ private constructor(
                 )
                 .apply { isDaemon = true }
         thread.start()
-        return if (latch.await(budgetMs, TimeUnit.MILLISECONDS)) {
-            requireNotNull(resultRef.get()) {
-                    "spectre-bounded-worker counted down the latch without publishing a Result"
+        try {
+            return if (latch.await(budgetMs, TimeUnit.MILLISECONDS)) {
+                requireNotNull(resultRef.get()) {
+                        "spectre-bounded-worker counted down the latch without publishing a Result"
+                    }
+                    .getOrThrow()
+            } else {
+                thread.interrupt()
+                // Brief grace window to let cooperative blockers (invokeAndWait) honour the
+                // interrupt and exit cleanly before we abandon the thread. Skipped when the
+                // caller's remaining budget was already exhausted (budgetMs == 0): in that case
+                // even a 50ms grace would push the public wait API past the caller's timeout.
+                // Native non-interruptible calls still leak, but the daemon flag keeps a stuck
+                // thread from holding the JVM open.
+                if (budgetMs > 0) {
+                    latch.await(WORKER_INTERRUPT_GRACE_MS, TimeUnit.MILLISECONDS)
                 }
-                .getOrThrow()
-        } else {
-            thread.interrupt()
-            // Brief grace window to let cooperative blockers (invokeAndWait) honour the
-            // interrupt and exit cleanly before we abandon the thread. Skipped when the
-            // caller's remaining budget was already exhausted (budgetMs == 0): in that case
-            // even a 50ms grace would push the public wait API past the caller's timeout.
-            // Native non-interruptible calls still leak, but the daemon flag keeps a stuck
-            // thread from holding the JVM open.
-            if (budgetMs > 0) {
-                latch.await(WORKER_INTERRUPT_GRACE_MS, TimeUnit.MILLISECONDS)
+                null
             }
-            null
+        } catch (e: InterruptedException) {
+            thread.interrupt()
+            throw e
         }
     }
 

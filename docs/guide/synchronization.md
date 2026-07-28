@@ -159,10 +159,11 @@ A few details worth knowing:
   `pollInterval` only kicking in when the capture is faster than that floor. The
   default `16.milliseconds` is a 60Hz *target*, not a guarantee of 60 polls per
   second.
-- **Bounded sampling budget.** Each frame hash runs on a worker thread capped at 500ms.
-  If the capture or hash exceeds that, `waitForVisualIdle` returns a value that differs
-  every call, so the streak never completes and the wait times out rather than silently
-  succeeding against an unsampleable UI.
+- **Bounded sampling budget.** The first completed frame hash may use the wait's remaining
+  timeout: native capture paths can have a one-off cold-start cost. Later frame hashes run on
+  a worker thread capped at 500ms. If a steady-state capture or hash exceeds that cap,
+  `waitForVisualIdle` returns a value that differs every call, so the streak never completes
+  and the wait times out rather than silently succeeding against an unsampleable UI.
 - **Pixel hashing isn't free.** Multiple large surfaces, full-screen windows on a 4K /
   Retina monitor, or running under a software-rendered virtual GPU all push the
   per-poll cost up. If `waitForVisualIdle` is timing out or burning more CPU than you

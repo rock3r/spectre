@@ -545,11 +545,12 @@ private const val HELPER_EXIT_PIPELINE: Int = 5
 private const val DEFAULT_DISCOVERY_TIMEOUT_MS: Int = 2000
 
 // Upper bound on how long start() will wait for the helper to either signal READY on stdout
-// or exit with one of the documented fast-fail codes. Must be greater than the helper's own
-// [DEFAULT_DISCOVERY_TIMEOUT_MS] plus a margin for SCK init, otherwise start() can return
-// before the helper has finished window discovery and the user would only learn of a
-// window-not-found failure when stop() throws.
-private const val READY_WAIT_MILLIS: Long = (DEFAULT_DISCOVERY_TIMEOUT_MS + 1500).toLong()
+// or exit with one of the documented fast-fail codes. It must cover the helper's complete
+// startup path: up to [DEFAULT_DISCOVERY_TIMEOUT_MS] for window discovery, up to ten seconds
+// for the first frame to be appended, and a small allowance for process/SCK startup overhead.
+// Discovery still reports a missing window promptly; this only prevents start() from
+// force-killing a healthy helper while its stream comes online.
+private const val READY_WAIT_MILLIS: Long = 15_000
 
 // Single-line marker the helper writes to stdout once SCK + AVAssetWriter are running.
 // start() blocks until either this line appears (success) or the helper exits (failure
