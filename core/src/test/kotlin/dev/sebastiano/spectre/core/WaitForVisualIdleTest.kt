@@ -46,7 +46,6 @@ class WaitForVisualIdleTest {
                             7
                         }
                     },
-                    unsampledHash = { Int.MIN_VALUE },
                 )
 
             waitForVisualIdleInternal(
@@ -72,7 +71,6 @@ class WaitForVisualIdleTest {
                     firstBudgets += budgetMs
                     1
                 },
-                unsampledHash = { Int.MIN_VALUE },
             )
         val secondWait =
             BoundedFrameHasher(
@@ -81,7 +79,6 @@ class WaitForVisualIdleTest {
                     secondBudgets += budgetMs
                     1
                 },
-                unsampledHash = { Int.MIN_VALUE },
             )
 
         firstWait.hash(5_000)

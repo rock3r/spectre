@@ -421,7 +421,6 @@ private constructor(
             BoundedFrameHasher(
                 steadyStateBudgetMs = FRAME_HASH_BUDGET_MS,
                 sample = ::sampleFrameHash,
-                unsampledHash = { System.nanoTime().toInt() },
             )
         waitForVisualIdleInternal(
             timeout = timeout,

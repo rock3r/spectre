@@ -105,7 +105,7 @@ internal suspend fun waitForVisualIdleInternal(
     timeout: Duration,
     stableFrames: Int,
     pollInterval: Duration,
-    frameHash: suspend (remainingMs: Long) -> Int,
+    frameHash: suspend (remainingMs: Long) -> Int?,
     clock: MonotonicClock = SystemClock(),
     sleep: suspend (Duration) -> Unit = { delay(it) },
 ) {
@@ -115,12 +115,18 @@ internal suspend fun waitForVisualIdleInternal(
 
     while (true) {
         val hash = frameHash((deadline - clock.now()).coerceAtLeast(0))
-        if (window.isNotEmpty() && window.last() != hash) {
-            window.clear()
-        }
-        window.addLast(hash)
-        if (window.size > stableFrames) window.removeFirst()
-        val streakComplete = window.size == stableFrames && window.all { it == window.first() }
+        val streakComplete =
+            if (hash == null) {
+                window.clear()
+                false
+            } else {
+                if (window.isNotEmpty() && window.last() != hash) {
+                    window.clear()
+                }
+                window.addLast(hash)
+                if (window.size > stableFrames) window.removeFirst()
+                window.size == stableFrames && window.all { it == window.first() }
+            }
 
         val nowAfterSample = clock.now()
         if (streakComplete && nowAfterSample <= deadline) return
@@ -144,18 +150,17 @@ internal suspend fun waitForVisualIdleInternal(
 internal class BoundedFrameHasher(
     private val steadyStateBudgetMs: Long,
     private val sample: suspend (budgetMs: Long) -> Int?,
-    private val unsampledHash: () -> Int,
 ) {
     private val hasSuccessfulSample = AtomicBoolean(false)
 
-    suspend fun hash(remainingMs: Long): Int {
+    suspend fun hash(remainingMs: Long): Int? {
         val budgetMs =
             if (hasSuccessfulSample.get()) {
                 remainingMs.coerceAtMost(steadyStateBudgetMs)
             } else {
                 remainingMs
             }
-        return sample(budgetMs)?.also { hasSuccessfulSample.set(true) } ?: unsampledHash()
+        return sample(budgetMs)?.also { hasSuccessfulSample.set(true) }
     }
 }
 
