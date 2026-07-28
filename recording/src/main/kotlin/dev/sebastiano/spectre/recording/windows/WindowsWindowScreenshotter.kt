@@ -87,9 +87,7 @@ internal constructor(
     }
 
     private companion object {
-        // The helper itself waits up to five seconds for its first WGC frame. Leave time for
-        // .NET/WGC startup and PNG encoding before declaring the outer process stuck.
-        private const val SCREENSHOT_TIMEOUT_SECONDS: Long = 8
+        private const val SCREENSHOT_TIMEOUT_SECONDS: Long = 5
         private const val FORCE_KILL_WAIT_SECONDS: Long = 1
     }
 }
