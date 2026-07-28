@@ -7,6 +7,7 @@ import java.awt.Frame
 import java.awt.Insets
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
+import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -89,6 +90,16 @@ class ScreenCaptureBackendTest {
                 insets = Insets(24, 0, 0, 0),
                 isWayland = true,
             ),
+        )
+    }
+
+    @Test
+    fun `Wayland detection recognizes a runtime-directory socket`() {
+        assertTrue(
+            isWaylandSession(
+                getenv = { if (it == "XDG_RUNTIME_DIR") "/run/user/1000" else null },
+                runtimeDirHasWaylandSocket = { it == Path.of("/run/user/1000") },
+            )
         )
     }
 

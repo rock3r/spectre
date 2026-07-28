@@ -6,6 +6,8 @@ import java.awt.Frame
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
 import java.lang.reflect.InvocationTargetException
+import java.nio.file.Files
+import java.nio.file.Path
 
 /** Internal capture seam: native window pixels when available, Robot regions otherwise. */
 internal interface ScreenCaptureBackend {
@@ -122,9 +124,20 @@ internal fun nativeWindowCaptureBounds(
     )
 }
 
-private fun isWaylandSession(): Boolean =
-    System.getenv("XDG_SESSION_TYPE").equals("wayland", ignoreCase = true) ||
-        !System.getenv("WAYLAND_DISPLAY").isNullOrBlank()
+internal fun isWaylandSession(
+    getenv: (String) -> String? = System::getenv,
+    runtimeDirHasWaylandSocket: (Path) -> Boolean = ::runtimeDirHasWaylandSocket,
+): Boolean {
+    if (getenv("XDG_SESSION_TYPE").equals("wayland", ignoreCase = true)) return true
+    if (!getenv("WAYLAND_DISPLAY").isNullOrBlank()) return true
+    return getenv("XDG_RUNTIME_DIR")?.let(Path::of)?.let(runtimeDirHasWaylandSocket) == true
+}
+
+private fun runtimeDirHasWaylandSocket(runtimeDir: Path): Boolean =
+    Files.isDirectory(runtimeDir) &&
+        Files.list(runtimeDir).use { entries ->
+            entries.anyMatch { it.fileName.toString().startsWith("wayland-") }
+        }
 
 /**
  * Loads the optional recording-owned native capture bridge without linking it into core.
