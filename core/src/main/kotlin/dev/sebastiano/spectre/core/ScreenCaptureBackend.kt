@@ -228,7 +228,9 @@ private fun isUndiscoverableNativeWindow(message: String): Boolean =
 private fun isUnavailableLinuxNativeScreenshot(message: String): Boolean =
     message == "Linux screenshot helper failed" ||
         (message.startsWith("Timed out after") &&
-            message.contains("waiting for Linux screenshot helper"))
+            message.contains("waiting for Linux screenshot helper")) ||
+        message.startsWith("spectre-wayland-helper did not exit within") ||
+        message.startsWith("spectre-wayland-helper exited with non-zero status")
 
 private fun isUnavailableMacosNativeScreenshot(message: String): Boolean =
     message == "spectre-screencapture screenshot failed" ||

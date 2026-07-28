@@ -243,6 +243,8 @@ class ScreenCaptureBackendTest {
         listOf(
                 "Linux screenshot helper failed",
                 "Timed out after 10000ms waiting for Linux screenshot helper",
+                "spectre-wayland-helper did not exit within 500ms after screenshot capture",
+                "spectre-wayland-helper exited with non-zero status 1 after screenshot capture",
             )
             .forEach { message ->
                 assertTrue(shouldFallBackToRegionCapture(IllegalStateException(message)), message)
