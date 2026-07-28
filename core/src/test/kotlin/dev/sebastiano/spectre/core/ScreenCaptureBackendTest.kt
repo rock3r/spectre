@@ -267,6 +267,10 @@ class ScreenCaptureBackendTest {
         listOf(
                 "spectre-screencapture screenshot failed",
                 "failed to start spectre-screencapture for TCC preflight: error=13, Permission denied",
+                "spectre-screencapture preflight timed out after 15s",
+                "spectre-screencapture preflight produced no JSON (exit=1)",
+                "spectre-screencapture preflight returned unparseable JSON: not-json",
+                "spectre-screencapture preflight failed with exit=1: helper crashed",
                 "Screen Recording: DENIED\nBinary needing grant: /tmp/spectre-screencapture",
             )
             .forEach { message ->

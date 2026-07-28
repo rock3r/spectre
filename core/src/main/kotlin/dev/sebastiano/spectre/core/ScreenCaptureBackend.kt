@@ -240,6 +240,7 @@ private fun isUnavailableMacosNativeScreenshot(message: String): Boolean =
     message == "spectre-screencapture screenshot failed" ||
         message.startsWith("spectre-screencapture's screenshot pipeline failed") ||
         message.startsWith("failed to start spectre-screencapture for TCC preflight:") ||
+        message.startsWith("spectre-screencapture preflight ") ||
         message.startsWith("Screen Recording: DENIED")
 
 private fun isUnavailableWindowsNativeScreenshot(message: String): Boolean =
