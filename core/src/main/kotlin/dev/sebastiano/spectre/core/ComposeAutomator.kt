@@ -9,6 +9,7 @@ import dev.sebastiano.spectre.core.capture.AtomicCapture
 import dev.sebastiano.spectre.core.capture.AtomicCaptureBuilder
 import dev.sebastiano.spectre.core.capture.CaptureNodeSnapshot
 import dev.sebastiano.spectre.core.capture.cropImageToScreenRegion
+import dev.sebastiano.spectre.core.capture.normalizeImageToScreenBounds
 import dev.sebastiano.spectre.core.perf.ExperimentalSpectreApi
 import dev.sebastiano.spectre.core.perf.RecompositionMonitor
 import java.awt.Rectangle
@@ -261,9 +262,18 @@ private constructor(
      */
     public fun screenshot(node: AutomatorNode): BufferedImage {
         val geometry = readOnEdt {
-            ScreenshotGeometry(node.boundsOnScreen, node.trackedWindow.window.bounds)
+            ScreenshotGeometry(
+                node.boundsOnScreen,
+                node.trackedWindow.window.bounds,
+                frameInsets(node.trackedWindow.window),
+            )
         }
-        return screenshotTrackedRegion(node.trackedWindow, geometry.region, geometry.windowBounds)
+        return screenshotTrackedRegion(
+            node.trackedWindow,
+            geometry.region,
+            geometry.windowBounds,
+            geometry.frameInsets,
+        )
     }
 
     /**
@@ -283,9 +293,15 @@ private constructor(
             ScreenshotGeometry(
                 trackedWindow.composeSurfaceBoundsOnScreen,
                 trackedWindow.window.bounds,
+                frameInsets(trackedWindow.window),
             )
         }
-        return screenshotTrackedRegion(trackedWindow, geometry.region, geometry.windowBounds)
+        return screenshotTrackedRegion(
+            trackedWindow,
+            geometry.region,
+            geometry.windowBounds,
+            geometry.frameInsets,
+        )
     }
 
     /**
@@ -635,53 +651,42 @@ private constructor(
         trackedWindow: TrackedWindow,
         region: Rectangle,
         windowBounds: Rectangle,
+        frameInsets: java.awt.Insets,
     ): BufferedImage {
-        val capture = screenshotTrackedRegionCapture(trackedWindow, region, windowBounds)
-        if (
-            capture.image.width == capture.boundsOnScreen.width &&
-                capture.image.height == capture.boundsOnScreen.height
-        ) {
-            return capture.image
-        }
-        return BufferedImage(
-                capture.boundsOnScreen.width,
-                capture.boundsOnScreen.height,
-                BufferedImage.TYPE_INT_ARGB,
-            )
-            .also { logicalImage ->
-                val graphics = logicalImage.createGraphics()
-                try {
-                    graphics.drawImage(
-                        capture.image,
-                        0,
-                        0,
-                        logicalImage.width,
-                        logicalImage.height,
-                        null,
-                    )
-                } finally {
-                    graphics.dispose()
-                }
-            }
+        return screenshotTrackedRegionCapture(trackedWindow, region, windowBounds, frameInsets)
+            .image
     }
 
-    private data class ScreenshotGeometry(val region: Rectangle, val windowBounds: Rectangle)
+    private data class ScreenshotGeometry(
+        val region: Rectangle,
+        val windowBounds: Rectangle,
+        val frameInsets: java.awt.Insets,
+    )
 
     private fun screenshotTrackedRegionCapture(
         trackedWindow: TrackedWindow,
         region: Rectangle,
         windowBounds: Rectangle = trackedWindow.window.bounds,
+        frameInsets: java.awt.Insets = frameInsets(trackedWindow.window),
     ): WindowCapture {
-        val capture = screenCaptureBackend.captureWindow(trackedWindow, windowBounds)
+        val capture = screenCaptureBackend.captureWindow(trackedWindow, windowBounds, frameInsets)
         if (capture.boundsOnScreen == region) {
             return capture
         }
         val visibleRegion = region.intersection(capture.boundsOnScreen)
         return WindowCapture(
-            image = cropImageToScreenRegion(capture.image, visibleRegion, capture.boundsOnScreen),
+            image =
+                cropImageToScreenRegion(
+                    normalizeImageToScreenBounds(capture.image, capture.boundsOnScreen),
+                    visibleRegion,
+                    capture.boundsOnScreen,
+                ),
             boundsOnScreen = visibleRegion,
         )
     }
+
+    private fun frameInsets(window: java.awt.Window): java.awt.Insets =
+        (window as? java.awt.Frame)?.insets ?: java.awt.Insets(0, 0, 0, 0)
 
     public suspend fun waitForNode(
         tag: String? = null,

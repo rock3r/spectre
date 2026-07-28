@@ -45,7 +45,7 @@ class ScreenCaptureBackendTest {
             PlatformScreenCaptureBackend(
                 regionCapture = { error("should not fall back") },
                 nativeCapture = { image },
-                nativeCaptureBounds = { _, _, _ -> clientBounds },
+                nativeCaptureBounds = { _, _, _, _ -> clientBounds },
             )
         try {
             val capture = backend.captureWindow(tracked(frame), Rectangle(frame.bounds))

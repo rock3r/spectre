@@ -3,6 +3,7 @@
 package dev.sebastiano.spectre.core
 
 import java.awt.Frame
+import java.awt.Insets
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
 import java.io.IOException
@@ -17,6 +18,7 @@ internal interface ScreenCaptureBackend {
     fun captureWindow(
         window: TrackedWindow,
         windowBounds: Rectangle = Rectangle(window.window.bounds),
+        frameInsets: Insets = Insets(0, 0, 0, 0),
     ): WindowCapture
 }
 
@@ -28,12 +30,12 @@ internal class PlatformScreenCaptureBackend(
     private val nativeCapture: (Frame) -> BufferedImage,
     private val nativeCaptureEnabled: () -> Boolean = { true },
     private val nativeCaptureDisambiguatesTitles: () -> Boolean = { false },
-    private val nativeCaptureBounds: (Frame, BufferedImage, Rectangle) -> Rectangle =
-        { frame, _, windowBounds ->
+    private val nativeCaptureBounds: (Frame, BufferedImage, Rectangle, Insets) -> Rectangle =
+        { _, _, windowBounds, frameInsets ->
             nativeWindowCaptureBounds(
                 osName = System.getProperty("os.name"),
                 windowBounds = windowBounds,
-                insets = frame.insets,
+                insets = frameInsets,
                 isWayland = isWaylandSession(),
             )
         },
@@ -50,7 +52,11 @@ internal class PlatformScreenCaptureBackend(
 
     override fun captureRegion(region: Rectangle?): BufferedImage = regionCapture(region)
 
-    override fun captureWindow(window: TrackedWindow, windowBounds: Rectangle): WindowCapture {
+    override fun captureWindow(
+        window: TrackedWindow,
+        windowBounds: Rectangle,
+        frameInsets: Insets,
+    ): WindowCapture {
         val frame =
             window.window as? Frame
                 ?: return regionCapture(
@@ -64,7 +70,7 @@ internal class PlatformScreenCaptureBackend(
         }
         return try {
             val image = normalizeNativeImage(nativeCapture(frame))
-            WindowCapture(image, nativeCaptureBounds(frame, image, windowBounds))
+            WindowCapture(image, nativeCaptureBounds(frame, image, windowBounds, frameInsets))
         } catch (e: IllegalStateException) {
             fallBackToRegionCapture(windowBounds, e)
         } catch (e: UnsupportedOperationException) {

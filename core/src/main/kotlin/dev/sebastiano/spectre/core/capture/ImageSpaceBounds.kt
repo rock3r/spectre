@@ -84,3 +84,22 @@ internal fun cropImageToScreenRegion(
             }
         }
 }
+
+/**
+ * Converts a native device-pixel capture into one pixel per logical screen unit before cropping.
+ */
+internal fun normalizeImageToScreenBounds(
+    image: BufferedImage,
+    boundsOnScreen: Rectangle,
+): BufferedImage {
+    if (image.width == boundsOnScreen.width && image.height == boundsOnScreen.height) return image
+    return BufferedImage(boundsOnScreen.width, boundsOnScreen.height, BufferedImage.TYPE_INT_ARGB)
+        .also { normalized ->
+            val graphics = normalized.createGraphics()
+            try {
+                graphics.drawImage(image, 0, 0, normalized.width, normalized.height, null)
+            } finally {
+                graphics.dispose()
+            }
+        }
+}

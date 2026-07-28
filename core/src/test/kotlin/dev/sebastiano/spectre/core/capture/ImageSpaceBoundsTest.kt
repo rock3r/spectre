@@ -87,6 +87,24 @@ class ImageSpaceBoundsTest {
     }
 
     @Test
+    fun `normalizing before cropping preserves fractional DPI logical geometry`() {
+        val image = BufferedImage(150, 150, BufferedImage.TYPE_INT_ARGB)
+        image.setRGB(2, 0, 0xFF112233.toInt())
+
+        val logical = normalizeImageToScreenBounds(image, Rectangle(100, 200, 100, 100))
+        val crop =
+            cropImageToScreenRegion(
+                logical,
+                Rectangle(101, 200, 1, 1),
+                Rectangle(100, 200, 100, 100),
+            )
+
+        assertEquals(1, crop.width)
+        assertEquals(1, crop.height)
+        assertEquals(0xFF112233.toInt(), crop.getRGB(0, 0))
+    }
+
+    @Test
     fun `crop rejects an empty screen region`() {
         val image = BufferedImage(100, 100, BufferedImage.TYPE_INT_ARGB)
 
