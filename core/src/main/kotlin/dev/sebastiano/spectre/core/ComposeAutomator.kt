@@ -523,24 +523,27 @@ private constructor(
         return runInterruptible {
             runBoundedOnWorker(budgetMs) {
                 refreshWindows()
-                val tracked = windows
-                if (tracked.isEmpty()) {
+                val surfaces = trackedComposeSurfaces()
+                if (surfaces.isEmpty()) {
                     null
                 } else {
-                    val hashes = IntArray(tracked.size)
-                    for (i in tracked.indices) {
-                        val surface = tracked[i]
-                        hashes[i] =
-                            hashImage(
-                                screenshotTrackedRegion(
-                                    surface,
-                                    surface.composeSurfaceBoundsOnScreen,
-                                )
-                            )
+                    val hashes = IntArray(surfaces.size)
+                    for (i in surfaces.indices) {
+                        val (window, region) = surfaces[i]
+                        hashes[i] = hashImage(screenshotTrackedRegion(window, region))
                     }
                     hashes.contentHashCode()
                 }
             }
+        }
+    }
+
+    private fun trackedComposeSurfaces(): List<Pair<TrackedWindow, Rectangle>> = readOnEdt {
+        windows.mapNotNull { window ->
+            runCatching { window.composeSurfaceBoundsOnScreen }
+                .getOrNull()
+                ?.takeIf { !it.isEmpty }
+                ?.let { window to it }
         }
     }
 

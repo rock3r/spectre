@@ -26,18 +26,37 @@ internal class PlatformScreenCaptureBackend(
     override fun captureRegion(region: Rectangle?): BufferedImage = regionCapture(region)
 
     override fun captureWindow(window: TrackedWindow): BufferedImage {
-        val frame =
-            window.window as? Frame ?: return captureRegion(window.composeSurfaceBoundsOnScreen)
+        val frame = window.window as? Frame ?: return captureRegion(window.window.bounds)
         return try {
             nativeCapture(frame)
         } catch (e: IllegalStateException) {
-            if (e.message?.contains(" is unavailable") == true) {
-                captureRegion(window.composeSurfaceBoundsOnScreen)
-            } else {
-                throw e
-            }
+            fallBackToRegionCapture(window, e)
+        } catch (e: UnsupportedOperationException) {
+            fallBackToRegionCapture(window, e)
+        } catch (e: IllegalArgumentException) {
+            fallBackToRegionCapture(window, e)
         }
     }
+
+    private fun fallBackToRegionCapture(
+        window: TrackedWindow,
+        error: RuntimeException,
+    ): BufferedImage {
+        if (!shouldFallBackToRegionCapture(error)) throw error
+        // Keep the fallback image in the same coordinate system as a native window image.
+        // Compose content can be inset from a decorated Frame, so capturing only the surface
+        // would make callers crop the title-bar offset a second time.
+        return captureRegion(window.window.bounds)
+    }
+
+    private fun shouldFallBackToRegionCapture(error: RuntimeException): Boolean =
+        error is UnsupportedOperationException ||
+            (error is IllegalStateException &&
+                error.message?.contains(" is unavailable") == true) ||
+            (error is IllegalArgumentException &&
+                error.message?.startsWith(
+                    "AutoScreenshotter.captureWindow requires a non-blank window title"
+                ) == true)
 
     private companion object {
         fun defaultNativeCapture(): (Frame) -> BufferedImage {
