@@ -68,10 +68,10 @@ internal class PlatformScreenCaptureBackend(
 
     private fun hasAmbiguousNativeIdentity(frame: Frame): Boolean {
         val title = frame.title
-        return title.isNullOrBlank() ||
-            Frame.getFrames().any { other ->
-                other !== frame && other.isDisplayable && other.title == title
-            }
+        if (title.isNullOrBlank()) return false
+        return Frame.getFrames().any { other ->
+            other !== frame && other.isDisplayable && other.title == title
+        }
     }
 
     private companion object {

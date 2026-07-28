@@ -97,8 +97,8 @@ class ScreenCaptureBackendTest {
     @Test
     fun `duplicate window titles use the region fallback`() {
         assumeLiveAwtAvailable()
-        val first = Frame("same title").apply { setBounds(0, 0, 100, 100) }
-        val second = Frame("same title").apply { setBounds(120, 0, 100, 100) }
+        val first = Frame("same title").apply { addNotify() }
+        val second = Frame("same title").apply { addNotify() }
         val expected = BufferedImage(100, 100, BufferedImage.TYPE_INT_ARGB)
         val backend =
             PlatformScreenCaptureBackend(
