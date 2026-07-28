@@ -229,6 +229,7 @@ class ScreenCaptureBackendTest {
     fun `unavailable macOS native screenshot helper falls back to the full window region`() {
         listOf(
                 "spectre-screencapture screenshot failed",
+                "failed to start spectre-screencapture for TCC preflight: error=13, Permission denied",
                 "Screen Recording: DENIED\nBinary needing grant: /tmp/spectre-screencapture",
             )
             .forEach { message ->
