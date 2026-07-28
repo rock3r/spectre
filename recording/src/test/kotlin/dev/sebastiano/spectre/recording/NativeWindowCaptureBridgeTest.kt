@@ -1,10 +1,12 @@
 package dev.sebastiano.spectre.recording
 
+import java.awt.EventQueue
 import java.awt.Frame
 import java.awt.GraphicsEnvironment
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -27,6 +29,25 @@ class NativeWindowCaptureBridgeTest {
                 )
             }
         } finally {
+            frame.dispose()
+        }
+    }
+
+    @Test
+    fun `EDT capture does not wait for another capture lock`() {
+        assumeLiveAwtAvailable()
+        val frame = Frame()
+        val captureLock = NativeWindowCaptureBridge.captureLockFor(frame)
+
+        try {
+            captureLock.lock()
+            EventQueue.invokeAndWait {
+                assertFailsWith<IllegalStateException> {
+                    NativeWindowCaptureBridge.withCaptureLock(frame) { error("should not run") }
+                }
+            }
+        } finally {
+            captureLock.unlock()
             frame.dispose()
         }
     }
