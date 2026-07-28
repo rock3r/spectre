@@ -220,12 +220,14 @@ wrapper when your UI reads Jewel locals such as `LocalComponent`.
 
 ## "Captured screenshot pixels look slightly off"
 
-`screenshot(windowIndex)`, `screenshot(node)`, and `capture()` prefer the platform
-window-capture backend when `spectre-recording` is on the runtime classpath, so an occluding
-window does not normally alter their pixels. When native
-capture is unavailable (for example an embedded non-`Frame` host or an unsupported platform),
-Spectre falls back to a screen-region capture; then bring the target to the front and keep it
-visible, because overlapping windows and off-screen portions are part of the captured framebuffer.
+`screenshot(windowIndex)` and `screenshot(node)` prefer the platform window-capture backend when
+`spectre-recording` is on the runtime classpath, so an occluding window does not normally alter
+their pixels. `capture()` intentionally uses an immediate Robot region capture to keep its
+semantics snapshot adjacent to its pixels, so its image can include occlusion. When native capture
+is unavailable (for example an embedded non-`Frame` host or an unsupported platform), the
+`screenshot()` overloads also fall back to a screen-region capture; then bring the target to the
+front and keep it visible, because overlapping windows and off-screen portions are part of the
+captured framebuffer.
 
 `waitForVisualIdle()` samples screen regions until the native capture API can keep one frame
 stream alive across polls. Bring the target to the front before using it when another window may
