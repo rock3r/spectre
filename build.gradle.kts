@@ -92,6 +92,27 @@ val verifyReleaseVersionScript by
         outputs.upToDateWhen { false }
     }
 
+val verifyMacosCliBundleReleaseContract by
+    tasks.registering(Exec::class) {
+        description =
+            "Asserts the release workflow verifies the final extracted macOS CLI archive " +
+                "with codesign, stapler, and Gatekeeper."
+        group = "verification"
+        workingDir = rootProject.layout.projectDirectory.asFile
+        commandLine("bash", ".github/scripts/test-verify-macos-cli-bundle.sh")
+        onlyIf("Unix host with bash") {
+            !System.getProperty("os.name").orEmpty().startsWith("Windows")
+        }
+        inputs
+            .files(
+                ".github/workflows/release.yml",
+                ".github/scripts/verify-macos-cli-bundle.sh",
+                ".github/scripts/test-verify-macos-cli-bundle.sh",
+            )
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+        outputs.upToDateWhen { false }
+    }
+
 // buildSrc is not a project of this build for `dependsOn(":buildSrc:…")`, but its tests
 // cover the shared Windows helper packaging contract. Invoke them via a nested Gradle run
 // on the buildSrc project directory (same pattern as `./gradlew -p buildSrc test`).
@@ -115,6 +136,7 @@ tasks.named("check") {
         "ktfmtCheck",
         verifyCliPackageManifests,
         verifyReleaseVersionScript,
+        verifyMacosCliBundleReleaseContract,
         buildSrcUnitTests,
     )
 }
