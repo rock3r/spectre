@@ -218,7 +218,8 @@ private fun isUnavailableLinuxNativeScreenshot(message: String): Boolean =
             message.contains("waiting for Linux screenshot helper"))
 
 private fun isUnavailableMacosNativeScreenshot(message: String): Boolean =
-    message == "spectre-screencapture screenshot failed"
+    message == "spectre-screencapture screenshot failed" ||
+        message.startsWith("Screen Recording: DENIED")
 
 private fun isUnavailableWindowsNativeScreenshot(message: String): Boolean =
     message.startsWith("spectre-window-capture failed to start.") ||
