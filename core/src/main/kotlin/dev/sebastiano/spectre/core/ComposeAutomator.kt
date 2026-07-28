@@ -253,17 +253,22 @@ private constructor(
         screenCaptureBackend.captureRegion(region)
 
     /**
-     * Captures the on-screen bounds of [node] as an sRGB [BufferedImage]. Delegates to
-     * [RobotDriver.screenshot] — see that method's KDoc before using the result for pixel-level
-     * assertions.
+     * Captures the on-screen bounds of [node] as an sRGB [BufferedImage].
+     *
+     * When the optional native recording backend is available, captures through the window backend
+     * first. If native capture is unavailable, falls back to [RobotDriver.screenshot]; its KDoc
+     * describes the visibility and platform-permission constraints that apply to that fallback.
      */
     public fun screenshot(node: AutomatorNode): BufferedImage =
         screenshotTrackedRegion(node.trackedWindow, node.boundsOnScreen)
 
     /**
      * Captures the Compose surface bounds of the tracked window at [windowIndex] as an sRGB
-     * [BufferedImage]. Refreshes the window list first. Delegates to [RobotDriver.screenshot] — see
-     * that method's KDoc before using the result for pixel-level assertions.
+     * [BufferedImage]. Refreshes the window list first.
+     *
+     * When the optional native recording backend is available, captures through the window backend
+     * first. If native capture is unavailable, falls back to [RobotDriver.screenshot]; its KDoc
+     * describes the visibility and platform-permission constraints that apply to that fallback.
      */
     public fun screenshot(windowIndex: Int): BufferedImage {
         refreshWindows()
