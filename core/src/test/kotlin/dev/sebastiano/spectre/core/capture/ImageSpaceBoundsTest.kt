@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.core.capture
 
 import java.awt.Rectangle
+import java.awt.image.BufferedImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -67,5 +68,20 @@ class ImageSpaceBoundsTest {
                 imageHeight = 150,
             )
         assertEquals(CaptureRect(x = 2, y = 0, width = 1, height = 2), image)
+    }
+
+    @Test
+    fun `crop uses transformed edges at fractional scale`() {
+        val image = BufferedImage(150, 150, BufferedImage.TYPE_INT_ARGB)
+
+        val crop =
+            cropImageToScreenRegion(
+                image = image,
+                screenRegion = Rectangle(/* x= */ 101, /* y= */ 200, /* w= */ 1, /* h= */ 1),
+                captureBounds = Rectangle(/* x= */ 100, /* y= */ 200, /* w= */ 100, /* h= */ 100),
+            )
+
+        assertEquals(1, crop.width)
+        assertEquals(2, crop.height)
     }
 }

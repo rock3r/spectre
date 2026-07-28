@@ -8,6 +8,7 @@ import androidx.compose.ui.semantics.getOrNull
 import dev.sebastiano.spectre.core.capture.AtomicCapture
 import dev.sebastiano.spectre.core.capture.AtomicCaptureBuilder
 import dev.sebastiano.spectre.core.capture.CaptureNodeSnapshot
+import dev.sebastiano.spectre.core.capture.cropImageToScreenRegion
 import dev.sebastiano.spectre.core.perf.ExperimentalSpectreApi
 import dev.sebastiano.spectre.core.perf.RecompositionMonitor
 import java.awt.Rectangle
@@ -297,15 +298,18 @@ private constructor(
         // *before* taking the PNG so JSON and pixels cannot describe different window layouts.
         data class PreCaptureSnapshot(
             val captureRegion: Rectangle,
+            val windowBounds: Rectangle,
             val densityScaleX: Double,
             val densityScaleY: Double,
             val nodeSnapshots: List<CaptureNodeSnapshot>,
         )
         val pre = readOnEdt {
             val region = trackedWindow.composeSurfaceBoundsOnScreen
+            val windowBounds = trackedWindow.window.bounds
             val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
             PreCaptureSnapshot(
                 captureRegion = region,
+                windowBounds = windowBounds,
                 densityScaleX = transform.scaleX,
                 densityScaleY = transform.scaleY,
                 nodeSnapshots =
@@ -327,7 +331,7 @@ private constructor(
                     },
             )
         }
-        val image = screenshotTrackedRegion(trackedWindow, pre.captureRegion)
+        val image = screenshotTrackedRegion(trackedWindow, pre.captureRegion, pre.windowBounds)
         return AtomicCaptureBuilder.build(
             windowIndex = windowIndex,
             trackedWindow = trackedWindow,
@@ -617,17 +621,11 @@ private constructor(
     private fun screenshotTrackedRegion(
         trackedWindow: TrackedWindow,
         region: Rectangle,
+        windowBounds: Rectangle = trackedWindow.window.bounds,
     ): BufferedImage {
         val image = screenCaptureBackend.captureWindow(trackedWindow)
-        val windowBounds = trackedWindow.window.bounds
         if (image.width == region.width && image.height == region.height) return image
-        val scaleX = image.width.toDouble() / windowBounds.width.coerceAtLeast(1)
-        val scaleY = image.height.toDouble() / windowBounds.height.coerceAtLeast(1)
-        val x = ((region.x - windowBounds.x) * scaleX).toInt().coerceIn(0, image.width - 1)
-        val y = ((region.y - windowBounds.y) * scaleY).toInt().coerceIn(0, image.height - 1)
-        val width = (region.width * scaleX).toInt().coerceIn(1, image.width - x)
-        val height = (region.height * scaleY).toInt().coerceIn(1, image.height - y)
-        return image.getSubimage(x, y, width, height)
+        return cropImageToScreenRegion(image, region, windowBounds)
     }
 
     public suspend fun waitForNode(

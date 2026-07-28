@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.core.capture
 
 import java.awt.Rectangle
+import java.awt.image.BufferedImage
 import kotlin.math.roundToInt
 
 /**
@@ -38,4 +39,27 @@ public fun screenRectToImageRect(
         width = (right - left).coerceAtLeast(0),
         height = (bottom - top).coerceAtLeast(0),
     )
+}
+
+/** Crops [image] using a screen-space region and the frozen AWT bounds captured with it. */
+internal fun cropImageToScreenRegion(
+    image: BufferedImage,
+    screenRegion: Rectangle,
+    captureBounds: Rectangle,
+): BufferedImage {
+    val crop =
+        screenRectToImageRect(
+            screen = screenRegion,
+            captureOriginX = captureBounds.x,
+            captureOriginY = captureBounds.y,
+            captureAwtWidth = captureBounds.width,
+            captureAwtHeight = captureBounds.height,
+            imageWidth = image.width,
+            imageHeight = image.height,
+        )
+    val x = crop.x.coerceIn(0, image.width - 1)
+    val y = crop.y.coerceIn(0, image.height - 1)
+    val width = crop.width.coerceIn(1, image.width - x)
+    val height = crop.height.coerceIn(1, image.height - y)
+    return image.getSubimage(x, y, width, height)
 }
