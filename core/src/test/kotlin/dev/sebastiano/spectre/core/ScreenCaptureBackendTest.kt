@@ -226,6 +226,15 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
+    fun `unavailable macOS native screenshot helper falls back to the full window region`() {
+        assertTrue(
+            shouldFallBackToRegionCapture(
+                IllegalStateException("spectre-screencapture screenshot failed")
+            )
+        )
+    }
+
+    @Test
     fun `unavailable Windows native screenshot prerequisites fall back to the full window region`() {
         listOf(
                 "spectre-window-capture failed to start. Native Windows window capture requires .NET 8 Desktop Runtime",

@@ -188,6 +188,7 @@ internal fun shouldFallBackToRegionCapture(error: RuntimeException): Boolean =
                 error.message?.let(::isMissingLinuxScreenshotPipeline) == true ||
                 error.message?.let(::isTimedOutNativeScreenshot) == true ||
                 error.message?.let(::isUnavailableLinuxNativeScreenshot) == true ||
+                error.message?.let(::isUnavailableMacosNativeScreenshot) == true ||
                 error.message?.let(::isUnavailableWindowsNativeScreenshot) == true ||
                 error.message?.contains("Could not determine WM frame extents") == true)) ||
         (error is IllegalArgumentException &&
@@ -209,6 +210,9 @@ private fun isUnavailableLinuxNativeScreenshot(message: String): Boolean =
     message == "Linux screenshot helper failed" ||
         (message.startsWith("Timed out after") &&
             message.contains("waiting for Linux screenshot helper"))
+
+private fun isUnavailableMacosNativeScreenshot(message: String): Boolean =
+    message == "spectre-screencapture screenshot failed"
 
 private fun isUnavailableWindowsNativeScreenshot(message: String): Boolean =
     message.startsWith("spectre-window-capture failed to start.") ||
