@@ -10,6 +10,7 @@ import java.awt.image.BufferedImage
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -99,6 +100,16 @@ class ScreenCaptureBackendTest {
             isWaylandSession(
                 getenv = { if (it == "XDG_RUNTIME_DIR") "/run/user/1000" else null },
                 runtimeDirHasWaylandSocket = { it == Path.of("/run/user/1000") },
+            )
+        )
+    }
+
+    @Test
+    fun `Wayland detection ignores an unreadable runtime directory`() {
+        assertFalse(
+            isWaylandSession(
+                getenv = { if (it == "XDG_RUNTIME_DIR") "/run/user/1000" else null },
+                runtimeDirHasWaylandSocket = { error("unreadable runtime directory") },
             )
         )
     }

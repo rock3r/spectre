@@ -130,7 +130,9 @@ internal fun isWaylandSession(
 ): Boolean {
     if (getenv("XDG_SESSION_TYPE").equals("wayland", ignoreCase = true)) return true
     if (!getenv("WAYLAND_DISPLAY").isNullOrBlank()) return true
-    return getenv("XDG_RUNTIME_DIR")?.let(Path::of)?.let(runtimeDirHasWaylandSocket) == true
+    return getenv("XDG_RUNTIME_DIR")?.let(Path::of)?.let {
+        runCatching { runtimeDirHasWaylandSocket(it) }.getOrDefault(false)
+    } == true
 }
 
 private fun runtimeDirHasWaylandSocket(runtimeDir: Path): Boolean =
