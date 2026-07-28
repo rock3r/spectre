@@ -220,12 +220,15 @@ wrapper when your UI reads Jewel locals such as `LocalComponent`.
 
 ## "Captured screenshot pixels look slightly off"
 
-`screenshot(windowIndex)`, `screenshot(node)`, `capture()`, and `waitForVisualIdle()`
-prefer the platform window-capture backend, so an occluding window does not normally alter
-their pixels. When native capture is unavailable (for example an embedded non-`Frame` host or
-an unsupported platform), Spectre falls back to a screen-region capture; then bring the target
-to the front and keep it visible, because overlapping windows and off-screen portions are part
-of the captured framebuffer.
+`screenshot(windowIndex)`, `screenshot(node)`, and `capture()` prefer the platform
+window-capture backend, so an occluding window does not normally alter their pixels. When native
+capture is unavailable (for example an embedded non-`Frame` host or an unsupported platform),
+Spectre falls back to a screen-region capture; then bring the target to the front and keep it
+visible, because overlapping windows and off-screen portions are part of the captured framebuffer.
+
+`waitForVisualIdle()` samples screen regions until the native capture API can keep one frame
+stream alive across polls. Bring the target to the front before using it when another window may
+overlap the Compose surface.
 
 **Rule of thumb: when you're validating colours from a `screenshot()`, always think
 about the node's interaction state first.** If the node is currently focused,

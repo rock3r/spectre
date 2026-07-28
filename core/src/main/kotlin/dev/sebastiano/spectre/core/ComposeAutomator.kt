@@ -528,8 +528,12 @@ private constructor(
                 } else {
                     val hashes = IntArray(surfaces.size)
                     for (i in surfaces.indices) {
-                        val (window, region) = surfaces[i]
-                        hashes[i] = imageHash(screenshotTrackedRegion(window, region))
+                        val (_, region) = surfaces[i]
+                        // AutoScreenshotter starts a native helper for each still image. Repeating
+                        // that startup on every visual-idle poll makes a stable-frame streak
+                        // unreachable on a cold helper, so use Robot's long-lived region path
+                        // until the native API exposes a persistent frame stream.
+                        hashes[i] = imageHash(screenCaptureBackend.captureRegion(region))
                     }
                     hashes.contentHashCode()
                 }

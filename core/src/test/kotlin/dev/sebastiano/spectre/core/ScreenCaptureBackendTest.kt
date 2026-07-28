@@ -8,6 +8,7 @@ import java.awt.image.BufferedImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 class ScreenCaptureBackendTest {
 
@@ -74,6 +75,17 @@ class ScreenCaptureBackendTest {
     @Test
     fun `missing platform helper falls back to the full window region`() {
         assertFallbackFor(IllegalStateException("Windows capture helper not found"))
+    }
+
+    @Test
+    fun `unavailable Wayland frame geometry falls back to the full window region`() {
+        assertTrue(
+            shouldFallBackToRegionCapture(
+                IllegalStateException(
+                    "Could not determine WM frame extents for window 'fixture' on this Wayland session"
+                )
+            )
+        )
     }
 
     @Test
