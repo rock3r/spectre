@@ -35,6 +35,17 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
+    fun `native helper images normalize to sRGB ARGB`() {
+        val source =
+            BufferedImage(2, 1, BufferedImage.TYPE_4BYTE_ABGR).apply {
+                setRGB(0, 0, 0xFF113355.toInt())
+            }
+        val captured = normalizeNativeImage(source)
+        assertEquals(BufferedImage.TYPE_INT_ARGB, captured.type)
+        assertEquals(0xFF113355.toInt(), captured.getRGB(0, 0))
+    }
+
+    @Test
     fun `native unavailability falls back to the full window region`() {
         assumeLiveAwtAvailable()
         val frame = Frame().apply { setBounds(40, 50, 300, 200) }

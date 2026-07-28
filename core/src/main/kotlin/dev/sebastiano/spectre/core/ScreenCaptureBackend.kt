@@ -19,20 +19,29 @@ internal class PlatformScreenCaptureBackend(
     private val regionCapture: (Rectangle?) -> BufferedImage,
     private val nativeCapture: (Frame) -> BufferedImage,
     private val nativeCaptureEnabled: () -> Boolean = { true },
+    private val nativeCaptureDisambiguatesTitles: () -> Boolean = { false },
 ) : ScreenCaptureBackend {
     internal constructor(
         robotDriver: RobotDriver
-    ) : this(robotDriver::screenshot, defaultNativeCapture(), { robotDriver.allowsPlatformCapture })
+    ) : this(
+        robotDriver::screenshot,
+        defaultNativeCapture(),
+        { robotDriver.allowsPlatformCapture },
+        ::defaultNativeCaptureDisambiguatesTitles,
+    )
 
     override fun captureRegion(region: Rectangle?): BufferedImage = regionCapture(region)
 
     override fun captureWindow(window: TrackedWindow): BufferedImage {
         val frame = window.window as? Frame ?: return captureRegion(window.window.bounds)
-        if (!nativeCaptureEnabled() || hasAmbiguousNativeIdentity(frame)) {
+        if (
+            !nativeCaptureEnabled() ||
+                (!nativeCaptureDisambiguatesTitles() && hasAmbiguousNativeIdentity(frame))
+        ) {
             return captureRegion(window.window.bounds)
         }
         return try {
-            nativeCapture(frame)
+            normalizeNativeImage(nativeCapture(frame))
         } catch (e: IllegalStateException) {
             fallBackToRegionCapture(window, e)
         } catch (e: UnsupportedOperationException) {
@@ -66,6 +75,9 @@ internal class PlatformScreenCaptureBackend(
             val screenshotter = AutoScreenshotter()
             return { frame -> screenshotter.captureWindow(frame.asTitledWindow()) }
         }
+
+        fun defaultNativeCaptureDisambiguatesTitles(): Boolean =
+            System.getProperty("os.name").contains("mac", ignoreCase = true)
     }
 }
 
@@ -82,3 +94,16 @@ private fun isMissingPlatformHelper(message: String): Boolean =
     message.contains("helper", ignoreCase = true) &&
         (message.contains("not found", ignoreCase = true) ||
             message.contains("not bundled", ignoreCase = true))
+
+internal fun normalizeNativeImage(image: BufferedImage): BufferedImage {
+    if (image.type == BufferedImage.TYPE_INT_ARGB && image.colorModel.colorSpace.isCS_sRGB)
+        return image
+    val normalized = BufferedImage(image.width, image.height, BufferedImage.TYPE_INT_ARGB)
+    val graphics = normalized.createGraphics()
+    try {
+        graphics.drawImage(image, 0, 0, null)
+    } finally {
+        graphics.dispose()
+    }
+    return normalized
+}
