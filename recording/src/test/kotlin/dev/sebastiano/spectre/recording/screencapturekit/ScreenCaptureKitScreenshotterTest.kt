@@ -146,7 +146,9 @@ private class InterruptingScreenshotHelperProcess : Process() {
         throw InterruptedException("interrupted")
     }
 
-    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean = false
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean {
+        throw InterruptedException("interrupted")
+    }
 
     override fun exitValue(): Int = throw IllegalThreadStateException("still running")
 

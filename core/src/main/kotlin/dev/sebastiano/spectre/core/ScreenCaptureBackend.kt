@@ -215,8 +215,9 @@ internal fun shouldFallBackToRegionCapture(error: RuntimeException): Boolean =
             error.message?.contains("requires a non-blank window title") == true)
 
 private fun isUnavailableNativeCapture(message: String): Boolean =
-    message.contains(" is unavailable") &&
-        !message.contains("while another capture for this frame is in progress")
+    (message.contains(" is unavailable") &&
+        !message.contains("while another capture for this frame is in progress")) ||
+        message.contains("did not produce a readable PNG")
 
 private fun isMissingPlatformHelper(message: String): Boolean =
     message.contains("helper", ignoreCase = true) &&
@@ -247,12 +248,14 @@ private fun isUnavailableMacosNativeScreenshot(message: String): Boolean =
         message.startsWith("spectre-screencapture's screenshot pipeline failed") ||
         message.startsWith("failed to start spectre-screencapture for TCC preflight:") ||
         message.startsWith("spectre-screencapture preflight ") ||
+        message.startsWith("spectre-screencapture screenshot timed out") ||
         message.startsWith("Screen Recording: DENIED")
 
 private fun isUnavailableWindowsNativeScreenshot(message: String): Boolean =
     message.startsWith("spectre-window-capture failed to start.") ||
         message.contains("reported Windows Graphics Capture is unsupported") ||
-        message.contains("Windows Graphics Capture pipeline failed")
+        message.contains("Windows Graphics Capture pipeline failed") ||
+        message.contains("did not produce a readable PNG")
 
 internal fun normalizeNativeImage(image: BufferedImage): BufferedImage {
     if (image.type == BufferedImage.TYPE_INT_ARGB && image.colorModel.colorSpace.isCS_sRGB)
