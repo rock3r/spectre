@@ -76,7 +76,8 @@ internal constructor(
 
 private const val SCREENSHOT_DISCOVERY_TIMEOUT_MS: Int = 2000
 private const val SCREENSHOT_FRAME_RATE: Int = 30
-private const val SCREENSHOT_TIMEOUT_SECONDS: Long = 10
+// Allow the helper's 2s window discovery and 10s first-frame budgets, plus startup slack.
+private const val SCREENSHOT_TIMEOUT_SECONDS: Long = 15
 private const val FORCE_KILL_WAIT_SECONDS: Long = 1
 private const val EXIT_ARGUMENTS_REJECTED: Int = 2
 private const val EXIT_WINDOW_NOT_FOUND: Int = 3
