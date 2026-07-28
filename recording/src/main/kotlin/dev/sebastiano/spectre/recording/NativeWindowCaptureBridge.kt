@@ -16,5 +16,5 @@ internal object NativeWindowCaptureBridge {
     @JvmStatic
     @JvmName("captureWindow")
     internal fun captureWindow(frame: Frame): BufferedImage =
-        screenshotter.captureWindow(frame.asTitledWindow())
+        synchronized(frame) { screenshotter.captureWindow(frame.asTitledWindow()) }
 }
