@@ -178,6 +178,17 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
+    fun `native capture contention remains a loud failure`() {
+        assertFalse(
+            shouldFallBackToRegionCapture(
+                IllegalStateException(
+                    "Native window capture is unavailable while another capture for this frame is in progress"
+                )
+            )
+        )
+    }
+
+    @Test
     fun `blank Windows title falls back to the full window region`() {
         assertFallbackFor(
             IllegalArgumentException(

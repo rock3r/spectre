@@ -194,7 +194,7 @@ private const val NATIVE_WINDOW_CAPTURE_BRIDGE: String =
 internal fun shouldFallBackToRegionCapture(error: RuntimeException): Boolean =
     error is UnsupportedOperationException ||
         (error is IllegalStateException &&
-            (error.message?.contains(" is unavailable") == true ||
+            (error.message?.let(::isUnavailableNativeCapture) == true ||
                 error.message?.let(::isMissingPlatformHelper) == true ||
                 error.message?.let(::isMissingLinuxScreenshotPipeline) == true ||
                 error.message?.let(::isTimedOutNativeScreenshot) == true ||
@@ -207,6 +207,10 @@ internal fun shouldFallBackToRegionCapture(error: RuntimeException): Boolean =
                     error.cause is IOException))) ||
         (error is IllegalArgumentException &&
             error.message?.contains("requires a non-blank window title") == true)
+
+private fun isUnavailableNativeCapture(message: String): Boolean =
+    message.contains(" is unavailable") &&
+        !message.contains("while another capture for this frame is in progress")
 
 private fun isMissingPlatformHelper(message: String): Boolean =
     message.contains("helper", ignoreCase = true) &&
