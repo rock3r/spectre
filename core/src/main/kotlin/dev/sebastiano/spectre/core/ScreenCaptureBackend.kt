@@ -186,6 +186,8 @@ internal fun shouldFallBackToRegionCapture(error: RuntimeException): Boolean =
             (error.message?.contains(" is unavailable") == true ||
                 error.message?.let(::isMissingPlatformHelper) == true ||
                 error.message?.let(::isMissingLinuxScreenshotPipeline) == true ||
+                error.message?.let(::isTimedOutNativeScreenshot) == true ||
+                error.message?.let(::isUnavailableWindowsNativeScreenshot) == true ||
                 error.message?.contains("Could not determine WM frame extents") == true)) ||
         (error is IllegalArgumentException &&
             error.message?.contains("requires a non-blank window title") == true)
@@ -198,6 +200,14 @@ private fun isMissingPlatformHelper(message: String): Boolean =
 private fun isMissingLinuxScreenshotPipeline(message: String): Boolean =
     message.contains("spawning gst-launch", ignoreCase = true) &&
         message.contains("No such file or directory", ignoreCase = true)
+
+private fun isTimedOutNativeScreenshot(message: String): Boolean =
+    message.contains("Timed out waiting for spectre-window-capture to capture a window")
+
+private fun isUnavailableWindowsNativeScreenshot(message: String): Boolean =
+    message.startsWith("spectre-window-capture failed to start.") ||
+        message.contains("reported Windows Graphics Capture is unsupported") ||
+        message.contains("Windows Graphics Capture pipeline failed")
 
 internal fun normalizeNativeImage(image: BufferedImage): BufferedImage {
     if (image.type == BufferedImage.TYPE_INT_ARGB && image.colorModel.colorSpace.isCS_sRGB)

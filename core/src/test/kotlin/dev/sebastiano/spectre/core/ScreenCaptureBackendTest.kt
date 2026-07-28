@@ -204,6 +204,29 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
+    fun `timed out Windows native screenshot falls back to the full window region`() {
+        assertTrue(
+            shouldFallBackToRegionCapture(
+                IllegalStateException(
+                    "Timed out waiting for spectre-window-capture to capture a window. Argv: []"
+                )
+            )
+        )
+    }
+
+    @Test
+    fun `unavailable Windows native screenshot prerequisites fall back to the full window region`() {
+        listOf(
+                "spectre-window-capture failed to start. Native Windows window capture requires .NET 8 Desktop Runtime",
+                "spectre-window-capture reported Windows Graphics Capture is unsupported (exit 4).",
+                "spectre-window-capture's Windows Graphics Capture pipeline failed (exit 5).",
+            )
+            .forEach { message ->
+                assertTrue(shouldFallBackToRegionCapture(IllegalStateException(message)), message)
+            }
+    }
+
+    @Test
     fun `unavailable Wayland frame geometry falls back to the full window region`() {
         assertTrue(
             shouldFallBackToRegionCapture(

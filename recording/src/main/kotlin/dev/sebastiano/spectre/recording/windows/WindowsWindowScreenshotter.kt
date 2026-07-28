@@ -5,6 +5,7 @@ import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import java.awt.image.BufferedImage
 import java.io.IOException
 import java.nio.file.Files
+import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 
 /** Windows still screenshot backend backed by the bundled .NET native helper. */
@@ -25,6 +26,7 @@ internal constructor(
         val helperPath = helperExtractor.extract()
         val output = Files.createTempFile("spectre-windows-window-screenshot-", ".png")
         var process: Process? = null
+        var preserveOutputForLiveHelper = false
         val argv =
             WindowsGraphicsCaptureArguments(
                     mode = WindowsGraphicsCaptureMode.Screenshot,
@@ -38,7 +40,21 @@ internal constructor(
                 .toArgv(helperPath)
         try {
             process = processFactory.start(argv)
-            val exit = process.waitFor()
+            val completed = process.waitFor(SCREENSHOT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            if (!completed) {
+                process.destroyForcibly()
+                if (!process.waitFor(FORCE_KILL_WAIT_SECONDS, TimeUnit.SECONDS)) {
+                    // A Windows process can still hold the output PNG open briefly after a
+                    // forced kill. Do not let cleanup replace the useful timeout error.
+                    preserveOutputForLiveHelper = true
+                    output.toFile().deleteOnExit()
+                }
+                error(
+                    "Timed out waiting for spectre-window-capture to capture a window. " +
+                        "Argv: $argv"
+                )
+            }
+            val exit = process.exitValue()
             check(exit == 0) { messageForWindowsGraphicsCaptureHelperExit(exit, argv) }
             return ImageIO.read(output.toFile())
                 ?: error("spectre-window-capture did not produce a readable PNG at $output")
@@ -54,7 +70,7 @@ internal constructor(
                 e,
             )
         } finally {
-            Files.deleteIfExists(output)
+            if (!preserveOutputForLiveHelper) Files.deleteIfExists(output)
         }
     }
 
@@ -68,5 +84,10 @@ internal constructor(
                 .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                 .redirectError(ProcessBuilder.Redirect.INHERIT)
                 .start()
+    }
+
+    private companion object {
+        private const val SCREENSHOT_TIMEOUT_SECONDS: Long = 5
+        private const val FORCE_KILL_WAIT_SECONDS: Long = 1
     }
 }
