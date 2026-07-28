@@ -623,9 +623,11 @@ private constructor(
         region: Rectangle,
         windowBounds: Rectangle = trackedWindow.window.bounds,
     ): BufferedImage {
-        val image = screenCaptureBackend.captureWindow(trackedWindow)
-        if (image.width == region.width && image.height == region.height) return image
-        return cropImageToScreenRegion(image, region, windowBounds)
+        val capture = screenCaptureBackend.captureWindow(trackedWindow, windowBounds)
+        if (capture.image.width == region.width && capture.image.height == region.height) {
+            return capture.image
+        }
+        return cropImageToScreenRegion(capture.image, region, capture.boundsOnScreen)
     }
 
     public suspend fun waitForNode(

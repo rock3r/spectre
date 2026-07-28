@@ -2,6 +2,7 @@
 
 package dev.sebastiano.spectre.core
 
+import dev.sebastiano.spectre.core.capture.cropImageToScreenRegion
 import java.awt.Frame
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
@@ -30,6 +31,33 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
+    fun `native client images crop in their client-window coordinate space`() {
+        assumeLiveAwtAvailable()
+        val frame = Frame().apply { setBounds(20, 30, 300, 200) }
+        val clientBounds = Rectangle(20, 54, 300, 176)
+        val image = BufferedImage(300, 176, BufferedImage.TYPE_INT_ARGB)
+        image.setRGB(10, 10, 0xFF112233.toInt())
+        val backend =
+            PlatformScreenCaptureBackend(
+                regionCapture = { error("should not fall back") },
+                nativeCapture = { image },
+                nativeCaptureBounds = { _, _, _ -> clientBounds },
+            )
+        try {
+            val capture = backend.captureWindow(tracked(frame), Rectangle(frame.bounds))
+            val crop =
+                cropImageToScreenRegion(
+                    capture.image,
+                    Rectangle(30, 64, 1, 1),
+                    capture.boundsOnScreen,
+                )
+            assertEquals(0xFF112233.toInt(), crop.getRGB(0, 0))
+        } finally {
+            frame.dispose()
+        }
+    }
+
+    @Test
     fun `tracked Frame capture prefers the native window backend`() {
         assumeLiveAwtAvailable()
         val frame = Frame().apply { setBounds(40, 50, 300, 200) }
@@ -44,7 +72,7 @@ class ScreenCaptureBackendTest {
                 nativeCapture = { expected },
             )
         try {
-            assertSame(expected, backend.captureWindow(tracked(frame)))
+            assertSame(expected, backend.captureWindow(tracked(frame)).image)
             assertEquals(0, fallbackCalls)
         } finally {
             frame.dispose()
@@ -79,7 +107,7 @@ class ScreenCaptureBackendTest {
                 },
             )
         try {
-            assertSame(expected, backend.captureWindow(tracked(frame)))
+            assertSame(expected, backend.captureWindow(tracked(frame)).image)
             assertEquals(Rectangle(40, 50, 300, 200), requested)
         } finally {
             frame.dispose()
@@ -128,7 +156,7 @@ class ScreenCaptureBackendTest {
                 nativeCaptureEnabled = { false },
             )
         try {
-            assertSame(expected, backend.captureWindow(tracked(frame)))
+            assertSame(expected, backend.captureWindow(tracked(frame)).image)
         } finally {
             frame.dispose()
         }
@@ -146,7 +174,7 @@ class ScreenCaptureBackendTest {
                 nativeCapture = { error("native capture should not be used for duplicate titles") },
             )
         try {
-            assertSame(expected, backend.captureWindow(tracked(second)))
+            assertSame(expected, backend.captureWindow(tracked(second)).image)
         } finally {
             first.dispose()
             second.dispose()
@@ -178,7 +206,7 @@ class ScreenCaptureBackendTest {
                 nativeCapture = { throw error },
             )
         try {
-            assertSame(expected, backend.captureWindow(tracked(frame)))
+            assertSame(expected, backend.captureWindow(tracked(frame)).image)
             assertEquals(Rectangle(40, 50, 300, 200), requested)
         } finally {
             frame.dispose()

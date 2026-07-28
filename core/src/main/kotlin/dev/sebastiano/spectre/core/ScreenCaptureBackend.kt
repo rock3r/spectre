@@ -11,14 +11,22 @@ import java.lang.reflect.InvocationTargetException
 internal interface ScreenCaptureBackend {
     fun captureRegion(region: Rectangle? = null): BufferedImage
 
-    fun captureWindow(window: TrackedWindow): BufferedImage
+    fun captureWindow(
+        window: TrackedWindow,
+        windowBounds: Rectangle = Rectangle(window.window.bounds),
+    ): WindowCapture
 }
+
+/** Pixels from a tracked window and the screen-space rectangle those pixels represent. */
+internal data class WindowCapture(val image: BufferedImage, val boundsOnScreen: Rectangle)
 
 internal class PlatformScreenCaptureBackend(
     private val regionCapture: (Rectangle?) -> BufferedImage,
     private val nativeCapture: (Frame) -> BufferedImage,
     private val nativeCaptureEnabled: () -> Boolean = { true },
     private val nativeCaptureDisambiguatesTitles: () -> Boolean = { false },
+    private val nativeCaptureBounds: (Frame, BufferedImage, Rectangle) -> Rectangle =
+        ::defaultNativeCaptureBounds,
 ) : ScreenCaptureBackend {
     internal constructor(
         robotDriver: RobotDriver
@@ -31,35 +39,39 @@ internal class PlatformScreenCaptureBackend(
 
     override fun captureRegion(region: Rectangle?): BufferedImage = regionCapture(region)
 
-    override fun captureWindow(window: TrackedWindow): BufferedImage {
-        val frame = window.window as? Frame ?: return captureRegion(window.window.bounds)
+    override fun captureWindow(window: TrackedWindow, windowBounds: Rectangle): WindowCapture {
+        val frame = window.window as? Frame ?: return regionCapture(windowBounds)
         if (
             !nativeCaptureEnabled() ||
                 (!nativeCaptureDisambiguatesTitles() && hasAmbiguousNativeIdentity(frame))
         ) {
-            return captureRegion(window.window.bounds)
+            return regionCapture(windowBounds)
         }
         return try {
-            normalizeNativeImage(nativeCapture(frame))
+            val image = normalizeNativeImage(nativeCapture(frame))
+            WindowCapture(image, nativeCaptureBounds(frame, image, windowBounds))
         } catch (e: IllegalStateException) {
-            fallBackToRegionCapture(window, e)
+            fallBackToRegionCapture(windowBounds, e)
         } catch (e: UnsupportedOperationException) {
-            fallBackToRegionCapture(window, e)
+            fallBackToRegionCapture(windowBounds, e)
         } catch (e: IllegalArgumentException) {
-            fallBackToRegionCapture(window, e)
+            fallBackToRegionCapture(windowBounds, e)
         }
     }
 
     private fun fallBackToRegionCapture(
-        window: TrackedWindow,
+        windowBounds: Rectangle,
         error: RuntimeException,
-    ): BufferedImage {
+    ): WindowCapture {
         if (!shouldFallBackToRegionCapture(error)) throw error
         // Keep the fallback image in the same coordinate system as a native window image.
         // Compose content can be inset from a decorated Frame, so capturing only the surface
         // would make callers crop the title-bar offset a second time.
-        return captureRegion(window.window.bounds)
+        return regionCapture(windowBounds)
     }
+
+    private fun regionCapture(bounds: Rectangle): WindowCapture =
+        WindowCapture(captureRegion(bounds), Rectangle(bounds))
 
     private fun hasAmbiguousNativeIdentity(frame: Frame): Boolean {
         val title = frame.title
@@ -81,6 +93,29 @@ internal class PlatformScreenCaptureBackend(
 
         fun defaultNativeCaptureDisambiguatesTitles(): Boolean =
             System.getProperty("os.name").contains("mac", ignoreCase = true)
+
+        fun defaultNativeCaptureBounds(
+            frame: Frame,
+            image: BufferedImage,
+            windowBounds: Rectangle,
+        ): Rectangle {
+            if (!System.getProperty("os.name").contains("linux", ignoreCase = true)) {
+                return Rectangle(windowBounds)
+            }
+            val insets = frame.insets
+            val clientBounds =
+                Rectangle(
+                    windowBounds.x + insets.left,
+                    windowBounds.y + insets.top,
+                    windowBounds.width - insets.left - insets.right,
+                    windowBounds.height - insets.top - insets.bottom,
+                )
+            return if (image.width == clientBounds.width && image.height == clientBounds.height) {
+                clientBounds
+            } else {
+                Rectangle(windowBounds)
+            }
+        }
     }
 }
 
