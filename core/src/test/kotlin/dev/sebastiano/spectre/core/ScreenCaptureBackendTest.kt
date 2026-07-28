@@ -191,6 +191,19 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
+    fun `missing Linux screenshot pipeline falls back to the full window region`() {
+        assertTrue(
+            shouldFallBackToRegionCapture(
+                IllegalStateException(
+                    "spectre-wayland-helper reported an error during screenshot capture: " +
+                        "running screenshot pipeline: spawning gst-launch from argv: " +
+                        "No such file or directory (os error 2)"
+                )
+            )
+        )
+    }
+
+    @Test
     fun `unavailable Wayland frame geometry falls back to the full window region`() {
         assertTrue(
             shouldFallBackToRegionCapture(

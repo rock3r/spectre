@@ -185,6 +185,7 @@ internal fun shouldFallBackToRegionCapture(error: RuntimeException): Boolean =
         (error is IllegalStateException &&
             (error.message?.contains(" is unavailable") == true ||
                 error.message?.let(::isMissingPlatformHelper) == true ||
+                error.message?.let(::isMissingLinuxScreenshotPipeline) == true ||
                 error.message?.contains("Could not determine WM frame extents") == true)) ||
         (error is IllegalArgumentException &&
             error.message?.contains("requires a non-blank window title") == true)
@@ -193,6 +194,10 @@ private fun isMissingPlatformHelper(message: String): Boolean =
     message.contains("helper", ignoreCase = true) &&
         (message.contains("not found", ignoreCase = true) ||
             message.contains("not bundled", ignoreCase = true))
+
+private fun isMissingLinuxScreenshotPipeline(message: String): Boolean =
+    message.contains("spawning gst-launch", ignoreCase = true) &&
+        message.contains("No such file or directory", ignoreCase = true)
 
 internal fun normalizeNativeImage(image: BufferedImage): BufferedImage {
     if (image.type == BufferedImage.TYPE_INT_ARGB && image.colorModel.colorSpace.isCS_sRGB)
