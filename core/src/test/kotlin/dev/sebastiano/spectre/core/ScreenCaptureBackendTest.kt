@@ -204,6 +204,18 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
+    fun `unavailable Linux GStreamer screenshot plugins fall back to the full window region`() {
+        assertTrue(
+            shouldFallBackToRegionCapture(
+                IllegalStateException(
+                    "spectre-wayland-helper reported an error during screenshot capture: " +
+                        "gst-launch screenshot pipeline exited with status 1"
+                )
+            )
+        )
+    }
+
+    @Test
     fun `timed out Windows native screenshot falls back to the full window region`() {
         assertTrue(
             shouldFallBackToRegionCapture(
