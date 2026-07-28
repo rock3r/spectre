@@ -7,6 +7,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -38,13 +39,15 @@ class NativeWindowCaptureBridgeTest {
         assumeLiveAwtAvailable()
         val frame = Frame()
         val captureLock = NativeWindowCaptureBridge.captureLockFor(frame)
+        var actionRan = false
 
         try {
             captureLock.lock()
             EventQueue.invokeAndWait {
                 assertFailsWith<IllegalStateException> {
-                    NativeWindowCaptureBridge.withCaptureLock(frame) { error("should not run") }
+                    NativeWindowCaptureBridge.withCaptureLock(frame) { actionRan = true }
                 }
+                assertFalse(actionRan, "the EDT must fail before entering the capture action")
             }
         } finally {
             captureLock.unlock()

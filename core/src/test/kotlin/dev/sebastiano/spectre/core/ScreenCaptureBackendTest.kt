@@ -215,6 +215,17 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
+    fun `unavailable Linux native screenshot helper falls back to the full window region`() {
+        listOf(
+                "Linux screenshot helper failed",
+                "Timed out after 10000ms waiting for Linux screenshot helper",
+            )
+            .forEach { message ->
+                assertTrue(shouldFallBackToRegionCapture(IllegalStateException(message)), message)
+            }
+    }
+
+    @Test
     fun `unavailable Windows native screenshot prerequisites fall back to the full window region`() {
         listOf(
                 "spectre-window-capture failed to start. Native Windows window capture requires .NET 8 Desktop Runtime",
