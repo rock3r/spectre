@@ -8,6 +8,7 @@ fi
 
 archive="$1"
 release_version="$2"
+expected_root="spectre-cli-$release_version"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "macOS bundle verification requires Darwin" >&2
@@ -24,7 +25,7 @@ trap 'rm -rf "$workspace"' EXIT
 
 echo "Verifying final Spectre CLI $release_version archive: $archive"
 ditto -x -k "$archive" "$workspace"
-app="$workspace/Spectre.app"
+app="$workspace/$expected_root/Spectre.app"
 launcher="$app/Contents/MacOS/spectre"
 
 test -d "$app"

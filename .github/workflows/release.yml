@@ -389,9 +389,8 @@ jobs:
               --sign "$APPLE_DEVELOPER_IDENTITY" "$app"
             codesign --verify --strict --verbose=4 "$app"
 
-            # Notarytool receives an app-root archive. Keep that same package shape for the
-            # published ZIP: rebuilding an outer version-directory archive after stapling made
-            # the 0.4.0 CLI signatures invalid for Gatekeeper.
+            # Notarytool receives an app-root archive. The published ZIP keeps its version
+            # directory so Homebrew does not strip the application bundle itself on install.
             notarization_archive="$workspace/Spectre.app.zip"
             ditto -c -k --sequesterRsrc --keepParent "$app" "$notarization_archive"
             notarization_output=$(xcrun notarytool submit "$notarization_archive" \
@@ -415,12 +414,11 @@ jobs:
             xcrun stapler staple "$app"
             xcrun stapler validate "$app"
             codesign --verify --strict --verbose=4 "$app"
-            rm -f "$archive"
-            ditto -c -k --sequesterRsrc --keepParent "$app" "$archive"
+            ditto -c -k --sequesterRsrc --keepParent "$root" "$archive"
 
             extracted="$workspace/published"
             ditto -x -k "$archive" "$extracted"
-            published_app="$extracted/Spectre.app"
+            published_app="$extracted/spectre-cli-$RELEASE_VERSION/Spectre.app"
             published_launcher="$published_app/Contents/MacOS/spectre"
             test -f "$published_launcher"
             test -x "$published_launcher"
