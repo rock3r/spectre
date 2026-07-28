@@ -436,6 +436,7 @@ final class Recorder {
     private var pipelineError: Error?
     private var framesSeen: Int = 0
     private var framesAppended: Int = 0
+    private let firstFrameAppended = DispatchSemaphore(value: 0)
     private var framesDropped: Int = 0
     private var streamDelegate: StreamLogger?
     private var frameOutput: FrameOutput?
@@ -746,6 +747,10 @@ final class Recorder {
         try await stream.startCapture()
         self.stream = stream
 
+        if args.mode == .recording {
+            try await waitForFirstRecordingFrame()
+        }
+
         // Signal the JVM-side recorder that capture is fully running. The JVM blocks on
         // reading this line from stdout in `start()` so it can return a recording handle
         // synchronously rather than racing against the helper's window-discovery + SCK init.
@@ -819,6 +824,9 @@ final class Recorder {
         }
         if adaptor.append(imageBuffer, withPresentationTime: presentationTime) {
             framesAppended += 1
+            if framesAppended == 1 {
+                firstFrameAppended.signal()
+            }
         } else {
             framesDropped += 1
             if pipelineError == nil { pipelineError = writer.error }
@@ -947,6 +955,19 @@ final class Recorder {
         let didAppendFrame = framesAppended > 0
         lock.unlock()
         return didAppendFrame
+    }
+
+    private func waitForFirstRecordingFrame() async throws {
+        let completed = await withCheckedContinuation {
+            (continuation: CheckedContinuation<Bool, Never>) in
+            DispatchQueue.global(qos: .utility).async { [firstFrameAppended] in
+                continuation.resume(
+                    returning: firstFrameAppended.wait(timeout: .now() + 10) == .success)
+            }
+        }
+        if !completed {
+            throw CLIError(code: 5, message: "timed out waiting for first recording frame")
+        }
     }
 
     private func finalize() async throws {
