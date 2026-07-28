@@ -13,7 +13,6 @@ import dev.sebastiano.spectre.core.perf.RecompositionMonitor
 import java.awt.Rectangle
 import java.awt.event.KeyEvent
 import java.awt.image.BufferedImage
-import java.awt.image.DataBufferInt
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -530,7 +529,7 @@ private constructor(
                     val hashes = IntArray(surfaces.size)
                     for (i in surfaces.indices) {
                         val (window, region) = surfaces[i]
-                        hashes[i] = hashImage(screenshotTrackedRegion(window, region))
+                        hashes[i] = imageHash(screenshotTrackedRegion(window, region))
                     }
                     hashes.contentHashCode()
                 }
@@ -625,20 +624,6 @@ private constructor(
         val width = (region.width * scaleX).toInt().coerceIn(1, image.width - x)
         val height = (region.height * scaleY).toInt().coerceIn(1, image.height - y)
         return image.getSubimage(x, y, width, height)
-    }
-
-    private fun hashImage(image: BufferedImage): Int {
-        val raster = image.raster
-        val buffer = raster.dataBuffer
-        return if (buffer is DataBufferInt) {
-            buffer.data.contentHashCode()
-        } else {
-            // Fallback: read pixels generically. Slower, but correct for any BufferedImage type.
-            val width = image.width
-            val height = image.height
-            val pixels = image.getRGB(0, 0, width, height, null, 0, width)
-            pixels.contentHashCode()
-        }
     }
 
     public suspend fun waitForNode(

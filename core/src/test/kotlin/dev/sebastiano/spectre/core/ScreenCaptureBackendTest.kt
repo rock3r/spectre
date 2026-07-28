@@ -94,6 +94,17 @@ class ScreenCaptureBackendTest {
         }
     }
 
+    @Test
+    fun `image hash excludes pixels outside a cropped subimage`() {
+        val parent = BufferedImage(4, 2, BufferedImage.TYPE_INT_ARGB)
+        val crop = parent.getSubimage(0, 0, 2, 2)
+        val initialHash = imageHash(crop)
+
+        parent.setRGB(3, 1, 0xFF00FF00.toInt())
+
+        assertEquals(initialHash, imageHash(crop))
+    }
+
     private fun assertFallbackFor(error: RuntimeException) {
         assumeLiveAwtAvailable()
         val frame = Frame().apply { setBounds(40, 50, 300, 200) }
