@@ -258,7 +258,7 @@ private constructor(
      * assertions.
      */
     public fun screenshot(node: AutomatorNode): BufferedImage =
-        screenshotTrackedRegion(node.trackedWindow, node.boundsOnScreen)
+        screenshotTrackedRegionCapture(node.trackedWindow, node.boundsOnScreen).image
 
     /**
      * Captures the Compose surface bounds of the tracked window at [windowIndex] as an sRGB
@@ -270,7 +270,11 @@ private constructor(
         val trackedWindow =
             windows.getOrNull(windowIndex)
                 ?: error("No tracked window at index $windowIndex (have ${windows.size})")
-        return screenshotTrackedRegion(trackedWindow, trackedWindow.composeSurfaceBoundsOnScreen)
+        return screenshotTrackedRegionCapture(
+                trackedWindow,
+                trackedWindow.composeSurfaceBoundsOnScreen,
+            )
+            .image
     }
 
     /**
@@ -331,13 +335,14 @@ private constructor(
                     },
             )
         }
-        val image = screenshotTrackedRegion(trackedWindow, pre.captureRegion, pre.windowBounds)
+        val capture =
+            screenshotTrackedRegionCapture(trackedWindow, pre.captureRegion, pre.windowBounds)
         return AtomicCaptureBuilder.build(
             windowIndex = windowIndex,
             trackedWindow = trackedWindow,
             nodeSnapshots = pre.nodeSnapshots,
-            image = image,
-            captureRegion = pre.captureRegion,
+            image = capture.image,
+            captureRegion = capture.boundsOnScreen,
             densityScaleX = pre.densityScaleX,
             densityScaleY = pre.densityScaleY,
             startedAt = startedAt,
@@ -618,16 +623,20 @@ private constructor(
         }
     }
 
-    private fun screenshotTrackedRegion(
+    private fun screenshotTrackedRegionCapture(
         trackedWindow: TrackedWindow,
         region: Rectangle,
         windowBounds: Rectangle = trackedWindow.window.bounds,
-    ): BufferedImage {
+    ): WindowCapture {
         val capture = screenCaptureBackend.captureWindow(trackedWindow, windowBounds)
-        if (capture.image.width == region.width && capture.image.height == region.height) {
-            return capture.image
+        if (capture.boundsOnScreen == region) {
+            return capture
         }
-        return cropImageToScreenRegion(capture.image, region, capture.boundsOnScreen)
+        val visibleRegion = region.intersection(capture.boundsOnScreen)
+        return WindowCapture(
+            image = cropImageToScreenRegion(capture.image, visibleRegion, capture.boundsOnScreen),
+            boundsOnScreen = visibleRegion,
+        )
     }
 
     public suspend fun waitForNode(
