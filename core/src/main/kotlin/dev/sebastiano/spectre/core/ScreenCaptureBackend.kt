@@ -255,6 +255,7 @@ private fun isUnavailableMacosNativeScreenshot(message: String): Boolean =
 
 private fun isUnavailableWindowsNativeScreenshot(message: String): Boolean =
     message.startsWith("spectre-window-capture failed to start.") ||
+        message.startsWith("Unsupported Windows architecture:") ||
         message.contains("reported Windows Graphics Capture is unsupported") ||
         message.contains("Windows Graphics Capture pipeline failed") ||
         message.contains("did not produce a readable PNG")
