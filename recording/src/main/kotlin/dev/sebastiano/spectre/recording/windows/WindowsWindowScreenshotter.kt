@@ -40,7 +40,7 @@ internal constructor(
                 .toArgv(helperPath)
         try {
             process = processFactory.start(argv)
-            val completed = process.waitFor(SCREENSHOT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            val completed = process.waitFor(SCREENSHOT_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
             if (!completed) {
                 process.destroyForcibly()
                 if (!process.waitFor(FORCE_KILL_WAIT_SECONDS, TimeUnit.SECONDS)) {
@@ -50,7 +50,8 @@ internal constructor(
                     output.toFile().deleteOnExit()
                 }
                 error(
-                    "Timed out waiting for spectre-window-capture to capture a window. " +
+                    "Timed out after ${SCREENSHOT_TIMEOUT_MILLIS}ms waiting for " +
+                        "spectre-window-capture to capture a window. " +
                         "Argv: $argv"
                 )
             }
@@ -87,7 +88,11 @@ internal constructor(
     }
 
     private companion object {
-        private const val SCREENSHOT_TIMEOUT_SECONDS: Long = 5
+        // A still-image request must fall back promptly when WGC cannot deliver a frame (for
+        // example, on a remote/session-isolated desktop). A healthy WGC session produces its
+        // first frame well within this budget; allowing the helper's 5s internal timeout here
+        // makes every subsequent screenshot unusably slow before Robot can take over.
+        private const val SCREENSHOT_TIMEOUT_MILLIS: Long = 750
         private const val FORCE_KILL_WAIT_SECONDS: Long = 1
     }
 }

@@ -125,6 +125,7 @@ class WindowsWindowScreenshotterTest {
         assertContains(error.message.orEmpty(), "Timed out")
         assertTrue(process.destroyed)
         assertEquals(2, process.timedWaitCalls)
+        assertEquals(listOf(750L, 1_000L), process.waitTimeoutMillis)
     }
 
     @Test
@@ -245,6 +246,8 @@ private class HangingProcess : Process() {
     var timedWaitCalls: Int = 0
         private set
 
+    val waitTimeoutMillis: MutableList<Long> = mutableListOf()
+
     override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
 
     override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
@@ -255,6 +258,7 @@ private class HangingProcess : Process() {
 
     override fun waitFor(timeout: Long, unit: TimeUnit): Boolean {
         timedWaitCalls += 1
+        waitTimeoutMillis += unit.toMillis(timeout)
         return false
     }
 
