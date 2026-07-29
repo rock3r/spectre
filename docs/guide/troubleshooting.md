@@ -220,14 +220,18 @@ wrapper when your UI reads Jewel locals such as `LocalComponent`.
 
 ## "Captured screenshot pixels look slightly off"
 
-First check whether the capture saw the target window itself. Spectre screenshots are
-currently screen-region captures: the requested window or node bounds are converted to
-a rectangle on the desktop, then the OS framebuffer is captured for that rectangle.
-Bring the target window to the front before capture. If another window overlaps it,
-or if the target is partly off-screen, the returned image reflects those visible
-screen pixels rather than an isolated window backing store. Native window-capture
-backends are tracked in
-[issue #147](https://github.com/rock3r/spectre/issues/147).
+`screenshot(windowIndex)` and `screenshot(node)` prefer the platform window-capture backend when
+`spectre-recording` is on the runtime classpath, so an occluding window does not normally alter
+their pixels. `capture()` intentionally uses an immediate Robot region capture to keep its
+semantics snapshot adjacent to its pixels, so its image can include occlusion. When native capture
+is unavailable (for example an embedded non-`Frame` host or an unsupported platform), the
+`screenshot()` overloads also fall back to a screen-region capture; then bring the target to the
+front and keep it visible, because overlapping windows and off-screen portions are part of the
+captured framebuffer.
+
+`waitForVisualIdle()` samples screen regions until the native capture API can keep one frame
+stream alive across polls. Bring the target to the front before using it when another window may
+overlap the Compose surface.
 
 **Rule of thumb: when you're validating colours from a `screenshot()`, always think
 about the node's interaction state first.** If the node is currently focused,

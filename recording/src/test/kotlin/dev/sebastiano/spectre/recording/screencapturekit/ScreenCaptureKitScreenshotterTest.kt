@@ -86,6 +86,35 @@ class ScreenCaptureKitScreenshotterTest {
             Thread.interrupted()
         }
     }
+
+    @Test
+    fun `captureWindow allows discovery and first-frame budget before timing out`() {
+        val process = TimedOutScreenshotHelperProcess()
+        val screenshotter =
+            ScreenCaptureKitScreenshotter(
+                helperExtractor =
+                    HelperBinaryExtractor(
+                        materialLocator = {
+                            helperAppBundleMaterial(
+                                executable = byteArrayOf(0x01),
+                                infoPlist = byteArrayOf(),
+                            )
+                        },
+                        targetDirProvider = { Path.of("/tmp") },
+                    ),
+                processFactory = ScreenshotHelperProcessFactory(process),
+                requireScreenCaptureAccess = {},
+            )
+
+        val failure =
+            assertFailsWith<IllegalStateException> {
+                screenshotter.captureWindow(ScreenshotFakeTitledWindow("MyApp"), 4242L)
+            }
+
+        assertEquals(listOf(15L, 1L), process.waitTimeoutSeconds)
+        assertTrue(process.destroyedForcibly)
+        assertContains(failure.message.orEmpty(), "timed out after 15s")
+    }
 }
 
 private class ScreenshotFakeTitledWindow(initialTitle: String?) : TitledWindow {
@@ -146,7 +175,46 @@ private class InterruptingScreenshotHelperProcess : Process() {
         throw InterruptedException("interrupted")
     }
 
-    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean = false
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean {
+        throw InterruptedException("interrupted")
+    }
+
+    override fun exitValue(): Int = throw IllegalThreadStateException("still running")
+
+    override fun destroy() = Unit
+
+    override fun destroyForcibly(): Process {
+        destroyedForcibly = true
+        return this
+    }
+
+    override fun isAlive(): Boolean = !destroyedForcibly
+
+    override fun pid(): Long = 0
+
+    override fun toHandle(): ProcessHandle = ProcessHandle.current()
+
+    override fun onExit(): CompletableFuture<Process> = CompletableFuture.completedFuture(this)
+}
+
+private class TimedOutScreenshotHelperProcess : Process() {
+    var destroyedForcibly: Boolean = false
+        private set
+
+    val waitTimeoutSeconds: MutableList<Long> = mutableListOf()
+
+    override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
+
+    override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun waitFor(): Int = throw IllegalThreadStateException("still running")
+
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean {
+        waitTimeoutSeconds += unit.toSeconds(timeout)
+        return destroyedForcibly
+    }
 
     override fun exitValue(): Int = throw IllegalThreadStateException("still running")
 

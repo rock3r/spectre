@@ -32,6 +32,7 @@ dependencies {
 
     testImplementation(libs.kotlin.testJunit5)
     testImplementation(libs.kotlinx.coroutines.test)
+    testRuntimeOnly(projects.recording)
 }
 
 tasks.withType<Test>().configureEach {

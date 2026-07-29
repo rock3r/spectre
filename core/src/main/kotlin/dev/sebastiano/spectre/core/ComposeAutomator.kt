@@ -8,12 +8,13 @@ import androidx.compose.ui.semantics.getOrNull
 import dev.sebastiano.spectre.core.capture.AtomicCapture
 import dev.sebastiano.spectre.core.capture.AtomicCaptureBuilder
 import dev.sebastiano.spectre.core.capture.CaptureNodeSnapshot
+import dev.sebastiano.spectre.core.capture.cropImageToScreenRegion
+import dev.sebastiano.spectre.core.capture.normalizeImageToScreenBounds
 import dev.sebastiano.spectre.core.perf.ExperimentalSpectreApi
 import dev.sebastiano.spectre.core.perf.RecompositionMonitor
 import java.awt.Rectangle
 import java.awt.event.KeyEvent
 import java.awt.image.BufferedImage
-import java.awt.image.DataBufferInt
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -41,6 +42,9 @@ private constructor(
     private val semanticsReader: SemanticsReader,
     private val robotDriver: RobotDriver,
 ) {
+
+    private val screenCaptureBackend: ScreenCaptureBackend =
+        PlatformScreenCaptureBackend(robotDriver)
 
     /**
      * Snapshot of the currently tracked windows. Returns the live `TrackedWindow` collaborator
@@ -246,36 +250,68 @@ private constructor(
      * KDoc for colour-space, focus-overlay, and per-platform TCC / Wayland gotchas before using the
      * result for pixel-level assertions.
      */
-    public fun screenshot(region: Rectangle? = null): BufferedImage = robotDriver.screenshot(region)
+    public fun screenshot(region: Rectangle? = null): BufferedImage =
+        screenCaptureBackend.captureRegion(region)
 
     /**
-     * Captures the on-screen bounds of [node] as an sRGB [BufferedImage]. Delegates to
-     * [RobotDriver.screenshot] — see that method's KDoc before using the result for pixel-level
-     * assertions.
+     * Captures the on-screen bounds of [node] as an sRGB [BufferedImage].
+     *
+     * When the optional native recording backend is available, captures through the window backend
+     * first. If native capture is unavailable, falls back to [RobotDriver.screenshot]; its KDoc
+     * describes the visibility and platform-permission constraints that apply to that fallback.
      */
-    public fun screenshot(node: AutomatorNode): BufferedImage =
-        robotDriver.screenshot(node.boundsOnScreen)
+    public fun screenshot(node: AutomatorNode): BufferedImage {
+        val geometry = readOnEdt {
+            ScreenshotGeometry(
+                node.boundsOnScreen,
+                node.trackedWindow.window.bounds,
+                frameInsets(node.trackedWindow.window),
+            )
+        }
+        return screenshotTrackedRegion(
+            node.trackedWindow,
+            geometry.region,
+            geometry.windowBounds,
+            geometry.frameInsets,
+        )
+    }
 
     /**
      * Captures the Compose surface bounds of the tracked window at [windowIndex] as an sRGB
-     * [BufferedImage]. Refreshes the window list first. Delegates to [RobotDriver.screenshot] — see
-     * that method's KDoc before using the result for pixel-level assertions.
+     * [BufferedImage]. Refreshes the window list first.
+     *
+     * When the optional native recording backend is available, captures through the window backend
+     * first. If native capture is unavailable, falls back to [RobotDriver.screenshot]; its KDoc
+     * describes the visibility and platform-permission constraints that apply to that fallback.
      */
     public fun screenshot(windowIndex: Int): BufferedImage {
         refreshWindows()
         val trackedWindow =
             windows.getOrNull(windowIndex)
                 ?: error("No tracked window at index $windowIndex (have ${windows.size})")
-        return robotDriver.screenshot(trackedWindow.composeSurfaceBoundsOnScreen)
+        val geometry = readOnEdt {
+            ScreenshotGeometry(
+                trackedWindow.composeSurfaceBoundsOnScreen,
+                trackedWindow.window.bounds,
+                frameInsets(trackedWindow.window),
+            )
+        }
+        return screenshotTrackedRegion(
+            trackedWindow,
+            geometry.region,
+            geometry.windowBounds,
+            geometry.frameInsets,
+        )
     }
 
     /**
      * Atomic capture of one window: semantics tree snapshot + window PNG taken back-to-back.
      *
-     * The tree (including node geometry) is read first; the window screenshot follows immediately
-     * without returning control to the caller between the two. True single-frame Robot capture is
-     * not available on the EDT; this method is the best-effort same-tick pair agents should use
-     * instead of separate `allNodes()` + `screenshot()` calls that can straddle a recomposition.
+     * The tree (including node geometry) is read first; an immediate Robot region screenshot
+     * follows without returning control to the caller between the two. This method is the
+     * best-effort same-tick pair agents should use instead of separate `allNodes()` +
+     * `screenshot()` calls that can straddle a recomposition. It intentionally does not use a
+     * one-shot native helper, whose startup time would invalidate this adjacency guarantee.
      *
      * Node bounds in the returned document use **image-pixel space of the PNG as primary** and
      * screen space as secondary. Callers that want files on disk should pass the result through
@@ -324,7 +360,7 @@ private constructor(
                     },
             )
         }
-        val image = robotDriver.screenshot(pre.captureRegion)
+        val image = screenCaptureBackend.captureRegion(pre.captureRegion)
         return AtomicCaptureBuilder.build(
             windowIndex = windowIndex,
             trackedWindow = trackedWindow,
@@ -519,15 +555,31 @@ private constructor(
         return runInterruptible {
             runBoundedOnWorker(budgetMs) {
                 refreshWindows()
-                val rects = composeSurfaceRects()
-                if (rects.isEmpty()) {
+                val surfaces = trackedComposeSurfaces()
+                if (surfaces.isEmpty()) {
                     null
                 } else {
-                    val hashes = IntArray(rects.size)
-                    for (i in rects.indices) hashes[i] = hashScreenRegion(rects[i])
+                    val hashes = IntArray(surfaces.size)
+                    for (i in surfaces.indices) {
+                        val (_, region) = surfaces[i]
+                        // AutoScreenshotter starts a native helper for each still image. Repeating
+                        // that startup on every visual-idle poll makes a stable-frame streak
+                        // unreachable on a cold helper, so use Robot's long-lived region path
+                        // until the native API exposes a persistent frame stream.
+                        hashes[i] = imageHash(screenCaptureBackend.captureRegion(region))
+                    }
                     hashes.contentHashCode()
                 }
             }
+        }
+    }
+
+    private fun trackedComposeSurfaces(): List<Pair<TrackedWindow, Rectangle>> = readOnEdt {
+        windows.mapNotNull { window ->
+            runCatching { window.composeSurfaceBoundsOnScreen }
+                .getOrNull()
+                ?.takeIf { !it.isEmpty }
+                ?.let { window to it }
         }
     }
 
@@ -595,26 +647,46 @@ private constructor(
         }
     }
 
-    private fun composeSurfaceRects(): List<Rectangle> = readOnEdt {
-        windows.mapNotNull { window ->
-            runCatching { window.composeSurfaceBoundsOnScreen }.getOrNull()?.takeIf { !it.isEmpty }
-        }
+    private fun screenshotTrackedRegion(
+        trackedWindow: TrackedWindow,
+        region: Rectangle,
+        windowBounds: Rectangle,
+        frameInsets: java.awt.Insets,
+    ): BufferedImage {
+        return screenshotTrackedRegionCapture(trackedWindow, region, windowBounds, frameInsets)
+            .image
     }
 
-    private fun hashScreenRegion(region: Rectangle): Int {
-        val image = robotDriver.screenshot(region)
-        val raster = image.raster
-        val buffer = raster.dataBuffer
-        return if (buffer is DataBufferInt) {
-            buffer.data.contentHashCode()
-        } else {
-            // Fallback: read pixels generically. Slower, but correct for any BufferedImage type.
-            val width = image.width
-            val height = image.height
-            val pixels = image.getRGB(0, 0, width, height, null, 0, width)
-            pixels.contentHashCode()
+    private data class ScreenshotGeometry(
+        val region: Rectangle,
+        val windowBounds: Rectangle,
+        val frameInsets: java.awt.Insets,
+    )
+
+    private fun screenshotTrackedRegionCapture(
+        trackedWindow: TrackedWindow,
+        region: Rectangle,
+        windowBounds: Rectangle = trackedWindow.window.bounds,
+        frameInsets: java.awt.Insets = frameInsets(trackedWindow.window),
+    ): WindowCapture {
+        val capture = screenCaptureBackend.captureWindow(trackedWindow, windowBounds, frameInsets)
+        if (capture.boundsOnScreen == region) {
+            return capture
         }
+        val visibleRegion = region.intersection(capture.boundsOnScreen)
+        return WindowCapture(
+            image =
+                cropImageToScreenRegion(
+                    normalizeImageToScreenBounds(capture.image, capture.boundsOnScreen),
+                    visibleRegion,
+                    capture.boundsOnScreen,
+                ),
+            boundsOnScreen = visibleRegion,
+        )
     }
+
+    private fun frameInsets(window: java.awt.Window): java.awt.Insets =
+        (window as? java.awt.Frame)?.insets ?: java.awt.Insets(0, 0, 0, 0)
 
     public suspend fun waitForNode(
         tag: String? = null,

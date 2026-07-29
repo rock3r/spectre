@@ -11,8 +11,10 @@ keep EDT callers from blocking the UI. Internal sleeps use `delay` rather than
 `Thread.sleep`, so a cancelled coroutine cancels mid-`longClick` / mid-`swipe` rather
 than parking the worker thread until the hold completes.
 
-`screenshot` stays sync — it's a single framebuffer read, no blocking I/O to bury
-behind a coroutine boundary.
+The explicit `screenshot(region)` overload stays sync — it is a single framebuffer
+read, with no blocking I/O to bury behind a coroutine boundary. Window- and
+node-targeted screenshots can instead launch a native capture helper and wait for a
+frame; use them from a coroutine-friendly test context when that latency matters.
 
 The snippets below are written as if they sit inside a suspend block (e.g. a JUnit
 test wrapped in `runSpectreTest { … }`).
@@ -119,12 +121,15 @@ val region = automator.screenshot(Rectangle(0, 0, 800, 600))
 
 Returns a `BufferedImage` you can save, hash, or compare against a baseline.
 
-!!! warning "`ComposeAutomator.screenshot` is a screen-region capture"
-    `ComposeAutomator.screenshot(...)` captures OS framebuffer pixels for a rectangle and
-    crops to the requested window, node, or region. Before capturing a window or node,
-    make sure the target window is visible and brought to the front. If another app
-    overlaps the rectangle, those overlapping pixels can appear in the image; if the
-    target is partially off-screen, Spectre can only capture the visible screen area.
+!!! note "Window captures prefer native backends"
+    `screenshot(windowIndex)` and `screenshot(node)` prefer a native, window-scoped backend when
+    `spectre-recording` is on the runtime classpath; `screenshot(region)` remains an explicit
+    screen-region capture. If a native backend is unavailable Spectre falls back to the screen
+    framebuffer. Before relying on that fallback, make sure the target window is visible and
+    brought to the front. Linux Xorg/Xvfb window capture also reads visible screen pixels, so the
+    same requirement applies there. If another app overlaps the rectangle, those overlapping
+    pixels can appear in the image; if the target is partially off-screen, Spectre can only capture
+    the visible screen area.
     For top-level windows, `spectre-recording` also exposes `AutoScreenshotter`,
     which uses native/window-targeted backends on macOS and Windows, and the Linux
     helper on Xorg/Xvfb and Wayland.

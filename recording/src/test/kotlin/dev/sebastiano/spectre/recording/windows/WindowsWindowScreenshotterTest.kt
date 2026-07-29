@@ -57,6 +57,7 @@ class WindowsWindowScreenshotterTest {
             listOf("--owner-pid", ProcessHandle.current().pid().toString()),
         )
         assertContains(factory.lastArgv, "--output")
+        assertContainsSequence(factory.lastArgv, listOf("--cursor", "false"))
     }
 
     @Test
@@ -98,6 +99,33 @@ class WindowsWindowScreenshotterTest {
             }
 
         assertTrue(error.message.orEmpty().contains("could not find"))
+    }
+
+    @Test
+    fun `captureWindow aborts a helper that does not finish`() {
+        val helper = Files.createTempFile("spectre-helper", ".exe")
+        val process = HangingProcess()
+        val screenshotter =
+            WindowsWindowScreenshotter(
+                helperExtractor =
+                    WindowsGraphicsCaptureHelperBinaryExtractor(
+                        resourceLocator = { null },
+                        targetDirProvider = { helper.parent },
+                        getenv = { helper.toString() },
+                        osArch = { "amd64" },
+                    ),
+                processFactory = ScreenshotProcessFactory(process = process),
+            )
+
+        val error =
+            assertFailsWith<IllegalStateException> {
+                screenshotter.captureWindow(ScreenshotWindow(title = "Stuck"))
+            }
+
+        assertContains(error.message.orEmpty(), "Timed out")
+        assertTrue(process.destroyed)
+        assertEquals(2, process.timedWaitCalls)
+        assertEquals(listOf(750L, 1_000L), process.waitTimeoutMillis)
     }
 
     @Test
@@ -209,6 +237,47 @@ private class ExitingProcess(private val exit: Int) : Process() {
     override fun toHandle(): ProcessHandle = ProcessHandle.current()
 
     override fun onExit(): CompletableFuture<Process> = CompletableFuture.completedFuture(this)
+}
+
+private class HangingProcess : Process() {
+    var destroyed: Boolean = false
+        private set
+
+    var timedWaitCalls: Int = 0
+        private set
+
+    val waitTimeoutMillis: MutableList<Long> = mutableListOf()
+
+    override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
+
+    override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun waitFor(): Int = error("captureWindow must use a bounded process wait")
+
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean {
+        timedWaitCalls += 1
+        waitTimeoutMillis += unit.toMillis(timeout)
+        return false
+    }
+
+    override fun exitValue(): Int = error("process has not exited")
+
+    override fun destroy() = Unit
+
+    override fun destroyForcibly(): Process {
+        destroyed = true
+        return this
+    }
+
+    override fun isAlive(): Boolean = true
+
+    override fun pid(): Long = 0
+
+    override fun toHandle(): ProcessHandle = ProcessHandle.current()
+
+    override fun onExit(): CompletableFuture<Process> = CompletableFuture()
 }
 
 private fun writeTestPng(output: Path) {

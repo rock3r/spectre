@@ -29,6 +29,10 @@ internal constructor(
     private val screenCapture: ScreenCaptureAdapter = robot,
 ) {
 
+    /** Whether callers may use a platform capture backend instead of this driver's adapter. */
+    internal val allowsPlatformCapture: Boolean
+        get() = screenCapture !== HeadlessThrowingScreenCaptureAdapter
+
     // Public surface: callers may instantiate without arguments (defaults to a fresh
     // AWT Robot + system clipboard) or hand in an existing Robot. The internal
     // adapter-injecting constructor is reserved for tests within this module.
@@ -747,7 +751,7 @@ internal fun interpolateSwipePoints(
 
 internal fun detectMacOs(): Boolean = System.getProperty("os.name").lowercase().contains("mac")
 
-private fun virtualDesktopBounds(): Rectangle {
+internal fun virtualDesktopBounds(): Rectangle {
     // GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices throws HeadlessException
     // when the JVM is running with -Djava.awt.headless=true (e.g. CI). Fall back to a 1×1
     // rectangle here so the bounds lookup itself doesn't throw; the underlying adapter's

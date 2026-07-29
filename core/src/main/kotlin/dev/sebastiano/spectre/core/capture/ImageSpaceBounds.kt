@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.core.capture
 
 import java.awt.Rectangle
+import java.awt.image.BufferedImage
 import kotlin.math.roundToInt
 
 /**
@@ -38,4 +39,67 @@ public fun screenRectToImageRect(
         width = (right - left).coerceAtLeast(0),
         height = (bottom - top).coerceAtLeast(0),
     )
+}
+
+/** Crops [image] using a screen-space region and the frozen AWT bounds captured with it. */
+internal fun cropImageToScreenRegion(
+    image: BufferedImage,
+    screenRegion: Rectangle,
+    captureBounds: Rectangle,
+): BufferedImage {
+    val crop =
+        screenRectToImageRect(
+            screen = screenRegion,
+            captureOriginX = captureBounds.x,
+            captureOriginY = captureBounds.y,
+            captureAwtWidth = captureBounds.width,
+            captureAwtHeight = captureBounds.height,
+            imageWidth = image.width,
+            imageHeight = image.height,
+        )
+    val intersection =
+        Rectangle(crop.x, crop.y, crop.width, crop.height)
+            .intersection(Rectangle(image.width, image.height))
+    require(intersection.width > 0 && intersection.height > 0) {
+        "Screenshot region does not intersect the captured image"
+    }
+    return BufferedImage(intersection.width, intersection.height, BufferedImage.TYPE_INT_ARGB)
+        .also { cropped ->
+            val graphics = cropped.createGraphics()
+            try {
+                graphics.drawImage(
+                    image,
+                    0,
+                    0,
+                    cropped.width,
+                    cropped.height,
+                    intersection.x,
+                    intersection.y,
+                    intersection.x + intersection.width,
+                    intersection.y + intersection.height,
+                    null,
+                )
+            } finally {
+                graphics.dispose()
+            }
+        }
+}
+
+/**
+ * Converts a native device-pixel capture into one pixel per logical screen unit before cropping.
+ */
+internal fun normalizeImageToScreenBounds(
+    image: BufferedImage,
+    boundsOnScreen: Rectangle,
+): BufferedImage {
+    if (image.width == boundsOnScreen.width && image.height == boundsOnScreen.height) return image
+    return BufferedImage(boundsOnScreen.width, boundsOnScreen.height, BufferedImage.TYPE_INT_ARGB)
+        .also { normalized ->
+            val graphics = normalized.createGraphics()
+            try {
+                graphics.drawImage(image, 0, 0, normalized.width, normalized.height, null)
+            } finally {
+                graphics.dispose()
+            }
+        }
 }

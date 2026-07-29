@@ -1,8 +1,10 @@
 package dev.sebastiano.spectre.core.capture
 
 import java.awt.Rectangle
+import java.awt.image.BufferedImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class ImageSpaceBoundsTest {
 
@@ -67,5 +69,51 @@ class ImageSpaceBoundsTest {
                 imageHeight = 150,
             )
         assertEquals(CaptureRect(x = 2, y = 0, width = 1, height = 2), image)
+    }
+
+    @Test
+    fun `crop uses transformed edges at fractional scale`() {
+        val image = BufferedImage(150, 150, BufferedImage.TYPE_INT_ARGB)
+
+        val crop =
+            cropImageToScreenRegion(
+                image = image,
+                screenRegion = Rectangle(/* x= */ 101, /* y= */ 200, /* w= */ 1, /* h= */ 1),
+                captureBounds = Rectangle(/* x= */ 100, /* y= */ 200, /* w= */ 100, /* h= */ 100),
+            )
+
+        assertEquals(1, crop.width)
+        assertEquals(2, crop.height)
+    }
+
+    @Test
+    fun `normalizing before cropping preserves fractional DPI logical geometry`() {
+        val image = BufferedImage(150, 150, BufferedImage.TYPE_INT_ARGB)
+        image.setRGB(2, 0, 0xFF112233.toInt())
+
+        val logical = normalizeImageToScreenBounds(image, Rectangle(100, 200, 100, 100))
+        val crop =
+            cropImageToScreenRegion(
+                logical,
+                Rectangle(101, 200, 1, 1),
+                Rectangle(100, 200, 100, 100),
+            )
+
+        assertEquals(1, crop.width)
+        assertEquals(1, crop.height)
+        assertEquals(0xFF112233.toInt(), crop.getRGB(0, 0))
+    }
+
+    @Test
+    fun `crop rejects an empty screen region`() {
+        val image = BufferedImage(100, 100, BufferedImage.TYPE_INT_ARGB)
+
+        assertFailsWith<IllegalArgumentException> {
+            cropImageToScreenRegion(
+                image = image,
+                screenRegion = Rectangle(/* x= */ 120, /* y= */ 120, /* w= */ 0, /* h= */ 0),
+                captureBounds = Rectangle(/* x= */ 100, /* y= */ 100, /* w= */ 100, /* h= */ 100),
+            )
+        }
     }
 }

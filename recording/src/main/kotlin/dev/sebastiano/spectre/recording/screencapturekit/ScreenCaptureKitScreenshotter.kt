@@ -4,6 +4,7 @@ import dev.sebastiano.spectre.recording.WindowScreenshotter
 import java.awt.image.BufferedImage
 import java.io.IOException
 import java.nio.file.Files
+import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 
 /** macOS still screenshot backend backed by the bundled ScreenCaptureKit helper. */
@@ -41,7 +42,14 @@ internal constructor(
                     )
                     .toArgv(helperPath)
             process = processFactory.start(argv)
-            val exit = process.waitFor()
+            if (!process.waitFor(SCREENSHOT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                process.waitFor(FORCE_KILL_WAIT_SECONDS, TimeUnit.SECONDS)
+                error(
+                    "spectre-screencapture screenshot timed out after ${SCREENSHOT_TIMEOUT_SECONDS}s"
+                )
+            }
+            val exit = process.exitValue()
             check(exit == 0) { messageForHelperExit(exit, output, argv) }
             return ImageIO.read(output.toFile())
                 ?: error("spectre-screencapture did not produce a readable PNG at $output")
@@ -68,6 +76,9 @@ internal constructor(
 
 private const val SCREENSHOT_DISCOVERY_TIMEOUT_MS: Int = 2000
 private const val SCREENSHOT_FRAME_RATE: Int = 30
+// Allow the helper's 2s window discovery and 10s first-frame budgets, plus startup slack.
+private const val SCREENSHOT_TIMEOUT_SECONDS: Long = 15
+private const val FORCE_KILL_WAIT_SECONDS: Long = 1
 private const val EXIT_ARGUMENTS_REJECTED: Int = 2
 private const val EXIT_WINDOW_NOT_FOUND: Int = 3
 private const val EXIT_SCREEN_RECORDING_DENIED: Int = 4

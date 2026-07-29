@@ -97,6 +97,7 @@ val verifyInjectRuntimeJarContents by tasks.registering {
                     "org/jetbrains/compose/",
                     "org/jetbrains/skiko/",
                     "kotlinx/coroutines/", // must be relocated, not original package
+                    "dev/sebastiano/spectre/recording/",
                 )
             val leaks = names.filter { entry -> forbidden.any { entry.startsWith(it) } }
             require(leaks.isEmpty()) {
