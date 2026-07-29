@@ -284,7 +284,7 @@ class ScreenCaptureBackendTest {
     fun `unavailable Windows native screenshot prerequisites fall back to the full window region`() {
         listOf(
                 "spectre-window-capture failed to start. Native Windows window capture requires .NET 8 Desktop Runtime",
-                "Unsupported Windows architecture: x86",
+                "Unsupported Windows architecture 'x86' for native window capture.",
                 "spectre-window-capture reported Windows Graphics Capture is unsupported (exit 4).",
                 "spectre-window-capture's Windows Graphics Capture pipeline failed (exit 5).",
             )
