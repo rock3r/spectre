@@ -231,7 +231,8 @@ private fun isMissingLinuxScreenshotPipeline(message: String): Boolean =
         message.contains("gst-launch did not exit within", ignoreCase = true)
 
 private fun isTimedOutNativeScreenshot(message: String): Boolean =
-    message.contains("Timed out waiting for spectre-window-capture to capture a window")
+    message.startsWith("Timed out") &&
+        message.contains("waiting for spectre-window-capture to capture a window")
 
 private fun isUndiscoverableNativeWindow(message: String): Boolean =
     message.contains("spectre-screencapture could not find", ignoreCase = true) ||

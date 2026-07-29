@@ -232,7 +232,8 @@ class ScreenCaptureBackendTest {
         assertTrue(
             shouldFallBackToRegionCapture(
                 IllegalStateException(
-                    "Timed out waiting for spectre-window-capture to capture a window. Argv: []"
+                    "Timed out after 750ms waiting for spectre-window-capture to capture a " +
+                        "window. Argv: []"
                 )
             )
         )

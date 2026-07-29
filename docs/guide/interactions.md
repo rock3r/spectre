@@ -11,8 +11,10 @@ keep EDT callers from blocking the UI. Internal sleeps use `delay` rather than
 `Thread.sleep`, so a cancelled coroutine cancels mid-`longClick` / mid-`swipe` rather
 than parking the worker thread until the hold completes.
 
-`screenshot` stays sync — it's a single framebuffer read, no blocking I/O to bury
-behind a coroutine boundary.
+The explicit `screenshot(region)` overload stays sync — it is a single framebuffer
+read, with no blocking I/O to bury behind a coroutine boundary. Window- and
+node-targeted screenshots can instead launch a native capture helper and wait for a
+frame; use them from a coroutine-friendly test context when that latency matters.
 
 The snippets below are written as if they sit inside a suspend block (e.g. a JUnit
 test wrapped in `runSpectreTest { … }`).
