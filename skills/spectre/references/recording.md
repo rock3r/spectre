@@ -1,22 +1,24 @@
 # Recording And Screenshots
 
 The `:recording` module captures videos and native still window screenshots
-of a running Compose Desktop UI. It is optional — depend on it only if a test
-or sample needs an MP4 or a window-scoped still image. **Audio is not
-supported.**
+of a running Compose Desktop UI. It is required for `ComposeAutomator.screenshot(node)`
+and `screenshot(windowIndex)`, which are window-scoped; `screenshot(region)` remains the
+explicit screen-framebuffer API. **Audio is not supported.**
 
 ## Still window screenshots — `AutoScreenshotter`
 
-Use `ComposeAutomator.screenshot(...)` for framebuffer rectangles / nodes.
-Use `AutoScreenshotter.captureWindow(frame.asTitledWindow())` when you need
-the pixels for one top-level OS window:
+Use `ComposeAutomator.screenshot(region)` for an explicit framebuffer rectangle.
+`ComposeAutomator.screenshot(node)` and `screenshot(windowIndex)` use the native
+window backend and fail clearly if it is unavailable or cannot identify the window.
+Use `AutoScreenshotter.captureWindow(frame.asTitledWindow())` for a direct top-level
+window still image:
 
 | Platform | Backend | Runtime helper |
 |---|---|---|
 | macOS | ScreenCaptureKit still-image mode | `spectre-recording-macos` |
 | Windows | Windows Graphics Capture helper (`spectre-window-capture.exe`) | `spectre-recording-windows` |
 | Linux X11 / XWayland | Linux helper (`ximagesrc`) | `spectre-recording-linux` |
-| Linux Wayland | unsupported for still images | use video portal path instead |
+| Linux Wayland | Linux portal/PipeWire helper | Requires the compositor portal dialog, `xprop`, and `_GTK_FRAME_EXTENTS`; supported on GNOME/Mutter, other compositors are best-effort |
 
 Windows still screenshots and native window/region recording share the same Windows Graphics
 Capture helper. Runtime users need Windows 10 version 1903 or newer, .NET 8 Desktop

@@ -109,11 +109,15 @@ class Issue14PerfValidationTest {
     @Test
     @Order(3)
     fun `screenshot warmup completes within a reasonable budget`() = runBlocking {
+        assumeFalse(
+            isHostedWindows(),
+            "Live Windows Graphics Capture requires an interactive console",
+        )
         with(fixture.automator) {
             navigateToScenario("scenario.counter")
             val button = waitForTestTag("incrementButton")
 
-            // Cold call — first screenshot may pay Robot / framebuffer capture setup costs.
+            // Cold call — native window capture may need to start its platform helper.
             val coldSource = TimeSource.Monotonic.markNow()
             screenshot(button)
             val coldMs = coldSource.elapsedNow().inWholeMilliseconds
@@ -148,9 +152,13 @@ class Issue14PerfValidationTest {
         const val POPUP_ITERATIONS: Int = 5
         const val POPUP_BUDGET_MS: Long = 1_000L
 
-        const val SCREENSHOT_COLD_BUDGET_MS: Long = 5_000L
+        const val SCREENSHOT_COLD_BUDGET_MS: Long = 15_000L
         const val SCREENSHOT_HOT_BUDGET_MS: Long = 1_000L
 
         val POPUP_OUTER_TIMEOUT = 5.seconds
+
+        fun isHostedWindows(): Boolean =
+            System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true) &&
+                System.getenv("GITHUB_ACTIONS") == "true"
     }
 }

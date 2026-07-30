@@ -256,9 +256,9 @@ private constructor(
     /**
      * Captures the on-screen bounds of [node] as an sRGB [BufferedImage].
      *
-     * When the optional native recording backend is available, captures through the window backend
-     * first. If native capture is unavailable, falls back to [RobotDriver.screenshot]; its KDoc
-     * describes the visibility and platform-permission constraints that apply to that fallback.
+     * Captures through the optional native window backend. If that backend cannot identify or
+     * capture the tracked window, this method fails rather than substituting a screen-region crop.
+     * Use [screenshot] with an explicit [Rectangle] when screen-region capture is intended.
      */
     public fun screenshot(node: AutomatorNode): BufferedImage {
         val geometry = readOnEdt {
@@ -280,9 +280,9 @@ private constructor(
      * Captures the Compose surface bounds of the tracked window at [windowIndex] as an sRGB
      * [BufferedImage]. Refreshes the window list first.
      *
-     * When the optional native recording backend is available, captures through the window backend
-     * first. If native capture is unavailable, falls back to [RobotDriver.screenshot]; its KDoc
-     * describes the visibility and platform-permission constraints that apply to that fallback.
+     * Captures through the optional native window backend. If that backend cannot identify or
+     * capture the tracked window, this method fails rather than substituting a screen-region crop.
+     * Use [screenshot] with an explicit [Rectangle] when screen-region capture is intended.
      */
     public fun screenshot(windowIndex: Int): BufferedImage {
         refreshWindows()
@@ -670,17 +670,13 @@ private constructor(
         frameInsets: java.awt.Insets = frameInsets(trackedWindow.window),
     ): WindowCapture {
         val capture = screenCaptureBackend.captureWindow(trackedWindow, windowBounds, frameInsets)
+        val normalizedImage = normalizeImageToScreenBounds(capture.image, capture.boundsOnScreen)
         if (capture.boundsOnScreen == region) {
-            return capture
+            return WindowCapture(normalizedImage, capture.boundsOnScreen)
         }
         val visibleRegion = region.intersection(capture.boundsOnScreen)
         return WindowCapture(
-            image =
-                cropImageToScreenRegion(
-                    normalizeImageToScreenBounds(capture.image, capture.boundsOnScreen),
-                    visibleRegion,
-                    capture.boundsOnScreen,
-                ),
+            image = cropImageToScreenRegion(normalizedImage, visibleRegion, capture.boundsOnScreen),
             boundsOnScreen = visibleRegion,
         )
     }

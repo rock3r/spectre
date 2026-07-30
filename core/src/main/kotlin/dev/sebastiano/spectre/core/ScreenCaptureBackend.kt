@@ -6,12 +6,11 @@ import java.awt.Frame
 import java.awt.Insets
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
-import java.io.IOException
 import java.lang.reflect.InvocationTargetException
 import java.nio.file.Files
 import java.nio.file.Path
 
-/** Internal capture seam: native window pixels when available, Robot regions otherwise. */
+/** Internal capture seam for explicit screen regions and identity-preserving native windows. */
 internal interface ScreenCaptureBackend {
     fun captureRegion(region: Rectangle? = null): BufferedImage
 
@@ -39,7 +38,6 @@ internal class PlatformScreenCaptureBackend(
                 isWayland = isWaylandSession(),
             )
         },
-    private val visibleDesktopBounds: () -> Rectangle = ::virtualDesktopBounds,
 ) : ScreenCaptureBackend {
     internal constructor(
         robotDriver: RobotDriver
@@ -59,47 +57,40 @@ internal class PlatformScreenCaptureBackend(
     ): WindowCapture {
         val frame =
             window.window as? Frame
-                ?: return regionCapture(
-                    visibleWindowCaptureBounds(windowBounds, visibleDesktopBounds())
+                ?: throw UnsupportedOperationException(
+                    "Window-scoped screenshots require a native backend for a Frame host. " +
+                        "Use screenshot(region) only when a screen-region capture is explicitly intended."
                 )
-        if (
-            !nativeCaptureEnabled() ||
-                (!nativeCaptureDisambiguatesTitles() && hasAmbiguousNativeIdentity(frame))
-        ) {
-            return regionCapture(visibleWindowCaptureBounds(windowBounds, visibleDesktopBounds()))
+        if (!nativeCaptureEnabled()) {
+            throw UnsupportedOperationException(
+                "Native window capture is disabled for this RobotDriver. " +
+                    "RobotDriver.headless() does not permit real screenshot capture."
+            )
         }
-        return try {
-            val image = normalizeNativeImage(nativeCapture(frame))
-            WindowCapture(image, nativeCaptureBounds(frame, image, windowBounds, frameInsets))
-        } catch (e: IllegalStateException) {
-            fallBackToRegionCapture(windowBounds, e)
-        } catch (e: UnsupportedOperationException) {
-            fallBackToRegionCapture(windowBounds, e)
-        } catch (e: IllegalArgumentException) {
-            fallBackToRegionCapture(windowBounds, e)
+        check(frame.isDisplayable) {
+            "Native window capture target ${frame.title.quoteForMessage()} is no longer displayable. " +
+                "Refresh the window list before requesting a window screenshot."
         }
+        if (!nativeCaptureDisambiguatesTitles()) {
+            ambiguousNativeIdentity(frame)?.let { candidates ->
+                throw IllegalStateException(
+                    "Native window capture cannot uniquely select title ${frame.title.quoteForMessage()}. " +
+                        "Matching frames: ${candidates.joinToString()}. " +
+                        "Provide criteria that identify one window, or request screenshot(region) explicitly."
+                )
+            }
+        }
+        val image = normalizeNativeImage(nativeCapture(frame))
+        return WindowCapture(image, nativeCaptureBounds(frame, image, windowBounds, frameInsets))
     }
 
-    private fun fallBackToRegionCapture(
-        windowBounds: Rectangle,
-        error: RuntimeException,
-    ): WindowCapture {
-        if (!shouldFallBackToRegionCapture(error)) throw error
-        // Keep the fallback image in the same coordinate system as a native window image.
-        // Compose content can be inset from a decorated Frame, so capturing only the surface
-        // would make callers crop the title-bar offset a second time.
-        return regionCapture(visibleWindowCaptureBounds(windowBounds, visibleDesktopBounds()))
-    }
-
-    private fun regionCapture(bounds: Rectangle): WindowCapture =
-        WindowCapture(captureRegion(bounds), Rectangle(bounds))
-
-    private fun hasAmbiguousNativeIdentity(frame: Frame): Boolean {
+    private fun ambiguousNativeIdentity(frame: Frame): List<String>? {
         val title = frame.title
-        if (title.isNullOrBlank()) return false
-        return Frame.getFrames().any { other ->
-            other !== frame && other.isDisplayable && other.title == title
-        }
+        if (title.isNullOrBlank()) return null
+        val matches = Frame.getFrames().filter { it.isDisplayable && it.title == title }
+        return matches
+            .takeIf { it.size > 1 }
+            ?.map { "title=${it.title.quoteForMessage()}, bounds=${it.bounds}" }
     }
 
     private companion object {
@@ -147,11 +138,6 @@ internal fun isWaylandSession(
     } == true
 }
 
-internal fun visibleWindowCaptureBounds(
-    windowBounds: Rectangle,
-    desktopBounds: Rectangle,
-): Rectangle = windowBounds.intersection(desktopBounds)
-
 private fun runtimeDirHasWaylandSocket(runtimeDir: Path): Boolean =
     Files.isDirectory(runtimeDir) &&
         Files.list(runtimeDir).use { entries ->
@@ -162,7 +148,8 @@ private fun runtimeDirHasWaylandSocket(runtimeDir: Path): Boolean =
  * Loads the optional recording-owned native capture bridge without linking it into core.
  *
  * The injected core payload intentionally excludes recording and its transitive dependencies;
- * absence of the bridge must therefore remain a normal Robot-fallback condition.
+ * absence of the bridge makes implicit window capture fail loudly; callers may opt in to the
+ * independent screen-region API when that is the capture they want.
  */
 internal fun nativeWindowCaptureFor(classLoader: ClassLoader): ((Frame) -> BufferedImage)? {
     val bridge =
@@ -197,69 +184,6 @@ internal fun nativeWindowCaptureFor(classLoader: ClassLoader): ((Frame) -> Buffe
 private const val NATIVE_WINDOW_CAPTURE_BRIDGE: String =
     "dev.sebastiano.spectre.recording.NativeWindowCaptureBridge"
 
-internal fun shouldFallBackToRegionCapture(error: RuntimeException): Boolean =
-    error is UnsupportedOperationException ||
-        (error is IllegalStateException &&
-            (error.message?.let(::isUnavailableNativeCapture) == true ||
-                error.message?.let(::isMissingPlatformHelper) == true ||
-                error.message?.let(::isMissingLinuxScreenshotPipeline) == true ||
-                error.message?.let(::isTimedOutNativeScreenshot) == true ||
-                error.message?.let(::isUndiscoverableNativeWindow) == true ||
-                error.message?.let(::isUnavailableLinuxNativeScreenshot) == true ||
-                error.message?.let(::isUnavailableMacosNativeScreenshot) == true ||
-                error.message?.let(::isUnavailableWindowsNativeScreenshot) == true ||
-                error.message?.contains("Could not determine WM frame extents") == true ||
-                (error.message == "Native window capture bridge failed" &&
-                    error.cause is IOException))) ||
-        (error is IllegalArgumentException &&
-            error.message?.contains("requires a non-blank window title") == true)
-
-private fun isUnavailableNativeCapture(message: String): Boolean =
-    (message.contains(" is unavailable") &&
-        !message.contains("while another capture for this frame is in progress")) ||
-        message.contains("did not produce a readable PNG")
-
-private fun isMissingPlatformHelper(message: String): Boolean =
-    message.contains("helper", ignoreCase = true) &&
-        (message.contains("not found", ignoreCase = true) ||
-            message.contains("not bundled", ignoreCase = true))
-
-private fun isMissingLinuxScreenshotPipeline(message: String): Boolean =
-    (message.contains("spawning gst-launch", ignoreCase = true) &&
-        message.contains("No such file or directory", ignoreCase = true)) ||
-        message.contains("gst-launch screenshot pipeline exited with status", ignoreCase = true) ||
-        message.contains("gst-launch did not exit within", ignoreCase = true)
-
-private fun isTimedOutNativeScreenshot(message: String): Boolean =
-    message.startsWith("Timed out") &&
-        message.contains("waiting for spectre-window-capture to capture a window")
-
-private fun isUndiscoverableNativeWindow(message: String): Boolean =
-    message.contains("spectre-screencapture could not find", ignoreCase = true) ||
-        message.contains("spectre-window-capture could not find", ignoreCase = true)
-
-private fun isUnavailableLinuxNativeScreenshot(message: String): Boolean =
-    message == "Linux screenshot helper failed" ||
-        (message.startsWith("Timed out after") &&
-            message.contains("waiting for Linux screenshot helper")) ||
-        message.startsWith("spectre-wayland-helper did not exit within") ||
-        message.startsWith("spectre-wayland-helper exited with non-zero status")
-
-private fun isUnavailableMacosNativeScreenshot(message: String): Boolean =
-    message == "spectre-screencapture screenshot failed" ||
-        message.startsWith("spectre-screencapture's screenshot pipeline failed") ||
-        message.startsWith("failed to start spectre-screencapture for TCC preflight:") ||
-        message.startsWith("spectre-screencapture preflight ") ||
-        message.startsWith("spectre-screencapture screenshot timed out") ||
-        message.startsWith("Screen Recording: DENIED")
-
-private fun isUnavailableWindowsNativeScreenshot(message: String): Boolean =
-    message.startsWith("spectre-window-capture failed to start.") ||
-        message.startsWith("Unsupported Windows architecture '") ||
-        message.contains("reported Windows Graphics Capture is unsupported") ||
-        message.contains("Windows Graphics Capture pipeline failed") ||
-        message.contains("did not produce a readable PNG")
-
 internal fun normalizeNativeImage(image: BufferedImage): BufferedImage {
     if (image.type == BufferedImage.TYPE_INT_ARGB && image.colorModel.colorSpace.isCS_sRGB)
         return image
@@ -272,3 +196,5 @@ internal fun normalizeNativeImage(image: BufferedImage): BufferedImage {
     }
     return normalized
 }
+
+private fun String?.quoteForMessage(): String = "\"${this.orEmpty()}\""

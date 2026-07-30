@@ -103,10 +103,17 @@ jobs:
         # Xvfb: display for Compose Desktop + Robot input. libdbus / pkg-config: needed by
         # the spectre-wayland-helper Rust build (`:recording`'s assembleWaylandHelper runs
         # cargo build --release on Linux as part of processResources, and dbus-rs links
-        # libdbus-1).
+        # libdbus-1). gstreamer supplies gst-launch-1.0 + ximagesrc for the required native
+        # window screenshot path exercised by validationTest under Xvfb.
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libdbus-1-dev pkg-config
+          sudo apt-get install -y \
+            xvfb \
+            libdbus-1-dev \
+            pkg-config \
+            gstreamer1.0-tools \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good
 
       - name: Set up Rust (for spectre-wayland-helper)
         uses: dtolnay/rust-toolchain@stable

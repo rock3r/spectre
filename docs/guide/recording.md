@@ -51,9 +51,11 @@ routers that pick the right one per call.
 
 `ComposeAutomator.screenshot(windowIndex)` and `screenshot(node)` use the same native
 window-capture route when `spectre-recording` is on the runtime classpath. Core intentionally
-does not depend on recording, so injected and core-only deployments keep working with their
-screen-framebuffer fallback. When you have a top-level AWT window and want an explicit
-window-scoped still image, use `AutoScreenshotter` from `spectre-recording`:
+does not depend on recording, so injected and core-only deployments fail clearly for these
+window-scoped overloads instead of silently substituting a screen-framebuffer crop. Use
+`screenshot(region)` when a screen-region capture is explicitly intended. When you have a
+top-level AWT window and want an explicit window-scoped still image, use `AutoScreenshotter`
+from `spectre-recording`:
 
 ```kotlin
 import dev.sebastiano.spectre.recording.AutoScreenshotter
