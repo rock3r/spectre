@@ -109,6 +109,10 @@ class Issue14PerfValidationTest {
     @Test
     @Order(3)
     fun `screenshot warmup completes within a reasonable budget`() = runBlocking {
+        assumeFalse(
+            isHostedWindows(),
+            "Live Windows Graphics Capture requires an interactive console",
+        )
         with(fixture.automator) {
             navigateToScenario("scenario.counter")
             val button = waitForTestTag("incrementButton")
@@ -152,5 +156,9 @@ class Issue14PerfValidationTest {
         const val SCREENSHOT_HOT_BUDGET_MS: Long = 1_000L
 
         val POPUP_OUTER_TIMEOUT = 5.seconds
+
+        fun isHostedWindows(): Boolean =
+            System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true) &&
+                System.getenv("GITHUB_ACTIONS") == "true"
     }
 }
