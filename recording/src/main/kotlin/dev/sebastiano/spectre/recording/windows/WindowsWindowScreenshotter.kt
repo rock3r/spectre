@@ -88,11 +88,9 @@ internal constructor(
     }
 
     private companion object {
-        // A still-image request must fall back promptly when WGC cannot deliver a frame (for
-        // example, on a remote/session-isolated desktop). A healthy WGC session produces its
-        // first frame well within this budget; allowing the helper's 5s internal timeout here
-        // makes every subsequent screenshot unusably slow before Robot can take over.
-        private const val SCREENSHOT_TIMEOUT_MILLIS: Long = 750
+        // Window screenshots require WGC; they must wait through the helper's own first-frame
+        // deadline rather than silently substituting a Robot screen-region capture.
+        private const val SCREENSHOT_TIMEOUT_MILLIS: Long = 5_000
         private const val FORCE_KILL_WAIT_SECONDS: Long = 1
     }
 }
