@@ -272,9 +272,11 @@ Recording TCC. A locked screen can make `Robot.createScreenCapture` return black
 pixels; current Spectre checks the macOS `IOConsoleLocked` flag first and tells
 the caller to unlock/retry before pointing at TCC.
 
-For a **top-level window-scoped still screenshot**, use `AutoScreenshotter`
-from `:recording` instead of `ComposeAutomator.screenshot(...)`. This is
-separate from video recording:
+`screenshot(node)` and `screenshot(windowIndex)` are native window-scoped still
+screenshots and require `:recording`; they fail clearly rather than silently cropping the
+framebuffer when no native backend is available. Use `screenshot(region)` only when a
+screen-region capture is intended. `AutoScreenshotter` remains the direct top-level-window
+API. This is separate from video recording:
 
 - macOS: `ScreenCaptureKitScreenshotter` via `spectre-recording-macos`.
 - Windows: `WindowsWindowScreenshotter` for stills and `WindowsGraphicsCaptureRecorder`
@@ -282,9 +284,8 @@ separate from video recording:
   `spectre-recording-windows` for x64 and arm64; requires Windows 10 version 1903 or
   newer, .NET 8 Desktop Runtime, and Windows App Runtime 1.8 at runtime, plus .NET 8 SDK
   when building from source / CI.
-- Linux X11: explicit `x11grab` region fallback.
-- Linux Wayland: still screenshots are unsupported; window-targeted video uses
-  the portal helper.
+- Linux X11: Linux helper (`ximagesrc`) for stills; the target must be visible/frontmost.
+- Linux Wayland: Linux portal helper for stills and window-targeted video.
 
 ## Recording, JUnit, IntelliJ-hosted Compose
 
