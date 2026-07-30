@@ -231,6 +231,29 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
+    fun `disposed tracked frame fails before title-based native capture`() {
+        assumeLiveAwtAvailable()
+        val target = Frame("same title").apply { addNotify() }
+        val other = Frame("same title").apply { addNotify() }
+        val backend =
+            PlatformScreenCaptureBackend(
+                regionCapture = { error("screen-region capture must not be used") },
+                nativeCapture = { error("native capture must not select another frame") },
+            )
+        try {
+            target.dispose()
+
+            val error =
+                assertFailsWith<IllegalStateException> { backend.captureWindow(tracked(target)) }
+
+            assertTrue(error.message.orEmpty().contains("no longer displayable"))
+        } finally {
+            target.dispose()
+            other.dispose()
+        }
+    }
+
+    @Test
     fun `image hash excludes pixels outside a cropped subimage`() {
         val parent = BufferedImage(4, 2, BufferedImage.TYPE_INT_ARGB)
         val crop = parent.getSubimage(0, 0, 2, 2)

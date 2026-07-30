@@ -67,6 +67,10 @@ internal class PlatformScreenCaptureBackend(
                     "RobotDriver.headless() does not permit real screenshot capture."
             )
         }
+        check(frame.isDisplayable) {
+            "Native window capture target ${frame.title.quoteForMessage()} is no longer displayable. " +
+                "Refresh the window list before requesting a window screenshot."
+        }
         if (!nativeCaptureDisambiguatesTitles()) {
             ambiguousNativeIdentity(frame)?.let { candidates ->
                 throw IllegalStateException(
