@@ -88,9 +88,9 @@ internal constructor(
     }
 
     private companion object {
-        // Window screenshots require WGC; they must wait through the helper's own first-frame
-        // deadline rather than silently substituting a Robot screen-region capture.
-        private const val SCREENSHOT_TIMEOUT_MILLIS: Long = 5_000
+        // Window screenshots require WGC. This parent deadline covers helper startup and window
+        // lookup, the helper's 5s first-frame deadline, PNG output, and clean process exit.
+        private const val SCREENSHOT_TIMEOUT_MILLIS: Long = 10_000
         private const val FORCE_KILL_WAIT_SECONDS: Long = 1
     }
 }

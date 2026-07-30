@@ -125,7 +125,7 @@ class WindowsWindowScreenshotterTest {
         assertContains(error.message.orEmpty(), "Timed out")
         assertTrue(process.destroyed)
         assertEquals(2, process.timedWaitCalls)
-        assertEquals(listOf(5_000L, 1_000L), process.waitTimeoutMillis)
+        assertEquals(listOf(10_000L, 1_000L), process.waitTimeoutMillis)
     }
 
     @Test
