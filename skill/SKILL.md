@@ -34,16 +34,16 @@ In `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    testImplementation("dev.sebastiano.spectre:core:$spectreVersion")
-    testImplementation("dev.sebastiano.spectre:testing:$spectreVersion")
+    testImplementation("dev.sebastiano.spectre:spectre-core:$spectreVersion")
+    testImplementation("dev.sebastiano.spectre:spectre-testing:$spectreVersion")
     // Required for video or native window-scoped screenshots:
-    testImplementation("dev.sebastiano.spectre:recording:$spectreVersion")
-    testRuntimeOnly("dev.sebastiano.spectre:recording-macos:$spectreVersion") // macOS helper
-    testRuntimeOnly("dev.sebastiano.spectre:recording-linux:$spectreVersion") // Linux helper
-    testRuntimeOnly("dev.sebastiano.spectre:recording-windows:$spectreVersion") // Windows helper
+    testImplementation("dev.sebastiano.spectre:spectre-recording:$spectreVersion")
+    testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-macos:$spectreVersion") // macOS helper
+    testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-linux:$spectreVersion") // Linux helper
+    testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-windows:$spectreVersion") // Windows helper
 
     // optional:
-    testImplementation("dev.sebastiano.spectre:server:$spectreVersion")     // cross-JVM HTTP transport
+    testImplementation("dev.sebastiano.spectre:spectre-server:$spectreVersion") // cross-JVM HTTP transport
 }
 ```
 
