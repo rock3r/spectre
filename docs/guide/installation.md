@@ -53,8 +53,9 @@ on `PATH`.
   need the .NET 8 SDK.
 - **A Compose Desktop or Compose Multiplatform (desktop target) application.** Spectre
   reads Compose's semantics tree, so the UI under test must be a real Compose surface.
-- **Platform-specific recording dependencies** if you plan to use the recording module
-  — see [Recording](recording.md) for the per-OS prerequisites.
+- **Platform-specific recording dependencies** if you plan to record video or use
+  window-scoped still screenshots (`screenshot(node)` or `screenshot(windowIndex)`) — see
+  [Recording](recording.md) for the per-OS prerequisites.
 
 ## Consume from Maven Central
 
@@ -65,11 +66,13 @@ dependencies {
     testImplementation("dev.sebastiano.spectre:spectre-core:<version>")
     testImplementation("dev.sebastiano.spectre:spectre-testing:<version>")
 
-    // Optional, depending on what you need:
+    // Required for video or native window-scoped screenshots:
     testImplementation("dev.sebastiano.spectre:spectre-recording:<version>")
     testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-macos:<version>") // macOS SCK helper
     testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-linux:<version>") // Linux capture helper
     testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-windows:<version>") // Windows WGC helper
+
+    // Optional, depending on what you need:
     testImplementation("dev.sebastiano.spectre:spectre-server:<version>")
     testImplementation("dev.sebastiano.spectre:spectre-agent:<version>")
     testRuntimeOnly("dev.sebastiano.spectre:spectre-agent-runtime:<version>") // Java-agent runtime
@@ -198,9 +201,9 @@ Maven Local:
 | `agent`     | Local attach transport API. **Experimental**; see [Agent attach](agent.md). |
 | `agent-runtime` | Loadable Java-agent runtime for `agent`; add as runtime-only beside the API jar. |
 
-Most projects only need `core` + `testing`. Add `recording` if you want video output for
-test runs, add the platform helper artifact(s) for the OSes you run recording tests on, and
-add `server` or `agent` if your test process needs to reach a UI in a different JVM.
+Most projects only need `core` + `testing`. Add `recording` and the matching platform helper
+artifact(s) when you need video output or native window-scoped screenshots; add `server` or
+`agent` if your test process needs to reach a UI in a different JVM.
 
 ## Next
 

@@ -36,8 +36,13 @@ In `build.gradle.kts`:
 dependencies {
     testImplementation("dev.sebastiano.spectre:core:$spectreVersion")
     testImplementation("dev.sebastiano.spectre:testing:$spectreVersion")
+    // Required for video or native window-scoped screenshots:
+    testImplementation("dev.sebastiano.spectre:recording:$spectreVersion")
+    testRuntimeOnly("dev.sebastiano.spectre:recording-macos:$spectreVersion") // macOS helper
+    testRuntimeOnly("dev.sebastiano.spectre:recording-linux:$spectreVersion") // Linux helper
+    testRuntimeOnly("dev.sebastiano.spectre:recording-windows:$spectreVersion") // Windows helper
+
     // optional:
-    testImplementation("dev.sebastiano.spectre:recording:$spectreVersion")  // video capture
     testImplementation("dev.sebastiano.spectre:server:$spectreVersion")     // cross-JVM HTTP transport
 }
 ```
@@ -125,8 +130,8 @@ automator.pressKey(KeyEvent.VK_S, modifiers = InputEvent.CTRL_DOWN_MASK)
 automator.pressEnter()
 
 val img: BufferedImage = automator.screenshot()         // full virtual screen
-val img = automator.screenshot(windowIndex = 0)        // single Compose surface
-val img = automator.screenshot(node)                   // node's bounding region
+val img = automator.screenshot(windowIndex = 0)         // native single-window capture; needs recording + platform helper
+val img = automator.screenshot(node)                    // native window capture; needs recording + platform helper
 ```
 
 ## Synchronization
