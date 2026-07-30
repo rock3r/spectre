@@ -7,10 +7,10 @@ import java.awt.Frame
 import java.awt.Insets
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
-import java.io.IOException
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -32,6 +32,11 @@ class ScreenCaptureBackendTest {
     @Test
     fun `optional native bridge is discovered without a core compile dependency`() {
         assertTrue(nativeWindowCaptureFor(javaClass.classLoader) != null)
+    }
+
+    @Test
+    fun `headless driver disables platform capture routing`() {
+        assertFalse(RobotDriver.headless().allowsPlatformCapture)
     }
 
     @Test
@@ -149,225 +154,78 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
-    fun `native unavailability falls back to the full window region`() {
+    fun `native unavailability fails without capturing a screen region`() {
         assumeLiveAwtAvailable()
         val frame = Frame().apply { setBounds(40, 50, 300, 200) }
-        val expected = BufferedImage(300, 200, BufferedImage.TYPE_INT_ARGB)
-        var requested: Rectangle? = null
+        var regionCaptureCalls = 0
         val backend =
             PlatformScreenCaptureBackend(
-                regionCapture = { region ->
-                    requested = region
-                    expected
+                regionCapture = {
+                    regionCaptureCalls += 1
+                    error("screen-region capture must not be used")
                 },
                 nativeCapture = {
                     throw IllegalStateException("macOS window screenshot is unavailable")
                 },
             )
         try {
-            assertSame(expected, backend.captureWindow(tracked(frame)).image)
-            assertEquals(Rectangle(40, 50, 300, 200), requested)
+            val error =
+                assertFailsWith<IllegalStateException> { backend.captureWindow(tracked(frame)) }
+            assertTrue(error.message.orEmpty().contains("macOS window screenshot is unavailable"))
+            assertEquals(0, regionCaptureCalls)
         } finally {
             frame.dispose()
         }
     }
 
     @Test
-    fun `unsupported native capture falls back to the full window region`() {
-        assertFallbackFor(UnsupportedOperationException("no native backend"))
-    }
-
-    @Test
-    fun `native capture contention remains a loud failure`() {
-        assertFalse(
-            shouldFallBackToRegionCapture(
-                IllegalStateException(
-                    "Native window capture is unavailable while another capture for this frame is in progress"
-                )
-            )
-        )
-    }
-
-    @Test
-    fun `blank Windows title falls back to the full window region`() {
-        assertFallbackFor(
-            IllegalArgumentException(
-                "AutoScreenshotter.captureWindow requires a non-blank window title on Windows."
-            )
-        )
-    }
-
-    @Test
-    fun `missing platform helper falls back to the full window region`() {
-        assertFallbackFor(IllegalStateException("Windows capture helper not found"))
-    }
-
-    @Test
-    fun `missing Linux screenshot pipeline falls back to the full window region`() {
-        assertTrue(
-            shouldFallBackToRegionCapture(
-                IllegalStateException(
-                    "spectre-wayland-helper reported an error during screenshot capture: " +
-                        "running screenshot pipeline: spawning gst-launch from argv: " +
-                        "No such file or directory (os error 2)"
-                )
-            )
-        )
-    }
-
-    @Test
-    fun `unavailable Linux GStreamer screenshot plugins fall back to the full window region`() {
-        assertTrue(
-            shouldFallBackToRegionCapture(
-                IllegalStateException(
-                    "spectre-wayland-helper reported an error during screenshot capture: " +
-                        "gst-launch screenshot pipeline exited with status 1"
-                )
-            )
-        )
-    }
-
-    @Test
-    fun `timed out Windows native screenshot falls back to the full window region`() {
-        assertTrue(
-            shouldFallBackToRegionCapture(
-                IllegalStateException(
-                    "Timed out after 750ms waiting for spectre-window-capture to capture a " +
-                        "window. Argv: []"
-                )
-            )
-        )
-    }
-
-    @Test
-    fun `native screenshot helper that cannot find its window falls back to the full window region`() {
-        listOf(
-                "spectre-screencapture could not find a window named 'fixture'",
-                "spectre-window-capture could not find a window named 'fixture'",
-            )
-            .forEach { message ->
-                assertTrue(shouldFallBackToRegionCapture(IllegalStateException(message)), message)
-            }
-    }
-
-    @Test
-    fun `unavailable Linux native screenshot helper falls back to the full window region`() {
-        listOf(
-                "Linux screenshot helper failed",
-                "spectre-wayland-helper reported an error: gst-launch did not exit within 30s",
-                "Timed out after 10000ms waiting for Linux screenshot helper",
-                "spectre-wayland-helper did not exit within 500ms after screenshot capture",
-                "spectre-wayland-helper exited with non-zero status 1 after screenshot capture",
-            )
-            .forEach { message ->
-                assertTrue(shouldFallBackToRegionCapture(IllegalStateException(message)), message)
-            }
-    }
-
-    @Test
-    fun `unavailable macOS native screenshot helper falls back to the full window region`() {
-        listOf(
-                "spectre-screencapture screenshot failed",
-                "failed to start spectre-screencapture for TCC preflight: error=13, Permission denied",
-                "spectre-screencapture preflight timed out after 15s",
-                "spectre-screencapture preflight produced no JSON (exit=1)",
-                "spectre-screencapture preflight returned unparseable JSON: not-json",
-                "spectre-screencapture preflight failed with exit=1: helper crashed",
-                "Screen Recording: DENIED\nBinary needing grant: /tmp/spectre-screencapture",
-            )
-            .forEach { message ->
-                assertTrue(shouldFallBackToRegionCapture(IllegalStateException(message)), message)
-            }
-    }
-
-    @Test
-    fun `unavailable Windows native screenshot prerequisites fall back to the full window region`() {
-        listOf(
-                "spectre-window-capture failed to start. Native Windows window capture requires .NET 8 Desktop Runtime",
-                "Unsupported Windows architecture 'x86' for native window capture.",
-                "spectre-window-capture reported Windows Graphics Capture is unsupported (exit 4).",
-                "spectre-window-capture's Windows Graphics Capture pipeline failed (exit 5).",
-            )
-            .forEach { message ->
-                assertTrue(shouldFallBackToRegionCapture(IllegalStateException(message)), message)
-            }
-    }
-
-    @Test
-    fun `unavailable Wayland frame geometry falls back to the full window region`() {
-        assertTrue(
-            shouldFallBackToRegionCapture(
-                IllegalStateException(
-                    "Could not determine WM frame extents for window 'fixture' on this Wayland session"
-                )
-            )
-        )
-    }
-
-    @Test
-    fun `failed macOS screenshot pipeline falls back to the full window region`() {
-        assertTrue(
-            shouldFallBackToRegionCapture(
-                IllegalStateException(
-                    "spectre-screencapture's screenshot pipeline failed (exit 5)."
-                )
-            )
-        )
-    }
-
-    @Test
-    fun `native bridge temporary file failure falls back to the full window region`() {
-        assertTrue(
-            shouldFallBackToRegionCapture(
-                IllegalStateException(
-                    "Native window capture bridge failed",
-                    IOException("No space left"),
-                )
-            )
-        )
-    }
-
-    @Test
-    fun `disabled native capture delegates to the configured region backend`() {
+    fun `disabled native capture preserves the driver's loud failure`() {
         assumeLiveAwtAvailable()
         val frame = Frame().apply { setBounds(40, 50, 300, 200) }
-        val expected = BufferedImage(300, 200, BufferedImage.TYPE_INT_ARGB)
         val backend =
             PlatformScreenCaptureBackend(
-                regionCapture = { expected },
+                regionCapture = { error("screen-region capture must not be used") },
                 nativeCapture = { error("native capture should be disabled") },
                 nativeCaptureEnabled = { false },
             )
         try {
-            assertSame(expected, backend.captureWindow(tracked(frame)).image)
+            val error =
+                assertFailsWith<UnsupportedOperationException> {
+                    backend.captureWindow(tracked(frame))
+                }
+            assertTrue(error.message.orEmpty().contains("disabled"))
         } finally {
             frame.dispose()
         }
     }
 
     @Test
-    fun `window fallback is clipped to the visible desktop`() {
-        val windowBounds = Rectangle(-20, 30, 300, 200)
-
-        assertEquals(
-            Rectangle(0, 30, 280, 200),
-            visibleWindowCaptureBounds(windowBounds, Rectangle(0, 0, 1920, 1080)),
-        )
-    }
-
-    @Test
-    fun `duplicate window titles use the region fallback`() {
+    fun `duplicate window titles fail with matching window bounds`() {
         assumeLiveAwtAvailable()
-        val first = Frame("same title").apply { addNotify() }
-        val second = Frame("same title").apply { addNotify() }
-        val expected = BufferedImage(100, 100, BufferedImage.TYPE_INT_ARGB)
+        val first =
+            Frame("same title").apply {
+                setBounds(10, 20, 100, 80)
+                addNotify()
+            }
+        val second =
+            Frame("same title").apply {
+                setBounds(120, 30, 100, 80)
+                addNotify()
+            }
         val backend =
             PlatformScreenCaptureBackend(
-                regionCapture = { expected },
+                regionCapture = { error("screen-region capture must not be used") },
                 nativeCapture = { error("native capture should not be used for duplicate titles") },
             )
         try {
-            assertSame(expected, backend.captureWindow(tracked(second)).image)
+            val error =
+                assertFailsWith<IllegalStateException> { backend.captureWindow(tracked(second)) }
+            assertTrue(error.message.orEmpty().contains("same title"))
+            assertTrue(
+                error.message
+                    .orEmpty()
+                    .contains("java.awt.Rectangle[x=10,y=20,width=100,height=80]")
+            )
         } finally {
             first.dispose()
             second.dispose()
@@ -383,27 +241,6 @@ class ScreenCaptureBackendTest {
         parent.setRGB(3, 1, 0xFF00FF00.toInt())
 
         assertEquals(initialHash, imageHash(crop))
-    }
-
-    private fun assertFallbackFor(error: RuntimeException) {
-        assumeLiveAwtAvailable()
-        val frame = Frame().apply { setBounds(40, 50, 300, 200) }
-        val expected = BufferedImage(300, 200, BufferedImage.TYPE_INT_ARGB)
-        var requested: Rectangle? = null
-        val backend =
-            PlatformScreenCaptureBackend(
-                regionCapture = { region ->
-                    requested = region
-                    expected
-                },
-                nativeCapture = { throw error },
-            )
-        try {
-            assertSame(expected, backend.captureWindow(tracked(frame)).image)
-            assertEquals(Rectangle(40, 50, 300, 200), requested)
-        } finally {
-            frame.dispose()
-        }
     }
 
     private fun tracked(frame: Frame): TrackedWindow =

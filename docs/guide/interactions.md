@@ -124,12 +124,11 @@ Returns a `BufferedImage` you can save, hash, or compare against a baseline.
 !!! note "Window captures prefer native backends"
     `screenshot(windowIndex)` and `screenshot(node)` prefer a native, window-scoped backend when
     `spectre-recording` is on the runtime classpath; `screenshot(region)` remains an explicit
-    screen-region capture. If a native backend is unavailable Spectre falls back to the screen
-    framebuffer. Before relying on that fallback, make sure the target window is visible and
-    brought to the front. Linux Xorg/Xvfb window capture also reads visible screen pixels, so the
-    same requirement applies there. If another app overlaps the rectangle, those overlapping
-    pixels can appear in the image; if the target is partially off-screen, Spectre can only capture
-    the visible screen area.
+    screen-region capture. If a native backend is unavailable or cannot identify the selected
+    window unambiguously, Spectre fails with an actionable error; it never substitutes a screen
+    framebuffer crop. Linux Xorg/Xvfb window capture reads visible screen pixels, so keep the
+    target visible and frontmost there. If another app overlaps the window, those overlapping
+    pixels can appear in the image.
     For top-level windows, `spectre-recording` also exposes `AutoScreenshotter`,
     which uses native/window-targeted backends on macOS and Windows, and the Linux
     helper on Xorg/Xvfb and Wayland.
