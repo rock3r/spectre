@@ -221,11 +221,9 @@ class ScreenCaptureBackendTest {
             val error =
                 assertFailsWith<IllegalStateException> { backend.captureWindow(tracked(second)) }
             assertTrue(error.message.orEmpty().contains("same title"))
-            assertTrue(
-                error.message
-                    .orEmpty()
-                    .contains("java.awt.Rectangle[x=10,y=20,width=100,height=80]")
-            )
+            val message = error.message.orEmpty()
+            assertTrue(message.contains(first.bounds.toString()))
+            assertTrue(message.contains(second.bounds.toString()))
         } finally {
             first.dispose()
             second.dispose()
