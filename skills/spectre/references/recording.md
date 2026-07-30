@@ -18,7 +18,7 @@ window still image:
 | macOS | ScreenCaptureKit still-image mode | `spectre-recording-macos` |
 | Windows | Windows Graphics Capture helper (`spectre-window-capture.exe`) | `spectre-recording-windows` |
 | Linux X11 / XWayland | Linux helper (`ximagesrc`) | `spectre-recording-linux` |
-| Linux Wayland | unsupported for still images | use video portal path instead |
+| Linux Wayland | Linux portal/PipeWire helper | Requires the compositor portal dialog, `xprop`, and `_GTK_FRAME_EXTENTS`; supported on GNOME/Mutter, other compositors are best-effort |
 
 Windows still screenshots and native window/region recording share the same Windows Graphics
 Capture helper. Runtime users need Windows 10 version 1903 or newer, .NET 8 Desktop
