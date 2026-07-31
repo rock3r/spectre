@@ -343,7 +343,7 @@ class HeadlessTest {
 
     @JvmField
     @RegisterExtension
-    val automatorExt = ComposeAutomatorExtension(headlessFactory)
+    val automatorExt = ComposeAutomatorExtension(factory = headlessFactory)
 }
 ```
 

@@ -50,8 +50,13 @@ import org.junit.jupiter.api.extension.ParameterResolver
  * parameter injection instead.
  */
 public class ComposeAutomatorExtension(
-    private val factory: AutomatorFactory,
+    // `factory` MUST stay last. It is function-typed, so Kotlin's trailing-lambda convention
+    // binds `ComposeAutomatorExtension { … }` to whichever parameter comes last; putting an
+    // optional non-function parameter after it silently breaks every trailing-lambda call site
+    // with "argument type mismatch: … but 'FailureArtifactsConfig' was expected".
+    // AutomatorFactoryTrailingLambdaTest stops compiling if this order is changed again.
     private val failureArtifacts: FailureArtifactsConfig = FailureArtifactsConfig(),
+    private val factory: AutomatorFactory,
 ) :
     BeforeEachCallback,
     AfterEachCallback,
@@ -62,11 +67,11 @@ public class ComposeAutomatorExtension(
     // Explicit no-arg secondary constructor so JUnit 5's @ExtendWith — which reflectively
     // calls the no-arg constructor — can instantiate the extension. Kotlin's default-parameter
     // primary constructor does not emit a true JVM no-arg overload without @JvmOverloads.
-    public constructor() : this({ ComposeAutomator.inProcess() })
+    public constructor() : this(factory = { ComposeAutomator.inProcess() })
 
     public constructor(
         failureArtifacts: FailureArtifactsConfig
-    ) : this({ ComposeAutomator.inProcess() }, failureArtifacts)
+    ) : this(failureArtifacts, { ComposeAutomator.inProcess() })
 
     @Volatile private var lastInstance: ComposeAutomator? = null
 

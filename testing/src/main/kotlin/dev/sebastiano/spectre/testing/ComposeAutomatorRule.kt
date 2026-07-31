@@ -50,18 +50,21 @@ import org.junit.runners.model.Statement
  * better fit for parallel test execution.
  */
 public class ComposeAutomatorRule(
-    private val factory: AutomatorFactory,
+    // `factory` MUST stay last — see the matching note on ComposeAutomatorExtension. Kotlin's
+    // trailing-lambda convention binds `ComposeAutomatorRule { … }` to the last parameter, so an
+    // optional non-function parameter after it breaks every trailing-lambda call site.
     private val failureArtifacts: FailureArtifactsConfig = FailureArtifactsConfig(),
+    private val factory: AutomatorFactory,
 ) : ExternalResource() {
 
     // Explicit no-arg secondary constructor so JUnit 4 callers can write
     // `@get:Rule val r = ComposeAutomatorRule()` without relying on Kotlin's
     // default-parameter constructor synthesis (consistent with ComposeAutomatorExtension).
-    public constructor() : this({ ComposeAutomator.inProcess() })
+    public constructor() : this(factory = { ComposeAutomator.inProcess() })
 
     public constructor(
         failureArtifacts: FailureArtifactsConfig
-    ) : this({ ComposeAutomator.inProcess() }, failureArtifacts)
+    ) : this(failureArtifacts, { ComposeAutomator.inProcess() })
 
     private var instance: ComposeAutomator? = null
 
