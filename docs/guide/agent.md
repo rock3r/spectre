@@ -310,10 +310,10 @@ recording (#183) uses this so capture stays on the daemon host rather than over 
 transport.
 
 `waitForNode`, `waitForVisualIdle` (#201), and `waitForIdle` (#362) are available over the
-agent transport. `waitForIdle` runs the target-side semantics-fingerprint wait (timeout /
-quiet / poll; absolute deadline on the wire like `waitForNode`). **Idling-resource
-registration** (`registerIdlingResource` / `unregisterIdlingResource`) and `withTracing`
-remain in-process-only — live JVM callbacks cannot cross attach.
+agent transport. `waitForIdle` runs a **fingerprint-only** wait on the agent's in-target
+automator (timeout / quiet / poll; absolute deadline on the wire like `waitForNode`). It does
+**not** observe idling resources registered on a different automator instance in the app.
+**Idling-resource registration** and `withTracing` remain in-process-only.
 
 Richer input verbs (`doubleClick` / `longClick` / `swipe` / `scrollWheel` / `pressKey`)
 are available over agent, HTTP, and daemon/CLI/MCP (#203). `focusWindow(nodeKey)` raises

@@ -17,9 +17,9 @@ import java.lang.reflect.Method
  * Lookups use parameter types, not the unmangled source name; invocations use
  * [durationStorageFromMs].
  *
- * Attach `waitForIdle` runs the target-side fingerprint wait (one RT). Idling-resource registration
- * remains in-process-only — the target uses whatever resources it already registered; the attach
- * client cannot add/remove them over IPC.
+ * Attach `waitForIdle` runs a fingerprint wait on the **agent's** in-target automator instance (one
+ * RT). That instance is separate from any automator the app may hold, so application-registered
+ * idling resources are not observed. Registration over attach remains unsupported by design.
  */
 internal class WaitOpsReflectiveMapper(
     private val automator: Any,

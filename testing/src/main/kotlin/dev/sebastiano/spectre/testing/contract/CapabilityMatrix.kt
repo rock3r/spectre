@@ -377,9 +377,10 @@ public object CapabilityMatrix {
                 platform = PlatformPrerequisite.AnyJvm,
                 state = CellState.Supported,
                 rationale =
-                    "Fingerprint/EDT waitForIdle over attach (#362). Absolute deadline on the " +
-                        "wire like waitForNode. Idling-resource registration remains " +
-                        "in-process-only (live callbacks).",
+                    "Fingerprint-only waitForIdle over attach (#362) on the agent-owned " +
+                        "ComposeAutomator. Absolute deadline on the wire like waitForNode. Does " +
+                        "not observe app-registered idling resources on another automator " +
+                        "instance; registration remains in-process-only.",
                 evidence =
                     listOf(
                         CapabilityEvidence(
@@ -392,7 +393,18 @@ public object CapabilityMatrix {
                             workflowPath = ".github/workflows/ci.yml",
                             gradleTaskHint =
                                 "./gradlew :agent:test --tests \"*WaitOpsReflectiveHandlerTest*\"",
-                        )
+                        ),
+                        CapabilityEvidence(
+                            id = "agent-wait-for-idle-ipc",
+                            description =
+                                "WaitOpsInfrastructureTest WaitForIdle Ok + timeout over multiplexed IPC",
+                            sourcePath =
+                                "agent/src/test/kotlin/dev/sebastiano/spectre/agent/transport/" +
+                                    "WaitOpsInfrastructureTest.kt",
+                            workflowPath = ".github/workflows/ci.yml",
+                            gradleTaskHint =
+                                "./gradlew :agent:test --tests \"*WaitOpsInfrastructureTest*\"",
+                        ),
                     ),
             )
         )

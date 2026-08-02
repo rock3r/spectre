@@ -329,10 +329,13 @@ internal constructor(
     }
 
     /**
-     * Wait until the semantics fingerprint is quiet (#362). Same as in-process
-     * `ComposeAutomator.waitForIdle` for timeout/quiet/poll and absolute deadline on the wire (like
-     * [waitForNode]). Idling-resource **registration** remains in-process-only — the target uses
-     * any resources it already registered; the attach client cannot add/remove them over IPC.
+     * Wait until the agent-side semantics fingerprint is quiet (#362).
+     *
+     * Timeout / quiet / poll parameters and absolute deadline on the wire match [waitForNode]. The
+     * wait runs on the **agent's** in-target `ComposeAutomator` (a separate instance from any
+     * automator the app may hold). It is **fingerprint-only**: application-registered
+     * [dev.sebastiano.spectre.core.AutomatorIdlingResource]s on another automator instance are not
+     * observed. Idling-resource registration over attach is unsupported by design.
      *
      * Throws [SpectreAgentException] with category `timeout` when the wait expires.
      */
