@@ -528,21 +528,42 @@ public object CapabilityMatrix {
                 evidence = listOf(agentMacOs, agentAttachLegacyMacOs),
             )
         )
+        // In-process focusWindow needs a live AWT window (toFront/requestFocus) — not AnyJvm.
+        // Public-surface name checks are not executable evidence of display-backed raise/focus.
         add(
             CapabilityCell(
                 operation = AutomatorOperation.FocusWindow,
                 transport = AutomatorTransport.InProcess,
-                platform = PlatformPrerequisite.AnyJvm,
+                platform = PlatformPrerequisite.LinuxXvfb,
                 state = CellState.Supported,
                 evidence =
                     listOf(
-                        coreEvidence(
-                            "core-focus-window-public-surface",
-                            "ComposeAutomatorPublicSurfaceTest.kt",
-                            "Public surface includes focusWindow; live smoke in " +
-                                "sample-desktop NewInteractionsValidationTest",
+                        CapabilityEvidence(
+                            id = "in-process-focus-window-validation-linux",
+                            description =
+                                "sample-desktop NewInteractionsValidationTest exercises " +
+                                    "ComposeAutomator.focusWindow under Xvfb (fail-closed class " +
+                                    "list in validation-linux.yml)",
+                            sourcePath =
+                                "sample-desktop/src/validation/kotlin/dev/sebastiano/spectre/" +
+                                    "sample/validation/NewInteractionsValidationTest.kt",
+                            workflowPath = ".github/workflows/validation-linux.yml",
+                            gradleTaskHint =
+                                "./gradlew :sample-desktop:validationTest --tests " +
+                                    "\"*NewInteractionsValidationTest*\"",
                         )
                     ),
+            )
+        )
+        add(
+            CapabilityCell(
+                operation = AutomatorOperation.FocusWindow,
+                transport = AutomatorTransport.InProcess,
+                platform = PlatformPrerequisite.MacOsDesktop,
+                state = CellState.NotYetCiExecuted,
+                rationale =
+                    "In-process focusWindow is display-backed; no fail-closed macOS " +
+                        "sample-desktop validation workflow claims it yet (Linux Xvfb is Supported).",
             )
         )
         add(
