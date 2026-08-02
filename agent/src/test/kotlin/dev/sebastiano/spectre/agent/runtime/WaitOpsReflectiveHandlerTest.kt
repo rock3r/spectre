@@ -64,6 +64,39 @@ class WaitOpsReflectiveHandlerTest {
         check(response is AgentResponse.Error)
         assertEquals(AgentErrorCategory.InvalidSelector.wireName, response.category)
     }
+
+    @Test
+    fun `WaitForIdle success invokes target-side wait with packed Duration rawValues`() {
+        val fake = WaitFakeAutomator()
+        val handler = ReflectiveAutomatorHandler(fake)
+
+        val response =
+            handler.handle(
+                AgentRequest.WaitForIdle(timeoutMs = 2_000, quietPeriodMs = 64, pollIntervalMs = 16)
+            )
+        check(response is AgentResponse.Ok) { "expected Ok, got $response" }
+        val expectedTimeoutRaw = 2_000L * 1_000_000L shl 1
+        val expectedQuietRaw = 64L * 1_000_000L shl 1
+        val expectedPollRaw = 16L * 1_000_000L shl 1
+        assertEquals(listOf(expectedTimeoutRaw), fake.waitForIdleTimeoutRaw.toList())
+        assertEquals(listOf(expectedQuietRaw), fake.waitForIdleQuietRaw.toList())
+        assertEquals(listOf(expectedPollRaw), fake.waitForIdlePollRaw.toList())
+    }
+
+    @Test
+    fun `WaitForIdle timeout maps to taxonomy timeout`() {
+        val fake =
+            WaitFakeAutomator(
+                waitForIdleImpl = { _: Long, _: Long, _: Long ->
+                    throw FakeIdleTimeoutException("waitForIdle timed out after 300ms")
+                }
+            )
+        val handler = ReflectiveAutomatorHandler(fake)
+
+        val response = handler.handle(AgentRequest.WaitForIdle(timeoutMs = 300, quietPeriodMs = 50))
+        check(response is AgentResponse.Error) { "expected Error, got $response" }
+        assertEquals(AgentErrorCategory.Timeout.wireName, response.category)
+    }
 }
 
 /** Name-shape matches core IdleTimeoutException for WaitOps taxonomy matching. */
@@ -76,9 +109,13 @@ private class FakeIdleTimeoutException(message: String) : RuntimeException(messa
 internal class WaitFakeAutomator(
     private val allNodesValue: List<Any> = emptyList(),
     private val waitForNodeImpl: ((String?, String?, Long, Long) -> Any?)? = null,
+    private val waitForIdleImpl: ((Long, Long, Long) -> Any?)? = null,
 ) {
     val waitForNodeTags = mutableListOf<String?>()
     val waitForNodeTimeoutRaw = mutableListOf<Long>()
+    val waitForIdleTimeoutRaw = mutableListOf<Long>()
+    val waitForIdleQuietRaw = mutableListOf<Long>()
+    val waitForIdlePollRaw = mutableListOf<Long>()
 
     @Suppress("unused") fun refreshWindows() = Unit
 
@@ -117,6 +154,22 @@ internal class WaitFakeAutomator(
         pollRaw: Long,
         continuation: kotlin.coroutines.Continuation<Any?>,
     ): Any? = Unit
+
+    @Suppress("unused", "UNUSED_PARAMETER")
+    fun waitForIdle(
+        timeoutRaw: Long,
+        quietRaw: Long,
+        pollRaw: Long,
+        continuation: kotlin.coroutines.Continuation<Any?>,
+    ): Any? {
+        waitForIdleTimeoutRaw += timeoutRaw
+        waitForIdleQuietRaw += quietRaw
+        waitForIdlePollRaw += pollRaw
+        waitForIdleImpl?.let {
+            return it(timeoutRaw, quietRaw, pollRaw)
+        }
+        return Unit
+    }
 }
 
 internal class WaitFakeNode(

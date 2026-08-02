@@ -162,6 +162,7 @@ internal class ReflectiveAutomatorHandler(
             is AgentRequest.Cancel -> AgentResponse.Ok
             is AgentRequest.WaitForNode -> waitOps.handleWaitForNode(request)
             is AgentRequest.WaitForVisualIdle -> waitOps.handleWaitForVisualIdle(request)
+            is AgentRequest.WaitForIdle -> waitOps.handleWaitForIdle(request)
         }
 
     // Note on un-caught exceptions: any non-reflective `RuntimeException` thrown by the

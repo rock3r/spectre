@@ -224,6 +224,20 @@ internal sealed interface AgentRequest {
         val stableFrames: Int? = null,
         val pollIntervalMs: Long? = null,
     ) : AgentRequest
+
+    /**
+     * Wait until the semantics fingerprint is quiet (#362). Same as in-process
+     * `ComposeAutomator.waitForIdle` **without** live idling-resource registration (callbacks stay
+     * in-process-only by design). Null durations use automator defaults. Replies with
+     * [AgentResponse.Ok] or [AgentResponse.Error] category `timeout`.
+     */
+    @Serializable
+    @SerialName("waitForIdle")
+    data class WaitForIdle(
+        val timeoutMs: Long? = null,
+        val quietPeriodMs: Long? = null,
+        val pollIntervalMs: Long? = null,
+    ) : AgentRequest
 }
 
 /** Payload-free operation label for diagnostics. Never include caller-controlled request data. */
@@ -253,6 +267,7 @@ internal val AgentRequest.logLabel: String
             is AgentRequest.Cancel -> "cancel"
             is AgentRequest.WaitForNode -> "waitForNode"
             is AgentRequest.WaitForVisualIdle -> "waitForVisualIdle"
+            is AgentRequest.WaitForIdle -> "waitForIdle"
         }
 
 /** Server-to-client response envelope. */

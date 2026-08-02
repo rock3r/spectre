@@ -69,19 +69,21 @@ boundary without a different design:
 | --- | --- |
 | `registerIdlingResource` / idling resources | Live callbacks in the UI JVM |
 | `withTracing` | Live tracer hooks |
-| `waitForIdle` (idling-resource variant) | Same as idling resources |
+| `waitForIdle` (idling-resource registration) | Live callbacks — use fingerprint wait over attach instead (#362) |
 
 Remote **waits** (`waitForNode` over agent — #201, also CLI `wait-for-node` / MCP
-`wait_for_node`), **selectors** (`findByText` / role / content-description — #202), and **input
-verbs** (`doubleClick` / `swipe` / `scrollWheel` — #203) are **Supported** on agent under Linux
-Xvfb and macOS desktop via `AgentContractCorpusTest` against `agent-test-fixture`. Agent
+`wait_for_node`; **`waitForIdle` fingerprint wait** over agent — #362), **selectors**
+(`findByText` / role / content-description — #202), and **input verbs** (`doubleClick` /
+`swipe` / `scrollWheel` — #203) are **Supported** on agent under Linux Xvfb and macOS desktop
+via `AgentContractCorpusTest` / reflective wait suites against `agent-test-fixture`. Agent
 `pressKey` is **Supported** on Linux Xvfb (fail-closed after focus retries) and
 **Experimental** on macOS desktop (hosted runners may soft-skip OS keyboard focus loss after
 retries — same class as `typeText`). Agent **`focusWindow`** (#364) is **Supported** on Linux
 Xvfb and macOS desktop (raises the window hosting a node before real keyboard input); HTTP
 `focusWindow` is **Unsupported by design** for this issue. HTTP selector entry points are covered
 by headless `HttpContractCorpusTest`. Some HTTP input/wait cells and agent `longClick` /
-`waitForVisualIdle` remain **Not yet CI-executed**.
+`waitForVisualIdle` remain **Not yet CI-executed**. Idling-resource **registration** over attach
+stays **Unsupported by design**.
 
 ## How to read a cell
 

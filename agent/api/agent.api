@@ -114,6 +114,8 @@ public final class dev/sebastiano/spectre/agent/AttachedAutomator : java/lang/Au
 	public static synthetic fun swipe$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;IIIIIJILjava/lang/Object;)V
 	public static synthetic fun swipe$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/String;Ljava/lang/String;IJILjava/lang/Object;)V
 	public final fun typeText (Ljava/lang/String;)V
+	public final fun waitForIdle (JJJ)V
+	public static synthetic fun waitForIdle$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;JJJILjava/lang/Object;)V
 	public final fun waitForNode (Ljava/lang/String;Ljava/lang/String;JJ)Ldev/sebastiano/spectre/agent/transport/NodeSnapshotDto;
 	public static synthetic fun waitForNode$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/String;Ljava/lang/String;JJILjava/lang/Object;)Ldev/sebastiano/spectre/agent/transport/NodeSnapshotDto;
 	public final fun waitForVisualIdle (JIJ)V

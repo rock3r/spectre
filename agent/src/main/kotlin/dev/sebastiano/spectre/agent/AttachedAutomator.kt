@@ -329,6 +329,33 @@ internal constructor(
     }
 
     /**
+     * Wait until the semantics fingerprint is quiet (#362). Same as in-process
+     * `ComposeAutomator.waitForIdle` for timeout/quiet/poll and absolute deadline on the wire (like
+     * [waitForNode]). Idling-resource **registration** remains in-process-only — the target uses
+     * any resources it already registered; the attach client cannot add/remove them over IPC.
+     *
+     * Throws [SpectreAgentException] with category `timeout` when the wait expires.
+     */
+    @Throws(IOException::class)
+    public fun waitForIdle(
+        timeoutMs: Long = 5_000,
+        quietPeriodMs: Long = 64,
+        pollIntervalMs: Long = 16,
+    ) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        val resp =
+            exchange(
+                AgentRequest.WaitForIdle(
+                    timeoutMs = timeoutMs,
+                    quietPeriodMs = quietPeriodMs,
+                    pollIntervalMs = pollIntervalMs,
+                ),
+                deadlineEpochMs = deadline,
+            )
+        if (resp !is AgentResponse.Ok) throw wireMismatch("Ok", resp)
+    }
+
+    /**
      * Send [AgentRequest.Detach], wait for [AgentResponse.Detached], close the underlying client.
      * Idempotent — calling twice is a no-op.
      */

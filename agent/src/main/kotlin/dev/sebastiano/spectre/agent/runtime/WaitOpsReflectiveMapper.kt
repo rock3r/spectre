@@ -9,13 +9,17 @@ import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import java.lang.reflect.Method
 
 /**
- * Reflective bridge for [AgentRequest.WaitForNode] / [AgentRequest.WaitForVisualIdle] (#201). Lives
+ * Reflective bridge for wait ops (#201 waitForNode/waitForVisualIdle, #362 waitForIdle). Lives
  * outside [ReflectiveAutomatorHandler] to keep that class under detekt complexity limits.
  *
  * Kotlin mangles `Duration` parameters into primitive `long` carrying [kotlin.time.Duration]'s
  * packed `rawValue` (not plain nanoseconds) and renames methods (e.g. `waitForNode-ck1zr5g`).
  * Lookups use parameter types, not the unmangled source name; invocations use
  * [durationStorageFromMs].
+ *
+ * Attach `waitForIdle` runs the target-side fingerprint wait (one RT). Idling-resource registration
+ * remains in-process-only — the target uses whatever resources it already registered; the attach
+ * client cannot add/remove them over IPC.
  */
 internal class WaitOpsReflectiveMapper(
     private val automator: Any,
@@ -45,6 +49,18 @@ internal class WaitOpsReflectiveMapper(
                 it.parameterTypes.size == 4 &&
                 it.parameterTypes[0] == longPrimitive &&
                 it.parameterTypes[1] == intPrimitive &&
+                it.parameterTypes[2] == longPrimitive &&
+                it.parameterTypes[3].name == CONTINUATION_FQN
+        }
+
+    /** `waitForIdle(timeout, quietPeriod, pollInterval)` — three Durations + Continuation. */
+    private val waitForIdleSuspendMethod: Method? =
+        automatorClass.methods.firstOrNull {
+            it.name.startsWith("waitForIdle") &&
+                !it.name.startsWith("waitForIdleInternal") &&
+                it.parameterTypes.size == 4 &&
+                it.parameterTypes[0] == longPrimitive &&
+                it.parameterTypes[1] == longPrimitive &&
                 it.parameterTypes[2] == longPrimitive &&
                 it.parameterTypes[3].name == CONTINUATION_FQN
         }
@@ -110,6 +126,29 @@ internal class WaitOpsReflectiveMapper(
         }
     }
 
+    fun handleWaitForIdle(request: AgentRequest.WaitForIdle): AgentResponse {
+        val method =
+            waitForIdleSuspendMethod
+                ?: return AgentResponse.Error(
+                    message = "ComposeAutomator does not expose waitForIdle",
+                    category = AgentErrorCategory.UnsupportedOperation.wireName,
+                )
+        val timeoutMs = request.timeoutMs ?: DEFAULT_WAIT_TIMEOUT_MS
+        val quietMs = request.quietPeriodMs ?: DEFAULT_QUIET_PERIOD_MS
+        val pollMs = request.pollIntervalMs ?: DEFAULT_IDLE_POLL_MS
+        return runWait {
+            suspendInvoker.invoke(
+                method,
+                automator,
+                durationStorageFromMs(timeoutMs),
+                durationStorageFromMs(quietMs),
+                durationStorageFromMs(pollMs),
+                timeoutMsOverride = timeoutMs + SUSPEND_BRIDGE_SLACK_MS,
+            )
+            AgentResponse.Ok
+        }
+    }
+
     /**
      * Maps wait-loop timeouts (stdlib [TimeoutException], IdleTimeoutException,
      * TimeoutCancellationException) to taxonomy `timeout`; rethrows everything else.
@@ -144,6 +183,10 @@ internal class WaitOpsReflectiveMapper(
         const val DEFAULT_WAIT_TIMEOUT_MS: Long = 5_000
         const val DEFAULT_WAIT_POLL_MS: Long = 100
         const val DEFAULT_VISUAL_POLL_MS: Long = 16
+        /** Matches core `DEFAULT_POLL_INTERVAL` for waitForIdle (~60 FPS). */
+        const val DEFAULT_IDLE_POLL_MS: Long = 16
+        /** Matches core `DEFAULT_QUIET_PERIOD` (64 ms). */
+        const val DEFAULT_QUIET_PERIOD_MS: Long = 64
         const val DEFAULT_STABLE_FRAMES: Int = 3
         const val SUSPEND_BRIDGE_SLACK_MS: Long = 2_000
 
