@@ -101,6 +101,49 @@ class WaitOpsInfrastructureTest {
     }
 
     @Test
+    fun `waitForIdle Ok and timeout taxonomy over IPC`() {
+        val calls = AtomicInteger(0)
+        IpcServer(
+                udsPath,
+                AgentRequestHandler { request ->
+                    when (request) {
+                        is AgentRequest.WaitForIdle -> {
+                            if (calls.getAndIncrement() == 0) {
+                                AgentResponse.Ok
+                            } else {
+                                AgentResponse.Error(
+                                    message = "waitForIdle timed out",
+                                    category = AgentErrorCategory.Timeout.wireName,
+                                )
+                            }
+                        }
+                        else -> AgentResponse.Ok
+                    }
+                },
+            )
+            .use {
+                awaitSocket(udsPath)
+                IpcClient(udsPath).use { client ->
+                    assertEquals(
+                        AgentResponse.Ok,
+                        client.send(
+                            AgentRequest.WaitForIdle(
+                                timeoutMs = 500,
+                                quietPeriodMs = 64,
+                                pollIntervalMs = 16,
+                            )
+                        ),
+                    )
+                    val err =
+                        assertIs<AgentResponse.Error>(
+                            client.send(AgentRequest.WaitForIdle(timeoutMs = 100))
+                        )
+                    assertEquals(AgentErrorCategory.Timeout.wireName, err.category)
+                }
+            }
+    }
+
+    @Test
     fun `slow waitForNode can be cancelled`() {
         val started = CountDownLatch(1)
         IpcServer(

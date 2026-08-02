@@ -483,7 +483,8 @@ class IpcRoundTripTest {
             is AgentRequest.FocusWindow,
             is AgentRequest.TypeText,
             is AgentRequest.Cancel,
-            is AgentRequest.WaitForVisualIdle -> AgentResponse.Ok
+            is AgentRequest.WaitForVisualIdle,
+            is AgentRequest.WaitForIdle -> AgentResponse.Ok
             is AgentRequest.Screenshot -> AgentResponse.Screenshot(ByteArray(0))
             is AgentRequest.Capture ->
                 AgentResponse.Capture(

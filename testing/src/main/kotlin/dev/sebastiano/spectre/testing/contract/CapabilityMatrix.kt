@@ -341,13 +341,11 @@ public object CapabilityMatrix {
         )
 
         // --- Deliberate exclusions (remote + live-JVM-object ops) ---
-        for (transport in listOf(AutomatorTransport.Http, AutomatorTransport.Agent)) {
-            for (op in
-                listOf(
-                    AutomatorOperation.WaitForIdle,
-                    AutomatorOperation.RegisterIdlingResource,
-                    AutomatorOperation.WithTracing,
-                )) {
+        // RegisterIdlingResource / withTracing stay in-process-only (live callbacks).
+        // waitForIdle fingerprint wait is available over Agent (#362); HTTP still deferred.
+        for (op in
+            listOf(AutomatorOperation.RegisterIdlingResource, AutomatorOperation.WithTracing)) {
+            for (transport in listOf(AutomatorTransport.Http, AutomatorTransport.Agent)) {
                 add(
                     CapabilityCell(
                         operation = op,
@@ -361,6 +359,55 @@ public object CapabilityMatrix {
                 )
             }
         }
+        add(
+            CapabilityCell(
+                operation = AutomatorOperation.WaitForIdle,
+                transport = AutomatorTransport.Http,
+                platform = PlatformPrerequisite.AnyJvm,
+                state = CellState.UnsupportedByDesign,
+                rationale =
+                    "HTTP waitForIdle not in #362 scope; use in-process or agent attach. " +
+                        "Idling-resource registration remains in-process-only.",
+            )
+        )
+        add(
+            CapabilityCell(
+                operation = AutomatorOperation.WaitForIdle,
+                transport = AutomatorTransport.Agent,
+                platform = PlatformPrerequisite.AnyJvm,
+                state = CellState.Supported,
+                rationale =
+                    "Fingerprint-only waitForIdle over attach (#362) on the agent-owned " +
+                        "ComposeAutomator. Absolute deadline on the wire like waitForNode. Does " +
+                        "not observe app-registered idling resources on another automator " +
+                        "instance; registration remains in-process-only.",
+                evidence =
+                    listOf(
+                        CapabilityEvidence(
+                            id = "agent-wait-for-idle-reflective",
+                            description =
+                                "WaitOpsReflectiveHandlerTest WaitForIdle success + timeout taxonomy",
+                            sourcePath =
+                                "agent/src/test/kotlin/dev/sebastiano/spectre/agent/runtime/" +
+                                    "WaitOpsReflectiveHandlerTest.kt",
+                            workflowPath = ".github/workflows/ci.yml",
+                            gradleTaskHint =
+                                "./gradlew :agent:test --tests \"*WaitOpsReflectiveHandlerTest*\"",
+                        ),
+                        CapabilityEvidence(
+                            id = "agent-wait-for-idle-ipc",
+                            description =
+                                "WaitOpsInfrastructureTest WaitForIdle Ok + timeout over multiplexed IPC",
+                            sourcePath =
+                                "agent/src/test/kotlin/dev/sebastiano/spectre/agent/transport/" +
+                                    "WaitOpsInfrastructureTest.kt",
+                            workflowPath = ".github/workflows/ci.yml",
+                            gradleTaskHint =
+                                "./gradlew :agent:test --tests \"*WaitOpsInfrastructureTest*\"",
+                        ),
+                    ),
+            )
+        )
 
         // In-process owns the full wait/idling surface
         fun coreEvidence(id: String, file: String, description: String) =

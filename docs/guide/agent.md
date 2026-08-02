@@ -294,6 +294,9 @@ can add a reliable preflight via `HotSpotDiagnosticMXBean`.
 | `screenshot(windowIndex?, surfaceId?, fullscreen?)` | `AgentRequest.Screenshot` | `ByteArray` (PNG); default window index 0, not full desktop |
 | `capture(windowIndex)`| `AgentRequest.Capture`           | `AtomicCaptureResult` |
 | `windowIdentities(windowIndex?)` | `AgentRequest.WindowIdentity` | `List<WindowIdentityDto>` |
+| `waitForNode(...)`    | `AgentRequest.WaitForNode`       | `NodeSnapshotDto` |
+| `waitForVisualIdle(...)` | `AgentRequest.WaitForVisualIdle` | `Unit`         |
+| `waitForIdle(...)`    | `AgentRequest.WaitForIdle`       | `Unit` (fingerprint wait; no idling-resource registration over attach — #362) |
 | `close()` (auto)      | `AgentRequest.Detach`            | tear-down         |
 
 `windowIdentities` returns native handle/id (when resolvable), window and Compose-surface
@@ -306,12 +309,16 @@ translateY)`; scale widths/heights by `scaleX`/`scaleY` only (no translation). D
 recording (#183) uses this so capture stays on the daemon host rather than over the
 transport.
 
-`waitForNode` and `waitForVisualIdle` are available over the agent transport (#201).
+`waitForNode`, `waitForVisualIdle` (#201), and `waitForIdle` (#362) are available over the
+agent transport. `waitForIdle` runs a **fingerprint-only** wait on the agent's in-target
+automator (timeout / quiet / poll; absolute deadline on the wire like `waitForNode`). It does
+**not** observe idling resources registered on a different automator instance in the app.
+**Idling-resource registration** and `withTracing` remain in-process-only.
+
 Richer input verbs (`doubleClick` / `longClick` / `swipe` / `scrollWheel` / `pressKey`)
 are available over agent, HTTP, and daemon/CLI/MCP (#203). `focusWindow(nodeKey)` raises
 and focuses the AWT window hosting a node over attach (#364) — use it before `pressKey` /
 `typeText` when the attach client is the foreground process and the target app is not.
-Streaming / long-poll idling resources and `withTracing` remain deferred to a follow-up.
 
 ## Wire format
 

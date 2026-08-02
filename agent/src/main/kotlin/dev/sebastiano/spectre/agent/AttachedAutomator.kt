@@ -329,6 +329,36 @@ internal constructor(
     }
 
     /**
+     * Wait until the agent-side semantics fingerprint is quiet (#362).
+     *
+     * Timeout / quiet / poll parameters and absolute deadline on the wire match [waitForNode]. The
+     * wait runs on the **agent's** in-target `ComposeAutomator` (a separate instance from any
+     * automator the app may hold). It is **fingerprint-only**: application-registered
+     * [dev.sebastiano.spectre.core.AutomatorIdlingResource]s on another automator instance are not
+     * observed. Idling-resource registration over attach is unsupported by design.
+     *
+     * Throws [SpectreAgentException] with category `timeout` when the wait expires.
+     */
+    @Throws(IOException::class)
+    public fun waitForIdle(
+        timeoutMs: Long = 5_000,
+        quietPeriodMs: Long = 64,
+        pollIntervalMs: Long = 16,
+    ) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        val resp =
+            exchange(
+                AgentRequest.WaitForIdle(
+                    timeoutMs = timeoutMs,
+                    quietPeriodMs = quietPeriodMs,
+                    pollIntervalMs = pollIntervalMs,
+                ),
+                deadlineEpochMs = deadline,
+            )
+        if (resp !is AgentResponse.Ok) throw wireMismatch("Ok", resp)
+    }
+
+    /**
      * Send [AgentRequest.Detach], wait for [AgentResponse.Detached], close the underlying client.
      * Idempotent — calling twice is a no-op.
      */

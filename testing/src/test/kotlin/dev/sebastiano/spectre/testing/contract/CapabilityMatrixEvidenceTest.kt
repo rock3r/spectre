@@ -119,13 +119,11 @@ class CapabilityMatrixEvidenceTest {
 
     @Test
     fun `deliberate remote exclusions for idling and tracing are recorded`() {
+        // Idling-resource registration / withTracing stay remote-unsupported. waitForIdle
+        // fingerprint wait is Supported on Agent (#362); HTTP waitForIdle remains excluded.
         for (transport in listOf(AutomatorTransport.Http, AutomatorTransport.Agent)) {
             for (op in
-                listOf(
-                    AutomatorOperation.RegisterIdlingResource,
-                    AutomatorOperation.WithTracing,
-                    AutomatorOperation.WaitForIdle,
-                )) {
+                listOf(AutomatorOperation.RegisterIdlingResource, AutomatorOperation.WithTracing)) {
                 val cell =
                     CapabilityMatrix.cell(op, transport, PlatformPrerequisite.AnyJvm)
                         ?: error("Missing exclusion cell for $op on $transport")
@@ -135,6 +133,26 @@ class CapabilityMatrixEvidenceTest {
                 )
             }
         }
+        val httpIdle =
+            CapabilityMatrix.cell(
+                AutomatorOperation.WaitForIdle,
+                AutomatorTransport.Http,
+                PlatformPrerequisite.AnyJvm,
+            ) ?: error("Missing HTTP WaitForIdle exclusion")
+        assertTrue(
+            httpIdle.state == CellState.UnsupportedByDesign,
+            "Expected HTTP WaitForIdle UnsupportedByDesign, got ${httpIdle.state}",
+        )
+        val agentIdle =
+            CapabilityMatrix.cell(
+                AutomatorOperation.WaitForIdle,
+                AutomatorTransport.Agent,
+                PlatformPrerequisite.AnyJvm,
+            ) ?: error("Missing Agent WaitForIdle cell")
+        assertTrue(
+            agentIdle.state == CellState.Supported,
+            "Expected Agent WaitForIdle Supported (#362), got ${agentIdle.state}",
+        )
     }
 
     @Test
