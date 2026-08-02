@@ -42,7 +42,11 @@ class ScreenCaptureBackendTest {
     @Test
     fun `native client images crop in their client-window coordinate space`() {
         assumeLiveAwtAvailable()
-        val frame = Frame().apply { setBounds(20, 30, 300, 200) }
+        val frame =
+            Frame().apply {
+                setBounds(20, 30, 300, 200)
+                addNotify()
+            }
         val clientBounds = Rectangle(20, 54, 300, 176)
         val image = BufferedImage(300, 176, BufferedImage.TYPE_INT_ARGB)
         image.setRGB(10, 10, 0xFF112233.toInt())
@@ -123,7 +127,11 @@ class ScreenCaptureBackendTest {
     @Test
     fun `tracked Frame capture prefers the native window backend`() {
         assumeLiveAwtAvailable()
-        val frame = Frame().apply { setBounds(40, 50, 300, 200) }
+        val frame =
+            Frame().apply {
+                setBounds(40, 50, 300, 200)
+                addNotify()
+            }
         val expected = BufferedImage(300, 200, BufferedImage.TYPE_INT_ARGB)
         var fallbackCalls = 0
         val backend =
@@ -156,7 +164,11 @@ class ScreenCaptureBackendTest {
     @Test
     fun `native unavailability fails without capturing a screen region`() {
         assumeLiveAwtAvailable()
-        val frame = Frame().apply { setBounds(40, 50, 300, 200) }
+        val frame =
+            Frame().apply {
+                setBounds(40, 50, 300, 200)
+                addNotify()
+            }
         var regionCaptureCalls = 0
         val backend =
             PlatformScreenCaptureBackend(
@@ -181,7 +193,11 @@ class ScreenCaptureBackendTest {
     @Test
     fun `disabled native capture preserves the driver's loud failure`() {
         assumeLiveAwtAvailable()
-        val frame = Frame().apply { setBounds(40, 50, 300, 200) }
+        val frame =
+            Frame().apply {
+                setBounds(40, 50, 300, 200)
+                addNotify()
+            }
         val backend =
             PlatformScreenCaptureBackend(
                 regionCapture = { error("screen-region capture must not be used") },
