@@ -50,10 +50,25 @@ internal constructor(
         val topLevelWindows = allWindows().filter { it.owner == null }
         for (window in topLevelWindows) {
             when {
-                window is ComposeWindow && window.isShowing -> trackComposeWindow(pending, window)
-                window.isShowing -> trackEmbeddedPanels(pending, window)
-                // Hidden parent (e.g. SharedOwnerFrame) — skip its own panels but still walk its
-                // owned dialogs in case any of them are showing.
+                // Use isDisplayable (not isShowing) so delayed-show / custom-chrome hosts stay
+                // discoverable once they have a peer and a semantics tree (#362).
+                //
+                // Jewel/Compose Desktop onboarding often creates the window with `visible =
+                // false`, runs a first composition (transparent title-bar client properties,
+                // minimum size), then flips visible. During that window `isShowing` is false
+                // while `semanticsOwners` / panel owners can already be non-empty. Requiring
+                // isShowing made `windows()` empty while a later `allNodes()` refresh could
+                // still report `window:*` keys after show.
+                //
+                // Track helpers still require non-empty semantics owners / panels, so bare
+                // not-yet-composed displayable frames are not listed. Hidden parents without
+                // panels (e.g. SharedOwnerFrame) still fall through to owned-popup walks.
+                window is ComposeWindow && window.isDisplayable ->
+                    trackComposeWindow(pending, window)
+                // Includes owned-popup walk (see trackEmbeddedPanels).
+                window.isDisplayable -> trackEmbeddedPanels(pending, window)
+                // Not displayable (e.g. SharedOwnerFrame before peer): skip own panels but still
+                // walk owned dialogs in case any of them are showing.
                 else -> trackOwnedPopups(pending, window)
             }
         }

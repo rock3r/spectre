@@ -172,7 +172,9 @@ internal class ReflectiveAutomatorHandler(
     private fun handleWindows(): AgentResponse {
         refreshWindowsMethod.invoke(automator)
         val windows = getWindowsMethod.invoke(automator) as List<*>
-        return AgentResponse.Windows(windows.mapIndexedNotNull(::mapTrackedWindow))
+        // Per-window resilience: a single bounds/title mapping failure must not drop the whole
+        // list or turn a successful discovery into an empty/error response (#362).
+        return AgentResponse.Windows(windows.mapIndexedNotNull(::mapTrackedWindowResilient))
     }
 
     private fun handleAllNodes(): AgentResponse {
@@ -406,18 +408,37 @@ internal class ReflectiveAutomatorHandler(
      * - `getSurfaceId()` for `val surfaceId: String`
      * - `isPopup()` for `val isPopup: Boolean` (Kotlin "is" prefix convention)
      * - `getComposeSurfaceBoundsOnScreen()` for `val composeSurfaceBoundsOnScreen: Rectangle`
-     * - `getWindow()` for `val window: java.awt.Window` — used to extract `title` (only meaningful
-     *   when the underlying window is a `java.awt.Frame`).
+     * - `getWindow()` / `getWindowTitle()` for title (Frame and Dialog; bare Window → null)
+     *
+     * Bounds and title failures fall back rather than nulling the entry — dropping a tracked
+     * surface from `windows()` while `allNodes()` still exposes `window:*` keys is the #362 bug.
      */
-    private fun mapTrackedWindow(index: Int, trackedWindow: Any?): WindowSummaryDto? {
+    private fun mapTrackedWindowResilient(index: Int, trackedWindow: Any?): WindowSummaryDto? {
         if (trackedWindow == null) return null
+        // Catch broad failures so one bad surface cannot empty the whole windows() list while
+        // allNodes() still exposes its keys (#362). Reflective invoke wraps target exceptions in
+        // InvocationTargetException; ClassCastException / IllegalStateException can surface too.
+        @Suppress("TooGenericExceptionCaught")
+        return try {
+            mapTrackedWindow(index, trackedWindow)
+        } catch (ex: Exception) {
+            System.err.println(
+                "[spectre-agent] mapTrackedWindow failed for index=$index: " +
+                    "${ex.javaClass.simpleName}: " +
+                    ((ex as? ReflectiveOperationException)?.targetMessage() ?: ex.message)
+            )
+            fallbackWindowSummary(index, trackedWindow)
+        }
+    }
+
+    private fun mapTrackedWindow(index: Int, trackedWindow: Any): WindowSummaryDto {
         val klass = trackedWindow.javaClass
         val surfaceId = klass.getMethod("getSurfaceId").invoke(trackedWindow) as String
         val isPopup = klass.getMethod("isPopup").invoke(trackedWindow) as Boolean
-        val bounds = klass.getMethod("getComposeSurfaceBoundsOnScreen").invoke(trackedWindow)
-        val window = klass.getMethod("getWindow").invoke(trackedWindow)
-        // Only Frame has getTitle(); Window does not. JFrame extends Frame.
-        val title = (window as? java.awt.Frame)?.title
+        val bounds =
+            runCatching { klass.getMethod("getComposeSurfaceBoundsOnScreen").invoke(trackedWindow) }
+                .getOrNull()
+        val title = extractWindowTitle(trackedWindow, klass)
         return WindowSummaryDto(
             index = index,
             surfaceId = surfaceId,
@@ -425,6 +446,50 @@ internal class ReflectiveAutomatorHandler(
             isPopup = isPopup,
             bounds = boundsToRect(bounds),
         )
+    }
+
+    private fun fallbackWindowSummary(index: Int, trackedWindow: Any): WindowSummaryDto? {
+        return try {
+            val klass = trackedWindow.javaClass
+            val surfaceId =
+                klass.getMethod("getSurfaceId").invoke(trackedWindow) as? String ?: return null
+            val isPopup =
+                runCatching { klass.getMethod("isPopup").invoke(trackedWindow) as Boolean }
+                    .getOrDefault(false)
+            WindowSummaryDto(
+                index = index,
+                surfaceId = surfaceId,
+                title = extractWindowTitle(trackedWindow, klass),
+                isPopup = isPopup,
+                bounds = RectDto(0, 0, 0, 0),
+            )
+        } catch (_: ReflectiveOperationException) {
+            null
+        }
+    }
+
+    /**
+     * Prefer `TrackedWindow.windowTitle` (Frame + Dialog). Fall back to Frame/Dialog casts on
+     * `getWindow()` for older core builds that lack the property.
+     */
+    private fun extractWindowTitle(trackedWindow: Any, klass: Class<*>): String? {
+        runCatching {
+                klass.methods
+                    .firstOrNull { it.name == "getWindowTitle" && it.parameterCount == 0 }
+                    ?.invoke(trackedWindow) as? String
+            }
+            .getOrNull()
+            ?.let {
+                return it
+            }
+        val window =
+            runCatching { klass.getMethod("getWindow").invoke(trackedWindow) }.getOrNull()
+                ?: return null
+        return when (window) {
+            is java.awt.Frame -> window.title
+            is java.awt.Dialog -> window.title
+            else -> null
+        }
     }
 
     private fun mapAutomatorNode(node: Any): NodeSnapshotDto {

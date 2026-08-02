@@ -836,7 +836,7 @@ private class FakeTrackedWindow(
     private val surfaceIdValue: String,
     private val isPopupValue: Boolean,
     private val composeSurfaceBoundsOnScreenValue: Rectangle,
-    private val windowValue: Frame?,
+    private val windowValue: java.awt.Window?,
 ) {
     @Suppress("unused") fun getSurfaceId(): String = surfaceIdValue
 
@@ -845,10 +845,8 @@ private class FakeTrackedWindow(
     @Suppress("unused")
     fun getComposeSurfaceBoundsOnScreen(): Rectangle = composeSurfaceBoundsOnScreenValue
 
-    // Returns `java.awt.Window?` typed in the real `TrackedWindow.getWindow()` — but Kotlin's
-    // reflection sees the declared static return type, so declaring `Frame?` here matches the
-    // handler's `(window as? Frame)?.title` shape (and lets the null branch resolve correctly).
-    @Suppress("unused") fun getWindow(): Frame? = windowValue
+    // Real TrackedWindow.getWindow() returns java.awt.Window; title is Frame or Dialog.
+    @Suppress("unused") fun getWindow(): java.awt.Window? = windowValue
 }
 
 @Suppress("LongParameterList")

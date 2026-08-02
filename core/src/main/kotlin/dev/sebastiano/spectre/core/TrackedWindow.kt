@@ -3,9 +3,13 @@ package dev.sebastiano.spectre.core
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.awt.ComposePanel
 import androidx.compose.ui.semantics.SemanticsOwner
+import java.awt.Component
+import java.awt.Dialog
+import java.awt.IllegalComponentStateException
 import java.awt.Point
 import java.awt.Rectangle
 import java.awt.Window
+import javax.swing.JDialog
 import javax.swing.JFrame
 
 @InternalSpectreApi
@@ -39,17 +43,64 @@ public data class TrackedWindow(
      * below the title bar. For embedded ComposePanels, the panel's own location is used. This is
      * critical for correct coordinate mapping: boundsInWindow is relative to the content area, not
      * the window frame.
+     *
+     * Falls through candidates when a component is not yet on-screen
+     * (`IllegalComponentStateException`) so attach probes against delayed-show / custom-chrome
+     * windows still get a usable origin (#362).
      */
     val composeContentOrigin: Point
         get() =
-            composePanel?.locationOnScreen
-                ?: (window as? JFrame)?.contentPane?.locationOnScreen
-                ?: window.locationOnScreen
+            locationOnScreenOrNull(composePanel)
+                ?: locationOnScreenOrNull((window as? JFrame)?.contentPane)
+                ?: locationOnScreenOrNull((window as? JDialog)?.contentPane)
+                ?: locationOnScreenOrNull(window)
+                ?: Point(window.x, window.y)
 
+    /**
+     * Compose surface bounds in screen coordinates.
+     *
+     * Tries the panel, then Swing content panes (Frame / Dialog), then the window itself. Each
+     * candidate is skipped when `locationOnScreen` is unavailable so a single not-yet-showing
+     * intermediate does not fail the whole read (#362 attach `windows()` mapping).
+     */
     val composeSurfaceBoundsOnScreen: Rectangle
         get() = readOnEdt {
-            composePanel?.let { Rectangle(it.locationOnScreen, it.size) }
-                ?: (window as? JFrame)?.contentPane?.let { Rectangle(it.locationOnScreen, it.size) }
-                ?: Rectangle(window.locationOnScreen, window.size)
+            screenBoundsOrNull(composePanel)
+                ?: screenBoundsOrNull((window as? JFrame)?.contentPane)
+                ?: screenBoundsOrNull((window as? JDialog)?.contentPane)
+                ?: screenBoundsOrNull(window)
+                ?: Rectangle(
+                    window.x,
+                    window.y,
+                    window.width.coerceAtLeast(0),
+                    window.height.coerceAtLeast(0),
+                )
         }
+
+    /** Title from [java.awt.Frame] or [Dialog]; null for bare [Window]. */
+    val windowTitle: String?
+        get() =
+            when (val w = window) {
+                is java.awt.Frame -> w.title
+                is Dialog -> w.title
+                else -> null
+            }
+}
+
+private fun locationOnScreenOrNull(component: Component?): Point? {
+    if (component == null) return null
+    return try {
+        component.locationOnScreen
+    } catch (_: IllegalComponentStateException) {
+        null
+    }
+}
+
+private fun screenBoundsOrNull(component: Component?): Rectangle? {
+    if (component == null) return null
+    return try {
+        Rectangle(component.locationOnScreen, component.size)
+    } catch (_: IllegalComponentStateException) {
+        null
+    }
 }

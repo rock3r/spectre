@@ -66,6 +66,15 @@ fun main() {
     // agent attaches — matches the realistic case where the target app uses Spectre directly.
     val automatorClassName = dev.sebastiano.spectre.core.ComposeAutomator::class.java.name
 
+    // Optional chrome modes for attach parity regressions (#362):
+    // - SPECTRE_FIXTURE_UNDECORATED=true → undecorated JFrame (custom-chrome-like host)
+    // - SPECTRE_FIXTURE_DELAYED_SHOW=true → pack/displayable first, compose, then show (onboarding-
+    //   style delayed visibility). WindowTracker must still list the surface once semantics exist.
+    val undecorated = System.getenv("SPECTRE_FIXTURE_UNDECORATED").toBoolean()
+    val delayedShow = System.getenv("SPECTRE_FIXTURE_DELAYED_SHOW").toBoolean()
+    System.err.println("[fixture] chrome undecorated=$undecorated delayedShow=$delayedShow")
+    System.err.flush()
+
     val panelRef = java.util.concurrent.atomic.AtomicReference<ComposePanel>()
     SwingUtilities.invokeAndWait {
         val frame =
@@ -77,6 +86,9 @@ fun main() {
                 // clicks land on Compose pixels and can take OS keyboard focus on Windows. See the
                 // `isAlwaysOnTop` rationale in this file's KDoc.
                 isAlwaysOnTop = true
+                if (undecorated) {
+                    isUndecorated = true
+                }
             }
 
         val composePanel =
@@ -110,10 +122,41 @@ fun main() {
             }
 
         frame.contentPane.add(composePanel)
-        frame.isVisible = true
-        frame.toFront()
-        frame.requestFocus()
+        if (delayedShow) {
+            // Make the peer displayable without showing — mirrors Jewel onboarding's
+            // visible=false first composition, then flip to visible.
+            frame.pack()
+            frame.isVisible = false
+        } else {
+            frame.isVisible = true
+            frame.toFront()
+            frame.requestFocus()
+        }
         panelRef.set(composePanel)
+    }
+
+    if (delayedShow) {
+        // Wait for semantics while still not showing, then show — attach may probe either phase.
+        val panel = panelRef.get()
+        val deadline = System.currentTimeMillis() + READY_POLL_TIMEOUT_MS
+        while (semanticsOwnerCountOnEdt(panel) == 0) {
+            check(System.currentTimeMillis() < deadline) {
+                "Compose semantics tree did not populate within ${READY_POLL_TIMEOUT_MS}ms " +
+                    "(delayed-show phase)"
+            }
+            Thread.sleep(READY_POLL_INTERVAL_MS)
+        }
+        SwingUtilities.invokeAndWait {
+            val frames = java.awt.Frame.getFrames()
+            for (frame in frames) {
+                if (frame.title == SPECTRE_FIXTURE_WINDOW_TITLE) {
+                    frame.isVisible = true
+                    frame.toFront()
+                    frame.requestFocus()
+                    break
+                }
+            }
+        }
     }
 
     // Race-free readiness signal: poll `ComposePanel.semanticsOwners` until it's non-empty.
