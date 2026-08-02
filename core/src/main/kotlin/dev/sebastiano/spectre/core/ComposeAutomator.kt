@@ -286,7 +286,8 @@ private constructor(
      */
     public fun screenshot(windowIndex: Int): BufferedImage {
         refreshWindows()
-        val trackedWindow = requireShowingTrackedWindow(windowIndex)
+        val resolvedIndex = resolveVisualWindowIndex(windowIndex)
+        val trackedWindow = requireShowingTrackedWindow(resolvedIndex)
         val geometry = readOnEdt {
             ScreenshotGeometry(
                 trackedWindow.composeSurfaceBoundsOnScreen,
@@ -318,17 +319,13 @@ private constructor(
      * Does **not** auto-call [waitForVisualIdle] or [waitForIdle] — settle the UI first when that
      * matters, matching [screenshot].
      */
-    /**
-     * @param windowIndex tracked window index, or null to capture the first **showing** window
-     *   (preferred default so delayed-show hosts listed for #362 are not captured by accident).
-     */
-    public fun capture(windowIndex: Int? = null): AtomicCapture {
+    public fun capture(windowIndex: Int = 0): AtomicCapture {
         val startedAt = TimeSource.Monotonic.markNow()
         refreshWindows()
-        val resolvedIndex =
-            windowIndex
-                ?: firstShowingWindowIndex()
-                ?: error("No showing tracked window to capture (have ${windows.size})")
+        // Index 0 is the long-standing default: if that slot is a delayed-show/hidden host listed
+        // for #362 agreement, prefer the first showing surface and record **that** index in the
+        // capture document (never claim index 0 while capturing another surface).
+        val resolvedIndex = resolveVisualWindowIndex(windowIndex)
         val trackedWindow = requireShowingTrackedWindow(resolvedIndex)
         // Freeze capture region, density, node properties, and screen geometry in one EDT pass
         // *before* taking the PNG so JSON and pixels cannot describe different window layouts.
@@ -471,10 +468,29 @@ private constructor(
     }
 
     /**
-     * Resolves a tracked window for visual ops at an **exact** index. Does not remap indices —
-     * callers that want "first showing" must pass [firstShowingWindowIndex] themselves (see
-     * [capture]). Silent remap would corrupt capture metadata.
+     * For visual ops: keep exact indices except the default slot 0, which falls back to the first
+     * showing surface when 0 is hidden (delayed-show hosts from #362). Callers must still record
+     * the **resolved** index in capture metadata — never claim index 0 while capturing another
+     * surface.
      */
+    private fun resolveVisualWindowIndex(windowIndex: Int): Int {
+        val preferred = windows.getOrNull(windowIndex)
+        if (preferred != null && preferred.window.isShowing) return windowIndex
+        if (windowIndex == 0) {
+            firstShowingWindowIndex()?.let {
+                return it
+            }
+        }
+        if (preferred != null && !preferred.window.isShowing) {
+            error(
+                "Tracked window at index $windowIndex is not showing " +
+                    "(surfaceId=${preferred.surfaceId}); wait until it is visible before " +
+                    "screenshot/capture"
+            )
+        }
+        error("No tracked window at index $windowIndex (have ${windows.size})")
+    }
+
     private fun requireShowingTrackedWindow(windowIndex: Int): TrackedWindow {
         val preferred =
             windows.getOrNull(windowIndex)
@@ -482,8 +498,7 @@ private constructor(
         if (!preferred.window.isShowing) {
             error(
                 "Tracked window at index $windowIndex is not showing " +
-                    "(surfaceId=${preferred.surfaceId}); wait until it is visible before " +
-                    "screenshot/capture, or omit windowIndex to capture the first showing surface"
+                    "(surfaceId=${preferred.surfaceId})"
             )
         }
         return preferred

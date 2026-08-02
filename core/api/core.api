@@ -73,8 +73,8 @@ public final class dev/sebastiano/spectre/core/ComposeAutomator {
 	public static final field Companion Ldev/sebastiano/spectre/core/ComposeAutomator$Companion;
 	public synthetic fun <init> (Ldev/sebastiano/spectre/core/WindowTracker;Ldev/sebastiano/spectre/core/SemanticsReader;Ldev/sebastiano/spectre/core/RobotDriver;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun allNodes ()Ljava/util/List;
-	public final fun capture (Ljava/lang/Integer;)Ldev/sebastiano/spectre/core/capture/AtomicCapture;
-	public static synthetic fun capture$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/lang/Integer;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/capture/AtomicCapture;
+	public final fun capture (I)Ldev/sebastiano/spectre/core/capture/AtomicCapture;
+	public static synthetic fun capture$default (Ldev/sebastiano/spectre/core/ComposeAutomator;IILjava/lang/Object;)Ldev/sebastiano/spectre/core/capture/AtomicCapture;
 	public final fun clearAndTypeText (Ldev/sebastiano/spectre/core/AutomatorNode;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun click (Ldev/sebastiano/spectre/core/AutomatorNode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun doubleClick (Ldev/sebastiano/spectre/core/AutomatorNode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
