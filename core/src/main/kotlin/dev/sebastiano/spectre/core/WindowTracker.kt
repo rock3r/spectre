@@ -101,8 +101,10 @@ internal constructor(
         owner: Window,
         skip: Set<Window> = emptySet(),
     ) {
-        val visibleOwned = owner.ownedWindows.filter { it.isShowing && it !in skip }
-        for (owned in visibleOwned) {
+        // #362: admit displayable owned dialogs (packed but not yet showing) the same way as
+        // top-level hosts, so delayed-show ComposeDialog / JDialog surfaces are discoverable.
+        val candidateOwned = owner.ownedWindows.filter { it.isDisplayable && it !in skip }
+        for (owned in candidateOwned) {
             when (owned) {
                 is ComposeWindow -> {
                     if (owned.semanticsOwners.isNotEmpty()) {
