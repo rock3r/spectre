@@ -286,9 +286,7 @@ private constructor(
      */
     public fun screenshot(windowIndex: Int): BufferedImage {
         refreshWindows()
-        val trackedWindow =
-            windows.getOrNull(windowIndex)
-                ?: error("No tracked window at index $windowIndex (have ${windows.size})")
+        val trackedWindow = requireShowingTrackedWindow(windowIndex)
         val geometry = readOnEdt {
             ScreenshotGeometry(
                 trackedWindow.composeSurfaceBoundsOnScreen,
@@ -318,14 +316,13 @@ private constructor(
      * [dev.sebastiano.spectre.core.capture.CaptureArtifactsWriter].
      *
      * Does **not** auto-call [waitForVisualIdle] or [waitForIdle] — settle the UI first when that
-     * matters, matching [screenshot].
+     * matters, matching [screenshot]. Exact [windowIndex] only (must be showing); attach clients
+     * that want "first showing" resolve via [windows] + `isShowing` before calling.
      */
     public fun capture(windowIndex: Int = 0): AtomicCapture {
         val startedAt = TimeSource.Monotonic.markNow()
         refreshWindows()
-        val trackedWindow =
-            windows.getOrNull(windowIndex)
-                ?: error("No tracked window at index $windowIndex (have ${windows.size})")
+        val trackedWindow = requireShowingTrackedWindow(windowIndex)
         // Freeze capture region, density, node properties, and screen geometry in one EDT pass
         // *before* taking the PNG so JSON and pixels cannot describe different window layouts.
         data class PreCaptureSnapshot(
@@ -464,6 +461,21 @@ private constructor(
             pollInterval = pollInterval,
             frameHash = frameHasher::hash,
         )
+    }
+
+    /** Exact index; fails if missing or not showing (no silent remap). */
+    private fun requireShowingTrackedWindow(windowIndex: Int): TrackedWindow {
+        val preferred =
+            windows.getOrNull(windowIndex)
+                ?: error("No tracked window at index $windowIndex (have ${windows.size})")
+        if (!preferred.window.isShowing) {
+            error(
+                "Tracked window at index $windowIndex is not showing " +
+                    "(surfaceId=${preferred.surfaceId}); wait until it is visible before " +
+                    "screenshot/capture"
+            )
+        }
+        return preferred
     }
 
     private fun rejectEdtCaller(name: String) {

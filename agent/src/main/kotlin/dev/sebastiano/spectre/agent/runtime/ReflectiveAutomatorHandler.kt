@@ -173,7 +173,9 @@ internal class ReflectiveAutomatorHandler(
     private fun handleWindows(): AgentResponse {
         refreshWindowsMethod.invoke(automator)
         val windows = getWindowsMethod.invoke(automator) as List<*>
-        return AgentResponse.Windows(windows.mapIndexedNotNull(::mapTrackedWindow))
+        // Per-window resilience: a single bounds/title mapping failure must not drop the whole
+        // list or turn a successful discovery into an empty/error response (#362).
+        return AgentResponse.Windows(windows.mapIndexedNotNull(::mapTrackedWindowResilient))
     }
 
     private fun handleAllNodes(): AgentResponse {
@@ -340,7 +342,7 @@ internal class ReflectiveAutomatorHandler(
         val target =
             resolveScreenshotTarget(
                     fullscreen = request.fullscreen,
-                    windowIndex = request.windowIndex,
+                    windowIndex = defaultScreenshotWindowIndex(request, windows),
                     surfaceId = request.surfaceId,
                     windows = windowSummaries,
                 )
@@ -371,27 +373,59 @@ internal class ReflectiveAutomatorHandler(
 
         val image =
             when (target) {
-                is ScreenshotTarget.Fullscreen -> {
+                is ScreenshotTarget.Fullscreen ->
                     // null region = full virtual desktop. Explicit opt-in only (#289).
                     regionScreenshotMethod.invoke(automator, null) as BufferedImage
-                }
-                is ScreenshotTarget.Window -> {
-                    // Capture bounds from the window list we just resolved against. Do not call
-                    // screenshot(windowIndex): that path refreshes windows again and can bind a
-                    // different surface at the same index after a popup open/close (#289 P2).
-                    val tracked =
-                        windows.getOrNull(target.windowIndex)
-                            ?: return AgentResponse.Error(
-                                "No tracked window at index ${target.windowIndex} (have ${windows.size})"
-                            )
-                    val bounds =
-                        tracked.javaClass
-                            .getMethod("getComposeSurfaceBoundsOnScreen")
-                            .invoke(tracked)
-                    regionScreenshotMethod.invoke(automator, bounds) as BufferedImage
-                }
+                is ScreenshotTarget.Window ->
+                    captureWindowScreenshot(windows, target, regionScreenshotMethod)
+                        ?: return AgentResponse.Error(
+                            message =
+                                "Tracked window at index ${target.windowIndex} is missing or " +
+                                    "not showing; wait until it is visible before screenshot",
+                            category =
+                                dev.sebastiano.spectre.agent.transport.AgentErrorCategory
+                                    .InvalidSelector
+                                    .wireName,
+                        )
             }
         return AgentResponse.Screenshot(imageToPng(image))
+    }
+
+    /**
+     * Default (no windowIndex/surfaceId): first showing surface so delayed-show hosts listed
+     * for #362 agreement are not the visual capture target.
+     */
+    private fun defaultScreenshotWindowIndex(
+        request: AgentRequest.Screenshot,
+        windows: List<*>,
+    ): Int? =
+        when {
+            request.fullscreen || request.surfaceId != null -> request.windowIndex
+            request.windowIndex != null -> request.windowIndex
+            else -> firstShowingWindowIndex(windows) ?: 0
+        }
+
+    private fun firstShowingWindowIndex(windows: List<*>): Int? =
+        windows
+            .mapIndexedNotNull { index, tracked ->
+                if (tracked != null && extractIsShowing(tracked, tracked.javaClass)) index else null
+            }
+            .firstOrNull()
+
+    /**
+     * Capture bounds from the window list we just resolved against. Do not call
+     * `screenshot(windowIndex)`: that path refreshes windows again and can bind a different surface
+     * at the same index after a popup open/close (#289 P2).
+     */
+    private fun captureWindowScreenshot(
+        windows: List<*>,
+        target: ScreenshotTarget.Window,
+        regionScreenshotMethod: Method,
+    ): BufferedImage? {
+        val tracked = windows.getOrNull(target.windowIndex) ?: return null
+        if (!extractIsShowing(tracked, tracked.javaClass)) return null
+        val bounds = tracked.javaClass.getMethod("getComposeSurfaceBoundsOnScreen").invoke(tracked)
+        return regionScreenshotMethod.invoke(automator, bounds) as BufferedImage
     }
 
     private fun imageToPng(image: BufferedImage): ByteArray {
@@ -407,25 +441,103 @@ internal class ReflectiveAutomatorHandler(
      * - `getSurfaceId()` for `val surfaceId: String`
      * - `isPopup()` for `val isPopup: Boolean` (Kotlin "is" prefix convention)
      * - `getComposeSurfaceBoundsOnScreen()` for `val composeSurfaceBoundsOnScreen: Rectangle`
-     * - `getWindow()` for `val window: java.awt.Window` — used to extract `title` (only meaningful
-     *   when the underlying window is a `java.awt.Frame`).
+     * - `getWindow()` / `getWindowTitle()` for title (Frame and Dialog; bare Window → null)
+     *
+     * Bounds and title failures fall back rather than nulling the entry — dropping a tracked
+     * surface from `windows()` while `allNodes()` still exposes `window:*` keys is the #362 bug.
      */
-    private fun mapTrackedWindow(index: Int, trackedWindow: Any?): WindowSummaryDto? {
+    private fun mapTrackedWindowResilient(index: Int, trackedWindow: Any?): WindowSummaryDto? {
         if (trackedWindow == null) return null
+        // Catch broad failures so one bad surface cannot empty the whole windows() list while
+        // allNodes() still exposes its keys (#362). Reflective invoke wraps target exceptions in
+        // InvocationTargetException; ClassCastException / IllegalStateException can surface too.
+        @Suppress("TooGenericExceptionCaught")
+        return try {
+            mapTrackedWindow(index, trackedWindow)
+        } catch (ex: Exception) {
+            System.err.println(
+                "[spectre-agent] mapTrackedWindow failed for index=$index: " +
+                    "${ex.javaClass.simpleName}: " +
+                    ((ex as? ReflectiveOperationException)?.targetMessage() ?: ex.message)
+            )
+            fallbackWindowSummary(index, trackedWindow)
+        }
+    }
+
+    private fun mapTrackedWindow(index: Int, trackedWindow: Any): WindowSummaryDto {
         val klass = trackedWindow.javaClass
         val surfaceId = klass.getMethod("getSurfaceId").invoke(trackedWindow) as String
         val isPopup = klass.getMethod("isPopup").invoke(trackedWindow) as Boolean
-        val bounds = klass.getMethod("getComposeSurfaceBoundsOnScreen").invoke(trackedWindow)
-        val window = klass.getMethod("getWindow").invoke(trackedWindow)
-        // Only Frame has getTitle(); Window does not. JFrame extends Frame.
-        val title = (window as? java.awt.Frame)?.title
+        val bounds =
+            runCatching { klass.getMethod("getComposeSurfaceBoundsOnScreen").invoke(trackedWindow) }
+                .getOrNull()
+        val title = extractWindowTitle(trackedWindow, klass)
         return WindowSummaryDto(
             index = index,
             surfaceId = surfaceId,
             title = title,
             isPopup = isPopup,
             bounds = boundsToRect(bounds),
+            isShowing = extractIsShowing(trackedWindow, klass),
         )
+    }
+
+    private fun fallbackWindowSummary(index: Int, trackedWindow: Any): WindowSummaryDto? {
+        return try {
+            val klass = trackedWindow.javaClass
+            val surfaceId =
+                klass.getMethod("getSurfaceId").invoke(trackedWindow) as? String ?: return null
+            val isPopup =
+                runCatching { klass.getMethod("isPopup").invoke(trackedWindow) as Boolean }
+                    .getOrDefault(false)
+            WindowSummaryDto(
+                index = index,
+                surfaceId = surfaceId,
+                title = extractWindowTitle(trackedWindow, klass),
+                isPopup = isPopup,
+                bounds = RectDto(0, 0, 0, 0),
+                isShowing = extractIsShowing(trackedWindow, klass),
+            )
+        } catch (_: ReflectiveOperationException) {
+            null
+        }
+    }
+
+    /** Reads AWT `Window.isShowing` via `TrackedWindow.getWindow()`. Defaults true if unknown. */
+    private fun extractIsShowing(trackedWindow: Any, klass: Class<*>): Boolean {
+        val window =
+            runCatching { klass.getMethod("getWindow").invoke(trackedWindow) }.getOrNull()
+                ?: return true
+        return runCatching {
+                window.javaClass.methods
+                    .firstOrNull { it.name == "isShowing" && it.parameterCount == 0 }
+                    ?.invoke(window) as? Boolean
+            }
+            .getOrNull() ?: true
+    }
+
+    /**
+     * Prefer `TrackedWindow.windowTitle` (Frame + Dialog). Fall back to Frame/Dialog casts on
+     * `getWindow()` for older core builds that lack the property.
+     */
+    private fun extractWindowTitle(trackedWindow: Any, klass: Class<*>): String? {
+        runCatching {
+                klass.methods
+                    .firstOrNull { it.name == "getWindowTitle" && it.parameterCount == 0 }
+                    ?.invoke(trackedWindow) as? String
+            }
+            .getOrNull()
+            ?.let {
+                return it
+            }
+        val window =
+            runCatching { klass.getMethod("getWindow").invoke(trackedWindow) }.getOrNull()
+                ?: return null
+        return when (window) {
+            is java.awt.Frame -> window.title
+            is java.awt.Dialog -> window.title
+            else -> null
+        }
     }
 
     private fun mapAutomatorNode(node: Any): NodeSnapshotDto {

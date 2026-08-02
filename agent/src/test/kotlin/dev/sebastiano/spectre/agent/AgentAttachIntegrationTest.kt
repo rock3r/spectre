@@ -156,6 +156,10 @@ class AgentAttachIntegrationTest {
                     "fixture or the fixture didn't bring up its UI before READY.",
             )
 
+            // #362: surfaces that contribute nodes must appear in windows() — never empty windows
+            // while allNodes() returns window:* (or embedded:*) keys for a live surface.
+            assertWindowsAgreeWithAllNodes(automator, windows, iteration = iteration)
+
             val labelMatches = automator.findByTestTag(TAG_LABEL)
             assertTrue(
                 labelMatches.isNotEmpty(),
@@ -228,6 +232,45 @@ class AgentAttachIntegrationTest {
             Files.exists(udsPath),
             "iteration $iteration: UDS path $udsPath should not exist after detach",
         )
+    }
+
+    /**
+     * #362 acceptance: every surface id that appears in `allNodes()` keys must appear in
+     * `windows()`. Disagreement is the original attach bug (empty windows while nodes use
+     * `window:0:0:*` keys).
+     */
+    private fun assertWindowsAgreeWithAllNodes(
+        automator: AttachedAutomator,
+        windows: List<WindowSummaryDto>,
+        iteration: Int,
+    ) {
+        val nodes = automator.allNodes()
+        assertTrue(
+            nodes.isNotEmpty(),
+            "iteration $iteration: allNodes() empty; cannot check windows/allNodes agreement",
+        )
+        val windowSurfaceIds = windows.map { it.surfaceId }.toSet()
+        val nodeSurfaceIds =
+            nodes.map { node -> surfaceIdFromNodeKey(node.key) }.filter { it.isNotEmpty() }.toSet()
+        val missing = nodeSurfaceIds - windowSurfaceIds
+        assertTrue(
+            missing.isEmpty(),
+            "iteration $iteration: windows() missing surfaces that allNodes() reports: $missing " +
+                "(windows=$windowSurfaceIds nodeSurfaces=$nodeSurfaceIds). " +
+                "See #362 windows()/allNodes() agreement.",
+        )
+    }
+
+    /** Node keys are `surfaceId:ownerIndex:nodeId`; surfaceId itself may contain `:`. */
+    private fun surfaceIdFromNodeKey(key: String): String {
+        val parts = key.split(':')
+        // Need at least surfacePrefix:index:owner:node — surfaceId is everything but the last two
+        // colon-separated segments when those are integers (ownerIndex, nodeId).
+        if (parts.size < 3) return key
+        val owner = parts[parts.lastIndex - 1]
+        val nodeId = parts.last()
+        if (owner.toIntOrNull() == null || nodeId.toIntOrNull() == null) return key
+        return parts.dropLast(2).joinToString(":")
     }
 
     /**

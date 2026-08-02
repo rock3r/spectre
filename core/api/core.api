@@ -261,6 +261,7 @@ public final class dev/sebastiano/spectre/core/TrackedWindow {
 	public final fun getComposeSurfaceBoundsOnScreen ()Ljava/awt/Rectangle;
 	public final fun getSurfaceId ()Ljava/lang/String;
 	public final fun getWindow ()Ljava/awt/Window;
+	public final fun getWindowTitle ()Ljava/lang/String;
 	public fun hashCode ()I
 	public final fun isPopup ()Z
 	public fun toString ()Ljava/lang/String;

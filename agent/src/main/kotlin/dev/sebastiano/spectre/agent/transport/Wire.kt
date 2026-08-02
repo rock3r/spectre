@@ -386,6 +386,15 @@ public data class WindowSummaryDto(
     public val title: String?,
     public val isPopup: Boolean,
     public val bounds: RectDto,
+    /**
+     * Whether the AWT window is currently showing ([java.awt.Window.isShowing]).
+     *
+     * Tracked surfaces may be listed before show (displayable + semantics, delayed-show hosts
+     * from #362) so `windows()` stays in agreement with `allNodes()`. Launch readiness and
+     * Robot/screenshot callers should prefer [isShowing] == true. Defaults to `true` so older wire
+     * peers without the field still decode.
+     */
+    public val isShowing: Boolean = true,
 )
 
 /**

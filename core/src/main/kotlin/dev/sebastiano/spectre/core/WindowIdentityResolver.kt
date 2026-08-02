@@ -2,8 +2,6 @@
 
 package dev.sebastiano.spectre.core
 
-import java.awt.Dialog
-import java.awt.Frame
 import java.awt.Rectangle
 import java.awt.Window
 import kotlin.math.abs
@@ -34,7 +32,7 @@ public object WindowIdentityResolver {
         WindowIdentitySnapshot(
             index = index,
             surfaceId = tracked.surfaceId,
-            title = windowTitle(window),
+            title = tracked.windowTitle,
             isPopup = tracked.isPopup,
             nativeHandle = nativeHandle,
             cropRequired = cropRequired,
@@ -48,19 +46,27 @@ public object WindowIdentityResolver {
         )
     }
 
+    /**
+     * Top-level window bounds in screen coordinates.
+     *
+     * When the window is displayable but not yet showing (delayed-show hosts admitted by
+     * [WindowTracker] for #362), `locationOnScreen` throws. Fall back to the window's layout
+     * position/size so identity resolution does not fail the whole list.
+     */
     private fun windowBoundsOnScreen(window: Window): Rectangle {
-        val location = window.locationOnScreen
-        val size = window.size
-        return Rectangle(location.x, location.y, size.width, size.height)
-    }
-
-    /** Title from [Frame] or [Dialog] (ComposeDialog / JDialog); null for bare [Window]. */
-    private fun windowTitle(window: Window): String? =
-        when (window) {
-            is Frame -> window.title
-            is Dialog -> window.title
-            else -> null
+        return try {
+            val location = window.locationOnScreen
+            val size = window.size
+            Rectangle(location.x, location.y, size.width, size.height)
+        } catch (_: java.awt.IllegalComponentStateException) {
+            Rectangle(
+                window.x,
+                window.y,
+                window.width.coerceAtLeast(0),
+                window.height.coerceAtLeast(0),
+            )
         }
+    }
 
     private fun rectsEqualWithin(a: Rectangle, b: Rectangle, tolerancePx: Int): Boolean =
         abs(a.x - b.x) <= tolerancePx &&

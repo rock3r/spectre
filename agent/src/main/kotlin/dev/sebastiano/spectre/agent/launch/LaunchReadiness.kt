@@ -257,7 +257,10 @@ internal object LaunchReadiness {
                 )
             }
             try {
-                if (automator.windows().isNotEmpty()) return
+                // #362: windows() may list displayable-but-not-yet-showing surfaces so it agrees
+                // with allNodes(). FIRST_WINDOW promises a visible window for Robot/screenshot —
+                // require isShowing (wire field; defaults true on older agents).
+                if (automator.windows().any { it.isShowing }) return
             } catch (ex: IOException) {
                 lastError = ex
             }

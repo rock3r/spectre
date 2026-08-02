@@ -280,7 +280,7 @@ can add a reliable preflight via `HotSpotDiagnosticMXBean`.
 
 | Method                | Wire op                          | Returns           |
 |-----------------------|----------------------------------|-------------------|
-| `windows()`           | `AgentRequest.Windows`           | `List<WindowSummaryDto>` |
+| `windows()`           | `AgentRequest.Windows`           | `List<WindowSummaryDto>` (includes `isShowing`; delayed-show hosts may appear before they are visible so keys agree with `allNodes()` — #362) |
 | `allNodes()`          | `AgentRequest.AllNodes`          | `List<NodeSnapshotDto>`  |
 | `findByTestTag(tag)`  | `AgentRequest.FindByTestTag`     | `List<NodeSnapshotDto>`  |
 | `click(nodeKey)`      | `AgentRequest.Click`             | `Unit`            |

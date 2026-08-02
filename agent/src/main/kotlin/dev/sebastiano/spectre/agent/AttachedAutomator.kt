@@ -234,8 +234,19 @@ internal constructor(
      * artifacts to disk and keeping only the summary in agent context.
      */
     @Throws(IOException::class)
-    public fun capture(windowIndex: Int = 0): AtomicCaptureResult {
-        val resp = exchange(AgentRequest.Capture(windowIndex))
+    /**
+     * Atomic capture of one tracked window.
+     *
+     * When [windowIndex] is null (default), uses the first **showing** window from [windows] so
+     * delayed-show hosts listed for #362 agreement are not captured by accident. An explicit index
+     * is never remapped.
+     */
+    public fun capture(windowIndex: Int? = null): AtomicCaptureResult {
+        val resolvedIndex =
+            windowIndex
+                ?: windows().firstOrNull { it.isShowing }?.index
+                ?: error("No showing tracked window to capture")
+        val resp = exchange(AgentRequest.Capture(resolvedIndex))
         val capture = resp as? AgentResponse.Capture ?: throw wireMismatch("Capture", resp)
         return AtomicCaptureResult(
             windowIndex = capture.windowIndex,
