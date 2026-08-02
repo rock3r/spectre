@@ -43,6 +43,14 @@ class WireCodecTest {
     }
 
     @Test
+    fun `FocusWindow round-trips and logLabel redacts nodeKey`() {
+        val req = AgentRequest.FocusWindow(nodeKey = "surface-0:1:42")
+        assertEquals(req, WireCodec.decodeRequest(WireCodec.encode(req)))
+        assertEquals("focusWindow", req.logLabel)
+        assertFalse(req.logLabel.contains(req.nodeKey))
+    }
+
+    @Test
     fun `TypeText round-trips with unicode payload`() {
         val req = AgentRequest.TypeText(text = "hello 🦀 world café")
         assertEquals(req, WireCodec.decodeRequest(WireCodec.encode(req)))

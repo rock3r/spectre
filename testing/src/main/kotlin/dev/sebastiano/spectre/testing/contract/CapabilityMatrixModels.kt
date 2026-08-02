@@ -63,6 +63,8 @@ public enum class AutomatorOperation {
     Swipe,
     ScrollWheel,
     PressKey,
+    /** Raise/focus the AWT window hosting a node (#364). */
+    FocusWindow,
     FindByText,
     FindByContentDescription,
     FindByRole,

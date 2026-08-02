@@ -77,8 +77,10 @@ verbs** (`doubleClick` / `swipe` / `scrollWheel` — #203) are **Supported** on 
 Xvfb and macOS desktop via `AgentContractCorpusTest` against `agent-test-fixture`. Agent
 `pressKey` is **Supported** on Linux Xvfb (fail-closed after focus retries) and
 **Experimental** on macOS desktop (hosted runners may soft-skip OS keyboard focus loss after
-retries — same class as `typeText`). HTTP selector entry points are covered by headless
-`HttpContractCorpusTest`. Some HTTP input/wait cells and agent `longClick` /
+retries — same class as `typeText`). Agent **`focusWindow`** (#364) is **Supported** on Linux
+Xvfb and macOS desktop (raises the window hosting a node before real keyboard input); HTTP
+`focusWindow` is **Unsupported by design** for this issue. HTTP selector entry points are covered
+by headless `HttpContractCorpusTest`. Some HTTP input/wait cells and agent `longClick` /
 `waitForVisualIdle` remain **Not yet CI-executed**.
 
 ## How to read a cell

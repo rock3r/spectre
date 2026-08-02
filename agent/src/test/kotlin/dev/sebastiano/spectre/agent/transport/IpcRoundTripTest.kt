@@ -480,6 +480,7 @@ class IpcRoundTripTest {
             is AgentRequest.Swipe,
             is AgentRequest.ScrollWheel,
             is AgentRequest.PressKey,
+            is AgentRequest.FocusWindow,
             is AgentRequest.TypeText,
             is AgentRequest.Cancel,
             is AgentRequest.WaitForVisualIdle -> AgentResponse.Ok

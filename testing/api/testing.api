@@ -131,6 +131,7 @@ public abstract interface class dev/sebastiano/spectre/testing/contract/Automato
 	public abstract fun findByTestTag (Ljava/lang/String;)Ljava/util/List;
 	public fun findByText (Ljava/lang/String;Z)Ljava/util/List;
 	public static synthetic fun findByText$default (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;ZILjava/lang/Object;)Ljava/util/List;
+	public fun focusWindow (Ljava/lang/String;)V
 	public fun getExpectsFixtureSemantics ()Z
 	public fun getSupportsExtendedParity ()Z
 	public fun getSupportsFixtureParity ()Z
@@ -154,6 +155,7 @@ public final class dev/sebastiano/spectre/testing/contract/AutomatorContractDriv
 	public static fun findByRole (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;)Ljava/util/List;
 	public static fun findByText (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;Z)Ljava/util/List;
 	public static synthetic fun findByText$default (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;ZILjava/lang/Object;)Ljava/util/List;
+	public static fun focusWindow (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;)V
 	public static fun getExpectsFixtureSemantics (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;)Z
 	public static fun getSupportsExtendedParity (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;)Z
 	public static fun getSupportsFixtureParity (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;)Z
@@ -176,6 +178,7 @@ public final class dev/sebastiano/spectre/testing/contract/AutomatorOperation : 
 	public static final field FindByRole Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field FindByTestTag Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field FindByText Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field FocusWindow Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field LongClick Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field PressKey Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field RegisterIdlingResource Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;

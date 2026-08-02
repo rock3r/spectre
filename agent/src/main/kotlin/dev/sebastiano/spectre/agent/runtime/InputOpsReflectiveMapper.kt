@@ -8,11 +8,15 @@ import dev.sebastiano.spectre.agent.transport.AgentResponse
 import java.lang.reflect.Method
 
 /**
- * Reflective bridge for richer input verbs (#203): doubleClick, longClick, swipe, scrollWheel,
- * pressKey. Kept out of [ReflectiveAutomatorHandler] for detekt size/complexity budgets.
+ * Reflective bridge for richer input verbs (#203 / #364): doubleClick, longClick, swipe,
+ * scrollWheel, pressKey, focusWindow. Kept out of [ReflectiveAutomatorHandler] for detekt
+ * size/complexity budgets.
  *
  * Kotlin mangles `Duration` parameters into primitive `long` carrying [Duration]'s packed
  * `rawValue` (not plain nanoseconds). Use [durationStorageFromMs] when invoking those methods.
+ *
+ * [handleFocusWindow] is non-suspend (core `focusWindow` is a plain method); other verbs use
+ * [BlockingSuspendInvoker].
  */
 internal class InputOpsReflectiveMapper(
     private val automator: Any,
@@ -80,6 +84,15 @@ internal class InputOpsReflectiveMapper(
                 it.parameterTypes[0] == intPrimitive &&
                 it.parameterTypes[1] == intPrimitive &&
                 it.parameterTypes[2].name == CONTINUATION_FQN
+        }
+
+    /**
+     * Non-suspend `focusWindow(node)`. JVM signature is a single node argument (no Continuation).
+     * Prefer exact arity so we never pick a future overload by accident.
+     */
+    private val focusWindowMethod: Method? =
+        automatorClass.methods.firstOrNull {
+            it.name == "focusWindow" && it.parameterTypes.size == 1
         }
 
     fun handleDoubleClick(nodeKey: String): AgentResponse =
@@ -230,6 +243,19 @@ internal class InputOpsReflectiveMapper(
         }
         refreshWindows()
         suspendInvoker.invoke(method, automator, request.keyCode, request.modifiers)
+        return AgentResponse.Ok
+    }
+
+    /**
+     * Raise/focus the AWT window that hosts [nodeKey] (#364). Non-suspend reflective invoke of
+     * `ComposeAutomator.focusWindow(node)`.
+     */
+    fun handleFocusWindow(nodeKey: String): AgentResponse {
+        val method = focusWindowMethod ?: return unsupported("focusWindow(node)")
+        val node = resolveNode(nodeKey) ?: return nodeNotFound(nodeKey)
+        // Core focusWindow dispatches toFront/requestFocus on the EDT itself; plain invoke is
+        // correct (no Continuation, no BlockingSuspendInvoker).
+        method.invoke(automator, node)
         return AgentResponse.Ok
     }
 

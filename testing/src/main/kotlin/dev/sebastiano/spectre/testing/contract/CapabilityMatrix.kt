@@ -508,6 +508,14 @@ public object CapabilityMatrix {
                         "Not Supported until fail-closed without skip.",
             )
         )
+        addAll(
+            focusWindowCapabilityCells(
+                agentLinuxXvfb = agentLinuxXvfb,
+                agentMacOs = agentMacOs,
+                agentAttachLegacyLinux = agentAttachLegacyLinux,
+                agentAttachLegacyMacOs = agentAttachLegacyMacOs,
+            )
+        )
         // HTTP selector routes exist; headless HttpContractCorpusTest only proves entry points
         // with empty trees (expectsFixtureSemantics=false), not fixture-backed matches.
         for (op in

@@ -17,8 +17,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * [AgentRequest.Detach] over the wire (Path A of the plan's D-7) before tearing down the underlying
  * socket. The target JVM's shutdown hook (Path B) covers crash cleanup.
  *
- * Current wire surface: windows, allNodes, findByTestTag, click, typeText, screenshot, capture,
- * windowIdentity, plus detach. Streaming/long-poll ops are deferred follow-ups (Q-3).
+ * Current wire surface: windows, allNodes, find*, click / input verbs, focusWindow, typeText,
+ * screenshot, capture, windowIdentity, waits, plus detach. Streaming/long-poll idling resources
+ * remain deferred follow-ups (Q-3).
  *
  * Not thread-safe. Callers needing concurrent automator access must serialise externally.
  *
@@ -177,6 +178,19 @@ internal constructor(
     @Throws(IOException::class)
     public fun pressKey(keyCode: Int, modifiers: Int = 0) {
         val resp = exchange(AgentRequest.PressKey(keyCode = keyCode, modifiers = modifiers))
+        if (resp !is AgentResponse.Ok) throw wireMismatch("Ok", resp)
+    }
+
+    /**
+     * Raise and request focus on the AWT window hosting [nodeKey] (#364).
+     *
+     * Mirrors in-process `ComposeAutomator.focusWindow`. Call this before [pressKey] / [typeText]
+     * when the target app may not own OS keyboard focus (common when the attach client is the
+     * foreground process).
+     */
+    @Throws(IOException::class)
+    public fun focusWindow(nodeKey: String) {
+        val resp = exchange(AgentRequest.FocusWindow(nodeKey))
         if (resp !is AgentResponse.Ok) throw wireMismatch("Ok", resp)
     }
 
