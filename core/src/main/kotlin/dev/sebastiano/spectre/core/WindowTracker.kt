@@ -7,6 +7,7 @@ import androidx.compose.ui.awt.ComposePanel
 import androidx.compose.ui.awt.ComposeWindow
 import java.awt.Container
 import java.awt.Window
+import java.lang.ref.WeakReference
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,6 +24,15 @@ internal constructor(
     private val surfaceIdAssigner = SurfaceIdAssigner()
 
     private val _trackedWindows = MutableStateFlow<List<TrackedWindow>>(emptyList())
+
+    /**
+     * Windows observed as [Window.isShowing] at least once during this tracker's lifetime.
+     *
+     * Used so #362 delayed-show hosts (displayable + semantics, never yet shown) remain
+     * discoverable, while HIDE_ON_CLOSE / setVisible(false) frames that **have** shown before are
+     * not re-listed after dismiss (they stay displayable with stale semantics).
+     */
+    private val everShownWindows = mutableListOf<WeakReference<Window>>()
 
     /**
      * Live view of the currently tracked surfaces. Backed by a [StateFlow] so that subscribers
@@ -49,30 +59,44 @@ internal constructor(
         // descendants).
         val topLevelWindows = allWindows().filter { it.owner == null }
         for (window in topLevelWindows) {
+            if (window.isShowing) markEverShown(window)
             when {
-                // Use isDisplayable (not isShowing) so delayed-show / custom-chrome hosts stay
-                // discoverable once they have a peer and a semantics tree (#362).
-                //
-                // Jewel/Compose Desktop onboarding often creates the window with `visible =
-                // false`, runs a first composition (transparent title-bar client properties,
-                // minimum size), then flips visible. During that window `isShowing` is false
-                // while `semanticsOwners` / panel owners can already be non-empty. Requiring
-                // isShowing made `windows()` empty while a later `allNodes()` refresh could
-                // still report `window:*` keys after show.
-                //
-                // Track helpers still require non-empty semantics owners / panels, so bare
-                // not-yet-composed displayable frames are not listed. Hidden parents without
-                // panels (e.g. SharedOwnerFrame) still fall through to owned-popup walks.
-                window is ComposeWindow && window.isDisplayable ->
+                // #362 delayed-show: admit never-yet-shown displayable Compose hosts with
+                // semantics. Once a window has been showing, only re-list while isShowing so
+                // HIDE_ON_CLOSE dismissals are not re-admitted with stale trees.
+                window is ComposeWindow && shouldTrackTopLevel(window) ->
                     trackComposeWindow(pending, window)
-                // Includes owned-popup walk (see trackEmbeddedPanels).
-                window.isDisplayable -> trackEmbeddedPanels(pending, window)
-                // Not displayable (e.g. SharedOwnerFrame before peer): skip own panels but still
-                // walk owned dialogs in case any of them are showing.
+                shouldTrackTopLevel(window) -> trackEmbeddedPanels(pending, window)
+                // Not displayable / not trackable: still walk owned dialogs in case any show.
                 else -> trackOwnedPopups(pending, window)
             }
         }
+        pruneEverShown()
         _trackedWindows.value = pending.toList()
+    }
+
+    /**
+     * True when [window] is currently showing, or is a delayed-show candidate (displayable, never
+     * observed showing, will be filtered further by semantics/panel presence in track helpers).
+     */
+    private fun shouldTrackTopLevel(window: Window): Boolean {
+        if (window.isShowing) return true
+        if (!window.isDisplayable) return false
+        return !hasEverShown(window)
+    }
+
+    private fun markEverShown(window: Window) {
+        if (hasEverShown(window)) return
+        everShownWindows += WeakReference(window)
+    }
+
+    private fun hasEverShown(window: Window): Boolean {
+        pruneEverShown()
+        return everShownWindows.any { it.get() === window }
+    }
+
+    private fun pruneEverShown() {
+        everShownWindows.removeAll { it.get() == null }
     }
 
     @OptIn(ExperimentalComposeUiApi::class)
