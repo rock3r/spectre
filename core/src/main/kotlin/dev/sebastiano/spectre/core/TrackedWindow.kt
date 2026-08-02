@@ -54,14 +54,18 @@ public data class TrackedWindow(
                 ?: locationOnScreenOrNull((window as? JFrame)?.contentPane)
                 ?: locationOnScreenOrNull((window as? JDialog)?.contentPane)
                 ?: locationOnScreenOrNull(window)
+                ?: layoutScreenOrigin(composePanel, window)
+                ?: layoutScreenOrigin((window as? JFrame)?.contentPane, window)
+                ?: layoutScreenOrigin((window as? JDialog)?.contentPane, window)
                 ?: Point(window.x, window.y)
 
     /**
      * Compose surface bounds in screen coordinates.
      *
-     * Tries the panel, then Swing content panes (Frame / Dialog), then the window itself. Each
-     * candidate is skipped when `locationOnScreen` is unavailable so a single not-yet-showing
-     * intermediate does not fail the whole read (#362 attach `windows()` mapping).
+     * Tries live `locationOnScreen` first (panel → content pane → window). When the host is
+     * displayable but not yet showing, falls back to **window-relative layout** (child offsets
+     * summed to the top-level window, then offset by the window's layout x/y) so decorated frames
+     * and non-full-size panels keep correct surface geometry during delayed-show (#362).
      */
     val composeSurfaceBoundsOnScreen: Rectangle
         get() = readOnEdt {
@@ -69,6 +73,9 @@ public data class TrackedWindow(
                 ?: screenBoundsOrNull((window as? JFrame)?.contentPane)
                 ?: screenBoundsOrNull((window as? JDialog)?.contentPane)
                 ?: screenBoundsOrNull(window)
+                ?: layoutScreenBounds(composePanel, window)
+                ?: layoutScreenBounds((window as? JFrame)?.contentPane, window)
+                ?: layoutScreenBounds((window as? JDialog)?.contentPane, window)
                 ?: Rectangle(
                     window.x,
                     window.y,
@@ -103,4 +110,35 @@ private fun screenBoundsOrNull(component: Component?): Rectangle? {
     } catch (_: IllegalComponentStateException) {
         null
     }
+}
+
+/**
+ * Screen-space origin for [component] when `locationOnScreen` is unavailable: sum parent offsets up
+ * to [window], then add the window's layout position.
+ */
+private fun layoutScreenOrigin(component: Component?, window: Window): Point? {
+    val inWindow = boundsInWindow(component, window) ?: return null
+    return Point(window.x + inWindow.x, window.y + inWindow.y)
+}
+
+private fun layoutScreenBounds(component: Component?, window: Window): Rectangle? {
+    val inWindow = boundsInWindow(component, window) ?: return null
+    return Rectangle(window.x + inWindow.x, window.y + inWindow.y, inWindow.width, inWindow.height)
+}
+
+private fun boundsInWindow(component: Component?, window: Window): Rectangle? {
+    if (component == null) return null
+    val width = component.width
+    val height = component.height
+    if (width <= 0 || height <= 0) return null
+    var x = 0
+    var y = 0
+    var current: Component? = component
+    while (current != null && current !== window) {
+        x += current.x
+        y += current.y
+        current = current.parent
+    }
+    if (current !== window) return null
+    return Rectangle(x, y, width, height)
 }

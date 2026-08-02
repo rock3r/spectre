@@ -341,7 +341,7 @@ internal class ReflectiveAutomatorHandler(
         val target =
             resolveScreenshotTarget(
                     fullscreen = request.fullscreen,
-                    windowIndex = request.windowIndex,
+                    windowIndex = defaultScreenshotWindowIndex(request, windows),
                     surfaceId = request.surfaceId,
                     windows = windowSummaries,
                 )
@@ -372,27 +372,59 @@ internal class ReflectiveAutomatorHandler(
 
         val image =
             when (target) {
-                is ScreenshotTarget.Fullscreen -> {
+                is ScreenshotTarget.Fullscreen ->
                     // null region = full virtual desktop. Explicit opt-in only (#289).
                     regionScreenshotMethod.invoke(automator, null) as BufferedImage
-                }
-                is ScreenshotTarget.Window -> {
-                    // Capture bounds from the window list we just resolved against. Do not call
-                    // screenshot(windowIndex): that path refreshes windows again and can bind a
-                    // different surface at the same index after a popup open/close (#289 P2).
-                    val tracked =
-                        windows.getOrNull(target.windowIndex)
-                            ?: return AgentResponse.Error(
-                                "No tracked window at index ${target.windowIndex} (have ${windows.size})"
-                            )
-                    val bounds =
-                        tracked.javaClass
-                            .getMethod("getComposeSurfaceBoundsOnScreen")
-                            .invoke(tracked)
-                    regionScreenshotMethod.invoke(automator, bounds) as BufferedImage
-                }
+                is ScreenshotTarget.Window ->
+                    captureWindowScreenshot(windows, target, regionScreenshotMethod)
+                        ?: return AgentResponse.Error(
+                            message =
+                                "Tracked window at index ${target.windowIndex} is missing or " +
+                                    "not showing; wait until it is visible before screenshot",
+                            category =
+                                dev.sebastiano.spectre.agent.transport.AgentErrorCategory
+                                    .InvalidSelector
+                                    .wireName,
+                        )
             }
         return AgentResponse.Screenshot(imageToPng(image))
+    }
+
+    /**
+     * Default (no windowIndex/surfaceId): first showing surface so delayed-show hosts listed
+     * for #362 agreement are not the visual capture target.
+     */
+    private fun defaultScreenshotWindowIndex(
+        request: AgentRequest.Screenshot,
+        windows: List<*>,
+    ): Int? =
+        when {
+            request.fullscreen || request.surfaceId != null -> request.windowIndex
+            request.windowIndex != null -> request.windowIndex
+            else -> firstShowingWindowIndex(windows) ?: 0
+        }
+
+    private fun firstShowingWindowIndex(windows: List<*>): Int? =
+        windows
+            .mapIndexedNotNull { index, tracked ->
+                if (tracked != null && extractIsShowing(tracked, tracked.javaClass)) index else null
+            }
+            .firstOrNull()
+
+    /**
+     * Capture bounds from the window list we just resolved against. Do not call
+     * `screenshot(windowIndex)`: that path refreshes windows again and can bind a different surface
+     * at the same index after a popup open/close (#289 P2).
+     */
+    private fun captureWindowScreenshot(
+        windows: List<*>,
+        target: ScreenshotTarget.Window,
+        regionScreenshotMethod: Method,
+    ): BufferedImage? {
+        val tracked = windows.getOrNull(target.windowIndex) ?: return null
+        if (!extractIsShowing(tracked, tracked.javaClass)) return null
+        val bounds = tracked.javaClass.getMethod("getComposeSurfaceBoundsOnScreen").invoke(tracked)
+        return regionScreenshotMethod.invoke(automator, bounds) as BufferedImage
     }
 
     private fun imageToPng(image: BufferedImage): ByteArray {

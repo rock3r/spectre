@@ -286,9 +286,7 @@ private constructor(
      */
     public fun screenshot(windowIndex: Int): BufferedImage {
         refreshWindows()
-        val trackedWindow =
-            windows.getOrNull(windowIndex)
-                ?: error("No tracked window at index $windowIndex (have ${windows.size})")
+        val trackedWindow = requireShowingTrackedWindow(windowIndex)
         val geometry = readOnEdt {
             ScreenshotGeometry(
                 trackedWindow.composeSurfaceBoundsOnScreen,
@@ -323,9 +321,7 @@ private constructor(
     public fun capture(windowIndex: Int = 0): AtomicCapture {
         val startedAt = TimeSource.Monotonic.markNow()
         refreshWindows()
-        val trackedWindow =
-            windows.getOrNull(windowIndex)
-                ?: error("No tracked window at index $windowIndex (have ${windows.size})")
+        val trackedWindow = requireShowingTrackedWindow(windowIndex)
         // Freeze capture region, density, node properties, and screen geometry in one EDT pass
         // *before* taking the PNG so JSON and pixels cannot describe different window layouts.
         data class PreCaptureSnapshot(
@@ -464,6 +460,34 @@ private constructor(
             pollInterval = pollInterval,
             frameHash = frameHasher::hash,
         )
+    }
+
+    /**
+     * Resolves a tracked window for visual ops (screenshot / capture).
+     *
+     * #362 may list displayable-but-not-yet-showing surfaces so `windows()` agrees with
+     * `allNodes()`. Visual capture must not target those: for the default index 0, prefer the first
+     * showing surface; for an explicit non-showing index, fail with a clear error.
+     */
+    private fun requireShowingTrackedWindow(windowIndex: Int): TrackedWindow {
+        val list = windows
+        val preferred = list.getOrNull(windowIndex)
+        if (preferred != null && preferred.window.isShowing) return preferred
+        if (windowIndex == 0) {
+            list
+                .firstOrNull { it.window.isShowing }
+                ?.let {
+                    return it
+                }
+        }
+        if (preferred != null && !preferred.window.isShowing) {
+            error(
+                "Tracked window at index $windowIndex is not showing " +
+                    "(surfaceId=${preferred.surfaceId}); wait until it is visible before " +
+                    "screenshot/capture, or pass a showing windowIndex"
+            )
+        }
+        error("No tracked window at index $windowIndex (have ${list.size})")
     }
 
     private fun rejectEdtCaller(name: String) {
