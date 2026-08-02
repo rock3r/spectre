@@ -406,8 +406,11 @@ internal class ReflectiveAutomatorHandler(
     }
 
     /**
-     * Capture a node's on-screen bounds (#362). Uses region screenshot of [AutomatorNode] bounds so
-     * attach matches in-process `screenshot(node)` scale policy for the PNG size.
+     * Capture a node's on-screen bounds (#362) via in-process `screenshot(AutomatorNode)`.
+     *
+     * Must not use the screen-framebuffer `screenshot(Rectangle?)` path: that can include pixels
+     * from occluding apps on macOS/Windows. The node overload is native window-scoped and matches
+     * attach documentation parity with in-process Spectre.
      */
     private fun handleNodeScreenshot(request: AgentRequest.Screenshot): AgentResponse {
         val nodeKey =
@@ -427,6 +430,16 @@ internal class ReflectiveAutomatorHandler(
                         .wireName,
             )
         }
+        val nodeScreenshotMethod =
+            nodeScreenshotMethodOrError()
+                ?: return AgentResponse.Error(
+                    message =
+                        "ComposeAutomator does not expose screenshot(AutomatorNode) on this build",
+                    category =
+                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory
+                            .UnsupportedOperation
+                            .wireName,
+                )
         refreshWindowsMethod.invoke(automator)
         val node =
             (allNodesMethod.invoke(automator) as List<*>).firstOrNull {
@@ -438,27 +451,7 @@ internal class ReflectiveAutomatorHandler(
                         dev.sebastiano.spectre.agent.transport.AgentErrorCategory.NodeNotFound
                             .wireName,
                 )
-        val regionScreenshotMethod =
-            regionScreenshotMethodOrError()
-                ?: return AgentResponse.Error(
-                    message =
-                        "ComposeAutomator does not expose screenshot(Rectangle?) on this build",
-                    category =
-                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory
-                            .UnsupportedOperation
-                            .wireName,
-                )
-        val bounds =
-            node.javaClass.methods
-                .firstOrNull { it.name == "getBoundsOnScreen" && it.parameterCount == 0 }
-                ?.invoke(node)
-                ?: return AgentResponse.Error(
-                    message = "Node has no boundsOnScreen for key=$nodeKey",
-                    category =
-                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InternalError
-                            .wireName,
-                )
-        val image = regionScreenshotMethod.invoke(automator, bounds) as BufferedImage
+        val image = nodeScreenshotMethod.invoke(automator, node) as BufferedImage
         return AgentResponse.Screenshot(imageToPng(image))
     }
 
@@ -467,6 +460,20 @@ internal class ReflectiveAutomatorHandler(
             it.name == "screenshot" &&
                 it.parameterTypes.size == 1 &&
                 it.parameterTypes[0].name == AWT_RECTANGLE_FQN
+        }
+
+    /**
+     * `screenshot(node: AutomatorNode)` — single non-primitive param that is not [Rectangle] /
+     * [Int] (windowIndex overload). Agent has no compile-time `core` dependency, so match by
+     * exclusion rather than FQN.
+     */
+    private fun nodeScreenshotMethodOrError(): Method? =
+        automatorClass.methods.firstOrNull {
+            it.name == "screenshot" &&
+                it.parameterTypes.size == 1 &&
+                it.parameterTypes[0].name != AWT_RECTANGLE_FQN &&
+                it.parameterTypes[0] != Int::class.javaPrimitiveType &&
+                it.parameterTypes[0] != Int::class.javaObjectType
         }
 
     /**

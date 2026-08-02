@@ -237,8 +237,11 @@ internal constructor(
     }
 
     /**
-     * Capture a PNG of a resolved node's on-screen bounds (#362). Same wire path as window
-     * screenshots; dimensions follow node bounds (± scale policy used for window screenshots).
+     * Capture a PNG of a resolved node's on-screen bounds (#362).
+     *
+     * Wire-equivalent of in-process `ComposeAutomator.screenshot(node)`: the agent invokes the
+     * native window-scoped node overload (not screen-region capture), so occluding apps are
+     * excluded on platforms that support window capture.
      */
     @Throws(IOException::class)
     public fun screenshot(node: NodeSnapshotDto): ByteArray {

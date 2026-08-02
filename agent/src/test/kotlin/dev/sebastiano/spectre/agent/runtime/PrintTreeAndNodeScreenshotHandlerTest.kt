@@ -30,7 +30,7 @@ class PrintTreeAndNodeScreenshotHandlerTest {
     }
 
     @Test
-    fun `Screenshot with nodeKey captures node boundsOnScreen region`() {
+    fun `Screenshot with nodeKey invokes window-scoped node overload`() {
         val node =
             DebugFakeNode(
                 keyValue = "window:0:0:5",
@@ -42,8 +42,9 @@ class PrintTreeAndNodeScreenshotHandlerTest {
         val response = handler.handle(AgentRequest.Screenshot(nodeKey = "window:0:0:5"))
         check(response is AgentResponse.Screenshot) { "expected Screenshot, got $response" }
         assertTrue(response.pngBytes.isNotEmpty())
-        assertEquals(1, fake.regionScreenshotCalls)
-        assertEquals(Rectangle(10, 20, 40, 30), fake.lastRegion)
+        assertEquals(1, fake.nodeScreenshotCalls)
+        assertEquals(0, fake.regionScreenshotCalls)
+        assertEquals(node, fake.lastNodeScreenshotTarget)
     }
 
     @Test
@@ -70,7 +71,9 @@ internal class DebugFakeAutomator(
 ) {
     var printTreeCalls = 0
     var regionScreenshotCalls = 0
+    var nodeScreenshotCalls = 0
     var lastRegion: Rectangle? = null
+    var lastNodeScreenshotTarget: Any? = null
 
     @Suppress("unused") fun refreshWindows() = Unit
 
@@ -93,6 +96,19 @@ internal class DebugFakeAutomator(
         val w = region?.width?.coerceAtLeast(1) ?: 1
         val h = region?.height?.coerceAtLeast(1) ?: 1
         return BufferedImage(w, h, BufferedImage.TYPE_INT_RGB)
+    }
+
+    /** Mirrors in-process `ComposeAutomator.screenshot(AutomatorNode)` window-scoped path. */
+    @Suppress("unused")
+    fun screenshot(node: DebugFakeNode): BufferedImage {
+        nodeScreenshotCalls++
+        lastNodeScreenshotTarget = node
+        val bounds = node.getBoundsOnScreen()
+        return BufferedImage(
+            bounds.width.coerceAtLeast(1),
+            bounds.height.coerceAtLeast(1),
+            BufferedImage.TYPE_INT_RGB,
+        )
     }
 }
 

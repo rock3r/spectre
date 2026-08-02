@@ -141,9 +141,9 @@ internal sealed interface AgentRequest {
      * fails (#289).
      *
      * Serial name is `screenshot_v3` so mixed-version attach fails closed when a client sends
-     * [nodeKey] (or other v3 fields) to an older agent that only knows `screenshot_v2` / payload-free
-     * `screenshot`. Unknown discriminators become `unsupportedOperation` rather than dropping
-     * `nodeKey` under `ignoreUnknownKeys` and returning a window capture (#362 / #289).
+     * [nodeKey] (or other v3 fields) to an older agent that only knows `screenshot_v2` /
+     * payload-free `screenshot`. Unknown discriminators become `unsupportedOperation` rather than
+     * dropping `nodeKey` under `ignoreUnknownKeys` and returning a window capture (#362 / #289).
      */
     @Serializable
     @SerialName("screenshot_v3")
