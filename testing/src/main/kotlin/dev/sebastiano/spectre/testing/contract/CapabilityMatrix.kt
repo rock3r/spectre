@@ -508,73 +508,12 @@ public object CapabilityMatrix {
                         "Not Supported until fail-closed without skip.",
             )
         )
-        // #364 focusWindow: attach clients can raise the target window before keyboard input.
-        // Evidence: AgentContractCorpus focus-window scenario + AgentAttachIntegrationTest.
-        add(
-            CapabilityCell(
-                operation = AutomatorOperation.FocusWindow,
-                transport = AutomatorTransport.Agent,
-                platform = PlatformPrerequisite.LinuxXvfb,
-                state = CellState.Supported,
-                evidence = listOf(agentLinuxXvfb, agentAttachLegacyLinux),
-            )
-        )
-        add(
-            CapabilityCell(
-                operation = AutomatorOperation.FocusWindow,
-                transport = AutomatorTransport.Agent,
-                platform = PlatformPrerequisite.MacOsDesktop,
-                state = CellState.Supported,
-                evidence = listOf(agentMacOs, agentAttachLegacyMacOs),
-            )
-        )
-        // In-process focusWindow needs a live AWT window (toFront/requestFocus) — not AnyJvm.
-        // Public-surface name checks are not executable evidence of display-backed raise/focus.
-        add(
-            CapabilityCell(
-                operation = AutomatorOperation.FocusWindow,
-                transport = AutomatorTransport.InProcess,
-                platform = PlatformPrerequisite.LinuxXvfb,
-                state = CellState.Supported,
-                evidence =
-                    listOf(
-                        CapabilityEvidence(
-                            id = "in-process-focus-window-validation-linux",
-                            description =
-                                "sample-desktop NewInteractionsValidationTest exercises " +
-                                    "ComposeAutomator.focusWindow under Xvfb (fail-closed class " +
-                                    "list in validation-linux.yml)",
-                            sourcePath =
-                                "sample-desktop/src/validation/kotlin/dev/sebastiano/spectre/" +
-                                    "sample/validation/NewInteractionsValidationTest.kt",
-                            workflowPath = ".github/workflows/validation-linux.yml",
-                            gradleTaskHint =
-                                "./gradlew :sample-desktop:validationTest --tests " +
-                                    "\"*NewInteractionsValidationTest*\"",
-                        )
-                    ),
-            )
-        )
-        add(
-            CapabilityCell(
-                operation = AutomatorOperation.FocusWindow,
-                transport = AutomatorTransport.InProcess,
-                platform = PlatformPrerequisite.MacOsDesktop,
-                state = CellState.NotYetCiExecuted,
-                rationale =
-                    "In-process focusWindow is display-backed; no fail-closed macOS " +
-                        "sample-desktop validation workflow claims it yet (Linux Xvfb is Supported).",
-            )
-        )
-        add(
-            CapabilityCell(
-                operation = AutomatorOperation.FocusWindow,
-                transport = AutomatorTransport.Http,
-                platform = PlatformPrerequisite.AnyJvm,
-                state = CellState.UnsupportedByDesign,
-                rationale =
-                    "HTTP focusWindow is out of scope for #364 (AttachedAutomator wire only). " +
-                        "Callers needing remote activation over HTTP can file a follow-up.",
+        addAll(
+            focusWindowCapabilityCells(
+                agentLinuxXvfb = agentLinuxXvfb,
+                agentMacOs = agentMacOs,
+                agentAttachLegacyLinux = agentAttachLegacyLinux,
+                agentAttachLegacyMacOs = agentAttachLegacyMacOs,
             )
         )
         // HTTP selector routes exist; headless HttpContractCorpusTest only proves entry points
