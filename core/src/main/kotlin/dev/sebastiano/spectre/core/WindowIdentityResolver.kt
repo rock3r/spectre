@@ -46,10 +46,26 @@ public object WindowIdentityResolver {
         )
     }
 
+    /**
+     * Top-level window bounds in screen coordinates.
+     *
+     * When the window is displayable but not yet showing (delayed-show hosts admitted by
+     * [WindowTracker] for #362), `locationOnScreen` throws. Fall back to the window's layout
+     * position/size so identity resolution does not fail the whole list.
+     */
     private fun windowBoundsOnScreen(window: Window): Rectangle {
-        val location = window.locationOnScreen
-        val size = window.size
-        return Rectangle(location.x, location.y, size.width, size.height)
+        return try {
+            val location = window.locationOnScreen
+            val size = window.size
+            Rectangle(location.x, location.y, size.width, size.height)
+        } catch (_: java.awt.IllegalComponentStateException) {
+            Rectangle(
+                window.x,
+                window.y,
+                window.width.coerceAtLeast(0),
+                window.height.coerceAtLeast(0),
+            )
+        }
     }
 
     private fun rectsEqualWithin(a: Rectangle, b: Rectangle, tolerancePx: Int): Boolean =

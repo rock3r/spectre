@@ -81,6 +81,48 @@ class ReflectiveAutomatorHandlerWindowsAgreementTest {
         assertEquals(0, dto.bounds.height)
         assertTrue(dto.surfaceId.startsWith("window:"))
     }
+
+    @Test
+    fun `Windows op reports isShowing from the AWT window`() {
+        assumeFalse(
+            GraphicsEnvironment.isHeadless(),
+            "Frame() requires a non-headless JVM; skipped on Linux CI.",
+        )
+        val frame = Frame("showing-probe")
+        try {
+            // Not shown yet — isShowing should be false after peer creation via pack().
+            frame.pack()
+            assertEquals(false, frame.isShowing)
+            val tracked =
+                AgreementFakeTrackedWindow(
+                    surfaceIdValue = "window:0",
+                    isPopupValue = false,
+                    composeSurfaceBoundsOnScreenValue = Rectangle(0, 0, 100, 80),
+                    windowValue = frame,
+                )
+            val handler =
+                ReflectiveAutomatorHandler(AgreementFakeAutomator(windowsValue = listOf(tracked)))
+            val response = handler.handle(AgentRequest.Windows)
+            check(response is AgentResponse.Windows)
+            assertEquals(false, response.windows.single().isShowing)
+
+            frame.isVisible = true
+            val shown =
+                AgreementFakeTrackedWindow(
+                    surfaceIdValue = "window:0",
+                    isPopupValue = false,
+                    composeSurfaceBoundsOnScreenValue = Rectangle(0, 0, 100, 80),
+                    windowValue = frame,
+                )
+            val shownResponse =
+                ReflectiveAutomatorHandler(AgreementFakeAutomator(windowsValue = listOf(shown)))
+                    .handle(AgentRequest.Windows)
+            check(shownResponse is AgentResponse.Windows)
+            assertEquals(true, shownResponse.windows.single().isShowing)
+        } finally {
+            frame.dispose()
+        }
+    }
 }
 
 private class AgreementFakeTrackedWindow(

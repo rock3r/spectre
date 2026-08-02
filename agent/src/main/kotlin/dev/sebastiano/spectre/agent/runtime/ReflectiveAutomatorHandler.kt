@@ -445,6 +445,7 @@ internal class ReflectiveAutomatorHandler(
             title = title,
             isPopup = isPopup,
             bounds = boundsToRect(bounds),
+            isShowing = extractIsShowing(trackedWindow, klass),
         )
     }
 
@@ -462,10 +463,24 @@ internal class ReflectiveAutomatorHandler(
                 title = extractWindowTitle(trackedWindow, klass),
                 isPopup = isPopup,
                 bounds = RectDto(0, 0, 0, 0),
+                isShowing = extractIsShowing(trackedWindow, klass),
             )
         } catch (_: ReflectiveOperationException) {
             null
         }
+    }
+
+    /** Reads AWT `Window.isShowing` via `TrackedWindow.getWindow()`. Defaults true if unknown. */
+    private fun extractIsShowing(trackedWindow: Any, klass: Class<*>): Boolean {
+        val window =
+            runCatching { klass.getMethod("getWindow").invoke(trackedWindow) }.getOrNull()
+                ?: return true
+        return runCatching {
+                window.javaClass.methods
+                    .firstOrNull { it.name == "isShowing" && it.parameterCount == 0 }
+                    ?.invoke(window) as? Boolean
+            }
+            .getOrNull() ?: true
     }
 
     /**
