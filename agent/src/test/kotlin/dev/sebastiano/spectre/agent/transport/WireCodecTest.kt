@@ -72,14 +72,14 @@ class WireCodecTest {
     }
 
     @Test
-    fun `Screenshot request uses screenshot_v2 discriminator so pre-289 agents cannot silently fullscreen`() {
-        // Old agent runtimes mapped SerialName("screenshot") to a payload-free object that always
-        // called screenshot(null). The new request must not share that discriminator.
-        val encoded = WireCodec.encode(AgentRequest.Screenshot())
+    fun `Screenshot request uses screenshot_v3 discriminator for fail-closed nodeKey`() {
+        // Old agents that only know screenshot_v2 would ignore unknown nodeKey and return a
+        // window capture. v3 discriminator forces unsupportedOperation on older runtimes.
+        val encoded = WireCodec.encode(AgentRequest.Screenshot(nodeKey = "window:0:0:1"))
         val asText = encoded.toString(Charsets.ISO_8859_1)
         assertTrue(
-            asText.contains("screenshot_v2"),
-            "encoded request must use screenshot_v2 discriminator",
+            asText.contains("screenshot_v3"),
+            "encoded request must use screenshot_v3 discriminator",
         )
     }
 

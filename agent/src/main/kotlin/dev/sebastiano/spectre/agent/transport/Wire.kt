@@ -140,12 +140,13 @@ internal sealed interface AgentRequest {
      * [fullscreen]; the server must not silently fall back to the full desktop when window capture
      * fails (#289).
      *
-     * Serial name is `screenshot_v2` (not the pre-#289 payload-free `screenshot`) so an older
-     * agent-runtime JAR that still maps `screenshot` → full-desktop `screenshot(null)` rejects this
-     * request instead of ignoring new fields and silently grabbing the whole desktop.
+     * Serial name is `screenshot_v3` so mixed-version attach fails closed when a client sends
+     * [nodeKey] (or other v3 fields) to an older agent that only knows `screenshot_v2` / payload-free
+     * `screenshot`. Unknown discriminators become `unsupportedOperation` rather than dropping
+     * `nodeKey` under `ignoreUnknownKeys` and returning a window capture (#362 / #289).
      */
     @Serializable
-    @SerialName("screenshot_v2")
+    @SerialName("screenshot_v3")
     data class Screenshot(
         val windowIndex: Int? = null,
         val surfaceId: String? = null,
