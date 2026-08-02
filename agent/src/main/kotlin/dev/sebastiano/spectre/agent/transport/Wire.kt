@@ -150,6 +150,11 @@ internal sealed interface AgentRequest {
         val windowIndex: Int? = null,
         val surfaceId: String? = null,
         val fullscreen: Boolean = false,
+        /**
+         * When set, capture the node's on-screen bounds (#362); mutually exclusive with window
+         * targets.
+         */
+        val nodeKey: String? = null,
     ) : AgentRequest
 
     /**
@@ -238,6 +243,12 @@ internal sealed interface AgentRequest {
         val quietPeriodMs: Long? = null,
         val pollIntervalMs: Long? = null,
     ) : AgentRequest
+
+    /**
+     * Human-readable semantics tree dump (#362), same shape as in-process
+     * `ComposeAutomator.printTree()`. Replies with [AgentResponse.TreeDump].
+     */
+    @Serializable @SerialName("printTree") data object PrintTree : AgentRequest
 }
 
 /** Payload-free operation label for diagnostics. Never include caller-controlled request data. */
@@ -268,6 +279,7 @@ internal val AgentRequest.logLabel: String
             is AgentRequest.WaitForNode -> "waitForNode"
             is AgentRequest.WaitForVisualIdle -> "waitForVisualIdle"
             is AgentRequest.WaitForIdle -> "waitForIdle"
+            AgentRequest.PrintTree -> "printTree"
         }
 
 /** Server-to-client response envelope. */
@@ -278,6 +290,9 @@ internal sealed interface AgentResponse {
 
     /** Generic OK signal for void operations (click, typeText). */
     @Serializable @SerialName("ok") data object Ok : AgentResponse
+
+    /** Reply to [AgentRequest.PrintTree] — human-readable tree dump (#362). */
+    @Serializable @SerialName("treeDump") data class TreeDump(val text: String) : AgentResponse
 
     /** Reply to [AgentRequest.Windows]. */
     @Serializable

@@ -91,6 +91,15 @@ internal constructor(
         if (resp !is AgentResponse.Ok) throw wireMismatch("Ok", resp)
     }
 
+    /**
+     * Click a previously resolved node DTO (#362). Equivalent to [click] with [NodeSnapshotDto.key]
+     * so callers need not extract the key (avoids confusing key vs testTag).
+     */
+    @Throws(IOException::class)
+    public fun click(node: NodeSnapshotDto) {
+        click(node.key)
+    }
+
     /** Double-click the node identified by [nodeKey] (#203). */
     @Throws(IOException::class)
     public fun doubleClick(nodeKey: String) {
@@ -225,6 +234,27 @@ internal constructor(
             )
         return (resp as? AgentResponse.Screenshot)?.pngBytes
             ?: throw wireMismatch("Screenshot", resp)
+    }
+
+    /**
+     * Capture a PNG of a resolved node's on-screen bounds (#362). Same wire path as window
+     * screenshots; dimensions follow node bounds (± scale policy used for window screenshots).
+     */
+    @Throws(IOException::class)
+    public fun screenshot(node: NodeSnapshotDto): ByteArray {
+        val resp = exchange(AgentRequest.Screenshot(nodeKey = node.key))
+        return (resp as? AgentResponse.Screenshot)?.pngBytes
+            ?: throw wireMismatch("Screenshot", resp)
+    }
+
+    /**
+     * Human-readable semantics tree dump (#362), equivalent to in-process
+     * `ComposeAutomator.printTree()`.
+     */
+    @Throws(IOException::class)
+    public fun printTree(): String {
+        val resp = exchange(AgentRequest.PrintTree)
+        return (resp as? AgentResponse.TreeDump)?.text ?: throw wireMismatch("TreeDump", resp)
     }
 
     /**
