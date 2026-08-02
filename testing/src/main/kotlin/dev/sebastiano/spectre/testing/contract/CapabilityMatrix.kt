@@ -508,6 +508,54 @@ public object CapabilityMatrix {
                         "Not Supported until fail-closed without skip.",
             )
         )
+        // #364 focusWindow: attach clients can raise the target window before keyboard input.
+        // Evidence: AgentContractCorpus focus-window scenario + AgentAttachIntegrationTest.
+        add(
+            CapabilityCell(
+                operation = AutomatorOperation.FocusWindow,
+                transport = AutomatorTransport.Agent,
+                platform = PlatformPrerequisite.LinuxXvfb,
+                state = CellState.Supported,
+                evidence = listOf(agentLinuxXvfb, agentAttachLegacyLinux),
+            )
+        )
+        add(
+            CapabilityCell(
+                operation = AutomatorOperation.FocusWindow,
+                transport = AutomatorTransport.Agent,
+                platform = PlatformPrerequisite.MacOsDesktop,
+                state = CellState.Supported,
+                evidence = listOf(agentMacOs, agentAttachLegacyMacOs),
+            )
+        )
+        add(
+            CapabilityCell(
+                operation = AutomatorOperation.FocusWindow,
+                transport = AutomatorTransport.InProcess,
+                platform = PlatformPrerequisite.AnyJvm,
+                state = CellState.Supported,
+                evidence =
+                    listOf(
+                        coreEvidence(
+                            "core-focus-window-public-surface",
+                            "ComposeAutomatorPublicSurfaceTest.kt",
+                            "Public surface includes focusWindow; live smoke in " +
+                                "sample-desktop NewInteractionsValidationTest",
+                        )
+                    ),
+            )
+        )
+        add(
+            CapabilityCell(
+                operation = AutomatorOperation.FocusWindow,
+                transport = AutomatorTransport.Http,
+                platform = PlatformPrerequisite.AnyJvm,
+                state = CellState.UnsupportedByDesign,
+                rationale =
+                    "HTTP focusWindow is out of scope for #364 (AttachedAutomator wire only). " +
+                        "Callers needing remote activation over HTTP can file a follow-up.",
+            )
+        )
         // HTTP selector routes exist; headless HttpContractCorpusTest only proves entry points
         // with empty trees (expectsFixtureSemantics=false), not fixture-backed matches.
         for (op in

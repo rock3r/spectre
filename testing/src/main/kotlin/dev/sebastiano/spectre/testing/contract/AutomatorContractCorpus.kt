@@ -80,6 +80,11 @@ public interface AutomatorContractDriver : AutoCloseable {
         error("pressKey not implemented for $transport")
     }
 
+    /** Optional window activation (#364). Default: unsupported. */
+    public fun focusWindow(nodeKey: String) {
+        error("focusWindow not implemented for $transport")
+    }
+
     /**
      * Optional wait (#201). Should throw on timeout when waiting for a never-present selector.
      * Returns the matched node key on success.
@@ -371,6 +376,15 @@ public object AutomatorContractCorpus {
                     )
                 check(key.isNotBlank()) { "waitForNode returned blank key" }
                 "key=$key"
+            }
+        // #364: raise the window hosting a known node before further Robot input.
+        out +=
+            scenario("focus-window-fixture-button", driver.transport) {
+                val button =
+                    driver.findByTestTag(ContractFixtureTags.BUTTON).firstOrNull()
+                        ?: error("fixture button missing")
+                driver.focusWindow(button.key)
+                "focused-window-for=${button.key}"
             }
         // #203 input verbs (real Robot on fixture) — no soft-skip: failures fail the scenario.
         out +=

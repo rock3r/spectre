@@ -100,6 +100,7 @@ public final class dev/sebastiano/spectre/agent/AttachedAutomator : java/lang/Au
 	public final fun findByTestTag (Ljava/lang/String;)Ljava/util/List;
 	public final fun findByText (Ljava/lang/String;Z)Ljava/util/List;
 	public static synthetic fun findByText$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/String;ZILjava/lang/Object;)Ljava/util/List;
+	public final fun focusWindow (Ljava/lang/String;)V
 	public final fun getPid ()J
 	public final fun longClick (Ljava/lang/String;J)V
 	public static synthetic fun longClick$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/String;JILjava/lang/Object;)V

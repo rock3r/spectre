@@ -1,13 +1,15 @@
 package dev.sebastiano.spectre.testing.contract
 
 /**
- * Click [fieldKey] then [AutomatorContractDriver.pressKey], retrying when the target JVM has not
- * yet acquired OS keyboard focus.
+ * Activate the window hosting [fieldKey] ([AutomatorContractDriver.focusWindow], #364), click the
+ * field, then [AutomatorContractDriver.pressKey], retrying when the target JVM has not yet acquired
+ * OS keyboard focus.
  *
  * On macOS under JBR, a single Robot click can leave Compose focus updated while OS keyboard focus
  * is still settling (or briefly lost to the attacher JVM). The agent refuses `pressKey` in that
- * window with an `inputRejected` / "OS keyboard focus" error. Re-click + short backoff makes the
- * matrix cell durable without soft-skipping the keyboard path.
+ * window with an `inputRejected` / "OS keyboard focus" error. Raising the window via focusWindow,
+ * re-click, and short backoff makes the matrix cell durable without soft-skipping the keyboard
+ * path.
  */
 public object PressKeyAfterFocus {
     /** Substring present in agent focus-rejection messages (typeText and pressKey). */
@@ -32,6 +34,8 @@ public object PressKeyAfterFocus {
         require(maxAttempts > 0) { "maxAttempts must be positive" }
         var lastError: Throwable? = null
         repeat(maxAttempts) { attempt ->
+            // #364: expressible remediation for the pressKey focus-rejection error text.
+            driver.focusWindow(fieldKey)
             driver.click(fieldKey)
             sleeper(sleepMs(attempt))
             try {

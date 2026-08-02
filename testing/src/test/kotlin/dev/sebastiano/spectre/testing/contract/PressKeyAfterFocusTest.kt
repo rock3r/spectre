@@ -21,6 +21,7 @@ class PressKeyAfterFocusTest {
                 sleeper = { sleeps.add(it) },
             )
         assertTrue(detail.contains("attempts=4"), detail)
+        assertEquals(4, driver.focusWindowCount)
         assertEquals(4, driver.clickCount)
         assertEquals(4, driver.pressKeyCount)
         assertEquals(listOf(50L, 100L, 150L, 200L), sleeps)
@@ -37,6 +38,7 @@ class PressKeyAfterFocusTest {
                 sleeper = {},
             )
         assertTrue(detail.contains("attempts=1"), detail)
+        assertEquals(1, driver.focusWindowCount)
         assertEquals(1, driver.clickCount)
         assertEquals(1, driver.pressKeyCount)
     }
@@ -65,6 +67,7 @@ class PressKeyAfterFocusTest {
                 ex.message,
             )
         }
+        assertEquals(3, driver.focusWindowCount)
         assertEquals(3, driver.clickCount)
         assertEquals(3, driver.pressKeyCount)
     }
@@ -87,6 +90,7 @@ class PressKeyAfterFocusTest {
                 )
             }
         assertEquals("boom-not-focus", ex.message)
+        assertEquals(1, driver.focusWindowCount)
         assertEquals(1, driver.clickCount)
     }
 
@@ -108,6 +112,7 @@ class PressKeyAfterFocusTest {
     private open class RecordingDriver(private val failFocusTimes: Int) : AutomatorContractDriver {
         var clickCount: Int = 0
         var pressKeyCount: Int = 0
+        var focusWindowCount: Int = 0
         private var focusFailuresRemaining: Int = failFocusTimes
 
         override val transport: AutomatorTransport = AutomatorTransport.Agent
@@ -120,6 +125,10 @@ class PressKeyAfterFocusTest {
 
         override fun click(nodeKey: String) {
             clickCount++
+        }
+
+        override fun focusWindow(nodeKey: String) {
+            focusWindowCount++
         }
 
         override fun typeText(text: String) = Unit

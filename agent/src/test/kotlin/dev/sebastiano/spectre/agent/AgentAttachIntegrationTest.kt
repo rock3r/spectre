@@ -178,6 +178,10 @@ class AgentAttachIntegrationTest {
             // mask identity regressions (identity does not need keyboard focus).
             assertWindowIdentityMatchesWindows(automator, windows, iteration = iteration)
 
+            // #364: raise/activate the fixture window via the attach wire before Robot input.
+            // Bare-throws on any wire/handler failure so a missing FocusWindow op fails loudly.
+            automator.focusWindow(buttonKey)
+
             // Click bare-throws on failure (no runCatching) so a broken suspend bridge or a
             // wire-level error fails the test loudly.
             automator.click(buttonKey)
@@ -383,8 +387,10 @@ class AgentAttachIntegrationTest {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(FOCUS_TIMEOUT_MS)
         var lastMatches: List<NodeSnapshotDto> = emptyList()
         while (System.nanoTime() < deadline) {
-            // On macOS the first click may only activate the fixture app; retry until a refreshed
-            // semantics snapshot proves the field itself owns Compose focus.
+            // #364: raise/activate the fixture window first, then click the field. On macOS the
+            // first click may only activate the app; focusWindow makes that activation expressible
+            // over attach (the remediation pressKey/typeText error text already asks for).
+            focusWindow(textFieldKey)
             click(textFieldKey)
             lastMatches = findByTestTag(TAG_TEXT_FIELD)
             lastMatches

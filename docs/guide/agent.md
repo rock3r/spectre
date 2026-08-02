@@ -289,6 +289,7 @@ can add a reliable preflight via `HotSpotDiagnosticMXBean`.
 | `swipe(...)`          | `AgentRequest.Swipe`             | `Unit` (node-to-node or screen coords) |
 | `scrollWheel(nodeKey, wheelClicks)` | `AgentRequest.ScrollWheel` | `Unit`       |
 | `pressKey(keyCode, modifiers?)` | `AgentRequest.PressKey`  | `Unit`            |
+| `focusWindow(nodeKey)` | `AgentRequest.FocusWindow` | `Unit` (raise/activate window hosting node) |
 | `typeText(text)`      | `AgentRequest.TypeText`          | `Unit`            |
 | `screenshot(windowIndex?, surfaceId?, fullscreen?)` | `AgentRequest.Screenshot` | `ByteArray` (PNG); default window index 0, not full desktop |
 | `capture(windowIndex)`| `AgentRequest.Capture`           | `AtomicCaptureResult` |
@@ -307,8 +308,10 @@ transport.
 
 `waitForNode` and `waitForVisualIdle` are available over the agent transport (#201).
 Richer input verbs (`doubleClick` / `longClick` / `swipe` / `scrollWheel` / `pressKey`)
-are available over agent, HTTP, and daemon/CLI/MCP (#203). Streaming / long-poll idling
-resources and `withTracing` remain deferred to a follow-up.
+are available over agent, HTTP, and daemon/CLI/MCP (#203). `focusWindow(nodeKey)` raises
+and focuses the AWT window hosting a node over attach (#364) — use it before `pressKey` /
+`typeText` when the attach client is the foreground process and the target app is not.
+Streaming / long-poll idling resources and `withTracing` remain deferred to a follow-up.
 
 ## Wire format
 

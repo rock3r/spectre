@@ -183,7 +183,9 @@ All `suspend` on `ComposeAutomator`:
   no scrolling), so it can't fully replace OS input for most tests. For
   parallel-JVM focus contention, prefer `RobotDriver.synthetic(rootWindow)`
   — especially as soon as the test also types text.
-- `focusWindow(node)` — raises and focuses the window hosting `node`.
+- `focusWindow(node)` — raises and focuses the window hosting `node`. Over attach,
+  use `AttachedAutomator.focusWindow(nodeKey)` (#364) before `pressKey` / `typeText`
+  when the target app may not own OS keyboard focus.
 
 ## Synchronization — the part everyone gets wrong
 

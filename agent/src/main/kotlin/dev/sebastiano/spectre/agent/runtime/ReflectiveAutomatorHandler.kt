@@ -146,6 +146,7 @@ internal class ReflectiveAutomatorHandler(
             is AgentRequest.Swipe -> inputOps.handleSwipe(request)
             is AgentRequest.ScrollWheel -> inputOps.handleScrollWheel(request)
             is AgentRequest.PressKey -> inputOps.handlePressKey(request)
+            is AgentRequest.FocusWindow -> inputOps.handleFocusWindow(request.nodeKey)
             is AgentRequest.TypeText -> handleTypeText(request.text)
             is AgentRequest.Screenshot -> handleScreenshot(request)
             is AgentRequest.Capture ->

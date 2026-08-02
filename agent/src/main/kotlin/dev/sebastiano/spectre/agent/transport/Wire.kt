@@ -115,6 +115,18 @@ internal sealed interface AgentRequest {
     data class PressKey(val keyCode: Int, val modifiers: Int = 0) : AgentRequest
 
     /**
+     * Raise and request focus on the AWT window hosting [nodeKey] (#364). Mirrors in-process
+     * `ComposeAutomator.focusWindow(node)`. Useful before real Robot keyboard input when the attach
+     * client JVM is foreground and the target app is not.
+     *
+     * Server replies with [AgentResponse.Ok] or [AgentResponse.Error] (`nodeNotFound` /
+     * `unsupportedOperation`).
+     */
+    @Serializable
+    @SerialName("focusWindow")
+    data class FocusWindow(val nodeKey: String) : AgentRequest
+
+    /**
      * Synthesize a sequence of key events that types [text] into whatever currently holds focus.
      * Server replies with [AgentResponse.Ok] or [AgentResponse.Error].
      */
@@ -231,6 +243,7 @@ internal val AgentRequest.logLabel: String
             is AgentRequest.Swipe -> "swipe"
             is AgentRequest.ScrollWheel -> "scrollWheel"
             is AgentRequest.PressKey -> "pressKey"
+            is AgentRequest.FocusWindow -> "focusWindow"
             is AgentRequest.TypeText -> "typeText"
             is AgentRequest.Screenshot -> "screenshot"
             is AgentRequest.Capture -> "capture"

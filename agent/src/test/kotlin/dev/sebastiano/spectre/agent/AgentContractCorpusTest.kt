@@ -351,6 +351,10 @@ class AgentContractCorpusTest {
             automator.pressKey(keyCode, modifiers)
         }
 
+        override fun focusWindow(nodeKey: String) {
+            automator.focusWindow(nodeKey)
+        }
+
         override fun screenshotProbe(): ScreenshotProbe {
             val bytes = automator.screenshot()
             return ScreenshotProbe(byteCount = bytes.size, formatHint = "png")

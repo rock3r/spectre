@@ -651,6 +651,31 @@ class ReflectiveAutomatorHandlerMappingTest {
     }
 
     @Test
+    fun `FocusWindow dispatches to the matching node`() {
+        val fake =
+            FakeSuspendCapableAutomator(allNodesValue = listOf(FakeAutomatorNode(keyValue = "btn")))
+        val handler = ReflectiveAutomatorHandler(fake)
+
+        assertEquals(AgentResponse.Ok, handler.handle(AgentRequest.FocusWindow("btn")))
+        assertEquals(listOf("btn"), fake.focusedWindowKeys)
+    }
+
+    @Test
+    fun `FocusWindow returns nodeNotFound for unknown key`() {
+        val fake = FakeSuspendCapableAutomator()
+        val handler = ReflectiveAutomatorHandler(fake)
+
+        val response = handler.handle(AgentRequest.FocusWindow("missing"))
+        check(response is AgentResponse.Error)
+        assertEquals(
+            dev.sebastiano.spectre.agent.transport.AgentErrorCategory.NodeNotFound.wireName,
+            response.category,
+        )
+        assertTrue(response.message.contains("missing"))
+        assertEquals(emptyList(), fake.focusedWindowKeys)
+    }
+
+    @Test
     fun `PressKey refuses when target JVM lacks OS focus`() {
         val fake = FakeSuspendCapableAutomator()
         val handler = ReflectiveAutomatorHandler(fake, isTargetJvmFocused = { false })
@@ -913,6 +938,7 @@ private class FakeSuspendCapableAutomator(private val allNodesValue: List<Any> =
     val scrollWheels = mutableListOf<Pair<String, Int>>()
     val nodeSwipes = mutableListOf<Pair<String, String>>()
     val pressKeys = mutableListOf<Pair<Int, Int>>()
+    val focusedWindowKeys = mutableListOf<String>()
 
     @Suppress("unused") fun refreshWindows() = Unit
 
@@ -926,6 +952,12 @@ private class FakeSuspendCapableAutomator(private val allNodesValue: List<Any> =
     // `Object click(Object node, kotlin.coroutines.Continuation<? super Unit>)`.
     @Suppress("unused", "UNUSED_PARAMETER")
     fun click(node: Any, continuation: kotlin.coroutines.Continuation<Any?>): Any? = Unit
+
+    // Non-suspend, matching ComposeAutomator.focusWindow(node).
+    @Suppress("unused")
+    fun focusWindow(node: Any) {
+        focusedWindowKeys += nodeKey(node)
+    }
 
     @Suppress("unused", "UNUSED_PARAMETER")
     fun doubleClick(node: Any, continuation: kotlin.coroutines.Continuation<Any?>): Any? {

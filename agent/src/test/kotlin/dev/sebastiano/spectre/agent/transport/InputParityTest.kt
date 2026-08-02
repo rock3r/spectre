@@ -12,7 +12,10 @@ import kotlin.test.assertIs
 import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
 
-/** #203: doubleClick / longClick / swipe / scrollWheel / pressKey over agent IPC. */
+/**
+ * #203 / #364: doubleClick / longClick / swipe / scrollWheel / pressKey / focusWindow over agent
+ * IPC.
+ */
 @EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)
 class InputParityTest {
     private val udsPath: Path =
@@ -24,7 +27,7 @@ class InputParityTest {
     }
 
     @Test
-    fun `doubleClick longClick scrollWheel pressKey round-trip`() {
+    fun `doubleClick longClick scrollWheel pressKey focusWindow round-trip`() {
         val seen = mutableListOf<String>()
         IpcServer(
                 udsPath,
@@ -46,6 +49,10 @@ class InputParityTest {
                             seen += "pressKey:${req.keyCode}:${req.modifiers}"
                             AgentResponse.Ok
                         }
+                        is AgentRequest.FocusWindow -> {
+                            seen += "focusWindow:${req.nodeKey}"
+                            AgentResponse.Ok
+                        }
                         else -> AgentResponse.Error("unexpected $req")
                     }
                 },
@@ -63,10 +70,19 @@ class InputParityTest {
                     assertIs<AgentResponse.Ok>(
                         client.send(AgentRequest.PressKey(keyCode = 10, modifiers = 128))
                     )
+                    assertIs<AgentResponse.Ok>(
+                        client.send(AgentRequest.FocusWindow(nodeKey = "k1"))
+                    )
                 }
             }
         assertEquals(
-            listOf("doubleClick:k1", "longClick:k1:600", "scrollWheel:k1:3", "pressKey:10:128"),
+            listOf(
+                "doubleClick:k1",
+                "longClick:k1:600",
+                "scrollWheel:k1:3",
+                "pressKey:10:128",
+                "focusWindow:k1",
+            ),
             seen,
         )
     }
