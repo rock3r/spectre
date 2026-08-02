@@ -29,23 +29,15 @@ internal object AtomicCaptureReflectiveMapper {
         val result =
             captureMethod.invoke(automator, windowIndex)
                 ?: return AgentResponse.Error("capture returned null")
-        return map(result, requestedWindowIndex = windowIndex)
+        return map(result, windowIndex)
     }
 
-    private fun map(result: Any, requestedWindowIndex: Int): AgentResponse {
+    private fun map(result: Any, windowIndex: Int): AgentResponse {
         val resultClass = result.javaClass
         val document =
             resultClass.getMethod("getDocument").invoke(result)
                 ?: return AgentResponse.Error("AtomicCapture.document was null")
         val documentClass = document.javaClass
-        // Prefer the index stored in the capture document — core may resolve default index 0 to
-        // the first showing surface when slot 0 is a delayed-show host (#362).
-        val resolvedWindowIndex =
-            runCatching {
-                    val window = documentClass.getMethod("getWindow").invoke(document)
-                    window?.javaClass?.getMethod("getIndex")?.invoke(window) as? Int
-                }
-                .getOrNull() ?: requestedWindowIndex
         val summary =
             documentClass.getMethod("getSummary").invoke(document)
                 ?: return AgentResponse.Error("CaptureDocument.summary was null")
@@ -65,7 +57,7 @@ internal object AtomicCaptureReflectiveMapper {
             )
         }
         return AgentResponse.Capture(
-            windowIndex = resolvedWindowIndex,
+            windowIndex = windowIndex,
             schemaVersion = documentClass.getMethod("getSchemaVersion").invoke(document) as Int,
             captureJsonUtf8 = captureJsonUtf8,
             pngBytes = pngBytes,

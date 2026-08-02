@@ -286,8 +286,7 @@ private constructor(
      */
     public fun screenshot(windowIndex: Int): BufferedImage {
         refreshWindows()
-        val resolvedIndex = resolveVisualWindowIndex(windowIndex)
-        val trackedWindow = requireShowingTrackedWindow(resolvedIndex)
+        val trackedWindow = requireShowingTrackedWindow(windowIndex)
         val geometry = readOnEdt {
             ScreenshotGeometry(
                 trackedWindow.composeSurfaceBoundsOnScreen,
@@ -317,16 +316,13 @@ private constructor(
      * [dev.sebastiano.spectre.core.capture.CaptureArtifactsWriter].
      *
      * Does **not** auto-call [waitForVisualIdle] or [waitForIdle] — settle the UI first when that
-     * matters, matching [screenshot].
+     * matters, matching [screenshot]. Exact [windowIndex] only (must be showing); attach clients
+     * that want "first showing" resolve via [windows] + `isShowing` before calling.
      */
     public fun capture(windowIndex: Int = 0): AtomicCapture {
         val startedAt = TimeSource.Monotonic.markNow()
         refreshWindows()
-        // Index 0 is the long-standing default: if that slot is a delayed-show/hidden host listed
-        // for #362 agreement, prefer the first showing surface and record **that** index in the
-        // capture document (never claim index 0 while capturing another surface).
-        val resolvedIndex = resolveVisualWindowIndex(windowIndex)
-        val trackedWindow = requireShowingTrackedWindow(resolvedIndex)
+        val trackedWindow = requireShowingTrackedWindow(windowIndex)
         // Freeze capture region, density, node properties, and screen geometry in one EDT pass
         // *before* taking the PNG so JSON and pixels cannot describe different window layouts.
         data class PreCaptureSnapshot(
@@ -363,7 +359,7 @@ private constructor(
         }
         val image = screenCaptureBackend.captureRegion(pre.captureRegion)
         return AtomicCaptureBuilder.build(
-            windowIndex = resolvedIndex,
+            windowIndex = windowIndex,
             trackedWindow = trackedWindow,
             nodeSnapshots = pre.nodeSnapshots,
             image = image,
@@ -467,30 +463,7 @@ private constructor(
         )
     }
 
-    /**
-     * For visual ops: keep exact indices except the default slot 0, which falls back to the first
-     * showing surface when 0 is hidden (delayed-show hosts from #362). Callers must still record
-     * the **resolved** index in capture metadata — never claim index 0 while capturing another
-     * surface.
-     */
-    private fun resolveVisualWindowIndex(windowIndex: Int): Int {
-        val preferred = windows.getOrNull(windowIndex)
-        if (preferred != null && preferred.window.isShowing) return windowIndex
-        if (windowIndex == 0) {
-            firstShowingWindowIndex()?.let {
-                return it
-            }
-        }
-        if (preferred != null && !preferred.window.isShowing) {
-            error(
-                "Tracked window at index $windowIndex is not showing " +
-                    "(surfaceId=${preferred.surfaceId}); wait until it is visible before " +
-                    "screenshot/capture"
-            )
-        }
-        error("No tracked window at index $windowIndex (have ${windows.size})")
-    }
-
+    /** Exact index; fails if missing or not showing (no silent remap). */
     private fun requireShowingTrackedWindow(windowIndex: Int): TrackedWindow {
         val preferred =
             windows.getOrNull(windowIndex)
@@ -498,14 +471,12 @@ private constructor(
         if (!preferred.window.isShowing) {
             error(
                 "Tracked window at index $windowIndex is not showing " +
-                    "(surfaceId=${preferred.surfaceId})"
+                    "(surfaceId=${preferred.surfaceId}); wait until it is visible before " +
+                    "screenshot/capture"
             )
         }
         return preferred
     }
-
-    private fun firstShowingWindowIndex(): Int? =
-        windows.indexOfFirst { it.window.isShowing }.takeIf { it >= 0 }
 
     private fun rejectEdtCaller(name: String) {
         // The wait loops drain the EDT, snapshot semantics via invokeAndWait, and capture

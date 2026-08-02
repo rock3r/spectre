@@ -90,8 +90,8 @@ public final class dev/sebastiano/spectre/agent/AttachUnsupportedException : dev
 
 public final class dev/sebastiano/spectre/agent/AttachedAutomator : java/lang/AutoCloseable {
 	public final fun allNodes ()Ljava/util/List;
-	public final fun capture (I)Ldev/sebastiano/spectre/agent/AtomicCaptureResult;
-	public static synthetic fun capture$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;IILjava/lang/Object;)Ldev/sebastiano/spectre/agent/AtomicCaptureResult;
+	public final fun capture (Ljava/lang/Integer;)Ldev/sebastiano/spectre/agent/AtomicCaptureResult;
+	public static synthetic fun capture$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/Integer;ILjava/lang/Object;)Ldev/sebastiano/spectre/agent/AtomicCaptureResult;
 	public final fun click (Ljava/lang/String;)V
 	public fun close ()V
 	public final fun doubleClick (Ljava/lang/String;)V
