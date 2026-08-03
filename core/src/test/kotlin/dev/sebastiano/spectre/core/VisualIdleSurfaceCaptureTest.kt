@@ -8,6 +8,7 @@ import java.awt.Rectangle
 import java.awt.image.BufferedImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -280,6 +281,38 @@ class VisualIdleSurfaceCaptureTest {
         } finally {
             window.dispose()
         }
+    }
+
+    @Test
+    fun `native window capture is unavailable on GitHub Actions Windows`() {
+        assertTrue(
+            isNonInteractiveHostedWindows(
+                osName = "Windows 11",
+                getenv = { if (it == "GITHUB_ACTIONS") "true" else null },
+            )
+        )
+        assertFalse(
+            isNativeWindowCaptureAvailable(
+                allowsPlatformCapture = true,
+                osName = "Windows 11",
+                getenv = { if (it == "GITHUB_ACTIONS") "true" else null },
+            )
+        )
+    }
+
+    @Test
+    fun `native window capture remains available on interactive Windows`() {
+        assertFalse(isNonInteractiveHostedWindows(osName = "Windows 11", getenv = { null }))
+    }
+
+    @Test
+    fun `native window capture remains available on GitHub Actions non-Windows`() {
+        assertFalse(
+            isNonInteractiveHostedWindows(
+                osName = "Linux",
+                getenv = { if (it == "GITHUB_ACTIONS") "true" else null },
+            )
+        )
     }
 
     private fun tracked(frame: Frame): TrackedWindow =
