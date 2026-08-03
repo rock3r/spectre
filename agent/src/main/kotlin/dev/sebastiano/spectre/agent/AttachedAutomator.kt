@@ -239,9 +239,10 @@ internal constructor(
     /**
      * Capture a PNG of a resolved node's on-screen bounds (#362).
      *
-     * Wire-equivalent of in-process `ComposeAutomator.screenshot(node)`: the agent invokes the
-     * native window-scoped node overload (not screen-region capture), so occluding apps are
-     * excluded on platforms that support window capture.
+     * Preferentially uses in-process `screenshot(AutomatorNode)` (native window-scoped) when the
+     * target has the recording capture bridge. When that bridge is absent — typical inject attach
+     * without a preinstalled recording module — falls back to region capture of the node's
+     * on-screen bounds, matching attach window screenshot policy.
      */
     @Throws(IOException::class)
     public fun screenshot(node: NodeSnapshotDto): ByteArray {

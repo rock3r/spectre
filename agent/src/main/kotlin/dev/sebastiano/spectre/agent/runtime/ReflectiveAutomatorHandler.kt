@@ -406,11 +406,13 @@ internal class ReflectiveAutomatorHandler(
     }
 
     /**
-     * Capture a node's on-screen bounds (#362) via in-process `screenshot(AutomatorNode)`.
+     * Capture a node's on-screen bounds (#362).
      *
-     * Must not use the screen-framebuffer `screenshot(Rectangle?)` path: that can include pixels
-     * from occluding apps on macOS/Windows. The node overload is native window-scoped and matches
-     * attach documentation parity with in-process Spectre.
+     * Prefers in-process `screenshot(AutomatorNode)` (native window-scoped, matches local Spectre
+     * when the recording bridge is on the target classpath). When that path is missing or rejects
+     * with "Native window capture bridge is unavailable" — the common inject-attach case, which
+     * deliberately omits recording — falls back to region capture of `boundsOnScreen`, the same
+     * framebuffer policy as attach window screenshots (#289).
      */
     private fun handleNodeScreenshot(request: AgentRequest.Screenshot): AgentResponse {
         val nodeKey =
@@ -430,16 +432,6 @@ internal class ReflectiveAutomatorHandler(
                         .wireName,
             )
         }
-        val nodeScreenshotMethod =
-            nodeScreenshotMethodOrError()
-                ?: return AgentResponse.Error(
-                    message =
-                        "ComposeAutomator does not expose screenshot(AutomatorNode) on this build",
-                    category =
-                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory
-                            .UnsupportedOperation
-                            .wireName,
-                )
         refreshWindowsMethod.invoke(automator)
         val node =
             (allNodesMethod.invoke(automator) as List<*>).firstOrNull {
@@ -451,8 +443,54 @@ internal class ReflectiveAutomatorHandler(
                         dev.sebastiano.spectre.agent.transport.AgentErrorCategory.NodeNotFound
                             .wireName,
                 )
-        val image = nodeScreenshotMethod.invoke(automator, node) as BufferedImage
+        val image =
+            captureNodeScreenshotPreferNative(node)
+                ?: return AgentResponse.Error(
+                    message =
+                        "ComposeAutomator does not expose screenshot(AutomatorNode) or " +
+                            "screenshot(Rectangle?) for nodeKey capture on this build",
+                    category =
+                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory
+                            .UnsupportedOperation
+                            .wireName,
+                )
         return AgentResponse.Screenshot(imageToPng(image))
+    }
+
+    /**
+     * Prefer native window-scoped node capture; fall back to region of [boundsOnScreen] when the
+     * recording bridge is absent (inject attach) or the node overload is missing.
+     */
+    private fun captureNodeScreenshotPreferNative(node: Any): BufferedImage? {
+        val nodeScreenshotMethod = nodeScreenshotMethodOrError()
+        if (nodeScreenshotMethod != null) {
+            try {
+                return nodeScreenshotMethod.invoke(automator, node) as BufferedImage
+            } catch (ex: ReflectiveOperationException) {
+                if (!isNativeWindowCaptureUnavailable(ex)) throw ex
+                // Fall through to region capture — attach windows already use this path.
+            }
+        }
+        val regionScreenshotMethod = regionScreenshotMethodOrError() ?: return null
+        val bounds =
+            node.javaClass.methods
+                .firstOrNull { it.name == "getBoundsOnScreen" && it.parameterCount == 0 }
+                ?.invoke(node) ?: return null
+        return regionScreenshotMethod.invoke(automator, bounds) as BufferedImage
+    }
+
+    /**
+     * Only the missing recording bridge (inject attach) may fall back to region capture. Other
+     * [UnsupportedOperationException]s from native capture (e.g. non-Frame hosts) must surface —
+     * silent framebuffer fallback would reintroduce occluded-pixel captures.
+     */
+    private fun isNativeWindowCaptureUnavailable(ex: ReflectiveOperationException): Boolean {
+        var current: Throwable? = ex
+        while (current != null) {
+            if (current.message.orEmpty().contains(NATIVE_BRIDGE_UNAVAILABLE_SNIPPET)) return true
+            current = current.cause
+        }
+        return false
     }
 
     private fun regionScreenshotMethodOrError(): Method? =
@@ -776,6 +814,9 @@ internal class ReflectiveAutomatorHandler(
         const val CONTINUATION_FQN: String = "kotlin.coroutines.Continuation"
         const val AWT_RECTANGLE_FQN: String = "java.awt.Rectangle"
         const val NO_MESSAGE_PLACEHOLDER: String = "<no message>"
+        /** Matches core ScreenCaptureBackend when NativeWindowCaptureBridge is not loadable. */
+        const val NATIVE_BRIDGE_UNAVAILABLE_SNIPPET: String =
+            "Native window capture bridge is unavailable"
         /** Sentinel when a fake/partial AutomatorNode lacks an optional boolean getter. */
         val MISSING_BOOLEAN_METHOD: Method = Object::class.java.getMethod("hashCode")
 

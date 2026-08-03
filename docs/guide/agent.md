@@ -298,7 +298,7 @@ can add a reliable preflight via `HotSpotDiagnosticMXBean`.
 | `waitForVisualIdle(...)` | `AgentRequest.WaitForVisualIdle` | `Unit`         |
 | `waitForIdle(...)`    | `AgentRequest.WaitForIdle`       | `Unit` (fingerprint wait; no idling-resource registration over attach — #362) |
 | `printTree()`         | `AgentRequest.PrintTree`         | `String` (human-readable dump — #362) |
-| `screenshot(node)`    | `AgentRequest.Screenshot(nodeKey)` | `ByteArray` (PNG of node bounds — #362) |
+| `screenshot(node)`    | `AgentRequest.Screenshot(nodeKey)` | `ByteArray` (PNG of node bounds — #362; native when recording bridge present, else region of bounds like attach window screenshots) |
 | `click(node)`         | `AgentRequest.Click`             | `Unit` (DTO overload uses [NodeSnapshotDto.key] — #362) |
 | `close()` (auto)      | `AgentRequest.Detach`            | tear-down         |
 
