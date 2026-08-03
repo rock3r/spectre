@@ -67,6 +67,9 @@ class VisualIdleSurfaceCaptureTest {
 
     @Test
     fun `uses region capture only when native window backend is unavailable`() {
+        // Frame is only a TrackedWindow carrier; region path never calls native. Still needs a
+        // non-headless AWT toolkit to construct the Frame on CI Ubuntu without xvfb.
+        assumeLiveAwtAvailable()
         var regionCalls = 0
         var windowCalls = 0
         val regionImage = solidImage(10, 10, 0xFF00FF00.toInt())
@@ -81,18 +84,23 @@ class VisualIdleSurfaceCaptureTest {
                     error("native must not be invoked when marked unavailable")
                 },
             )
-        val image =
-            captureSurfaceForVisualIdle(
-                backend = backend,
-                window = tracked(Frame()),
-                surfaceRegion = Rectangle(1, 2, 10, 10),
-                windowBounds = Rectangle(0, 0, 100, 100),
-                frameInsets = Insets(0, 0, 0, 0),
-                nativeWindowCaptureAvailable = false,
-            )
-        assertSame(regionImage, image)
-        assertEquals(1, regionCalls)
-        assertEquals(0, windowCalls)
+        val frame = Frame()
+        try {
+            val image =
+                captureSurfaceForVisualIdle(
+                    backend = backend,
+                    window = tracked(frame),
+                    surfaceRegion = Rectangle(1, 2, 10, 10),
+                    windowBounds = Rectangle(0, 0, 100, 100),
+                    frameInsets = Insets(0, 0, 0, 0),
+                    nativeWindowCaptureAvailable = false,
+                )
+            assertSame(regionImage, image)
+            assertEquals(1, regionCalls)
+            assertEquals(0, windowCalls)
+        } finally {
+            frame.dispose()
+        }
     }
 
     @Test
@@ -209,6 +217,7 @@ class VisualIdleSurfaceCaptureTest {
 
     @Test
     fun `unsupported native absence uses region without throwing`() {
+        assumeLiveAwtAvailable()
         val regionImage = solidImage(8, 8, 0xFF334455.toInt())
         val backend =
             PlatformScreenCaptureBackend(
@@ -219,20 +228,26 @@ class VisualIdleSurfaceCaptureTest {
                     )
                 },
             )
-        val image =
-            captureSurfaceForVisualIdle(
-                backend = backend,
-                window = tracked(Frame()),
-                surfaceRegion = Rectangle(0, 0, 8, 8),
-                windowBounds = Rectangle(0, 0, 8, 8),
-                frameInsets = Insets(0, 0, 0, 0),
-                nativeWindowCaptureAvailable = false,
-            )
-        assertSame(regionImage, image)
+        val frame = Frame()
+        try {
+            val image =
+                captureSurfaceForVisualIdle(
+                    backend = backend,
+                    window = tracked(frame),
+                    surfaceRegion = Rectangle(0, 0, 8, 8),
+                    windowBounds = Rectangle(0, 0, 8, 8),
+                    frameInsets = Insets(0, 0, 0, 0),
+                    nativeWindowCaptureAvailable = false,
+                )
+            assertSame(regionImage, image)
+        } finally {
+            frame.dispose()
+        }
     }
 
     @Test
     fun `native path does not region-fallback when host is not a Frame`() {
+        assumeLiveAwtAvailable()
         // A bare Window (not Frame) cannot use native capture; when native is "available" we must
         // not silently substitute region — callers see null (unsampleable) instead.
         var regionCalls = 0
