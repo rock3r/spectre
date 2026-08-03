@@ -121,8 +121,25 @@ internal suspend fun waitForVisualIdleInternal(
     var lastSuccessfulHash: Int? = null
     var sawHashChange = false
 
+    fun timeoutException(): IdleTimeoutException =
+        IdleTimeoutException(
+            "waitForVisualIdle timed out after ${timeout.inWholeMilliseconds}ms: " +
+                visualIdleTimeoutDiagnostic(
+                    stableFrames = stableFrames,
+                    sampleCount = sampleCount,
+                    unsampleableCount = unsampleableCount,
+                    sawHashChange = sawHashChange,
+                )
+        )
+
     while (true) {
-        val hash = frameHash((deadline - clock.now()).coerceAtLeast(0))
+        // If a prior sleep already exhausted the wait, stop without taking another sample.
+        // A zero remaining budget makes BoundedFrameHasher return null, which would spuriously
+        // inflate unsampleable counts on pure pixel-churn timeouts.
+        val remainingMs = (deadline - clock.now()).coerceAtLeast(0)
+        if (remainingMs == 0L) throw timeoutException()
+
+        val hash = frameHash(remainingMs)
         sampleCount++
         val streakComplete =
             if (hash == null) {
@@ -143,17 +160,7 @@ internal suspend fun waitForVisualIdleInternal(
 
         val nowAfterSample = clock.now()
         if (streakComplete && nowAfterSample <= deadline) return
-        if (nowAfterSample >= deadline) {
-            throw IdleTimeoutException(
-                "waitForVisualIdle timed out after ${timeout.inWholeMilliseconds}ms: " +
-                    visualIdleTimeoutDiagnostic(
-                        stableFrames = stableFrames,
-                        sampleCount = sampleCount,
-                        unsampleableCount = unsampleableCount,
-                        sawHashChange = sawHashChange,
-                    )
-            )
-        }
+        if (nowAfterSample >= deadline) throw timeoutException()
         sleep(pollInterval)
     }
 }
@@ -172,6 +179,7 @@ internal fun visualIdleTimeoutDiagnostic(
     sawHashChange: Boolean,
 ): String {
     val unstable = "frames did not stabilise across $stableFrames samples"
+    val incompleteStreak = "stable-frame streak did not complete across $stableFrames samples"
     val unsampleable =
         if (unsampleableCount > 0 && sampleCount > 0) {
             "$unsampleableCount/$sampleCount samples were unsampleable " +
@@ -181,15 +189,17 @@ internal fun visualIdleTimeoutDiagnostic(
         }
 
     return when {
-        unsampleable == null -> unstable
-        unsampleableCount == sampleCount ->
+        unsampleableCount == sampleCount && unsampleable != null ->
             // Every attempt failed to produce a hash — do not send the caller hunting for
             // animations.
             unsampleable
-        sawHashChange -> "$unsampleable; $unstable"
-        else ->
-            // Successful hashes were identical; nulls alone prevented the streak.
-            "$unsampleable; stable-frame streak did not complete across $stableFrames samples"
+        // Only blame pixel churn when non-null hashes actually differed.
+        sawHashChange && unsampleable != null -> "$unsampleable; $unstable"
+        sawHashChange -> unstable
+        // Hashes that did land were identical (or never landed a second time); incomplete streak
+        // from timeout and/or unsampleable polls — not an animation.
+        unsampleable != null -> "$unsampleable; $incompleteStreak"
+        else -> incompleteStreak
     }
 }
 
