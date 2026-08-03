@@ -217,9 +217,13 @@ plugin) does **not** ship `spectre-core`, use [agent attach](agent.md) with the 
    fully restart the IDE. Without it, JDK 21+ warns (JEP 451) and a future JDK may reject
    attach. Config example on macOS:
    `~/Library/Application Support/JetBrains/IntelliJIdea2026.2/idea.vmoptions`
-2. Ensure a Compose surface is showing. Spectre's sample plugin tags tool-window nodes as
-   `ide.counter.*` and `ide.popup.*` (`SpectreSampleToolWindowContent`) — useful proving
-   tags when that plugin is installed.
+2. Ensure a Compose surface is showing with known test tags (or product Compose semantics).
+   Any Jewel/Compose host in the IDE works; you do **not** need Spectre's sample plugin.
+   If you maintain Spectre itself and want the proving `ide.counter.*` / `ide.popup.*` tags
+   without shipping `spectre-core`, build the tags-only zip **from a Spectre source
+   checkout**: `./gradlew :sample-intellij-plugin:buildNoCorePlugin` →
+   `sample-intellij-plugin/build/distributions/sample-intellij-plugin-no-core-0.0.0-DEV.zip`.
+   The default instrumented sample plugin ships core and exercises the non-inject path.
 3. Find the IDE PID (`jps -l`), then from an attacher JVM with `spectre-agent` +
    `spectre-agent-runtime`:
 
@@ -235,11 +239,13 @@ AgentAttach.attach(idePid).use { automator ->
 }
 ```
 
-If the sample plugin is on the classpath **with** `spectre-core`, attach uses the
-instrumented path instead of inject — same API either way. Prefer in-process
-`ComposeAutomator` (sections above) when your code already runs inside the IDE.
+If a plugin on the classpath **ships** `spectre-core`, attach uses the instrumented path
+instead of inject — same API either way. Prefer in-process `ComposeAutomator` (sections
+above) when your code already runs inside the IDE.
 
-Maintainer spike notes (recipe + evidence chain, not on the public site nav):
+Spectre maintainers re-verify inject against the no-core sample from a source checkout with
+`./gradlew :sample-intellij-plugin:stockInjectUiTest` (opt-in; not on every PR; requires a
+graphical host). Spike notes (recipe + evidence chain, not on the public site nav):
 [`docs/spikes/209-injection/stock-intellij-recipe.md`](https://github.com/rock3r/spectre/blob/main/docs/spikes/209-injection/stock-intellij-recipe.md).
 
 ## Validating from a separate test JVM
