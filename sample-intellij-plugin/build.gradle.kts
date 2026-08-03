@@ -322,4 +322,7 @@ val stockInjectUiTest by
             javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(25)) }
         )
         jvmArgs("--add-opens=java.base/sun.nio.fs=ALL-UNNAMED")
+        // External e2e: a headless assumption-skip must not UP-TO-DATE-mask a later graphical
+        // run (DISPLAY / Xvfb state is not a Gradle input). Always re-enter (Codex #381).
+        outputs.upToDateWhen { false }
     }
