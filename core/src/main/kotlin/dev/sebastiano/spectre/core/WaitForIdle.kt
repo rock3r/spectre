@@ -100,6 +100,10 @@ internal suspend fun waitForIdleInternal(
  * Stricter than [waitForIdleInternal]: the UI must not just be structurally stable, it must also
  * paint the same pixels for several frames in a row. Useful before screenshots and recordings to
  * avoid capturing in the middle of an animation.
+ *
+ * A `null` frame hash means the sample was unsampleable (capture budget exceeded or no Compose
+ * surface available). Those samples clear the streak and are counted so a timeout can name the real
+ * cause instead of only blaming unstable pixels.
  */
 internal suspend fun waitForVisualIdleInternal(
     timeout: Duration,
@@ -112,11 +116,15 @@ internal suspend fun waitForVisualIdleInternal(
     require(stableFrames > 0) { "stableFrames must be positive, was $stableFrames" }
     val deadline = clock.now() + timeout.inWholeMilliseconds
     val window = ArrayDeque<Int>(stableFrames)
+    var sampleCount = 0
+    var unsampleableCount = 0
 
     while (true) {
         val hash = frameHash((deadline - clock.now()).coerceAtLeast(0))
+        sampleCount++
         val streakComplete =
             if (hash == null) {
+                unsampleableCount++
                 window.clear()
                 false
             } else {
@@ -133,10 +141,37 @@ internal suspend fun waitForVisualIdleInternal(
         if (nowAfterSample >= deadline) {
             throw IdleTimeoutException(
                 "waitForVisualIdle timed out after ${timeout.inWholeMilliseconds}ms: " +
-                    "frames did not stabilise across $stableFrames samples"
+                    visualIdleTimeoutDiagnostic(
+                        stableFrames = stableFrames,
+                        sampleCount = sampleCount,
+                        unsampleableCount = unsampleableCount,
+                    )
             )
         }
         sleep(pollInterval)
+    }
+}
+
+/**
+ * Builds the diagnostic tail for a [waitForVisualIdleInternal] timeout.
+ *
+ * Pure so unit tests can pin the wording without driving the full wait loop.
+ */
+internal fun visualIdleTimeoutDiagnostic(
+    stableFrames: Int,
+    sampleCount: Int,
+    unsampleableCount: Int,
+): String {
+    val unstable = "frames did not stabilise across $stableFrames samples"
+    if (unsampleableCount <= 0 || sampleCount <= 0) return unstable
+    val unsampleable =
+        "$unsampleableCount/$sampleCount samples were unsampleable " +
+            "(capture budget exceeded or no Compose surface available)"
+    return if (unsampleableCount == sampleCount) {
+        // Every attempt failed to produce a hash — do not send the caller hunting for animations.
+        unsampleable
+    } else {
+        "$unsampleable; $unstable"
     }
 }
 

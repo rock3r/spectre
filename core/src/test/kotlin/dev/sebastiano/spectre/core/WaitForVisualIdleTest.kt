@@ -154,6 +154,75 @@ class WaitForVisualIdleTest {
             error.message?.contains("waitForVisualIdle") == true,
             "Should mention waitForVisualIdle: ${error.message}",
         )
+        assertTrue(
+            error.message?.contains("frames did not stabilise") == true,
+            "Should attribute pure pixel churn to unstable frames: ${error.message}",
+        )
+        assertTrue(
+            error.message?.contains("unsampleable") != true,
+            "Must not claim unsampleable/budget failure when every sample returned a hash: ${error.message}",
+        )
+    }
+
+    @Test
+    fun `timeout names unsampleable samples when every frame hash is null`() = runTest {
+        val clock = FakeClock()
+        val error =
+            assertFailsWith<IdleTimeoutException> {
+                waitForVisualIdleInternal(
+                    timeout = 50.milliseconds,
+                    stableFrames = 3,
+                    pollInterval = 10.milliseconds,
+                    frameHash = { _ -> null },
+                    clock = clock,
+                    sleep = clock::advance,
+                )
+            }
+
+        val message = error.message.orEmpty()
+        assertTrue(
+            message.contains("waitForVisualIdle timed out after 50ms"),
+            "Should include wait name and timeout: $message",
+        )
+        assertTrue(
+            Regex("""\d+/\d+ samples were unsampleable""").containsMatchIn(message),
+            "Should report unsampleable sample counts: $message",
+        )
+        assertTrue(
+            message.contains("capture budget") || message.contains("no Compose surface"),
+            "Should hint at capture budget or missing surfaces: $message",
+        )
+    }
+
+    @Test
+    fun `timeout reports mixed unsampleable and unstable samples`() = runTest {
+        val clock = FakeClock()
+        var calls = 0
+        val error =
+            assertFailsWith<IdleTimeoutException> {
+                waitForVisualIdleInternal(
+                    timeout = 80.milliseconds,
+                    stableFrames = 3,
+                    pollInterval = 10.milliseconds,
+                    frameHash = { _ ->
+                        // Alternate null (budget/surface miss) with changing hashes so neither
+                        // cause alone explains the timeout.
+                        if (calls++ % 2 == 0) null else calls
+                    },
+                    clock = clock,
+                    sleep = clock::advance,
+                )
+            }
+
+        val message = error.message.orEmpty()
+        assertTrue(
+            Regex("""\d+/\d+ samples were unsampleable""").containsMatchIn(message),
+            "Should report partial unsampleable counts: $message",
+        )
+        assertTrue(
+            message.contains("frames did not stabilise"),
+            "Should still mention unstable frames when some hashes were returned: $message",
+        )
     }
 
     @Test
@@ -200,6 +269,32 @@ class WaitForVisualIdleTest {
         assertTrue(
             budgets.zipWithNext().all { (prev, next) -> next <= prev },
             "Budget should monotonically decrease across polls: $budgets",
+        )
+    }
+
+    @Test
+    fun `visualIdleTimeoutDiagnostic only blames unstable frames when every sample hashed`() {
+        assertEquals(
+            "frames did not stabilise across 3 samples",
+            visualIdleTimeoutDiagnostic(stableFrames = 3, sampleCount = 5, unsampleableCount = 0),
+        )
+    }
+
+    @Test
+    fun `visualIdleTimeoutDiagnostic prioritises fully unsampleable waits`() {
+        val message =
+            visualIdleTimeoutDiagnostic(stableFrames = 3, sampleCount = 4, unsampleableCount = 4)
+        assertTrue(
+            message.startsWith("4/4 samples were unsampleable"),
+            "Should lead with unsampleable counts: $message",
+        )
+        assertTrue(
+            message.contains("capture budget exceeded"),
+            "Should name capture budget: $message",
+        )
+        assertTrue(
+            !message.contains("frames did not stabilise"),
+            "All-null waits should not claim pixel churn: $message",
         )
     }
 
