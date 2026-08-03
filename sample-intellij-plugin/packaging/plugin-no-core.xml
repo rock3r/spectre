@@ -1,0 +1,30 @@
+<!--
+  No-core Spectre sample plugin for #353 stock IntelliJ inject QA.
+
+  Hosts the same Jewel-tagged tool window as the instrumented sample
+  (SpectreSampleToolWindowContent) without in-process Spectre classes, and is
+  packaged without the core library on the plugin classpath so AgentAttach must
+  take the nested inject-runtime path.
+
+  Built by :sample-intellij-plugin:buildNoCorePlugin. Not for marketplace use.
+-->
+<idea-plugin>
+    <id>dev.sebastiano.spectre.sample</id>
+    <name>Spectre IDE Sample (no-core inject QA)</name>
+    <version>0.0.0-DEV</version>
+    <vendor>Spectre</vendor>
+    <idea-version since-build="262.8665"/>
+    <description><![CDATA[
+        Tags-only Jewel tool window for stock IntelliJ inject attach validation (#353).
+        Does not ship the Spectre core library on the plugin classpath.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.compose</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Spectre Sample"
+                    anchor="right"
+                    factoryClass="dev.sebastiano.spectre.intellij.SpectreSampleToolWindowFactory"/>
+    </extensions>
+</idea-plugin>
