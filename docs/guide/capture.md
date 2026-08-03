@@ -57,9 +57,16 @@ For reload settle and generation-stamped keys, see
 ## In-process API
 
 ```kotlin
+automator.waitForVisualIdle() // settle first when pixels matter
 val result = automator.capture(windowIndex = 0)
 // result.captureJson + result.pngBytes; write via your own paths or the agent/CLI surfaces
 ```
+
+With `spectre-recording` present, the PNG is a **window-scoped** native still (same path as
+`screenshot(windowIndex)`), not a silent desktop crop after a failed native still. Without
+recording on the classpath, the still is a Robot region capture of the Compose surface (agent
+inject payloads often omit recording). Settle the UI before calling so the semantics tree and
+pixels stay decision-grade across native still-helper latency.
 
 Library details live in `:core` under `dev.sebastiano.spectre.core.capture`.
 

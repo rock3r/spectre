@@ -222,10 +222,12 @@ wrapper when your UI reads Jewel locals such as `LocalComponent`.
 
 `screenshot(windowIndex)` and `screenshot(node)` use the platform window-capture backend when
 `spectre-recording` is on the runtime classpath. They fail if that backend is unavailable or cannot
-identify the requested window; they never substitute a screen-region crop. On Linux X11/Xvfb the
-native backend itself reads visible framebuffer pixels, so keep the target frontmost and unobscured.
-`capture()` intentionally uses an immediate Robot region capture to keep its semantics snapshot
-adjacent to its pixels, so its image can include occlusion.
+identify the requested window; they never substitute a screen-region crop. `capture()` uses the same
+window-scoped still when recording is present; without recording (for example an inject payload that
+omits it) it uses a Robot region capture of the Compose surface so attach/agent stills still work.
+On Linux X11/Xvfb native stills read visible framebuffer pixels — keep the target frontmost. Settle
+the UI (`waitForIdle` / `waitForVisualIdle`) before `capture()` so the semantics snapshot and PNG
+stay a usable pair across one-shot native still latency.
 
 `waitForVisualIdle()` samples **window-scoped** pixels for tracked Compose surfaces when
 `spectre-recording` is present (same native still path as `screenshot(windowIndex)`). Without that
