@@ -161,9 +161,11 @@ A few details worth knowing:
   second.
 - **Bounded sampling budget.** The first completed frame hash may use the wait's remaining
   timeout: native capture paths can have a one-off cold-start cost. Later frame hashes run on
-  a worker thread capped at 500ms. If a steady-state capture or hash exceeds that cap,
-  `waitForVisualIdle` returns a value that differs every call, so the streak never completes
-  and the wait times out rather than silently succeeding against an unsampleable UI.
+  a worker thread capped at 500ms. If a steady-state capture or hash exceeds that cap — or no
+  Compose surface is available — that poll is treated as unsampleable: the stable-frame streak
+  resets and the wait times out rather than silently succeeding. When that happens,
+  `IdleTimeoutException` reports how many samples were unsampleable (capture budget or missing
+  surface) instead of only saying the frames did not stabilise.
 - **Pixel hashing isn't free.** Multiple large surfaces, full-screen windows on a 4K /
   Retina monitor, or running under a software-rendered virtual GPU all push the
   per-poll cost up. If `waitForVisualIdle` is timing out or burning more CPU than you

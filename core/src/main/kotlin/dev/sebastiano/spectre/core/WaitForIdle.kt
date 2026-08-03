@@ -100,6 +100,10 @@ internal suspend fun waitForIdleInternal(
  * Stricter than [waitForIdleInternal]: the UI must not just be structurally stable, it must also
  * paint the same pixels for several frames in a row. Useful before screenshots and recordings to
  * avoid capturing in the middle of an animation.
+ *
+ * A `null` frame hash means the sample was unsampleable (capture budget exceeded or no Compose
+ * surface available). Those samples clear the streak and are counted so a timeout can name the real
+ * cause instead of only blaming unstable pixels.
  */
 internal suspend fun waitForVisualIdleInternal(
     timeout: Duration,
@@ -112,14 +116,40 @@ internal suspend fun waitForVisualIdleInternal(
     require(stableFrames > 0) { "stableFrames must be positive, was $stableFrames" }
     val deadline = clock.now() + timeout.inWholeMilliseconds
     val window = ArrayDeque<Int>(stableFrames)
+    var sampleCount = 0
+    var unsampleableCount = 0
+    var lastSuccessfulHash: Int? = null
+    var sawHashChange = false
+
+    fun timeoutException(): IdleTimeoutException =
+        IdleTimeoutException(
+            "waitForVisualIdle timed out after ${timeout.inWholeMilliseconds}ms: " +
+                visualIdleTimeoutDiagnostic(
+                    stableFrames = stableFrames,
+                    sampleCount = sampleCount,
+                    unsampleableCount = unsampleableCount,
+                    sawHashChange = sawHashChange,
+                )
+        )
 
     while (true) {
-        val hash = frameHash((deadline - clock.now()).coerceAtLeast(0))
+        // If a prior sleep already exhausted the wait, stop without taking another sample.
+        // A zero remaining budget makes BoundedFrameHasher return null, which would spuriously
+        // inflate unsampleable counts on pure pixel-churn timeouts.
+        val remainingMs = (deadline - clock.now()).coerceAtLeast(0)
+        if (remainingMs == 0L) throw timeoutException()
+
+        val hash = frameHash(remainingMs)
+        sampleCount++
         val streakComplete =
             if (hash == null) {
+                unsampleableCount++
                 window.clear()
                 false
             } else {
+                val previous = lastSuccessfulHash
+                if (previous != null && previous != hash) sawHashChange = true
+                lastSuccessfulHash = hash
                 if (window.isNotEmpty() && window.last() != hash) {
                     window.clear()
                 }
@@ -130,13 +160,46 @@ internal suspend fun waitForVisualIdleInternal(
 
         val nowAfterSample = clock.now()
         if (streakComplete && nowAfterSample <= deadline) return
-        if (nowAfterSample >= deadline) {
-            throw IdleTimeoutException(
-                "waitForVisualIdle timed out after ${timeout.inWholeMilliseconds}ms: " +
-                    "frames did not stabilise across $stableFrames samples"
-            )
-        }
+        if (nowAfterSample >= deadline) throw timeoutException()
         sleep(pollInterval)
+    }
+}
+
+/**
+ * Builds the diagnostic tail for a [waitForVisualIdleInternal] timeout.
+ *
+ * Pure so unit tests can pin the wording without driving the full wait loop. Only blames unstable
+ * frames when non-null hashes actually differed; intermittent unsampleable polls that merely
+ * interrupt identical hashes are not reported as pixel churn.
+ */
+internal fun visualIdleTimeoutDiagnostic(
+    stableFrames: Int,
+    sampleCount: Int,
+    unsampleableCount: Int,
+    sawHashChange: Boolean,
+): String {
+    val unstable = "frames did not stabilise across $stableFrames samples"
+    val incompleteStreak = "stable-frame streak did not complete across $stableFrames samples"
+    val unsampleable =
+        if (unsampleableCount > 0 && sampleCount > 0) {
+            "$unsampleableCount/$sampleCount samples were unsampleable " +
+                "(capture budget exceeded or no Compose surface available)"
+        } else {
+            null
+        }
+
+    return when {
+        unsampleableCount == sampleCount && unsampleable != null ->
+            // Every attempt failed to produce a hash — do not send the caller hunting for
+            // animations.
+            unsampleable
+        // Only blame pixel churn when non-null hashes actually differed.
+        sawHashChange && unsampleable != null -> "$unsampleable; $unstable"
+        sawHashChange -> unstable
+        // Hashes that did land were identical (or never landed a second time); incomplete streak
+        // from timeout and/or unsampleable polls — not an animation.
+        unsampleable != null -> "$unsampleable; $incompleteStreak"
+        else -> incompleteStreak
     }
 }
 
