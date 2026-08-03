@@ -9,8 +9,10 @@ import dev.sebastiano.spectre.core.InternalSpectreApi
 import dev.sebastiano.spectre.core.RobotDriver
 import dev.sebastiano.spectre.core.WindowTracker
 import java.awt.GraphicsEnvironment
+import java.awt.Toolkit
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -34,10 +36,11 @@ import kotlin.time.Duration.Companion.seconds
  */
 class SampleAppFixture(
     private val title: String = "Spectre validation",
-    private val startupTimeout: Duration = 10.seconds,
+    private val startupTimeout: Duration = DEFAULT_STARTUP_TIMEOUT,
 ) {
 
     private val applicationStarted = CountDownLatch(1)
+    private val startupError = AtomicReference<Throwable?>(null)
     @Volatile private var exitFn: (() -> Unit)? = null
     private lateinit var thread: Thread
     private lateinit var _automator: ComposeAutomator
@@ -58,33 +61,56 @@ class SampleAppFixture(
 
     fun start() {
         requireDisplay()
+        // Cold Windows CI workers spend a noticeable chunk of the startup budget on first-time
+        // AWT Toolkit / peer init. Warm the toolkit on the test thread *before* arming the latch
+        // clock so that budget is spent waiting for Compose Desktop's application{} entry, not
+        // for AWT itself.
+        Toolkit.getDefaultToolkit()
         thread =
             Thread(
                     {
-                        application {
-                            exitFn = ::exitApplication
-                            applicationStarted.countDown()
-                            Window(onCloseRequest = ::exitApplication, title = title) {
-                                dev.sebastiano.spectre.sample.App()
+                        try {
+                            application {
+                                exitFn = ::exitApplication
+                                applicationStarted.countDown()
+                                Window(onCloseRequest = ::exitApplication, title = title) {
+                                    dev.sebastiano.spectre.sample.App()
+                                }
                             }
+                        } catch (t: Throwable) {
+                            startupError.compareAndSet(null, t)
+                            // Unblock the waiter even when application{} never entered so the
+                            // failure path can report the real exception instead of only a timeout.
+                            applicationStarted.countDown()
+                            throw t
                         }
                     },
                     "spectre-sample-fixture",
                 )
-                .apply { isDaemon = true }
+                .apply {
+                    isDaemon = true
+                    uncaughtExceptionHandler = Thread.UncaughtExceptionHandler { _, error ->
+                        startupError.compareAndSet(null, error)
+                    }
+                }
         thread.start()
-        check(applicationStarted.await(startupTimeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)) {
-            "Sample app did not enter application{} within $startupTimeout"
-        }
+        val entered =
+            applicationStarted.await(startupTimeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)
+        throwIfStartupFailed(enteredApplication = entered)
         // The Window enters the AWT hierarchy a few frames after application{} starts. Poll a
         // bootstrap WindowTracker until it surfaces our window so we can construct the
         // automator with a synthetic driver bound to it. Match by title — `Window.getWindows()`
         // can return multiple top-level windows in unspecified order (other JVM windows, the
         // sample app's previous instance, etc.), so taking `.first()` would risk attaching the
         // synthetic driver to an unrelated surface.
+        //
+        // Re-check [startupError] each poll: Window/composition can still throw *after*
+        // applicationStarted counted down; without this, that failure only surfaces 30s later
+        // as a generic "window did not appear" with no cause (Codex review on #373).
         val bootstrapTracker = WindowTracker()
         val deadline = System.nanoTime() + startupTimeout.inWholeNanoseconds
         while (System.nanoTime() < deadline) {
+            throwIfStartupFailed(enteredApplication = true)
             bootstrapTracker.refresh()
             val tracked =
                 bootstrapTracker.trackedWindows.value.firstOrNull {
@@ -98,7 +124,22 @@ class SampleAppFixture(
             }
             Thread.sleep(WINDOW_POLL.inWholeMilliseconds)
         }
+        throwIfStartupFailed(enteredApplication = true)
         error("Main window with title '$title' did not appear within $startupTimeout")
+    }
+
+    private fun throwIfStartupFailed(enteredApplication: Boolean) {
+        val error = startupError.get()
+        if (enteredApplication && error == null) return
+        throw IllegalStateException(
+            describeApplicationStartupFailure(
+                timeout = startupTimeout,
+                enteredApplication = enteredApplication,
+                threadAlive = ::thread.isInitialized && thread.isAlive,
+                startupError = error,
+            ),
+            error,
+        )
     }
 
     fun stop() {
@@ -113,10 +154,48 @@ class SampleAppFixture(
         }
     }
 
-    private companion object {
-        val WINDOW_POLL: Duration = 100.milliseconds
-        val SHUTDOWN_TIMEOUT: Duration = 5.seconds
+    companion object {
+        /**
+         * Default wait for Compose Desktop `application {}` entry and subsequent window discovery.
+         *
+         * 10s proved tight on cold Windows GHA workers (`AtomicCaptureValidationTest` — "Sample app
+         * did not enter application{} within 10s"). Each validation class forks a fresh JVM
+         * (`forkEvery = 1`), so first AWT + Compose Desktop init regularly burns several seconds
+         * before the application lambda runs.
+         */
+        val DEFAULT_STARTUP_TIMEOUT: Duration = 30.seconds
+
+        private val WINDOW_POLL: Duration = 100.milliseconds
+        private val SHUTDOWN_TIMEOUT: Duration = 5.seconds
     }
+}
+
+/**
+ * Human-readable startup failure text for [SampleAppFixture.start]. Pure so diagnostics can be
+ * unit-tested without spawning AWT / Compose Desktop.
+ */
+internal fun describeApplicationStartupFailure(
+    timeout: Duration,
+    enteredApplication: Boolean,
+    threadAlive: Boolean,
+    startupError: Throwable?,
+): String {
+    val parts = mutableListOf<String>()
+    if (!enteredApplication) {
+        parts += "Sample app did not enter application{} within $timeout"
+    } else {
+        parts += "Sample app application{} failed during startup"
+    }
+    parts +=
+        if (threadAlive) {
+            "fixture thread still alive"
+        } else {
+            "fixture thread already exited"
+        }
+    if (startupError != null) {
+        parts += "cause=${startupError::class.java.name}: ${startupError.message ?: "(no message)"}"
+    }
+    return parts.joinToString("; ")
 }
 
 /**

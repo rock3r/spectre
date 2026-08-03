@@ -128,10 +128,11 @@ val applyValidationJvmArgs: Test.() -> Unit = {
     // Xvfb / headless-CI hosts often lack a working GL stack; Skiko then logs
     // "Cannot create Linux GL context" and can hang or abandon a forked validation JVM
     // without writing per-class JUnit XML (AtomicCaptureValidationTest envelope-only skip).
-    // Default SOFTWARE_COMPAT matches the Linux Robot smoke path, but honor a caller
-    // override (e.g. -Dskiko.renderApi=OPENGL) so local GPU/fidelity work is not forced
-    // through the software renderer.
-    if (OperatingSystem.current().isLinux) {
+    // Windows GHA runners hit a related cold-start flake: first GPU/ANGLE init can delay
+    // Compose Desktop application{} past the fixture budget. Default SOFTWARE_COMPAT on
+    // Linux *and* Windows; honor a caller override (e.g. -Dskiko.renderApi=OPENGL) so local
+    // GPU/fidelity work is not forced through the software renderer.
+    if (OperatingSystem.current().isLinux || OperatingSystem.current().isWindows) {
         val renderApi = providers.systemProperty("skiko.renderApi").orElse("SOFTWARE_COMPAT").get()
         systemProperty("skiko.renderApi", renderApi)
     }
@@ -151,7 +152,8 @@ val validationTest by
         // a previous shutdown finalises the AWT runtime).
         forkEvery = 1
         // Re-render the picker / spawn the window inside each test method via the fixture's poll
-        // loop. The 10-second startupTimeout is enough headroom for cold JVM warmup on CI hardware.
+        // loop. SampleAppFixture.DEFAULT_STARTUP_TIMEOUT (30s) leaves headroom for cold AWT +
+        // Compose Desktop init on Windows GHA workers (see AtomicCaptureValidationTest flake).
         applyValidationJvmArgs()
     }
 
