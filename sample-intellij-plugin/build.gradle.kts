@@ -1,3 +1,6 @@
+import dev.sebastiano.spectre.build.BuildNoCorePluginZip
+import dev.sebastiano.spectre.build.VerifyNoCorePluginZip
+
 plugins {
     alias(libs.plugins.detekt)
     alias(libs.plugins.ktfmt)
@@ -142,6 +145,12 @@ tasks.named<JavaExec>("runIde") {
 // `detektUiTest` is hooked into `:check` so the uiTest source set is statically validated on every
 // PR even though `:uiTest` itself (which boots a real IDE) is opt-in — keeps the linter from going
 // stale on a source set that only runs in the dedicated `ide-uitest.yml` CI job.
+//
+// No-core packaging (#353 / #375): pure contract unit tests live in buildSrc
+// (`NoCorePluginPackagingContractTest`) and run on every root `:check` via `buildSrcUnitTests`.
+// The real zip (`buildNoCorePlugin` + `verifyNoCorePluginZip`) stays off default `:check` so
+// unrelated PRs don't pay `buildPlugin`; run those when packaging / inject QA changes and from
+// the stock inject e2e (#376).
 tasks.named("check") { dependsOn("verifyPluginStructure", "detektUiTest") }
 
 // Disable the IntelliJ Platform Gradle plugin's `buildSearchableOptions` task. That task boots a
@@ -206,6 +215,35 @@ dependencies {
 
 val buildPluginTask = tasks.named<Zip>("buildPlugin")
 val pluginZipProvider = buildPluginTask.flatMap { it.archiveFile }
+
+// --- No-core plugin zip for stock IntelliJ inject QA (#353 / #375) -------------------------
+//
+// Transforms the instrumented `buildPlugin` zip into a tags-only distribution: Jewel tool
+// window with `ide.counter.*` / `ide.popup.*` tags, zero spectre-core jars, no RunSpectreAction.
+// Used by the stock inject attach e2e (#376) and manual recipe; not the default `uiTest` plugin.
+val noCorePluginXmlFile = layout.projectDirectory.file("packaging/plugin-no-core.xml")
+val noCorePluginZipFile =
+    layout.buildDirectory.file("distributions/sample-intellij-plugin-no-core-0.0.0-DEV.zip")
+
+val buildNoCorePlugin by
+    tasks.registering(BuildNoCorePluginZip::class) {
+        group = "build"
+        description =
+            "Build a no-core sample plugin zip (Jewel tags only) for stock IntelliJ inject QA (#353)."
+        dependsOn(buildPluginTask)
+        instrumentedPluginZip.set(pluginZipProvider)
+        noCorePluginXml.set(noCorePluginXmlFile)
+        outputZip.set(noCorePluginZipFile)
+    }
+
+val verifyNoCorePluginZip by
+    tasks.registering(VerifyNoCorePluginZip::class) {
+        group = "verification"
+        description =
+            "Assert the no-core sample plugin zip has no spectre-core and retains Jewel proving tags (#353)."
+        dependsOn(buildNoCorePlugin)
+        noCorePluginZip.set(buildNoCorePlugin.flatMap { it.outputZip })
+    }
 
 val uiTest by
     tasks.registering(Test::class) {

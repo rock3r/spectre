@@ -119,7 +119,8 @@ val verifyMacosCliBundleReleaseContract by
 val buildSrcUnitTests by
     tasks.registering(Exec::class) {
         group = "verification"
-        description = "Runs buildSrc unit tests (Windows helper packaging contract and related)."
+        description =
+            "Runs buildSrc unit tests (Windows helper packaging, no-core plugin packaging, and related)."
         workingDir = rootProject.layout.projectDirectory.asFile
         val isWindows = System.getProperty("os.name").orEmpty().startsWith("Windows")
         val wrapperName = if (isWindows) "gradlew.bat" else "gradlew"
