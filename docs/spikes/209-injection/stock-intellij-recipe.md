@@ -14,7 +14,8 @@ Attach from a sister JVM to **IntelliJ IDEA 2026.2+** that does **not** ship
 ## Automated path (opt-in — preferred re-verify)
 
 **Does not** run on every PR (always-on stock IDE inject CI remains a non-goal). Local /
-release QA:
+release QA on a **graphical** host (non-headless JVM; Linux needs `DISPLAY` or
+`xvfb-run -a`):
 
 ```bash
 # Builds no-core plugin zip + agent-runtime, boots IDEA 2026.2 via ide-starter,
@@ -22,7 +23,12 @@ release QA:
 ./gradlew :sample-intellij-plugin:stockInjectUiTest
 ```
 
-What it proves on a green run (real shipped APIs):
+**Pass criteria:** the task must **execute** `StockIntellijInjectAttachUiTest` (not
+assumption-skip). A headless run skips with a successful Gradle exit — that is **not**
+stock-inject proof. Check the HTML/XML test report for `tests=1` / `skipped=0`, or look
+for the inject log line below in the sandbox `idea.log`.
+
+What a non-skipped green run proves (real shipped APIs):
 
 1. `-XX:+EnableDynamicAgentLoading` on the IDE VM options patch.
 2. No-core plugin install (`buildNoCorePlugin` — Jewel tags only, no `spectre-core` jars).
