@@ -70,8 +70,8 @@ public class AttachPermissionDeniedException(
     targetPid: Long,
     targetUser: String?,
     currentUser: String? = System.getProperty("user.name"),
-    targetUid: Int? = null,
-    currentUid: Int? = null,
+    targetUid: Long? = null,
+    currentUid: Long? = null,
 ) :
     SpectreAttachException(
         buildAttachPermissionDeniedMessage(
@@ -87,8 +87,8 @@ private fun buildAttachPermissionDeniedMessage(
     targetPid: Long,
     targetUser: String?,
     currentUser: String?,
-    targetUid: Int?,
-    currentUid: Int?,
+    targetUid: Long?,
+    currentUid: Long?,
 ): String {
     val targetDesc = formatOwner(targetUser, targetUid)
     val currentDesc = formatOwner(currentUser, currentUid)
@@ -97,7 +97,7 @@ private fun buildAttachPermissionDeniedMessage(
         "the same OS user identity (numeric UID on POSIX when available)."
 }
 
-private fun formatOwner(userName: String?, uid: Int?): String =
+private fun formatOwner(userName: String?, uid: Long?): String =
     when {
         uid != null && userName != null -> "uid=$uid (user '$userName')"
         uid != null -> "uid=$uid"

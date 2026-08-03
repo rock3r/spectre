@@ -50,8 +50,8 @@ class AttachUserPreflightTest {
                 posix = true,
                 current = "DOMAIN\\rock3r",
                 target = "rock3r",
-                currentUid = 501,
-                targetUid = 501,
+                currentUid = 501L,
+                targetUid = 501L,
             )
             .requireSameUser(targetPid)
     }
@@ -64,8 +64,8 @@ class AttachUserPreflightTest {
                         posix = true,
                         current = "rock3r",
                         target = "rock3r",
-                        currentUid = 501,
-                        targetUid = 0,
+                        currentUid = 501L,
+                        targetUid = 0L,
                     )
                     .requireSameUser(targetPid)
             }
@@ -81,8 +81,8 @@ class AttachUserPreflightTest {
                         posix = true,
                         current = "rock3r",
                         target = "root",
-                        currentUid = 501,
-                        targetUid = 0,
+                        currentUid = 501L,
+                        targetUid = 0L,
                     )
                     .requireSameUser(targetPid)
             }
@@ -113,7 +113,7 @@ class AttachUserPreflightTest {
                     posix = true,
                     current = "rock3r",
                     target = "root",
-                    currentUid = 501,
+                    currentUid = 501L,
                     targetUid = null,
                 )
                 .requireSameUser(targetPid)
@@ -128,6 +128,20 @@ class AttachUserPreflightTest {
                 target = null,
                 currentUid = null,
                 targetUid = null,
+            )
+            .requireSameUser(targetPid)
+    }
+
+    @Test
+    fun `posix preflight accepts large uid_t values above Int MAX`() {
+        // Full unsigned 32-bit uid_t range must not fall back to name equality.
+        val high = 3_000_000_000L
+        preflight(
+                posix = true,
+                current = "DOMAIN\\a",
+                target = "a",
+                currentUid = high,
+                targetUid = high,
             )
             .requireSameUser(targetPid)
     }
@@ -202,8 +216,8 @@ class AttachUserPreflightTest {
         posix: Boolean,
         current: String?,
         target: String?,
-        currentUid: Int? = null,
-        targetUid: Int? = null,
+        currentUid: Long? = null,
+        targetUid: Long? = null,
     ): AttachUserPreflight {
         val currentResolver = { current }
         val targetResolver = { _: Long -> target }
@@ -223,7 +237,7 @@ class AttachUserPreflightTest {
 class PosixProcessUidLookupTest {
 
     @Test
-    fun `parseProcStatusRealUid reads the real uid field`() {
+    fun `parseProcStatusEffectiveUid reads the effective uid field`() {
         val status =
             """
             Name:	java
@@ -233,23 +247,33 @@ class PosixProcessUidLookupTest {
             Gid:	20	20	20	20
             """
                 .trimIndent()
-        assertEquals(501, parseProcStatusRealUid(status))
+        assertEquals(501L, parseProcStatusEffectiveUid(status))
     }
 
     @Test
-    fun `parseProcStatusRealUid prefers real over effective when they differ`() {
+    fun `parseProcStatusEffectiveUid prefers effective over real when they differ`() {
+        // Privilege-dropping wrapper shape: real=1000, effective=0 (or vice versa).
         val status = "Uid:\t1000\t0\t0\t0\n"
-        assertEquals(1000, parseProcStatusRealUid(status))
+        assertEquals(0L, parseProcStatusEffectiveUid(status))
     }
 
     @Test
-    fun `parseProcStatusRealUid returns null when Uid line is missing`() {
-        assertEquals(null, parseProcStatusRealUid("Name:\tjava\n"))
+    fun `parseProcStatusEffectiveUid returns null when Uid line is missing`() {
+        assertEquals(null, parseProcStatusEffectiveUid("Name:\tjava\n"))
     }
 
     @Test
-    fun `parseProcStatusRealUid tolerates spaces instead of tabs`() {
-        assertEquals(42, parseProcStatusRealUid("Uid:   42  42  42  42\n"))
+    fun `parseProcStatusEffectiveUid tolerates spaces instead of tabs`() {
+        assertEquals(42L, parseProcStatusEffectiveUid("Uid:   42  42  42  42\n"))
+    }
+
+    @Test
+    fun `parseProcStatusEffectiveUid accepts full unsigned 32-bit uid_t`() {
+        val high = 4_000_000_000L
+        assertEquals(high, parseProcStatusEffectiveUid("Uid:\t1\t$high\t$high\t$high\n"))
+        assertEquals(high, "$high".toUidOrNull())
+        assertEquals(null, "4294967296".toUidOrNull()) // above uid_t max
+        assertEquals(null, "-1".toUidOrNull())
     }
 
     @Test

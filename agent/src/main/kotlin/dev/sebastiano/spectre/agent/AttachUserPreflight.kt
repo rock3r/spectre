@@ -52,8 +52,8 @@ internal interface AttachUserPreflight {
 internal class PosixUserPreflight(
     private val currentUser: () -> String? = defaultCurrentUser,
     private val targetUser: (Long) -> String? = defaultTargetUser,
-    private val currentUid: () -> Int? = defaultCurrentUid,
-    private val targetUid: (Long) -> Int? = defaultTargetUid,
+    private val currentUid: () -> Long? = defaultCurrentUid,
+    private val targetUid: (Long) -> Long? = defaultTargetUid,
 ) : AttachUserPreflight {
     override fun requireSameUser(targetPid: Long) {
         val curUid = currentUid()
@@ -111,8 +111,8 @@ private inline fun requireSameUserOwnership(
     targetPid: Long,
     current: String?,
     target: String?,
-    currentUid: Int?,
-    targetUid: Int?,
+    currentUid: Long?,
+    targetUid: Long?,
     normalize: (String) -> String,
 ) {
     // Undeterminable ownership must not block the attach — the OS remains the real boundary.
@@ -139,8 +139,8 @@ private val defaultTargetUser: (Long) -> String? = { pid ->
 
 private val defaultUidLookup: ProcessUidLookup = ProcessUidLookup.forOs()
 
-private val defaultCurrentUid: () -> Int? = {
+private val defaultCurrentUid: () -> Long? = {
     defaultUidLookup.uidOf(ProcessHandle.current().pid())
 }
 
-private val defaultTargetUid: (Long) -> Int? = { pid -> defaultUidLookup.uidOf(pid) }
+private val defaultTargetUid: (Long) -> Long? = { pid -> defaultUidLookup.uidOf(pid) }

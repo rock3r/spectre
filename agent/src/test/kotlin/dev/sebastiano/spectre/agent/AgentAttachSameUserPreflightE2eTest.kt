@@ -97,7 +97,7 @@ class AgentAttachSameUserPreflightE2eTest {
      * Prefer pid 1 (init/launchd, almost always root). Fall back to a short scan of live processes
      * when pid 1 is unreadable or same-UID (unusual containers).
      */
-    private fun findDifferentUidProcess(lookup: ProcessUidLookup, myUid: Int): Pair<Long, Int>? {
+    private fun findDifferentUidProcess(lookup: ProcessUidLookup, myUid: Long): Pair<Long, Long>? {
         val pid1Uid = lookup.uidOf(1L)
         if (pid1Uid != null && pid1Uid != myUid) return 1L to pid1Uid
 
