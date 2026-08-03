@@ -408,11 +408,11 @@ internal class ReflectiveAutomatorHandler(
     /**
      * Capture a node's on-screen bounds (#362).
      *
-     * Prefers in-process `screenshot(AutomatorNode)` (native window-scoped, matches local Spectre
-     * when the recording bridge is on the target classpath). When that path is missing or rejects
-     * with "Native window capture bridge is unavailable" — the common inject-attach case, which
-     * deliberately omits recording — falls back to region capture of `boundsOnScreen`, the same
-     * framebuffer policy as attach window screenshots (#289).
+     * Prefers in-process `screenshot(AutomatorNode)` (native window-scoped) when the recording
+     * bridge is present and returns a non-degenerate image. Otherwise uses region capture of live
+     * `boundsOnScreen` — the same framebuffer policy as attach window screenshots (#289).
+     * Degenerate native crops (empty intersection / DPI mishap) also fall back to region so Windows
+     * desktops do not return 1×1 / ~90-byte PNGs for real nodes.
      */
     private fun handleNodeScreenshot(request: AgentRequest.Screenshot): AgentResponse {
         val nodeKey =
@@ -443,8 +443,26 @@ internal class ReflectiveAutomatorHandler(
                         dev.sebastiano.spectre.agent.transport.AgentErrorCategory.NodeNotFound
                             .wireName,
                 )
+        val bounds =
+            extractBoundsOnScreen(node)
+                ?: return AgentResponse.Error(
+                    message = "Node has no boundsOnScreen for key=$nodeKey",
+                    category =
+                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InternalError
+                            .wireName,
+                )
+        if (bounds.width < 1 || bounds.height < 1) {
+            return AgentResponse.Error(
+                message =
+                    "Node boundsOnScreen are empty for key=$nodeKey " +
+                        "(${bounds.width}x${bounds.height}); cannot capture screenshot",
+                category =
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InvalidSelector
+                        .wireName,
+            )
+        }
         val image =
-            captureNodeScreenshotPreferNative(node)
+            captureNodeScreenshotPreferNative(node, bounds)
                 ?: return AgentResponse.Error(
                     message =
                         "ComposeAutomator does not expose screenshot(AutomatorNode) or " +
@@ -458,25 +476,54 @@ internal class ReflectiveAutomatorHandler(
     }
 
     /**
-     * Prefer native window-scoped node capture; fall back to region of [boundsOnScreen] when the
-     * recording bridge is absent (inject attach) or the node overload is missing.
+     * Prefer native window-scoped node capture; fall back to region of [bounds] when the recording
+     * bridge is absent, the node overload is missing, or native returns a degenerate crop.
+     *
+     * Region capture uses a **defensive copy** of the AWT rectangle: live `boundsOnScreen` getters
+     * return snapshots that must not be mutated by `Robot.createScreenCapture` / AWT.
      */
-    private fun captureNodeScreenshotPreferNative(node: Any): BufferedImage? {
+    private fun captureNodeScreenshotPreferNative(
+        node: Any,
+        bounds: java.awt.Rectangle,
+    ): BufferedImage? {
+        val captureBounds = java.awt.Rectangle(bounds)
         val nodeScreenshotMethod = nodeScreenshotMethodOrError()
         if (nodeScreenshotMethod != null) {
             try {
-                return nodeScreenshotMethod.invoke(automator, node) as BufferedImage
+                val image = nodeScreenshotMethod.invoke(automator, node) as BufferedImage
+                if (isPlausibleNodeCapture(image, captureBounds)) return image
+                // Native crop can be empty after DPI / coordinate mismatch — use region.
             } catch (ex: ReflectiveOperationException) {
                 if (!isNativeWindowCaptureUnavailable(ex)) throw ex
-                // Fall through to region capture — attach windows already use this path.
             }
         }
         val regionScreenshotMethod = regionScreenshotMethodOrError() ?: return null
-        val bounds =
+        val image = regionScreenshotMethod.invoke(automator, captureBounds) as BufferedImage
+        check(isPlausibleNodeCapture(image, captureBounds)) {
+            "Region node screenshot ${image.width}x${image.height} is implausible for " +
+                "boundsOnScreen ${captureBounds.width}x${captureBounds.height} at " +
+                "(${captureBounds.x},${captureBounds.y})"
+        }
+        return image
+    }
+
+    private fun extractBoundsOnScreen(node: Any): java.awt.Rectangle? {
+        val raw =
             node.javaClass.methods
                 .firstOrNull { it.name == "getBoundsOnScreen" && it.parameterCount == 0 }
                 ?.invoke(node) ?: return null
-        return regionScreenshotMethod.invoke(automator, bounds) as BufferedImage
+        return raw as? java.awt.Rectangle
+    }
+
+    /**
+     * Reject empty / 1×1 native crops that are clearly not the requested node. Allow DPI scale down
+     * to roughly 1/4 of logical bounds (HiDPI edge cases).
+     */
+    private fun isPlausibleNodeCapture(image: BufferedImage, bounds: java.awt.Rectangle): Boolean {
+        if (image.width < 1 || image.height < 1) return false
+        val minW = (bounds.width / 4).coerceAtLeast(1).coerceAtMost(bounds.width.coerceAtLeast(1))
+        val minH = (bounds.height / 4).coerceAtLeast(1).coerceAtMost(bounds.height.coerceAtLeast(1))
+        return image.width >= minW && image.height >= minH
     }
 
     /**
@@ -553,8 +600,25 @@ internal class ReflectiveAutomatorHandler(
     }
 
     private fun imageToPng(image: BufferedImage): ByteArray {
+        // Normalize to a PNG-friendly sRGB type; some platform Robot captures use types that
+        // ImageIO encodes poorly or not at all on Windows.
+        val normalized =
+            if (
+                image.type == BufferedImage.TYPE_INT_RGB ||
+                    image.type == BufferedImage.TYPE_INT_ARGB
+            ) {
+                image
+            } else {
+                BufferedImage(image.width, image.height, BufferedImage.TYPE_INT_ARGB).also { dst ->
+                    val g = dst.createGraphics()
+                    g.drawImage(image, 0, 0, null)
+                    g.dispose()
+                }
+            }
         val baos = ByteArrayOutputStream()
-        ImageIO.write(image, "png", baos)
+        check(ImageIO.write(normalized, "png", baos)) {
+            "ImageIO failed to encode ${normalized.width}x${normalized.height} screenshot as PNG"
+        }
         return baos.toByteArray()
     }
 

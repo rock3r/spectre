@@ -155,6 +155,11 @@ class AgentAttachIntegrationTest {
                     "'$SPECTRE_FIXTURE_WINDOW_TITLE' window. Either WindowTracker didn't see the " +
                     "fixture or the fixture didn't bring up its UI before READY.",
             )
+            println(
+                "[362-user-like] iter=$iteration windows.size=${windows.size} " +
+                    "windows=${windows.map { "idx=${it.index} surface=${it.surfaceId} " +
+                        "title=${it.title} showing=${it.isShowing}" }}"
+            )
 
             // #362: surfaces that contribute nodes must appear in windows() — never empty windows
             // while allNodes() returns window:* (or embedded:*) keys for a live surface.
@@ -182,25 +187,14 @@ class AgentAttachIntegrationTest {
             // mask identity regressions (identity does not need keyboard focus).
             assertWindowIdentityMatchesWindows(automator, windows, iteration = iteration)
 
-            // #362 P2/P3 attach parity: fingerprint wait + human-readable dump before input.
-            automator.waitForIdle()
-            val treeDump = automator.printTree()
-            assertTrue(
-                treeDump.isNotBlank(),
-                "iteration $iteration: printTree() empty after waitForIdle; expected fixture tags",
+            // #362 / #364: wait, dump, focus, DTO click, window + node screenshots (before
+            // typeText).
+            exerciseIssue362AttachParity(
+                automator = automator,
+                buttonNode = buttonMatches.first(),
+                buttonKey = buttonKey,
+                iteration = iteration,
             )
-            assertTrue(
-                treeDump.contains(TAG_BUTTON) || treeDump.contains(buttonKey),
-                "iteration $iteration: printTree() should mention button tag or key; dump=$treeDump",
-            )
-
-            // #364: raise/activate the fixture window via the attach wire before Robot input.
-            // Bare-throws on any wire/handler failure so a missing FocusWindow op fails loudly.
-            automator.focusWindow(buttonKey)
-
-            // #362: DTO click convenience uses the same wire path as key-based click.
-            val buttonNode = buttonMatches.first()
-            automator.click(buttonNode)
 
             val textFieldMatches = automator.findByTestTag(TAG_TEXT_FIELD)
             assertTrue(
@@ -228,32 +222,98 @@ class AgentAttachIntegrationTest {
                     )
                 }
             }
-
-            val screenshotBytes = automator.screenshot()
-            assertTrue(
-                screenshotBytes.size >= MIN_PNG_BYTES,
-                "iteration $iteration: screenshot too small (${screenshotBytes.size}b) — not a real PNG?",
-            )
-            assertTrue(
-                screenshotBytes.startsWith(PNG_MAGIC),
-                "iteration $iteration: screenshot bytes do not start with PNG magic header",
-            )
-
-            // #362: node-bounds PNG via window-scoped screenshot(AutomatorNode) on the agent.
-            val nodePng = automator.screenshot(buttonNode)
-            assertTrue(
-                nodePng.size >= MIN_PNG_BYTES,
-                "iteration $iteration: node screenshot too small (${nodePng.size}b)",
-            )
-            assertTrue(
-                nodePng.startsWith(PNG_MAGIC),
-                "iteration $iteration: node screenshot missing PNG magic",
-            )
         }
 
         assertFalse(
             Files.exists(udsPath),
             "iteration $iteration: UDS path $udsPath should not exist after detach",
+        )
+    }
+
+    /**
+     * #362 attach parity: waitForIdle, printTree, DTO click, window + node screenshots.
+     *
+     * Screenshots run **before** typeText focus work so OS focus flakes do not mask capture
+     * regressions. Node PNG is validated by **decoded dimensions** (not compressed size): solid
+     * Windows button crops can compress to ~90 bytes while remaining a valid 100×40 capture.
+     */
+    private fun exerciseIssue362AttachParity(
+        automator: AttachedAutomator,
+        buttonNode: NodeSnapshotDto,
+        buttonKey: String,
+        iteration: Int,
+    ) {
+        automator.waitForIdle()
+        println("[362-user-like] iter=$iteration waitForIdle=ok")
+        val treeDump = automator.printTree()
+        assertTrue(
+            treeDump.isNotBlank(),
+            "iteration $iteration: printTree() empty after waitForIdle; expected fixture tags",
+        )
+        assertTrue(
+            treeDump.contains(TAG_BUTTON) || treeDump.contains(buttonKey),
+            "iteration $iteration: printTree() should mention button tag or key; dump=$treeDump",
+        )
+        println(
+            "[362-user-like] iter=$iteration printTree.chars=${treeDump.length} " +
+                "printTree.head=${treeDump.lineSequence().take(12).joinToString(" | ")}"
+        )
+
+        // #364: raise/activate the fixture window before Robot input.
+        automator.focusWindow(buttonKey)
+        automator.click(buttonNode)
+        println(
+            "[362-user-like] iter=$iteration dtoClick=ok key=${buttonNode.key} " +
+                "tag=${buttonNode.testTag} bounds=${buttonNode.bounds}"
+        )
+
+        val screenshotBytes = automator.screenshot()
+        assertTrue(
+            screenshotBytes.size >= MIN_PNG_BYTES,
+            "iteration $iteration: screenshot too small (${screenshotBytes.size}b) — not a real PNG?",
+        )
+        assertTrue(
+            screenshotBytes.startsWith(PNG_MAGIC),
+            "iteration $iteration: screenshot bytes do not start with PNG magic header",
+        )
+        assertNodeScreenshotDimensions(automator, buttonNode, screenshotBytes, iteration)
+        println(
+            "[362-user-like] iter=$iteration RESULT=SUCCESS " +
+                "primary_observables_non_empty=true " +
+                "(windows,waitForIdle,printTree,dtoClick,nodeScreenshot)"
+        )
+    }
+
+    private fun assertNodeScreenshotDimensions(
+        automator: AttachedAutomator,
+        buttonNode: NodeSnapshotDto,
+        windowScreenshotBytes: ByteArray,
+        iteration: Int,
+    ) {
+        val nodePng = automator.screenshot(buttonNode)
+        assertTrue(
+            nodePng.startsWith(PNG_MAGIC),
+            "iteration $iteration: node screenshot missing PNG magic (${nodePng.size}b)",
+        )
+        val nodeImage =
+            javax.imageio.ImageIO.read(java.io.ByteArrayInputStream(nodePng))
+                ?: error(
+                    "iteration $iteration: ImageIO could not decode node PNG (${nodePng.size}b)"
+                )
+        val expectedW = buttonNode.bounds.width.coerceAtLeast(1)
+        val expectedH = buttonNode.bounds.height.coerceAtLeast(1)
+        val minW = (expectedW / 4).coerceAtLeast(1)
+        val minH = (expectedH / 4).coerceAtLeast(1)
+        assertTrue(
+            nodeImage.width >= minW && nodeImage.height >= minH,
+            "iteration $iteration: node screenshot ${nodeImage.width}x${nodeImage.height} " +
+                "implausible for bounds ${expectedW}x${expectedH} (pngBytes=${nodePng.size})",
+        )
+        println(
+            "[362-user-like] iter=$iteration nodeScreenshot.bytes=${nodePng.size} " +
+                "decoded=${nodeImage.width}x${nodeImage.height} " +
+                "nodeBounds=${expectedW}x${expectedH} " +
+                "windowScreenshot.bytes=${windowScreenshotBytes.size}"
         )
     }
 

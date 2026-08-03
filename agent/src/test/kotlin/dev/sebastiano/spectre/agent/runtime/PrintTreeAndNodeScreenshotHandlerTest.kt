@@ -71,6 +71,39 @@ class PrintTreeAndNodeScreenshotHandlerTest {
     }
 
     @Test
+    fun `Screenshot nodeKey falls back to region when native returns degenerate crop`() {
+        val node =
+            DebugFakeNode(
+                keyValue = "window:0:0:5",
+                boundsOnScreenValue = Rectangle(10, 20, 40, 30),
+            )
+        val fake =
+            DebugFakeAutomator(
+                allNodesValue = listOf(node),
+                // 1×1 native crop is implausible for 40×30 bounds → region fallback.
+                nodeScreenshotImage = BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB),
+            )
+        val handler = ReflectiveAutomatorHandler(fake)
+
+        val response = handler.handle(AgentRequest.Screenshot(nodeKey = "window:0:0:5"))
+        check(response is AgentResponse.Screenshot) { "expected Screenshot, got $response" }
+        assertTrue(response.pngBytes.isNotEmpty())
+        assertEquals(1, fake.nodeScreenshotCalls)
+        assertEquals(1, fake.regionScreenshotCalls)
+        assertEquals(Rectangle(10, 20, 40, 30), fake.lastRegion)
+    }
+
+    @Test
+    fun `Screenshot nodeKey rejects empty boundsOnScreen`() {
+        val node =
+            DebugFakeNode(keyValue = "window:0:0:5", boundsOnScreenValue = Rectangle(10, 20, 0, 0))
+        val handler = ReflectiveAutomatorHandler(DebugFakeAutomator(allNodesValue = listOf(node)))
+        val response = handler.handle(AgentRequest.Screenshot(nodeKey = "window:0:0:5"))
+        check(response is AgentResponse.Error)
+        assertEquals(AgentErrorCategory.InvalidSelector.wireName, response.category)
+    }
+
+    @Test
     fun `Screenshot nodeKey unknown returns nodeNotFound`() {
         val handler = ReflectiveAutomatorHandler(DebugFakeAutomator())
         val response = handler.handle(AgentRequest.Screenshot(nodeKey = "missing"))
@@ -92,6 +125,7 @@ internal class DebugFakeAutomator(
     private val allNodesValue: List<Any> = emptyList(),
     private val printTreeValue: String = "",
     private val nodeScreenshotThrows: RuntimeException? = null,
+    private val nodeScreenshotImage: BufferedImage? = null,
 ) {
     var printTreeCalls = 0
     var regionScreenshotCalls = 0
@@ -128,6 +162,9 @@ internal class DebugFakeAutomator(
         nodeScreenshotCalls++
         lastNodeScreenshotTarget = node
         nodeScreenshotThrows?.let { throw it }
+        nodeScreenshotImage?.let {
+            return it
+        }
         val bounds = node.getBoundsOnScreen()
         return BufferedImage(
             bounds.width.coerceAtLeast(1),
