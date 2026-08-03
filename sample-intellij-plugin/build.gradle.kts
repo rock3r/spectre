@@ -1,5 +1,6 @@
 import dev.sebastiano.spectre.build.BuildNoCorePluginZip
 import dev.sebastiano.spectre.build.VerifyNoCorePluginZip
+import org.gradle.jvm.tasks.Jar
 
 plugins {
     alias(libs.plugins.detekt)
@@ -204,6 +205,8 @@ dependencies {
     "uiTestImplementation"(libs.ideStarter.driverSdk)
     "uiTestImplementation"(libs.ideStarter.driverModel)
     "uiTestImplementation"(libs.kotlinx.coroutines.core)
+    // Stock inject e2e (#353 / #376): attach from the test JVM into the IDE process.
+    "uiTestImplementation"(projects.agent)
     "uiTestRuntimeOnly"(libs.junit5.engine)
     // Gradle 8+ test execution needs junit-platform-launcher on the test runtime classpath
     // OR `useJUnitPlatform()` on a task that pulls it via convention. The Test task we
@@ -245,6 +248,9 @@ val verifyNoCorePluginZip by
         noCorePluginZip.set(buildNoCorePlugin.flatMap { it.outputZip })
     }
 
+val agentRuntimeJarProvider =
+    project(":agent-runtime").tasks.named<Jar>("jar").flatMap { it.archiveFile }
+
 val uiTest by
     tasks.registering(Test::class) {
         group = "verification"
@@ -262,6 +268,9 @@ val uiTest by
         // upstream task; depending on `prepareSandbox` instead would skip the
         // pluginConfiguration validation that surfaces e.g. malformed plugin.xml early.
         dependsOn(buildPluginTask)
+        // Only the instrumented-path test (RunSpectreAction / idea.log). Stock inject e2e is
+        // `stockInjectUiTest` so this task stays focused and path-filter CI cost is predictable.
+        filter { includeTestsMatching("*RunSpectreUiTest*") }
         // `path.to.build.plugin` is the system property the ide-starter sample tests use to
         // point at a locally-built plugin zip — we follow the same convention so the test
         // code reads naturally for anyone familiar with the JetBrains examples.
@@ -277,4 +286,40 @@ val uiTest by
         )
         // Required by ide-starter 2026.2 changelog for recent IDE runs.
         jvmArgs("--add-opens=java.base/sun.nio.fs=ALL-UNNAMED")
+    }
+
+// #353 / #376: stock IntelliJ inject attach against the no-core sample plugin.
+// Boots IDEA, installs tags-only plugin (no spectre-core), AgentAttach from test JVM.
+// NOT wired into :check — always-on stock inject CI is an intentional non-goal.
+val noCorePluginZipProvider = buildNoCorePlugin.flatMap { it.outputZip }
+val stockInjectUiTest by
+    tasks.registering(Test::class) {
+        group = "verification"
+        description =
+            "Stock IntelliJ inject attach e2e (#353): no-core Jewel plugin + AgentAttach inject " +
+                "path. NOT wired into :check — opt-in."
+        useJUnitPlatform()
+        testClassesDirs = uiTestSourceSet.output.classesDirs
+        classpath = uiTestSourceSet.runtimeClasspath
+        dependsOn(buildNoCorePlugin, agentRuntimeJarProvider)
+        // Invalidate when inject packaging or agent-runtime content changes (same pattern as
+        // `:agent:test` wiring `runtimeJar` via inputs.file — Bugbot #381).
+        inputs.file(noCorePluginZipProvider)
+        inputs.file(agentRuntimeJarProvider)
+        filter { includeTestsMatching("*StockIntellijInjectAttachUiTest*") }
+        // Resolve paths eagerly at configuration time (Test.systemProperty Object overload
+        // does not reliably expand Provider values on all Gradle versions). inputs.file above
+        // still owns up-to-date invalidation when those artifacts change.
+        systemProperty("path.to.no.core.plugin", noCorePluginZipProvider.get().asFile.absolutePath)
+        systemProperty(
+            "dev.sebastiano.spectre.agent.runtimeJar",
+            agentRuntimeJarProvider.get().asFile.absolutePath,
+        )
+        javaLauncher.set(
+            javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(25)) }
+        )
+        jvmArgs("--add-opens=java.base/sun.nio.fs=ALL-UNNAMED")
+        // External e2e: a headless assumption-skip must not UP-TO-DATE-mask a later graphical
+        // run (DISPLAY / Xvfb state is not a Gradle input). Always re-enter (Codex #381).
+        outputs.upToDateWhen { false }
     }
