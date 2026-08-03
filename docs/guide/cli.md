@@ -85,11 +85,9 @@ spectre find <session-id> save-button --json
 spectre click <session-id> <node-key>
 spectre type <session-id> "A short note"
 
-# Keep visual evidence (default: tracked window index 0, not the whole desktop).
-spectre screenshot <session-id> --output ./after-save.png
-# Target a specific window from `spectre windows --json`, or opt into full desktop.
-spectre screenshot <session-id> --window 0 --output ./window.png
-spectre screenshot <session-id> --surface window:0 --output ./surface.png
+# Full-desktop capture is the only screen-pixel mode on the CLI attach path (#359).
+# Window/surface targets fail closed (occlusion/privacy risk) until native window
+# capture is wired into attach.
 spectre screenshot <session-id> --fullscreen --output ./desktop.png
 # Atomic capture: window PNG + full semantics tree on disk (summary only on stdout).
 spectre capture <session-id> --json
@@ -108,21 +106,24 @@ spectre record stop <session-id>
 ```
 
 `tree` lists the current semantics nodes. `find` performs an exact match on a Compose test tag.
-`windows` includes top-level windows and popup roots. `screenshot` captures a tracked window of the
-attached session (default index `0`) and writes a PNG to `--output`, or creates a temporary PNG and
-prints its path. Pass `--window <index>` or `--surface <surfaceId>` (as returned by
-`spectre windows --json`) to target a specific surface. Full virtual-desktop capture is opt-in only
-via `--fullscreen`; if window capture cannot be performed, the command fails rather than silently
-writing a full-screen image. `capture` takes a window screenshot and the semantics
-tree under the same tick, writes `capture.json` + `screenshot.png` under a sequenced capture
-directory (`NNNN-<timestamp>/` under `$TMPDIR/spectre/captures` by default, mode `0700`, or under
-`--out-dir`), appends a crash-proof ledger entry, and returns only a decision-grade summary
-(paths, node counts, image size). Default-root captures are lazily capped (keep last 50 closed
-sessions' captures); client `--out-dir` captures are never auto-deleted. Summaries and detach
-reports point agents at the **`spectre-capture`** skill for `jq` recipes — see
-[Atomic capture](capture.md). `record start` records a tracked window by default (index `0`;
-`--window` / `--window-index`). Full-display recording is opt-in via `--fullscreen` (primary
-display only; multi-monitor desktops are rejected until multi-display capture is supported).
+`windows` includes top-level windows and popup roots. `screenshot` writes a PNG to `--output`, or
+creates a temporary PNG and prints its path. On the attach/CLI path, **only `--fullscreen` is
+supported** as a screen-pixel capture mode: it grabs the full virtual desktop after an explicit
+opt-in. Default, `--window`, and `--surface` requests **fail closed** rather than silently
+cropping the desktop framebuffer — that crop is occlusion-prone and can capture unrelated
+on-screen content (privacy risk) until a true native window-surface backend is wired into attach
+(#359). For occlusion-safe window stills from in-process library code, use
+`ComposeAutomator.screenshot(windowIndex)` with the `:recording` native backends. `capture` takes a
+window screenshot and the semantics tree under the same tick, writes `capture.json` +
+`screenshot.png` under a sequenced capture directory (`NNNN-<timestamp>/` under
+`$TMPDIR/spectre/captures` by default, mode `0700`, or under `--out-dir`), appends a crash-proof
+ledger entry, and returns only a decision-grade summary (paths, node counts, image size).
+Default-root captures are lazily capped (keep last 50 closed sessions' captures); client
+`--out-dir` captures are never auto-deleted. Summaries and detach reports point agents at the
+**`spectre-capture`** skill for `jq` recipes — see [Atomic capture](capture.md). `record start`
+records a tracked window by default (index `0`; `--window` / `--window-index`). Full-display
+recording is opt-in via `--fullscreen` (primary display only; multi-monitor desktops are rejected
+until multi-display capture is supported).
 
 `spectre captures list [--all] [--json]` lists ledger-backed capture directories with size and
 live/closed status. `spectre captures prune` supports `--keep N`, `--older-than 7d`, `--all`,

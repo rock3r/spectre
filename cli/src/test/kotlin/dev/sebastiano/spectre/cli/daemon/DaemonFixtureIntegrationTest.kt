@@ -85,9 +85,24 @@ class DaemonFixtureIntegrationTest {
                             .jsonPrimitive
                             .content
                     mcpText(client, "click", mapOf("session_id" to attached, "node_key" to button))
+                    // Window-scoped attach screenshots fail closed (#359).
+                    val windowShot = client.callTool("screenshot", mapOf("session_id" to attached))
+                    assertTrue(
+                        windowShot.isError == true ||
+                            windowShot.content.any {
+                                it is TextContent &&
+                                    (it.text.contains("occlusion", ignoreCase = true) ||
+                                        it.text.contains("fullscreen", ignoreCase = true) ||
+                                        it.text.contains("privacy", ignoreCase = true))
+                            },
+                        "default MCP screenshot must fail closed: ${windowShot.content}",
+                    )
                     val image =
                         client
-                            .callTool("screenshot", mapOf("session_id" to attached))
+                            .callTool(
+                                "screenshot",
+                                mapOf("session_id" to attached, "fullscreen" to true),
+                            )
                             .content
                             .single() as ImageContent
                     assertEquals("image/png", image.mimeType)
@@ -150,12 +165,39 @@ class DaemonFixtureIntegrationTest {
                         .content
 
                 assertEquals(0, runCliBinary(daemonUser, "click", sessionId, buttonKey).exitCode)
+                // #359: default / window-scoped CLI screenshot must fail closed (no PNG).
+                val windowShot =
+                    runCliBinary(
+                        daemonUser,
+                        "screenshot",
+                        sessionId,
+                        "--window",
+                        "0",
+                        "--output",
+                        screenshot.toString(),
+                    )
+                assertTrue(
+                    windowShot.exitCode != 0,
+                    "window screenshot must fail: ${windowShot.output}\n${windowShot.errorOutput}",
+                )
+                assertTrue(
+                    windowShot.errorOutput.contains("occlusion", ignoreCase = true) ||
+                        windowShot.errorOutput.contains("privacy", ignoreCase = true) ||
+                        windowShot.errorOutput.contains("fullscreen", ignoreCase = true),
+                    windowShot.errorOutput,
+                )
+                assertTrue(
+                    !Files.exists(screenshot) || Files.size(screenshot) == 0L,
+                    "must not write an occlusion-prone window crop PNG",
+                )
+
                 assertEquals(
                     0,
                     runCliBinary(
                             daemonUser,
                             "screenshot",
                             sessionId,
+                            "--fullscreen",
                             "--output",
                             screenshot.toString(),
                         )
@@ -215,9 +257,21 @@ class DaemonFixtureIntegrationTest {
                         client.request(DaemonRequest.Click(attached.sessionId, button.key)),
                     )
 
+                    // #359: non-fullscreen window screenshot fails; fullscreen still works.
+                    val windowError = client.request(DaemonRequest.Screenshot(attached.sessionId))
+                    check(windowError is DaemonResponse.Error) {
+                        "expected Error for default window screenshot, got $windowError"
+                    }
+                    assertTrue(
+                        windowError.message.contains("occlusion", ignoreCase = true) ||
+                            windowError.message.contains("privacy", ignoreCase = true) ||
+                            windowError.message.contains("fullscreen", ignoreCase = true),
+                        windowError.message,
+                    )
                     val screenshot =
-                        client.request(DaemonRequest.Screenshot(attached.sessionId))
-                            as DaemonResponse.Screenshot
+                        client.request(
+                            DaemonRequest.Screenshot(attached.sessionId, fullscreen = true)
+                        ) as DaemonResponse.Screenshot
                     assertTrue(screenshot.pngBytes.size >= MIN_PNG_BYTES)
                     assertTrue(screenshot.pngBytes.startsWith(PNG_MAGIC))
                     assertEquals(

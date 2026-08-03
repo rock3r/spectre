@@ -267,7 +267,9 @@ class AgentAttachIntegrationTest {
                 "tag=${buttonNode.testTag} bounds=${buttonNode.bounds}"
         )
 
-        val screenshotBytes = automator.screenshot()
+        // Window-scoped attach screenshots fail closed (#359); fullscreen is the only
+        // screen-pixel capture mode on this path.
+        val screenshotBytes = automator.screenshot(fullscreen = true)
         assertTrue(
             screenshotBytes.size >= MIN_PNG_BYTES,
             "iteration $iteration: screenshot too small (${screenshotBytes.size}b) — not a real PNG?",

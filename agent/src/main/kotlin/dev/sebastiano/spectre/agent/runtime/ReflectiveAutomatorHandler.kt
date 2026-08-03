@@ -374,6 +374,18 @@ internal class ReflectiveAutomatorHandler(
                     )
                 }
 
+        // Window/surface targets: fail closed rather than cropping desktop pixels (#359).
+        // The attach path has no native window-surface capture; Robot region crops are
+        // occlusion-prone and can capture unrelated on-screen content (privacy risk).
+        if (target is ScreenshotTarget.Window) {
+            return AgentResponse.Error(
+                message = WINDOW_SCREENSHOT_UNSUPPORTED_MESSAGE,
+                category =
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.UnsupportedOperation
+                        .wireName,
+            )
+        }
+
         val regionScreenshotMethod =
             regionScreenshotMethodOrError()
                 ?: return AgentResponse.Error(
@@ -385,23 +397,9 @@ internal class ReflectiveAutomatorHandler(
                             .wireName,
                 )
 
-        val image =
-            when (target) {
-                is ScreenshotTarget.Fullscreen ->
-                    // null region = full virtual desktop. Explicit opt-in only (#289).
-                    regionScreenshotMethod.invoke(automator, null) as BufferedImage
-                is ScreenshotTarget.Window ->
-                    captureWindowScreenshot(windows, target, regionScreenshotMethod)
-                        ?: return AgentResponse.Error(
-                            message =
-                                "Tracked window at index ${target.windowIndex} is missing or " +
-                                    "not showing; wait until it is visible before screenshot",
-                            category =
-                                dev.sebastiano.spectre.agent.transport.AgentErrorCategory
-                                    .InvalidSelector
-                                    .wireName,
-                        )
-            }
+        // Only Fullscreen remains (explicit opt-in). null region = full virtual desktop (#289).
+        check(target is ScreenshotTarget.Fullscreen)
+        val image = regionScreenshotMethod.invoke(automator, null) as BufferedImage
         return AgentResponse.Screenshot(imageToPng(image))
     }
 
@@ -410,7 +408,7 @@ internal class ReflectiveAutomatorHandler(
      *
      * Prefers in-process `screenshot(AutomatorNode)` (native window-scoped) when the recording
      * bridge is present and returns a non-degenerate image. Otherwise uses region capture of live
-     * `boundsOnScreen` — the same framebuffer policy as attach window screenshots (#289).
+     * `boundsOnScreen` (node-key path only; window/surface attach screenshots fail closed — #359).
      * Degenerate native crops (empty intersection / DPI mishap) also fall back to region so Windows
      * desktops do not return 1×1 / ~90-byte PNGs for real nodes.
      */
@@ -582,22 +580,6 @@ internal class ReflectiveAutomatorHandler(
                 if (tracked != null && extractIsShowing(tracked, tracked.javaClass)) index else null
             }
             .firstOrNull()
-
-    /**
-     * Capture bounds from the window list we just resolved against. Do not call
-     * `screenshot(windowIndex)`: that path refreshes windows again and can bind a different surface
-     * at the same index after a popup open/close (#289 P2).
-     */
-    private fun captureWindowScreenshot(
-        windows: List<*>,
-        target: ScreenshotTarget.Window,
-        regionScreenshotMethod: Method,
-    ): BufferedImage? {
-        val tracked = windows.getOrNull(target.windowIndex) ?: return null
-        if (!extractIsShowing(tracked, tracked.javaClass)) return null
-        val bounds = tracked.javaClass.getMethod("getComposeSurfaceBoundsOnScreen").invoke(tracked)
-        return regionScreenshotMethod.invoke(automator, bounds) as BufferedImage
-    }
 
     private fun imageToPng(image: BufferedImage): ByteArray {
         // Normalize to a PNG-friendly sRGB type; some platform Robot captures use types that
@@ -881,6 +863,15 @@ internal class ReflectiveAutomatorHandler(
         /** Matches core ScreenCaptureBackend when NativeWindowCaptureBridge is not loadable. */
         const val NATIVE_BRIDGE_UNAVAILABLE_SNIPPET: String =
             "Native window capture bridge is unavailable"
+        /**
+         * Fail-closed message for attach/CLI window or surface screenshots (#359). Must mention
+         * occlusion/privacy risk and point callers at explicit fullscreen opt-in.
+         */
+        const val WINDOW_SCREENSHOT_UNSUPPORTED_MESSAGE: String =
+            "Window/surface screenshots are not supported on the attach path: they would crop " +
+                "occlusion-prone desktop pixels (privacy risk if another window covers the " +
+                "target). Use --fullscreen (or fullscreen=true) for an explicit full-desktop " +
+                "capture."
         /** Sentinel when a fake/partial AutomatorNode lacks an optional boolean getter. */
         val MISSING_BOOLEAN_METHOD: Method = Object::class.java.getMethod("hashCode")
 

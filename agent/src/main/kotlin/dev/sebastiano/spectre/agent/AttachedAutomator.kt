@@ -211,10 +211,13 @@ internal constructor(
     }
 
     /**
-     * Capture a PNG of a tracked window (default) or the full desktop when [fullscreen] is true.
+     * Capture a PNG of the full desktop when [fullscreen] is true.
      *
-     * Without [windowIndex], [surfaceId], or [fullscreen], targets window index 0. Window capture
-     * failures surface as [IOException] rather than silently returning a full-desktop grab (#289).
+     * Window/surface targets (default, [windowIndex], or [surfaceId]) fail closed on the attach
+     * path (#359): they would crop occlusion-prone desktop pixels rather than a native window
+     * surface. Only [fullscreen] is supported as an explicit screen-pixel capture mode. Prefer
+     * in-process `ComposeAutomator.screenshot(windowIndex)` with the recording native backend for
+     * occlusion-safe window stills.
      *
      * @return raw PNG bytes
      */

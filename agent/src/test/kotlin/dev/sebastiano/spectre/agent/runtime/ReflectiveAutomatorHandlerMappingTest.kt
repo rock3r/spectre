@@ -10,10 +10,10 @@ import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import java.awt.Frame
 import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
-import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeFalse
@@ -286,9 +286,8 @@ class ReflectiveAutomatorHandlerMappingTest {
     }
 
     @Test
-    fun `Screenshot op defaults to window surface bounds not full desktop`() {
-        var receivedRegion: Any? = "<not invoked>"
-        val image = java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+    fun `Screenshot op defaults to fail closed not occlusion prone region crop`() {
+        var regionInvoked = false
         val surfaceBounds = Rectangle(10, 20, 800, 600)
         val automator =
             FakeAutomator(
@@ -302,26 +301,19 @@ class ReflectiveAutomatorHandlerMappingTest {
                         )
                     ),
                 screenshotWindowImpl = { error("must not call screenshot(windowIndex)") },
-                screenshotImpl = { region ->
-                    receivedRegion = region
-                    image
+                screenshotImpl = { _ ->
+                    regionInvoked = true
+                    error("must not crop desktop pixels for window-scoped screenshot (#359)")
                 },
             )
         val handler = ReflectiveAutomatorHandler(automator)
 
         val response = handler.handle(AgentRequest.Screenshot())
-        check(response is AgentResponse.Screenshot) {
-            "expected Screenshot, got ${response::class.simpleName}: $response"
+        check(response is AgentResponse.Error) {
+            "expected Error, got ${response::class.simpleName}: $response"
         }
-        assertEquals(
-            surfaceBounds,
-            receivedRegion,
-            "default screenshot must crop to window surface bounds, not full desktop",
-        )
-
-        val decoded = ImageIO.read(response.pngBytes.inputStream())
-        assertEquals(2, decoded.width)
-        assertEquals(2, decoded.height)
+        assertFalse(regionInvoked, "default screenshot must not invoke region capture")
+        assertWindowScreenshotUnsupported(response)
     }
 
     @Test
@@ -349,9 +341,8 @@ class ReflectiveAutomatorHandlerMappingTest {
     }
 
     @Test
-    fun `Screenshot op with explicit window index captures that surface bounds`() {
-        var receivedRegion: Any? = null
-        val image = java.awt.image.BufferedImage(3, 3, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+    fun `Screenshot op with explicit window index fails closed without region crop`() {
+        var regionInvoked = false
         val targetBounds = Rectangle(5, 6, 200, 200)
         val automator =
             FakeAutomator(
@@ -370,22 +361,24 @@ class ReflectiveAutomatorHandlerMappingTest {
                             windowValue = null,
                         ),
                     ),
-                screenshotImpl = { region ->
-                    receivedRegion = region
-                    image
+                screenshotImpl = { _ ->
+                    regionInvoked = true
+                    error("must not crop desktop for --window (#359)")
                 },
             )
         val handler = ReflectiveAutomatorHandler(automator)
 
         val response = handler.handle(AgentRequest.Screenshot(windowIndex = 1))
-        check(response is AgentResponse.Screenshot)
-        assertEquals(targetBounds, receivedRegion)
+        check(response is AgentResponse.Error) {
+            "expected Error, got ${response::class.simpleName}: $response"
+        }
+        assertFalse(regionInvoked)
+        assertWindowScreenshotUnsupported(response)
     }
 
     @Test
-    fun `Screenshot op with surface id captures matching surface bounds without reindex race`() {
-        var receivedRegion: Any? = null
-        val image = java.awt.image.BufferedImage(3, 3, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+    fun `Screenshot op with surface id fails closed without region crop`() {
+        var regionInvoked = false
         val targetBounds = Rectangle(9, 10, 200, 200)
         val automator =
             FakeAutomator(
@@ -405,16 +398,19 @@ class ReflectiveAutomatorHandlerMappingTest {
                         ),
                     ),
                 screenshotWindowImpl = { error("must not re-resolve via screenshot(windowIndex)") },
-                screenshotImpl = { region ->
-                    receivedRegion = region
-                    image
+                screenshotImpl = { _ ->
+                    regionInvoked = true
+                    error("must not crop desktop for --surface (#359)")
                 },
             )
         val handler = ReflectiveAutomatorHandler(automator)
 
         val response = handler.handle(AgentRequest.Screenshot(surfaceId = "window:1"))
-        check(response is AgentResponse.Screenshot)
-        assertEquals(targetBounds, receivedRegion)
+        check(response is AgentResponse.Error) {
+            "expected Error, got ${response::class.simpleName}: $response"
+        }
+        assertFalse(regionInvoked)
+        assertWindowScreenshotUnsupported(response)
     }
 
     @Test
@@ -435,6 +431,24 @@ class ReflectiveAutomatorHandlerMappingTest {
             response.message.contains("window", ignoreCase = true) ||
                 response.message.contains("full-desktop", ignoreCase = true),
             response.message,
+        )
+    }
+
+    private fun assertWindowScreenshotUnsupported(response: AgentResponse.Error) {
+        assertEquals(
+            dev.sebastiano.spectre.agent.transport.AgentErrorCategory.UnsupportedOperation.wireName,
+            response.category,
+            response.message,
+        )
+        val message = response.message
+        assertTrue(
+            message.contains("occlusion", ignoreCase = true) ||
+                message.contains("privacy", ignoreCase = true),
+            "error must name occlusion/privacy risk: $message",
+        )
+        assertTrue(
+            message.contains("fullscreen", ignoreCase = true),
+            "error must point users to explicit fullscreen: $message",
         )
     }
 
