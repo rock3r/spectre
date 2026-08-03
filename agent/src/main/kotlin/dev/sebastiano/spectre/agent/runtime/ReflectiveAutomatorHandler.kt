@@ -479,11 +479,18 @@ internal class ReflectiveAutomatorHandler(
         return regionScreenshotMethod.invoke(automator, bounds) as BufferedImage
     }
 
+    /**
+     * Only the missing recording bridge (inject attach) may fall back to region capture. Other
+     * [UnsupportedOperationException]s from native capture (e.g. non-Frame hosts) must surface —
+     * silent framebuffer fallback would reintroduce occluded-pixel captures.
+     */
     private fun isNativeWindowCaptureUnavailable(ex: ReflectiveOperationException): Boolean {
-        val cause = ex.cause ?: ex
-        val message = cause.message.orEmpty()
-        return cause is UnsupportedOperationException ||
-            message.contains("Native window capture bridge is unavailable")
+        var current: Throwable? = ex
+        while (current != null) {
+            if (current.message.orEmpty().contains(NATIVE_BRIDGE_UNAVAILABLE_SNIPPET)) return true
+            current = current.cause
+        }
+        return false
     }
 
     private fun regionScreenshotMethodOrError(): Method? =
@@ -807,6 +814,9 @@ internal class ReflectiveAutomatorHandler(
         const val CONTINUATION_FQN: String = "kotlin.coroutines.Continuation"
         const val AWT_RECTANGLE_FQN: String = "java.awt.Rectangle"
         const val NO_MESSAGE_PLACEHOLDER: String = "<no message>"
+        /** Matches core ScreenCaptureBackend when NativeWindowCaptureBridge is not loadable. */
+        const val NATIVE_BRIDGE_UNAVAILABLE_SNIPPET: String =
+            "Native window capture bridge is unavailable"
         /** Sentinel when a fake/partial AutomatorNode lacks an optional boolean getter. */
         val MISSING_BOOLEAN_METHOD: Method = Object::class.java.getMethod("hashCode")
 
