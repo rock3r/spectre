@@ -155,21 +155,41 @@ class StockIntellijInjectAttachUiTest {
 
     /**
      * Prefer [candidatePid] when it is a live JVM visible to Attach. On Linux, ide-starter may
-     * expose an xvfb-run wrapper — fall back to [SpectreProcesses] matching idea/intellij.
+     * expose an xvfb-run wrapper — walk that process tree and pick an attachable descendant that
+     * looks like IDEA (never a machine-wide "newest IntelliJ" guess — Codex #381).
      */
     private fun resolveIdeJvmPid(candidatePid: Long): Long {
         val listed = runCatching { SpectreProcesses.listJvmProcesses() }.getOrDefault(emptyList())
-        if (listed.any { it.pid == candidatePid }) return candidatePid
-        val matches = listed.filter { info ->
-            val name = info.displayName.lowercase()
-            ("idea" in name || "intellij" in name) && "jps" !in name
+        val attachableByPid = listed.associateBy { it.pid }
+        if (attachableByPid.containsKey(candidatePid)) return candidatePid
+
+        val root =
+            ProcessHandle.of(candidatePid).orElse(null)
+                ?: error(
+                    "Candidate pid $candidatePid is not a live process and is not attach-visible. " +
+                        "Attach-visible JVMs: ${listed.map { "${it.pid}:${it.displayName}" }}"
+                )
+        val treePids = buildList {
+            add(root.pid())
+            root.descendants().forEach { add(it.pid()) }
         }
-        require(matches.isNotEmpty()) {
-            "Could not resolve IDE JVM pid (candidate=$candidatePid). " +
-                "Attach-visible JVMs: ${listed.map { "${it.pid}:${it.displayName}" }}"
+        val inTree =
+            treePids
+                .mapNotNull { attachableByPid[it] }
+                .filter { info ->
+                    val name = info.displayName.lowercase()
+                    ("idea" in name || "intellij" in name) && "jps" !in name
+                }
+        if (inTree.isNotEmpty()) {
+            // Prefer the oldest suitable descendant in this tree (main IDE JVM, not helpers).
+            return inTree.minBy { it.pid }.pid
         }
-        // Prefer the newest match when multiple (sandbox may leave helpers).
-        return matches.maxBy { it.pid }.pid
+        val anyInTree = treePids.mapNotNull { attachableByPid[it] }
+        require(anyInTree.isNotEmpty()) {
+            "Could not resolve IDE JVM pid under process tree of $candidatePid. " +
+                "Tree pids=$treePids; attach-visible=${listed.map { "${it.pid}:${it.displayName}" }}"
+        }
+        return anyInTree.minBy { it.pid }.pid
     }
 
     private fun waitForInjectLog(logPath: Path, deadlineMs: Long): Boolean {
