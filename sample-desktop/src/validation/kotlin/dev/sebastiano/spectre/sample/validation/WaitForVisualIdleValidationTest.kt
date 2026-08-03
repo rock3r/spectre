@@ -20,6 +20,9 @@ import org.junit.jupiter.api.TestInstance
  *   frame hashes come from native window capture, not `Robot.createScreenCapture` of a screen
  *   rectangle. A full default `stableFrames = 3` streak must complete against a static UI so
  *   one-shot helper cost cannot make visual idle unreachable by construction.
+ *
+ * Skips GitHub-hosted Windows: WGC still capture needs an interactive console (same gate as Issue14
+ * screenshot warmup).
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class WaitForVisualIdleValidationTest {
@@ -29,6 +32,10 @@ class WaitForVisualIdleValidationTest {
     @BeforeAll
     fun start() {
         assumeFalse(GraphicsEnvironment.isHeadless(), "Needs a real AWT display")
+        assumeFalse(
+            isHostedWindows(),
+            "Live Windows Graphics Capture requires an interactive console",
+        )
         fixture.start()
     }
 
@@ -58,4 +65,10 @@ class WaitForVisualIdleValidationTest {
                 waitForVisualIdle(timeout = 15.seconds, stableFrames = 3)
             }
         }
+
+    private companion object {
+        fun isHostedWindows(): Boolean =
+            System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true) &&
+                System.getenv("GITHUB_ACTIONS") == "true"
+    }
 }
