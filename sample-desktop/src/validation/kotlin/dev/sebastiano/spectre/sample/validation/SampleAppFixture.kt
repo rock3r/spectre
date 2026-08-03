@@ -96,27 +96,21 @@ class SampleAppFixture(
         thread.start()
         val entered =
             applicationStarted.await(startupTimeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)
-        val error = startupError.get()
-        if (!entered || error != null) {
-            throw IllegalStateException(
-                describeApplicationStartupFailure(
-                    timeout = startupTimeout,
-                    enteredApplication = entered,
-                    threadAlive = thread.isAlive,
-                    startupError = error,
-                ),
-                error,
-            )
-        }
+        throwIfStartupFailed(enteredApplication = entered)
         // The Window enters the AWT hierarchy a few frames after application{} starts. Poll a
         // bootstrap WindowTracker until it surfaces our window so we can construct the
         // automator with a synthetic driver bound to it. Match by title — `Window.getWindows()`
         // can return multiple top-level windows in unspecified order (other JVM windows, the
         // sample app's previous instance, etc.), so taking `.first()` would risk attaching the
         // synthetic driver to an unrelated surface.
+        //
+        // Re-check [startupError] each poll: Window/composition can still throw *after*
+        // applicationStarted counted down; without this, that failure only surfaces 30s later
+        // as a generic "window did not appear" with no cause (Codex review on #373).
         val bootstrapTracker = WindowTracker()
         val deadline = System.nanoTime() + startupTimeout.inWholeNanoseconds
         while (System.nanoTime() < deadline) {
+            throwIfStartupFailed(enteredApplication = true)
             bootstrapTracker.refresh()
             val tracked =
                 bootstrapTracker.trackedWindows.value.firstOrNull {
@@ -130,7 +124,22 @@ class SampleAppFixture(
             }
             Thread.sleep(WINDOW_POLL.inWholeMilliseconds)
         }
+        throwIfStartupFailed(enteredApplication = true)
         error("Main window with title '$title' did not appear within $startupTimeout")
+    }
+
+    private fun throwIfStartupFailed(enteredApplication: Boolean) {
+        val error = startupError.get()
+        if (enteredApplication && error == null) return
+        throw IllegalStateException(
+            describeApplicationStartupFailure(
+                timeout = startupTimeout,
+                enteredApplication = enteredApplication,
+                threadAlive = ::thread.isInitialized && thread.isAlive,
+                startupError = error,
+            ),
+            error,
+        )
     }
 
     fun stop() {
