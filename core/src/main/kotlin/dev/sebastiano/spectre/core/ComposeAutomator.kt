@@ -564,6 +564,10 @@ private constructor(
         // sample the wait's remaining budget. After the first completed sample, this worker is
         // capped at FRAME_HASH_BUDGET_MS: an unexpectedly hung EDT or capture API still cannot
         // out-block waitForVisualIdle's overall deadline.
+        //
+        // Prefer window-scoped pixels when the recording native still bridge is present (#355):
+        // one-shot helper startup is paid on the cold sample; steady-state budget is sized for a
+        // warm one-shot still (see FRAME_HASH_BUDGET_MS), not a continuous frame stream.
         return runInterruptible {
             runBoundedOnWorker(budgetMs) {
                 refreshWindows()
@@ -571,16 +575,22 @@ private constructor(
                 if (surfaces.isEmpty()) {
                     null
                 } else {
-                    val hashes = IntArray(surfaces.size)
-                    for (i in surfaces.indices) {
-                        val (_, region) = surfaces[i]
-                        // AutoScreenshotter starts a native helper for each still image. Repeating
-                        // that startup on every visual-idle poll makes a stable-frame streak
-                        // unreachable on a cold helper, so use Robot's long-lived region path
-                        // until the native API exposes a persistent frame stream.
-                        hashes[i] = imageHash(screenCaptureBackend.captureRegion(region))
+                    val geometry = readOnEdt {
+                        surfaces.associate { (window, _) ->
+                            window to
+                                (Rectangle(window.window.bounds) to frameInsets(window.window))
+                        }
                     }
-                    hashes.contentHashCode()
+                    hashTrackedSurfacesForVisualIdle(
+                        surfaces = surfaces,
+                        windowBoundsFor = { geometry.getValue(it).first },
+                        frameInsetsFor = { geometry.getValue(it).second },
+                        backend = screenCaptureBackend,
+                        nativeWindowCaptureAvailable =
+                            isNativeWindowCaptureAvailable(
+                                allowsPlatformCapture = robotDriver.allowsPlatformCapture
+                            ),
+                    )
                 }
             }
         }
@@ -752,7 +762,10 @@ private val DEFAULT_QUIET_PERIOD: Duration = 64.milliseconds
 private val DEFAULT_POLL_INTERVAL: Duration = 16.milliseconds
 private const val DEFAULT_STABLE_FRAMES: Int = 3
 private const val EDT_DRAIN_BUDGET_MS: Long = 250
-private const val FRAME_HASH_BUDGET_MS: Long = 500
+// Steady-state sample budget after the cold sample. Warm one-shot native stills are typically
+// a few hundred ms (Issue14: ~400ms hot on macOS); keep headroom for multi-surface waits and
+// slower Windows/Linux helper startup without treating a static UI as permanently unstable.
+private const val FRAME_HASH_BUDGET_MS: Long = 2_000
 private const val FINGERPRINT_BUDGET_MS: Long = 500
 private const val WORKER_INTERRUPT_GRACE_MS: Long = 50
 private const val EMPTY_FINGERPRINT_PREFIX: String = "spectre-fingerprint-budget-elapsed:"

@@ -10,15 +10,16 @@ import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.TestInstance
 
 /**
- * Live acceptance for the cold-capture path in
- * [dev.sebastiano.spectre.core.ComposeAutomator.waitForVisualIdle].
+ * Live acceptance for [dev.sebastiano.spectre.core.ComposeAutomator.waitForVisualIdle].
  *
- * The fixture starts in a fresh worker JVM. Navigation and `waitForIdle()` are semantics-only, so
- * `waitForVisualIdle()` below is the first pixel capture a user performs against a static Compose
- * surface. This is the ordering that previously made an otherwise idle UI time out when native
- * screen capture had a one-off startup cost. One stable frame intentionally isolates that cold
- * public-capture path from the separate window-scoped capture fidelity work in #355, which can make
- * repeated synthetic-screen samples differ even when the Compose content is static.
+ * Covers:
+ * - **Cold capture (#356):** the fixture starts in a fresh worker JVM. Navigation and
+ *   `waitForIdle()` are semantics-only, so the first `waitForVisualIdle` poll is the first pixel
+ *   capture against a static Compose surface.
+ * - **Window-scoped sampling (#355):** with `spectre-recording` on the classpath (this module),
+ *   frame hashes come from native window capture, not `Robot.createScreenCapture` of a screen
+ *   rectangle. A full default `stableFrames = 3` streak must complete against a static UI so
+ *   one-shot helper cost cannot make visual idle unreachable by construction.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class WaitForVisualIdleValidationTest {
@@ -42,6 +43,19 @@ class WaitForVisualIdleValidationTest {
                 waitForIdle()
 
                 waitForVisualIdle(timeout = 5.seconds, stableFrames = 1)
+            }
+        }
+
+    @Test
+    fun `window-scoped visual idle reaches a three-frame streak on a static live Compose surface`() =
+        runBlocking {
+            with(fixture.automator) {
+                navigateToScenario("scenario.hidpi")
+                waitForTestTag("hidpi.target.40x0")
+                waitForIdle()
+
+                // Default stableFrames; longer timeout absorbs cold helper + three warm stills.
+                waitForVisualIdle(timeout = 15.seconds, stableFrames = 3)
             }
         }
 }

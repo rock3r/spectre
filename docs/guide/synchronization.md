@@ -151,17 +151,21 @@ A few details worth knowing:
 - **No surfaces tracked → never idle.** If no Compose surfaces are tracked, or all of
   them have empty bounds, `waitForVisualIdle` returns a different value every poll and
   times out rather than reporting fake stability.
-- **`pollInterval` is a floor, not the real cadence.** Each poll captures the pixel
-  buffer of every tracked surface (`java.awt.Robot.createScreenCapture`) and hashes
-  it. The native capture call is the dominant cost — typically tens of milliseconds
-  per surface on a desktop, more on Wayland, large displays, or software-rendered VMs.
-  In practice the gap between completed polls is whatever the capture takes, with
-  `pollInterval` only kicking in when the capture is faster than that floor. The
-  default `16.milliseconds` is a 60Hz *target*, not a guarantee of 60 polls per
-  second.
+- **`pollInterval` is a floor, not the real cadence.** Each poll captures every tracked
+  Compose surface and hashes the pixels. When `spectre-recording` is on the runtime
+  classpath, surfaces are sampled with the same **window-scoped** native still path as
+  `screenshot(windowIndex)` (occlusion-immune on platforms with true window capture).
+  Without that backend, Spectre falls back to `java.awt.Robot` region capture of the
+  surface rectangle. Capture cost dominates the poll cadence — typically tens to a few
+  hundred milliseconds per surface (one-shot native helper startup is larger on the first
+  sample), more on Wayland, large displays, or software-rendered VMs. In practice the gap
+  between completed polls is whatever the capture takes, with `pollInterval` only kicking
+  in when the capture is faster than that floor. The default `16.milliseconds` is a 60Hz
+  *target*, not a guarantee of 60 polls per second.
 - **Bounded sampling budget.** The first completed frame hash may use the wait's remaining
   timeout: native capture paths can have a one-off cold-start cost. Later frame hashes run on
-  a worker thread capped at 500ms. If a steady-state capture or hash exceeds that cap — or no
+  a worker thread capped at 2s so a warm one-shot window still can complete without treating a
+  static UI as permanently unstable. If a steady-state capture or hash exceeds that cap — or no
   Compose surface is available — that poll is treated as unsampleable: the stable-frame streak
   resets and the wait times out rather than silently succeeding. When that happens,
   `IdleTimeoutException` reports how many samples were unsampleable (capture budget or missing
