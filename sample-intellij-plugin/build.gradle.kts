@@ -310,10 +310,7 @@ val stockInjectUiTest by
         // Resolve paths eagerly at configuration time (Test.systemProperty Object overload
         // does not reliably expand Provider values on all Gradle versions). inputs.file above
         // still owns up-to-date invalidation when those artifacts change.
-        systemProperty(
-            "path.to.no.core.plugin",
-            noCorePluginZipProvider.get().asFile.absolutePath,
-        )
+        systemProperty("path.to.no.core.plugin", noCorePluginZipProvider.get().asFile.absolutePath)
         systemProperty(
             "dev.sebastiano.spectre.agent.runtimeJar",
             agentRuntimeJarProvider.get().asFile.absolutePath,
