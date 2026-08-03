@@ -182,13 +182,25 @@ class AgentAttachIntegrationTest {
             // mask identity regressions (identity does not need keyboard focus).
             assertWindowIdentityMatchesWindows(automator, windows, iteration = iteration)
 
+            // #362 P2/P3 attach parity: fingerprint wait + human-readable dump before input.
+            automator.waitForIdle()
+            val treeDump = automator.printTree()
+            assertTrue(
+                treeDump.isNotBlank(),
+                "iteration $iteration: printTree() empty after waitForIdle; expected fixture tags",
+            )
+            assertTrue(
+                treeDump.contains(TAG_BUTTON) || treeDump.contains(buttonKey),
+                "iteration $iteration: printTree() should mention button tag or key; dump=$treeDump",
+            )
+
             // #364: raise/activate the fixture window via the attach wire before Robot input.
             // Bare-throws on any wire/handler failure so a missing FocusWindow op fails loudly.
             automator.focusWindow(buttonKey)
 
-            // Click bare-throws on failure (no runCatching) so a broken suspend bridge or a
-            // wire-level error fails the test loudly.
-            automator.click(buttonKey)
+            // #362: DTO click convenience uses the same wire path as key-based click.
+            val buttonNode = buttonMatches.first()
+            automator.click(buttonNode)
 
             val textFieldMatches = automator.findByTestTag(TAG_TEXT_FIELD)
             assertTrue(
@@ -225,6 +237,17 @@ class AgentAttachIntegrationTest {
             assertTrue(
                 screenshotBytes.startsWith(PNG_MAGIC),
                 "iteration $iteration: screenshot bytes do not start with PNG magic header",
+            )
+
+            // #362: node-bounds PNG via window-scoped screenshot(AutomatorNode) on the agent.
+            val nodePng = automator.screenshot(buttonNode)
+            assertTrue(
+                nodePng.size >= MIN_PNG_BYTES,
+                "iteration $iteration: node screenshot too small (${nodePng.size}b)",
+            )
+            assertTrue(
+                nodePng.startsWith(PNG_MAGIC),
+                "iteration $iteration: node screenshot missing PNG magic",
             )
         }
 

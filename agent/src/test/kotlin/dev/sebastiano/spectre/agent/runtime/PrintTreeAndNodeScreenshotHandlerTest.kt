@@ -30,7 +30,7 @@ class PrintTreeAndNodeScreenshotHandlerTest {
     }
 
     @Test
-    fun `Screenshot with nodeKey invokes window-scoped node overload`() {
+    fun `Screenshot with nodeKey prefers window-scoped node overload`() {
         val node =
             DebugFakeNode(
                 keyValue = "window:0:0:5",
@@ -45,6 +45,29 @@ class PrintTreeAndNodeScreenshotHandlerTest {
         assertEquals(1, fake.nodeScreenshotCalls)
         assertEquals(0, fake.regionScreenshotCalls)
         assertEquals(node, fake.lastNodeScreenshotTarget)
+    }
+
+    @Test
+    fun `Screenshot nodeKey falls back to region when native bridge unavailable`() {
+        val node =
+            DebugFakeNode(
+                keyValue = "window:0:0:5",
+                boundsOnScreenValue = Rectangle(10, 20, 40, 30),
+            )
+        val fake =
+            DebugFakeAutomator(
+                allNodesValue = listOf(node),
+                nodeScreenshotThrows =
+                    UnsupportedOperationException("Native window capture bridge is unavailable"),
+            )
+        val handler = ReflectiveAutomatorHandler(fake)
+
+        val response = handler.handle(AgentRequest.Screenshot(nodeKey = "window:0:0:5"))
+        check(response is AgentResponse.Screenshot) { "expected Screenshot, got $response" }
+        assertTrue(response.pngBytes.isNotEmpty())
+        assertEquals(1, fake.nodeScreenshotCalls)
+        assertEquals(1, fake.regionScreenshotCalls)
+        assertEquals(Rectangle(10, 20, 40, 30), fake.lastRegion)
     }
 
     @Test
@@ -68,6 +91,7 @@ class PrintTreeAndNodeScreenshotHandlerTest {
 internal class DebugFakeAutomator(
     private val allNodesValue: List<Any> = emptyList(),
     private val printTreeValue: String = "",
+    private val nodeScreenshotThrows: RuntimeException? = null,
 ) {
     var printTreeCalls = 0
     var regionScreenshotCalls = 0
@@ -103,6 +127,7 @@ internal class DebugFakeAutomator(
     fun screenshot(node: DebugFakeNode): BufferedImage {
         nodeScreenshotCalls++
         lastNodeScreenshotTarget = node
+        nodeScreenshotThrows?.let { throw it }
         val bounds = node.getBoundsOnScreen()
         return BufferedImage(
             bounds.width.coerceAtLeast(1),
