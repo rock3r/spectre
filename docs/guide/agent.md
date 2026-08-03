@@ -268,9 +268,11 @@ directory's permissions. Spectre creates the default per-attach directory and so
 mode 0700/0600 on POSIX, an owner-only ACL (owner full control, inherited ACEs dropped) on
 Windows — but it does not tighten directories it did not create.
 
-`AgentAttach.attach` runs a **same-user preflight** via `ProcessHandle` and throws
+`AgentAttach.attach` runs a **same-user preflight** and throws
 `AttachPermissionDeniedException` if the target JVM is owned by a different OS user (the
-JDK Attach API only works across attach-compatible same-user processes on POSIX).
+JDK Attach API only works across attach-compatible same-user processes on POSIX). On
+Linux/macOS the preflight prefers numeric UID equality when both sides can be resolved, and
+falls back to `ProcessHandle` usernames when UID lookup is unavailable (#166).
 
 The JEP 451 `-XX:+EnableDynamicAgentLoading` flag is **not** verified by Spectre yet — the
 JVM itself prints a stderr warning if it's missing, which is the source of truth. A follow-up

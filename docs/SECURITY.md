@@ -38,7 +38,8 @@ out of scope.
    ALLOW full-control ACE for the owning user, with inherited ACEs dropped — to both the private
    directory and the socket file. Either way the protection is set explicitly by `IpcServer` to
    defend against permissive umasks or inherited ACLs, and the same-user preflight compares the
-   attacher's and target's process owners (`ProcessHandle`) rather than trusting the socket alone.
+   attacher's and target's process owners (numeric UID on POSIX when available, otherwise
+   `ProcessHandle` usernames; see #166) rather than trusting the socket alone.
    If callers override `AttachOptions.udsPath` with a path under an existing directory, they own
    that parent directory's permissions; Spectre only tightens directories it creates itself.
    Any process running as the same OS user can connect and drive the target. There is no

@@ -74,7 +74,8 @@ public final class dev/sebastiano/spectre/agent/AttachOptions$Companion {
 }
 
 public final class dev/sebastiano/spectre/agent/AttachPermissionDeniedException : dev/sebastiano/spectre/agent/SpectreAttachException {
-	public fun <init> (JLjava/lang/String;)V
+	public fun <init> (JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/Long;)V
+	public synthetic fun <init> (JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/Long;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 }
 
 public final class dev/sebastiano/spectre/agent/AttachPlatformUnsupportedException : dev/sebastiano/spectre/agent/SpectreAttachException {

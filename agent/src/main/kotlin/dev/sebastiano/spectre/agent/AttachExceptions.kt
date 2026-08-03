@@ -57,18 +57,53 @@ public class AgentBootstrapTimeoutException(udsPath: java.nio.file.Path, timeout
 /**
  * Thrown when the target JVM is owned by a different OS user than the attacher.
  *
- * The JDK Attach API requires compatible same-user ownership on POSIX. We pre-check this with
- * `ProcessHandle.of(pid).info().user()`, which reports user names rather than numeric UIDs, because
- * the underlying error from `VirtualMachine.attach` is generic and hard to diagnose.
+ * The JDK Attach API requires compatible same-user ownership on POSIX. On POSIX hosts we prefer
+ * numeric UID comparison when both sides resolve, and fall back to `ProcessHandle` usernames
+ * otherwise (#166). The underlying error from `VirtualMachine.attach` is generic and hard to
+ * diagnose, so this preflight surfaces a structured ownership message first.
+ *
+ * Optional [currentUser], [targetUid], and [currentUid] improve diagnostics; the two-argument form
+ * remains source-compatible for existing call sites.
  */
 @ExperimentalSpectreAgentApi
-public class AttachPermissionDeniedException(targetPid: Long, targetUser: String?) :
+public class AttachPermissionDeniedException(
+    targetPid: Long,
+    targetUser: String?,
+    currentUser: String? = System.getProperty("user.name"),
+    targetUid: Long? = null,
+    currentUid: Long? = null,
+) :
     SpectreAttachException(
-        "Target JVM (pid=$targetPid) is owned by " +
-            "${targetUser?.let { "user '$it'" } ?: "a different user"} but this process is " +
-            "running as '${System.getProperty("user.name")}'. The JDK Attach API only works " +
-            "across processes owned by the same OS user on POSIX systems."
+        buildAttachPermissionDeniedMessage(
+            targetPid = targetPid,
+            targetUser = targetUser,
+            currentUser = currentUser,
+            targetUid = targetUid,
+            currentUid = currentUid,
+        )
     )
+
+private fun buildAttachPermissionDeniedMessage(
+    targetPid: Long,
+    targetUser: String?,
+    currentUser: String?,
+    targetUid: Long?,
+    currentUid: Long?,
+): String {
+    val targetDesc = formatOwner(targetUser, targetUid)
+    val currentDesc = formatOwner(currentUser, currentUid)
+    return "Target JVM (pid=$targetPid) is owned by $targetDesc but this process is " +
+        "running as $currentDesc. The JDK Attach API only works across processes owned by " +
+        "the same OS user identity (numeric UID on POSIX when available)."
+}
+
+private fun formatOwner(userName: String?, uid: Long?): String =
+    when {
+        uid != null && userName != null -> "uid=$uid (user '$userName')"
+        uid != null -> "uid=$uid"
+        userName != null -> "user '$userName'"
+        else -> "a different user"
+    }
 
 /**
  * Thrown when the agent JAR could not be located by [AgentAttach.attach]. Caller can fix by passing
