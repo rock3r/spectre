@@ -291,6 +291,7 @@ val uiTest by
 // #353 / #376: stock IntelliJ inject attach against the no-core sample plugin.
 // Boots IDEA, installs tags-only plugin (no spectre-core), AgentAttach from test JVM.
 // NOT wired into :check — always-on stock inject CI is an intentional non-goal.
+val noCorePluginZipProvider = buildNoCorePlugin.flatMap { it.outputZip }
 val stockInjectUiTest by
     tasks.registering(Test::class) {
         group = "verification"
@@ -301,14 +302,18 @@ val stockInjectUiTest by
         testClassesDirs = uiTestSourceSet.output.classesDirs
         classpath = uiTestSourceSet.runtimeClasspath
         dependsOn(buildNoCorePlugin, agentRuntimeJarProvider)
+        // Invalidate when inject packaging or agent-runtime content changes (same pattern as
+        // `:agent:test` wiring `runtimeJar` via inputs.file — Bugbot #381).
+        inputs.file(noCorePluginZipProvider)
+        inputs.file(agentRuntimeJarProvider)
         filter { includeTestsMatching("*StockIntellijInjectAttachUiTest*") }
         systemProperty(
             "path.to.no.core.plugin",
-            buildNoCorePlugin.flatMap { it.outputZip }.get().asFile.absolutePath,
+            noCorePluginZipProvider.map { it.asFile.absolutePath },
         )
         systemProperty(
             "dev.sebastiano.spectre.agent.runtimeJar",
-            agentRuntimeJarProvider.get().asFile.absolutePath,
+            agentRuntimeJarProvider.map { it.asFile.absolutePath },
         )
         javaLauncher.set(
             javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(25)) }
