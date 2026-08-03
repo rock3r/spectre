@@ -101,11 +101,18 @@ internal fun isNativeWindowCaptureAvailable(
     return nativeWindowCaptureFor(classLoader) != null
 }
 
-/** GitHub Actions hosted Windows is not an interactive console for WGC stills. */
+/**
+ * GitHub-**hosted** Windows Actions runners are not an interactive console for WGC stills.
+ *
+ * Uses `RUNNER_ENVIRONMENT=github-hosted` (not merely `GITHUB_ACTIONS=true`) so interactive
+ * self-hosted Windows runners keep native window capture.
+ */
 internal fun isNonInteractiveHostedWindows(
     osName: String = System.getProperty("os.name").orEmpty(),
     getenv: (String) -> String? = System::getenv,
-): Boolean = osName.startsWith("Windows", ignoreCase = true) && getenv("GITHUB_ACTIONS") == "true"
+): Boolean =
+    osName.startsWith("Windows", ignoreCase = true) &&
+        getenv("RUNNER_ENVIRONMENT") == "github-hosted"
 
 /** Marker for classloader defaults (avoids referencing ComposeAutomator from this helper). */
 private object VisualIdleSurfaceCapture

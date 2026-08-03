@@ -284,18 +284,34 @@ class VisualIdleSurfaceCaptureTest {
     }
 
     @Test
-    fun `native window capture is unavailable on GitHub Actions Windows`() {
+    fun `native window capture is unavailable on GitHub-hosted Windows`() {
         assertTrue(
             isNonInteractiveHostedWindows(
                 osName = "Windows 11",
-                getenv = { if (it == "GITHUB_ACTIONS") "true" else null },
+                getenv = { if (it == "RUNNER_ENVIRONMENT") "github-hosted" else null },
             )
         )
         assertFalse(
             isNativeWindowCaptureAvailable(
                 allowsPlatformCapture = true,
                 osName = "Windows 11",
-                getenv = { if (it == "GITHUB_ACTIONS") "true" else null },
+                getenv = { if (it == "RUNNER_ENVIRONMENT") "github-hosted" else null },
+            )
+        )
+    }
+
+    @Test
+    fun `native window capture remains available on self-hosted Actions Windows`() {
+        assertFalse(
+            isNonInteractiveHostedWindows(
+                osName = "Windows 11",
+                getenv = {
+                    when (it) {
+                        "GITHUB_ACTIONS" -> "true"
+                        "RUNNER_ENVIRONMENT" -> "self-hosted"
+                        else -> null
+                    }
+                },
             )
         )
     }
@@ -306,11 +322,11 @@ class VisualIdleSurfaceCaptureTest {
     }
 
     @Test
-    fun `native window capture remains available on GitHub Actions non-Windows`() {
+    fun `native window capture remains available on GitHub-hosted non-Windows`() {
         assertFalse(
             isNonInteractiveHostedWindows(
                 osName = "Linux",
-                getenv = { if (it == "GITHUB_ACTIONS") "true" else null },
+                getenv = { if (it == "RUNNER_ENVIRONMENT") "github-hosted" else null },
             )
         )
     }
