@@ -118,6 +118,8 @@ internal suspend fun waitForVisualIdleInternal(
     val window = ArrayDeque<Int>(stableFrames)
     var sampleCount = 0
     var unsampleableCount = 0
+    var lastSuccessfulHash: Int? = null
+    var sawHashChange = false
 
     while (true) {
         val hash = frameHash((deadline - clock.now()).coerceAtLeast(0))
@@ -128,6 +130,9 @@ internal suspend fun waitForVisualIdleInternal(
                 window.clear()
                 false
             } else {
+                val previous = lastSuccessfulHash
+                if (previous != null && previous != hash) sawHashChange = true
+                lastSuccessfulHash = hash
                 if (window.isNotEmpty() && window.last() != hash) {
                     window.clear()
                 }
@@ -145,6 +150,7 @@ internal suspend fun waitForVisualIdleInternal(
                         stableFrames = stableFrames,
                         sampleCount = sampleCount,
                         unsampleableCount = unsampleableCount,
+                        sawHashChange = sawHashChange,
                     )
             )
         }
@@ -155,23 +161,35 @@ internal suspend fun waitForVisualIdleInternal(
 /**
  * Builds the diagnostic tail for a [waitForVisualIdleInternal] timeout.
  *
- * Pure so unit tests can pin the wording without driving the full wait loop.
+ * Pure so unit tests can pin the wording without driving the full wait loop. Only blames unstable
+ * frames when non-null hashes actually differed; intermittent unsampleable polls that merely
+ * interrupt identical hashes are not reported as pixel churn.
  */
 internal fun visualIdleTimeoutDiagnostic(
     stableFrames: Int,
     sampleCount: Int,
     unsampleableCount: Int,
+    sawHashChange: Boolean,
 ): String {
     val unstable = "frames did not stabilise across $stableFrames samples"
-    if (unsampleableCount <= 0 || sampleCount <= 0) return unstable
     val unsampleable =
-        "$unsampleableCount/$sampleCount samples were unsampleable " +
-            "(capture budget exceeded or no Compose surface available)"
-    return if (unsampleableCount == sampleCount) {
-        // Every attempt failed to produce a hash — do not send the caller hunting for animations.
-        unsampleable
-    } else {
-        "$unsampleable; $unstable"
+        if (unsampleableCount > 0 && sampleCount > 0) {
+            "$unsampleableCount/$sampleCount samples were unsampleable " +
+                "(capture budget exceeded or no Compose surface available)"
+        } else {
+            null
+        }
+
+    return when {
+        unsampleable == null -> unstable
+        unsampleableCount == sampleCount ->
+            // Every attempt failed to produce a hash — do not send the caller hunting for
+            // animations.
+            unsampleable
+        sawHashChange -> "$unsampleable; $unstable"
+        else ->
+            // Successful hashes were identical; nulls alone prevented the streak.
+            "$unsampleable; stable-frame streak did not complete across $stableFrames samples"
     }
 }
 

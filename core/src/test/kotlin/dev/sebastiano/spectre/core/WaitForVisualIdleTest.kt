@@ -221,7 +221,40 @@ class WaitForVisualIdleTest {
         )
         assertTrue(
             message.contains("frames did not stabilise"),
-            "Should still mention unstable frames when some hashes were returned: $message",
+            "Should still mention unstable frames when hashes actually changed: $message",
+        )
+    }
+
+    @Test
+    fun `timeout does not blame unstable frames when nulls interrupt identical hashes`() = runTest {
+        val clock = FakeClock()
+        var calls = 0
+        val error =
+            assertFailsWith<IdleTimeoutException> {
+                waitForVisualIdleInternal(
+                    timeout = 80.milliseconds,
+                    stableFrames = 3,
+                    pollInterval = 10.milliseconds,
+                    // Identical successful hashes interrupted by nulls: streak never
+                    // completes, but pixels that did hash never changed.
+                    frameHash = { _ -> if (calls++ % 2 == 0) null else 7 },
+                    clock = clock,
+                    sleep = clock::advance,
+                )
+            }
+
+        val message = error.message.orEmpty()
+        assertTrue(
+            Regex("""\d+/\d+ samples were unsampleable""").containsMatchIn(message),
+            "Should report unsampleable sample counts: $message",
+        )
+        assertTrue(
+            !message.contains("frames did not stabilise"),
+            "Must not blame pixel churn when non-null hashes were identical: $message",
+        )
+        assertTrue(
+            message.contains("stable-frame streak did not complete"),
+            "Should explain incomplete streak without implying animation: $message",
         )
     }
 
@@ -276,14 +309,24 @@ class WaitForVisualIdleTest {
     fun `visualIdleTimeoutDiagnostic only blames unstable frames when every sample hashed`() {
         assertEquals(
             "frames did not stabilise across 3 samples",
-            visualIdleTimeoutDiagnostic(stableFrames = 3, sampleCount = 5, unsampleableCount = 0),
+            visualIdleTimeoutDiagnostic(
+                stableFrames = 3,
+                sampleCount = 5,
+                unsampleableCount = 0,
+                sawHashChange = true,
+            ),
         )
     }
 
     @Test
     fun `visualIdleTimeoutDiagnostic prioritises fully unsampleable waits`() {
         val message =
-            visualIdleTimeoutDiagnostic(stableFrames = 3, sampleCount = 4, unsampleableCount = 4)
+            visualIdleTimeoutDiagnostic(
+                stableFrames = 3,
+                sampleCount = 4,
+                unsampleableCount = 4,
+                sawHashChange = false,
+            )
         assertTrue(
             message.startsWith("4/4 samples were unsampleable"),
             "Should lead with unsampleable counts: $message",
@@ -295,6 +338,29 @@ class WaitForVisualIdleTest {
         assertTrue(
             !message.contains("frames did not stabilise"),
             "All-null waits should not claim pixel churn: $message",
+        )
+    }
+
+    @Test
+    fun `visualIdleTimeoutDiagnostic omits unstable-frame blame when hashes never changed`() {
+        val message =
+            visualIdleTimeoutDiagnostic(
+                stableFrames = 3,
+                sampleCount = 6,
+                unsampleableCount = 3,
+                sawHashChange = false,
+            )
+        assertTrue(
+            message.contains("3/6 samples were unsampleable"),
+            "Should report unsampleable counts: $message",
+        )
+        assertTrue(
+            !message.contains("frames did not stabilise"),
+            "No observed pixel change → no unstable-frame blame: $message",
+        )
+        assertTrue(
+            message.contains("stable-frame streak did not complete"),
+            "Should explain incomplete streak: $message",
         )
     }
 
