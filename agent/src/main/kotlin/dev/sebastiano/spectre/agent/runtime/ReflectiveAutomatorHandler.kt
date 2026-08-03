@@ -36,9 +36,8 @@ import javax.imageio.ImageIO
  * developers expect them; we deliberately don't ship them across the wire because that would mean
  * smuggling `Throwable` types we can't safely reconstruct on the client side.
  */
-// Snapshot/input/wait ops each live in helpers where possible; remaining private methods stay
-// under detekt's function-count budget.
-@Suppress("TooManyFunctions")
+// Snapshot/input/wait/debug ops: helpers hold most of the surface; this class is the dispatch hub.
+@Suppress("TooManyFunctions", "LargeClass")
 internal class ReflectiveAutomatorHandler(
     private val automator: Any,
     private val isTargetJvmFocused: () -> Boolean = ::targetJvmHasKeyboardFocus,
@@ -163,6 +162,7 @@ internal class ReflectiveAutomatorHandler(
             is AgentRequest.WaitForNode -> waitOps.handleWaitForNode(request)
             is AgentRequest.WaitForVisualIdle -> waitOps.handleWaitForVisualIdle(request)
             is AgentRequest.WaitForIdle -> waitOps.handleWaitForIdle(request)
+            AgentRequest.PrintTree -> handlePrintTree()
         }
 
     // Note on un-caught exceptions: any non-reflective `RuntimeException` thrown by the
@@ -331,7 +331,24 @@ internal class ReflectiveAutomatorHandler(
         return AgentResponse.Ok
     }
 
+    private fun handlePrintTree(): AgentResponse {
+        val method =
+            automatorClass.methods.firstOrNull { it.name == "printTree" && it.parameterCount == 0 }
+                ?: return AgentResponse.Error(
+                    message = "ComposeAutomator does not expose printTree()",
+                    category =
+                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory
+                            .UnsupportedOperation
+                            .wireName,
+                )
+        val text = (method.invoke(automator) as? String).orEmpty()
+        return AgentResponse.TreeDump(text = text)
+    }
+
     private fun handleScreenshot(request: AgentRequest.Screenshot): AgentResponse {
+        if (request.nodeKey != null) {
+            return handleNodeScreenshot(request)
+        }
         refreshWindowsMethod.invoke(automator)
         val windows = getWindowsMethod.invoke(automator) as List<*>
         val windowSummaries = windows.mapIndexedNotNull { index, tracked ->
@@ -358,11 +375,7 @@ internal class ReflectiveAutomatorHandler(
                 }
 
         val regionScreenshotMethod =
-            automatorClass.methods.firstOrNull {
-                it.name == "screenshot" &&
-                    it.parameterTypes.size == 1 &&
-                    it.parameterTypes[0].name == AWT_RECTANGLE_FQN
-            }
+            regionScreenshotMethodOrError()
                 ?: return AgentResponse.Error(
                     message =
                         "ComposeAutomator does not expose screenshot(Rectangle?) on this build",
@@ -393,15 +406,87 @@ internal class ReflectiveAutomatorHandler(
     }
 
     /**
-     * Default (no windowIndex/surfaceId): first showing surface so delayed-show hosts listed
-     * for #362 agreement are not the visual capture target.
+     * Capture a node's on-screen bounds (#362) via in-process `screenshot(AutomatorNode)`.
+     *
+     * Must not use the screen-framebuffer `screenshot(Rectangle?)` path: that can include pixels
+     * from occluding apps on macOS/Windows. The node overload is native window-scoped and matches
+     * attach documentation parity with in-process Spectre.
+     */
+    private fun handleNodeScreenshot(request: AgentRequest.Screenshot): AgentResponse {
+        val nodeKey =
+            request.nodeKey
+                ?: return AgentResponse.Error(
+                    message = "nodeKey required for node screenshot",
+                    category =
+                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InvalidSelector
+                            .wireName,
+                )
+        if (request.fullscreen || request.windowIndex != null || request.surfaceId != null) {
+            return AgentResponse.Error(
+                message =
+                    "nodeKey screenshot cannot be combined with fullscreen, windowIndex, or surfaceId",
+                category =
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InvalidSelector
+                        .wireName,
+            )
+        }
+        val nodeScreenshotMethod =
+            nodeScreenshotMethodOrError()
+                ?: return AgentResponse.Error(
+                    message =
+                        "ComposeAutomator does not expose screenshot(AutomatorNode) on this build",
+                    category =
+                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory
+                            .UnsupportedOperation
+                            .wireName,
+                )
+        refreshWindowsMethod.invoke(automator)
+        val node =
+            (allNodesMethod.invoke(automator) as List<*>).firstOrNull {
+                it != null && extractKey(it) == nodeKey
+            }
+                ?: return AgentResponse.Error(
+                    message = "No node found with key=$nodeKey",
+                    category =
+                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory.NodeNotFound
+                            .wireName,
+                )
+        val image = nodeScreenshotMethod.invoke(automator, node) as BufferedImage
+        return AgentResponse.Screenshot(imageToPng(image))
+    }
+
+    private fun regionScreenshotMethodOrError(): Method? =
+        automatorClass.methods.firstOrNull {
+            it.name == "screenshot" &&
+                it.parameterTypes.size == 1 &&
+                it.parameterTypes[0].name == AWT_RECTANGLE_FQN
+        }
+
+    /**
+     * `screenshot(node: AutomatorNode)` — single non-primitive param that is not [Rectangle] /
+     * [Int] (windowIndex overload). Agent has no compile-time `core` dependency, so match by
+     * exclusion rather than FQN.
+     */
+    private fun nodeScreenshotMethodOrError(): Method? =
+        automatorClass.methods.firstOrNull {
+            it.name == "screenshot" &&
+                it.parameterTypes.size == 1 &&
+                it.parameterTypes[0].name != AWT_RECTANGLE_FQN &&
+                it.parameterTypes[0] != Int::class.javaPrimitiveType &&
+                it.parameterTypes[0] != Int::class.javaObjectType
+        }
+
+    /**
+     * Default (no windowIndex/surfaceId/nodeKey): first showing surface so delayed-show hosts
+     * listed for #362 agreement are not the visual capture target.
      */
     private fun defaultScreenshotWindowIndex(
         request: AgentRequest.Screenshot,
         windows: List<*>,
     ): Int? =
         when {
-            request.fullscreen || request.surfaceId != null -> request.windowIndex
+            request.fullscreen || request.surfaceId != null || request.nodeKey != null ->
+                request.windowIndex
             request.windowIndex != null -> request.windowIndex
             else -> firstShowingWindowIndex(windows) ?: 0
         }

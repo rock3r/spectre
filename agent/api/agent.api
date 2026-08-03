@@ -92,6 +92,7 @@ public final class dev/sebastiano/spectre/agent/AttachedAutomator : java/lang/Au
 	public final fun allNodes ()Ljava/util/List;
 	public final fun capture (Ljava/lang/Integer;)Ldev/sebastiano/spectre/agent/AtomicCaptureResult;
 	public static synthetic fun capture$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/Integer;ILjava/lang/Object;)Ldev/sebastiano/spectre/agent/AtomicCaptureResult;
+	public final fun click (Ldev/sebastiano/spectre/agent/transport/NodeSnapshotDto;)V
 	public final fun click (Ljava/lang/String;)V
 	public fun close ()V
 	public final fun doubleClick (Ljava/lang/String;)V
@@ -106,6 +107,8 @@ public final class dev/sebastiano/spectre/agent/AttachedAutomator : java/lang/Au
 	public static synthetic fun longClick$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/String;JILjava/lang/Object;)V
 	public final fun pressKey (II)V
 	public static synthetic fun pressKey$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;IIILjava/lang/Object;)V
+	public final fun printTree ()Ljava/lang/String;
+	public final fun screenshot (Ldev/sebastiano/spectre/agent/transport/NodeSnapshotDto;)[B
 	public final fun screenshot (Ljava/lang/Integer;Ljava/lang/String;Z)[B
 	public static synthetic fun screenshot$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/Integer;Ljava/lang/String;ZILjava/lang/Object;)[B
 	public final fun scrollWheel (Ljava/lang/String;I)V
