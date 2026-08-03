@@ -8,6 +8,7 @@ import java.awt.Rectangle
 import java.awt.image.BufferedImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -280,6 +281,54 @@ class VisualIdleSurfaceCaptureTest {
         } finally {
             window.dispose()
         }
+    }
+
+    @Test
+    fun `native window capture is unavailable on GitHub-hosted Windows`() {
+        assertTrue(
+            isNonInteractiveHostedWindows(
+                osName = "Windows 11",
+                getenv = { if (it == "RUNNER_ENVIRONMENT") "github-hosted" else null },
+            )
+        )
+        assertFalse(
+            isNativeWindowCaptureAvailable(
+                allowsPlatformCapture = true,
+                osName = "Windows 11",
+                getenv = { if (it == "RUNNER_ENVIRONMENT") "github-hosted" else null },
+            )
+        )
+    }
+
+    @Test
+    fun `native window capture remains available on self-hosted Actions Windows`() {
+        assertFalse(
+            isNonInteractiveHostedWindows(
+                osName = "Windows 11",
+                getenv = {
+                    when (it) {
+                        "GITHUB_ACTIONS" -> "true"
+                        "RUNNER_ENVIRONMENT" -> "self-hosted"
+                        else -> null
+                    }
+                },
+            )
+        )
+    }
+
+    @Test
+    fun `native window capture remains available on interactive Windows`() {
+        assertFalse(isNonInteractiveHostedWindows(osName = "Windows 11", getenv = { null }))
+    }
+
+    @Test
+    fun `native window capture remains available on GitHub-hosted non-Windows`() {
+        assertFalse(
+            isNonInteractiveHostedWindows(
+                osName = "Linux",
+                getenv = { if (it == "RUNNER_ENVIRONMENT") "github-hosted" else null },
+            )
+        )
     }
 
     private fun tracked(frame: Frame): TrackedWindow =

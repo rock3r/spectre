@@ -305,11 +305,13 @@ private constructor(
     /**
      * Atomic capture of one window: semantics tree snapshot + window PNG taken back-to-back.
      *
-     * The tree (including node geometry) is read first; an immediate Robot region screenshot
-     * follows without returning control to the caller between the two. This method is the
-     * best-effort same-tick pair agents should use instead of separate `allNodes()` +
-     * `screenshot()` calls that can straddle a recomposition. It intentionally does not use a
-     * one-shot native helper, whose startup time would invalidate this adjacency guarantee.
+     * The tree (including node geometry) is read first; the PNG is taken immediately afterward
+     * without returning control to the caller. Prefer settling with [waitForVisualIdle] /
+     * [waitForIdle] first so the pair stays decision-grade across any native still-helper latency.
+     * When `spectre-recording` is present the PNG uses the same **window-scoped** native still path
+     * as [screenshot] with a [windowIndex] (fails loudly rather than substituting a screen-region
+     * crop after a native failure). Without that backend (e.g. inject payload that omits
+     * recording), the still is a Robot region capture of the Compose surface.
      *
      * Node bounds in the returned document use **image-pixel space of the PNG as primary** and
      * screen space as secondary. Callers that want files on disk should pass the result through
@@ -327,6 +329,8 @@ private constructor(
         // *before* taking the PNG so JSON and pixels cannot describe different window layouts.
         data class PreCaptureSnapshot(
             val captureRegion: Rectangle,
+            val windowBounds: Rectangle,
+            val frameInsets: java.awt.Insets,
             val densityScaleX: Double,
             val densityScaleY: Double,
             val nodeSnapshots: List<CaptureNodeSnapshot>,
@@ -336,6 +340,8 @@ private constructor(
             val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
             PreCaptureSnapshot(
                 captureRegion = region,
+                windowBounds = Rectangle(trackedWindow.window.bounds),
+                frameInsets = frameInsets(trackedWindow.window),
                 densityScaleX = transform.scaleX,
                 densityScaleY = transform.scaleY,
                 nodeSnapshots =
@@ -357,13 +363,33 @@ private constructor(
                     },
             )
         }
-        val image = screenCaptureBackend.captureRegion(pre.captureRegion)
+        // Window-scoped still when the recording native bridge is present (#355). Injected core
+        // excludes recording, so fall back to an explicit region capture only when the bridge is
+        // absent — never as a silent substitute after a failed native still.
+        val windowCapture =
+            if (
+                isNativeWindowCaptureAvailable(
+                    allowsPlatformCapture = robotDriver.allowsPlatformCapture
+                )
+            ) {
+                screenshotTrackedRegionCapture(
+                    trackedWindow,
+                    pre.captureRegion,
+                    pre.windowBounds,
+                    pre.frameInsets,
+                )
+            } else {
+                WindowCapture(
+                    image = screenCaptureBackend.captureRegion(pre.captureRegion),
+                    boundsOnScreen = pre.captureRegion,
+                )
+            }
         return AtomicCaptureBuilder.build(
             windowIndex = windowIndex,
             trackedWindow = trackedWindow,
             nodeSnapshots = pre.nodeSnapshots,
-            image = image,
-            captureRegion = pre.captureRegion,
+            image = windowCapture.image,
+            captureRegion = windowCapture.boundsOnScreen,
             densityScaleX = pre.densityScaleX,
             densityScaleY = pre.densityScaleY,
             startedAt = startedAt,

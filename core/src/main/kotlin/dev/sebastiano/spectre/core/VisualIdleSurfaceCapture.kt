@@ -82,11 +82,37 @@ internal fun hashTrackedSurfacesForVisualIdle(
     return hashes.contentHashCode()
 }
 
-/** True when the optional recording-owned native still bridge can be loaded. */
+/**
+ * True when window-scoped native stills can be used for visual-idle / atomic capture.
+ *
+ * Requires the recording-owned bridge on the classpath and a [RobotDriver] that allows platform
+ * capture. GitHub Actions Windows runners are treated as non-interactive: Windows Graphics Capture
+ * needs an interactive console there (same gate as Issue14 screenshot validation), so callers fall
+ * back to region sampling instead of hanging on a one-shot WGC helper.
+ */
 internal fun isNativeWindowCaptureAvailable(
     classLoader: ClassLoader = VisualIdleSurfaceCapture::class.java.classLoader,
     allowsPlatformCapture: Boolean = true,
-): Boolean = allowsPlatformCapture && nativeWindowCaptureFor(classLoader) != null
+    osName: String = System.getProperty("os.name").orEmpty(),
+    getenv: (String) -> String? = System::getenv,
+): Boolean {
+    if (!allowsPlatformCapture) return false
+    if (isNonInteractiveHostedWindows(osName, getenv)) return false
+    return nativeWindowCaptureFor(classLoader) != null
+}
+
+/**
+ * GitHub-**hosted** Windows Actions runners are not an interactive console for WGC stills.
+ *
+ * Uses `RUNNER_ENVIRONMENT=github-hosted` (not merely `GITHUB_ACTIONS=true`) so interactive
+ * self-hosted Windows runners keep native window capture.
+ */
+internal fun isNonInteractiveHostedWindows(
+    osName: String = System.getProperty("os.name").orEmpty(),
+    getenv: (String) -> String? = System::getenv,
+): Boolean =
+    osName.startsWith("Windows", ignoreCase = true) &&
+        getenv("RUNNER_ENVIRONMENT") == "github-hosted"
 
 /** Marker for classloader defaults (avoids referencing ComposeAutomator from this helper). */
 private object VisualIdleSurfaceCapture
