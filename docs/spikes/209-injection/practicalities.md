@@ -78,8 +78,10 @@ Full operator recipe, tag table, and evidence chain: **[stock-intellij-recipe.md
 | --- | --- |
 | Inject packaging + no-core fixture attach | Automated (`AgentInjectAttachIntegrationTest`, jar verify tasks; Windows opt-in e2e) |
 | Jewel `ide.counter.*` / `ide.popup.*` in IDEA 2026.2 | Automated via `:sample-intellij-plugin:uiTest` (**instrumented** sample — ships core) |
-| Stock IDE + inject (no preinstalled core) | **Not a 0.4.0 release gate** — recipe exists; full QA deferred to **0.4.1** ([#353](https://github.com/rock3r/spectre/issues/353)) |
-| Stock IDE + inject when no `spectre-core` | Documented manual / release-QA recipe (vmoptions + attach dump) |
+| No-core sample plugin packaging | Automated (`buildNoCorePlugin` / `verifyNoCorePluginZip` + buildSrc contract tests) (#375) |
+| Stock IDE + inject (no preinstalled core) | **PASS** via opt-in `:sample-intellij-plugin:stockInjectUiTest` (#353 / #376) — not always-on PR CI |
+| Manual operator path | [stock-intellij-recipe.md](stock-intellij-recipe.md) (vmoptions + attach dump) |
 
-Stock no-core inject remains **experimental inspect**, not a PR-blocking CI gate
-(see packaging-1.0-decision.md).
+Stock no-core inject remains **experimental inspect**, not a PR-blocking always-on CI gate
+(see packaging-1.0-decision.md). Re-verify with `stockInjectUiTest` before releases that
+touch inject bootstrap or IDE-hosted Compose discovery.

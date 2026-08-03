@@ -44,7 +44,8 @@ Bootstrap order (see `AgentBootstrap.findSpectre`):
 ## Revisit triggers (post-1.0)
 
 - Metaspace / unload hardened enough for CI attach loops.
-- Stock-IDE inject green in release QA or CI with a no-core Jewel target.
+- Always-on PR CI for stock-IDE inject (currently opt-in `stockInjectUiTest` is green — #353).
 - Product need for CLI/MCP “attach without core” as a supported mode (not experimental).
 
 Until then, docs and STABILITY language must keep inject **experimental inspect**, not production attach.
+Stock no-core IDE inject is **proven** (opt-in e2e) but not promoted beyond experimental inspect.

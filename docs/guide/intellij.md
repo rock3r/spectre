@@ -217,9 +217,11 @@ plugin) does **not** ship `spectre-core`, use [agent attach](agent.md) with the 
    fully restart the IDE. Without it, JDK 21+ warns (JEP 451) and a future JDK may reject
    attach. Config example on macOS:
    `~/Library/Application Support/JetBrains/IntelliJIdea2026.2/idea.vmoptions`
-2. Ensure a Compose surface is showing. Spectre's sample plugin tags tool-window nodes as
-   `ide.counter.*` and `ide.popup.*` (`SpectreSampleToolWindowContent`) — useful proving
-   tags when that plugin is installed.
+2. Ensure a Compose surface is showing. For a proving UI **without** `spectre-core`, install
+   Spectre's no-core sample plugin zip
+   (`./gradlew :sample-intellij-plugin:buildNoCorePlugin`) — same `ide.counter.*` /
+   `ide.popup.*` tags as `SpectreSampleToolWindowContent`. The default instrumented sample
+   plugin ships core and exercises the non-inject path.
 3. Find the IDE PID (`jps -l`), then from an attacher JVM with `spectre-agent` +
    `spectre-agent-runtime`:
 
@@ -239,7 +241,9 @@ If the sample plugin is on the classpath **with** `spectre-core`, attach uses th
 instrumented path instead of inject — same API either way. Prefer in-process
 `ComposeAutomator` (sections above) when your code already runs inside the IDE.
 
-Maintainer spike notes (recipe + evidence chain, not on the public site nav):
+Maintainers re-verify with
+`./gradlew :sample-intellij-plugin:stockInjectUiTest` (opt-in; not on every PR). Spike
+notes (recipe + evidence chain, not on the public site nav):
 [`docs/spikes/209-injection/stock-intellij-recipe.md`](https://github.com/rock3r/spectre/blob/main/docs/spikes/209-injection/stock-intellij-recipe.md).
 
 ## Validating from a separate test JVM
