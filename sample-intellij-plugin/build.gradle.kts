@@ -307,13 +307,16 @@ val stockInjectUiTest by
         inputs.file(noCorePluginZipProvider)
         inputs.file(agentRuntimeJarProvider)
         filter { includeTestsMatching("*StockIntellijInjectAttachUiTest*") }
+        // Resolve paths eagerly at configuration time (Test.systemProperty Object overload
+        // does not reliably expand Provider values on all Gradle versions). inputs.file above
+        // still owns up-to-date invalidation when those artifacts change.
         systemProperty(
             "path.to.no.core.plugin",
-            noCorePluginZipProvider.map { it.asFile.absolutePath },
+            noCorePluginZipProvider.get().asFile.absolutePath,
         )
         systemProperty(
             "dev.sebastiano.spectre.agent.runtimeJar",
-            agentRuntimeJarProvider.map { it.asFile.absolutePath },
+            agentRuntimeJarProvider.get().asFile.absolutePath,
         )
         javaLauncher.set(
             javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(25)) }
