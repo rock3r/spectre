@@ -242,7 +242,9 @@ AgentAttach.attach(target.pid).use { automator ->
     if (submitNodes.isNotEmpty()) {
         automator.click(submitNodes.first().key)
     }
-    val pngBytes = automator.screenshot()
+    // Window/surface attach screenshots fail closed (#359); fullscreen is the only
+    // screen-pixel capture mode on this path.
+    val pngBytes = automator.screenshot(fullscreen = true)
 } // detach + cleanup on close()
 ```
 
@@ -291,14 +293,14 @@ can add a reliable preflight via `HotSpotDiagnosticMXBean`.
 | `pressKey(keyCode, modifiers?)` | `AgentRequest.PressKey`  | `Unit`            |
 | `focusWindow(nodeKey)` | `AgentRequest.FocusWindow` | `Unit` (raise/activate window hosting node) |
 | `typeText(text)`      | `AgentRequest.TypeText`          | `Unit`            |
-| `screenshot(windowIndex?, surfaceId?, fullscreen?)` | `AgentRequest.Screenshot` | `ByteArray` (PNG); default window index 0, not full desktop |
+| `screenshot(windowIndex?, surfaceId?, fullscreen?)` | `AgentRequest.Screenshot` | `ByteArray` (PNG); **only `fullscreen=true` succeeds** on attach — window/surface fail closed (#359) |
 | `capture(windowIndex)`| `AgentRequest.Capture`           | `AtomicCaptureResult` |
 | `windowIdentities(windowIndex?)` | `AgentRequest.WindowIdentity` | `List<WindowIdentityDto>` |
 | `waitForNode(...)`    | `AgentRequest.WaitForNode`       | `NodeSnapshotDto` |
 | `waitForVisualIdle(...)` | `AgentRequest.WaitForVisualIdle` | `Unit`         |
 | `waitForIdle(...)`    | `AgentRequest.WaitForIdle`       | `Unit` (fingerprint wait; no idling-resource registration over attach — #362) |
 | `printTree()`         | `AgentRequest.PrintTree`         | `String` (human-readable dump — #362) |
-| `screenshot(node)`    | `AgentRequest.Screenshot(nodeKey)` | `ByteArray` (PNG of node bounds — #362; native when recording bridge present, else region of bounds like attach window screenshots) |
+| `screenshot(node)`    | `AgentRequest.Screenshot(nodeKey)` | `ByteArray` (PNG of node bounds — #362; native when recording bridge present, else region of `boundsOnScreen`) |
 | `click(node)`         | `AgentRequest.Click`             | `Unit` (DTO overload uses [NodeSnapshotDto.key] — #362) |
 | `close()` (auto)      | `AgentRequest.Detach`            | tear-down         |
 
@@ -495,9 +497,9 @@ spectre attach <pid> --json
 ```
 
 The attach response contains an `id`. Pass it to commands such as `tree`, `find`, `click`, and
-`screenshot`. `screenshot` writes a PNG of the attached session's tracked window (default index
-`0`) to `--output`; without that option it creates a temporary file and prints its path. Use
-`--window`, `--surface`, or opt-in `--fullscreen` as described in [CLI](cli.md).
+`screenshot`. On the attach path, `screenshot` **requires** `--fullscreen` for screen-pixel
+capture; default / `--window` / `--surface` fail closed (occlusion/privacy risk — #359). Without
+`--output`, a successful capture creates a temporary file and prints its path. See [CLI](cli.md).
 
 ### Claude Code recipe
 
@@ -521,8 +523,8 @@ Restart Claude Code after changing the configuration. It can then use these tool
 1. `list_processes` to find the target PID.
 2. `attach` with that PID and retain the returned `sessionId`.
 3. `tree` or `find` to retrieve current node keys, then `click` or `type_text` to interact.
-4. `screenshot` to receive a window-scoped PNG as MCP image content (optional `window_index` /
-   `surface_id` / `fullscreen`), rather than a file path.
+4. `screenshot` with `fullscreen=true` to receive a full-desktop PNG as MCP image content
+   (window/surface targets fail closed on attach — #359), rather than a file path.
 5. When the target runs under Compose Hot Reload: call `wait_for_reload_settled` **before**
    triggering a code reload (it must observe the settle chain), then re-run `tree` / `find`
    before further input.

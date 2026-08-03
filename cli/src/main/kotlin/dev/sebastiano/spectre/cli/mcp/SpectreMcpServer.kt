@@ -630,10 +630,12 @@ private fun registerScreenshotTool(server: Server, request: (DaemonRequest) -> D
     server.addTool(
         name = "screenshot",
         description =
-            "Capture a tracked window of the attached UI (default: window index 0) and return " +
-                "a PNG inline as MCP image content, never as a file path. Pass fullscreen=true " +
-                "only when a full virtual-desktop grab is intentional; do not combine fullscreen " +
-                "with window_index or surface_id.",
+            "Capture a PNG of the attached UI and return it inline as MCP image content " +
+                "(never a file path). Window/surface targets (default, window_index, " +
+                "surface_id) fail closed on the attach path because capture would crop " +
+                "occlusion-prone desktop pixels (privacy risk). Pass fullscreen=true for an " +
+                "explicit full virtual-desktop grab; do not combine fullscreen with " +
+                "window_index or surface_id.",
         inputSchema = ToolSchema(properties = properties, required = listOf("session_id")),
     ) { call ->
         handleScreenshotTool(call, request)

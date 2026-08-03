@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.cli
 
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.CliktError
+import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.clikt.core.parse
 import com.github.ajalt.clikt.core.subcommands
@@ -196,15 +197,35 @@ private class ScreenshotCommand(
 ) : CliktCommand(name = "screenshot") {
     private val sessionId: String by argument()
     private val outputPath: Path? by option("--output").path()
-    private val windowIndex: Int? by option("--window").int()
-    private val surfaceId: String? by option("--surface")
+    private val windowIndex: Int? by
+        option(
+                "--window",
+                help =
+                    "Tracked window index. Currently unsupported on attach (fails closed; " +
+                        "occlusion/privacy risk) — use --fullscreen instead.",
+            )
+            .int()
+    private val surfaceId: String? by
+        option(
+            "--surface",
+            help =
+                "Tracked surface id from `spectre windows --json`. Currently unsupported on " +
+                    "attach (fails closed) — use --fullscreen instead.",
+        )
     private val fullscreen: Boolean by
         option(
                 "--fullscreen",
-                help = "Capture the full virtual desktop instead of a tracked window",
+                help =
+                    "Capture the full virtual desktop (explicit opt-in; the only screen-pixel " +
+                        "mode on this CLI path).",
             )
             .flag(default = false)
     private val json: Boolean by option("--json").flag(default = false)
+
+    override fun help(context: Context): String =
+        "Capture a PNG of the attached session. Window/surface targets (default) fail closed " +
+            "because attach cannot produce an occlusion-safe native window still (#359). " +
+            "Pass --fullscreen for an explicit full-desktop capture."
 
     override fun run() {
         if (fullscreen && (windowIndex != null || surfaceId != null)) {

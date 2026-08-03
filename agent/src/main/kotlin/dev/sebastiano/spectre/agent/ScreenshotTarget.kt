@@ -4,8 +4,9 @@ package dev.sebastiano.spectre.agent
  * Resolved screenshot capture target for the agent/daemon/CLI path.
  *
  * Default is a tracked window (index 0 when the caller does not name one). Full-desktop capture is
- * never implied: callers must request [Fullscreen] explicitly. Window capture failure must surface
- * as an error rather than silently falling back to the full desktop.
+ * never implied: callers must request [Fullscreen] explicitly. Window/surface targets are resolved
+ * for validation, then rejected at capture time on the attach path (#359) rather than silently
+ * cropping occlusion-prone desktop pixels.
  */
 @ExperimentalSpectreAgentApi
 public sealed interface ScreenshotTarget {

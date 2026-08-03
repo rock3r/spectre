@@ -356,7 +356,8 @@ class AgentContractCorpusTest {
         }
 
         override fun screenshotProbe(): ScreenshotProbe {
-            val bytes = automator.screenshot()
+            // Attach window screenshots fail closed (#359); probe the supported fullscreen path.
+            val bytes = automator.screenshot(fullscreen = true)
             return ScreenshotProbe(byteCount = bytes.size, formatHint = "png")
         }
     }
