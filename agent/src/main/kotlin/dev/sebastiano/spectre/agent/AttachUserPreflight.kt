@@ -11,8 +11,8 @@ package dev.sebastiano.spectre.agent
  * a clear message before opening the VM connection.
  *
  * **Advisory, not authoritative.** The real boundary is the OS. When ownership cannot be determined
- * (sandboxes return an empty `ProcessHandle.user()`), the preflight proceeds and lets the attach
- * surface whatever the OS reports.
+ * (sandboxes return an empty `ProcessHandle.user()`, or UID lookup fails), the preflight proceeds
+ * and lets the attach surface whatever the OS reports.
  *
  * Both implementations resolve the current *and* target owner through the same
  * `ProcessHandle.info().user()` API so the two strings are directly comparable. The previous
@@ -20,8 +20,9 @@ package dev.sebastiano.spectre.agent
  * `System.getProperty("user.name")` (bare) — a mismatch that wrongly rejected the same user
  * attaching to their own JVM on Windows.
  *
- * The per-platform split leaves room for #166 (numeric POSIX UID comparison) and a future Windows
- * SID/elevation refinement to drop in without reshaping call sites.
+ * On POSIX, numeric UID equality is preferred when both sides can be resolved (#166); username
+ * equality is the fallback when UID lookup is unavailable. Windows keeps name-based comparison (SID
+ * refinement is a future follow-up).
  */
 @ExperimentalSpectreAgentApi
 internal interface AttachUserPreflight {
@@ -40,19 +41,44 @@ internal interface AttachUserPreflight {
 }
 
 /**
- * POSIX same-user preflight: case-sensitive username equality via `ProcessHandle.info().user()`.
+ * POSIX same-user preflight.
  *
- * #166 will refine this to a numeric UID comparison (name equality can false-negative under
- * directory services, domain prefixes, or localized name formatting) and keep the name path as a
- * fallback when a numeric UID is unavailable.
+ * Prefer numeric UID equality when both the attacher and target UIDs can be resolved. Name equality
+ * alone false-negatives under directory services, domain prefixes, case differences, or localized
+ * formatting even when both processes share one OS identity. When either UID is unavailable, fall
+ * back to case-sensitive username equality via `ProcessHandle.info().user()`.
  */
 @ExperimentalSpectreAgentApi
 internal class PosixUserPreflight(
     private val currentUser: () -> String? = defaultCurrentUser,
     private val targetUser: (Long) -> String? = defaultTargetUser,
+    private val currentUid: () -> Int? = defaultCurrentUid,
+    private val targetUid: (Long) -> Int? = defaultTargetUid,
 ) : AttachUserPreflight {
     override fun requireSameUser(targetPid: Long) {
-        requireSameUserOwnership(targetPid, currentUser(), targetUser(targetPid)) { it }
+        val curUid = currentUid()
+        val tgtUid = targetUid(targetPid)
+        if (curUid != null && tgtUid != null) {
+            if (curUid != tgtUid) {
+                throw AttachPermissionDeniedException(
+                    targetPid = targetPid,
+                    targetUser = targetUser(targetPid),
+                    currentUser = currentUser(),
+                    targetUid = tgtUid,
+                    currentUid = curUid,
+                )
+            }
+            // Same UID: accept even when ProcessHandle name strings differ.
+            return
+        }
+        requireSameUserOwnership(
+            targetPid = targetPid,
+            current = currentUser(),
+            target = targetUser(targetPid),
+            currentUid = curUid,
+            targetUid = tgtUid,
+            normalize = { it },
+        )
     }
 }
 
@@ -70,7 +96,14 @@ internal class WindowsUserPreflight(
     private val targetUser: (Long) -> String? = defaultTargetUser,
 ) : AttachUserPreflight {
     override fun requireSameUser(targetPid: Long) {
-        requireSameUserOwnership(targetPid, currentUser(), targetUser(targetPid)) { it.lowercase() }
+        requireSameUserOwnership(
+            targetPid = targetPid,
+            current = currentUser(),
+            target = targetUser(targetPid),
+            currentUid = null,
+            targetUid = null,
+            normalize = { it.lowercase() },
+        )
     }
 }
 
@@ -78,13 +111,21 @@ private inline fun requireSameUserOwnership(
     targetPid: Long,
     current: String?,
     target: String?,
+    currentUid: Int?,
+    targetUid: Int?,
     normalize: (String) -> String,
 ) {
     // Undeterminable ownership must not block the attach — the OS remains the real boundary.
     if (current == null || target == null) return
     if (normalize(current) != normalize(target)) {
         @OptIn(ExperimentalSpectreAgentApi::class)
-        throw AttachPermissionDeniedException(targetPid, target)
+        throw AttachPermissionDeniedException(
+            targetPid = targetPid,
+            targetUser = target,
+            currentUser = current,
+            targetUid = targetUid,
+            currentUid = currentUid,
+        )
     }
 }
 
@@ -95,3 +136,11 @@ private val defaultCurrentUser: () -> String? = {
 private val defaultTargetUser: (Long) -> String? = { pid ->
     ProcessHandle.of(pid).flatMap { it.info().user() }.orElse(null)
 }
+
+private val defaultUidLookup: ProcessUidLookup = ProcessUidLookup.forOs()
+
+private val defaultCurrentUid: () -> Int? = {
+    defaultUidLookup.uidOf(ProcessHandle.current().pid())
+}
+
+private val defaultTargetUid: (Long) -> Int? = { pid -> defaultUidLookup.uidOf(pid) }
