@@ -227,9 +227,11 @@ native backend itself reads visible framebuffer pixels, so keep the target front
 `capture()` intentionally uses an immediate Robot region capture to keep its semantics snapshot
 adjacent to its pixels, so its image can include occlusion.
 
-`waitForVisualIdle()` samples screen regions until the native capture API can keep one frame
-stream alive across polls. Bring the target to the front before using it when another window may
-overlap the Compose surface.
+`waitForVisualIdle()` samples **window-scoped** pixels for tracked Compose surfaces when
+`spectre-recording` is present (same native still path as `screenshot(windowIndex)`). Without that
+backend it falls back to Robot region capture of each surface rectangle — keep the target frontmost
+and unobscured in that fallback mode (Linux X11 region and some embedded cases still need
+visibility).
 
 **Rule of thumb: when you're validating colours from a `screenshot()`, always think
 about the node's interaction state first.** If the node is currently focused,

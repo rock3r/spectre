@@ -205,10 +205,12 @@ querying state that depends on a prior action.
 - **`waitForIdle()`** — wait until the semantics fingerprint stabilizes and
   all registered `AutomatorIdlingResource`s are idle. Use this when you've
   triggered work that updates semantics but no specific node appears.
-- **`waitForVisualIdle(stableFrames = 3)`** — wait until the on-screen pixels
-  are stable for N consecutive frames. Heavier than `waitForIdle`. Use it
-  before screenshotting, or when work is animation-bound rather than
-  semantics-bound.
+- **`waitForVisualIdle(stableFrames = 3)`** — wait until tracked Compose
+  surface pixels are stable for N consecutive frames. With `spectre-recording`
+  present, samples use the same window-scoped native still path as
+  `screenshot(windowIndex)` (not a screen-region crop). Heavier than
+  `waitForIdle`. Use it before screenshotting, or when work is animation-bound
+  rather than semantics-bound.
 
 A typical pattern after an interaction is `waitForVisualIdle()`. After
 triggering a screen *change* (e.g. opening a dialog), `waitForNode(tag = …)`
