@@ -70,26 +70,14 @@ internal object AutoFailureVideoStarter : FailureVideoStarter {
         identity: WindowIdentitySnapshot,
         output: Path,
     ): RecordingHandle? {
-        val userSpace =
+        // Pass AWT user-space bounds unchanged — same contract as startFullscreenRegion and
+        // other AutoRecorder.startRegion callers (locationOnScreen / GraphicsConfiguration.bounds).
+        // Do not multiply by scaleX/scaleY; that double-scales on HiDPI.
+        val bounds =
             identity.surfaceBoundsOnScreen.takeIf { it.width > 0 && it.height > 0 }
                 ?: identity.windowBoundsOnScreen.takeIf { it.width > 0 && it.height > 0 }
                 ?: return null
-        // Region recorders consume device-pixel coordinates; WindowIdentitySnapshot bounds are
-        // AWT user space. Convert with the snapshot transform (same formula as window-identity
-        // docs) so HiDPI/Retina fallbacks target the correct monitor rect.
-        val region = toDevicePixels(userSpace, identity)
-        if (region.width <= 0 || region.height <= 0) return null
-        return runCatching { recorder.startRegion(region = region, output = output) }.getOrNull()
-    }
-
-    private fun toDevicePixels(userSpace: Rectangle, identity: WindowIdentitySnapshot): Rectangle {
-        val scaleX = identity.scaleX.takeIf { it > 0.0 } ?: 1.0
-        val scaleY = identity.scaleY.takeIf { it > 0.0 } ?: 1.0
-        val x = (userSpace.x * scaleX + identity.translateX).toInt()
-        val y = (userSpace.y * scaleY + identity.translateY).toInt()
-        val width = (userSpace.width * scaleX).toInt().coerceAtLeast(1)
-        val height = (userSpace.height * scaleY).toInt().coerceAtLeast(1)
-        return Rectangle(x.coerceAtLeast(0), y.coerceAtLeast(0), width, height)
+        return runCatching { recorder.startRegion(region = bounds, output = output) }.getOrNull()
     }
 
     private fun startFullscreenRegion(recorder: AutoRecorder, output: Path): RecordingHandle? {
