@@ -15,19 +15,19 @@
   (WinPS 5.1 defaults to the system ANSI code page for BOM-less sources).
 
   Invocation: prefer one of the .EXAMPLE one-liners below. Direct `.\scripts\...` often fails under
-  the default LocalMachine Restricted ExecutionPolicy. Use -ExecutionPolicy Bypass on the process
-  (does not change machine policy) or run via pwsh, which typically allows local scripts.
+  the default LocalMachine Restricted ExecutionPolicy. Always pass -ExecutionPolicy Bypass on the
+  process (does not change machine policy) for both pwsh and Windows PowerShell 5.1.
 
 .EXAMPLE
-  # Preferred when PowerShell 7+ is installed (local scripts usually allowed):
-  pwsh -NoProfile -File .\scripts\windows-release-smoke.ps1
+  # Preferred when PowerShell 7+ is installed (Bypass is process-scoped only):
+  pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1
 
 .EXAMPLE
-  # Windows PowerShell 5.1 / stock powershell.exe (Bypass is process-scoped only):
+  # Windows PowerShell 5.1 / stock powershell.exe:
   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1
 
 .EXAMPLE
-  pwsh -NoProfile -File .\scripts\windows-release-smoke.ps1 -SkipWgc -SkipCli
+  pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1 -SkipWgc -SkipCli
 #>
 [CmdletBinding()]
 param(
@@ -214,20 +214,25 @@ function Write-HostGuidance {
     if ($processPolicy -and $processPolicy -ne "Undefined") {
         Write-Host ("ExecutionPolicy (Process): {0}" -f $processPolicy) -ForegroundColor DarkGray
     }
-    $blockingScope = $null
-    $blockingValue = $null
-    foreach ($scope in @("LocalMachine", "CurrentUser")) {
-        $value = $null
-        try { $value = Get-ExecutionPolicy -Scope $scope -ErrorAction SilentlyContinue } catch { $value = $null }
-        if ($value -and ($value -eq "Restricted" -or $value -eq "AllSigned")) {
-            $blockingScope = $scope
-            $blockingValue = $value
-            break
-        }
+    # Bare .\script.ps1 uses effective policy without Process override. Scope order:
+    # CurrentUser outranks LocalMachine when CurrentUser is not Undefined.
+    $userPolicy = $null
+    $machinePolicy = $null
+    try { $userPolicy = Get-ExecutionPolicy -Scope CurrentUser -ErrorAction SilentlyContinue } catch { $userPolicy = $null }
+    try { $machinePolicy = Get-ExecutionPolicy -Scope LocalMachine -ErrorAction SilentlyContinue } catch { $machinePolicy = $null }
+    $bareScope = $null
+    $barePolicy = $null
+    if ($userPolicy -and $userPolicy -ne "Undefined") {
+        $bareScope = "CurrentUser"
+        $barePolicy = $userPolicy
     }
-    if ($blockingScope) {
-        Write-Host ("ExecutionPolicy ({0}): {1} -- bare .\script.ps1 may fail. Prefer:" -f $blockingScope, $blockingValue) -ForegroundColor Yellow
-        Write-Host "  pwsh -NoProfile -File .\scripts\windows-release-smoke.ps1" -ForegroundColor Yellow
+    elseif ($machinePolicy -and $machinePolicy -ne "Undefined") {
+        $bareScope = "LocalMachine"
+        $barePolicy = $machinePolicy
+    }
+    if ($barePolicy -and ($barePolicy -eq "Restricted" -or $barePolicy -eq "AllSigned")) {
+        Write-Host ("ExecutionPolicy ({0}): {1} -- bare .\script.ps1 may fail. Prefer:" -f $bareScope, $barePolicy) -ForegroundColor Yellow
+        Write-Host "  pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1" -ForegroundColor Yellow
         Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1" -ForegroundColor Yellow
     }
 }

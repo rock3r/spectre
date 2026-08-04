@@ -167,13 +167,12 @@ Empty hard cells or `n/a` for “no display” on a claimed platform **block the
 
 When you have a Windows desktop for a few minutes, run **one** command from the repo
 root (interactive logon session preferred). Prefer **PowerShell 7+ (`pwsh`)** when
-installed; keep the Windows PowerShell 5.1 form with an explicit process-scoped
-`Bypass` when you only have stock `powershell.exe`.
+installed; both hosts need process-scoped `Bypass` under common **Restricted** policy.
 
 **Preferred (pwsh):**
 
 ```powershell
-pwsh -NoProfile -File .\scripts\windows-release-smoke.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1
 ```
 
 **Windows PowerShell 5.1 / stock `powershell.exe`:**
@@ -191,7 +190,7 @@ can load it without a BOM).
 From an absolute path (either host; adjust the repo path):
 
 ```powershell
-pwsh -NoProfile -File C:\src\spectre\scripts\windows-release-smoke.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File C:\src\spectre\scripts\windows-release-smoke.ps1
 # or:
 powershell -NoProfile -ExecutionPolicy Bypass -File C:\src\spectre\scripts\windows-release-smoke.ps1
 ```

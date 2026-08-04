@@ -50,7 +50,7 @@ fi
 # --- Documented one-liners must exist in script help and RELEASE-SMOKE.md ---
 # Exact operator commands (not loose fragments) so the -File target cannot drift silently.
 for needle in \
-  'pwsh -NoProfile -File .\scripts\windows-release-smoke.ps1' \
+  'pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1' \
   'powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1'
 do
   grep -F -q "$needle" "$script" || fail "script missing documented one-liner: $needle"
