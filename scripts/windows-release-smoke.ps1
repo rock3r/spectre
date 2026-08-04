@@ -209,28 +209,33 @@ function Write-HostGuidance {
     $ver = $PSVersionTable.PSVersion
     $edition = if ($PSVersionTable.ContainsKey("PSEdition")) { [string]$PSVersionTable.PSEdition } else { "Desktop" }
     Write-Host ("PowerShell: {0} ({1})" -f $ver, $edition) -ForegroundColor DarkGray
-    $processPolicy = $null
-    try { $processPolicy = Get-ExecutionPolicy -Scope Process -ErrorAction SilentlyContinue } catch { $processPolicy = $null }
-    if ($processPolicy -and $processPolicy -ne "Undefined") {
+    # Stringify policy enums: Unrestricted is enum value 0 and is falsy under PowerShell
+    # boolean coercion, so never use bare `$policy` in truthiness checks -- always [string].
+    $processRaw = $null
+    try { $processRaw = Get-ExecutionPolicy -Scope Process -ErrorAction SilentlyContinue } catch { $processRaw = $null }
+    $processPolicy = if ($null -eq $processRaw) { "Undefined" } else { [string]$processRaw }
+    if ($processPolicy -ne "Undefined") {
         Write-Host ("ExecutionPolicy (Process): {0}" -f $processPolicy) -ForegroundColor DarkGray
     }
     # Bare .\script.ps1 uses effective policy without Process override. Scope order:
     # CurrentUser outranks LocalMachine when CurrentUser is not Undefined.
-    $userPolicy = $null
-    $machinePolicy = $null
-    try { $userPolicy = Get-ExecutionPolicy -Scope CurrentUser -ErrorAction SilentlyContinue } catch { $userPolicy = $null }
-    try { $machinePolicy = Get-ExecutionPolicy -Scope LocalMachine -ErrorAction SilentlyContinue } catch { $machinePolicy = $null }
+    $userRaw = $null
+    $machineRaw = $null
+    try { $userRaw = Get-ExecutionPolicy -Scope CurrentUser -ErrorAction SilentlyContinue } catch { $userRaw = $null }
+    try { $machineRaw = Get-ExecutionPolicy -Scope LocalMachine -ErrorAction SilentlyContinue } catch { $machineRaw = $null }
+    $userPolicy = if ($null -eq $userRaw) { "Undefined" } else { [string]$userRaw }
+    $machinePolicy = if ($null -eq $machineRaw) { "Undefined" } else { [string]$machineRaw }
     $bareScope = $null
     $barePolicy = $null
-    if ($userPolicy -and $userPolicy -ne "Undefined") {
+    if ($userPolicy -ne "Undefined") {
         $bareScope = "CurrentUser"
         $barePolicy = $userPolicy
     }
-    elseif ($machinePolicy -and $machinePolicy -ne "Undefined") {
+    elseif ($machinePolicy -ne "Undefined") {
         $bareScope = "LocalMachine"
         $barePolicy = $machinePolicy
     }
-    if ($barePolicy -and ($barePolicy -eq "Restricted" -or $barePolicy -eq "AllSigned")) {
+    if ($barePolicy -eq "Restricted" -or $barePolicy -eq "AllSigned") {
         Write-Host ("ExecutionPolicy ({0}): {1} -- bare .\script.ps1 may fail. Prefer:" -f $bareScope, $barePolicy) -ForegroundColor Yellow
         Write-Host "  pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1" -ForegroundColor Yellow
         Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1" -ForegroundColor Yellow
