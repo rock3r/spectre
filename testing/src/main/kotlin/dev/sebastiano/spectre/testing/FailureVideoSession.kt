@@ -41,16 +41,22 @@ internal class FailureVideoSession(
                     ),
             )
         val output = methodDir.resolve(VIDEO_FILE_NAME)
-        runCatching {
-                Files.createDirectories(methodDir)
-                val started = starter.start(output, automator) ?: return
-                handle = started
-                outputPath = started.output
-            }
-            .onFailure {
-                handle = null
-                outputPath = null
-            }
+        val started =
+            runCatching {
+                    Files.createDirectories(methodDir)
+                    starter.start(output, automator)
+                }
+                .getOrNull()
+        if (started == null) {
+            // Starter may have created a partial file before failing; never leave it for a later
+            // pass/abort to look like kept failure-video evidence.
+            handle = null
+            outputPath = null
+            deleteQuietly(output)
+            return
+        }
+        handle = started
+        outputPath = started.output
     }
 
     /**

@@ -231,8 +231,14 @@ class FailureVideoSessionTest {
                     FailureVideoConfig(
                         policy = FailureVideoPolicy.OnFailureKeep,
                         reportsRoot = temp,
+                        invocationId = "start-fail",
                     ),
-                starter = { _, _ -> error("helper missing") },
+                starter = { path, _ ->
+                    // Simulate a helper that creates a partial file then fails.
+                    Files.createDirectories(path.parent)
+                    Files.writeString(path, "partial-orphan")
+                    error("helper missing")
+                },
             )
         session.start(
             automator = newHeadlessAutomator(),
@@ -240,6 +246,12 @@ class FailureVideoSessionTest {
             testMethodName = "m",
         )
         assertFalse(session.hasActiveRecorder)
+        assertFalse(
+            Files.walk(temp).use { s ->
+                s.anyMatch { it.fileName.toString() == FailureVideoSession.VIDEO_FILE_NAME }
+            },
+            "failed start must delete partial video",
+        )
         session.finalizeAndApply(FailureVideoOutcome.Failed)
         assertFalse(session.hasActiveRecorder)
     }
