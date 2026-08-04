@@ -95,9 +95,13 @@ internal constructor(
         factory = { ComposeAutomator.inProcess() },
     )
 
+    /**
+     * Pre-#206 shape with default args so already-compiled Kotlin callers that used default
+     * parameters / trailing-lambda factories stay binary-compatible.
+     */
     public constructor(
-        failureArtifacts: FailureArtifactsConfig,
-        factory: AutomatorFactory,
+        failureArtifacts: FailureArtifactsConfig = FailureArtifactsConfig(),
+        factory: AutomatorFactory = { ComposeAutomator.inProcess() },
     ) : this(
         failureArtifacts = failureArtifacts,
         failureVideo = FailureVideoConfig(),
@@ -116,6 +120,8 @@ internal constructor(
     private var instance: ComposeAutomator? = null
     private var videoSession: FailureVideoSession? = null
     private var lastDescription: Description? = null
+    /** Shared per-evaluate invocation id for stills + video when callers leave both null. */
+    private var evaluateInvocationId: String? = null
 
     public val automator: ComposeAutomator
         get() =
@@ -132,6 +138,14 @@ internal constructor(
         return object : Statement() {
             override fun evaluate() {
                 lastDescription = description
+                // One invocation id for this evaluate() so stills and video share a method dir
+                // when callers leave invocationId null on both configs.
+                val testClass = description.className ?: "UnknownClass"
+                val testMethod = description.methodName ?: description.displayName ?: "unknown"
+                evaluateInvocationId =
+                    failureVideo.invocationId?.takeIf { it.isNotBlank() }
+                        ?: failureArtifacts.invocationId?.takeIf { it.isNotBlank() }
+                        ?: "${testClass}#${testMethod}#${System.nanoTime()}"
                 before()
                 try {
                     // runCatching so both Exception and AssertionError (JUnit 4 failures) are
@@ -159,6 +173,7 @@ internal constructor(
                     videoSession = null
                     after()
                     lastDescription = null
+                    evaluateInvocationId = null
                 }
             }
         }
@@ -180,6 +195,7 @@ internal constructor(
         val testMethod = description?.methodName ?: description?.displayName ?: "unknown"
         val invocation =
             failureVideo.invocationId?.takeIf { it.isNotBlank() }
+                ?: evaluateInvocationId
                 ?: "${testClass}#${testMethod}#${System.nanoTime()}"
         val videoConfig = failureVideo.copy(invocationId = invocation)
         val session = FailureVideoSession(config = videoConfig, starter = videoStarter)
@@ -197,12 +213,13 @@ internal constructor(
         val automator = instance ?: return
         val testClass = description.className ?: "UnknownClass"
         val testMethod = description.methodName ?: description.displayName
-        // JUnit 4 has no ExtensionContext.uniqueId; synthesize an invocation id so parallel or
-        // repeated runs of the same method do not share artifact directories.
+        // JUnit 4 has no ExtensionContext.uniqueId; reuse the per-evaluate invocation id so
+        // stills and video land as siblings under the same method directory.
         val config =
             failureArtifacts.copy(
                 invocationId =
                     failureArtifacts.invocationId?.takeIf { it.isNotBlank() }
+                        ?: evaluateInvocationId
                         ?: "${testClass}#${testMethod}#${System.nanoTime()}"
             )
         FailureArtifactHooks.recordFailure(

@@ -86,8 +86,7 @@ internal constructor(
     )
 
     // Explicit no-arg secondary constructor so JUnit 5's @ExtendWith — which reflectively
-    // calls the no-arg constructor — can instantiate the extension. Kotlin's default-parameter
-    // primary constructor does not emit a true JVM no-arg overload without @JvmOverloads.
+    // calls the no-arg constructor — can instantiate the extension.
     public constructor() : this(factory = { ComposeAutomator.inProcess() })
 
     public constructor(
@@ -102,9 +101,14 @@ internal constructor(
         factory = { ComposeAutomator.inProcess() },
     )
 
+    /**
+     * Pre-#206 shape with default args so already-compiled Kotlin callers that used default
+     * parameters / trailing-lambda factories still resolve `(FailureArtifactsConfig, Function0,
+     * int, DefaultConstructorMarker)` binary-compatibly.
+     */
     public constructor(
-        failureArtifacts: FailureArtifactsConfig,
-        factory: AutomatorFactory,
+        failureArtifacts: FailureArtifactsConfig = FailureArtifactsConfig(),
+        factory: AutomatorFactory = { ComposeAutomator.inProcess() },
     ) : this(
         failureArtifacts = failureArtifacts,
         failureVideo = FailureVideoConfig(),
@@ -150,6 +154,9 @@ internal constructor(
         throwable: Throwable,
     ) {
         captureFailureArtifacts(context, throwable)
+        // @AfterEach failures are not always visible on executionException when afterEach runs;
+        // finalize with this throwable so OnFailureKeep keeps video for lifecycle failures.
+        finalizeFailureVideo(context, throwable)
         throw throwable
     }
 
