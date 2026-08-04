@@ -202,25 +202,31 @@ function Save-SmokeReport {
 # --- main ---
 
 function Write-HostGuidance {
-    # Operator-facing reminder when the host is stock WinPS under a blocking policy.
-    # Encoding/parse failures happen before any of this runs; keep the file ASCII-only.
+    # Operator-facing reminder. Encoding/parse failures happen before any of this runs
+    # (keep the file ASCII-only). Process-scoped Bypass makes effective policy Bypass, so
+    # inspect LocalMachine/CurrentUser scopes for the stock Restricted case operators hit
+    # with bare .\script.ps1.
     $ver = $PSVersionTable.PSVersion
     $edition = if ($PSVersionTable.ContainsKey("PSEdition")) { [string]$PSVersionTable.PSEdition } else { "Desktop" }
     Write-Host ("PowerShell: {0} ({1})" -f $ver, $edition) -ForegroundColor DarkGray
     $processPolicy = $null
     try { $processPolicy = Get-ExecutionPolicy -Scope Process -ErrorAction SilentlyContinue } catch { $processPolicy = $null }
-    $effectivePolicy = $null
-    try { $effectivePolicy = Get-ExecutionPolicy -ErrorAction SilentlyContinue } catch { $effectivePolicy = $null }
     if ($processPolicy -and $processPolicy -ne "Undefined") {
         Write-Host ("ExecutionPolicy (Process): {0}" -f $processPolicy) -ForegroundColor DarkGray
     }
-    elseif ($effectivePolicy -and $effectivePolicy -ne "Undefined") {
-        Write-Host ("ExecutionPolicy: {0}" -f $effectivePolicy) -ForegroundColor DarkGray
+    $blockingScope = $null
+    $blockingValue = $null
+    foreach ($scope in @("LocalMachine", "CurrentUser")) {
+        $value = $null
+        try { $value = Get-ExecutionPolicy -Scope $scope -ErrorAction SilentlyContinue } catch { $value = $null }
+        if ($value -and ($value -eq "Restricted" -or $value -eq "AllSigned")) {
+            $blockingScope = $scope
+            $blockingValue = $value
+            break
+        }
     }
-    # Only steer when the effective policy would block a bare .\script.ps1 re-run.
-    # (Encoding/parse death cannot be recovered here -- keep the file ASCII-only.)
-    if ($effectivePolicy -and ($effectivePolicy -eq "Restricted" -or $effectivePolicy -eq "AllSigned")) {
-        Write-Host "ExecutionPolicy is $effectivePolicy; bare .\script.ps1 may fail next time. Prefer:" -ForegroundColor Yellow
+    if ($blockingScope) {
+        Write-Host ("ExecutionPolicy ({0}): {1} -- bare .\script.ps1 may fail. Prefer:" -f $blockingScope, $blockingValue) -ForegroundColor Yellow
         Write-Host "  pwsh -NoProfile -File .\scripts\windows-release-smoke.ps1" -ForegroundColor Yellow
         Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1" -ForegroundColor Yellow
     }

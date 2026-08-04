@@ -40,15 +40,11 @@ if non_ascii:
 print("OK: windows-release-smoke.ps1 is ASCII-only (WinPS 5.1-safe without BOM)")
 PY
 else
-  # Fallback without python: reject any high bit via LC_ALL=C grep.
-  if LC_ALL=C grep -n '[^[:print:][:space:]]' "$script" >/dev/null 2>&1; then
-    fail "non-ASCII or non-printable bytes in $script (install python3 for details)"
+  # Fallback without python3: unsigned-byte scan (128-255 only; do not match ASCII 'x'=120).
+  if od -An -t u1 "$script" | tr -s '[:space:]' '\n' | grep -E '^(1[3-9][0-9]|12[89]|2[0-4][0-9]|25[0-5])$' >/dev/null; then
+    fail "byte > 127 found in $script (install python3 for offset details)"
   fi
-  # Also reject bytes > 127 that might still be "printable" in some locales: od scan.
-  if od -An -t u1 "$script" | tr -s ' ' '\n' | grep -E '^(1[2-9][0-9]|2[0-9]{2})$' >/dev/null; then
-    fail "byte > 127 found in $script"
-  fi
-  echo "OK: windows-release-smoke.ps1 ASCII check (grep/od fallback)"
+  echo "OK: windows-release-smoke.ps1 ASCII check (od fallback)"
 fi
 
 # --- Documented one-liners must exist in script help and RELEASE-SMOKE.md ---
