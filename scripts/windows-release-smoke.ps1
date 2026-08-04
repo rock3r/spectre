@@ -9,16 +9,25 @@
 
   PowerShell note: Gradle -P properties with dots must be quoted (this script does that).
 
-  `spectre launch -- … gradlew …` prints a Gradle-ish warning by design — still a valid smoke.
+  `spectre launch -- ... gradlew ...` prints a Gradle-ish warning by design -- still a valid smoke.
+
+  Encoding: this file is ASCII-only so Windows PowerShell 5.1 can parse it without a UTF-8 BOM
+  (WinPS 5.1 defaults to the system ANSI code page for BOM-less sources).
+
+  Invocation: prefer one of the .EXAMPLE one-liners below. Direct `.\scripts\...` often fails under
+  the default LocalMachine Restricted ExecutionPolicy. Use -ExecutionPolicy Bypass on the process
+  (does not change machine policy) or run via pwsh, which typically allows local scripts.
 
 .EXAMPLE
-  .\scripts\windows-release-smoke.ps1
+  # Preferred when PowerShell 7+ is installed (local scripts usually allowed):
+  pwsh -NoProfile -File .\scripts\windows-release-smoke.ps1
 
 .EXAMPLE
-  pwsh -NoProfile -File C:\src\spectre\scripts\windows-release-smoke.ps1
+  # Windows PowerShell 5.1 / stock powershell.exe (Bypass is process-scoped only):
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1
 
 .EXAMPLE
-  .\scripts\windows-release-smoke.ps1 -SkipWgc -SkipCli
+  pwsh -NoProfile -File .\scripts\windows-release-smoke.ps1 -SkipWgc -SkipCli
 #>
 [CmdletBinding()]
 param(
@@ -192,6 +201,31 @@ function Save-SmokeReport {
 
 # --- main ---
 
+function Write-HostGuidance {
+    # Operator-facing reminder when the host is stock WinPS under a blocking policy.
+    # Encoding/parse failures happen before any of this runs; keep the file ASCII-only.
+    $ver = $PSVersionTable.PSVersion
+    $edition = if ($PSVersionTable.ContainsKey("PSEdition")) { [string]$PSVersionTable.PSEdition } else { "Desktop" }
+    Write-Host ("PowerShell: {0} ({1})" -f $ver, $edition) -ForegroundColor DarkGray
+    $processPolicy = $null
+    try { $processPolicy = Get-ExecutionPolicy -Scope Process -ErrorAction SilentlyContinue } catch { $processPolicy = $null }
+    $effectivePolicy = $null
+    try { $effectivePolicy = Get-ExecutionPolicy -ErrorAction SilentlyContinue } catch { $effectivePolicy = $null }
+    if ($processPolicy -and $processPolicy -ne "Undefined") {
+        Write-Host ("ExecutionPolicy (Process): {0}" -f $processPolicy) -ForegroundColor DarkGray
+    }
+    elseif ($effectivePolicy -and $effectivePolicy -ne "Undefined") {
+        Write-Host ("ExecutionPolicy: {0}" -f $effectivePolicy) -ForegroundColor DarkGray
+    }
+    # Only steer when the effective policy would block a bare .\script.ps1 re-run.
+    # (Encoding/parse death cannot be recovered here -- keep the file ASCII-only.)
+    if ($effectivePolicy -and ($effectivePolicy -eq "Restricted" -or $effectivePolicy -eq "AllSigned")) {
+        Write-Host "ExecutionPolicy is $effectivePolicy; bare .\script.ps1 may fail next time. Prefer:" -ForegroundColor Yellow
+        Write-Host "  pwsh -NoProfile -File .\scripts\windows-release-smoke.ps1" -ForegroundColor Yellow
+        Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1" -ForegroundColor Yellow
+    }
+}
+
 try {
     if ($env:OS -ne "Windows_NT") {
         throw "This script is Windows-only (current OS: $([System.Environment]::OSVersion.VersionString))"
@@ -205,6 +239,7 @@ try {
     try { $sha = [string](git -C $repoRoot rev-parse --short HEAD 2>$null) } catch { $sha = "" }
     if ($sha) { Write-Host ("SHA:  {0}" -f $sha) }
     Write-Host ("Host: {0}  User: {1}" -f $env:COMPUTERNAME, $env:USERNAME)
+    Write-HostGuidance
 
     $results = New-Object System.Collections.ArrayList
 
@@ -248,7 +283,7 @@ try {
         $step = Invoke-Step -Name "Packaged spectre launch --once (fixture)" -Action {
             $spectre = Get-PackagedSpectre -RepoRoot $repoRoot
             if (-not $spectre) {
-                throw "spectre.exe not found under cli\build\construo\windowsX64\roast\ — run without -SkipPackageCli"
+                throw "spectre.exe not found under cli\build\construo\windowsX64\roast\ -- run without -SkipPackageCli"
             }
             Write-Host ("  using {0}" -f $spectre) -ForegroundColor DarkGray
             Write-Host "  note: Gradle-ish launch warning is expected for ':agent-test-fixture:run'" -ForegroundColor DarkGray

@@ -17,8 +17,10 @@ promotion, and undrafting.
 
 1. Diff since previous tag + capability matrix → baseline hard cells + **delta** hard cells.
 2. Run hard cells on macOS, headed Windows, and Linux as scoped.
-3. On Windows, prefer the one-liner (interactive logon session):
-   `.\scripts\windows-release-smoke.ps1` — see [docs/RELEASE-SMOKE.md](../../../docs/RELEASE-SMOKE.md).
+3. On Windows, prefer the one-liner (interactive logon session); see
+   [docs/RELEASE-SMOKE.md](../../../docs/RELEASE-SMOKE.md):
+   - `pwsh -NoProfile -File .\scripts\windows-release-smoke.ps1` when PowerShell 7+ is installed
+   - `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1` on stock WinPS 5.1
 4. Produce a results table. **Hard red or empty hard cells → do not tag.**
 5. Soft cells (Experimental matrix, focus flakes, Hot Reload) may be notes only.
 

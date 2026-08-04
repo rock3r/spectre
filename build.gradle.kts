@@ -113,6 +113,27 @@ val verifyMacosCliBundleReleaseContract by
         outputs.upToDateWhen { false }
     }
 
+val verifyWindowsReleaseSmokeScript by
+    tasks.registering(Exec::class) {
+        description =
+            "Contract tests for scripts/windows-release-smoke.ps1 (ASCII-only for WinPS 5.1, " +
+                "documented Bypass/pwsh one-liners in script + RELEASE-SMOKE.md)."
+        group = "verification"
+        workingDir = rootProject.layout.projectDirectory.asFile
+        commandLine("bash", ".github/scripts/test-windows-release-smoke-script.sh")
+        onlyIf("Unix host with bash") {
+            !System.getProperty("os.name").orEmpty().startsWith("Windows")
+        }
+        inputs
+            .files(
+                "scripts/windows-release-smoke.ps1",
+                "docs/RELEASE-SMOKE.md",
+                ".github/scripts/test-windows-release-smoke-script.sh",
+            )
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+        outputs.upToDateWhen { false }
+    }
+
 // buildSrc is not a project of this build for `dependsOn(":buildSrc:…")`, but its tests
 // cover the shared Windows helper packaging contract. Invoke them via a nested Gradle run
 // on the buildSrc project directory (same pattern as `./gradlew -p buildSrc test`).
@@ -138,6 +159,7 @@ tasks.named("check") {
         verifyCliPackageManifests,
         verifyReleaseVersionScript,
         verifyMacosCliBundleReleaseContract,
+        verifyWindowsReleaseSmokeScript,
         buildSrcUnitTests,
     )
 }
