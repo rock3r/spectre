@@ -166,16 +166,33 @@ Empty hard cells or `n/a` for “no display” on a claimed platform **block the
 ## Windows one-liner script
 
 When you have a Windows desktop for a few minutes, run **one** command from the repo
-root (interactive logon session preferred):
+root (interactive logon session preferred). Prefer **PowerShell 7+ (`pwsh`)** when
+installed; both hosts need process-scoped `Bypass` under common **Restricted** policy.
+
+**Preferred (pwsh):**
 
 ```powershell
-.\scripts\windows-release-smoke.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1
 ```
 
-Or from anywhere:
+**Windows PowerShell 5.1 / stock `powershell.exe`:**
 
 ```powershell
-pwsh -NoProfile -File C:\src\spectre\scripts\windows-release-smoke.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1
+```
+
+`Bypass` applies only to that process; it does not weaken machine policy. A bare
+`.\scripts\windows-release-smoke.ps1` often fails under the common default
+`LocalMachine` **Restricted** policy, and UTF-8 multi-byte punctuation in the
+script historically broke WinPS 5.1 parse (the script is kept **ASCII-only** so 5.1
+can load it without a BOM).
+
+From an absolute path (either host; adjust the repo path):
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File C:\src\spectre\scripts\windows-release-smoke.ps1
+# or:
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\src\spectre\scripts\windows-release-smoke.ps1
 ```
 
 What it does (no second terminal):

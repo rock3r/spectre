@@ -9,16 +9,25 @@
 
   PowerShell note: Gradle -P properties with dots must be quoted (this script does that).
 
-  `spectre launch -- … gradlew …` prints a Gradle-ish warning by design — still a valid smoke.
+  `spectre launch -- ... gradlew ...` prints a Gradle-ish warning by design -- still a valid smoke.
+
+  Encoding: this file is ASCII-only so Windows PowerShell 5.1 can parse it without a UTF-8 BOM
+  (WinPS 5.1 defaults to the system ANSI code page for BOM-less sources).
+
+  Invocation: prefer one of the .EXAMPLE one-liners below. Direct `.\scripts\...` often fails under
+  the default LocalMachine Restricted ExecutionPolicy. Always pass -ExecutionPolicy Bypass on the
+  process (does not change machine policy) for both pwsh and Windows PowerShell 5.1.
 
 .EXAMPLE
-  .\scripts\windows-release-smoke.ps1
+  # Preferred when PowerShell 7+ is installed (Bypass is process-scoped only):
+  pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1
 
 .EXAMPLE
-  pwsh -NoProfile -File C:\src\spectre\scripts\windows-release-smoke.ps1
+  # Windows PowerShell 5.1 / stock powershell.exe:
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1
 
 .EXAMPLE
-  .\scripts\windows-release-smoke.ps1 -SkipWgc -SkipCli
+  pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1 -SkipWgc -SkipCli
 #>
 [CmdletBinding()]
 param(
@@ -192,6 +201,47 @@ function Save-SmokeReport {
 
 # --- main ---
 
+function Write-HostGuidance {
+    # Operator-facing reminder. Encoding/parse failures happen before any of this runs
+    # (keep the file ASCII-only). Process-scoped Bypass makes effective policy Bypass, so
+    # inspect LocalMachine/CurrentUser scopes for the stock Restricted case operators hit
+    # with bare .\script.ps1.
+    $ver = $PSVersionTable.PSVersion
+    $edition = if ($PSVersionTable.ContainsKey("PSEdition")) { [string]$PSVersionTable.PSEdition } else { "Desktop" }
+    Write-Host ("PowerShell: {0} ({1})" -f $ver, $edition) -ForegroundColor DarkGray
+    # Stringify policy enums: Unrestricted is enum value 0 and is falsy under PowerShell
+    # boolean coercion, so never use bare `$policy` in truthiness checks -- always [string].
+    $processRaw = $null
+    try { $processRaw = Get-ExecutionPolicy -Scope Process -ErrorAction SilentlyContinue } catch { $processRaw = $null }
+    $processPolicy = if ($null -eq $processRaw) { "Undefined" } else { [string]$processRaw }
+    if ($processPolicy -ne "Undefined") {
+        Write-Host ("ExecutionPolicy (Process): {0}" -f $processPolicy) -ForegroundColor DarkGray
+    }
+    # Bare .\script.ps1 uses effective policy without Process override. Scope order:
+    # CurrentUser outranks LocalMachine when CurrentUser is not Undefined.
+    $userRaw = $null
+    $machineRaw = $null
+    try { $userRaw = Get-ExecutionPolicy -Scope CurrentUser -ErrorAction SilentlyContinue } catch { $userRaw = $null }
+    try { $machineRaw = Get-ExecutionPolicy -Scope LocalMachine -ErrorAction SilentlyContinue } catch { $machineRaw = $null }
+    $userPolicy = if ($null -eq $userRaw) { "Undefined" } else { [string]$userRaw }
+    $machinePolicy = if ($null -eq $machineRaw) { "Undefined" } else { [string]$machineRaw }
+    $bareScope = $null
+    $barePolicy = $null
+    if ($userPolicy -ne "Undefined") {
+        $bareScope = "CurrentUser"
+        $barePolicy = $userPolicy
+    }
+    elseif ($machinePolicy -ne "Undefined") {
+        $bareScope = "LocalMachine"
+        $barePolicy = $machinePolicy
+    }
+    if ($barePolicy -eq "Restricted" -or $barePolicy -eq "AllSigned") {
+        Write-Host ("ExecutionPolicy ({0}): {1} -- bare .\script.ps1 may fail. Prefer:" -f $bareScope, $barePolicy) -ForegroundColor Yellow
+        Write-Host "  pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1" -ForegroundColor Yellow
+        Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1" -ForegroundColor Yellow
+    }
+}
+
 try {
     if ($env:OS -ne "Windows_NT") {
         throw "This script is Windows-only (current OS: $([System.Environment]::OSVersion.VersionString))"
@@ -205,6 +255,7 @@ try {
     try { $sha = [string](git -C $repoRoot rev-parse --short HEAD 2>$null) } catch { $sha = "" }
     if ($sha) { Write-Host ("SHA:  {0}" -f $sha) }
     Write-Host ("Host: {0}  User: {1}" -f $env:COMPUTERNAME, $env:USERNAME)
+    Write-HostGuidance
 
     $results = New-Object System.Collections.ArrayList
 
@@ -248,7 +299,7 @@ try {
         $step = Invoke-Step -Name "Packaged spectre launch --once (fixture)" -Action {
             $spectre = Get-PackagedSpectre -RepoRoot $repoRoot
             if (-not $spectre) {
-                throw "spectre.exe not found under cli\build\construo\windowsX64\roast\ — run without -SkipPackageCli"
+                throw "spectre.exe not found under cli\build\construo\windowsX64\roast\ -- run without -SkipPackageCli"
             }
             Write-Host ("  using {0}" -f $spectre) -ForegroundColor DarkGray
             Write-Host "  note: Gradle-ish launch warning is expected for ':agent-test-fixture:run'" -ForegroundColor DarkGray
