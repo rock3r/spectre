@@ -72,9 +72,11 @@ internal class FailureVideoSession(
         handle = null
         outputPath = null
         if (active == null) return
-        runCatching { if (!active.isStopped) active.stop() }
         val finalized = path ?: active.output
-        val keep = FailureVideoDecisions.shouldKeep(config.policy, outcome)
+        val stopOk = runCatching { if (!active.isStopped) active.stop() }.isSuccess
+        // Only keep after a successful stop: a failed finalize can leave a truncated file that
+        // must not be published as failure evidence (treat like abandon/delete).
+        val keep = stopOk && FailureVideoDecisions.shouldKeep(config.policy, outcome)
         if (keep) {
             if (Files.isRegularFile(finalized)) {
                 publishReport(REPORT_ENTRY_KEY, finalized.toAbsolutePath().normalize().toString())

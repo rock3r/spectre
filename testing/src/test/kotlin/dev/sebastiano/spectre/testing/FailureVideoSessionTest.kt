@@ -224,6 +224,41 @@ class FailureVideoSessionTest {
     }
 
     @Test
+    fun `stop failure deletes video even under Always`(@TempDir temp: Path) {
+        val session =
+            FailureVideoSession(
+                config =
+                    FailureVideoConfig(
+                        policy = FailureVideoPolicy.Always,
+                        reportsRoot = temp,
+                        invocationId = "stop-fail",
+                    ),
+                starter = { path, _ ->
+                    Files.createDirectories(path.parent)
+                    Files.writeString(path, "partial")
+                    object : RecordingHandle {
+                        override val output: Path = path
+                        override var isStopped: Boolean = false
+                            private set
+
+                        override fun stop() {
+                            error("helper crashed during stop")
+                        }
+                    }
+                },
+            )
+        session.start(
+            automator = newHeadlessAutomator(),
+            testClassName = "com.example.T",
+            testMethodName = "m",
+        )
+        val active = checkNotNull(session.activeOutput)
+        session.finalizeAndApply(FailureVideoOutcome.Failed)
+        assertFalse(Files.exists(active), "failed stop must not keep partial video")
+        assertFalse(session.hasActiveRecorder)
+    }
+
+    @Test
     fun `start failure is best-effort and leaves no active recorder`(@TempDir temp: Path) {
         val session =
             FailureVideoSession(
