@@ -40,11 +40,9 @@ dependencies {
     testRuntimeOnly(libs.junit5.vintageEngine)
     // Runtime jar path for attach e2es that launch fixtures via the harness.
     testRuntimeOnly(projects.agentRuntime)
-    // Platform helpers only needed when unit tests exercise the real AutoFailureVideoStarter;
-    // fake-starter tests do not need them. sample-desktop validation supplies its own runtimeOnly.
-    testRuntimeOnly(projects.recordingMacos)
-    testRuntimeOnly(projects.recordingLinux)
-    testRuntimeOnly(projects.recordingWindows)
+    // Do not testRuntimeOnly recording platform helpers here: unit tests inject fake
+    // FailureVideoStarters and must not force cargo/Swift/.NET helper builds on check.
+    // Live recording uses sample-desktop validation runtimeOnly and :agent testRuntimeOnly.
 }
 
 tasks.withType<Test>().configureEach { useJUnitPlatform() }
