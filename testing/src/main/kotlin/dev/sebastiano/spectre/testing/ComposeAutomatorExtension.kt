@@ -95,6 +95,14 @@ internal constructor(
     ) : this(failureArtifacts = failureArtifacts, factory = { ComposeAutomator.inProcess() })
 
     public constructor(
+        failureVideo: FailureVideoConfig
+    ) : this(
+        failureArtifacts = FailureArtifactsConfig(),
+        failureVideo = failureVideo,
+        factory = { ComposeAutomator.inProcess() },
+    )
+
+    public constructor(
         failureArtifacts: FailureArtifactsConfig,
         factory: AutomatorFactory,
     ) : this(

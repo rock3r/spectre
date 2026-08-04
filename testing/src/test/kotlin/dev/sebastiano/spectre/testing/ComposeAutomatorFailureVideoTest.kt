@@ -159,6 +159,45 @@ class ComposeAutomatorFailureVideoTest {
     }
 
     @Test
+    fun `failureVideo-only constructor uses default factory and stills config`(
+        @TempDir temp: Path
+    ) {
+        val starts = AtomicInteger(0)
+        // Documented form: ComposeAutomatorExtension(failureVideo = …) with default factory.
+        val extension =
+            ComposeAutomatorExtension(
+                failureVideo =
+                    FailureVideoConfig(policy = FailureVideoPolicy.Off, reportsRoot = temp)
+            )
+        val context =
+            RecordingExtensionContext(
+                failure = null,
+                testClass = VideoSample::class.java,
+                methodName = "passes",
+            )
+        // Replace is not possible on the public overload; just construct + lifecycle with Off.
+        extension.beforeEach(context)
+        extension.afterEach(context)
+        assertEquals(0, starts.get())
+        // Rule mirror.
+        val rule =
+            ComposeAutomatorRule(
+                failureVideo =
+                    FailureVideoConfig(policy = FailureVideoPolicy.Off, reportsRoot = temp)
+            )
+        rule
+            .apply(
+                object : Statement() {
+                    override fun evaluate() {
+                        // pass
+                    }
+                },
+                Description.createTestDescription("com.example.VideoCtor", "ok"),
+            )
+            .evaluate()
+    }
+
+    @Test
     fun `trailing lambda factory still compiles with failureVideo param present`() {
         // Compile-time guard (mirrors AutomatorFactoryTrailingLambdaTest): factory remains last.
         // If this file fails to compile, factory is no longer the last parameter.

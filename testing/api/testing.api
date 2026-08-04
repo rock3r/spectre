@@ -5,6 +5,7 @@ public final class dev/sebastiano/spectre/testing/ComposeAutomatorExtension : or
 	public fun <init> (Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;Ldev/sebastiano/spectre/testing/FailureVideoConfig;Lkotlin/jvm/functions/Function0;)V
 	public synthetic fun <init> (Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;Ldev/sebastiano/spectre/testing/FailureVideoConfig;Lkotlin/jvm/functions/Function0;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun <init> (Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;Lkotlin/jvm/functions/Function0;)V
+	public fun <init> (Ldev/sebastiano/spectre/testing/FailureVideoConfig;)V
 	public fun afterEach (Lorg/junit/jupiter/api/extension/ExtensionContext;)V
 	public fun afterTestExecution (Lorg/junit/jupiter/api/extension/ExtensionContext;)V
 	public fun beforeEach (Lorg/junit/jupiter/api/extension/ExtensionContext;)V
@@ -22,6 +23,7 @@ public final class dev/sebastiano/spectre/testing/ComposeAutomatorRule : org/jun
 	public fun <init> (Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;Ldev/sebastiano/spectre/testing/FailureVideoConfig;Lkotlin/jvm/functions/Function0;)V
 	public synthetic fun <init> (Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;Ldev/sebastiano/spectre/testing/FailureVideoConfig;Lkotlin/jvm/functions/Function0;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun <init> (Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;Lkotlin/jvm/functions/Function0;)V
+	public fun <init> (Ldev/sebastiano/spectre/testing/FailureVideoConfig;)V
 	public fun after ()V
 	public fun apply (Lorg/junit/runners/model/Statement;Lorg/junit/runner/Description;)Lorg/junit/runners/model/Statement;
 	public fun before ()V

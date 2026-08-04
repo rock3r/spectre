@@ -25,7 +25,7 @@ internal object AutoFailureVideoStarter : FailureVideoStarter {
                     runCatching { automator.windowIdentities() }.getOrDefault(emptyList())
                 val primary = identities.firstOrNull { !it.isPopup }
                 if (primary != null) {
-                    startForIdentity(recorder, primary, output)
+                    startForIdentity(recorder, primary, identities, output)
                         ?: startRegionFallback(recorder, primary, output)
                 } else {
                     startFullscreenRegion(recorder, output)
@@ -36,9 +36,16 @@ internal object AutoFailureVideoStarter : FailureVideoStarter {
     private fun startForIdentity(
         recorder: AutoRecorder,
         identity: WindowIdentitySnapshot,
+        allIdentities: List<WindowIdentitySnapshot>,
         output: Path,
     ): RecordingHandle? {
         val title = identity.title?.takeIf { it.isNotBlank() } ?: return null
+        // Helpers match by title among all same-PID windows (including popups). Only use
+        // window-targeted mode when the title uniquely identifies the selected surface.
+        val titleMatches = allIdentities.count { candidate ->
+            candidate.title.orEmpty().contains(title) || candidate.title == title
+        }
+        if (titleMatches != 1) return null
         val crop =
             if (identity.cropRequired) {
                 Rectangle(identity.surfaceBoundsInWindow)
