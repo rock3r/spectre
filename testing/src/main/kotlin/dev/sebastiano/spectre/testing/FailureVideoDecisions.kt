@@ -33,4 +33,17 @@ internal object FailureVideoDecisions {
             FailureArtifactHooks.isNonFailureAbort(throwable) -> FailureVideoOutcome.Aborted
             else -> FailureVideoOutcome.Failed
         }
+
+    /**
+     * Prefer [FailureVideoOutcome.Failed] over abort over pass. Used when combining the test-method
+     * exception with a later lifecycle throwable (e.g. `@AfterEach` abort after a real failure).
+     */
+    fun worseOutcome(a: FailureVideoOutcome, b: FailureVideoOutcome): FailureVideoOutcome =
+        when {
+            a == FailureVideoOutcome.Failed || b == FailureVideoOutcome.Failed ->
+                FailureVideoOutcome.Failed
+            a == FailureVideoOutcome.Aborted || b == FailureVideoOutcome.Aborted ->
+                FailureVideoOutcome.Aborted
+            else -> FailureVideoOutcome.Passed
+        }
 }

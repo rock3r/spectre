@@ -227,7 +227,14 @@ internal constructor(
         val session = store.remove(VIDEO_SESSION_KEY, FailureVideoSession::class.java)
         store.put(VIDEO_FINALIZED_KEY, true)
         if (session == null) return
-        val outcome = FailureVideoDecisions.outcomeFromThrowable(failure)
+        // Prefer the worst outcome: a failed test method must keep video even if a later
+        // @AfterEach aborts (handleAfterEach only sees the AfterEach throwable).
+        val executionFailure = context.executionException.orElse(null)
+        val outcome =
+            FailureVideoDecisions.worseOutcome(
+                FailureVideoDecisions.outcomeFromThrowable(executionFailure),
+                FailureVideoDecisions.outcomeFromThrowable(failure),
+            )
         session.finalizeAndApply(outcome) { key, value -> context.publishReportEntry(key, value) }
     }
 

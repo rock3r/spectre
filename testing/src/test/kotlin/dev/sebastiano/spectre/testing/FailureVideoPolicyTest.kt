@@ -66,6 +66,38 @@ class FailureVideoPolicyTest {
     }
 
     @Test
+    fun `worseOutcome prefers Failed over Aborted over Passed`() {
+        assertEquals(
+            FailureVideoOutcome.Failed,
+            FailureVideoDecisions.worseOutcome(
+                FailureVideoOutcome.Failed,
+                FailureVideoOutcome.Aborted,
+            ),
+        )
+        assertEquals(
+            FailureVideoOutcome.Failed,
+            FailureVideoDecisions.worseOutcome(
+                FailureVideoOutcome.Aborted,
+                FailureVideoOutcome.Failed,
+            ),
+        )
+        assertEquals(
+            FailureVideoOutcome.Aborted,
+            FailureVideoDecisions.worseOutcome(
+                FailureVideoOutcome.Passed,
+                FailureVideoOutcome.Aborted,
+            ),
+        )
+        assertEquals(
+            FailureVideoOutcome.Passed,
+            FailureVideoDecisions.worseOutcome(
+                FailureVideoOutcome.Passed,
+                FailureVideoOutcome.Passed,
+            ),
+        )
+    }
+
+    @Test
     fun `outcomeFromThrowable maps abort types like stills hooks`() {
         assertEquals(FailureVideoOutcome.Passed, FailureVideoDecisions.outcomeFromThrowable(null))
         assertEquals(
