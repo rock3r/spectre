@@ -28,6 +28,13 @@ dependencies {
     testImplementation(projects.core)
     // Shared automator contract corpus + capability matrix (#198).
     testImplementation(projects.testing)
+    // `:testing` implementation-depends on `:recording` for failure-video (#206). That puts
+    // the native-window-capture bridge on the test/fixture classpath; without the platform
+    // helper jars, window screenshots fail with "Bundled helper app not found" instead of
+    // falling back. Match sample-desktop's runtime helper wiring for attach e2e.
+    testRuntimeOnly(projects.recordingMacos)
+    testRuntimeOnly(projects.recordingLinux)
+    testRuntimeOnly(projects.recordingWindows)
     testImplementation(libs.kotlinx.coroutines.core)
     testImplementation(libs.kotlin.testJunit5)
     testImplementation(libs.kotlinx.coroutines.test)

@@ -20,6 +20,9 @@ dependencies {
     // Launch-and-attach JUnit surface (#208) composes over the experimental agent launch API.
     // Kept as `api` so consumers see `LaunchSpec` / `LaunchedSession` types from the extension.
     api(projects.agent)
+    // Failure-video (#206) uses AutoRecorder / RecordingHandle; implementation so public API stays
+    // FailureVideoConfig/Policy only (not a re-export of the full recording surface).
+    implementation(projects.recording)
     // Public runSpectreTest surface exposes CoroutineScope / CoroutineContext; core only
     // implementation()-depends on coroutines, so re-export here for consumers of :testing.
     api(libs.kotlinx.coroutines.core)
@@ -37,6 +40,9 @@ dependencies {
     testRuntimeOnly(libs.junit5.vintageEngine)
     // Runtime jar path for attach e2es that launch fixtures via the harness.
     testRuntimeOnly(projects.agentRuntime)
+    // Do not testRuntimeOnly recording platform helpers here: unit tests inject fake
+    // FailureVideoStarters and must not force cargo/Swift/.NET helper builds on check.
+    // Live recording uses sample-desktop validation runtimeOnly and :agent testRuntimeOnly.
 }
 
 tasks.withType<Test>().configureEach { useJUnitPlatform() }

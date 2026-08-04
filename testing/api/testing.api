@@ -1,8 +1,12 @@
 public final class dev/sebastiano/spectre/testing/ComposeAutomatorExtension : org/junit/jupiter/api/extension/AfterEachCallback, org/junit/jupiter/api/extension/AfterTestExecutionCallback, org/junit/jupiter/api/extension/BeforeEachCallback, org/junit/jupiter/api/extension/LifecycleMethodExecutionExceptionHandler, org/junit/jupiter/api/extension/ParameterResolver {
 	public fun <init> ()V
 	public fun <init> (Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;)V
+	public fun <init> (Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;Ldev/sebastiano/spectre/testing/FailureVideoConfig;)V
+	public fun <init> (Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;Ldev/sebastiano/spectre/testing/FailureVideoConfig;Lkotlin/jvm/functions/Function0;)V
+	public synthetic fun <init> (Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;Ldev/sebastiano/spectre/testing/FailureVideoConfig;Lkotlin/jvm/functions/Function0;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun <init> (Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;Lkotlin/jvm/functions/Function0;)V
 	public synthetic fun <init> (Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;Lkotlin/jvm/functions/Function0;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ldev/sebastiano/spectre/testing/FailureVideoConfig;)V
 	public fun afterEach (Lorg/junit/jupiter/api/extension/ExtensionContext;)V
 	public fun afterTestExecution (Lorg/junit/jupiter/api/extension/ExtensionContext;)V
 	public fun beforeEach (Lorg/junit/jupiter/api/extension/ExtensionContext;)V
@@ -16,8 +20,12 @@ public final class dev/sebastiano/spectre/testing/ComposeAutomatorExtension : or
 public final class dev/sebastiano/spectre/testing/ComposeAutomatorRule : org/junit/rules/ExternalResource {
 	public fun <init> ()V
 	public fun <init> (Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;)V
+	public fun <init> (Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;Ldev/sebastiano/spectre/testing/FailureVideoConfig;)V
+	public fun <init> (Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;Ldev/sebastiano/spectre/testing/FailureVideoConfig;Lkotlin/jvm/functions/Function0;)V
+	public synthetic fun <init> (Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;Ldev/sebastiano/spectre/testing/FailureVideoConfig;Lkotlin/jvm/functions/Function0;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun <init> (Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;Lkotlin/jvm/functions/Function0;)V
 	public synthetic fun <init> (Ldev/sebastiano/spectre/testing/FailureArtifactsConfig;Lkotlin/jvm/functions/Function0;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ldev/sebastiano/spectre/testing/FailureVideoConfig;)V
 	public fun after ()V
 	public fun apply (Lorg/junit/runners/model/Statement;Lorg/junit/runner/Description;)Lorg/junit/runners/model/Statement;
 	public fun before ()V
@@ -54,6 +62,34 @@ public final class dev/sebastiano/spectre/testing/FailureArtifactsConfig {
 	public final fun getReportsRoot ()Ljava/nio/file/Path;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/testing/FailureVideoConfig {
+	public fun <init> ()V
+	public fun <init> (Ldev/sebastiano/spectre/testing/FailureVideoPolicy;Ljava/nio/file/Path;Ljava/lang/Integer;Ljava/lang/String;)V
+	public synthetic fun <init> (Ldev/sebastiano/spectre/testing/FailureVideoPolicy;Ljava/nio/file/Path;Ljava/lang/Integer;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ldev/sebastiano/spectre/testing/FailureVideoPolicy;
+	public final fun component2 ()Ljava/nio/file/Path;
+	public final fun component3 ()Ljava/lang/Integer;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun copy (Ldev/sebastiano/spectre/testing/FailureVideoPolicy;Ljava/nio/file/Path;Ljava/lang/Integer;Ljava/lang/String;)Ldev/sebastiano/spectre/testing/FailureVideoConfig;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/testing/FailureVideoConfig;Ldev/sebastiano/spectre/testing/FailureVideoPolicy;Ljava/nio/file/Path;Ljava/lang/Integer;Ljava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/testing/FailureVideoConfig;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAttemptIndex ()Ljava/lang/Integer;
+	public final fun getInvocationId ()Ljava/lang/String;
+	public final fun getPolicy ()Ldev/sebastiano/spectre/testing/FailureVideoPolicy;
+	public final fun getReportsRoot ()Ljava/nio/file/Path;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/testing/FailureVideoPolicy : java/lang/Enum {
+	public static final field Always Ldev/sebastiano/spectre/testing/FailureVideoPolicy;
+	public static final field Off Ldev/sebastiano/spectre/testing/FailureVideoPolicy;
+	public static final field OnFailureKeep Ldev/sebastiano/spectre/testing/FailureVideoPolicy;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/sebastiano/spectre/testing/FailureVideoPolicy;
+	public static fun values ()[Ldev/sebastiano/spectre/testing/FailureVideoPolicy;
 }
 
 public final class dev/sebastiano/spectre/testing/LaunchAndAttachExtension : org/junit/jupiter/api/extension/AfterEachCallback, org/junit/jupiter/api/extension/BeforeEachCallback, org/junit/jupiter/api/extension/ParameterResolver {

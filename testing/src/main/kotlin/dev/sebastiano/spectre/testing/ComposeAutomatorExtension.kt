@@ -40,6 +40,13 @@ import org.junit.jupiter.api.extension.ParameterResolver
  * false)`. Paths are published as JUnit report entries under
  * [FailureArtifactHooks.REPORT_ENTRY_KEY].
  *
+ * ## Failure video (#206)
+ *
+ * Optional whole-test recording via [FailureVideoConfig] (default [FailureVideoPolicy.Off]). When
+ * the policy is not off, recording starts in [beforeEach] and is stopped+finalized in [afterEach]
+ * before the keep/delete decision (`onFailureKeep` deletes on pass; `always` keeps pass and fail).
+ * Non-failure aborts use the same rules as stills and do not leave a kept video.
+ *
  * The [factory] defaults to `ComposeAutomator.inProcess()`. Tests that need a stub for headless CI
  * or focused unit testing can supply their own factory.
  *
@@ -49,13 +56,16 @@ import org.junit.jupiter.api.extension.ParameterResolver
  * typical sequential `@RegisterExtension` flow; callers running tests in parallel should rely on
  * parameter injection instead.
  */
-public class ComposeAutomatorExtension(
-    // `factory` MUST stay last. It is function-typed, so Kotlin's trailing-lambda convention
-    // binds `ComposeAutomatorExtension { … }` to whichever parameter comes last; putting an
-    // optional non-function parameter after it silently breaks every trailing-lambda call site
-    // with "argument type mismatch: … but 'FailureArtifactsConfig' was expected".
-    // AutomatorFactoryTrailingLambdaTest stops compiling if this order is changed again.
+public class ComposeAutomatorExtension
+internal constructor(
+    // `factory` MUST stay last among public-facing construction parameters. It is function-typed,
+    // so Kotlin's trailing-lambda convention binds `ComposeAutomatorExtension { … }` to whichever
+    // parameter comes last; putting an optional non-function parameter after it silently breaks
+    // every trailing-lambda call site. AutomatorFactoryTrailingLambdaTest stops compiling if this
+    // order is changed again.
     private val failureArtifacts: FailureArtifactsConfig = FailureArtifactsConfig(),
+    private val failureVideo: FailureVideoConfig = FailureVideoConfig(),
+    private val videoStarter: FailureVideoStarter = AutoFailureVideoStarter,
     private val factory: AutomatorFactory,
 ) :
     BeforeEachCallback,
@@ -64,14 +74,55 @@ public class ComposeAutomatorExtension(
     LifecycleMethodExecutionExceptionHandler,
     ParameterResolver {
 
+    public constructor(
+        failureArtifacts: FailureArtifactsConfig = FailureArtifactsConfig(),
+        failureVideo: FailureVideoConfig = FailureVideoConfig(),
+        factory: AutomatorFactory,
+    ) : this(
+        failureArtifacts = failureArtifacts,
+        failureVideo = failureVideo,
+        videoStarter = AutoFailureVideoStarter,
+        factory = factory,
+    )
+
     // Explicit no-arg secondary constructor so JUnit 5's @ExtendWith — which reflectively
-    // calls the no-arg constructor — can instantiate the extension. Kotlin's default-parameter
-    // primary constructor does not emit a true JVM no-arg overload without @JvmOverloads.
+    // calls the no-arg constructor — can instantiate the extension.
     public constructor() : this(factory = { ComposeAutomator.inProcess() })
 
     public constructor(
         failureArtifacts: FailureArtifactsConfig
-    ) : this(failureArtifacts, { ComposeAutomator.inProcess() })
+    ) : this(failureArtifacts = failureArtifacts, factory = { ComposeAutomator.inProcess() })
+
+    public constructor(
+        failureVideo: FailureVideoConfig
+    ) : this(
+        failureArtifacts = FailureArtifactsConfig(),
+        failureVideo = failureVideo,
+        factory = { ComposeAutomator.inProcess() },
+    )
+
+    /**
+     * Pre-#206 shape with default args so already-compiled Kotlin callers that used default
+     * parameters / trailing-lambda factories still resolve `(FailureArtifactsConfig, Function0,
+     * int, DefaultConstructorMarker)` binary-compatibly.
+     */
+    public constructor(
+        failureArtifacts: FailureArtifactsConfig = FailureArtifactsConfig(),
+        factory: AutomatorFactory = { ComposeAutomator.inProcess() },
+    ) : this(
+        failureArtifacts = failureArtifacts,
+        failureVideo = FailureVideoConfig(),
+        factory = factory,
+    )
+
+    public constructor(
+        failureArtifacts: FailureArtifactsConfig,
+        failureVideo: FailureVideoConfig,
+    ) : this(
+        failureArtifacts = failureArtifacts,
+        failureVideo = failureVideo,
+        factory = { ComposeAutomator.inProcess() },
+    )
 
     @Volatile private var lastInstance: ComposeAutomator? = null
 
@@ -83,8 +134,10 @@ public class ComposeAutomatorExtension(
 
     override fun beforeEach(context: ExtensionContext) {
         val automator = factory()
-        context.getStore(NAMESPACE).put(STORE_KEY, automator)
+        val store = context.getStore(NAMESPACE)
+        store.put(STORE_KEY, automator)
         lastInstance = automator
+        startFailureVideo(context, automator)
     }
 
     override fun afterTestExecution(context: ExtensionContext) {
@@ -101,6 +154,9 @@ public class ComposeAutomatorExtension(
         throwable: Throwable,
     ) {
         captureFailureArtifacts(context, throwable)
+        // @AfterEach failures are not always visible on executionException when afterEach runs;
+        // finalize with this throwable so OnFailureKeep keeps video for lifecycle failures.
+        finalizeFailureVideo(context, throwable)
         throw throwable
     }
 
@@ -110,6 +166,8 @@ public class ComposeAutomatorExtension(
     ) {
         // Automator may already exist if factory ran; capture is best-effort.
         captureFailureArtifacts(context, throwable)
+        // Video may have started; finalize with abort/fail outcome so we never leave an orphan.
+        finalizeFailureVideo(context, throwable)
         throw throwable
     }
 
@@ -140,10 +198,44 @@ public class ComposeAutomatorExtension(
     }
 
     override fun afterEach(context: ExtensionContext) {
-        // Future hook: when the automator gains lifecycle-aware resources (recordings,
-        // background pollers, etc.) tear them down here.
+        // Finalize video before clearing the automator so window-targeted backends still see
+        // live windows during stop if needed; then drop the automator.
+        val failure = context.executionException.orElse(null)
+        finalizeFailureVideo(context, failure)
         context.getStore(NAMESPACE).remove(STORE_KEY)
         lastInstance = null
+    }
+
+    private fun startFailureVideo(context: ExtensionContext, automator: ComposeAutomator) {
+        if (!FailureVideoDecisions.shouldStart(failureVideo.policy)) return
+        val store = context.getStore(NAMESPACE)
+        val testClass = context.testClass.map { it.name }.orElse("UnknownClass")
+        val testMethod = context.testMethod.map { it.name }.orElseGet { context.displayName }
+        val videoConfig =
+            failureVideo.copy(
+                invocationId =
+                    failureVideo.invocationId?.takeIf { it.isNotBlank() } ?: context.uniqueId
+            )
+        val session = FailureVideoSession(config = videoConfig, starter = videoStarter)
+        session.start(automator = automator, testClassName = testClass, testMethodName = testMethod)
+        store.put(VIDEO_SESSION_KEY, session)
+    }
+
+    private fun finalizeFailureVideo(context: ExtensionContext, failure: Throwable?) {
+        val store = context.getStore(NAMESPACE)
+        if (store.get(VIDEO_FINALIZED_KEY) == true) return
+        val session = store.remove(VIDEO_SESSION_KEY, FailureVideoSession::class.java)
+        store.put(VIDEO_FINALIZED_KEY, true)
+        if (session == null) return
+        // Prefer the worst outcome: a failed test method must keep video even if a later
+        // @AfterEach aborts (handleAfterEach only sees the AfterEach throwable).
+        val executionFailure = context.executionException.orElse(null)
+        val outcome =
+            FailureVideoDecisions.worseOutcome(
+                FailureVideoDecisions.outcomeFromThrowable(executionFailure),
+                FailureVideoDecisions.outcomeFromThrowable(failure),
+            )
+        session.finalizeAndApply(outcome) { key, value -> context.publishReportEntry(key, value) }
     }
 
     override fun supportsParameter(
@@ -184,3 +276,5 @@ public class ComposeAutomatorExtension(
 // static field on the file's facade class and stays out of the public ABI surface.
 private const val STORE_KEY: String = "automator"
 private const val CAPTURED_KEY: String = "failureArtifactsCaptured"
+private const val VIDEO_SESSION_KEY: String = "failureVideoSession"
+private const val VIDEO_FINALIZED_KEY: String = "failureVideoFinalized"
