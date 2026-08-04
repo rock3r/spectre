@@ -318,6 +318,82 @@ On JUnit 5, each written window directory is published as a report entry under t
 
 Point CI at the reports tree with a single upload glob — see [Running on CI](ci.md#failure-artifacts).
 
+## Failure video
+
+You cannot record a failure retroactively, so video-of-a-failure means recording the **whole
+test** and deciding at the end whether to keep the file. Configure this with
+`FailureVideoConfig` next to stills config on `ComposeAutomatorExtension` /
+`ComposeAutomatorRule`.
+
+Default is **`FailureVideoPolicy.Off`** — no recorder overhead on green CI. Opt in per suite:
+
+| Policy | Behaviour |
+| --- | --- |
+| `Off` | Default. No recording starts. |
+| `OnFailureKeep` | Record the whole test; **delete** the finalized file on pass; **keep** on fail. |
+| `Always` | Keep the finalized video on pass and fail. |
+
+```kotlin
+import dev.sebastiano.spectre.testing.ComposeAutomatorExtension
+import dev.sebastiano.spectre.testing.FailureVideoConfig
+import dev.sebastiano.spectre.testing.FailureVideoPolicy
+import org.junit.jupiter.api.extension.RegisterExtension
+
+@JvmField
+@RegisterExtension
+val automatorExt =
+    ComposeAutomatorExtension(
+        failureVideo =
+            FailureVideoConfig(policy = FailureVideoPolicy.OnFailureKeep),
+    )
+```
+
+```kotlin
+import dev.sebastiano.spectre.testing.ComposeAutomatorRule
+import dev.sebastiano.spectre.testing.FailureVideoConfig
+import dev.sebastiano.spectre.testing.FailureVideoPolicy
+import org.junit.Rule
+
+@get:Rule
+val automatorRule =
+    ComposeAutomatorRule(
+        failureVideo =
+            FailureVideoConfig(policy = FailureVideoPolicy.OnFailureKeep),
+    )
+```
+
+### Layout
+
+Videos land under the **same reports tree** as stills (same class/method/invocation/`attempt-N`
+nesting), as a sibling file:
+
+```text
+build/reports/spectre/<test-class>/<test-method>[/<invocation>][/attempt-N]/
+  failure-video.mp4          ← when the policy keeps the file
+  run-*/window-<i>/…         ← stills (#205), independent of video policy
+```
+
+Stills stay default-on and are independent of the video policy. Aborted tests (JUnit assumptions)
+never keep a failure video — same skip semantics as stills. On JUnit 5, a kept video is published
+as a report entry under `spectre.failureVideo`.
+
+### Overhead (honest)
+
+Recording every test is real cost. Prefer `Off` on CI unless you need video for a flaky suite.
+
+- **CPU / helper process** — a platform recorder runs for the full test duration (ScreenCaptureKit
+  helper on macOS, Windows Graphics Capture helper on Windows, GStreamer / portal paths on Linux).
+  See [Recording limitations](../RECORDING-LIMITATIONS.md) for per-OS backend behaviour and
+  permissions.
+- **Disk under `OnFailureKeep`** — the file is written for **every** invocation (including green
+  tests) and only deleted after the recorder stops and finalizes. Parallel suites and long tests
+  can spike disk during the run even when nothing is left on pass.
+- **Permissions** — macOS Screen Recording TCC, Windows helper packaging, and Wayland portal
+  consent still apply; if the backend cannot start, video is skipped best-effort (the test
+  outcome is never replaced by a recorder error).
+- **Scope** — this policy is for **in-process** JUnit wrappers only. Agent/attach recording stays
+  on the CLI/daemon path (`spectre record`), not this config.
+
 ## Custom `AutomatorFactory`
 
 Both wrappers default to `ComposeAutomator.inProcess()`. Pass your own factory when you

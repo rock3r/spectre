@@ -272,6 +272,28 @@ compositor and not raw framebuffer reads.
 - The handle MUST be stopped (`RecordingHandle.stop(...)`) for the file to be flushed cleanly. A
   JVM exit without stop leaves a partial/non-finalised file and an orphaned subprocess.
 
+## JUnit failure-video policy (#206)
+
+`ComposeAutomatorExtension` / `ComposeAutomatorRule` can record the whole test and keep or
+delete the file at the end (`FailureVideoPolicy`: `Off` | `OnFailureKeep` | `Always`). See
+[JUnit integration — Failure video](guide/junit.md#failure-video).
+
+Honest overhead notes (policy defaults to **`Off`** for a reason):
+
+- **Per-OS cost** — the same backends as `AutoRecorder` run for the full test duration
+  (ScreenCaptureKit helper on macOS, Windows Graphics Capture helper on Windows, GStreamer
+  X11 / Wayland portal on Linux). CPU, encoder, and helper-process cost scale with test
+  length and resolution; capability and permission limits on this page still apply.
+- **Disk under `OnFailureKeep`** — the video file is written during **every** invocation
+  (including green tests) and only deleted after stop+finalize on pass. Parallel suites and
+  long-running tests can therefore spike disk use during the run even when nothing remains
+  after a green suite.
+- **Stop before delete** — Spectre always stops the recorder and finalizes the file before
+  applying keep/delete. A JVM exit without teardown can still leave a partial file and an
+  orphaned helper (same as any other `RecordingHandle` — see process lifecycle above).
+- **In-process JUnit only** — this policy does not cover agent/attach / CLI `spectre record`
+  paths; those remain separate entry points.
+
 ## Current non-limitations
 
 - Cursor capture is configurable via `RecordingOptions.captureCursor` and works under the region

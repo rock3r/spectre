@@ -22,9 +22,8 @@ spectre
 sample-desktop          ─┐
 sample-intellij-plugin   ├──> core
 server                   │
-testing                 ─┘
-
-recording                (isolated desktop/native integration API)
+testing                 ─┴──> recording   (failure-video #206 uses AutoRecorder)
+                               ↑
 recording-macos    ─┐
 recording-linux     ├──> recording (runtime helper artifacts)
 recording-windows  ─┘

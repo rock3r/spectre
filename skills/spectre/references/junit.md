@@ -96,6 +96,21 @@ val automatorExt = ComposeAutomatorExtension {
 
 The JUnit 4 rule is identical: `ComposeAutomatorRule { ComposeAutomator.inProcess(...) }`.
 
+## Failure video (#206)
+
+Optional whole-test recording via `FailureVideoConfig` (default
+`FailureVideoPolicy.Off`). Policies: `Off` | `OnFailureKeep` (delete on pass,
+keep on fail) | `Always`. Output: `build/reports/spectre/<class>/<method>/failure-video.mp4`
+next to stills. Independent of still failure artifacts. In-process JUnit only —
+see the user guide (`docs/guide/junit.md#failure-video`) and
+`docs/RECORDING-LIMITATIONS.md` for overhead.
+
+```kotlin
+ComposeAutomatorExtension(
+    failureVideo = FailureVideoConfig(policy = FailureVideoPolicy.OnFailureKeep),
+)
+```
+
 ## Lifecycle notes
 
 - The extension/rule does **not** open a Compose window for you. Launch your
