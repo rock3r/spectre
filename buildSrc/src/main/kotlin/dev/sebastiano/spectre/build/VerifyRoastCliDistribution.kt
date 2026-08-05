@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.build
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.TimeUnit
+import java.util.jar.JarInputStream
 import java.util.zip.ZipFile
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.RegularFileProperty
@@ -18,6 +19,12 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
     @get:Input abstract val launcherPath: Property<String>
 
     @get:Input abstract val runtimeJavaPath: Property<String>
+
+    /**
+     * OS native prefix the embedded CLI application jar must retain exclusively (e.g.
+     * `native/macos/`). See [CliRoastNativePackagingContract].
+     */
+    @get:Input abstract val keepNativePrefix: Property<String>
 
     @TaskAction
     fun verify() {
@@ -35,11 +42,53 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
             check(zip.getEntry("$applicationRoot/app/spectre.json") != null) {
                 "${archive.name} does not contain Roast's application configuration"
             }
+            validateNativeLayout(zip, applicationRoot)
             validateEntries(zip)
             extract(archive, zip)
         }
         verifyLauncher(File(temporaryDir, launcher))
         verifyRuntimeJava(File(temporaryDir, runtimeJavaPath.get()))
+    }
+
+    private fun validateNativeLayout(zip: ZipFile, applicationRoot: String) {
+        val keepPrefix = keepNativePrefix.get()
+        val applicationJar =
+            zip.entries()
+                .asSequence()
+                .map { it.name }
+                .filter { name ->
+                    name.startsWith("$applicationRoot/") &&
+                        name.endsWith(".jar") &&
+                        !name.contains("/runtime/") &&
+                        !name.contains("/app/")
+                }
+                .sortedByDescending { name -> zip.getEntry(name).size }
+                .firstOrNull()
+                ?: error(
+                    "${zip.name ?: "Roast zip"} does not contain an application jar under $applicationRoot"
+                )
+        val entryNames =
+            zip.getInputStream(zip.getEntry(applicationJar)).use { input ->
+                JarInputStream(input).use { jar ->
+                    buildList {
+                        var entry = jar.nextJarEntry
+                        while (entry != null) {
+                            add(entry.name)
+                            jar.closeEntry()
+                            entry = jar.nextJarEntry
+                        }
+                    }
+                }
+            }
+        val errors =
+            CliRoastNativePackagingContract.validateEmbeddedJarEntries(entryNames, keepPrefix)
+        check(errors.isEmpty()) {
+            "${zip.name ?: "Roast zip"} embedded jar $applicationJar fails per-target native layout:\n" +
+                errors.joinToString("\n") { "  - $it" }
+        }
+        check(AGENT_RUNTIME_ENTRY in entryNames) {
+            "${zip.name ?: "Roast zip"} embedded jar $applicationJar is missing $AGENT_RUNTIME_ENTRY"
+        }
     }
 
     private fun validateEntries(zip: ZipFile) {
@@ -116,6 +165,7 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
     private companion object {
         const val EXTRACTION_TIMEOUT_SECONDS = 30L
         const val LAUNCH_TIMEOUT_SECONDS = 20L
+        const val AGENT_RUNTIME_ENTRY = "spectre/agent-runtime.jar"
         val ANSI_ESCAPE_SEQUENCE = Regex("\\u001B\\[[0-?]*[ -/]*[@-~]")
     }
 

@@ -1,4 +1,6 @@
+import dev.sebastiano.spectre.build.CliRoastNativePackagingContract
 import dev.sebastiano.spectre.build.CreateCliRuntimeImage
+import dev.sebastiano.spectre.build.FilterCliShadowJarNatives
 import dev.sebastiano.spectre.build.PatchStartScripts
 import dev.sebastiano.spectre.build.VerifyCliDistributionZip
 import dev.sebastiano.spectre.build.VerifyCliRuntimeImage
@@ -6,6 +8,7 @@ import dev.sebastiano.spectre.build.VerifyCliShadowJar
 import dev.sebastiano.spectre.build.VerifyRoastCliDistribution
 import io.github.fourlastor.construo.Target
 import io.github.fourlastor.construo.task.jvm.CreateRuntimeImageTask as ConstruoCreateRuntimeImageTask
+import io.github.fourlastor.construo.task.jvm.RoastTask
 import org.gradle.api.tasks.Copy
 import org.gradle.api.tasks.application.CreateStartScripts
 import org.gradle.api.tasks.bundling.Zip
@@ -116,6 +119,10 @@ preserveRuntimeJavaLauncher("macosX64", macBundle = true)
 preserveRuntimeJavaLauncher("macosArm64", macBundle = true)
 
 preserveRuntimeJavaLauncher("windowsX64")
+
+// Each Roast target embeds a filtered copy of the multi-platform shadow jar so platform zips
+// only ship that OS's recording helpers (#354). Maven recording jars stay multi-arch.
+wirePerTargetRoastNativeFiltering()
 
 tasks.shadowJar {
     val agentRuntimeJar = project(":agent-runtime").tasks.named<Jar>("jar")
@@ -232,6 +239,9 @@ val verifyRoastCliDistribution =
         )
         launcherPath.set(hostTarget.launcherPath(project.version.toString()))
         runtimeJavaPath.set(hostTarget.runtimeJavaPath(project.version.toString()))
+        keepNativePrefix.set(
+            CliRoastNativePackagingContract.keepNativePrefixForRoastTarget(hostTarget.name)
+        )
     }
 
 tasks.assemble { dependsOn(verifyCliShadowJar, verifyCliRuntimeImage) }
@@ -303,6 +313,36 @@ private fun preserveRuntimeJavaLauncher(target: String, macBundle: Boolean = fal
             filePermissions { unix("rwxr-xr-x") }
         }
     tasks.named("roast$taskSuffix") { dependsOn(preserveLauncher) }
+}
+
+/**
+ * Construo uses a single [jarTask] for every Roast target. After the multi-platform shadow jar is
+ * built, filter natives per OS and rewire each [RoastTask.jarFile] so package* zips never embed
+ * foreign recording helpers.
+ */
+private fun wirePerTargetRoastNativeFiltering() {
+    val roastTargets = listOf("linuxX64", "linuxArm64", "macosX64", "macosArm64", "windowsX64")
+    for (target in roastTargets) {
+        val taskSuffix = target.replaceFirstChar(Char::uppercase)
+        val keepPrefix = CliRoastNativePackagingContract.keepNativePrefixForRoastTarget(target)
+        val filterTask =
+            tasks.register<FilterCliShadowJarNatives>("filterShadowJarNatives$taskSuffix") {
+                description =
+                    "Filters the multi-platform CLI shadow jar so Roast $target keeps only $keepPrefix helpers."
+                group = "distribution"
+                inputJar.set(tasks.shadowJar.flatMap { it.archiveFile })
+                outputJar.set(
+                    layout.buildDirectory.file(
+                        "construo/filtered-jars/cli-$target-${project.version}-all.jar"
+                    )
+                )
+                keepNativePrefix.set(keepPrefix)
+            }
+        tasks.named<RoastTask>("roast$taskSuffix") {
+            dependsOn(filterTask)
+            jarFile.set(filterTask.flatMap { it.outputJar })
+        }
+    }
 }
 
 private data class RoastTarget(
