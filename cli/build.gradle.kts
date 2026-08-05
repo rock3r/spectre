@@ -336,10 +336,16 @@ private fun wirePerTargetRoastNativeFiltering(roastTargets: List<String>) {
                     "Filters the multi-platform CLI shadow jar so Roast $target keeps only $keepPrefix helpers."
                 group = "distribution"
                 inputJar.set(tasks.shadowJar.flatMap { it.archiveFile })
+                // Keep the unfiltered shadow jar basename (`cli-$version-all.jar`). Roast copies
+                // that name into the bundle and release.yml signs
+                // `Contents/MacOS/cli-$RELEASE_VERSION-all.jar` on macOS — a target-suffixed
+                // basename would break notarization under `set -euo pipefail`.
                 outputJar.set(
-                    layout.buildDirectory.file(
-                        "construo/filtered-jars/cli-$target-${project.version}-all.jar"
-                    )
+                    tasks.shadowJar.flatMap { shadow ->
+                        layout.buildDirectory.file(
+                            "construo/filtered-jars/$target/${shadow.archiveFile.get().asFile.name}"
+                        )
+                    }
                 )
                 keepNativePrefix.set(keepPrefix)
             }
