@@ -23,6 +23,14 @@ module SpectreHomebrewInstallSemantics
   FORBIDDEN_SYMLINK = 'bin.install_symlink libexec/"Spectre.app/Contents/MacOS/spectre"'
 
   REQUIRED_SNIPPETS = [
+    # #390: without preserve_rpath, brew rewrites jlink @rpath dylib IDs + ad-hoc re-signs
+    # nested Mach-Os and Gatekeeper reports Spectre.app as "damaged".
+    "preserve_rpath",
+    # #390: re-stage notarized Spectre.app after fix_dynamic_linkage (duplicate rpath strip).
+    "def post_install",
+    "restore_signed_app!",
+    "cached_download",
+    'system "ditto", "-x", "-k"',
     '(bin/"spectre").write',
     "#!/bin/sh",
     'exec "#{libexec}/Spectre.app/Contents/MacOS/spectre" "$@"',

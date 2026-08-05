@@ -49,9 +49,13 @@ Jobs on tag push (order simplified; see the workflow for the full graph):
 5. **`mac-cli-bundles`** (macOS runner, depends on the gate and `mac-helper`) — builds the
    x64 and arm64 Roast `.app` CLI bundles with the notarised screen-capture helper, signs every
    Mach-O component in their jlink runtimes with the Developer ID and JVM hardened-runtime
-   entitlements, submits each archive to `notarytool` with a 30-minute bound, staples the
-   resulting ticket, then verifies the exact extracted ZIP with `codesign`, `stapler`, and
-   `spctl` before uploading it as a workflow artefact.
+   entitlements (nested first, outer bundle last), submits each archive to `notarytool` with a
+   30-minute bound, staples the ticket, then verifies the exact extracted ZIP with
+   `codesign --verify --deep --strict`, `stapler`, and `spctl` before upload. Intermediate
+   post-sign checks also use `--deep --strict` so a nested jlink seal break cannot green-pass
+   (#390). The Homebrew formula must keep `preserve_rpath` and a `post_install` that re-stages
+   the notarized `Spectre.app` from the release zip after `fix_dynamic_linkage` (which can still
+   strip duplicate jlink rpaths and ad-hoc re-sign nested dylibs, breaking the outer seal).
 6. **`publish`** (Linux runner, depends on the gate and all helper/bundle jobs) — downloads the
    helper and signed macOS CLI artefacts, runs `:verifyMavenLocalPublication` to assert the
    publication shape, builds the Linux x64/Linux arm64/Windows x64 Roast CLI bundles, and runs

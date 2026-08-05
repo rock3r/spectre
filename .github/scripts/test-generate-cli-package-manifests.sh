@@ -29,6 +29,12 @@ grep -q 'sha256 "ddf7ff5ebd9d66ce161466c1c0262430fa04de32b0e420ee3f489e2e2112e38
 grep -q 'shell_output("#{bin}/spectre --help")' "$generated_formula"
 grep -q '"bin": "spectre-cli-1.2.3/spectre.exe"' "$tmp/out/bucket/spectre.json"
 
+# #390: Homebrew fix_dynamic_linkage must not leave a broken Spectre.app seal.
+grep -q 'preserve_rpath' "$generated_formula"
+grep -q 'def post_install' "$generated_formula"
+grep -q 'restore_signed_app!' "$generated_formula"
+grep -q 'cached_download' "$generated_formula"
+
 # Dual-layout app discovery: Homebrew may leave spectre-cli-*/ or strip it to top-level Spectre.app
 grep -q 'Dir\["spectre-cli-\*/Spectre.app"\]\.first || Dir\["Spectre.app"\]\.first' "$generated_formula"
 
@@ -47,6 +53,9 @@ if [[ ! -f "$committed_formula" ]]; then
   echo "missing committed formula: $committed_formula" >&2
   exit 1
 fi
+grep -q 'preserve_rpath' "$committed_formula"
+grep -q 'def post_install' "$committed_formula"
+grep -q 'restore_signed_app!' "$committed_formula"
 grep -q 'Dir\["spectre-cli-\*/Spectre.app"\]\.first || Dir\["Spectre.app"\]\.first' "$committed_formula"
 if grep -q 'bin.install_symlink libexec/"Spectre.app/Contents/MacOS/spectre"' "$committed_formula"; then
   echo "committed Formula/spectre.rb must not use raw bin.install_symlink of the Roast binary" >&2

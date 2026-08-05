@@ -120,6 +120,7 @@ Run these for **every** release unless a cell is explicitly N/A with reason
 | B6 | macOS | Agent inject | Compose-only target; inject bootstrap; non-empty tree; detach |
 | B7 | macOS | CLI daemon fixture | `spectre attach` (or package binary) → tree/capture against live fixture |
 | B8 | macOS | Capture helper + TCC | Helper is app-bundle identity; `spectre permissions check`; one screenshot/record |
+| B16 | macOS | CLI app seal (packaged) | Release-shaped or Homebrew `Spectre.app`: `codesign --verify --deep --strict` exit 0; `xcrun stapler validate` when notarized; launcher `--help` prints Usage (not silent exit 0 / Gatekeeper “damaged”). Prefer brew install of the formula after undraft when claiming Homebrew. See [#390](https://github.com/rock3r/spectre/issues/390). |
 | B9 | Windows | Agent attach (core) | Same as B5; prefer opt-in e2e (recipe below). SSH OK if semantics-only. |
 | B10 | Windows | Agent inject | Same as B6 — **does not ship “three OS agent” without this** |
 | B11 | Windows | Launch-and-attach | Direct `java` launch + attach (Gradle optional) |
