@@ -33,20 +33,29 @@ object CliRoastNativePackagingContract {
                 )
         }
 
+    /** Rejects malformed keep prefixes that would over-keep or under-keep helper trees. */
+    fun requireKnownKeepNativePrefix(keepNativePrefix: String): String {
+        check(keepNativePrefix in OS_NATIVE_PREFIXES) {
+            "keepNativePrefix must be one of $OS_NATIVE_PREFIXES, got: $keepNativePrefix"
+        }
+        return keepNativePrefix
+    }
+
     /**
      * Whether a jar entry should be copied into a target-filtered CLI application jar.
      * Non-native entries are always kept (bytecode, agent-runtime resource, services).
      */
     fun shouldIncludeJarEntry(entryName: String, keepNativePrefix: String): Boolean {
+        val keep = requireKnownKeepNativePrefix(keepNativePrefix)
         if (!entryName.startsWith(NATIVE_ROOT)) {
             return true
         }
         // Directory markers under native/ that are ancestors of the keep prefix stay so zip
         // tools retain a coherent tree; foreign OS roots are dropped.
         if (entryName.endsWith("/")) {
-            return keepNativePrefix.startsWith(entryName) || entryName.startsWith(keepNativePrefix)
+            return keep.startsWith(entryName) || entryName.startsWith(keep)
         }
-        return entryName.startsWith(keepNativePrefix)
+        return entryName.startsWith(keep)
     }
 
     /**

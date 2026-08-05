@@ -6,6 +6,7 @@ import dev.sebastiano.spectre.build.VerifyCliDistributionZip
 import dev.sebastiano.spectre.build.VerifyCliRuntimeImage
 import dev.sebastiano.spectre.build.VerifyCliShadowJar
 import dev.sebastiano.spectre.build.VerifyRoastCliDistribution
+import dev.sebastiano.spectre.build.VerifyRoastCliNativeLayout
 import io.github.fourlastor.construo.Target
 import io.github.fourlastor.construo.task.jvm.CreateRuntimeImageTask as ConstruoCreateRuntimeImageTask
 import io.github.fourlastor.construo.task.jvm.RoastTask
@@ -120,9 +121,13 @@ preserveRuntimeJavaLauncher("macosArm64", macBundle = true)
 
 preserveRuntimeJavaLauncher("windowsX64")
 
+// Keep in sync with the `construo { targets { create… } }` block above. Declared before
+// wirePerTargetRoastNativeFiltering() so configuration-time iteration is non-null.
+val roastPackageTargets = listOf("linuxX64", "linuxArm64", "macosX64", "macosArm64", "windowsX64")
+
 // Each Roast target embeds a filtered copy of the multi-platform shadow jar so platform zips
 // only ship that OS's recording helpers (#354). Maven recording jars stay multi-arch.
-wirePerTargetRoastNativeFiltering()
+wirePerTargetRoastNativeFiltering(roastPackageTargets)
 
 tasks.shadowJar {
     val agentRuntimeJar = project(":agent-runtime").tasks.named<Jar>("jar")
@@ -318,10 +323,10 @@ private fun preserveRuntimeJavaLauncher(target: String, macBundle: Boolean = fal
 /**
  * Construo uses a single [jarTask] for every Roast target. After the multi-platform shadow jar is
  * built, filter natives per OS and rewire each [RoastTask.jarFile] so package* zips never embed
- * foreign recording helpers.
+ * foreign recording helpers. Each package* is finalized by a launcher-free layout verify so
+ * non-host release packages fail closed on foreign natives without running the target launcher.
  */
-private fun wirePerTargetRoastNativeFiltering() {
-    val roastTargets = listOf("linuxX64", "linuxArm64", "macosX64", "macosArm64", "windowsX64")
+private fun wirePerTargetRoastNativeFiltering(roastTargets: List<String>) {
     for (target in roastTargets) {
         val taskSuffix = target.replaceFirstChar(Char::uppercase)
         val keepPrefix = CliRoastNativePackagingContract.keepNativePrefixForRoastTarget(target)
@@ -342,6 +347,21 @@ private fun wirePerTargetRoastNativeFiltering() {
             dependsOn(filterTask)
             jarFile.set(filterTask.flatMap { it.outputJar })
         }
+        val packageTask = tasks.named("package$taskSuffix")
+        val layoutVerify =
+            tasks.register<VerifyRoastCliNativeLayout>("verifyRoastCliNativeLayout$taskSuffix") {
+                description =
+                    "Verifies Roast $target embeds only $keepPrefix helpers (no launcher)."
+                group = "verification"
+                dependsOn(packageTask)
+                artifact.set(
+                    layout.buildDirectory.file("construo/distributions/spectre-$target.zip")
+                )
+                roastTargetName.set(target)
+            }
+        // finalizedBy so any explicit package* (release matrix, local cross-build) still runs
+        // the layout gate without pulling every target into :cli:check.
+        packageTask.configure { finalizedBy(layoutVerify) }
     }
 }
 

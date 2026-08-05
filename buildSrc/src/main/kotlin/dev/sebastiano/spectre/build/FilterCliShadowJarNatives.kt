@@ -57,9 +57,8 @@ abstract class FilterCliShadowJarNatives : DefaultTask() {
             outputJar: java.io.File,
             keepNativePrefix: String,
         ) {
-            require(keepNativePrefix.startsWith(CliRoastNativePackagingContract.NATIVE_ROOT)) {
-                "keepNativePrefix must start with ${CliRoastNativePackagingContract.NATIVE_ROOT}, got: $keepNativePrefix"
-            }
+            val keep =
+                CliRoastNativePackagingContract.requireKnownKeepNativePrefix(keepNativePrefix)
             outputJar.parentFile?.mkdirs()
             JarFile(inputJar).use { source ->
                 JarOutputStream(BufferedOutputStream(outputJar.outputStream())).use { dest ->
@@ -69,7 +68,7 @@ abstract class FilterCliShadowJarNatives : DefaultTask() {
                         if (
                             !CliRoastNativePackagingContract.shouldIncludeJarEntry(
                                 entry.name,
-                                keepNativePrefix,
+                                keep,
                             )
                         ) {
                             continue
@@ -78,8 +77,17 @@ abstract class FilterCliShadowJarNatives : DefaultTask() {
                         copy.time = entry.time
                         copy.method = entry.method
                         if (entry.method == ZipEntry.STORED) {
-                            copy.size = entry.size
-                            copy.compressedSize = entry.compressedSize
+                            // ZipOutputStream requires size == compressedSize for STORED. Repair
+                            // incomplete source metadata rather than failing mid-filter.
+                            val size = entry.size
+                            val compressed =
+                                if (entry.compressedSize >= 0 && entry.compressedSize == size) {
+                                    entry.compressedSize
+                                } else {
+                                    size
+                                }
+                            copy.size = size
+                            copy.compressedSize = compressed
                             copy.crc = entry.crc
                         }
                         dest.putNextEntry(copy)

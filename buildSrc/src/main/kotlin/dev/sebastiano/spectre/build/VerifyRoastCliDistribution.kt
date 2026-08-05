@@ -52,21 +52,10 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
 
     private fun validateNativeLayout(zip: ZipFile, applicationRoot: String) {
         val keepPrefix = keepNativePrefix.get()
-        val applicationJar =
-            zip.entries()
-                .asSequence()
-                .map { it.name }
-                .filter { name ->
-                    name.startsWith("$applicationRoot/") &&
-                        name.endsWith(".jar") &&
-                        !name.contains("/runtime/") &&
-                        !name.contains("/app/")
-                }
-                .sortedByDescending { name -> zip.getEntry(name).size }
-                .firstOrNull()
-                ?: error(
-                    "${zip.name ?: "Roast zip"} does not contain an application jar under $applicationRoot"
-                )
+        val applicationJar = VerifyRoastCliNativeLayout.resolveApplicationJarEntry(zip)
+        check(applicationJar.startsWith("$applicationRoot/") || !applicationRoot.contains('/')) {
+            "${zip.name ?: "Roast zip"} application jar $applicationJar is outside launcher root $applicationRoot"
+        }
         val entryNames =
             zip.getInputStream(zip.getEntry(applicationJar)).use { input ->
                 JarInputStream(input).use { jar ->
@@ -86,8 +75,9 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
             "${zip.name ?: "Roast zip"} embedded jar $applicationJar fails per-target native layout:\n" +
                 errors.joinToString("\n") { "  - $it" }
         }
-        check(AGENT_RUNTIME_ENTRY in entryNames) {
-            "${zip.name ?: "Roast zip"} embedded jar $applicationJar is missing $AGENT_RUNTIME_ENTRY"
+        check(VerifyRoastCliNativeLayout.AGENT_RUNTIME_ENTRY in entryNames) {
+            "${zip.name ?: "Roast zip"} embedded jar $applicationJar is missing " +
+                VerifyRoastCliNativeLayout.AGENT_RUNTIME_ENTRY
         }
     }
 
@@ -165,7 +155,6 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
     private companion object {
         const val EXTRACTION_TIMEOUT_SECONDS = 30L
         const val LAUNCH_TIMEOUT_SECONDS = 20L
-        const val AGENT_RUNTIME_ENTRY = "spectre/agent-runtime.jar"
         val ANSI_ESCAPE_SEQUENCE = Regex("\\u001B\\[[0-?]*[ -/]*[@-~]")
     }
 
