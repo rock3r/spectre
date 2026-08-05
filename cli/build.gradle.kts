@@ -134,24 +134,45 @@ tasks.shadowJar {
     dependsOn(agentRuntimeJar)
     archiveClassifier = "all"
     manifest { attributes["Main-Class"] = application.mainClass.get() }
-    // Keep Spectre's entrypoints readable and callable by name while R8 removes dead code from
-    // the merged third-party runtime. The nested agent runtime is copied as an opaque resource
-    // below, so its reflection-based attach contract stays outside the shrinker's scope.
+    // R8 on the CLI fat jar only (#354): shrink + optimize third-party bytecode while keeping
+    // human stack traces (`-dontobfuscate` + line numbers). Nested agent-runtime is copied as an
+    // opaque resource below, so its reflection attach contract stays outside the shrinker.
     minimize {
         r8 {
+            // Shadow defaults to shrink-only (`-dontoptimize`). Opt into optimize as the #354
+            // canary; verifyCliShadowJar / MCP / daemon main must stay green. If a future R8
+            // upgrade breaks canary, remove enableOptimization() rather than invent obfuscation.
+            enableOptimization()
             keepRules.addAll(
-                "-dontobfuscate",
-                "-dontoptimize",
-                // kotlin-logging ships adapters for optional logging backends. The CLI does not
-                // bundle Logback, so R8 must not treat those unused adapter references as an
-                // unresolved runtime dependency.
+                // Supportable traces; no name mangling (hard non-goal for #354).
+                // Shadow already passes --no-minification unless enableObfuscation() is called.
                 "-dontwarn ch.qos.logback.classic.**",
-                "-keepattributes SourceFile,LineNumberTable",
-                "-keep class dev.sebastiano.spectre.cli.** { *; }",
-                // Compose Hot Reload orchestration uses reflection + service loaders for message
-                // encoders; keep the public client surface used by waitForReloadSettled (#211).
-                "-keep class org.jetbrains.compose.reload.** { *; }",
+                "-keepattributes SourceFile,LineNumberTable,InnerClasses,EnclosingMethod," +
+                    "RuntimeVisibleAnnotations,AnnotationDefault,Signature",
+                // `java -jar` Main-Class and the daemon spawn launched by string class name
+                // (DaemonProcessLauncher / DaemonJvmProcessDiscovery).
+                "-keep class dev.sebastiano.spectre.cli.SpectreCliKt { " +
+                    "public static void main(java.lang.String[]); }",
+                "-keep class dev.sebastiano.spectre.cli.daemon.DaemonMainKt { " +
+                    "public static void main(java.lang.String[]); }",
+                "-keep class dev.sebastiano.spectre.cli.daemon.DaemonMain { *; }",
+                // Clikt builds the command tree from constructed classes; keep command types and
+                // their members so options/arguments and run() survive shrinking without a blanket
+                // keep of every helper in the package.
+                "-keep class * extends com.github.ajalt.clikt.core.CliktCommand { *; }",
+                // kotlinx.serialization consumer rules ship in dependency META-INF; keep Spectre
+                // serializable models that the daemon/MCP wire protocol uses by name.
+                "-if @kotlinx.serialization.Serializable class dev.sebastiano.spectre.cli.**",
+                "-keepclassmembers class <1> { *** Companion; }",
+                "-keepclasseswithmembers class dev.sebastiano.spectre.cli.** { " +
+                    "kotlinx.serialization.KSerializer serializer(...); }",
+                // Compose Hot Reload (#211): only the orchestration client + core types used by
+                // waitForReloadSettled / port discovery — not the full compose.reload tree.
+                "-keep class org.jetbrains.compose.reload.orchestration.** { *; }",
+                "-keep class org.jetbrains.compose.reload.core.** { *; }",
                 "-dontwarn org.jetbrains.compose.reload.**",
+                // Ktor ServiceLoader entry verified by verifyCliShadowJar.
+                "-keep class * implements io.ktor.server.config.ConfigLoader { *; }",
             )
         }
     }
