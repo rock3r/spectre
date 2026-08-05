@@ -384,10 +384,14 @@ jobs:
                   --sign "$APPLE_DEVELOPER_IDENTITY" "$file"
               fi
             done < <(find "$app" -type f -print0)
+            # Nested Mach-Os were signed above; outer seal is the last content mutation
+            # before notarize/staple. Stapling only attaches a ticket under _CodeSignature.
             codesign --force --options runtime --timestamp \
               --entitlements "$entitlements" \
               --sign "$APPLE_DEVELOPER_IDENTITY" "$app"
-            codesign --verify --strict --verbose=4 "$app"
+            # --deep is required: without it nested jlink dylib seal breaks can pass
+            # intermediate checks and only fail on consumer machines / Gatekeeper (#390).
+            codesign --verify --deep --strict --verbose=4 "$app"
 
             # Notarytool receives an app-root archive. The published ZIP keeps its version
             # directory so Homebrew does not strip the application bundle itself on install.
@@ -413,7 +417,7 @@ jobs:
             fi
             xcrun stapler staple "$app"
             xcrun stapler validate "$app"
-            codesign --verify --strict --verbose=4 "$app"
+            codesign --verify --deep --strict --verbose=4 "$app"
             ditto -c -k --sequesterRsrc --keepParent "$root" "$archive"
 
             extracted="$workspace/published"

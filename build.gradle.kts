@@ -108,6 +108,8 @@ val verifyMacosCliBundleReleaseContract by
                 ".github/workflows/release.yml",
                 ".github/scripts/verify-macos-cli-bundle.sh",
                 ".github/scripts/test-verify-macos-cli-bundle.sh",
+                ".github/scripts/test-macos-cli-seal-preservation.sh",
+                "Formula/spectre.rb",
             )
             .withPathSensitivity(PathSensitivity.RELATIVE)
         outputs.upToDateWhen { false }
