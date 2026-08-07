@@ -66,6 +66,22 @@ grep -F -q 'taskkill.exe /PID $p.Id /T /F' "$script" || fail "timeout does not c
 grep -F -q 'timed out after {1}s' "$script" || fail "timeout diagnostic is missing"
 grep -F -q '"--stop"' "$script" || fail "packaged Gradle-ish launch does not reset attach-tainted daemons"
 
+# --- Shared schemaVersion report + stable scenario IDs (#398) ---
+grep -F -q 'schemaVersion' "$script" || fail "Windows report missing schemaVersion"
+grep -F -q 'Save-VersionedSmokeReport' "$script" || fail "Windows report writer missing"
+grep -F -q 'hard skip without N/A reason' "$script" || fail "fail-closed hard N/A policy missing"
+for scenario_id in \
+  preflight check junit-live agent-attach-core agent-contract-corpus agent-inject \
+  agent-launch-and-attach cli-packaged cli-native-helper-layout cli-user-flow \
+  mcp-sdk-flow host-native-recording maven-local-consumer
+do
+  grep -F -q "$scenario_id" "$script" || fail "Windows runner missing stable scenario id: $scenario_id"
+done
+grep -F -q 'windows-ssh' "$script" || fail "SSH displayMode honesty for WGC missing"
+grep -F -q 'WGC requires native interactive console' "$script" || fail "WGC interactive-console N/A reason missing"
+grep -F -q 'displayMode' "$script" || fail "displayMode field missing from Windows harness"
+grep -F -q 'windows-release-smoke.json' "$script" || fail "Windows JSON report path missing"
+
 # --- Optional: parse with pwsh when present (macOS/Linux CI agents may have it) ---
 # Note: this is PowerShell Core parse, not Desktop 5.1; ASCII byte check is the 5.1 stand-in.
 if command -v pwsh >/dev/null 2>&1; then
