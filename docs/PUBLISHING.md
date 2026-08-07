@@ -71,11 +71,19 @@ tap formula and `bucket/spectre.json` is the Scoop bucket manifest. Publishing t
 release regenerates both from its public CLI archives and their SHA-256 values, then commits them
 to `main`.
 
-Package-manifest generation and Homebrew install contracts are gated by
-`./gradlew verifyCliPackageManifests` (part of `./gradlew check`): the generator is exercised with
-fixture archives, the committed formula's `install` body must stay aligned with the generator, and
-behavioral tests cover dual-layout `Spectre.app` discovery (Homebrew strip) plus the wrapper bin
-entry (Roast is argv[0]-sensitive and cannot be exposed via `bin.install_symlink`).
+Package-manifest generation and Homebrew install contracts are gated on Unix
+`./gradlew check` in two tasks (issue #400 — clean Linux must not need undeclared Ruby):
+
+- `verifyCliPackageManifests` — generator + structural contracts (`python3` + `bash` only):
+  fixture archives, Scoop JSON, committed `Formula/spectre.rb` install-body alignment with
+  the generator, wrapper bin entry text contracts.
+- `verifyHomebrewFormulaInstallSemantics` — behavioral install-semantics (**Ruby**): dual-layout
+  `Spectre.app` discovery (Homebrew strip) plus wrapper-vs-symlink behaviour (Roast is
+  argv[0]-sensitive and cannot be exposed via `bin.install_symlink`). Runs when Ruby is on
+  `PATH`, and **always under CI** (actionable preflight if Ruby is missing). Host-dep
+  regression: `verifyCliPackageManifestHostDeps`.
+
+See [Testing — Package-channel contracts](TESTING.md#package-channel-homebrew--scoop-contracts).
 
 On macOS, use the repository as an explicit tap because its name is `spectre`, not Homebrew's
 `homebrew-*` shorthand:

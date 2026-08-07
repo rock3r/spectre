@@ -10,8 +10,10 @@
 # App discovery is evaluated from the formula source (not a reimplemented ideal), so a
 # nested-only glob regresses the stripped-layout case.
 #
-# Run via test-generate-cli-package-manifests.sh or directly:
+# Run via test-homebrew-formula-install-semantics.sh (Gradle:
+# verifyHomebrewFormulaInstallSemantics) or directly:
 #   ruby .github/scripts/test-homebrew-formula-install-semantics.rb [formula.rb ...]
+# Structural/generator checks (no Ruby) live in test-generate-cli-package-manifests.sh.
 
 require "fileutils"
 require "tmpdir"
