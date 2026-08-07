@@ -21,6 +21,14 @@ tasks.withType<Test>().configureEach {
 Linux a display server, but it cannot help if the JVM has already decided to run headless and
 ignore `DISPLAY`.
 
+**Honesty:** `xvfb-run` proves the Linux **X11** capture path (helper `ximagesrc`, JUnit
+failure screenshots, agent screenshots, visual idle under a virtual framebuffer). It does
+**not** prove Wayland portal consent, PipeWire one-frame capture, or restore-token behaviour.
+When the host also has residual Wayland sockets or inherited Wayland env vars, Spectre still
+routes to X11 for an Xvfb `DISPLAY` (#397). For portal coverage, run on a real Wayland
+session separately. If detection ever disagrees with your setup, set
+`SPECTRE_CAPTURE_BACKEND=x11` (or `wayland`) explicitly.
+
 `-Dskiko.renderApi=SOFTWARE_COMPAT` is required on GPU-less Linux runners. Without it, Skiko's
 default OpenGL path can throw `RenderException: Cannot create Linux GL context`. The semantics
 tree may still compose, so selectors such as `findByTestTag` can pass, but typed input can

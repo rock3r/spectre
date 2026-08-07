@@ -17,9 +17,12 @@ name: Validation tests (Linux)
 #
 # `ubuntu-latest` runners ship without a display server, so we install `xvfb` and drive the
 # whole Gradle invocation under `xvfb-run`. That gives us a real Xorg server (NOT XWayland) —
-# framebuffer reads work normally, Robot input works normally, and the LinuxX11Grab Wayland
-# guard from #77 stage 1 stays out of the picture (`XDG_SESSION_TYPE` and `WAYLAND_DISPLAY`
-# are unset in xvfb-run's environment, no `wayland-*` socket exists in `XDG_RUNTIME_DIR`).
+# framebuffer reads work normally, Robot input works normally. This proves Linux **X11**
+# capture under Xvfb only — not Wayland portal/PipeWire. On clean runners
+# `XDG_SESSION_TYPE`/`WAYLAND_DISPLAY` are unset and there is usually no residual
+# `wayland-*` under `XDG_RUNTIME_DIR`; hosts that still carry login-session Wayland
+# sockets (or inherit Wayland env into xvfb-run) rely on #397 session detection so pure
+# X11 `DISPLAY` still routes to `ximagesrc` rather than portal.
 #
 # Counterpart to `validation-windows.yml`. Historically both workflows carried a
 # fail-tolerant + XML-source-of-truth pattern to ride out a Gradle test-executor protocol race

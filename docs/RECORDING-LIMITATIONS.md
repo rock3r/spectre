@@ -104,10 +104,25 @@ interactive and not automatable. Spectre's `spectre-wayland-helper` uses portal
   `"x264enc"`; unsupported codec strings fail at `start(...)` with a targeted error rather
   than building a broken GStreamer pipeline. The explicit ffmpeg classes remain available
   only as deprecated compatibility escape hatches.
+
+  **Xvfb validation proves Linux X11 capture only** — not Wayland portal/PipeWire consent,
+  restore-token reuse, or compositor-specific portal behaviour. CI and release-smoke under
+  `xvfb-run` exercise the X11 helper path (`ximagesrc`). Keep a separate real Wayland
+  desktop run when claiming portal capture.
+
+  Session detection (#397): residual `wayland-*` sockets under `XDG_RUNTIME_DIR` (or
+  inherited `WAYLAND_DISPLAY` / `XDG_SESSION_TYPE=wayland` from a login session) must not
+  hijack an active pure-X11 `DISPLAY` such as Xvfb. Spectre prefers a pure-X11 display
+  probe (Xvfb process match or `xdpyinfo` without the `XWAYLAND` extension) and only treats
+  a residual compositor socket as Wayland when `DISPLAY` is unset (SSH into a Wayland host).
+  Real Wayland+XWayland still routes to the portal. Override with
+  `SPECTRE_CAPTURE_BACKEND=x11` or `wayland` when probes cannot decide.
+
   Native Wayland sessions with XWayland are different: Mutter does not expose the composited
   desktop through the XWayland root framebuffer, so root-region `ximagesrc` capture can be black
   except for the cursor. `AutoRecorder` detects Wayland before this backend and routes region
-  capture through the portal; do not force the X11 backend in that environment.
+  capture through the portal; do not force the X11 backend in that environment
+  (`SPECTRE_CAPTURE_BACKEND=x11` is an escape hatch for nested Xvfb only).
 - **Linux Wayland sessions** — `gst-launch-1.0` driven through the
   `xdg-desktop-portal` ScreenCast interface, with the PipeWire FD passed to the encoder by a
   small Rust helper binary from `spectre-recording-linux` (`spectre-wayland-helper`, sources at

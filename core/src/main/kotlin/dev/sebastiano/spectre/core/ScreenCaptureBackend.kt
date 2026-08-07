@@ -127,12 +127,33 @@ internal fun nativeWindowCaptureBounds(
     )
 }
 
+/**
+ * Returns true when still/window capture should use the Linux Wayland/portal path.
+ *
+ * Mirrors [dev.sebastiano.spectre.recording.FfmpegBackend.detectWaylandSession] (recording cannot
+ * depend on core and core cannot depend on recording — keep both in lockstep; #397).
+ *
+ * Order: explicit `SPECTRE_CAPTURE_BACKEND` → pure-X11 DISPLAY (Xvfb) wins over inherited Wayland
+ * env → session type / WAYLAND_DISPLAY → residual wayland-* socket only when DISPLAY is unset.
+ */
+@Suppress("ReturnCount")
 internal fun isWaylandSession(
     getenv: (String) -> String? = System::getenv,
     runtimeDirHasWaylandSocket: (Path) -> Boolean = ::runtimeDirHasWaylandSocket,
+    displayIsPureX11: (String) -> Boolean = ::defaultDisplayIsPureX11,
 ): Boolean {
+    when (getenv("SPECTRE_CAPTURE_BACKEND")?.trim()?.lowercase()) {
+        "x11",
+        "xorg",
+        "xvfb" -> return false
+        "wayland",
+        "portal" -> return true
+    }
+    val display = getenv("DISPLAY")?.takeIf { it.isNotBlank() }
+    if (display != null && displayIsPureX11(display)) return false
     if (getenv("XDG_SESSION_TYPE").equals("wayland", ignoreCase = true)) return true
     if (!getenv("WAYLAND_DISPLAY").isNullOrBlank()) return true
+    if (display != null) return false
     return getenv("XDG_RUNTIME_DIR")?.let(Path::of)?.let {
         runCatching { runtimeDirHasWaylandSocket(it) }.getOrDefault(false)
     } == true
@@ -143,6 +164,68 @@ private fun runtimeDirHasWaylandSocket(runtimeDir: Path): Boolean =
         Files.list(runtimeDir).use { entries ->
             entries.anyMatch { it.fileName.toString().startsWith("wayland-") }
         }
+
+/** True when [display] is served by Xvfb or a non-XWayland X server (see recording twin). */
+@Suppress("TooGenericExceptionCaught")
+internal fun defaultDisplayIsPureX11(display: String): Boolean {
+    if (linuxDisplayMatchesXvfbProcess(display)) return true
+    return runCatching { xdpyinfoReportsPureX11(display) }.getOrDefault(false)
+}
+
+/** Scans Linux /proc pid cmdlines for an Xvfb process serving [display]. */
+@Suppress("TooGenericExceptionCaught")
+internal fun linuxDisplayMatchesXvfbProcess(display: String): Boolean {
+    val displayToken = normalizeDisplayToken(display) ?: return false
+    val proc = Path.of("/proc")
+    if (!Files.isDirectory(proc)) return false
+    return runCatching {
+            Files.list(proc).use { stream ->
+                stream.anyMatch { entry ->
+                    val name = entry.fileName.toString()
+                    if (name.toLongOrNull() == null) return@anyMatch false
+                    val cmdline =
+                        runCatching { Files.readAllBytes(entry.resolve("cmdline")) }.getOrNull()
+                            ?: return@anyMatch false
+                    val args =
+                        cmdline.toString(Charsets.UTF_8).split('\u0000').filter { it.isNotEmpty() }
+                    if (args.none { it == "Xvfb" || it.endsWith("/Xvfb") }) return@anyMatch false
+                    args.any { arg ->
+                        val token = normalizeDisplayToken(arg) ?: return@anyMatch false
+                        token == displayToken
+                    }
+                }
+            }
+        }
+        .getOrDefault(false)
+}
+
+internal fun normalizeDisplayToken(raw: String): String? {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return null
+    val afterHost =
+        when {
+            trimmed.startsWith(":") -> trimmed
+            trimmed.contains(':') -> trimmed.substringAfterLast(':').let { ":$it" }
+            else -> return null
+        }
+    val num =
+        afterHost.removePrefix(":").substringBefore('.').takeIf { it.isNotEmpty() } ?: return null
+    if (num.toIntOrNull() == null) return null
+    return ":$num"
+}
+
+@Suppress("TooGenericExceptionCaught")
+private fun xdpyinfoReportsPureX11(display: String): Boolean {
+    val process = ProcessBuilder("xdpyinfo", "-display", display).redirectErrorStream(true).start()
+    val output = process.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+    val finished = process.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
+    if (!finished) {
+        process.destroyForcibly()
+        return false
+    }
+    if (process.exitValue() != 0) return false
+    return !output.contains("XWAYLAND", ignoreCase = true)
+}
 
 /**
  * Loads the optional recording-owned native capture bridge without linking it into core.

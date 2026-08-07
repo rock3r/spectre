@@ -102,43 +102,54 @@ internal sealed interface FfmpegBackend {
         }
 
         /**
-         * Returns true when the host is running a Wayland session, false otherwise.
+         * Returns true when capture should use the Linux Wayland/portal path, false for X11/Xvfb.
          *
-         * Three signals checked in order; any one positive returns true:
-         * 1. `XDG_SESSION_TYPE=wayland` — set by systemd-logind / GDM for graphical sessions that
-         *    started under Wayland.
-         * 2. `WAYLAND_DISPLAY` non-blank (typically `wayland-0`) — set when a Wayland compositor
-         *    socket is reachable. Catches manually-started compositors and user-namespace setups
-         *    where `XDG_SESSION_TYPE` may be missing.
-         * 3. A `wayland-*` socket file under `XDG_RUNTIME_DIR` — catches the SSH-into-Wayland-host
-         *    case that #1 and #2 miss. SSH's `XDG_SESSION_TYPE` reports `tty` (not `wayland`) and
-         *    `WAYLAND_DISPLAY` is unset, but the user's Wayland compositor is still running and
-         *    leaves a socket at `/run/user/<uid>/wayland-0`. Without this tier, recording a Wayland
-         *    host over SSH would silently produce a black mp4 even though we have ample signal that
-         *    Wayland is in play.
+         * Order of signals (#397 — Xvfb must not be hijacked by residual Wayland env/sockets):
+         * 0. `SPECTRE_CAPTURE_BACKEND=x11|wayland` — explicit override (also accepts `xorg` /
+         *    `xvfb` → X11, `portal` → Wayland). Use when nested Xvfb probes are unavailable.
+         * 1. Active pure-X11 [DISPLAY] (Xvfb / non-XWayland Xorg) — process windows live on that
+         *    server; prefer `ximagesrc` even if the login session exported Wayland vars.
+         * 2. `XDG_SESSION_TYPE=wayland` — logind/GDM graphical Wayland session.
+         * 3. `WAYLAND_DISPLAY` non-blank — compositor socket name for this session.
+         * 4. A `wayland-*` socket under `XDG_RUNTIME_DIR` **only when DISPLAY is unset** — SSH into
+         *    a Wayland host without X11 forwarding. Residual sockets must not override an active
+         *    Xvfb/Xorg DISPLAY (that was the #397 misroute).
          *
-         * The pure form (taking `getenv` and a filesystem-probe lambda as parameters rather than
-         * reading [System.getenv] / [Files] directly) lets unit tests cover the signal matrix
-         * deterministically without mucking with process-level env vars (which the JVM can't modify
-         * at runtime anyway) or per-test temp directories.
+         * Real Wayland+XWayland still returns true: pure-X11 probe is false for XWayland, and tiers
+         * 2–3 fire. Do not treat "DISPLAY is set" alone as X11 — XWayland always has DISPLAY.
+         *
+         * Injectable [getenv] / probes keep the matrix unit-testable without process env mutation.
          */
         @Suppress("ReturnCount")
         internal fun detectWaylandSession(
             getenv: (String) -> String?,
             runtimeDirHasWaylandSocket: (Path) -> Boolean = ::defaultRuntimeDirHasWaylandSocket,
+            displayIsPureX11: (String) -> Boolean = ::defaultDisplayIsPureX11,
         ): Boolean {
+            when (getenv("SPECTRE_CAPTURE_BACKEND")?.trim()?.lowercase()) {
+                "x11",
+                "xorg",
+                "xvfb" -> return false
+                "wayland",
+                "portal" -> return true
+            }
+            val display = getenv("DISPLAY")?.takeIf { it.isNotBlank() }
+            if (display != null && displayIsPureX11(display)) return false
             val sessionType = getenv("XDG_SESSION_TYPE")?.lowercase()
             if (sessionType == "wayland") return true
             val waylandDisplay = getenv("WAYLAND_DISPLAY")
             if (!waylandDisplay.isNullOrBlank()) return true
+            // Tier 4: residual compositor socket. Only when this process has no X11 DISPLAY —
+            // otherwise Xvfb-under-SSH would misroute to portal (#397).
+            if (display != null) return false
             val runtimeDir = getenv("XDG_RUNTIME_DIR")?.takeIf { it.isNotBlank() } ?: return false
             return runtimeDirHasWaylandSocket(Path.of(runtimeDir))
         }
 
         /**
-         * Default filesystem probe for tier 3 of [detectWaylandSession]. Returns true if
-         * [runtimeDir] is a readable directory and contains any entry whose name starts with
-         * `wayland-` (matching the compositor's socket file convention).
+         * Default filesystem probe for the residual-socket tier of [detectWaylandSession]. Returns
+         * true if [runtimeDir] is a readable directory and contains any entry whose name starts
+         * with `wayland-` (matching the compositor's socket file convention).
          *
          * Wrapped in [runCatching] because the directory may exist but be unreadable due to a mount
          * race or permission glitch — in that case we'd rather treat the host as non-Wayland (and
@@ -156,6 +167,85 @@ internal sealed interface FfmpegBackend {
         }
 
         /**
+         * True when [display] talks to a pure X11 server (Xvfb / Xorg), not XWayland.
+         *
+         * Used so `xvfb-run` on a host that still exports Wayland session vars routes capture to
+         * X11. Prefer an Xvfb process match for [display]; fall back to `xdpyinfo` and treat the
+         * presence of the `XWAYLAND` extension as "not pure X11". Probe failures return false (do
+         * not claim pure X11 without evidence).
+         */
+        @Suppress("TooGenericExceptionCaught")
+        internal fun defaultDisplayIsPureX11(display: String): Boolean {
+            if (linuxDisplayMatchesXvfbProcess(display)) return true
+            return runCatching { xdpyinfoReportsPureX11(display) }.getOrDefault(false)
+        }
+
+        /**
+         * Scans Linux `/proc/<pid>/cmdline` entries for an `Xvfb` process serving [display] (e.g.
+         * `:99`). Returns false on other OSes or when `/proc` is unavailable.
+         */
+        @Suppress("TooGenericExceptionCaught")
+        internal fun linuxDisplayMatchesXvfbProcess(display: String): Boolean {
+            val displayToken = normalizeDisplayToken(display) ?: return false
+            val proc = Path.of("/proc")
+            if (!Files.isDirectory(proc)) return false
+            return runCatching {
+                    Files.list(proc).use { stream ->
+                        stream.anyMatch { entry ->
+                            val name = entry.fileName.toString()
+                            if (name.toLongOrNull() == null) return@anyMatch false
+                            val cmdline =
+                                runCatching { Files.readAllBytes(entry.resolve("cmdline")) }
+                                    .getOrNull() ?: return@anyMatch false
+                            val args =
+                                cmdline.toString(Charsets.UTF_8).split('\u0000').filter {
+                                    it.isNotEmpty()
+                                }
+                            if (args.none { it == "Xvfb" || it.endsWith("/Xvfb") })
+                                return@anyMatch false
+                            args.any { arg ->
+                                val token = normalizeDisplayToken(arg) ?: return@anyMatch false
+                                token == displayToken
+                            }
+                        }
+                    }
+                }
+                .getOrDefault(false)
+        }
+
+        /** `:99.0` / `host:99` → `:99` for comparison with Xvfb argv. */
+        internal fun normalizeDisplayToken(raw: String): String? {
+            val trimmed = raw.trim()
+            if (trimmed.isEmpty()) return null
+            val afterHost =
+                when {
+                    trimmed.startsWith(":") -> trimmed
+                    trimmed.contains(':') -> trimmed.substringAfterLast(':').let { ":$it" }
+                    else -> return null
+                }
+            val num =
+                afterHost.removePrefix(":").substringBefore('.').takeIf { it.isNotEmpty() }
+                    ?: return null
+            if (num.toIntOrNull() == null) return null
+            return ":$num"
+        }
+
+        @Suppress("TooGenericExceptionCaught")
+        private fun xdpyinfoReportsPureX11(display: String): Boolean {
+            val process =
+                ProcessBuilder("xdpyinfo", "-display", display).redirectErrorStream(true).start()
+            val output = process.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val finished = process.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
+            if (!finished) {
+                process.destroyForcibly()
+                return false
+            }
+            if (process.exitValue() != 0) return false
+            // XWayland advertises an "XWAYLAND" extension; Xvfb/Xorg do not.
+            return !output.contains("XWAYLAND", ignoreCase = true)
+        }
+
+        /**
          * Throws [UnsupportedOperationException] if [getenv] reports a Wayland session.
          *
          * Internal so tests can drive it with a fake [getenv]. The real call site is
@@ -167,14 +257,14 @@ internal sealed interface FfmpegBackend {
                 "ffmpeg's x11grab silently captures black frames on Wayland sessions even with " +
                     "XWayland in the loop — Wayland's security model blocks framebuffer reads " +
                     "by clients other than the compositor. Detected via XDG_SESSION_TYPE / " +
-                    "WAYLAND_DISPLAY / XDG_RUNTIME_DIR/wayland-* socket. " +
+                    "WAYLAND_DISPLAY / residual wayland-* socket (only when DISPLAY is unset). " +
                     "Use Wayland-native capture instead: construct " +
                     "`dev.sebastiano.spectre.recording.AutoRecorder` (which routes Wayland " +
                     "sessions through xdg-desktop-portal + PipeWire automatically), or " +
                     "instantiate `WaylandPortalRecorder` directly. Alternatively, switch to an " +
                     "Xorg session (set `WaylandEnable=false` in /etc/gdm3/custom.conf and " +
-                    "restart gdm, or pick \"Ubuntu on Xorg\" at the GDM login screen), or run " +
-                    "under Xvfb."
+                    "restart gdm, or pick \"Ubuntu on Xorg\" at the GDM login screen), run " +
+                    "under Xvfb, or set SPECTRE_CAPTURE_BACKEND=x11 for nested Xvfb only."
             )
         }
     }

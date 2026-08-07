@@ -105,11 +105,95 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
-    fun `Wayland detection recognizes a runtime-directory socket`() {
+    fun `Wayland detection recognizes a runtime-directory socket without DISPLAY`() {
+        // SSH into a Wayland host: no DISPLAY, residual compositor socket → Wayland.
         assertTrue(
             isWaylandSession(
                 getenv = { if (it == "XDG_RUNTIME_DIR") "/run/user/1000" else null },
                 runtimeDirHasWaylandSocket = { it == Path.of("/run/user/1000") },
+            )
+        )
+    }
+
+    @Test
+    fun `Wayland detection ignores residual socket when Xvfb DISPLAY is set`() {
+        // #397: Xvfb + leftover wayland-* under XDG_RUNTIME_DIR must not route to portal.
+        assertFalse(
+            isWaylandSession(
+                getenv = { key ->
+                    when (key) {
+                        "DISPLAY" -> ":99"
+                        "XDG_RUNTIME_DIR" -> "/run/user/1000"
+                        else -> null
+                    }
+                },
+                runtimeDirHasWaylandSocket = { true },
+                displayIsPureX11 = { false },
+            )
+        )
+    }
+
+    @Test
+    fun `Wayland detection prefers pure X11 DISPLAY over inherited Wayland env`() {
+        assertFalse(
+            isWaylandSession(
+                getenv = { key ->
+                    when (key) {
+                        "DISPLAY" -> ":99"
+                        "XDG_SESSION_TYPE" -> "wayland"
+                        "WAYLAND_DISPLAY" -> "wayland-0"
+                        "XDG_RUNTIME_DIR" -> "/run/user/1000"
+                        else -> null
+                    }
+                },
+                runtimeDirHasWaylandSocket = { true },
+                displayIsPureX11 = { it == ":99" },
+            )
+        )
+    }
+
+    @Test
+    fun `Wayland detection keeps portal routing for XWayland DISPLAY`() {
+        assertTrue(
+            isWaylandSession(
+                getenv = { key ->
+                    when (key) {
+                        "DISPLAY" -> ":0"
+                        "XDG_SESSION_TYPE" -> "wayland"
+                        "WAYLAND_DISPLAY" -> "wayland-0"
+                        else -> null
+                    }
+                },
+                runtimeDirHasWaylandSocket = { true },
+                displayIsPureX11 = { false },
+            )
+        )
+    }
+
+    @Test
+    fun `Wayland detection honors SPECTRE_CAPTURE_BACKEND override`() {
+        assertFalse(
+            isWaylandSession(
+                getenv = { key ->
+                    when (key) {
+                        "SPECTRE_CAPTURE_BACKEND" -> "x11"
+                        "XDG_SESSION_TYPE" -> "wayland"
+                        "WAYLAND_DISPLAY" -> "wayland-0"
+                        else -> null
+                    }
+                }
+            )
+        )
+        assertTrue(
+            isWaylandSession(
+                getenv = { key ->
+                    when (key) {
+                        "SPECTRE_CAPTURE_BACKEND" -> "wayland"
+                        "DISPLAY" -> ":99"
+                        else -> null
+                    }
+                },
+                displayIsPureX11 = { true },
             )
         )
     }

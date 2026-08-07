@@ -141,6 +141,13 @@ no signature check, hash check, or path constraint. Never set it in an environme
 ingests untrusted input. The published platform helper artifacts are the only supported
 configuration for non-dev use.
 
+`SPECTRE_CAPTURE_BACKEND` forces Linux still/video routing when auto-detection is wrong for a
+nested setup: `x11` / `xorg` / `xvfb` → X11 helper path; `wayland` / `portal` → portal path;
+unset or any other value → auto (pure-X11 `DISPLAY` probe, then session type /
+`WAYLAND_DISPLAY`, then residual `wayland-*` sockets only if `DISPLAY` is unset — see #397).
+Prefer fixing the environment (run under `xvfb-run` with a real Xvfb `DISPLAY`) over leaving
+the override set in CI.
+
 ## Out of scope for this review
 
 The R5 review explicitly did not cover:
