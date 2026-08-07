@@ -37,6 +37,10 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    // Forward live-AWT opt-in into the test JVM (macOS AppKit is opt-in; see LiveAwtAssumptions).
+    providers.systemProperty("spectre.test.liveAwt").orNull?.let { value ->
+        systemProperty("spectre.test.liveAwt", value)
+    }
     // Docs contract tests read repo-root markdown at runtime; register them as inputs so
     // :core:test is not UP-TO-DATE/cache-hit after spike/guide docs change (#209).
     val docsRoot = rootProject.layout.projectDirectory.dir("docs")

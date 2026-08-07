@@ -152,18 +152,39 @@ internal constructor(
      * ASCII letters, digits, space, newline, and common US-keyboard punctuation. Use [pasteText]
      * when you need arbitrary Unicode text.
      *
+     * **Caps Lock.** Requested letter case is independent of ambient Caps Lock (#396). When the
+     * adapter can write locking-key state, Spectre temporarily clears Caps Lock for the duration of
+     * this call and restores the prior state in a `finally` (including after mid-string failures).
+     * When Caps Lock is on but cannot be cleared, letter strokes invert Shift so the OS still emits
+     * the requested case. Non-letter characters are unaffected by Caps Lock on standard keyboards.
+     *
      * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
     public suspend fun typeText(text: String) {
         tccGuard.requireAccessibility()
         runOffEdt {
-            for (char in text) {
-                val stroke = keyStrokeForChar(char)
-                for (modifier in stroke.modifiers) robot.keyPress(modifier)
-                robot.keyPress(stroke.keyCode)
-                robot.keyRelease(stroke.keyCode)
-                for (modifier in stroke.modifiers.asReversed()) robot.keyRelease(modifier)
+            val capsLockWasOn = robot.getLockingKeyState(KeyEvent.VK_CAPS_LOCK) == true
+            var capsLockCleared = false
+            try {
+                if (capsLockWasOn) {
+                    capsLockCleared = robot.setLockingKeyState(KeyEvent.VK_CAPS_LOCK, on = false)
+                }
+                // Prefer a cleared lock so strokes match the pure US-keyboard map. If the adapter
+                // cannot clear Caps Lock, invert Shift on letters so requested case still lands.
+                val compensateCapsLock = capsLockWasOn && !capsLockCleared
+                for (char in text) {
+                    val stroke = keyStrokeForChar(char, capsLockOn = compensateCapsLock)
+                    for (modifier in stroke.modifiers) robot.keyPress(modifier)
+                    robot.keyPress(stroke.keyCode)
+                    robot.keyRelease(stroke.keyCode)
+                    for (modifier in stroke.modifiers.asReversed()) robot.keyRelease(modifier)
+                }
+            } finally {
+                if (capsLockCleared) {
+                    // Fail-closed: never leave the host Caps Lock inverted after typeText.
+                    runCatching { robot.setLockingKeyState(KeyEvent.VK_CAPS_LOCK, on = true) }
+                }
             }
         }
     }
@@ -484,6 +505,20 @@ internal interface RobotAdapter : ScreenCaptureAdapter {
 
     fun waitForIdle()
 
+    /**
+     * Reads a locking-key LED state (`KeyEvent.VK_CAPS_LOCK`, `VK_NUM_LOCK`, `VK_SCROLL_LOCK`).
+     * Returns `null` when the backend cannot report the key (unsupported on this platform/JVM, or a
+     * pure test fake that does not model locks). Default is `null` so headless/synthetic adapters
+     * do not initialise AWT.
+     */
+    fun getLockingKeyState(keyCode: Int): Boolean? = null
+
+    /**
+     * Attempts to set a locking-key LED state. Returns `true` when the write is believed to have
+     * taken effect; `false` when unsupported. Default is `false`.
+     */
+    fun setLockingKeyState(keyCode: Int, on: Boolean): Boolean = false
+
     override fun createScreenCapture(region: Rectangle): BufferedImage =
         throw UnsupportedOperationException("This robot adapter does not support screen capture")
 
@@ -548,6 +583,30 @@ private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) :
     override fun keyRelease(keyCode: Int) = robot.keyRelease(keyCode)
 
     override fun mouseWheel(wheelClicks: Int) = robot.mouseWheel(wheelClicks)
+
+    // Locking-key LEDs are a Toolkit API (not Robot). Unsupported on some platforms/JVMs —
+    // treat as "unknown" / "write failed" so typeText can fall back to Shift compensation.
+    override fun getLockingKeyState(keyCode: Int): Boolean? =
+        try {
+            Toolkit.getDefaultToolkit().getLockingKeyState(keyCode)
+        } catch (_: UnsupportedOperationException) {
+            null
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+
+    override fun setLockingKeyState(keyCode: Int, on: Boolean): Boolean =
+        try {
+            Toolkit.getDefaultToolkit().setLockingKeyState(keyCode, on)
+            // Some platforms accept the call without throwing but leave the LED unchanged.
+            // Only report success when read-back matches so typeText can fall back to Shift
+            // compensation for letters under ambient Caps Lock.
+            getLockingKeyState(keyCode) == on
+        } catch (_: UnsupportedOperationException) {
+            false
+        } catch (_: IllegalArgumentException) {
+            false
+        }
 
     override fun createScreenCapture(region: Rectangle): BufferedImage =
         robot.createScreenCapture(region)
@@ -664,7 +723,19 @@ internal fun modifierMaskToKeyCodes(mask: Int): List<Int> = buildList {
 
 internal data class KeyStrokeSpec(val keyCode: Int, val modifiers: List<Int> = emptyList())
 
-internal fun keyStrokeForChar(char: Char): KeyStrokeSpec {
+/**
+ * Maps [char] to a US-keyboard key code and optional Shift modifiers.
+ *
+ * When [capsLockOn] is true, letter strokes invert Shift so the OS still produces the requested
+ * case under ambient Caps Lock (used only when Caps Lock cannot be temporarily cleared).
+ */
+internal fun keyStrokeForChar(char: Char, capsLockOn: Boolean = false): KeyStrokeSpec {
+    val base = baseKeyStrokeForChar(char)
+    if (!capsLockOn || !char.isLetter()) return base
+    return invertShift(base)
+}
+
+private fun baseKeyStrokeForChar(char: Char): KeyStrokeSpec {
     unmodifiedCharKeyCodes[char]?.let {
         return KeyStrokeSpec(it)
     }
@@ -676,6 +747,15 @@ internal fun keyStrokeForChar(char: Char): KeyStrokeSpec {
         in 'A'..'Z' -> KeyStrokeSpec(KeyEvent.VK_A + (char - 'A'), listOf(KeyEvent.VK_SHIFT))
         in '0'..'9' -> KeyStrokeSpec(KeyEvent.VK_0 + (char - '0'))
         else -> unsupportedTypeTextChar(char)
+    }
+}
+
+private fun invertShift(stroke: KeyStrokeSpec): KeyStrokeSpec {
+    val hasShift = stroke.modifiers.contains(KeyEvent.VK_SHIFT)
+    return if (hasShift) {
+        KeyStrokeSpec(stroke.keyCode, stroke.modifiers.filterNot { it == KeyEvent.VK_SHIFT })
+    } else {
+        KeyStrokeSpec(stroke.keyCode, stroke.modifiers + KeyEvent.VK_SHIFT)
     }
 }
 

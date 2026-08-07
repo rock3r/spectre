@@ -89,7 +89,10 @@ mask into the right modifier-key presses around the main `keyCode`.
 
 `typeText` dispatches key press/release pairs and does not touch the clipboard. It is
 intentionally conservative: ASCII letters, digits, space, newline, and common
-US-keyboard punctuation. Use `pasteText` for large strings or arbitrary Unicode; it
+US-keyboard punctuation. Requested letter case is independent of ambient Caps Lock:
+when the platform allows, Spectre temporarily clears Caps Lock for the call and
+restores it afterward; otherwise letter strokes invert Shift so the OS still emits
+the requested case. Use `pasteText` for large strings or arbitrary Unicode; it
 stashes the previous clipboard contents, writes the requested text, dispatches the
 platform paste shortcut (<kbd>Cmd</kbd>+<kbd>V</kbd> on macOS,
 <kbd>Ctrl</kbd>+<kbd>V</kbd> elsewhere), waits for the paste handler to drain, then
