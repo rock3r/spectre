@@ -21,11 +21,12 @@ import org.junit.jupiter.api.Timeout
 
 /**
  * Physical coverage for #396: real [RobotDriver.typeText] must land the requested letter case under
- * Caps Lock off and (when the host can force it) Caps Lock on, and must restore Caps Lock when it
- * temporarily clears the lock.
+ * Caps Lock off and (when the host can force it) Caps Lock on, without mutating ambient Caps Lock.
  *
- * Gating:
- * - [assumeLiveAwtAvailable] — needs a display; macOS requires `-Dspectre.test.liveAwt=true`.
+ * Gating (must stay opt-in — not part of default `./gradlew check` / hosted CI):
+ * - Requires `-Dspectre.test.physicalTypeText=true` on every OS (hosted runners cannot reliably
+ *   drive real Robot + Caps Lock).
+ * - [assumeLiveAwtAvailable] — needs a display; macOS also requires `-Dspectre.test.liveAwt=true`.
  * - Caps Lock **on** is attempted via Toolkit then Robot toggle; if neither works the on scenario
  *   is assumption-skipped (macOS Toolkit cannot set Caps Lock; synthetic HID often cannot either).
  */
@@ -34,6 +35,7 @@ class RobotDriverTypeTextCapsPhysicalTest {
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     fun `typeText lands requested case with Caps Lock off`() {
+        assumePhysicalTypeTextEnabled()
         assumeLiveAwtAvailable()
         withTextFieldFixture { field, robot, toolkit ->
             ensureCaps(robot, toolkit, on = false)
@@ -60,6 +62,7 @@ class RobotDriverTypeTextCapsPhysicalTest {
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     fun `typeText lands requested case with Caps Lock on without mutating lock`() {
+        assumePhysicalTypeTextEnabled()
         assumeLiveAwtAvailable()
         withTextFieldFixture { field, robot, toolkit ->
             val original = readCaps(toolkit)
@@ -91,6 +94,14 @@ class RobotDriverTypeTextCapsPhysicalTest {
                 ensureCaps(robot, toolkit, on = original)
             }
         }
+    }
+
+    private fun assumePhysicalTypeTextEnabled() {
+        assumeTrue(
+            System.getProperty(PHYSICAL_TYPE_TEXT_PROPERTY).toBoolean(),
+            "Physical Caps Lock typeText tests require -$PHYSICAL_TYPE_TEXT_PROPERTY=true " +
+                "(not part of default check / hosted CI; use an interactive desktop).",
+        )
     }
 
     private fun withTextFieldFixture(block: (JTextField, Robot, Toolkit) -> Unit) {
@@ -179,6 +190,7 @@ class RobotDriverTypeTextCapsPhysicalTest {
     }
 
     private companion object {
+        const val PHYSICAL_TYPE_TEXT_PROPERTY: String = "spectre.test.physicalTypeText"
         const val TIMEOUT_SECONDS: Long = 30
         const val FOCUS_SETTLE_MS: Long = 400
         const val CAPS_TOGGLE_SETTLE_MS: Long = 200
