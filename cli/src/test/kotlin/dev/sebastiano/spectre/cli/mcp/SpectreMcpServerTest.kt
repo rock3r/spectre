@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.cli.mcp
 
+import dev.sebastiano.spectre.cli.SpectreBuildMetadata
 import dev.sebastiano.spectre.cli.daemon.DaemonErrorCode
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import io.modelcontextprotocol.kotlin.sdk.types.ImageContent
@@ -17,6 +18,24 @@ class SpectreMcpServerTest {
         assertEquals(
             Path.of(outputPath).toAbsolutePath().normalize().toString(),
             normalizeRecordingOutputPath(outputPath),
+        )
+    }
+
+    @Test
+    fun `MCP serverInfo version is derived from project build metadata`() {
+        val projectVersion =
+            System.getProperty("spectre.project.version")
+                ?: error(
+                    "spectre.project.version must be injected by Gradle so this test cannot " +
+                        "pass against a stale hardcoded MCP version constant"
+                )
+        // Cross-check resource metadata against the live Gradle project version. A hardcoded
+        // "0.1.0" cannot satisfy both when VERSION_NAME is 0.1.0-SNAPSHOT or a release like 0.5.0.
+        assertEquals(projectVersion, SpectreBuildMetadata.version)
+        assertEquals(projectVersion, SpectreMcpServer.serverVersion())
+        assertTrue(
+            projectVersion.isNotBlank() && !projectVersion.contains("\${"),
+            "project version metadata must be a concrete VERSION_NAME value, was: $projectVersion",
         )
     }
 
