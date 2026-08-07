@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import platform
 import subprocess
 import sys
 import tempfile
@@ -268,25 +269,21 @@ class SmokeLibSchemaTest(unittest.TestCase):
         self.assertIn("--rerun-tasks", args)
         self.assertIn("--no-build-cache", args)
 
-    def test_release_smoke_script_imports_and_exposes_main(self):
+    def test_release_smoke_script_wires_full_required_matrix(self):
         self.assertTrue(RELEASE_SMOKE.is_file())
         text = RELEASE_SMOKE.read_text(encoding="utf-8")
-        self.assertIn("schemaVersion", text or "build_report")
         self.assertIn("smoke_lib", text)
         self.assertIn("--version", text)
-        # Structural: PR1 wires these IDs.
-        for scenario_id in (
-            "preflight",
-            "check",
-            "junit-live",
-            "agent-attach-core",
-            "agent-contract-corpus",
-            "agent-inject",
-            "cli-packaged",
-            "cli-user-flow",
-            "mcp-sdk-flow",
-        ):
+        self.assertIn("REQUIRED_SCENARIO_IDS", text)
+        # Structural: every required stable ID is referenced by the Unix runner.
+        for scenario_id in smoke_lib.REQUIRED_SCENARIO_IDS:
             self.assertIn(scenario_id, text, f"missing wired id {scenario_id}")
+        # Force-UI flags and host recording tasks must stay wired.
+        self.assertIn("gradle_ui_force_args", text)
+        self.assertIn("runMacOsSckRegionSmoke", text)
+        self.assertIn("runLinuxX11RecordingSmoke", text)
+        self.assertIn("verifyMavenLocalPublication", text)
+        self.assertIn("LaunchAndAttachIntegration", text)
 
 
 class ReleaseSmokeHelpTest(unittest.TestCase):
@@ -299,6 +296,50 @@ class ReleaseSmokeHelpTest(unittest.TestCase):
         )
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("--version", result.stdout)
+        self.assertIn("--skip-maven-local", result.stdout)
+        self.assertIn("--skip-recording", result.stdout)
+
+
+class ReleaseSmokeHelperLogicTest(unittest.TestCase):
+    """Drive real helper functions shipped in release-smoke.py (not reimplemented)."""
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location("release_smoke", RELEASE_SMOKE)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        # release-smoke inserts scripts/ on sys.path for smoke_lib.
+        spec.loader.exec_module(module)
+        cls.rs = module
+
+    def test_maven_local_version_is_release_shaped_smoke_coord(self):
+        self.assertEqual("0.5.0-rc.smoke", self.rs._maven_local_version("0.5.0"))
+
+    def test_host_recording_task_per_os(self):
+        self.assertEqual(
+            ":recording:runMacOsSckRegionSmoke", self.rs._host_recording_task("Darwin")
+        )
+        self.assertEqual(
+            ":recording:runLinuxX11RecordingSmoke", self.rs._host_recording_task("Linux")
+        )
+        self.assertIsNone(self.rs._host_recording_task("Windows"))
+
+    def test_native_helper_layout_check_requires_executable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(RuntimeError) as ctx:
+                self.rs._native_helper_layout_check(root, platform.system())
+            self.assertTrue(
+                "missing" in str(ctx.exception).lower()
+                or "neither" in str(ctx.exception).lower(),
+                ctx.exception,
+            )
+
+    def test_fresh_consumer_check_fails_when_jar_absent(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            self.rs._fresh_consumer_check(ROOT, "0.0.0-does-not-exist-smoke")
+        self.assertIn("missing", str(ctx.exception).lower())
 
 
 if __name__ == "__main__":

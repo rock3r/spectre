@@ -181,11 +181,12 @@ Optional flags:
 | `--skip-check` | Skip `./gradlew check` (records hard `n/a` with reason) |
 | `--out-dir PATH` | Report/log directory (default `build/smoke`) |
 | `--overall-timeout SECS` | Wall-clock budget for the whole run (default 7200) |
-| `--require-all-ids` | Require every stable scenario ID in `scripts/smoke_lib.py` |
+| `--skip-maven-local` | Skip Maven Local publish + consumer (hard `n/a` with reason) |
+| `--skip-recording` | Skip host native recording smoke (hard `n/a` with reason) |
 
 On Linux it supplies `xvfb-run -a` when `DISPLAY` is unset and records `environment.displayMode`
 as `xvfb-auto` or `real-display:$DISPLAY`. On Windows use the interactive PowerShell runner in the
-next section (same stable scenario IDs and `schemaVersion` report shape once parity lands).
+next section (shared stable scenario IDs and `schemaVersion` report shape).
 
 ### Report artifacts
 
@@ -224,9 +225,8 @@ Shared across macOS / Linux / Windows entrypoints (`scripts/smoke_lib.py` → `R
 | `host-native-recording` | Host native recording smoke |
 | `maven-local-consumer` | Maven Local publication + fresh consumer |
 
-The Unix runner currently wires the baseline subset end-to-end (preflight through
-`cli-user-flow` / `mcp-sdk-flow`). Remaining IDs are expanded toward the full matrix in the
-#398 harness completion; use `--require-all-ids` only when the full set is registered.
+The Unix runner registers **every** required ID end-to-end (fail-closed). Environment-impossible
+cells must be explicit hard `n/a` with reason — never a silent omit or fake `pass`.
 
 The cross-platform runner covers the stable baseline that should not be reinvented per release:
 
@@ -234,10 +234,12 @@ The cross-platform runner covers the stable baseline that should not be reinvent
 - the full `check` gate
 - live JUnit validation (failure artifacts/video and capture/wait validation), forced with
   `--rerun-tasks --no-build-cache` so cache-only passes cannot skip UI work
-- agent attach with preinstalled core and the contract corpus (separate scenario IDs)
-- injected attach without core
-- release-shaped packaged CLI construction
-- packaged CLI fixture user flow + strict packaged MCP initialize / `tools/list` / `list_processes`
+- agent attach with preinstalled core, contract corpus, inject, and launch-and-attach
+- release-shaped packaged CLI construction + host native-helper layout checks
+- packaged CLI fixture user flow (ps/attach/find/input/fail-closed window screenshot/fullscreen/detach)
+- packaged MCP via official SDK e2e + strict stdio banner/version smoke
+- host native recording smoke (macOS SCK region / Linux X11; Windows WGC via interactive PS script)
+- Maven Local `verifyMavenLocalPublication` + fresh consumer jar resolve
 
 Each release still needs delta cells based on `git log <previous-tag>..HEAD`. Add reusable delta
 coverage to the runner rather than leaving a one-release command only in chat.
