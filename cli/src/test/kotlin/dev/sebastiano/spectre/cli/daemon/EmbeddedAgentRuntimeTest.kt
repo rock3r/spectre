@@ -8,6 +8,17 @@ import kotlin.test.assertNotEquals
 
 class EmbeddedAgentRuntimeTest {
     @Test
+    fun `installed runtime path is short enough for Windows attach`() {
+        val home = Files.createTempDirectory("spectre-runtime-home")
+        val installed =
+            requireNotNull(
+                EmbeddedAgentRuntime.install(home) { ByteArrayInputStream(byteArrayOf(1, 2)) }
+            )
+
+        assertEquals("agent-${"0".repeat(16)}.jar".length, installed.fileName.toString().length)
+    }
+
+    @Test
     fun `installs each embedded agent version at a content-addressed path`() {
         val home = Files.createTempDirectory("spectre-runtime-home")
 

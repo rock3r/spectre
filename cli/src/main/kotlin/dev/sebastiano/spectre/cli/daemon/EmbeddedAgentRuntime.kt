@@ -11,6 +11,8 @@ import java.util.Locale
 
 /** Installs the shaded agent runtime at a content-addressed path for daemon use. */
 internal object EmbeddedAgentRuntime {
+    private const val CACHE_HASH_CHARS: Int = 16
+
     fun install(
         home: Path = Path.of(System.getProperty("user.home")),
         resource: () -> InputStream? = {
@@ -19,7 +21,10 @@ internal object EmbeddedAgentRuntime {
     ): Path? {
         val bytes = resource()?.use(InputStream::readBytes) ?: return null
         val directory = home.resolve(".spectre").resolve("runtime")
-        val destination = directory.resolve("agent-runtime-${bytes.sha256()}.jar")
+        // Keep the extracted filename short. HotSpot's Windows attach implementation can fail
+        // to open an otherwise valid agent jar when the full path is long; the content hash still
+        // makes this immutable and collision-resistant for the local cache.
+        val destination = directory.resolve("agent-${bytes.sha256().take(CACHE_HASH_CHARS)}.jar")
         if (Files.isRegularFile(destination)) return destination
 
         Files.createDirectories(directory)
