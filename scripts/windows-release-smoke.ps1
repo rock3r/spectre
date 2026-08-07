@@ -175,6 +175,8 @@ function New-StepResult {
         $finalResult = "fail"
         $finalDetail = "hard skip without N/A reason"
     }
+    # Use a single case form only: PowerShell member names are case-insensitive, so
+    # camelCase + TitleCase aliases on the same PSObject collide and overwrite.
     $o = New-Object PSObject
     Add-Member -InputObject $o -MemberType NoteProperty -Name "id" -Value $Id
     Add-Member -InputObject $o -MemberType NoteProperty -Name "name" -Value $Name
@@ -184,11 +186,6 @@ function New-StepResult {
     Add-Member -InputObject $o -MemberType NoteProperty -Name "reason" -Value $Reason
     Add-Member -InputObject $o -MemberType NoteProperty -Name "log" -Value $Log
     Add-Member -InputObject $o -MemberType NoteProperty -Name "hard" -Value $Hard
-    # Legacy TitleCase fields kept for older operators grepping Name/Result.
-    Add-Member -InputObject $o -MemberType NoteProperty -Name "Name" -Value $Name
-    Add-Member -InputObject $o -MemberType NoteProperty -Name "Result" -Value $finalResult
-    Add-Member -InputObject $o -MemberType NoteProperty -Name "Seconds" -Value $Seconds
-    Add-Member -InputObject $o -MemberType NoteProperty -Name "Detail" -Value $finalDetail
     return $o
 }
 
