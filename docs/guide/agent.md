@@ -500,8 +500,10 @@ spectre attach <pid> --json
 
 The attach response contains an `id`. Pass it to commands such as `tree`, `find`, `click`, and
 `screenshot`. On the attach path, `screenshot` **requires** `--fullscreen` for screen-pixel
-capture; default / `--window` / `--surface` fail closed (occlusion/privacy risk — #359). Without
-`--output`, a successful capture creates a temporary file and prints its path. See [CLI](cli.md).
+capture; default / `--window` / `--surface` fail closed (occlusion/privacy risk). Without
+`--output`, a successful capture creates a temporary file and prints its path. Prefer a target
+with preinstalled `spectre-core`; experimental inject also works for Compose-only hosts — see
+[Requirements](#requirements). Full command and MCP reference: [CLI](cli.md).
 
 ### Claude Code recipe
 
@@ -524,12 +526,18 @@ Restart Claude Code after changing the configuration. It can then use these tool
 
 1. `list_processes` to find the target PID.
 2. `attach` with that PID and retain the returned `sessionId`.
-3. `tree` or `find` to retrieve current node keys, then `click` or `type_text` to interact.
-4. `screenshot` with `fullscreen=true` to receive a full-desktop PNG as MCP image content
-   (window/surface targets fail closed on attach — #359), rather than a file path.
+3. `tree`, `find`, or `find_text` / `wait_for_node` for keys, then input tools
+   (`click`, `double_click`, `long_click`, `swipe`, `scroll_wheel`, `press_key`, `type_text`).
+4. `screenshot` with `fullscreen=true` for an inline full-desktop PNG (window/surface targets
+   fail closed on attach), or `capture` / `record_*` for daemon-filesystem artifacts (paths only).
 5. When the target runs under Compose Hot Reload: call `wait_for_reload_settled` **before**
    triggering a code reload (it must observe the settle chain), then re-run `tree` / `find`
    before further input.
+6. **End the session from the CLI** — MCP has no `detach` tool. Run
+   `spectre detach <sessionId>` or `spectre daemon kill` (drops every session).
+
+Full MCP tool names, input/output schemas, filesystem implications, and capture-mode
+distinctions: [CLI — MCP](cli.md#mcp).
 
 Node keys are short-lived: get a fresh key with `tree` or `find` after an interaction changes the
 UI. On reload-aware sessions, keys are also invalidated after a successful hot reload settle —
@@ -540,5 +548,5 @@ If the agent also has Compose Hot Reload’s MCP configured, do not alternate ra
 > If you have HR available and want quick sanity checks while iterating on a live app, use the
 > HR MCP; in any other case, Spectre is the right choice.
 
-Use `spectre daemon kill` to stop the shared daemon and discard its sessions when you are
-finished.
+Use `spectre detach <session-id>` to release one session, or `spectre daemon kill` to stop the
+shared daemon and discard all sessions when you are finished.

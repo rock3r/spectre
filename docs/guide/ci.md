@@ -258,3 +258,64 @@ suite:
 `if-no-files-found: ignore` keeps the step green when every test passed or opt-out produced
 no files. Prefer a multi-module glob (`**/build/reports/spectre/**`) over a single module path
 when several projects run Spectre tests in one job.
+
+## Failure video uploads
+
+[Failure video](junit.md#failure-video) writes `failure-video.mp4` under the same
+`build/reports/spectre/` tree when the policy **keeps** a file. You still need the matching
+`spectre-recording-<os>` runtime helper on the test classpath (see that page). Choose the
+upload condition from the policy you configured:
+
+### `FailureVideoPolicy.Off` (default)
+
+No recorder starts and no video files are written. Upload **stills only on failure** (same as
+[Failure artifacts](#failure-artifacts)):
+
+```yaml
+- name: Upload Spectre failure stills
+  if: failure()
+  uses: actions/upload-artifact@v4
+  with:
+    name: spectre-failure-artifacts
+    path: "**/build/reports/spectre/**"
+    if-no-files-found: ignore
+```
+
+### `FailureVideoPolicy.OnFailureKeep`
+
+Video is kept **only when the test failed** (deleted on pass). Upload on failure — stills and
+any kept videos share the same reports tree:
+
+```yaml
+- name: Upload Spectre failure stills and videos
+  if: failure()
+  uses: actions/upload-artifact@v4
+  with:
+    name: spectre-failure-artifacts
+    path: "**/build/reports/spectre/**"
+    if-no-files-found: ignore
+```
+
+### `FailureVideoPolicy.Always`
+
+Videos are kept on **pass and fail** (not on assumption/abort skips). Use `if: always()` so
+green jobs still publish videos; stills remain failure-only on disk, so the same glob is safe:
+
+```yaml
+- name: Upload Spectre reports (including Always policy videos)
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: spectre-reports
+    path: "**/build/reports/spectre/**"
+    if-no-files-found: ignore
+```
+
+Without `if: always()`, a fully green job never runs a `if: failure()` upload step, so
+`Always` videos would be left only on the runner filesystem and discarded when the job ends.
+
+| Policy | When files remain on disk | Typical GHA `if:` |
+| --- | --- | --- |
+| `Off` | Stills on fail only | `failure()` |
+| `OnFailureKeep` | Stills + video on fail | `failure()` |
+| `Always` | Stills on fail; video on pass **and** fail | `always()` for video-bearing uploads |
