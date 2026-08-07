@@ -56,7 +56,7 @@ DEFAULT_OVERALL_TIMEOUT = 7200
 def _print_result(item: ScenarioResult) -> None:
     note = item.reason or item.detail or ""
     suffix = f": {note}" if note else ""
-    print(f"{item.result.upper():4} {item.id} ({item.seconds}s){suffix}  {item.log}")
+    print(f"{item.result.upper():4} {item.id} ({item.seconds}s){suffix}  {item.log}", flush=True)
 
 
 def _run_preflight_scenario(preflight, out_dir: Path) -> ScenarioResult:
