@@ -27,19 +27,68 @@ if awk '
   fail "structural script invokes ruby; move Ruby work to install-semantics (#400)"
 fi
 
-# 2) Build a PATH without ruby (and without accidental ruby stubs).
+# 2) PATH without ruby that still runs real toolchains (not broken shims).
+# Linking `command -v python3` can point at a pyenv/asdf shim that needs the rest of
+# PATH; resolve the real interpreter via the current python3 instead.
 strip_bin="$(mktemp -d)"
 trap 'rm -rf "$strip_bin"' EXIT
-# Resolve real tools from the current PATH, skipping any ruby binary.
-export PATH="${PATH:-/usr/bin:/bin}"
-for cmd in bash sh python3 grep mktemp rm dirname pwd printf tr cat sed head uname env true false chmod awk; do
-  p="$(command -v "$cmd" 2>/dev/null)" || continue
-  # Skip if this path is the ruby interpreter itself.
-  base="$(basename "$p")"
-  [[ "$base" == ruby || "$base" == ruby3* ]] && continue
-  ln -sf "$p" "$strip_bin/$cmd"
+
+link_abs() {
+  local name="$1"
+  local target="$2"
+  [[ -n "$target" && -e "$target" ]] || return 1
+  ln -sf "$target" "$strip_bin/$name"
+}
+
+# Core shell utilities: prefer absolute paths from the live PATH, resolve symlinks
+# when possible so we get the real binary (Homebrew cellar, not a thin wrapper).
+resolve_bin() {
+  local cmd="$1"
+  local p
+  p="$(command -v "$cmd" 2>/dev/null)" || return 1
+  # Prefer a real filesystem path over shell builtins (pwd, true, …).
+  if [[ "$p" != /* ]]; then
+    return 1
+  fi
+  if command -v realpath >/dev/null 2>&1; then
+    realpath "$p" 2>/dev/null || echo "$p"
+  elif command -v readlink >/dev/null 2>&1 && readlink -f "$p" >/dev/null 2>&1; then
+    readlink -f "$p"
+  else
+    echo "$p"
+  fi
+}
+
+for cmd in bash sh grep mktemp rm dirname tr cat sed head uname env chmod awk ln mkdir; do
+  target="$(resolve_bin "$cmd" 2>/dev/null)" || continue
+  link_abs "$cmd" "$target" || true
 done
-# Intentionally do not link ruby into strip_bin.
+
+# python3: use the running interpreter's sys.executable (real binary, not pyenv shim).
+if command -v python3 >/dev/null 2>&1; then
+  real_py="$(python3 -c 'import sys; print(sys.executable)' 2>/dev/null || true)"
+  if [[ -n "${real_py:-}" && -x "$real_py" ]]; then
+    link_abs python3 "$real_py"
+  else
+    target="$(resolve_bin python3)" && link_abs python3 "$target"
+  fi
+fi
+
+# printf / true / false may be builtins only — provide tiny sh wrappers if missing.
+for builtin_cmd in printf true false pwd; do
+  if [[ ! -e "$strip_bin/$builtin_cmd" ]]; then
+    case "$builtin_cmd" in
+      printf) printf '%s\n' '#!/bin/sh' 'builtin printf "$@"' >"$strip_bin/printf" ;;
+      true) printf '%s\n' '#!/bin/sh' 'exit 0' >"$strip_bin/true" ;;
+      false) printf '%s\n' '#!/bin/sh' 'exit 1' >"$strip_bin/false" ;;
+      pwd) printf '%s\n' '#!/bin/sh' 'echo "$PWD"' >"$strip_bin/pwd" ;;
+    esac
+    chmod +x "$strip_bin/$builtin_cmd"
+  fi
+done
+
+# Intentionally do not provide ruby.
+[[ ! -e "$strip_bin/ruby" ]] || fail "strip PATH must not include ruby"
 
 # 3) Structural checks must pass without ruby.
 if ! env PATH="$strip_bin" bash "$structural" >/dev/null; then
