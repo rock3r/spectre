@@ -34,7 +34,11 @@ param(
     [switch] $SkipAgentE2e,
     [switch] $SkipWgc,
     [switch] $SkipCli,
-    [switch] $SkipPackageCli
+    [switch] $SkipPackageCli,
+    [ValidateRange(1, 86400)][int] $AgentE2eTimeoutSeconds = 900,
+    [ValidateRange(1, 86400)][int] $WgcTimeoutSeconds = 300,
+    [ValidateRange(1, 86400)][int] $PackageCliTimeoutSeconds = 900,
+    [ValidateRange(1, 86400)][int] $CliLaunchTimeoutSeconds = 300
 )
 
 $ErrorActionPreference = "Stop"
@@ -81,6 +85,7 @@ function Invoke-Native {
         [Parameter(Mandatory = $true)][string] $FilePath,
         [Parameter(Mandatory = $true)][string[]] $Arguments,
         [Parameter(Mandatory = $true)][string] $WorkingDirectory,
+        [ValidateRange(1, 86400)][int] $TimeoutSeconds = 900,
         [string] $LogName = "smoke"
     )
     if (-not (Test-Path -LiteralPath $FilePath)) {
@@ -95,22 +100,39 @@ function Invoke-Native {
     $argString = ConvertTo-ArgString -Args $Arguments
     Write-Host ("> {0} {1}" -f $FilePath, $argString) -ForegroundColor DarkGray
 
-    $p = Start-Process -FilePath $FilePath `
-        -ArgumentList $argString `
-        -WorkingDirectory $WorkingDirectory `
-        -NoNewWindow `
-        -Wait `
-        -PassThru `
-        -RedirectStandardOutput $stdout `
-        -RedirectStandardError $stderr
+    # Start-Process on WinPS 5.1 can lose the native exit code after asynchronous
+    # waiting. ProcessStartInfo keeps one process handle for timeout and ExitCode.
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $FilePath
+    $startInfo.Arguments = $argString
+    $startInfo.WorkingDirectory = $WorkingDirectory
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $p = [System.Diagnostics.Process]::new()
+    $p.StartInfo = $startInfo
+    if (-not $p.Start()) { throw "Failed to start: $FilePath" }
 
+    $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+    $stderrTask = $p.StandardError.ReadToEndAsync()
+    if (-not $p.WaitForExit($TimeoutSeconds * 1000)) {
+        Write-Host ("TIMEOUT after {0}s; terminating process tree rooted at PID {1}" -f $TimeoutSeconds, $p.Id) -ForegroundColor Red
+        & taskkill.exe /PID $p.Id /T /F 2>$null | Out-Null
+        try { $p.WaitForExit(10000) | Out-Null } catch { }
+        try { [System.IO.File]::WriteAllText($stdout, $stdoutTask.Result) } catch { }
+        try { [System.IO.File]::WriteAllText($stderr, $stderrTask.Result) } catch { }
+        Write-LogFile -Path $stdout
+        Write-LogFile -Path $stderr
+        throw ("{0} timed out after {1}s (logs: {2} ; {3})" -f $FilePath, $TimeoutSeconds, $stdout, $stderr)
+    }
+
+    $p.WaitForExit()
+    [System.IO.File]::WriteAllText($stdout, $stdoutTask.Result)
+    [System.IO.File]::WriteAllText($stderr, $stderrTask.Result)
     Write-LogFile -Path $stdout
     Write-LogFile -Path $stderr
-
-    $code = 0
-    if ($null -ne $p -and $null -ne $p.ExitCode) {
-        $code = [int]$p.ExitCode
-    }
+    $code = [int]$p.ExitCode
     if ($code -ne 0) {
         throw ("{0} exited with code {1} (logs: {2} ; {3})" -f $FilePath, $code, $stdout, $stderr)
     }
@@ -120,12 +142,13 @@ function Invoke-Gradle {
     param(
         [Parameter(Mandatory = $true)][string] $RepoRoot,
         [Parameter(Mandatory = $true)][string[]] $GradleArgs,
+        [ValidateRange(1, 86400)][int] $TimeoutSeconds = 900,
         [string] $LogName = "gradle"
     )
     $gradlew = Join-Path $RepoRoot "gradlew.bat"
     if (-not (Test-Path -LiteralPath $gradlew)) { throw "gradlew.bat not found at $gradlew" }
     $allArgs = [string[]](@($GradleArgs) + @("--console=plain"))
-    Invoke-Native -FilePath $gradlew -Arguments $allArgs -WorkingDirectory $RepoRoot -LogName $LogName
+    Invoke-Native -FilePath $gradlew -Arguments $allArgs -WorkingDirectory $RepoRoot -TimeoutSeconds $TimeoutSeconds -LogName $LogName
 }
 
 function New-StepResult {
@@ -261,7 +284,7 @@ try {
 
     if (-not $SkipAgentE2e) {
         $step = Invoke-Step -Name "Agent UI e2e (attach + inject + launch)" -Action {
-            Invoke-Gradle -RepoRoot $repoRoot -LogName "agent-e2e" -GradleArgs @(
+            Invoke-Gradle -RepoRoot $repoRoot -TimeoutSeconds $AgentE2eTimeoutSeconds -LogName "agent-e2e" -GradleArgs @(
                 ":agent:test",
                 "-Pspectre.agent.attachE2e.allowWindows=true",
                 "--tests", "*AgentAttachIntegration*",
@@ -274,7 +297,7 @@ try {
 
     if (-not $SkipWgc) {
         $step = Invoke-Step -Name "WGC region smoke" -Action {
-            Invoke-Gradle -RepoRoot $repoRoot -LogName "wgc-region" -GradleArgs @(
+            Invoke-Gradle -RepoRoot $repoRoot -TimeoutSeconds $WgcTimeoutSeconds -LogName "wgc-region" -GradleArgs @(
                 ":recording:runWindowsGraphicsCaptureRegionSmoke"
             )
             $mp4 = Join-Path $env:TEMP "spectre-wgc-region-smoke.mp4"
@@ -289,7 +312,7 @@ try {
     if (-not $SkipCli) {
         if (-not $SkipPackageCli) {
             $step = Invoke-Step -Name "Package Windows CLI" -Action {
-                Invoke-Gradle -RepoRoot $repoRoot -LogName "package-cli" -GradleArgs @(
+                Invoke-Gradle -RepoRoot $repoRoot -TimeoutSeconds $PackageCliTimeoutSeconds -LogName "package-cli" -GradleArgs @(
                     ":cli:packageWindowsX64"
                 )
             }
@@ -304,7 +327,7 @@ try {
             Write-Host ("  using {0}" -f $spectre) -ForegroundColor DarkGray
             Write-Host "  note: Gradle-ish launch warning is expected for ':agent-test-fixture:run'" -ForegroundColor DarkGray
             $gradlew = Join-Path $repoRoot "gradlew.bat"
-            Invoke-Native -FilePath $spectre -WorkingDirectory $repoRoot -LogName "spectre-launch" -Arguments @(
+            Invoke-Native -FilePath $spectre -WorkingDirectory $repoRoot -TimeoutSeconds $CliLaunchTimeoutSeconds -LogName "spectre-launch" -Arguments @(
                 "launch",
                 "--once",
                 "--app-name", "ComposeFixtureMain",

@@ -57,6 +57,14 @@ do
   grep -F -q "$needle" "$docs" || fail "docs/RELEASE-SMOKE.md missing documented one-liner: $needle"
 done
 
+# --- Timeout / cleanup contract ---
+# Every external command must be bounded and a timed-out wrapper must clean its child tree.
+grep -F -q '[int] $TimeoutSeconds' "$script" || fail "script missing configurable timeout parameters"
+grep -F -q '[System.Diagnostics.ProcessStartInfo]::new()' "$script" || fail "native process does not use a reliable process handle"
+grep -F -q '.WaitForExit($TimeoutSeconds * 1000)' "$script" || fail "native process wait is not bounded"
+grep -F -q 'taskkill.exe /PID $p.Id /T /F' "$script" || fail "timeout does not clean the Windows process tree"
+grep -F -q 'timed out after {1}s' "$script" || fail "timeout diagnostic is missing"
+
 # --- Optional: parse with pwsh when present (macOS/Linux CI agents may have it) ---
 # Note: this is PowerShell Core parse, not Desktop 5.1; ASCII byte check is the 5.1 stand-in.
 if command -v pwsh >/dev/null 2>&1; then
