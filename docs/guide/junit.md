@@ -331,7 +331,35 @@ Default is **`FailureVideoPolicy.Off`** — no recorder overhead on green CI. Op
 | --- | --- |
 | `Off` | Default. No recording starts. |
 | `OnFailureKeep` | Record the whole test; **delete** the finalized file on pass; **keep** on fail. |
-| `Always` | Keep the finalized video on pass and fail. |
+| `Always` | Keep the finalized video on pass and fail (not on assumption/abort skips). |
+
+### Runtime dependency (required for video)
+
+Failure video routes through `AutoRecorder` and therefore needs the **matching platform helper
+on the test runtime classpath** — the same requirement as any other recording call:
+
+| Host OS | Runtime dependency |
+| --- | --- |
+| macOS | `dev.sebastiano.spectre:spectre-recording-macos` |
+| Linux | `dev.sebastiano.spectre:spectre-recording-linux` (plus GStreamer / portal prerequisites) |
+| Windows | `dev.sebastiano.spectre:spectre-recording-windows` (plus .NET / Windows App Runtime) |
+
+```kotlin
+// build.gradle.kts — test runtime only; pick the OS you actually run
+dependencies {
+    testImplementation("dev.sebastiano.spectre:spectre-testing:<version>")
+    // Also pull the base recording API if not already on the classpath:
+    testImplementation("dev.sebastiano.spectre:spectre-recording:<version>")
+    // Platform helper (example: macOS CI runner)
+    testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-macos:<version>")
+}
+```
+
+Without the OS helper, the recorder fails to start and video is **skipped best-effort** (the
+test outcome is never replaced by a recorder error). Stills (`FailureArtifactsConfig`) do not
+require these helpers for Robot-region fallbacks, but native window stills do — see
+[Recording](recording.md). Full per-OS packaging and permission notes:
+[Recording limitations](../RECORDING-LIMITATIONS.md).
 
 ```kotlin
 import dev.sebastiano.spectre.testing.ComposeAutomatorExtension
@@ -370,12 +398,15 @@ nesting), as a sibling file:
 ```text
 build/reports/spectre/<test-class>/<test-method>[/<invocation>][/attempt-N]/
   failure-video.mp4          ← when the policy keeps the file
-  run-*/window-<i>/…         ← stills (#205), independent of video policy
+  run-*/window-<i>/…         ← stills, independent of video policy
 ```
 
 Stills stay default-on and are independent of the video policy. Aborted tests (JUnit assumptions)
 never keep a failure video — same skip semantics as stills. On JUnit 5, a kept video is published
 as a report entry under `spectre.failureVideo`.
+
+CI artifact upload examples for **every** policy (`Off`, `OnFailureKeep`, `Always` with
+`if: always()`): [Running on CI — Failure video uploads](ci.md#failure-video-uploads).
 
 ### Overhead (honest)
 

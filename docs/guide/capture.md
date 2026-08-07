@@ -4,6 +4,10 @@ Atomic capture freezes one Compose window into a PNG plus a versioned semantics 
 (`capture.json`) taken under the same EDT/intent tick. Agents and scripts get only a
 decision-grade summary back; the full tree stays on disk for `jq` and other tools.
 
+Do not confuse this with CLI/MCP **fullscreen screenshot** (full virtual desktop PNG, no
+tree) or **primary-display / window recording** (MP4 paths). Mode comparison:
+[CLI — Capture and recording](cli.md#capture-and-recording).
+
 ## CLI
 
 ```shell
