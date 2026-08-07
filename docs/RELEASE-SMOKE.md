@@ -244,13 +244,27 @@ The cross-platform runner covers the stable baseline that should not be reinvent
 Each release still needs delta cells based on `git log <previous-tag>..HEAD`. Add reusable delta
 coverage to the runner rather than leaving a one-release command only in chat.
 
+### Automated vs manual (0.5.0 harness)
+
+| Surface | Automated entrypoint | Manual recipe only |
+| --- | --- | --- |
+| Preflight / check / agent attach·inject·launch / CLI package / MCP SDK / Maven Local | `release-smoke.py` (macOS/Linux); Windows PS shares IDs | — |
+| Live JUnit failure artifacts/video + atomic capture | `release-smoke.py` → `junit-live` | Windows: run on macOS/Linux baseline (hard `n/a` on Windows entrypoint with reason) |
+| Host native recording | macOS SCK + Linux X11 in `release-smoke.py`; WGC in Windows PS when **interactive** | SSH WGC is N/A (not PASS) |
+| TCC / notarization / app seal | — | macOS recipes below |
+| Real Wayland portal | — | Real Wayland session (Xvfb ≠ Wayland) |
+| Public Homebrew / Scoop / archive installs | — | After draft release undraft |
+| Focus / lock keys / multi-monitor / HiDPI | Soft / env-dependent | Operator notes |
+| Stock IntelliJ inject | Soft recipe | Manual when claimed in notes |
+
 ### Manual cells that remain
 
 These cannot currently be made portable and fail-closed by the baseline runner:
 
 - **Windows WGC:** run `windows-release-smoke.ps1` in the logged-in user's native console terminal.
   SSH and even `PsExec -i` can use a service/elevated token that WGC rejects with `0x80070424` or
-  `UnauthorizedAccessException`. Do not accept those runs as visual evidence.
+  `UnauthorizedAccessException`. The Windows harness records hard `n/a` with reason when
+  `displayMode` is `windows-ssh` — do **not** treat SSH runs as visual PASS evidence.
 - **macOS TCC and release seal:** grant Screen Recording to the actual helper identity, exercise one
   live SCK still/record, then verify the signed release app with `codesign --verify --deep --strict`,
   `spctl`, and `xcrun stapler validate`. A local ad-hoc app is not notarization evidence.
@@ -260,9 +274,23 @@ These cannot currently be made portable and fail-closed by the baseline runner:
   package manager and rerun launcher/MCP smoke. Local packaging does not prove channel metadata.
 - **Input focus/lock keys:** real Robot input uses global desktop state. Record focus failures and
   Caps Lock state; restore any modified lock state. Do not silently rerun a case mismatch.
+- **Multi-monitor / HiDPI / stock IntelliJ:** environment-dependent delta cells; keep as recipes when
+  the release delta claims them.
 
-Copy `build/smoke/release-smoke.json` and Windows' `windows-release-smoke.json` into the release
-record. A report from a different SHA or user session is not evidence for the release SHA.
+Copy `build/smoke/release-smoke.json` (+ `.md`) and Windows' `windows-release-smoke.json` (+ `.md`)
+into the release record. A report from a different SHA or user session is not evidence for the
+release SHA.
+
+### Residual gaps for the 0.5.0 cut
+
+- Full multi-OS operator proof still needs a headed Windows interactive console for WGC and a Linux
+  box (Xvfb or real display) for the Unix entrypoint — unit tests + macOS are necessary but not
+  sufficient alone for a GO claim on all three OSes.
+- Windows MCP packaged e2e remains hard `n/a` with reason until
+  `DaemonFixtureIntegrationTest` is EnabledOnOs Windows (or a dedicated Windows MCP cell lands).
+- Issues **#399** (MCP per-session detach) and **#386** (Windows `launch --once` + Gradle
+  `JVM_ATTACHABLE`) are **not** required inside this harness; soft-document only if a scenario
+  already surfaces them.
 
 ## Windows one-liner script
 
@@ -296,26 +324,35 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File C:\src\spectre\scripts\windows-rel
 powershell -NoProfile -ExecutionPolicy Bypass -File C:\src\spectre\scripts\windows-release-smoke.ps1
 ```
 
-What it does (no second terminal):
+What it does (no second terminal), using the **same stable scenario IDs** as
+`scripts/release-smoke.py` / `scripts/smoke_lib.py`:
 
-1. Opt-in agent UI e2e: attach + inject + launch-and-attach  
+1. `preflight` + optional `check`
+2. Agent UI e2e: `agent-attach-core`, `agent-inject`, `agent-launch-and-attach`
    (`-Pspectre.agent.attachE2e.allowWindows=true`, properly quoted for PowerShell)
-2. WGC region smoke (`:recording:runWindowsGraphicsCaptureRegionSmoke`)
-3. `:cli:packageWindowsX64` then packaged `spectre launch --once --app-name ComposeFixtureMain -- gradlew :agent-test-fixture:run`
+3. `host-native-recording` — WGC region smoke only when `displayMode` is interactive
+   (SSH → hard `n/a` with reason, never fake PASS)
+4. `cli-packaged` / `cli-native-helper-layout` / packaged `spectre launch --once` as `cli-user-flow`
+5. optional `maven-local-consumer` via `verifyMavenLocalPublication`
 
-Writes `build/smoke/windows-release-smoke.json` and exits non-zero on any failed step.
+Writes versioned `build/smoke/windows-release-smoke.json` + `.md` (`schemaVersion: 1`, full SHA,
+dirty flag, `environment.displayMode`) and exits non-zero on any hard `fail`.
 
 Flags:
 
 | Flag | Effect |
 | --- | --- |
+| `-Version 0.5.0` | Release version recorded in the report (default `0.5.0`) |
+| `-Base v0.4.1` | Previous tag recorded in the report |
+| `-SkipCheck` | Skip `./gradlew check` (hard `n/a` with reason) |
 | `-SkipAgentE2e` | Skip Gradle attach/inject/launch tests |
 | `-SkipWgc` | Skip region recording smoke |
 | `-SkipCli` | Skip package + `spectre launch` |
 | `-SkipPackageCli` | Reuse existing `spectre.exe` (still runs launch) |
+| `-SkipMavenLocal` | Skip Maven Local publication smoke |
 
 This is **manual, operator-driven** automation — not hosted CI. Use it so release smoke is
-not multi-terminal faff.
+not multi-terminal faff. Prefer the logged-in interactive console for any WGC cell.
 
 ## Recipes (common hard cells)
 
