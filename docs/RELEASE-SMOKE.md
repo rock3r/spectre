@@ -173,19 +173,71 @@ Run the committed baseline runner from the repository root on macOS and Linux:
 python3 scripts/release-smoke.py --version 0.5.0
 ```
 
-On Linux it supplies `xvfb-run -a` when `DISPLAY` is unset. On Windows use the interactive
-PowerShell runner in the next section. Both runners write machine-readable results and per-step
-logs under `build/smoke/`, bound every external step with a timeout, continue after failures, and
-exit non-zero if any hard scenario is red.
+Optional flags:
+
+| Flag | Effect |
+| --- | --- |
+| `--base v0.4.1` | Record the previous release tag (default: latest git tag) |
+| `--skip-check` | Skip `./gradlew check` (records hard `n/a` with reason) |
+| `--out-dir PATH` | Report/log directory (default `build/smoke`) |
+| `--overall-timeout SECS` | Wall-clock budget for the whole run (default 7200) |
+| `--require-all-ids` | Require every stable scenario ID in `scripts/smoke_lib.py` |
+
+On Linux it supplies `xvfb-run -a` when `DISPLAY` is unset and records `environment.displayMode`
+as `xvfb-auto` or `real-display:$DISPLAY`. On Windows use the interactive PowerShell runner in the
+next section (same stable scenario IDs and `schemaVersion` report shape once parity lands).
+
+### Report artifacts
+
+Every run writes under `build/smoke/` (or `--out-dir`):
+
+| Path | Contents |
+| --- | --- |
+| `release-smoke.json` | Versioned machine-readable report (`schemaVersion`, full SHA, dirty flag, env, scenario rows) |
+| `release-smoke.md` | Markdown results table for the release record |
+| `<scenario-id>-<timestamp>.log` | Per-step stdout/stderr |
+
+Report fields of note: `schemaVersion` (currently `1`), `version`, `base`, `sha` (full), `dirty`,
+`environment.displayMode`, and `scenarios[]` with stable `id`, `result` (`pass` \| `fail` \| `n/a`),
+optional `reason` (required for hard `n/a`), timings, and log path.
+
+**Hard skips are fail-closed:** a hard scenario result of `n/a` without a non-empty `reason` is
+treated as `fail`. Soft cells may use `hard: false`.
+
+### Stable scenario IDs
+
+Shared across macOS / Linux / Windows entrypoints (`scripts/smoke_lib.py` → `REQUIRED_SCENARIO_IDS`):
+
+| ID | Cell |
+| --- | --- |
+| `preflight` | Environment / SHA / clean-tree preflight |
+| `check` | `./gradlew check` |
+| `junit-live` | Live JUnit failure artifacts/video and atomic capture |
+| `agent-attach-core` | Agent attach with preinstalled core |
+| `agent-contract-corpus` | Agent contract corpus |
+| `agent-inject` | Injected attach without preinstalled core |
+| `agent-launch-and-attach` | Launch-and-attach |
+| `cli-packaged` | Release-shaped host CLI packaging |
+| `cli-native-helper-layout` | Native-helper layout in package |
+| `cli-user-flow` | Packaged CLI user flow (ps/attach/tree/input/screenshots/detach) |
+| `mcp-sdk-flow` | Packaged MCP via official SDK / strict stdio |
+| `host-native-recording` | Host native recording smoke |
+| `maven-local-consumer` | Maven Local publication + fresh consumer |
+
+The Unix runner currently wires the baseline subset end-to-end (preflight through
+`cli-user-flow` / `mcp-sdk-flow`). Remaining IDs are expanded toward the full matrix in the
+#398 harness completion; use `--require-all-ids` only when the full set is registered.
 
 The cross-platform runner covers the stable baseline that should not be reinvented per release:
 
+- environment/SHA/dirty-tree preflight recorded in the report
 - the full `check` gate
-- live JUnit validation (failure artifacts/video and capture/wait validation)
-- agent attach with preinstalled core and the contract corpus
+- live JUnit validation (failure artifacts/video and capture/wait validation), forced with
+  `--rerun-tasks --no-build-cache` so cache-only passes cannot skip UI work
+- agent attach with preinstalled core and the contract corpus (separate scenario IDs)
 - injected attach without core
-- release-shaped packaged CLI construction and launcher help
-- strict packaged MCP initialize, `tools/list`, and `list_processes` invocation
+- release-shaped packaged CLI construction
+- packaged CLI fixture user flow + strict packaged MCP initialize / `tools/list` / `list_processes`
 
 Each release still needs delta cells based on `git log <previous-tag>..HEAD`. Add reusable delta
 coverage to the runner rather than leaving a one-release command only in chat.
