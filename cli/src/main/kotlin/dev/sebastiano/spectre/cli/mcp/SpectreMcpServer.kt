@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.cli.mcp
 
+import dev.sebastiano.spectre.cli.SpectreBuildMetadata
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import io.modelcontextprotocol.kotlin.sdk.server.Server
@@ -29,10 +30,17 @@ import kotlinx.serialization.json.put
 /** MCP stdio facade over the local Spectre session daemon. */
 @Suppress("TooManyFunctions") // Tool registration surface grows with daemon ops.
 public object SpectreMcpServer {
+    /**
+     * Version advertised in MCP `initialize` `serverInfo`. Always the build's
+     * [SpectreBuildMetadata.version] (from `VERSION_NAME` / `project.version`), never a stale
+     * constant.
+     */
+    public fun serverVersion(): String = SpectreBuildMetadata.version
+
     /** Creates the MCP server and registers the agent-facing daemon tools. */
     public fun create(request: (DaemonRequest) -> DaemonResponse): Server =
         Server(
-                serverInfo = Implementation(name = "spectre", version = MCP_VERSION),
+                serverInfo = Implementation(name = "spectre", version = serverVersion()),
                 options =
                     ServerOptions(
                         capabilities = ServerCapabilities(tools = ServerCapabilities.Tools())
@@ -593,7 +601,6 @@ public object SpectreMcpServer {
                 )
         }
 
-    private const val MCP_VERSION: String = "0.1.0"
     private val MCP_JSON: Json = Json { encodeDefaults = true }
 }
 

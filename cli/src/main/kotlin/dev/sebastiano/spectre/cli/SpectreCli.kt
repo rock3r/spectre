@@ -95,13 +95,21 @@ public class SpectreCli(
 }
 
 /** Runs the Spectre CLI with its default per-user daemon endpoint. */
-public fun main(arguments: Array<String>): Unit =
+public fun main(arguments: Array<String>) {
+    // MCP stdio requires protocol-clean stdout. kotlin-logging (transitive via the MCP SDK)
+    // prints "kotlin-logging: initializing..." to System.out unless disabled before first use.
+    // Property is read once during KotlinLoggingConfiguration class init — set it before any
+    // code loads io.github.oshai.kotlinlogging.KotlinLogging.
+    if (System.getProperty("kotlin-logging.logStartupMessage") == null) {
+        System.setProperty("kotlin-logging.logStartupMessage", "false")
+    }
     exitProcess(
         minimumJdkPreflightError()?.let { message ->
             System.err.println(message)
             EXIT_DAEMON_FAILURE
-        } ?: run { SpectreCli().run(arguments.asList()) }
+        } ?: SpectreCli().run(arguments.asList())
     )
+}
 
 internal fun jdkPreflightError(
     featureVersion: Int = Runtime.version().feature(),

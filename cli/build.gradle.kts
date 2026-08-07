@@ -456,12 +456,23 @@ dependencies {
     testImplementation(projects.agentTestFixture)
 }
 
+// Expand VERSION_NAME / project.version into the packaged classpath resource so MCP
+// serverInfo.version (and any other CLI version surfaces) match the release metadata.
+tasks.named<ProcessResources>("processResources") {
+    val publishVersion = project.version.toString()
+    inputs.property("spectre.version", publishVersion)
+    filesMatching("spectre-build.properties") { expand(mapOf("version" to publishVersion)) }
+}
+
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
     systemProperty(
         "spectre.cli.testRuntimeClasspath",
         sourceSets.test.get().runtimeClasspath.asPath,
     )
+    // Anti-stale guard for MCP serverInfo.version tests: must match build metadata, not a
+    // hardcoded constant that only coincides with VERSION_NAME by accident.
+    systemProperty("spectre.project.version", project.version.toString())
     providers.systemProperty("spectre.cli.distributionExecutable").orNull?.let { executable ->
         systemProperty("spectre.cli.distributionExecutable", executable)
     }
