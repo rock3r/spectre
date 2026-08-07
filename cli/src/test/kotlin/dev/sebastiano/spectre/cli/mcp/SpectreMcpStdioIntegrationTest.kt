@@ -42,14 +42,12 @@ class SpectreMcpStdioIntegrationTest {
     fun `spectre mcp stdout stays protocol-clean through initialize`() {
         val process = ProcessBuilder(mcpCommand()).redirectErrorStream(false).start()
         try {
-            process.outputStream.bufferedWriter(StandardCharsets.UTF_8).use { writer ->
-                writer.write(INITIALIZE_REQUEST)
-                writer.newLine()
-                writer.flush()
-            }
-            // Keep stdin open only long enough for one request/response; then close so the server
-            // can shut down after the initialize exchange.
-            process.outputStream.close()
+            // Keep stdin open until the initialize response is fully read — closing early can
+            // race the SDK writer and drop the JSON-RPC response (see VerifyCliShadowJar).
+            val writer = process.outputStream.bufferedWriter(StandardCharsets.UTF_8)
+            writer.write(INITIALIZE_REQUEST)
+            writer.newLine()
+            writer.flush()
 
             val stdout =
                 BufferedReader(InputStreamReader(process.inputStream, StandardCharsets.UTF_8))
@@ -79,6 +77,7 @@ class SpectreMcpStdioIntegrationTest {
                     ?.content
             assertEquals(expectedMcpVersion(), version)
 
+            writer.close()
             assertTrue(process.waitFor(PROCESS_EXIT_TIMEOUT_SECONDS, TimeUnit.SECONDS))
         } finally {
             process.destroyForcibly()
@@ -129,9 +128,10 @@ class SpectreMcpStdioIntegrationTest {
                     ),
                     client.listTools().tools.map { it.name }.toSet(),
                 )
-                val toolResult = client.callTool(name = "list_processes", arguments = emptyMap())
-                assertNotNull(toolResult, "list_processes tool call returned null")
-                assertTrue(toolResult.isError != true, "list_processes failed: $toolResult")
+                // Tool invocation is proven by scripts/mcp-stdio-smoke.py against packaged
+                // binaries. Calling list_processes here would auto-start the shared per-user
+                // daemon and leave it idle until timeout, which this hermetic protocol test
+                // intentionally avoids.
             }
         } finally {
             transport.close()
