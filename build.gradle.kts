@@ -211,6 +211,7 @@ val verifyReleaseSmokeScripts by
         inputs
             .files(
                 "scripts/release-smoke.py",
+                "scripts/smoke_lib.py",
                 "scripts/mcp-stdio-smoke.py",
                 ".github/scripts/test-release-smoke-scripts.py",
                 "docs/RELEASE-SMOKE.md",
