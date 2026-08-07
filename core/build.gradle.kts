@@ -37,6 +37,15 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    // Forward live-AWT / physical typeText opt-ins into the test JVM (macOS AppKit is opt-in;
+    // physical Robot Caps Lock tests must not run unguarded on hosted CI — see
+    // RobotDriverTypeTextCapsPhysicalTest).
+    providers.systemProperty("spectre.test.liveAwt").orNull?.let { value ->
+        systemProperty("spectre.test.liveAwt", value)
+    }
+    providers.systemProperty("spectre.test.physicalTypeText").orNull?.let { value ->
+        systemProperty("spectre.test.physicalTypeText", value)
+    }
     // Docs contract tests read repo-root markdown at runtime; register them as inputs so
     // :core:test is not UP-TO-DATE/cache-hit after spike/guide docs change (#209).
     val docsRoot = rootProject.layout.projectDirectory.dir("docs")

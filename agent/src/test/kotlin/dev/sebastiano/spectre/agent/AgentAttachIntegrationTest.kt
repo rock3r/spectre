@@ -559,6 +559,11 @@ class AgentAttachIntegrationTest {
      * Wait for the typed character, or on CI skip the remainder of the typeText assertion when
      * Xvfb/Robot delivers a no-op keystroke (same class of flakiness as
      * [typeTextOrSkipCiFocusLoss]).
+     *
+     * **#396:** a wrong-case receipt (e.g. `X` when we typed `x`) is a product input bug, not an
+     * environmental focus failure. Fail hard even on CI when the case-insensitive character arrived
+     * but the exact-case character did not. Soft CI skip is reserved for true no-op delivery (empty
+     * / unchanged text).
      */
     private fun AttachedAutomator.waitForTextFieldToReceiveTypedCharacterOrSkipCi(
         textFieldKey: String,
@@ -567,6 +572,9 @@ class AgentAttachIntegrationTest {
     ): NodeSnapshotDto? {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(FOCUS_TIMEOUT_MS)
         val previousTypedCount = previousEditableText.count { it == TYPED_CHARACTER }
+        val previousCaseInsensitiveCount = previousEditableText.count {
+            it.equals(TYPED_CHARACTER, ignoreCase = true)
+        }
         var lastText: String? = null
         while (System.nanoTime() < deadline) {
             val match = findByTestTag(TAG_TEXT_FIELD).firstOrNull { it.key == textFieldKey }
@@ -578,6 +586,19 @@ class AgentAttachIntegrationTest {
                 return match
             }
             sleepBetweenFocusPolls()
+        }
+        val last = lastText.orEmpty()
+        val caseInsensitiveArrived =
+            last.count { it.equals(TYPED_CHARACTER, ignoreCase = true) } >
+                previousCaseInsensitiveCount
+        val exactCaseArrived = last.count { it == TYPED_CHARACTER } > previousTypedCount
+        if (caseInsensitiveArrived && !exactCaseArrived) {
+            // Product bug: ambient Caps Lock / case mapping flipped the character. Never soft-skip.
+            error(
+                "iteration $iteration: fixture text field $textFieldKey received wrong letter " +
+                    "case after typeText (product input bug, not focus loss). " +
+                    "Expected exact '$TYPED_CHARACTER', Before='$previousEditableText', last='$lastText'"
+            )
         }
         val message =
             "iteration $iteration: fixture text field $textFieldKey did not receive " +

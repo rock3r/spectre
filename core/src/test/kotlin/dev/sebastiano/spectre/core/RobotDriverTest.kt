@@ -95,6 +95,22 @@ class RobotDriverTest {
     }
 
     @Test
+    fun `keyStrokeForChar inverts letter shift when Caps Lock is on`() {
+        // Ambient Caps Lock inverts letter case at the OS; compensate by flipping Shift.
+        assertEquals(
+            KeyStrokeSpec(KeyEvent.VK_A, listOf(KeyEvent.VK_SHIFT)),
+            keyStrokeForChar('a', capsLockOn = true),
+        )
+        assertEquals(KeyStrokeSpec(KeyEvent.VK_A), keyStrokeForChar('A', capsLockOn = true))
+        // Non-letters are unaffected by Caps Lock.
+        assertEquals(KeyStrokeSpec(KeyEvent.VK_1), keyStrokeForChar('1', capsLockOn = true))
+        assertEquals(
+            KeyStrokeSpec(KeyEvent.VK_1, listOf(KeyEvent.VK_SHIFT)),
+            keyStrokeForChar('!', capsLockOn = true),
+        )
+    }
+
+    @Test
     fun `typeText dispatches key events without touching the clipboard`() = runTest {
         val robot = RecordingRobotAdapter()
         val clipboard = RecordingClipboardAdapter()
@@ -120,6 +136,65 @@ class RobotDriverTest {
             ),
             robot.events,
         )
+    }
+
+    @Test
+    fun `typeText with Caps Lock on compensates letter Shift and does not mutate lock`() = runTest {
+        // #396: ambient Caps Lock must not invert requested letter case. Spectre does not write
+        // locking-key state (unreliable across JVMs); it inverts Shift on letters instead.
+        val robot = RecordingRobotAdapter(initialCapsLockOn = true)
+        val driver = RobotDriver(robot, RecordingClipboardAdapter())
+
+        driver.typeText("xY")
+
+        assertEquals(
+            emptyList(),
+            robot.capsLockWrites,
+            "typeText must not mutate global Caps Lock state",
+        )
+        assertTrue(robot.capsLockOn, "ambient Caps Lock must remain as the host left it")
+        assertEquals(
+            listOf(
+                // lowercase 'x' needs Shift while Caps Lock is on
+                "keyPress(${KeyEvent.VK_SHIFT})",
+                "keyPress(${KeyEvent.VK_X})",
+                "keyRelease(${KeyEvent.VK_X})",
+                "keyRelease(${KeyEvent.VK_SHIFT})",
+                // uppercase 'Y' needs no Shift while Caps Lock is on
+                "keyPress(${KeyEvent.VK_Y})",
+                "keyRelease(${KeyEvent.VK_Y})",
+            ),
+            robot.events,
+        )
+    }
+
+    @Test
+    fun `typeText with Caps Lock off does not mutate lock state`() = runTest {
+        val robot = RecordingRobotAdapter(initialCapsLockOn = false)
+        val driver = RobotDriver(robot, RecordingClipboardAdapter())
+
+        driver.typeText("x")
+
+        assertEquals(emptyList(), robot.capsLockWrites)
+        assertEquals(false, robot.capsLockOn)
+        assertEquals(
+            listOf("keyPress(${KeyEvent.VK_X})", "keyRelease(${KeyEvent.VK_X})"),
+            robot.events,
+        )
+    }
+
+    @Test
+    fun `typeText leaves Caps Lock unchanged after a mid-type failure`() = runTest {
+        val robot = RecordingRobotAdapter(initialCapsLockOn = true)
+        val driver = RobotDriver(robot, RecordingClipboardAdapter())
+
+        val error = assertFailsWith<IllegalArgumentException> { driver.typeText("xé") }
+        assertTrue(error.message?.contains("pasteText") == true)
+        assertTrue(
+            robot.capsLockOn,
+            "Fail-closed: typeText must not leave Caps Lock inverted after a mid-string throw",
+        )
+        assertEquals(emptyList(), robot.capsLockWrites)
     }
 
     @Test
@@ -403,9 +478,13 @@ private class RecordingRobotAdapter(
     override val autoDelayMs: Int = 0,
     private val sharedLog: MutableList<String>? = null,
     private val drainAfterPaste: Boolean = false,
+    initialCapsLockOn: Boolean = false,
+    private val allowCapsLockWrite: Boolean = true,
 ) : RobotAdapter {
     override val requiresOffEdt: Boolean = false
     val events = mutableListOf<String>()
+    val capsLockWrites = mutableListOf<Boolean>()
+    var capsLockOn: Boolean = initialCapsLockOn
     var captureCalls: Int = 0
         private set
 
@@ -425,6 +504,16 @@ private class RecordingRobotAdapter(
     override fun keyRelease(keyCode: Int) = log("keyRelease($keyCode)")
 
     override fun mouseWheel(wheelClicks: Int) = log("mouseWheel($wheelClicks)")
+
+    override fun getLockingKeyState(keyCode: Int): Boolean? =
+        if (keyCode == KeyEvent.VK_CAPS_LOCK) capsLockOn else null
+
+    override fun setLockingKeyState(keyCode: Int, on: Boolean): Boolean {
+        if (keyCode != KeyEvent.VK_CAPS_LOCK || !allowCapsLockWrite) return false
+        capsLockWrites += on
+        capsLockOn = on
+        return true
+    }
 
     override fun createScreenCapture(region: Rectangle): BufferedImage {
         captureCalls++
