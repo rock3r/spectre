@@ -484,11 +484,12 @@ def run_command(
 
     remaining = timeout
     if overall_deadline is not None:
-        remaining = min(remaining, max(1, int(overall_deadline - time.monotonic())))
-        if remaining <= 0:
+        budget_left = int(overall_deadline - time.monotonic())
+        if budget_left <= 0:
             message = "overall smoke deadline exceeded before step start"
             log_path.write_text(message + "\n", encoding="utf-8")
             return 124, message, str(log_path)
+        remaining = min(remaining, budget_left)
 
     # start_new_session creates a new process group on POSIX so killpg works.
     popen_kwargs: dict[str, Any] = {
@@ -510,15 +511,24 @@ def run_command(
         if code == 0:
             return 0, "", str(log_path)
         return code, f"exit {code}", str(log_path)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as error:
         kill_process_tree(proc)
+        # communicate() stashes already-captured stdout on the exception; prefer that
+        # over re-reading the pipe (which is often empty after the timeout).
         partial = ""
-        try:
-            if proc.stdout is not None:
-                partial = proc.stdout.read() or ""
-                proc.stdout.close()
-        except Exception:
-            partial = ""
+        if isinstance(error.stdout, (str, bytes)):
+            partial = (
+                error.stdout.decode("utf-8", errors="replace")
+                if isinstance(error.stdout, bytes)
+                else error.stdout
+            )
+        else:
+            try:
+                if proc.stdout is not None:
+                    partial = proc.stdout.read() or ""
+                    proc.stdout.close()
+            except Exception:
+                partial = ""
         try:
             proc.wait(timeout=5)
         except Exception:

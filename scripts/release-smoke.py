@@ -151,8 +151,9 @@ def main(argv: list[str] | None = None) -> int:
     results: list[ScenarioResult] = []
 
     preflight_result = _run_preflight_scenario(preflight, out_dir)
-    if preflight.dirty:
-        # Always surface dirty state in the scenario detail (still pass when collection ok).
+    if preflight.dirty and preflight_result.result == RESULT_PASS:
+        # Annotate dirty state only when preflight checks already passed — never
+        # overwrite a real preflight failure with a synthetic PASS.
         preflight_result = scenario_result(
             "preflight",
             name=preflight_result.name,
