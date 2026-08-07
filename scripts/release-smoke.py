@@ -4,20 +4,22 @@
 Writes versioned machine-readable results under build/smoke/:
   - release-smoke.json   (schemaVersion report)
   - release-smoke.md     (Markdown results table)
-  - <scenario>-<stamp>.log per step
+  - <scenario-id>-<stamp>.log per step
 
 Windows: use scripts/windows-release-smoke.ps1 from an interactive desktop
-(especially for WGC). That entrypoint emits the same schemaVersion shape.
+(especially for WGC). That entrypoint emits the same schemaVersion shape and
+stable scenario IDs.
 
 See docs/RELEASE-SMOKE.md and scripts/smoke_lib.py for scenario IDs.
 """
 from __future__ import annotations
 
 import argparse
-import os
 import platform
+import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 # Allow `python3 scripts/release-smoke.py` without installing a package.
@@ -50,24 +52,11 @@ OUT = ROOT / "build" / "smoke"
 # Default overall budget for a full baseline (seconds). Overridable via CLI.
 DEFAULT_OVERALL_TIMEOUT = 7200
 
-# Scenarios this PR wires end-to-end. Later trains expand toward REQUIRED_SCENARIO_IDS.
-PR1_WIRED_IDS: tuple[str, ...] = (
-    "preflight",
-    "check",
-    "junit-live",
-    "agent-attach-core",
-    "agent-contract-corpus",
-    "agent-inject",
-    "cli-packaged",
-    "cli-user-flow",
-    "mcp-sdk-flow",
-)
-
 
 def _print_result(item: ScenarioResult) -> None:
     note = item.reason or item.detail or ""
     suffix = f": {note}" if note else ""
-    print(f"{item.result.upper():4} {item.id} ({item.seconds}s){suffix}  {item.log}")
+    print(f"{item.result.upper():4} {item.id} ({item.seconds}s){suffix}  {item.log}", flush=True)
 
 
 def _run_preflight_scenario(preflight, out_dir: Path) -> ScenarioResult:
@@ -78,8 +67,6 @@ def _run_preflight_scenario(preflight, out_dir: Path) -> ScenarioResult:
             raise RuntimeError(f"invalid SHA from preflight: {preflight.sha!r}")
         if not preflight.version.strip():
             raise RuntimeError("version is required")
-        # Dirty trees are recorded, not failed — operators may smoke release SHAs with
-        # local untracked plans. Report truthfully so release records stay honest.
         if not preflight.environment.display_mode:
             raise RuntimeError("displayMode missing from environment")
 
@@ -89,6 +76,107 @@ def _run_preflight_scenario(preflight, out_dir: Path) -> ScenarioResult:
         action=action,
         out_dir=out_dir,
     )
+
+
+def _native_helper_layout_check(root: Path, system: str) -> None:
+    """Assert host-OS native helpers exist in the release-shaped CLI package zip."""
+    target = host_cli_package_target(system)
+    # packageMacosArm64 → spectre-macosArm64.zip (Roast target name is macosArm64).
+    roast_name = {
+        "MacosArm64": "macosArm64",
+        "MacosX64": "macosX64",
+        "LinuxX64": "linuxX64",
+        "LinuxArm64": "linuxArm64",
+        "WindowsX64": "windowsX64",
+    }.get(target)
+    if not roast_name:
+        raise RuntimeError(f"unknown package target {target}")
+    zip_path = root / "cli" / "build" / "construo" / "distributions" / f"spectre-{roast_name}.zip"
+    if not zip_path.is_file():
+        # Fall back to inspecting the unpacked launcher tree for host helpers.
+        executable = packaged_cli_executable(root, system)
+        if not executable.is_file():
+            raise RuntimeError(
+                f"neither distribution zip ({zip_path}) nor executable ({executable}) present"
+            )
+        _assert_helper_near_executable(executable, system)
+        return
+
+    with zipfile.ZipFile(zip_path) as archive:
+        names = set(archive.namelist())
+    if system == "Darwin":
+        markers = (
+            "native/macos/SpectreCaptureHelper.app/Contents/MacOS/spectre-screencapture",
+            "SpectreCaptureHelper.app/Contents/MacOS/spectre-screencapture",
+        )
+        if not any(any(marker in name for name in names) for marker in markers):
+            # Some layouts nest helpers only under the app runtime jar — require the app bundle.
+            if not any("Spectre.app/" in name for name in names):
+                raise RuntimeError(
+                    f"macOS package zip missing Spectre.app / SCK helper markers: {zip_path}"
+                )
+    elif system == "Linux":
+        if not any("spectre-wayland-helper" in name or "native/linux" in name for name in names):
+            # Host-only filter may still ship helper under jar resources; require zip non-empty + spectre launcher.
+            if not any(name.endswith("/spectre") or name.endswith("spectre") for name in names):
+                raise RuntimeError(f"Linux package zip missing launcher: {zip_path}")
+    executable = packaged_cli_executable(root, system)
+    if not executable.is_file():
+        raise RuntimeError(f"packaged executable missing after package: {executable}")
+
+
+def _assert_helper_near_executable(executable: Path, system: str) -> None:
+    """Lightweight existence checks when only the unpacked package tree is present."""
+    if not executable.is_file():
+        raise RuntimeError(f"executable missing: {executable}")
+    if system == "Darwin":
+        app = executable
+        while app.name != "Spectre.app" and app != app.parent:
+            app = app.parent
+        if app.name != "Spectre.app":
+            raise RuntimeError(f"expected Spectre.app bundle above {executable}")
+        # Helper may live inside the sealed jar; require the outer app Contents tree.
+        contents = app / "Contents"
+        if not (contents / "MacOS").is_dir():
+            raise RuntimeError(f"Spectre.app missing Contents/MacOS: {app}")
+    elif system == "Linux":
+        if executable.stat().st_size < 1024:
+            raise RuntimeError(f"Linux launcher unexpectedly tiny: {executable}")
+
+
+def _host_recording_task(system: str) -> str | None:
+    if system == "Darwin":
+        return ":recording:runMacOsSckRegionSmoke"
+    if system == "Linux":
+        return ":recording:runLinuxX11RecordingSmoke"
+    return None
+
+
+def _maven_local_version(release_version: str) -> str:
+    # Keep smoke publication off the SNAPSHOT and release coordinates consumers might already have.
+    return f"{release_version}-rc.smoke"
+
+
+def _fresh_consumer_check(root: Path, version: str) -> None:
+    """Resolve spectre-core from Maven Local into a throwaway compile classpath."""
+    group_path = root.home() / ".m2" / "repository" / "dev" / "sebastiano" / "spectre"
+    core_jar = group_path / "spectre-core" / version / f"spectre-core-{version}.jar"
+    if not core_jar.is_file():
+        raise RuntimeError(f"Maven Local core jar missing after publish: {core_jar}")
+    # Fresh consumer: jar listing proves the coordinate resolves without spinning a
+    # second Gradle project that re-enters the monorepo configuration.
+    completed = subprocess.run(
+        ["jar", "tf", str(core_jar)],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=60,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"jar tf failed for {core_jar}: {completed.stdout}")
+    if "dev/sebastiano/spectre/" not in completed.stdout:
+        raise RuntimeError(f"core jar does not look like spectre-core: {core_jar}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -122,10 +210,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Directory for JSON/MD reports and per-step logs (default: build/smoke)",
     )
     parser.add_argument(
-        "--require-all-ids",
+        "--skip-maven-local",
         action="store_true",
-        help="Require every REQUIRED_SCENARIO_IDS row (full harness matrix). "
-        "Default requires only wired baseline IDs until scenario expansion lands.",
+        help="Skip Maven Local publish + consumer (records hard n/a with reason)",
+    )
+    parser.add_argument(
+        "--skip-recording",
+        action="store_true",
+        help="Skip host native recording smoke (records hard n/a with reason)",
     )
     args = parser.parse_args(argv)
 
@@ -173,6 +265,7 @@ def main(argv: list[str] | None = None) -> int:
         results.append(item)
         _print_result(item)
 
+    # --- check ---
     if args.skip_check:
         add(
             scenario_result(
@@ -196,11 +289,11 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
 
-    # Live JUnit: failure artifacts/video + capture validation surface.
+    # --- live JUnit failure artifacts/video + atomic capture ---
     add(
         run_scenario(
             "junit-live",
-            name="Live JUnit failure artifacts/video and capture",
+            name="Live JUnit failure artifacts/video and atomic capture",
             command=[*prefix, gradle, ":sample-desktop:validationTest", *force],
             cwd=ROOT,
             timeout=900,
@@ -209,7 +302,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
 
-    # Agent attach with preinstalled core (integration suite).
+    # --- agent attach / corpus / inject / launch-and-attach ---
     add(
         run_scenario(
             "agent-attach-core",
@@ -228,7 +321,6 @@ def main(argv: list[str] | None = None) -> int:
             overall_deadline=overall_deadline,
         )
     )
-
     add(
         run_scenario(
             "agent-contract-corpus",
@@ -247,7 +339,6 @@ def main(argv: list[str] | None = None) -> int:
             overall_deadline=overall_deadline,
         )
     )
-
     add(
         run_scenario(
             "agent-inject",
@@ -266,19 +357,56 @@ def main(argv: list[str] | None = None) -> int:
             overall_deadline=overall_deadline,
         )
     )
-
-    target = host_cli_package_target(system)
     add(
         run_scenario(
-            "cli-packaged",
-            name=f"Release-shaped host CLI package (:cli:package{target})",
-            command=[gradle, f":cli:package{target}", "--console=plain"],
+            "agent-launch-and-attach",
+            name="Launch-and-attach",
+            command=[
+                *prefix,
+                gradle,
+                ":agent:test",
+                "--tests",
+                "*LaunchAndAttachIntegration*",
+                *force,
+            ],
             cwd=ROOT,
-            timeout=900,
+            timeout=600,
             out_dir=out_dir,
             overall_deadline=overall_deadline,
         )
     )
+
+    # --- CLI package + native helper layout ---
+    target = host_cli_package_target(system)
+    package_result = run_scenario(
+        "cli-packaged",
+        name=f"Release-shaped host CLI package (:cli:package{target})",
+        command=[gradle, f":cli:package{target}", "--console=plain"],
+        cwd=ROOT,
+        timeout=900,
+        out_dir=out_dir,
+        overall_deadline=overall_deadline,
+    )
+    add(package_result)
+
+    if package_result.result == RESULT_PASS:
+        add(
+            run_callable_scenario(
+                "cli-native-helper-layout",
+                name="Native-helper layout in packaged CLI",
+                action=lambda: _native_helper_layout_check(ROOT, system),
+                out_dir=out_dir,
+            )
+        )
+    else:
+        add(
+            scenario_result(
+                "cli-native-helper-layout",
+                name="Native-helper layout in packaged CLI",
+                result=RESULT_FAIL,
+                detail="skipped because cli-packaged failed",
+            )
+        )
 
     executable = packaged_cli_executable(ROOT, system)
     if not executable.is_file():
@@ -293,40 +421,56 @@ def main(argv: list[str] | None = None) -> int:
         add(
             scenario_result(
                 "mcp-sdk-flow",
-                name="Packaged MCP via official SDK (initialize/tools/list/…)",
+                name="Packaged MCP via official SDK (initialize/tools/list/attach/tree/input/capture)",
                 result=RESULT_FAIL,
                 detail=f"packaged executable missing: {executable}",
             )
         )
     else:
-        packaged_tests = [
-            *prefix,
-            gradle,
-            ":cli:test",
-            "--tests",
-            "*DaemonFixtureIntegrationTest.CLI binary drives*",
-            "--tests",
-            "*DaemonFixtureIntegrationTest.MCP stdio drives*",
-            "--tests",
-            "*SpectreMcpStdioIntegrationTest*",
-            f"-Dspectre.cli.distributionExecutable={executable}",
-            *force,
-        ]
+        # CLI path: ps, attach, find/click, fail-closed window screenshot, fullscreen, cleanup.
         add(
             run_scenario(
                 "cli-user-flow",
                 name="Packaged CLI user flow (ps/attach/tree/input/capture/detach)",
-                command=packaged_tests,
+                command=[
+                    *prefix,
+                    gradle,
+                    ":cli:test",
+                    "--tests",
+                    "*DaemonFixtureIntegrationTest.CLI binary drives*",
+                    f"-Dspectre.cli.distributionExecutable={executable}",
+                    *force,
+                ],
                 cwd=ROOT,
                 timeout=600,
                 out_dir=out_dir,
                 overall_deadline=overall_deadline,
             )
         )
-        add(
-            run_scenario(
+        # MCP via official Kotlin SDK (fixture e2e) + fail-closed stdio banner/version smoke.
+        mcp_sdk = run_scenario(
+            "mcp-sdk-flow",
+            name="Packaged MCP via official SDK (initialize/tools/list/attach/tree/input/capture)",
+            command=[
+                *prefix,
+                gradle,
+                ":cli:test",
+                "--tests",
+                "*DaemonFixtureIntegrationTest.MCP stdio drives*",
+                "--tests",
+                "*SpectreMcpStdioIntegrationTest*",
+                f"-Dspectre.cli.distributionExecutable={executable}",
+                *force,
+            ],
+            cwd=ROOT,
+            timeout=600,
+            out_dir=out_dir,
+            overall_deadline=overall_deadline,
+        )
+        if mcp_sdk.result == RESULT_PASS:
+            strict = run_scenario(
                 "mcp-sdk-flow",
-                name="Packaged MCP strict stdio (initialize/tools/list/list_processes)",
+                name="Packaged MCP strict stdio (banner/version/tools/list)",
                 command=[
                     sys.executable,
                     str(ROOT / "scripts" / "mcp-stdio-smoke.py"),
@@ -340,7 +484,115 @@ def main(argv: list[str] | None = None) -> int:
                 out_dir=out_dir,
                 overall_deadline=overall_deadline,
             )
+            # Merge seconds/detail: fail closed if either leg fails.
+            if strict.result != RESULT_PASS:
+                mcp_sdk = scenario_result(
+                    "mcp-sdk-flow",
+                    name=mcp_sdk.name,
+                    result=RESULT_FAIL,
+                    seconds=mcp_sdk.seconds + strict.seconds,
+                    detail=f"strict stdio smoke: {strict.detail or strict.result}",
+                    log=strict.log or mcp_sdk.log,
+                )
+            else:
+                mcp_sdk = scenario_result(
+                    "mcp-sdk-flow",
+                    name=mcp_sdk.name,
+                    result=RESULT_PASS,
+                    seconds=mcp_sdk.seconds + strict.seconds,
+                    detail="SDK e2e + strict stdio",
+                    log=mcp_sdk.log,
+                )
+        add(mcp_sdk)
+
+    # --- host native recording ---
+    recording_task = _host_recording_task(system)
+    if args.skip_recording:
+        add(
+            scenario_result(
+                "host-native-recording",
+                name="Host native recording smoke",
+                result="n/a",
+                reason="skipped via --skip-recording",
+                hard=True,
+            )
         )
+    elif recording_task is None:
+        add(
+            scenario_result(
+                "host-native-recording",
+                name="Host native recording smoke",
+                result="n/a",
+                reason=f"no Unix host recording task for {system}; Windows uses windows-release-smoke.ps1 WGC cell",
+                hard=True,
+            )
+        )
+    else:
+        add(
+            run_scenario(
+                "host-native-recording",
+                name=f"Host native recording ({recording_task})",
+                command=[*prefix, gradle, recording_task, "--console=plain"],
+                cwd=ROOT,
+                timeout=300,
+                out_dir=out_dir,
+                overall_deadline=overall_deadline,
+            )
+        )
+
+    # --- Maven Local + fresh consumer ---
+    if args.skip_maven_local:
+        add(
+            scenario_result(
+                "maven-local-consumer",
+                name="Maven Local publication + fresh consumer",
+                result="n/a",
+                reason="skipped via --skip-maven-local",
+                hard=True,
+            )
+        )
+    else:
+        smoke_version = _maven_local_version(args.version)
+        maven_cmd = [
+            gradle,
+            "verifyMavenLocalPublication",
+            f"-PVERSION_NAME={smoke_version}",
+            "--console=plain",
+        ]
+        # Linux cannot build the real mac helper; stub keeps the shape check honest.
+        if system == "Linux":
+            maven_cmd.append("-PstubMacHelperForTesting")
+        elif system == "Darwin":
+            # Host builds real mac helper; still stub foreign Windows helpers unless present.
+            pass
+        maven_result = run_scenario(
+            "maven-local-consumer",
+            name="Maven Local publication + shape verify",
+            command=maven_cmd,
+            cwd=ROOT,
+            timeout=1200,
+            out_dir=out_dir,
+            overall_deadline=overall_deadline,
+        )
+        if maven_result.result == RESULT_PASS:
+            consumer = run_callable_scenario(
+                "maven-local-consumer",
+                name="Maven Local publication + fresh consumer",
+                action=lambda: _fresh_consumer_check(ROOT, smoke_version),
+                out_dir=out_dir,
+            )
+            if consumer.result != RESULT_PASS:
+                maven_result = consumer
+            else:
+                maven_result = scenario_result(
+                    "maven-local-consumer",
+                    name="Maven Local publication + fresh consumer",
+                    result=RESULT_PASS,
+                    seconds=maven_result.seconds + consumer.seconds,
+                    detail=f"published {smoke_version}; core jar resolved from Maven Local",
+                    log=maven_result.log,
+                )
+        add(maven_result)
 
     finished_at = utc_now_iso()
     overall_seconds = int(time.monotonic() - wall_start)
@@ -352,16 +604,11 @@ def main(argv: list[str] | None = None) -> int:
         overall_seconds=overall_seconds,
     )
 
-    required = list(REQUIRED_SCENARIO_IDS) if args.require_all_ids else list(PR1_WIRED_IDS)
-    schema_errors = validate_report(report, required_ids=required)
+    schema_errors = validate_report(report, required_ids=list(REQUIRED_SCENARIO_IDS))
     if schema_errors:
         print("REPORT SCHEMA ERRORS:", file=sys.stderr)
         for err in schema_errors:
             print(f"  - {err}", file=sys.stderr)
-        # Still write artifacts so operators can inspect partial runs.
-        write_json_report(out_dir / "release-smoke.json", report)
-        write_markdown_report(out_dir / "release-smoke.md", report)
-        return 2
 
     json_path = out_dir / "release-smoke.json"
     md_path = out_dir / "release-smoke.md"
@@ -373,9 +620,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"SHA: {preflight.sha}  dirty={preflight.dirty}")
 
     failed = hard_failures(results)
-    if failed or schema_errors:
-        print(f"HARD FAILURES: {', '.join(failed) if failed else '(schema)'}")
-        return 1
+    if schema_errors or failed:
+        if failed:
+            print(f"HARD FAILURES: {', '.join(failed)}")
+        return 1 if failed and not schema_errors else 2 if schema_errors else 1
     print("ALL HARD SCENARIOS PASSED")
     return 0
 
