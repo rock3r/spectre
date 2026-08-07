@@ -136,6 +136,27 @@ val verifyWindowsReleaseSmokeScript by
         outputs.upToDateWhen { false }
     }
 
+val verifyReleaseSmokeScripts by
+    tasks.registering(Exec::class) {
+        description = "Contract tests for cross-platform release-smoke orchestration and MCP stdio."
+        group = "verification"
+        workingDir = rootProject.layout.projectDirectory.asFile
+        commandLine("python3", ".github/scripts/test-release-smoke-scripts.py")
+        onlyIf("Host with python3") {
+            runCatching { ProcessBuilder("python3", "--version").start().waitFor() == 0 }
+                .getOrDefault(false)
+        }
+        inputs
+            .files(
+                "scripts/release-smoke.py",
+                "scripts/mcp-stdio-smoke.py",
+                ".github/scripts/test-release-smoke-scripts.py",
+                "docs/RELEASE-SMOKE.md",
+            )
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+        outputs.upToDateWhen { false }
+    }
+
 // buildSrc is not a project of this build for `dependsOn(":buildSrc:…")`, but its tests
 // cover the shared Windows helper packaging contract. Invoke them via a nested Gradle run
 // on the buildSrc project directory (same pattern as `./gradlew -p buildSrc test`).
@@ -162,6 +183,7 @@ tasks.named("check") {
         verifyReleaseVersionScript,
         verifyMacosCliBundleReleaseContract,
         verifyWindowsReleaseSmokeScript,
+        verifyReleaseSmokeScripts,
         buildSrcUnitTests,
     )
 }

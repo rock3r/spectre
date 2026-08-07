@@ -164,6 +164,51 @@ Soft notes: …
 Result values: `pass` | `fail` | `n/a` (with reason).  
 Empty hard cells or `n/a` for “no display” on a claimed platform **block the tag**.
 
+## Baseline automation
+
+Run the committed baseline runner from the repository root on macOS and Linux:
+
+```shell
+python3 scripts/release-smoke.py --version 0.5.0
+```
+
+On Linux it supplies `xvfb-run -a` when `DISPLAY` is unset. On Windows use the interactive
+PowerShell runner in the next section. Both runners write machine-readable results and per-step
+logs under `build/smoke/`, bound every external step with a timeout, continue after failures, and
+exit non-zero if any hard scenario is red.
+
+The cross-platform runner covers the stable baseline that should not be reinvented per release:
+
+- the full `check` gate
+- live JUnit validation (failure artifacts/video and capture/wait validation)
+- agent attach with preinstalled core and the contract corpus
+- injected attach without core
+- release-shaped packaged CLI construction and launcher help
+- strict packaged MCP initialize, `tools/list`, and `list_processes` invocation
+
+Each release still needs delta cells based on `git log <previous-tag>..HEAD`. Add reusable delta
+coverage to the runner rather than leaving a one-release command only in chat.
+
+### Manual cells that remain
+
+These cannot currently be made portable and fail-closed by the baseline runner:
+
+- **Windows WGC:** run `windows-release-smoke.ps1` in the logged-in user's native console terminal.
+  SSH and even `PsExec -i` can use a service/elevated token that WGC rejects with `0x80070424` or
+  `UnauthorizedAccessException`. Do not accept those runs as visual evidence.
+- **macOS TCC and release seal:** grant Screen Recording to the actual helper identity, exercise one
+  live SCK still/record, then verify the signed release app with `codesign --verify --deep --strict`,
+  `spctl`, and `xcrun stapler validate`. A local ad-hoc app is not notarization evidence.
+- **Wayland portal:** Xvfb proves X11 only. When Wayland is claimed or changed, run from a real
+  Wayland desktop and record portal consent/cancel behaviour.
+- **Homebrew/Scoop/public archives:** after the draft artifacts exist, install through the real
+  package manager and rerun launcher/MCP smoke. Local packaging does not prove channel metadata.
+- **Input focus/lock keys:** real Robot input uses global desktop state. Record focus failures and
+  Caps Lock state; restore any modified lock state. Do not silently rerun a case mismatch.
+
+Copy `build/smoke/release-smoke.json` and Windows' `windows-release-smoke.json` into the release
+record. A report from a different SHA or user session is not evidence for the release SHA.
+
 ## Windows one-liner script
 
 When you have a Windows desktop for a few minutes, run **one** command from the repo
