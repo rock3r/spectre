@@ -139,31 +139,32 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `typeText with Caps Lock on clears lock types lowercase and restores`() = runTest {
-        // #396: ambient Caps Lock must not invert requested letter case. Prefer clear→type→restore
-        // so the per-char mapping stays pure US-keyboard when the adapter can write lock state.
+    fun `typeText with Caps Lock on compensates letter Shift and does not mutate lock`() = runTest {
+        // #396: ambient Caps Lock must not invert requested letter case. Spectre does not write
+        // locking-key state (unreliable across JVMs); it inverts Shift on letters instead.
         val robot = RecordingRobotAdapter(initialCapsLockOn = true)
         val driver = RobotDriver(robot, RecordingClipboardAdapter())
 
         driver.typeText("xY")
 
         assertEquals(
-            listOf(false, true),
+            emptyList(),
             robot.capsLockWrites,
-            "typeText must clear Caps Lock before typing and restore it afterward",
+            "typeText must not mutate global Caps Lock state",
         )
-        assertTrue(robot.capsLockOn, "Caps Lock must be restored to the prior on state")
+        assertTrue(robot.capsLockOn, "ambient Caps Lock must remain as the host left it")
         assertEquals(
             listOf(
+                // lowercase 'x' needs Shift while Caps Lock is on
+                "keyPress(${KeyEvent.VK_SHIFT})",
                 "keyPress(${KeyEvent.VK_X})",
                 "keyRelease(${KeyEvent.VK_X})",
-                "keyPress(${KeyEvent.VK_SHIFT})",
+                "keyRelease(${KeyEvent.VK_SHIFT})",
+                // uppercase 'Y' needs no Shift while Caps Lock is on
                 "keyPress(${KeyEvent.VK_Y})",
                 "keyRelease(${KeyEvent.VK_Y})",
-                "keyRelease(${KeyEvent.VK_SHIFT})",
             ),
             robot.events,
-            "With Caps Lock cleared, strokes must match the requested case without ambient invert",
         )
     }
 
@@ -183,7 +184,7 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `typeText restores Caps Lock after a mid-type failure`() = runTest {
+    fun `typeText leaves Caps Lock unchanged after a mid-type failure`() = runTest {
         val robot = RecordingRobotAdapter(initialCapsLockOn = true)
         val driver = RobotDriver(robot, RecordingClipboardAdapter())
 
@@ -191,35 +192,9 @@ class RobotDriverTest {
         assertTrue(error.message?.contains("pasteText") == true)
         assertTrue(
             robot.capsLockOn,
-            "Fail-closed: Caps Lock must be restored even when typeText throws mid-string",
+            "Fail-closed: typeText must not leave Caps Lock inverted after a mid-string throw",
         )
-        assertEquals(listOf(false, true), robot.capsLockWrites)
-    }
-
-    @Test
-    fun `typeText compensates with Shift when Caps Lock cannot be cleared`() = runTest {
-        // Some JVMs/platforms refuse setLockingKeyState for Caps Lock. Fall back to inverting
-        // Shift on letters so the requested case still lands.
-        val robot = RecordingRobotAdapter(initialCapsLockOn = true, allowCapsLockWrite = false)
-        val driver = RobotDriver(robot, RecordingClipboardAdapter())
-
-        driver.typeText("xY")
-
         assertEquals(emptyList(), robot.capsLockWrites)
-        assertTrue(robot.capsLockOn)
-        assertEquals(
-            listOf(
-                // lowercase 'x' needs Shift while Caps Lock is stuck on
-                "keyPress(${KeyEvent.VK_SHIFT})",
-                "keyPress(${KeyEvent.VK_X})",
-                "keyRelease(${KeyEvent.VK_X})",
-                "keyRelease(${KeyEvent.VK_SHIFT})",
-                // uppercase 'Y' needs no Shift while Caps Lock is stuck on
-                "keyPress(${KeyEvent.VK_Y})",
-                "keyRelease(${KeyEvent.VK_Y})",
-            ),
-            robot.events,
-        )
     }
 
     @Test

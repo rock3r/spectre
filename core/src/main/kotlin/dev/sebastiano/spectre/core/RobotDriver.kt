@@ -152,11 +152,12 @@ internal constructor(
      * ASCII letters, digits, space, newline, and common US-keyboard punctuation. Use [pasteText]
      * when you need arbitrary Unicode text.
      *
-     * **Caps Lock.** Requested letter case is independent of ambient Caps Lock (#396). When the
-     * adapter can write locking-key state, Spectre temporarily clears Caps Lock for the duration of
-     * this call and restores the prior state in a `finally` (including after mid-string failures).
-     * When Caps Lock is on but cannot be cleared, letter strokes invert Shift so the OS still emits
-     * the requested case. Non-letter characters are unaffected by Caps Lock on standard keyboards.
+     * **Caps Lock.** Requested letter case is independent of ambient Caps Lock (#396). Spectre
+     * reads the Caps Lock LED via the adapter and, when it is on, inverts Shift on letter strokes
+     * so the OS still emits the requested case. Global locking-key state is **not** mutated
+     * (Toolkit `setLockingKeyState` is unsupported or a silent no-op on several desktop JVMs, and a
+     * false "cleared" read-back still left host key events inverted in physical Windows
+     * validation). Non-letter characters are unaffected by Caps Lock on standard keyboards.
      *
      * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
@@ -164,27 +165,15 @@ internal constructor(
     public suspend fun typeText(text: String) {
         tccGuard.requireAccessibility()
         runOffEdt {
-            val capsLockWasOn = robot.getLockingKeyState(KeyEvent.VK_CAPS_LOCK) == true
-            var capsLockCleared = false
-            try {
-                if (capsLockWasOn) {
-                    capsLockCleared = robot.setLockingKeyState(KeyEvent.VK_CAPS_LOCK, on = false)
-                }
-                // Prefer a cleared lock so strokes match the pure US-keyboard map. If the adapter
-                // cannot clear Caps Lock, invert Shift on letters so requested case still lands.
-                val compensateCapsLock = capsLockWasOn && !capsLockCleared
-                for (char in text) {
-                    val stroke = keyStrokeForChar(char, capsLockOn = compensateCapsLock)
-                    for (modifier in stroke.modifiers) robot.keyPress(modifier)
-                    robot.keyPress(stroke.keyCode)
-                    robot.keyRelease(stroke.keyCode)
-                    for (modifier in stroke.modifiers.asReversed()) robot.keyRelease(modifier)
-                }
-            } finally {
-                if (capsLockCleared) {
-                    // Fail-closed: never leave the host Caps Lock inverted after typeText.
-                    runCatching { robot.setLockingKeyState(KeyEvent.VK_CAPS_LOCK, on = true) }
-                }
+            // Read once per call: ambient Caps Lock is stable for a short typeText burst, and we
+            // intentionally do not write locking-key state (see KDoc).
+            val capsLockOn = robot.getLockingKeyState(KeyEvent.VK_CAPS_LOCK) == true
+            for (char in text) {
+                val stroke = keyStrokeForChar(char, capsLockOn = capsLockOn)
+                for (modifier in stroke.modifiers) robot.keyPress(modifier)
+                robot.keyPress(stroke.keyCode)
+                robot.keyRelease(stroke.keyCode)
+                for (modifier in stroke.modifiers.asReversed()) robot.keyRelease(modifier)
             }
         }
     }

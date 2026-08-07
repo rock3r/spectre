@@ -59,7 +59,7 @@ class RobotDriverTypeTextCapsPhysicalTest {
 
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
-    fun `typeText lands requested case with Caps Lock on and restores lock`() {
+    fun `typeText lands requested case with Caps Lock on without mutating lock`() {
         assumeLiveAwtAvailable()
         withTextFieldFixture { field, robot, toolkit ->
             val original = readCaps(toolkit)
@@ -68,7 +68,7 @@ class RobotDriverTypeTextCapsPhysicalTest {
                 assumeTrue(
                     readCaps(toolkit),
                     "Host cannot force Caps Lock on (Toolkit set / Robot toggle unsupported); " +
-                        "Caps Lock on physical path skipped. Unit tests cover clear+compensate.",
+                        "Caps Lock on physical path skipped. Unit tests cover Shift compensation.",
                 )
                 val before = readCaps(toolkit)
                 assertTrue(before, "precondition: Caps Lock on")
@@ -85,7 +85,7 @@ class RobotDriverTypeTextCapsPhysicalTest {
                 )
                 assertTrue(
                     after,
-                    "Fail-closed: Caps Lock must be restored after typeText when it was on",
+                    "typeText must not clear ambient Caps Lock (before was on; after must stay on)",
                 )
             } finally {
                 ensureCaps(robot, toolkit, on = original)
