@@ -108,6 +108,9 @@ Expected results by platform:
   PNG and confirm it contains the smoke window. Do not force this smoke through XWayland
   inside a native Wayland compositor: Mutter's XWayland root framebuffer is black even though
   the pointer is visible. Normal Wayland sessions should validate the portal route below.
+  **`xvfb-run` proves X11 only** — not portal/PipeWire. Nested Xvfb on a host that still
+  exports Wayland env or `wayland-*` sockets is handled by session detection (#397); set
+  `SPECTRE_CAPTURE_BACKEND=x11` if you need an explicit override.
 - **Linux Wayland** — run with `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, and the D-Bus session
   bus visible to the JVM. The task asks the compositor portal for a window stream and writes
   a one-frame PNG after you accept the dialog. If the dialog is hidden or rejected, the helper

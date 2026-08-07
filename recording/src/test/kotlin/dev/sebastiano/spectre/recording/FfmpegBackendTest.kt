@@ -77,11 +77,103 @@ class FfmpegBackendTest {
     @Test
     fun `detectWaylandSession returns true when XDG_RUNTIME_DIR has a wayland socket`() {
         // Simulates SSH-into-Wayland-host: env signals tier 1 + 2 are absent (XDG_SESSION_TYPE
-        // would be "tty" for SSH, WAYLAND_DISPLAY unset), but the runtime dir contains the
-        // compositor's socket.
+        // would be "tty" for SSH, WAYLAND_DISPLAY unset), DISPLAY is unset, but the runtime dir
+        // contains the compositor's socket. Tier 3 only fires without an active X11 DISPLAY
+        // (#397 — residual sockets must not hijack Xvfb).
         val sshEnv = fakeEnv("XDG_SESSION_TYPE" to "tty", "XDG_RUNTIME_DIR" to "/run/user/1000")
         val socketPresent: (Path) -> Boolean = { _ -> true }
         assertTrue(FfmpegBackend.detectWaylandSession(sshEnv, socketPresent))
+    }
+
+    @Test
+    fun `detectWaylandSession ignores residual wayland socket when DISPLAY is set - Xvfb case`() {
+        // #397: xvfb-run sets DISPLAY to a pure X11 server, but a live or stale wayland-*
+        // socket often remains under XDG_RUNTIME_DIR from the login session / host compositor.
+        // Capture must route to X11, not portal (portal fails on Xvfb; ximagesrc works).
+        val xvfbEnv =
+            fakeEnv(
+                "DISPLAY" to ":99",
+                "XDG_SESSION_TYPE" to "tty",
+                "XDG_RUNTIME_DIR" to "/run/user/1000",
+            )
+        val socketPresent: (Path) -> Boolean = { _ -> true }
+        assertFalse(
+            FfmpegBackend.detectWaylandSession(
+                getenv = xvfbEnv,
+                runtimeDirHasWaylandSocket = socketPresent,
+                displayIsPureX11 = { false }, // even without pure-X11 confirmation
+            )
+        )
+    }
+
+    @Test
+    fun `detectWaylandSession prefers pure X11 DISPLAY over inherited Wayland env - nested Xvfb`() {
+        // xvfb-run from a Wayland desktop inherits XDG_SESSION_TYPE=wayland and WAYLAND_DISPLAY,
+        // but the process's windows live on the Xvfb DISPLAY. A pure-X11 probe (no XWAYLAND
+        // extension / Xvfb process) must win so capture uses ximagesrc, not portal.
+        val nestedXvfb =
+            fakeEnv(
+                "DISPLAY" to ":99",
+                "XDG_SESSION_TYPE" to "wayland",
+                "WAYLAND_DISPLAY" to "wayland-0",
+                "XDG_RUNTIME_DIR" to "/run/user/1000",
+            )
+        assertFalse(
+            FfmpegBackend.detectWaylandSession(
+                getenv = nestedXvfb,
+                runtimeDirHasWaylandSocket = { true },
+                displayIsPureX11 = { display -> display == ":99" },
+            )
+        )
+    }
+
+    @Test
+    fun `detectWaylandSession keeps Wayland when DISPLAY is XWayland`() {
+        // Real Wayland session with XWayland: DISPLAY is set, but the server is XWayland.
+        // Pure-X11 probe returns false → session type / WAYLAND_DISPLAY still route to portal.
+        val waylandXwayland =
+            fakeEnv(
+                "DISPLAY" to ":0",
+                "XDG_SESSION_TYPE" to "wayland",
+                "WAYLAND_DISPLAY" to "wayland-0",
+                "XDG_RUNTIME_DIR" to "/run/user/1000",
+            )
+        assertTrue(
+            FfmpegBackend.detectWaylandSession(
+                getenv = waylandXwayland,
+                runtimeDirHasWaylandSocket = { true },
+                displayIsPureX11 = { false },
+            )
+        )
+    }
+
+    @Test
+    fun `detectWaylandSession honors SPECTRE_CAPTURE_BACKEND x11 override`() {
+        val env =
+            fakeEnv(
+                "SPECTRE_CAPTURE_BACKEND" to "x11",
+                "XDG_SESSION_TYPE" to "wayland",
+                "WAYLAND_DISPLAY" to "wayland-0",
+            )
+        assertFalse(
+            FfmpegBackend.detectWaylandSession(
+                getenv = env,
+                runtimeDirHasWaylandSocket = { true },
+                displayIsPureX11 = { false },
+            )
+        )
+    }
+
+    @Test
+    fun `detectWaylandSession honors SPECTRE_CAPTURE_BACKEND wayland override`() {
+        val env = fakeEnv("SPECTRE_CAPTURE_BACKEND" to "wayland", "DISPLAY" to ":99")
+        assertTrue(
+            FfmpegBackend.detectWaylandSession(
+                getenv = env,
+                runtimeDirHasWaylandSocket = { false },
+                displayIsPureX11 = { true },
+            )
+        )
     }
 
     @Test
@@ -116,6 +208,39 @@ class FfmpegBackendTest {
             fakeEnv("XDG_SESSION_TYPE" to "wayland", "XDG_RUNTIME_DIR" to "/run/user/1000")
         val unreachable: (Path) -> Boolean = { _ -> error("must not probe filesystem") }
         assertTrue(FfmpegBackend.detectWaylandSession(explicitWayland, unreachable))
+    }
+
+    // -----------------------------------------------------------------------
+    // cmdlineMatchesXvfbDisplay — pure argv matcher used by pure-X11 probe.
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `cmdlineMatchesXvfbDisplay accepts typical Xvfb argv with display after binary`() {
+        // Real xvfb-run shape: Xvfb :99 -screen 0 1280x1024x24 …
+        // Non-display tokens must not abort the scan (Bugbot: return@anyMatch on null).
+        val args = listOf("Xvfb", ":99", "-screen", "0", "1280x1024x24")
+        assertTrue(FfmpegBackend.cmdlineMatchesXvfbDisplay(args, ":99"))
+        assertFalse(FfmpegBackend.cmdlineMatchesXvfbDisplay(args, ":0"))
+    }
+
+    @Test
+    fun `cmdlineMatchesXvfbDisplay accepts absolute Xvfb path and dotted display`() {
+        val args = listOf("/usr/bin/Xvfb", ":99.0", "-ac")
+        assertTrue(FfmpegBackend.cmdlineMatchesXvfbDisplay(args, ":99"))
+    }
+
+    @Test
+    fun `cmdlineMatchesXvfbDisplay rejects non-Xvfb processes`() {
+        assertFalse(FfmpegBackend.cmdlineMatchesXvfbDisplay(listOf("Xorg", ":0"), ":0"))
+    }
+
+    @Test
+    fun `normalizeDisplayToken strips host and screen index`() {
+        assertEquals(":99", FfmpegBackend.normalizeDisplayToken(":99"))
+        assertEquals(":99", FfmpegBackend.normalizeDisplayToken(":99.0"))
+        assertEquals(":0", FfmpegBackend.normalizeDisplayToken("localhost:0.0"))
+        assertEquals(null, FfmpegBackend.normalizeDisplayToken("Xvfb"))
+        assertEquals(null, FfmpegBackend.normalizeDisplayToken("-screen"))
     }
 
     // -----------------------------------------------------------------------
