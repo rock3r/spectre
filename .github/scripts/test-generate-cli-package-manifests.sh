@@ -1,9 +1,27 @@
 #!/usr/bin/env bash
-# Contract + behavioral tests for Homebrew/Scoop package manifest generation.
-# Wired into ./gradlew check (verifyCliPackageManifests) and CI.
+# Structural + generator contracts for Homebrew/Scoop package manifests.
+# Wired into ./gradlew check via verifyCliPackageManifests (Unix).
+#
+# No Ruby: install-semantics live in verifyHomebrewFormulaInstallSemantics
+# (test-homebrew-formula-install-semantics.sh). See docs/TESTING.md (#400).
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
+
+require_cmd() {
+  local cmd="$1"
+  local hint="$2"
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "error: '$cmd' is required for verifyCliPackageManifests (CLI package-manifest structural checks)." >&2
+    echo "  Install: $hint" >&2
+    echo "  Task: ./gradlew verifyCliPackageManifests" >&2
+    echo "  Docs: docs/TESTING.md (Package-channel contracts)" >&2
+    exit 1
+  fi
+}
+
+require_cmd python3 "apt install python3  |  brew install python3  |  https://www.python.org/downloads/"
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -21,7 +39,6 @@ python3 "$root/.github/scripts/generate-cli-package-manifests.py" \
 generated_formula="$tmp/out/Formula/spectre.rb"
 committed_formula="$root/Formula/spectre.rb"
 
-ruby -c "$generated_formula"
 python3 -m json.tool "$tmp/out/bucket/spectre.json" >/dev/null
 
 grep -q 'version "1.2.3"' "$generated_formula"
@@ -67,20 +84,30 @@ grep -q '(bin/"spectre").chmod 0755' "$committed_formula"
 
 # Install-method bodies (excluding version/url/sha) must stay aligned between generator output
 # and the committed formula so regenerating manifests cannot silently diverge from main.
+# Python (not Ruby) so clean Linux ./gradlew check has no undeclared Ruby dependency (#400).
 extract_install_body() {
-  # From "def install" through the matching "end" of that method (indent-aware enough for this formula).
-  ruby -e '
-    text = File.read(ARGV[0])
-    start = text.index(/^  def install\n/)
-    abort "no def install in #{ARGV[0]}" unless start
-    rest = text[start..]
-    # Method ends at the first line that is exactly "  end" after the def (formula style).
-    body = rest[/\A  def install\n.*?\n  end\n/m]
-    abort "could not extract install method from #{ARGV[0]}" unless body
-    # Drop Ruby comment lines (indent + "#" + space/end) so comment-only drift
-    # does not fail the gate. Keep shebangs inside the wrapper heredoc (#!/bin/sh).
-    puts body.lines.reject { |l| l.match?(/^\s+#(\s|$)/) }.join
-  ' "$1"
+  python3 - "$1" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+start = text.find("  def install\n")
+if start < 0:
+    sys.exit(f"no def install in {path}")
+rest = text[start:]
+# Method ends at the first line that is exactly "  end" after the def (formula style).
+match = re.match(r"  def install\n.*?\n  end\n", rest, flags=re.DOTALL)
+if not match:
+    sys.exit(f"could not extract install method from {path}")
+body = match.group(0)
+# Drop Ruby comment lines (indent + "#" + space/end) so comment-only drift
+# does not fail the gate. Keep shebangs inside the wrapper heredoc (#!/bin/sh).
+for line in body.splitlines(keepends=True):
+    if re.match(r"^\s+#(\s|$)", line):
+        continue
+    sys.stdout.write(line)
+PY
 }
 
 generated_install="$(extract_install_body "$generated_formula")"
@@ -93,10 +120,5 @@ if [[ "$generated_install" != "$committed_install" ]]; then
   echo "$committed_install" >&2
   exit 1
 fi
-
-# Behavioral semantics (layouts + wrapper vs symlink) against both formula texts.
-ruby "$root/.github/scripts/test-homebrew-formula-install-semantics.rb" \
-  "$generated_formula" \
-  "$committed_formula"
 
 echo "test-generate-cli-package-manifests: OK"

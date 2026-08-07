@@ -36,15 +36,40 @@ Before marking testing work complete:
 
 ## Package-channel (Homebrew / Scoop) contracts
 
-CLI package manifests are not optional docs — they are install paths. Keep them on the
-`./gradlew check` graph via `verifyCliPackageManifests`:
+CLI package manifests are not optional docs — they are install paths. They are split so
+a clean Linux host without Ruby can still run `./gradlew check` (issue #400):
 
-- generator smoke: `.github/scripts/test-generate-cli-package-manifests.sh`
-- install semantics: `.github/scripts/test-homebrew-formula-install-semantics.rb`
+| Gradle task | Host tools | On `check` when |
+|---|---|---|
+| `verifyCliPackageManifests` | `bash`, `python3` | Every Unix host |
+| `verifyHomebrewFormulaInstallSemantics` | `bash`, `python3`, **Ruby** | Unix **and** (Ruby on `PATH` **or** `CI` is set) |
+| `verifyCliPackageManifestHostDeps` | `bash`, `python3` | Every Unix host (regression: no undeclared Ruby on the structural path; missing Ruby on the semantics path fails with a preflight message) |
 
-Those tests evaluate the formula's real `app = Dir[...]` expression against nested and
-Homebrew-stripped layouts, require a wrapper (not a Roast `bin.install_symlink`), and
-assert the committed `Formula/spectre.rb` `install` body stays aligned with the generator.
+Scripts:
+
+- structural/generator: `.github/scripts/test-generate-cli-package-manifests.sh`
+- install semantics (Ruby): `.github/scripts/test-homebrew-formula-install-semantics.sh` → `.rb`
+- host-dep regression: `.github/scripts/test-cli-package-manifest-host-deps.sh`
+
+**Structural** checks generate fixture manifests, assert Scoop JSON + formula text contracts
+(wrapper bin entry, dual-layout `Spectre.app` discovery snippets, install-body alignment
+between generator output and committed `Formula/spectre.rb`). They must **not** invoke Ruby.
+
+**Install-semantics** evaluate the formula's real `app = Dir[...]` expression against nested
+and Homebrew-stripped layouts and require a wrapper (not a Roast `bin.install_symlink`).
+They need Ruby. Locally, if Ruby is absent the task is skipped (structural + host-dep
+guards still run). Under CI (`CI` env set), the task always runs and **fails closed** with
+an actionable preflight if Ruby is missing:
+
+```text
+error: 'ruby' is required for verifyHomebrewFormulaInstallSemantics
+  Install: apt install ruby  |  brew install ruby  |  …
+```
+
+GitHub `ubuntu-latest` typically ships Ruby; if that ever changes, install Ruby in
+`.github/workflows/ci.yml` before `./gradlew check` (do not re-merge semantics into the
+structural script). For a full local package-channel gate on Linux: `apt install ruby`
+(or equivalent), then `./gradlew verifyHomebrewFormulaInstallSemantics`.
 
 ## Cross-Boundary Contract Tests
 

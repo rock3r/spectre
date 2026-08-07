@@ -46,16 +46,19 @@ configure<DetektExtension> {
     basePath.set(rootProject.layout.projectDirectory)
 }
 
-// Homebrew/Scoop package-manifest contracts + install semantics (#283/#284).
-// Cheap (python + ruby + bash). Wired into check on Unix only: Windows CI has no
-// bash/WSL, and Homebrew install semantics are not a Windows concern (Linux CI
-// already runs ./gradlew check with bash).
+// Homebrew/Scoop package-manifest contracts (#283/#284/#400).
+//
+// Strategy (issue #400): structural/generator checks need only python3 + bash and
+// stay on every Unix `./gradlew check`. Ruby install-semantics are a separate
+// host-appropriate task so clean Linux without Ruby is not a surprise failure.
+// under CI (or when Ruby is present), the semantics task runs; missing Ruby on
+// CI fails closed via an actionable preflight in the shell wrapper.
 // onlyIf lambdas must not close over the Gradle script object (configuration cache).
 val verifyCliPackageManifests by
     tasks.registering(Exec::class) {
         description =
-            "Generates CLI package manifests and asserts Homebrew install contracts " +
-                "(dual-layout Spectre.app discovery, wrapper bin entry, install-body sync)."
+            "Generates CLI package manifests and asserts structural Homebrew/Scoop " +
+                "contracts (wrapper bin entry, install-body sync). Requires python3; no Ruby."
         group = "verification"
         workingDir = rootProject.layout.projectDirectory.asFile
         commandLine("bash", ".github/scripts/test-generate-cli-package-manifests.sh")
@@ -66,11 +69,70 @@ val verifyCliPackageManifests by
             .files(
                 ".github/scripts/generate-cli-package-manifests.py",
                 ".github/scripts/test-generate-cli-package-manifests.sh",
-                ".github/scripts/test-homebrew-formula-install-semantics.rb",
                 "Formula/spectre.rb",
             )
             .withPathSensitivity(PathSensitivity.RELATIVE)
         // Always re-run: generator is pure but failures are cheap to catch on every check.
+        outputs.upToDateWhen { false }
+    }
+
+// Homebrew formula *behavioral* install-semantics (Ruby). Not required on every
+// clean Linux contributor host; always required under CI so #283/#284/#390 cannot
+// be orphaned by a silent skip.
+val verifyHomebrewFormulaInstallSemantics by
+    tasks.registering(Exec::class) {
+        description =
+            "Homebrew formula install-semantics (dual-layout Spectre.app discovery, " +
+                "wrapper vs symlink). Requires Ruby; actionable preflight if missing."
+        group = "verification"
+        workingDir = rootProject.layout.projectDirectory.asFile
+        commandLine("bash", ".github/scripts/test-homebrew-formula-install-semantics.sh")
+        onlyIf("Unix host with bash, and Ruby present or CI") {
+            val isWindows = System.getProperty("os.name").orEmpty().startsWith("Windows")
+            if (isWindows) {
+                false
+            } else {
+                val ci = !System.getenv("CI").isNullOrBlank()
+                val hasRuby =
+                    runCatching { ProcessBuilder("ruby", "--version").start().waitFor() == 0 }
+                        .getOrDefault(false)
+                hasRuby || ci
+            }
+        }
+        inputs
+            .files(
+                ".github/scripts/generate-cli-package-manifests.py",
+                ".github/scripts/test-homebrew-formula-install-semantics.sh",
+                ".github/scripts/test-homebrew-formula-install-semantics.rb",
+                "Formula/spectre.rb",
+            )
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+        outputs.upToDateWhen { false }
+    }
+
+// Regression guard: structural path never requires Ruby; missing Ruby on the
+// semantics path fails with a preflight message (#400).
+val verifyCliPackageManifestHostDeps by
+    tasks.registering(Exec::class) {
+        description =
+            "Asserts package-manifest host-dep split: no undeclared Ruby on structural " +
+                "checks; actionable preflight when Ruby is missing for install-semantics."
+        group = "verification"
+        workingDir = rootProject.layout.projectDirectory.asFile
+        commandLine("bash", ".github/scripts/test-cli-package-manifest-host-deps.sh")
+        onlyIf("Unix host with bash") {
+            !System.getProperty("os.name").orEmpty().startsWith("Windows")
+        }
+        inputs
+            .files(
+                ".github/scripts/test-cli-package-manifest-host-deps.sh",
+                ".github/scripts/test-generate-cli-package-manifests.sh",
+                ".github/scripts/test-homebrew-formula-install-semantics.sh",
+                ".github/scripts/test-homebrew-formula-install-semantics.rb",
+                ".github/scripts/generate-cli-package-manifests.py",
+                "Formula/spectre.rb",
+            )
+            .withPathSensitivity(PathSensitivity.RELATIVE)
         outputs.upToDateWhen { false }
     }
 
@@ -180,6 +242,8 @@ tasks.named("check") {
         "detekt",
         "ktfmtCheck",
         verifyCliPackageManifests,
+        verifyHomebrewFormulaInstallSemantics,
+        verifyCliPackageManifestHostDeps,
         verifyReleaseVersionScript,
         verifyMacosCliBundleReleaseContract,
         verifyWindowsReleaseSmokeScript,
