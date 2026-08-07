@@ -320,13 +320,20 @@ try {
         }
 
         $step = Invoke-Step -Name "Packaged spectre launch --once (fixture)" -Action {
+            # Agent e2e attaches to Gradle-spawned fixtures. A reused daemon can retain the
+            # extracted runtime path and make the next launch hand that path to a fresh JVM while
+            # Windows still has transient file state around it. Use a fresh daemon for this
+            # independent packaged-CLI cell.
+            $gradlew = Join-Path $repoRoot "gradlew.bat"
+            Invoke-Native -FilePath $gradlew -WorkingDirectory $repoRoot -TimeoutSeconds 60 -LogName "gradle-stop-before-cli" -Arguments @(
+                "--stop"
+            )
             $spectre = Get-PackagedSpectre -RepoRoot $repoRoot
             if (-not $spectre) {
                 throw "spectre.exe not found under cli\build\construo\windowsX64\roast\ -- run without -SkipPackageCli"
             }
             Write-Host ("  using {0}" -f $spectre) -ForegroundColor DarkGray
             Write-Host "  note: Gradle-ish launch warning is expected for ':agent-test-fixture:run'" -ForegroundColor DarkGray
-            $gradlew = Join-Path $repoRoot "gradlew.bat"
             Invoke-Native -FilePath $spectre -WorkingDirectory $repoRoot -TimeoutSeconds $CliLaunchTimeoutSeconds -LogName "spectre-launch" -Arguments @(
                 "launch",
                 "--once",

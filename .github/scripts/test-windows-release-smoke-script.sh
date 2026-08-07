@@ -64,6 +64,7 @@ grep -F -q '[System.Diagnostics.ProcessStartInfo]::new()' "$script" || fail "nat
 grep -F -q '.WaitForExit($TimeoutSeconds * 1000)' "$script" || fail "native process wait is not bounded"
 grep -F -q 'taskkill.exe /PID $p.Id /T /F' "$script" || fail "timeout does not clean the Windows process tree"
 grep -F -q 'timed out after {1}s' "$script" || fail "timeout diagnostic is missing"
+grep -F -q '"--stop"' "$script" || fail "packaged Gradle-ish launch does not reset attach-tainted daemons"
 
 # --- Optional: parse with pwsh when present (macOS/Linux CI agents may have it) ---
 # Note: this is PowerShell Core parse, not Desktop 5.1; ASCII byte check is the 5.1 stand-in.
