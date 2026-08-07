@@ -209,6 +209,21 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
+    fun `cmdlineMatchesXvfbDisplay accepts real Xvfb argv shape`() {
+        // Non-display args must not abort the match (see recording twin + Bugbot #401).
+        assertTrue(
+            cmdlineMatchesXvfbDisplay(listOf("Xvfb", ":99", "-screen", "0", "1280x1024x24"), ":99")
+        )
+        assertFalse(cmdlineMatchesXvfbDisplay(listOf("Xorg", ":0"), ":0"))
+    }
+
+    @Test
+    fun `normalizeDisplayToken handles Xvfb-style names`() {
+        assertEquals(":99", normalizeDisplayToken(":99.0"))
+        assertEquals(null, normalizeDisplayToken("Xvfb"))
+    }
+
+    @Test
     fun `tracked Frame capture prefers the native window backend`() {
         assumeLiveAwtAvailable()
         val frame =

@@ -201,16 +201,21 @@ internal sealed interface FfmpegBackend {
                                 cmdline.toString(Charsets.UTF_8).split('\u0000').filter {
                                     it.isNotEmpty()
                                 }
-                            if (args.none { it == "Xvfb" || it.endsWith("/Xvfb") })
-                                return@anyMatch false
-                            args.any { arg ->
-                                val token = normalizeDisplayToken(arg) ?: return@anyMatch false
-                                token == displayToken
-                            }
+                            cmdlineMatchesXvfbDisplay(args, displayToken)
                         }
                     }
                 }
                 .getOrDefault(false)
+        }
+
+        /**
+         * True when [args] is an Xvfb argv that serves [displayToken] (normalized, e.g. `:99`).
+         * Non-display args (binary path, `-screen`, geometry) are skipped — must not abort the scan
+         * when `normalizeDisplayToken` returns null.
+         */
+        internal fun cmdlineMatchesXvfbDisplay(args: List<String>, displayToken: String): Boolean {
+            if (args.none { it == "Xvfb" || it.endsWith("/Xvfb") }) return false
+            return args.any { normalizeDisplayToken(it) == displayToken }
         }
 
         /** `:99.0` / `host:99` → `:99` for comparison with Xvfb argv. */
@@ -230,20 +235,53 @@ internal sealed interface FfmpegBackend {
             return ":$num"
         }
 
+        /**
+         * Queries `xdpyinfo` for [display]; true when the server responds without advertising the
+         * `XWAYLAND` extension. Bounded by [XDPYINFO_TIMEOUT_MS] including output drain — never
+         * blocks forever on a hung X connection.
+         */
         @Suppress("TooGenericExceptionCaught")
         private fun xdpyinfoReportsPureX11(display: String): Boolean {
             val process =
                 ProcessBuilder("xdpyinfo", "-display", display).redirectErrorStream(true).start()
-            val output = process.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            val finished = process.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
-            if (!finished) {
+            return try {
+                val outputRef = java.util.concurrent.atomic.AtomicReference("")
+                val reader =
+                    Thread(
+                            {
+                                runCatching {
+                                    outputRef.set(
+                                        process.inputStream.bufferedReader(Charsets.UTF_8).use {
+                                            it.readText()
+                                        }
+                                    )
+                                }
+                            },
+                            "spectre-xdpyinfo-reader",
+                        )
+                        .apply {
+                            isDaemon = true
+                            start()
+                        }
+                val finished =
+                    process.waitFor(XDPYINFO_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+                if (!finished) {
+                    process.destroyForcibly()
+                    reader.join(READER_JOIN_MS)
+                    return false
+                }
+                reader.join(READER_JOIN_MS)
+                if (process.exitValue() != 0) return false
+                // XWayland advertises an "XWAYLAND" extension; Xvfb/Xorg do not.
+                !outputRef.get().contains("XWAYLAND", ignoreCase = true)
+            } catch (_: Exception) {
                 process.destroyForcibly()
-                return false
+                false
             }
-            if (process.exitValue() != 0) return false
-            // XWayland advertises an "XWAYLAND" extension; Xvfb/Xorg do not.
-            return !output.contains("XWAYLAND", ignoreCase = true)
         }
+
+        private const val XDPYINFO_TIMEOUT_MS: Long = 3_000
+        private const val READER_JOIN_MS: Long = 500
 
         /**
          * Throws [UnsupportedOperationException] if [getenv] reports a Wayland session.

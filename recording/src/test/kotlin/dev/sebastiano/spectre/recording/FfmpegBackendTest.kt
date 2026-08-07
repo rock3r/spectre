@@ -211,6 +211,39 @@ class FfmpegBackendTest {
     }
 
     // -----------------------------------------------------------------------
+    // cmdlineMatchesXvfbDisplay — pure argv matcher used by pure-X11 probe.
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `cmdlineMatchesXvfbDisplay accepts typical Xvfb argv with display after binary`() {
+        // Real xvfb-run shape: Xvfb :99 -screen 0 1280x1024x24 …
+        // Non-display tokens must not abort the scan (Bugbot: return@anyMatch on null).
+        val args = listOf("Xvfb", ":99", "-screen", "0", "1280x1024x24")
+        assertTrue(FfmpegBackend.cmdlineMatchesXvfbDisplay(args, ":99"))
+        assertFalse(FfmpegBackend.cmdlineMatchesXvfbDisplay(args, ":0"))
+    }
+
+    @Test
+    fun `cmdlineMatchesXvfbDisplay accepts absolute Xvfb path and dotted display`() {
+        val args = listOf("/usr/bin/Xvfb", ":99.0", "-ac")
+        assertTrue(FfmpegBackend.cmdlineMatchesXvfbDisplay(args, ":99"))
+    }
+
+    @Test
+    fun `cmdlineMatchesXvfbDisplay rejects non-Xvfb processes`() {
+        assertFalse(FfmpegBackend.cmdlineMatchesXvfbDisplay(listOf("Xorg", ":0"), ":0"))
+    }
+
+    @Test
+    fun `normalizeDisplayToken strips host and screen index`() {
+        assertEquals(":99", FfmpegBackend.normalizeDisplayToken(":99"))
+        assertEquals(":99", FfmpegBackend.normalizeDisplayToken(":99.0"))
+        assertEquals(":0", FfmpegBackend.normalizeDisplayToken("localhost:0.0"))
+        assertEquals(null, FfmpegBackend.normalizeDisplayToken("Xvfb"))
+        assertEquals(null, FfmpegBackend.normalizeDisplayToken("-screen"))
+    }
+
+    // -----------------------------------------------------------------------
     // checkNotWayland — throws-if-Wayland wrapper. The error message is part
     // of the contract because users will see it directly (this is what they
     // hit when they try to record on a Wayland session).

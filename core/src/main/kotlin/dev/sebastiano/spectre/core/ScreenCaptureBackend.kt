@@ -188,15 +188,20 @@ internal fun linuxDisplayMatchesXvfbProcess(display: String): Boolean {
                             ?: return@anyMatch false
                     val args =
                         cmdline.toString(Charsets.UTF_8).split('\u0000').filter { it.isNotEmpty() }
-                    if (args.none { it == "Xvfb" || it.endsWith("/Xvfb") }) return@anyMatch false
-                    args.any { arg ->
-                        val token = normalizeDisplayToken(arg) ?: return@anyMatch false
-                        token == displayToken
-                    }
+                    cmdlineMatchesXvfbDisplay(args, displayToken)
                 }
             }
         }
         .getOrDefault(false)
+}
+
+/**
+ * True when [args] is an Xvfb argv serving [displayToken]. Non-display args are skipped — do not
+ * abort when [normalizeDisplayToken] returns null for the binary path or flags.
+ */
+internal fun cmdlineMatchesXvfbDisplay(args: List<String>, displayToken: String): Boolean {
+    if (args.none { it == "Xvfb" || it.endsWith("/Xvfb") }) return false
+    return args.any { normalizeDisplayToken(it) == displayToken }
 }
 
 internal fun normalizeDisplayToken(raw: String): String? {
@@ -214,18 +219,47 @@ internal fun normalizeDisplayToken(raw: String): String? {
     return ":$num"
 }
 
+/** Bounded `xdpyinfo` probe; never blocks forever on a hung DISPLAY. */
 @Suppress("TooGenericExceptionCaught")
 private fun xdpyinfoReportsPureX11(display: String): Boolean {
     val process = ProcessBuilder("xdpyinfo", "-display", display).redirectErrorStream(true).start()
-    val output = process.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-    val finished = process.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
-    if (!finished) {
+    return try {
+        val outputRef = java.util.concurrent.atomic.AtomicReference("")
+        val reader =
+            Thread(
+                    {
+                        runCatching {
+                            outputRef.set(
+                                process.inputStream.bufferedReader(Charsets.UTF_8).use {
+                                    it.readText()
+                                }
+                            )
+                        }
+                    },
+                    "spectre-xdpyinfo-reader",
+                )
+                .apply {
+                    isDaemon = true
+                    start()
+                }
+        val finished =
+            process.waitFor(XDPYINFO_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+        if (!finished) {
+            process.destroyForcibly()
+            reader.join(XDPYINFO_READER_JOIN_MS)
+            return false
+        }
+        reader.join(XDPYINFO_READER_JOIN_MS)
+        if (process.exitValue() != 0) return false
+        !outputRef.get().contains("XWAYLAND", ignoreCase = true)
+    } catch (_: Exception) {
         process.destroyForcibly()
-        return false
+        false
     }
-    if (process.exitValue() != 0) return false
-    return !output.contains("XWAYLAND", ignoreCase = true)
 }
+
+private const val XDPYINFO_TIMEOUT_MS: Long = 3_000
+private const val XDPYINFO_READER_JOIN_MS: Long = 500
 
 /**
  * Loads the optional recording-owned native capture bridge without linking it into core.
