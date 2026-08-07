@@ -32,9 +32,22 @@ class McpStdioSmokeTest(unittest.TestCase):
         return script
 
     def run_smoke(self, server: Path):
+        # Launch the fake server via the same interpreter: Windows cannot exec a
+        # shebang-only .py (WinError 193). Production smoke still passes a real
+        # packaged spectre binary as the command.
         return subprocess.run(
-            [sys.executable, str(MCP_SMOKE), "--expected-version", "0.5.0", "--", str(server)],
-            text=True, capture_output=True, timeout=10,
+            [
+                sys.executable,
+                str(MCP_SMOKE),
+                "--expected-version",
+                "0.5.0",
+                "--",
+                sys.executable,
+                str(server),
+            ],
+            text=True,
+            capture_output=True,
+            timeout=10,
         )
 
     def test_clean_server_passes(self):
