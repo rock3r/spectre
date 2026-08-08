@@ -303,6 +303,62 @@ class SpectreMcpServerTest {
     }
 
     @Test
+    fun `tree tool fails closed for blank session_id without reaching daemon`() = runBlocking {
+        var daemonReached = false
+        val server = SpectreMcpServer.create {
+            daemonReached = true
+            error("tree must not reach daemon with blank session_id")
+        }
+
+        val result = invokeTool(server, "tree", buildJsonObject { put("session_id", "  ") })
+
+        assertTrue(result.isError == true, "blank session_id on tree must fail closed: $result")
+        assertTrue(!daemonReached, "blank session_id must fail at the tool boundary: $result")
+    }
+
+    @Test
+    fun `find_text allows empty text but rejects whitespace-only text`() = runBlocking {
+        var seenText: String? = null
+        val server = SpectreMcpServer.create { request ->
+            when (request) {
+                is DaemonRequest.FindByText -> {
+                    seenText = request.text
+                    DaemonResponse.Nodes(sessionId = request.sessionId, nodes = emptyList())
+                }
+                else -> error("unexpected: $request")
+            }
+        }
+
+        val emptyOk =
+            invokeTool(
+                server,
+                "find_text",
+                buildJsonObject {
+                    put("session_id", "session-1")
+                    put("text", "")
+                },
+            )
+        assertTrue(emptyOk.isError != true, "empty text must reach daemon: $emptyOk")
+        assertEquals("", seenText)
+
+        seenText = null
+        val blankRejected =
+            invokeTool(
+                server,
+                "find_text",
+                buildJsonObject {
+                    put("session_id", "session-1")
+                    put("text", "  \t")
+                },
+            )
+        assertTrue(
+            blankRejected.isError == true,
+            "whitespace-only text must fail closed: $blankRejected",
+        )
+        assertEquals(null, seenText, "whitespace-only text must not reach the daemon")
+    }
+
+    @Test
     fun `screenshot tool returns daemon PNG bytes as inline MCP image content`() {
         val result =
             DaemonResponse.Screenshot("session-42", byteArrayOf(1, 2, 3)).screenshotResult()
