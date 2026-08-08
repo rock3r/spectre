@@ -430,11 +430,18 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # --- CLI package + native helper layout ---
+    # Bake --version into the package so MCP serverInfo.version matches strict stdio
+    # (default gradle.properties VERSION_NAME is 0.1.0-SNAPSHOT on main).
     target = host_cli_package_target(system)
     package_result = run_scenario(
         "cli-packaged",
         name=f"Release-shaped host CLI package (:cli:package{target})",
-        command=[gradle, f":cli:package{target}", "--console=plain"],
+        command=[
+            gradle,
+            f":cli:package{target}",
+            f"-PVERSION_NAME={args.version}",
+            "--console=plain",
+        ],
         cwd=ROOT,
         timeout=900,
         out_dir=out_dir,

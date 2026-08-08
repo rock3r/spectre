@@ -361,6 +361,8 @@ class SmokeLibSchemaTest(unittest.TestCase):
         # #414: hard pass requires fixture e2e lifecycle gate, not tools/list alone.
         self.assertIn("assert_mcp_fixture_e2e_executed", text)
         self.assertIn("attach/op/detach", text)
+        # Package must bake --version so MCP serverInfo matches strict stdio (not SNAPSHOT).
+        self.assertIn("-PVERSION_NAME=", text)
 
     def test_assert_mcp_fixture_e2e_executed_rejects_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:

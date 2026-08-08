@@ -586,8 +586,11 @@ try {
     if (-not $SkipCli) {
         if (-not $SkipPackageCli) {
             $step = Invoke-Step -Id "cli-packaged" -Name "Release-shaped host CLI package (packageWindowsX64)" -Action {
+                # Bake -Version into the package so MCP serverInfo.version matches strict stdio
+                # (default gradle.properties VERSION_NAME is 0.1.0-SNAPSHOT on main).
                 Invoke-Gradle -RepoRoot $repoRoot -TimeoutSeconds $PackageCliTimeoutSeconds -LogName "package-cli" -GradleArgs @(
-                    ":cli:packageWindowsX64"
+                    ":cli:packageWindowsX64",
+                    ("-PVERSION_NAME={0}" -f $Version)
                 )
             }
             [void]$results.Add($step)
