@@ -571,7 +571,9 @@ public object SpectreMcpServer {
     private fun sessionSchema(): ToolSchema = schema("session_id" to "string")
 
     private fun CallToolRequest.callString(name: String): String =
-        arguments?.get(name)?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+        // Empty string is a valid payload for some args (e.g. find_text exact "" for empty
+        // EditableText — #202). Presence is required; blank rejection is only for session_id.
+        arguments?.get(name)?.jsonPrimitive?.content
             ?: throw IllegalArgumentException("MCP tool requires a non-empty '$name' argument")
 
     private fun CallToolRequest.requiredString(name: String): String = callString(name)
@@ -579,6 +581,7 @@ public object SpectreMcpServer {
     /**
      * session_id for detach (and similar fail-closed tools): must be a JSON string token that is
      * non-blank. Numbers/booleans/objects must not stringify into a fabricated daemon lookup.
+     * Unlike [callString], deliberately rejects `""` and whitespace-only values.
      */
     private fun CallToolRequest.requiredSessionId(): String {
         val element =
