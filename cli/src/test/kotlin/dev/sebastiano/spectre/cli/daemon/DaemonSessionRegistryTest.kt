@@ -609,6 +609,47 @@ class DaemonSessionRegistryTest {
     }
 
     @Test
+    fun `same-PID re-attach waits for detach teardown to finish`() {
+        val closeEntered = CountDownLatch(1)
+        val releaseClose = CountDownLatch(1)
+        val closes = AtomicInteger(0)
+        val registry = DaemonSessionRegistry {
+            TestDaemonSessionAutomator(
+                closeAction = {
+                    closes.incrementAndGet()
+                    closeEntered.countDown()
+                    check(releaseClose.await(5, TimeUnit.SECONDS))
+                }
+            )
+        }
+        assertIs<DaemonResponse.Attached>(registry.handle(DaemonRequest.Attach(4242)))
+
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val detachFuture =
+                pool.submit<DaemonResponse> { registry.handle(DaemonRequest.Detach("pid-4242")) }
+            check(closeEntered.await(5, TimeUnit.SECONDS)) { "detach close did not start" }
+
+            val reattachFuture =
+                pool.submit<DaemonResponse> { registry.handle(DaemonRequest.Attach(4242)) }
+
+            // Re-attach must not complete while the previous automator is still closing.
+            Thread.sleep(100)
+            assertTrue(!reattachFuture.isDone, "re-attach raced ahead of detach teardown")
+
+            releaseClose.countDown()
+            assertIs<DaemonResponse.Detached>(detachFuture.get(5, TimeUnit.SECONDS))
+            val reattached =
+                assertIs<DaemonResponse.Attached>(reattachFuture.get(5, TimeUnit.SECONDS))
+            assertEquals("pid-4242", reattached.sessionId)
+            assertEquals(1, closes.get(), "first session must close once before re-attach")
+        } finally {
+            releaseClose.countDown()
+            pool.shutdownNow()
+        }
+    }
+
+    @Test
     fun `concurrent detach finalizes an active recording once without leak`() {
         val finalizeLive = AtomicReference<Set<String>?>(null)
         val stopCount = AtomicInteger(0)

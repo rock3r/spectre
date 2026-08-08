@@ -11,6 +11,8 @@ import dev.sebastiano.spectre.cli.hotreload.ReloadSettleErrorCategory
 import dev.sebastiano.spectre.cli.hotreload.mapReloadSettleOutcome
 import dev.sebastiano.spectre.cli.jdkPreflightError
 import java.io.IOException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /** In-memory session table for one daemon process. */
 @OptIn(ExperimentalSpectreAgentApi::class)
@@ -28,6 +30,11 @@ internal constructor(
     },
 ) : AutoCloseable {
     private val sessionsByPid: MutableMap<Long, DaemonSession> = linkedMapOf()
+    /**
+     * PIDs whose agent teardown is still running after the session left [sessionsByPid]. Same-PID
+     * re-attach waits on these latches so it does not race an in-flight agent Detach (#413).
+     */
+    private val detachingByPid: MutableMap<Long, CountDownLatch> = linkedMapOf()
 
     public val isShutdown: Boolean
         get() = shutdown
@@ -38,15 +45,16 @@ internal constructor(
     private var shutdown: Boolean = false
 
     /**
-     * Dispatches a daemon request. Long waits (#201) and detach teardown (#413) run **outside** the
-     * registry monitor so a multi-second `waitForNode` / wait-drain does not freeze attach/ps (or
-     * sibling-session ops) for other clients.
+     * Dispatches a daemon request. Long waits (#201), attach (may wait on same-PID detach), and
+     * detach teardown (#413) run **outside** the registry monitor so sibling-session ops stay
+     * responsive.
      */
     public fun handle(request: DaemonRequest): DaemonResponse =
         when (request) {
             is DaemonRequest.WaitForNode,
             is DaemonRequest.WaitForVisualIdle,
             is DaemonRequest.WaitForReloadSettled -> handleWaitOutsideLock(request)
+            is DaemonRequest.Attach -> attach(request.targetPid)
             is DaemonRequest.Detach -> handleDetachOutsideLock(request.sessionId)
             else -> handleSynchronized(request)
         }
@@ -56,7 +64,7 @@ internal constructor(
         when (request) {
             is DaemonRequest.Hello ->
                 DaemonResponse.Hello(daemonVersion = DaemonProtocol.CurrentVersion)
-            is DaemonRequest.Attach -> attach(request.targetPid)
+            is DaemonRequest.Attach -> error("attach must use attach() outside the monitor")
             is DaemonRequest.Detach -> error("detach must use handleDetachOutsideLock")
             DaemonRequest.ListSessions ->
                 DaemonResponse.Sessions(
@@ -87,7 +95,10 @@ internal constructor(
             is DaemonRequest.WaitForVisualIdle,
             is DaemonRequest.WaitForReloadSettled ->
                 error("wait ops must use handleWaitOutsideLock")
-            DaemonRequest.Shutdown -> shutdown()
+            DaemonRequest.Shutdown -> {
+                close()
+                DaemonResponse.ShuttingDown
+            }
         }
 
     private fun handleWaitOutsideLock(request: DaemonRequest): DaemonResponse {
@@ -264,18 +275,36 @@ internal constructor(
         attachPreflightFailure()?.let {
             return it
         }
-        if (shutdown) {
-            return DaemonResponse.Error(
-                code = DaemonErrorCode.ShutdownInProgress,
-                message = "daemon shutdown is already in progress",
+        // Wait outside the monitor so detach teardown can finish (same-PID re-attach race, #413).
+        val waited =
+            awaitCountDownLatch(
+                timeoutMs = ATTACH_WAIT_DETACH_TIMEOUT_MS,
+                latch = { synchronized(this) { detachingByPid[targetPid] } },
             )
+        if (!waited) return stillDetachingError(targetPid)
+        return synchronized(this) {
+            if (shutdown) {
+                return@synchronized DaemonResponse.Error(
+                    code = DaemonErrorCode.ShutdownInProgress,
+                    message = "daemon shutdown is already in progress",
+                )
+            }
+            sessionsByPid[targetPid]?.let { session ->
+                return@synchronized DaemonResponse.Attached(
+                    sessionId = session.summary.sessionId,
+                    targetPid = session.summary.targetPid,
+                )
+            }
+            // Another detach may have started after we waited; re-check under the monitor.
+            if (detachingByPid.containsKey(targetPid)) {
+                return@synchronized stillDetachingError(targetPid)
+            }
+            openAttachedSession(targetPid)
         }
-        sessionsByPid[targetPid]?.let { session ->
-            return DaemonResponse.Attached(
-                sessionId = session.summary.sessionId,
-                targetPid = session.summary.targetPid,
-            )
-        }
+    }
+
+    /** Create the automator/session row. Caller holds the registry monitor. */
+    private fun openAttachedSession(targetPid: Long): DaemonResponse {
         val attached =
             try {
                 attachAutomator(targetPid)
@@ -319,33 +348,46 @@ internal constructor(
      * stay operable, then tear down outside the lock so concurrent waits fail closed without
      * freezing attach/ps for other clients.
      *
-     * Order: drop from table → finalize recording → close automator (aborts in-flight waits) →
-     * drain wait counters. Preferred agent ordering is still stop recording → finish waits →
+     * Order: drop from table → register detaching gate → finalize recording → close automator →
+     * drain waits → clear gate. Preferred agent ordering is still stop recording → finish waits →
      * detach; concurrent ops during detach fail closed.
      */
     private fun handleDetachOutsideLock(sessionId: String): DaemonResponse {
-        val (session, remainingLive) =
-            synchronized(this) {
-                if (shutdown) {
-                    return DaemonResponse.Error(
-                        code = DaemonErrorCode.ShutdownInProgress,
-                        message = "daemon is shutting down",
-                    )
-                }
-                val removed =
-                    sessionsByPid.entries.firstOrNull { (_, candidate) ->
-                        candidate.sessionId == sessionId
-                    } ?: return sessionNotFound(sessionId)
-                val live = sessionsByPid.values.map { it.sessionId }.toSet() - sessionId
-                checkNotNull(sessionsByPid.remove(removed.key)) to live
+        val targetPid: Long
+        val session: DaemonSession
+        val remainingLive: Set<String>
+        val gate = CountDownLatch(1)
+        synchronized(this) {
+            if (shutdown) {
+                return DaemonResponse.Error(
+                    code = DaemonErrorCode.ShutdownInProgress,
+                    message = "daemon is shutting down",
+                )
             }
-        // Finalize while other sessions remain known live (#185); then close so in-flight waits
-        // observe a closed automator and fail closed instead of hanging on the full wait budget.
-        session.automator.finalizeRecording(remainingLive)
-        session.hotReloadSession?.close()
-        session.automator.close()
-        session.awaitIdleWaits()
-        return CaptureSessionReport.forDetach(sessionId)
+            val removed =
+                sessionsByPid.entries.firstOrNull { (_, candidate) ->
+                    candidate.sessionId == sessionId
+                } ?: return sessionNotFound(sessionId)
+            targetPid = removed.key
+            remainingLive = sessionsByPid.values.map { it.sessionId }.toSet() - sessionId
+            session = checkNotNull(sessionsByPid.remove(targetPid))
+            detachingByPid[targetPid] = gate
+        }
+        try {
+            // Finalize while other sessions remain known live (#185); then close so in-flight waits
+            // observe a closed automator and fail closed instead of hanging on the full wait
+            // budget.
+            session.automator.finalizeRecording(remainingLive)
+            session.hotReloadSession?.close()
+            session.automator.close()
+            session.awaitIdleWaits()
+            return CaptureSessionReport.forDetach(sessionId)
+        } finally {
+            synchronized(this) {
+                if (detachingByPid[targetPid] === gate) detachingByPid.remove(targetPid)
+            }
+            gate.countDown()
+        }
     }
 
     private fun handleQuerySessionCommand(request: DaemonRequest): DaemonResponse =
@@ -489,25 +531,33 @@ internal constructor(
         }
     }
 
-    private fun shutdown(): DaemonResponse {
-        close()
-        return DaemonResponse.ShuttingDown
-    }
-
     override fun close() {
-        val snapshot =
-            synchronized(this) {
-                shutdown = true
-                val sessions = sessionsByPid.values.toList()
-                sessionsByPid.clear()
-                sessions
+        val snapshot: List<Pair<Long, DaemonSession>>
+        val gates: List<Pair<Long, CountDownLatch>>
+        synchronized(this) {
+            shutdown = true
+            snapshot = sessionsByPid.entries.map { it.key to it.value }
+            sessionsByPid.clear()
+            gates = snapshot.map { (pid, _) ->
+                val gate = CountDownLatch(1)
+                detachingByPid[pid] = gate
+                pid to gate
             }
+        }
         // Outside the monitor after clear so wait finally-blocks and sibling work can finish.
-        snapshot.forEach { session ->
-            runCatching { session.automator.finalizeRecording(emptySet()) }
-            session.hotReloadSession?.close()
-            session.automator.close()
-            session.awaitIdleWaits()
+        snapshot.forEach { (pid, session) ->
+            try {
+                runCatching { session.automator.finalizeRecording(emptySet()) }
+                session.hotReloadSession?.close()
+                session.automator.close()
+                session.awaitIdleWaits()
+            } finally {
+                val gate = gates.firstOrNull { it.first == pid }?.second
+                synchronized(this) {
+                    if (gate != null && detachingByPid[pid] === gate) detachingByPid.remove(pid)
+                }
+                gate?.countDown()
+            }
         }
     }
 }
@@ -515,6 +565,7 @@ internal constructor(
 private const val WAIT_DRAIN_TIMEOUT_MS: Long = 90_000
 private const val WAIT_DRAIN_MARGIN_MS: Long = 5_000
 private const val WAIT_DRAIN_POLL_MS: Long = 10
+private const val ATTACH_WAIT_DETACH_TIMEOUT_MS: Long = 90_000
 private const val NANOS_PER_MS: Long = 1_000_000
 
 private data class DaemonSession(
@@ -601,6 +652,26 @@ private fun sessionNotFound(sessionId: String): DaemonResponse.Error =
         code = DaemonErrorCode.SessionNotFound,
         message = "session not found: $sessionId",
     )
+
+private fun stillDetachingError(targetPid: Long): DaemonResponse.Error =
+    DaemonResponse.Error(
+        code = DaemonErrorCode.AttachFailed,
+        message = "previous session for pid $targetPid is still detaching; retry attach shortly",
+    )
+
+/**
+ * Waits until [latch] returns null, or until [timeoutMs] elapses. Returns false on timeout while a
+ * latch is still present.
+ */
+private fun awaitCountDownLatch(timeoutMs: Long, latch: () -> CountDownLatch?): Boolean {
+    val deadlineNs = System.nanoTime() + timeoutMs * NANOS_PER_MS
+    while (true) {
+        val gate = latch() ?: return true
+        val remainingMs = ((deadlineNs - System.nanoTime()) / NANOS_PER_MS).coerceAtLeast(0)
+        if (remainingMs == 0L) return false
+        if (!gate.await(remainingMs, TimeUnit.MILLISECONDS)) return false
+    }
+}
 
 private fun sessionSummaryFor(targetPid: Long): DaemonSessionSummary =
     DaemonSessionSummary(sessionId = "pid-$targetPid", targetPid = targetPid)
