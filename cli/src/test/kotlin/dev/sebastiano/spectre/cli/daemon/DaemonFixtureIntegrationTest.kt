@@ -136,6 +136,7 @@ class DaemonFixtureIntegrationTest {
      */
     @Test
     fun `MCP detach reports real capture leftovers and keeps the daemon alive`() = runBlocking {
+        assumeWindowsDaemonFixtureE2eAllowed()
         assumeFalse(GraphicsEnvironment.isHeadless(), "Requires a Compose Desktop display")
         val daemonUser = "spectre-mcp-detach-leftover-${UUID.randomUUID()}"
         val process = startMcpBinary(daemonUser)
@@ -159,7 +160,9 @@ class DaemonFixtureIntegrationTest {
             process.destroyForcibly()
             process.waitFor()
             runCatching { runCliBinary(daemonUser, "daemon", "kill") }
-            deleteDaemonSocketAndParent(DaemonEndpoint.defaultSocketPath(userName = daemonUser))
+            deleteDaemonSocketAndParent(
+                DaemonEndpoint.defaultSocketPath(userName = socketUserName(daemonUser))
+            )
         }
     }
 
