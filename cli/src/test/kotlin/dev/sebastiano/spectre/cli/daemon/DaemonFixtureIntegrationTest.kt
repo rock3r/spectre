@@ -123,7 +123,9 @@ class DaemonFixtureIntegrationTest {
                 process.destroyForcibly()
                 process.waitFor()
                 runCatching { runCliBinary(daemonUser, "daemon", "kill") }
-                deleteDaemonSocketAndParent(DaemonEndpoint.defaultSocketPath(userName = daemonUser))
+                deleteDaemonSocketAndParent(
+                    DaemonEndpoint.defaultSocketPath(userName = socketUserName(daemonUser))
+                )
             }
         }
 
@@ -217,7 +219,9 @@ class DaemonFixtureIntegrationTest {
         } finally {
             runCatching { runCliBinary(daemonUser, "daemon", "kill") }
             Files.deleteIfExists(screenshot)
-            deleteDaemonSocketAndParent(DaemonEndpoint.defaultSocketPath(userName = daemonUser))
+            deleteDaemonSocketAndParent(
+                DaemonEndpoint.defaultSocketPath(userName = socketUserName(daemonUser))
+            )
         }
     }
 
@@ -563,23 +567,44 @@ private fun startMcpBinary(daemonUser: String): Process {
 }
 
 /**
- * Per-user home for Roast isolation via JAVA_TOOL_OPTIONS.
+ * Roast isolation via JAVA_TOOL_OPTIONS.
  *
- * Unix uses `/tmp/...` so daemon lock/socket ancestor checks stay within the macOS `/tmp` →
- * `/private/tmp` symlink exception. [java.io.tmpdir] on macOS is under `/var/folders`, and `/var`
- * is a symlink that DaemonSocketProtection rejects. Windows has no `/tmp` convention; use the
- * process temp directory instead.
+ * Unix uses `/tmp/...` for user.home so daemon lock/socket ancestor checks stay within the macOS
+ * `/tmp` → `/private/tmp` symlink exception (java.io.tmpdir under `/var/folders` is rejected). Fake
+ * `-Duser.name=` isolates the daemon socket (hashed into the path).
+ *
+ * Windows must keep the real OS user.name: EmbeddedAgentRuntime grants ACL read access by looking
+ * up that principal, and a synthetic name fails with "Failed to prepare the agent runtime". Isolate
+ * only via a dedicated temp user.home; teardown still kills the daemon.
  */
 private fun daemonIsolationJvmToolOptions(daemonUser: String): String {
     val osName = System.getProperty("os.name").orEmpty()
+    val windows = osName.startsWith("Windows", ignoreCase = true)
     val daemonHome =
-        if (osName.startsWith("Windows", ignoreCase = true)) {
+        if (windows) {
             Path.of(System.getProperty("java.io.tmpdir"), "spectre-daemon-home-$daemonUser")
         } else {
             Path.of("/tmp", "spectre-daemon-home-$daemonUser")
         }
     Files.createDirectories(daemonHome)
-    return "-Duser.name=$daemonUser -Duser.home=$daemonHome -Djava.awt.headless=false"
+    return if (windows) {
+        "-Duser.home=$daemonHome -Djava.awt.headless=false"
+    } else {
+        "-Duser.name=$daemonUser -Duser.home=$daemonHome -Djava.awt.headless=false"
+    }
+}
+
+/**
+ * Socket-path user for teardown. On Windows Roast isolation keeps the real OS user.name (see
+ * [daemonIsolationJvmToolOptions]); Unix tests hash the synthetic [daemonUser].
+ */
+private fun socketUserName(daemonUser: String): String {
+    val osName = System.getProperty("os.name").orEmpty()
+    return if (osName.startsWith("Windows", ignoreCase = true)) {
+        System.getProperty("user.name")
+    } else {
+        daemonUser
+    }
 }
 
 /**
