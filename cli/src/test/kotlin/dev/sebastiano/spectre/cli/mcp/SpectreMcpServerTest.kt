@@ -214,6 +214,151 @@ class SpectreMcpServerTest {
     }
 
     @Test
+    fun `detach tool fails closed for empty session_id without reaching daemon`() = runBlocking {
+        var daemonReached = false
+        val server = SpectreMcpServer.create {
+            daemonReached = true
+            error("detach must not reach daemon with empty session_id")
+        }
+
+        val result = invokeTool(server, "detach", buildJsonObject { put("session_id", "") })
+
+        assertTrue(result.isError == true, "empty session_id must fail closed: $result")
+        assertTrue(!daemonReached, "empty session_id must fail at the tool boundary: $result")
+        val message = (result.content.single() as TextContent).text
+        assertTrue(
+            message.contains("session_id", ignoreCase = true),
+            "error should mention session_id, was: $message",
+        )
+    }
+
+    @Test
+    fun `detach tool fails closed for whitespace-only session_id without reaching daemon`() =
+        runBlocking {
+            var daemonReached = false
+            val server = SpectreMcpServer.create {
+                daemonReached = true
+                error("detach must not reach daemon with blank session_id")
+            }
+
+            val result =
+                invokeTool(server, "detach", buildJsonObject { put("session_id", "   \t") })
+
+            assertTrue(result.isError == true, "blank session_id must fail closed: $result")
+            assertTrue(!daemonReached, "blank session_id must fail at the tool boundary: $result")
+            val message = (result.content.single() as TextContent).text
+            assertTrue(
+                message.contains("session_id", ignoreCase = true),
+                "error should mention session_id, was: $message",
+            )
+        }
+
+    @Test
+    fun `detach tool fails closed for non-string session_id without reaching daemon`() =
+        runBlocking {
+            var daemonReached = false
+            val server = SpectreMcpServer.create {
+                daemonReached = true
+                error("detach must not reach daemon with non-string session_id")
+            }
+
+            val result = invokeTool(server, "detach", buildJsonObject { put("session_id", 42) })
+
+            assertTrue(result.isError == true, "numeric session_id must fail closed: $result")
+            assertTrue(
+                !daemonReached,
+                "non-string session_id must fail at the tool boundary: $result",
+            )
+            val message = (result.content.single() as TextContent).text
+            assertTrue(
+                message.contains("session_id", ignoreCase = true),
+                "error should mention session_id, was: $message",
+            )
+        }
+
+    @Test
+    fun `detach tool fails closed for object session_id without reaching daemon`() = runBlocking {
+        var daemonReached = false
+        val server = SpectreMcpServer.create {
+            daemonReached = true
+            error("detach must not reach daemon with object session_id")
+        }
+
+        val result =
+            invokeTool(
+                server,
+                "detach",
+                buildJsonObject { put("session_id", buildJsonObject { put("nested", "value") }) },
+            )
+
+        assertTrue(result.isError == true, "object session_id must fail closed: $result")
+        assertTrue(!daemonReached, "object session_id must fail at the tool boundary: $result")
+        val message = (result.content.single() as TextContent).text
+        assertTrue(
+            message.contains("session_id", ignoreCase = true) ||
+                message.contains("string", ignoreCase = true) ||
+                message.contains("Error executing tool", ignoreCase = true),
+            "error should identify bad session_id input, was: $message",
+        )
+    }
+
+    @Test
+    fun `tree tool fails closed for blank session_id without reaching daemon`() = runBlocking {
+        var daemonReached = false
+        val server = SpectreMcpServer.create {
+            daemonReached = true
+            error("tree must not reach daemon with blank session_id")
+        }
+
+        val result = invokeTool(server, "tree", buildJsonObject { put("session_id", "  ") })
+
+        assertTrue(result.isError == true, "blank session_id on tree must fail closed: $result")
+        assertTrue(!daemonReached, "blank session_id must fail at the tool boundary: $result")
+    }
+
+    @Test
+    fun `find_text allows empty text but rejects whitespace-only text`() = runBlocking {
+        var seenText: String? = null
+        val server = SpectreMcpServer.create { request ->
+            when (request) {
+                is DaemonRequest.FindByText -> {
+                    seenText = request.text
+                    DaemonResponse.Nodes(sessionId = request.sessionId, nodes = emptyList())
+                }
+                else -> error("unexpected: $request")
+            }
+        }
+
+        val emptyOk =
+            invokeTool(
+                server,
+                "find_text",
+                buildJsonObject {
+                    put("session_id", "session-1")
+                    put("text", "")
+                },
+            )
+        assertTrue(emptyOk.isError != true, "empty text must reach daemon: $emptyOk")
+        assertEquals("", seenText)
+
+        seenText = null
+        val blankRejected =
+            invokeTool(
+                server,
+                "find_text",
+                buildJsonObject {
+                    put("session_id", "session-1")
+                    put("text", "  \t")
+                },
+            )
+        assertTrue(
+            blankRejected.isError == true,
+            "whitespace-only text must fail closed: $blankRejected",
+        )
+        assertEquals(null, seenText, "whitespace-only text must not reach the daemon")
+    }
+
+    @Test
     fun `screenshot tool returns daemon PNG bytes as inline MCP image content`() {
         val result =
             DaemonResponse.Screenshot("session-42", byteArrayOf(1, 2, 3)).screenshotResult()

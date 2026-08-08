@@ -337,11 +337,12 @@ Spectre for tree, input, capture, and evidence.
 | Attach | `attach` → retain `sessionId` |
 | Drive | `tree` / `find` / input tools / waits |
 | Capture | `screenshot` (inline image), `capture` (paths on daemon FS), `record_*` (paths) |
-| Release session | **`detach`** with `session_id` — ends that session and returns leftover capture cleanup summary (same honesty as CLI `spectre detach`). Unknown / already-detached sessions **fail closed** (`isError`). Use `spectre daemon kill` only when you intend to drop **every** session. |
+| Release session | **`detach`** with `session_id` — ends that session and returns leftover capture cleanup summary (same honesty as CLI `spectre detach`). Unknown / already-detached / blank `session_id` **fail closed** (`isError`). Detach does **not** delete capture files; prune stays explicit. Use `spectre daemon kill` only when you intend to drop **every** session. |
 
 Sessions created by MCP remain in the daemon until `detach`, daemon kill, or daemon
 teardown. Long agent workflows should call **`detach`** when finished so session and native
-resources do not leak.
+resources do not leak. Successful detach leaves the **shared daemon running** so
+`list_processes` and a new `attach` still work.
 
 ### Tool inventory
 
@@ -352,7 +353,7 @@ Inputs use snake_case JSON fields. Successful non-screenshot tools return **JSON
 | --- | --- | --- | --- |
 | `list_processes` | — | — | `{ "processes": [ { pid, displayName, … } ] }` |
 | `attach` | `pid` (integer) | — | `{ "sessionId", "targetPid" }` |
-| `detach` | `session_id` | — | `{ "sessionId", "captureCount", "captureBytes", "capturePaths", "pruneCommand"?, "skillHint"? }` — prune/skill present when leftovers exist; unknown session → `isError` |
+| `detach` | `session_id` (non-blank JSON string) | — | Daemon `Detached` JSON — see [Detach success body](#detach-success-body-mcp-vs-cli) below |
 | `windows` | `session_id` | — | `{ "sessionId", "windows": […] }` |
 | `tree` | `session_id` | — | `{ "sessionId", "nodes": […] }` |
 | `find` | `session_id`, `test_tag` | — | nodes list (exact test tag) |
@@ -397,9 +398,37 @@ Inputs use snake_case JSON fields. Successful non-screenshot tools return **JSON
 // tools/call record_start
 { "session_id": "…", "fullscreen": true, "output_path": "/tmp/demo.mp4" }
 
-// tools/call detach  (release session; prune leftover captures if the summary says so)
+// tools/call detach  (release session; does not delete files — run pruneCommand if needed)
 { "session_id": "…" }
 ```
+
+### Detach success body (MCP vs CLI)
+
+MCP `detach` success content is the daemon’s serialized **`DaemonResponse.Detached`** payload
+(with `encodeDefaults`, plus the sealed-type discriminator field the codec emits). Field names
+match the daemon protocol, not the CLI human line and not necessarily CLI `--json`:
+
+| Field | MCP detach success | CLI `spectre detach --json` | Notes |
+| --- | --- | --- | --- |
+| Session id | `sessionId` | `id` | Same value; different key |
+| Leftover count | `captureCount` | `captureCount` | Existing ledger dirs for that session only |
+| Leftover bytes | `captureBytes` | `captureBytes` | Sum of ledger `sizeBytes` |
+| Leftover paths | `capturePaths` | `capturePaths` | Absolute dirs still on disk |
+| Prune command | `pruneCommand` (when leftovers) | `pruneCommand` | e.g. `spectre captures prune --session …` |
+| Skill hint | `skillHint` (when leftovers) | `skillHint` | `spectre-capture` when leftovers exist |
+
+Do **not** treat MCP text and CLI `--json` as byte-identical envelopes. CLI human output is a
+prose line (`Detached <id>.` plus optional leftover lines), not this JSON.
+
+**Honesty rules (shared with CLI detach):** when the session left capture artifacts on disk,
+`captureCount` / `captureBytes` / `capturePaths` are non-zero and paths are real; `pruneCommand`
+and `skillHint` are populated. Empty sessions report zeros and omit prune/skill. Detach never
+auto-deletes files — run the reported prune command (or `spectre captures prune …`) explicitly.
+Malformed `session_id` (missing, empty, whitespace-only, non-string) fails closed at the MCP tool
+boundary without fabricating a summary.
+
+Full tool row: [Tool inventory](#tool-inventory) above. Capture retention and prune flags:
+[CLI capture](capture.md).
 
 ### Paths, filesystem, and capture modes (MCP)
 

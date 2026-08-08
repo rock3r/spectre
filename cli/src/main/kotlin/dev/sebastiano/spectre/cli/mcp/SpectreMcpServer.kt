@@ -91,10 +91,11 @@ public object SpectreMcpServer {
             description =
                 "Detach a Spectre daemon session by session_id and return leftover capture cleanup " +
                     "summary (count, bytes, paths, prune command, skill hint). Fails closed when " +
-                    "the session is unknown or already detached.",
+                    "the session is unknown or already detached. Does not delete capture files; " +
+                    "prune stays explicit via pruneCommand when leftovers exist.",
             inputSchema = sessionSchema(),
         ) { call ->
-            request(DaemonRequest.Detach(call.requiredString("session_id"))).asResult {
+            request(DaemonRequest.Detach(call.requiredSessionId())).asResult {
                 it is DaemonResponse.Detached
             }
         }
@@ -107,7 +108,7 @@ public object SpectreMcpServer {
             description = "List top-level windows and popup roots for an attached session.",
             inputSchema = sessionSchema(),
         ) { call ->
-            request(DaemonRequest.Windows(call.requiredString("session_id"))).asResult {
+            request(DaemonRequest.Windows(call.requiredSessionId())).asResult {
                 it is DaemonResponse.Windows
             }
         }
@@ -117,7 +118,7 @@ public object SpectreMcpServer {
                 "Dump the current semantics tree. Node keys are valid only until the UI changes.",
             inputSchema = sessionSchema(),
         ) { call ->
-            request(DaemonRequest.AllNodes(call.requiredString("session_id"))).asResult {
+            request(DaemonRequest.AllNodes(call.requiredSessionId())).asResult {
                 it is DaemonResponse.Nodes
             }
         }
@@ -129,7 +130,7 @@ public object SpectreMcpServer {
         ) { call ->
             request(
                     DaemonRequest.FindByTestTag(
-                        call.requiredString("session_id"),
+                        call.requiredSessionId(),
                         call.requiredString("test_tag"),
                     )
                 )
@@ -157,13 +158,12 @@ public object SpectreMcpServer {
                             "MCP tool argument 'exact' must be true or false"
                         )
                 }
-            request(
-                    DaemonRequest.FindByText(
-                        call.requiredString("session_id"),
-                        call.requiredString("text"),
-                        exact = exact,
-                    )
-                )
+            val text = call.requiredString("text")
+            // Empty text is valid (#202 empty EditableText); whitespace-only is not.
+            require(text.isEmpty() || text.isNotBlank()) {
+                "MCP tool argument 'text' must not be whitespace-only"
+            }
+            request(DaemonRequest.FindByText(call.requiredSessionId(), text, exact = exact))
                 .asResult { it is DaemonResponse.Nodes }
         }
         server.addTool(
@@ -181,7 +181,7 @@ public object SpectreMcpServer {
         ) { call ->
             request(
                     DaemonRequest.WaitForNode(
-                        sessionId = call.requiredString("session_id"),
+                        sessionId = call.requiredSessionId(),
                         tag = call.optionalString("tag"),
                         text = call.optionalString("text"),
                         timeoutMs = call.optionalLong("timeout_ms") ?: 5_000L,
@@ -201,7 +201,7 @@ public object SpectreMcpServer {
         ) { call ->
             request(
                     DaemonRequest.WaitForVisualIdle(
-                        sessionId = call.requiredString("session_id"),
+                        sessionId = call.requiredSessionId(),
                         timeoutMs = call.optionalLong("timeout_ms") ?: 5_000L,
                     )
                 )
@@ -223,7 +223,7 @@ public object SpectreMcpServer {
         ) { call ->
             request(
                     DaemonRequest.WaitForReloadSettled(
-                        sessionId = call.requiredString("session_id"),
+                        sessionId = call.requiredSessionId(),
                         timeoutMs = call.optionalLong("timeout_ms") ?: 60_000L,
                     )
                 )
@@ -235,12 +235,7 @@ public object SpectreMcpServer {
                 "Click a visible semantics node by its node key. Refresh the tree after UI changes.",
             inputSchema = schema("session_id" to "string", "node_key" to "string"),
         ) { call ->
-            request(
-                    DaemonRequest.Click(
-                        call.requiredString("session_id"),
-                        call.requiredString("node_key"),
-                    )
-                )
+            request(DaemonRequest.Click(call.requiredSessionId(), call.requiredString("node_key")))
                 .asResult { it is DaemonResponse.Completed }
         }
         server.addTool(
@@ -250,7 +245,7 @@ public object SpectreMcpServer {
         ) { call ->
             request(
                     DaemonRequest.DoubleClick(
-                        call.requiredString("session_id"),
+                        call.requiredSessionId(),
                         call.requiredString("node_key"),
                     )
                 )
@@ -270,7 +265,7 @@ public object SpectreMcpServer {
             val hold = call.optionalLong("hold_for_ms") ?: 500L
             request(
                     DaemonRequest.LongClick(
-                        call.requiredString("session_id"),
+                        call.requiredSessionId(),
                         call.requiredString("node_key"),
                         holdForMs = hold,
                     )
@@ -298,7 +293,7 @@ public object SpectreMcpServer {
         ) { call ->
             request(
                     DaemonRequest.Swipe(
-                        sessionId = call.requiredString("session_id"),
+                        sessionId = call.requiredSessionId(),
                         fromNodeKey = call.optionalString("from_node_key"),
                         toNodeKey = call.optionalString("to_node_key"),
                         startX = call.optionalInt("start_x"),
@@ -324,7 +319,7 @@ public object SpectreMcpServer {
         ) { call ->
             request(
                     DaemonRequest.ScrollWheel(
-                        call.requiredString("session_id"),
+                        call.requiredSessionId(),
                         call.requiredString("node_key"),
                         call.requiredInt("wheel_clicks"),
                     )
@@ -345,7 +340,7 @@ public object SpectreMcpServer {
         ) { call ->
             request(
                     DaemonRequest.PressKey(
-                        call.requiredString("session_id"),
+                        call.requiredSessionId(),
                         call.requiredInt("key_code"),
                         call.optionalInt("modifiers") ?: 0,
                     )
@@ -358,12 +353,7 @@ public object SpectreMcpServer {
                 "Type text through the real operating-system input path into the focused target UI.",
             inputSchema = schema("session_id" to "string", "text" to "string"),
         ) { call ->
-            request(
-                    DaemonRequest.TypeText(
-                        call.requiredString("session_id"),
-                        call.requiredString("text"),
-                    )
-                )
+            request(DaemonRequest.TypeText(call.requiredSessionId(), call.requiredString("text")))
                 .asResult { it is DaemonResponse.Completed }
         }
         registerScreenshotTool(server, request)
@@ -399,7 +389,7 @@ public object SpectreMcpServer {
         call: CallToolRequest,
         request: (DaemonRequest) -> DaemonResponse,
     ): CallToolResult {
-        val sessionId = call.requiredString("session_id")
+        val sessionId = call.requiredSessionId()
         val windowIndexArg = call.arguments?.get("window_index")?.jsonPrimitive?.content
         val windowIndex =
             if (windowIndexArg == null) {
@@ -525,7 +515,7 @@ public object SpectreMcpServer {
             }
             request(
                     DaemonRequest.StartRecording(
-                        sessionId = call.requiredString("session_id"),
+                        sessionId = call.requiredSessionId(),
                         outputPath = outputRaw?.let(::normalizeRecordingOutputPath),
                         windowIndex = windowIndex ?: 0,
                         fullscreen = fullscreen,
@@ -538,7 +528,7 @@ public object SpectreMcpServer {
             description = "Stop the active recording and return its final output path.",
             inputSchema = sessionSchema(),
         ) { call ->
-            request(DaemonRequest.StopRecording(call.requiredString("session_id"))).asResult {
+            request(DaemonRequest.StopRecording(call.requiredSessionId())).asResult {
                 it is DaemonResponse.RecordingStopped
             }
         }
@@ -547,7 +537,7 @@ public object SpectreMcpServer {
             description = "Report whether a session has an active recording and its output path.",
             inputSchema = sessionSchema(),
         ) { call ->
-            request(DaemonRequest.RecordingStatus(call.requiredString("session_id"))).asResult {
+            request(DaemonRequest.RecordingStatus(call.requiredSessionId())).asResult {
                 it is DaemonResponse.RecordingStatus
             }
         }
@@ -570,6 +560,8 @@ public object SpectreMcpServer {
     private fun sessionSchema(): ToolSchema = schema("session_id" to "string")
 
     private fun CallToolRequest.callString(name: String): String =
+        // Empty string is a valid payload for some args (e.g. find_text exact "" for empty
+        // EditableText — #202). Presence is required; non-blank session_id uses requiredSessionId.
         arguments?.get(name)?.jsonPrimitive?.content
             ?: throw IllegalArgumentException("MCP tool requires a non-empty '$name' argument")
 
@@ -639,6 +631,20 @@ internal fun DaemonResponse.screenshotResult(): CallToolResult =
             )
     }
 
+/** Non-blank JSON string session_id; rejects empty/whitespace and non-string tokens. */
+private fun CallToolRequest.requiredSessionId(): String {
+    val element =
+        arguments?.get("session_id")
+            ?: throw IllegalArgumentException("MCP tool requires a non-empty 'session_id' argument")
+    val primitive =
+        element as? kotlinx.serialization.json.JsonPrimitive
+            ?: throw IllegalArgumentException("MCP tool argument 'session_id' must be a string")
+    require(primitive.isString) { "MCP tool argument 'session_id' must be a string" }
+    val content = primitive.content
+    require(content.isNotBlank()) { "MCP tool requires a non-empty 'session_id' argument" }
+    return content
+}
+
 private fun registerScreenshotTool(server: Server, request: (DaemonRequest) -> DaemonResponse) {
     val properties = buildJsonObject {
         put("session_id", buildJsonObject { put("type", "string") })
@@ -666,12 +672,14 @@ private fun handleScreenshotTool(
     request: (DaemonRequest) -> DaemonResponse,
 ): CallToolResult {
     val sessionId =
-        call.arguments?.get("session_id")?.jsonPrimitive?.content
-            ?: return CallToolResult(
-                content =
-                    listOf(TextContent("MCP tool requires a non-empty 'session_id' argument")),
+        try {
+            call.requiredSessionId()
+        } catch (error: IllegalArgumentException) {
+            return CallToolResult(
+                content = listOf(TextContent(error.message ?: "invalid session_id")),
                 isError = true,
             )
+        }
     val windowIndexArg = call.arguments?.get("window_index")?.jsonPrimitive?.content
     val windowIndex =
         if (windowIndexArg == null) {

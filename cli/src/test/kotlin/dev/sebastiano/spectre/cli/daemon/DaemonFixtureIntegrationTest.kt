@@ -120,6 +120,40 @@ class DaemonFixtureIntegrationTest {
             }
         }
 
+    /**
+     * #415: attach → real MCP atomic capture (ledger leftover on disk) → MCP detach reports
+     * non-zero count/bytes/paths + prune/skill hints; daemon stays alive for list_processes and a
+     * second attach. Screenshot alone is not enough — it returns inline image without ledger rows.
+     */
+    @Test
+    fun `MCP detach reports real capture leftovers and keeps the daemon alive`() = runBlocking {
+        assumeFalse(GraphicsEnvironment.isHeadless(), "Requires a Compose Desktop display")
+        val daemonUser = "spectre-mcp-detach-leftover-${UUID.randomUUID()}"
+        val process = startMcpBinary(daemonUser)
+        val transport =
+            StdioClientTransport(
+                input = process.inputStream.asSource().buffered(),
+                output = process.outputStream.asSink().buffered(),
+            )
+
+        try {
+            spawnComposeFixture().use { fixture ->
+                val client = Client(Implementation(name = "spectre-test", version = "1"))
+                withTimeout(MCP_CONNECTION_TIMEOUT_MILLIS) { client.connect(transport) }
+                val attached = mcpAttachSession(client, fixture.pid)
+                val captureDir = mcpCaptureAndAssertOnDisk(client, attached)
+                assertMcpDetachReportsLeftovers(client, attached, captureDir)
+                assertMcpDaemonAliveAfterDetach(client, fixture.pid)
+            }
+        } finally {
+            transport.close()
+            process.destroyForcibly()
+            process.waitFor()
+            runCatching { runCliBinary(daemonUser, "daemon", "kill") }
+            deleteDaemonSocketAndParent(DaemonEndpoint.defaultSocketPath(userName = daemonUser))
+        }
+    }
+
     @Test
     fun `CLI binary drives a Compose fixture through ps attach find click and screenshot`() {
         assumeFalse(GraphicsEnvironment.isHeadless(), "Requires a Compose Desktop display")
@@ -604,6 +638,99 @@ private suspend fun mcpText(client: Client, tool: String, arguments: Map<String,
     val result = client.callTool(tool, arguments)
     assertTrue(result.isError != true, "MCP $tool failed: ${result.content}")
     return (result.content.single() as TextContent).text
+}
+
+private suspend fun mcpAttachSession(client: Client, pid: Long): String =
+    mcpText(client, "attach", mapOf("pid" to pid)).let { response ->
+        Json.parseToJsonElement(response).jsonObject.getValue("sessionId").jsonPrimitive.content
+    }
+
+/** Product path that appends the capture ledger (not inline screenshot). */
+private suspend fun mcpCaptureAndAssertOnDisk(client: Client, sessionId: String): String {
+    val captureText =
+        mcpText(client, "capture", mapOf("session_id" to sessionId, "window_index" to 0))
+    val captureBody = Json.parseToJsonElement(captureText).jsonObject
+    val captureDir = captureBody.getValue("directory").jsonPrimitive.content
+    assertTrue(
+        Files.isDirectory(Path.of(captureDir)),
+        "capture must land a directory on disk: $captureText",
+    )
+    val screenshotPng = captureBody.getValue("screenshotPngPath").jsonPrimitive.content
+    assertTrue(
+        Files.isRegularFile(Path.of(screenshotPng)) && Files.size(Path.of(screenshotPng)) > 0,
+        "capture must write a non-empty screenshot.png: $captureText",
+    )
+    return captureDir
+}
+
+/** #415: detach success body is honest about real leftovers and does not auto-prune. */
+private suspend fun assertMcpDetachReportsLeftovers(
+    client: Client,
+    sessionId: String,
+    expectedCaptureDir: String,
+) {
+    val detachText = mcpText(client, "detach", mapOf("session_id" to sessionId))
+    val detached = Json.parseToJsonElement(detachText).jsonObject
+    assertEquals(
+        sessionId,
+        detached.getValue("sessionId").jsonPrimitive.content,
+        "detach must echo sessionId (daemon Detached field, not CLI --json id): $detachText",
+    )
+    val captureCount = detached.getValue("captureCount").jsonPrimitive.content.toInt()
+    val captureBytes = detached.getValue("captureBytes").jsonPrimitive.content.toLong()
+    val capturePaths = detached.getValue("capturePaths").jsonArray.map { it.jsonPrimitive.content }
+    assertTrue(
+        captureCount >= 1,
+        "leftover detach must report captureCount >= 1, was $captureCount: $detachText",
+    )
+    assertTrue(
+        captureBytes > 0,
+        "leftover detach must report captureBytes > 0, was $captureBytes: $detachText",
+    )
+    assertTrue(
+        capturePaths.isNotEmpty(),
+        "leftover detach must report non-empty capturePaths: $detachText",
+    )
+    assertTrue(
+        capturePaths.any { it == expectedCaptureDir || Path.of(it) == Path.of(expectedCaptureDir) },
+        "detach paths must include the capture directory $expectedCaptureDir, was $capturePaths",
+    )
+    capturePaths.forEach { path ->
+        assertTrue(
+            Files.isDirectory(Path.of(path)),
+            "detach must not invent paths; expected existing dir: $path",
+        )
+    }
+    val pruneCommand = detached["pruneCommand"]?.jsonPrimitive?.content
+    assertTrue(
+        !pruneCommand.isNullOrBlank(),
+        "leftover detach must populate pruneCommand: $detachText",
+    )
+    checkNotNull(pruneCommand)
+    assertTrue(
+        pruneCommand.contains(sessionId),
+        "pruneCommand must target this session, was: $pruneCommand",
+    )
+    val skillHint = detached["skillHint"]?.jsonPrimitive?.content
+    assertTrue(!skillHint.isNullOrBlank(), "leftover detach must populate skillHint: $detachText")
+    assertTrue(
+        Files.isDirectory(Path.of(expectedCaptureDir)),
+        "detach must leave capture artifacts on disk (no auto-prune): $expectedCaptureDir",
+    )
+}
+
+/** After detach, the shared daemon must still serve list_processes and a new attach. */
+private suspend fun assertMcpDaemonAliveAfterDetach(client: Client, fixturePid: Long) {
+    val processesText = mcpText(client, "list_processes", emptyMap())
+    assertTrue(
+        processesText.contains("processes") || processesText.contains("pid"),
+        "list_processes after detach must succeed: $processesText",
+    )
+    val reattached = mcpAttachSession(client, fixturePid)
+    assertTrue(reattached.isNotBlank(), "reattach must return a session id")
+    val tree = mcpText(client, "tree", mapOf("session_id" to reattached))
+    assertTrue(tree.contains(TAG_LABEL), "tree after reattach: $tree")
+    assertMcpDetachReleasesSession(client, reattached)
 }
 
 /** #399: detach returns cleanup summary and the daemon session is gone afterward. */
