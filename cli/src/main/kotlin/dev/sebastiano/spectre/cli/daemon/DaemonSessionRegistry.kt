@@ -535,31 +535,44 @@ internal constructor(
 
     override fun close() {
         val snapshot: List<Pair<Long, DaemonSession>>
-        val gates: List<Pair<Long, CountDownLatch>>
+        val ownedGates: List<Pair<Long, CountDownLatch>>
+        val waitGates: List<CountDownLatch>
         synchronized(this) {
             shutdown = true
             snapshot = sessionsByPid.entries.map { it.key to it.value }
             sessionsByPid.clear()
-            gates = snapshot.map { (pid, _) ->
-                val gate = CountDownLatch(1)
-                detachingByPid[pid] = gate
-                pid to gate
+            val owned = mutableListOf<Pair<Long, CountDownLatch>>()
+            for ((pid, _) in snapshot) {
+                // Do not overwrite a gate owned by an in-flight per-session detach.
+                if (!detachingByPid.containsKey(pid)) {
+                    val gate = CountDownLatch(1)
+                    detachingByPid[pid] = gate
+                    owned += pid to gate
+                }
             }
+            ownedGates = owned
+            waitGates = detachingByPid.values.toList()
         }
+        val ownedPids = ownedGates.map { it.first }.toSet()
         // Outside the monitor after clear so wait finally-blocks and sibling work can finish.
         snapshot.forEach { (pid, session) ->
+            if (pid !in ownedPids) return@forEach
+            val ownedGate = ownedGates.first { it.first == pid }.second
             try {
                 runCatching { session.automator.finalizeRecording(emptySet()) }
                 session.hotReloadSession?.close()
                 session.automator.close()
                 session.awaitIdleWaits()
             } finally {
-                val gate = gates.firstOrNull { it.first == pid }?.second
                 synchronized(this) {
-                    if (gate != null && detachingByPid[pid] === gate) detachingByPid.remove(pid)
+                    if (detachingByPid[pid] === ownedGate) detachingByPid.remove(pid)
                 }
-                gate?.countDown()
+                ownedGate.countDown()
             }
+        }
+        // Join concurrent detach teardowns so Shutdown does not race agent close.
+        waitGates.forEach { gate ->
+            runCatching { gate.await(ATTACH_WAIT_DETACH_TIMEOUT_MS, TimeUnit.MILLISECONDS) }
         }
     }
 }

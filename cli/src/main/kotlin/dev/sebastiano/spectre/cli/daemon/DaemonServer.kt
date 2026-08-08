@@ -192,18 +192,22 @@ public constructor(
                         handshakeComplete = response is DaemonResponse.Hello
                     }
                     val isShutdown = request is DaemonRequest.Shutdown && handshakeComplete
-                    DaemonWireCodec.writeResponse(output, response)
                     if (isShutdown) {
-                        // Defer server close until this client channel is fully released so socket
-                        // ancestor dirs can be unlinked (Shutdown already closed the registry).
+                        // Mark before write: a disconnected client must not leave this process
+                        // listening after Shutdown (registry is already closed by handleRequest).
                         shutdownAfterResponse = true
-                        return
+                    }
+                    try {
+                        DaemonWireCodec.writeResponse(output, response)
+                    } finally {
+                        if (isShutdown) return
                     }
                 }
             }
         } finally {
             activeClients.remove(client)
-            // A disconnected client must not leave this process listening after Shutdown.
+            // Defer server close until this client channel is fully released so socket ancestor
+            // dirs can be unlinked; always run when Shutdown was handled (write may have failed).
             if (shutdownAfterResponse) close()
         }
     }
