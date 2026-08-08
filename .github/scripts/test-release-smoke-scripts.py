@@ -361,6 +361,8 @@ class SmokeLibSchemaTest(unittest.TestCase):
         # #414: hard pass requires fixture e2e lifecycle gate, not tools/list alone.
         self.assertIn("assert_mcp_fixture_e2e_executed", text)
         self.assertIn("attach/op/detach", text)
+        # Package must bake --version so MCP serverInfo matches strict stdio (not SNAPSHOT).
+        self.assertIn("-PVERSION_NAME=", text)
 
     def test_assert_mcp_fixture_e2e_executed_rejects_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -406,6 +408,46 @@ class ReleaseSmokeHelpTest(unittest.TestCase):
         self.assertIn("--version", result.stdout)
         self.assertIn("--skip-maven-local", result.stdout)
         self.assertIn("--skip-recording", result.stdout)
+        self.assertIn("--preflight-only", result.stdout)
+
+    def test_preflight_only_emits_full_required_matrix_with_na_reason(self):
+        """Drive the real entrypoint: --preflight-only must not invent PASS for hard cells."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(RELEASE_SMOKE),
+                    "--version",
+                    "0.5.0",
+                    "--base",
+                    "v0.4.1",
+                    "--preflight-only",
+                    "--out-dir",
+                    str(out),
+                ],
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            self.assertEqual(0, result.returncode, result.stderr + result.stdout)
+            self.assertIn("PREFLIGHT-ONLY", result.stdout)
+            report_path = out / "release-smoke.json"
+            self.assertTrue(report_path.is_file(), result.stdout)
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            errors = smoke_lib.validate_report(
+                report, required_ids=smoke_lib.REQUIRED_SCENARIO_IDS
+            )
+            self.assertEqual([], errors, errors)
+            by_id = {row["id"]: row for row in report["scenarios"]}
+            self.assertEqual("pass", by_id["preflight"]["result"])
+            for sid in smoke_lib.REQUIRED_SCENARIO_IDS:
+                if sid == "preflight":
+                    continue
+                self.assertEqual("n/a", by_id[sid]["result"], sid)
+                self.assertIn("preflight-only", by_id[sid]["reason"])
+            # Must not claim a full hard GO.
+            self.assertNotIn("ALL HARD SCENARIOS PASSED", result.stdout)
 
 
 class ReleaseSmokeHelperLogicTest(unittest.TestCase):
@@ -448,6 +490,33 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             self.rs._fresh_consumer_check(ROOT, "0.0.0-does-not-exist-smoke")
         self.assertIn("missing", str(ctx.exception).lower())
+
+
+class DocsAndSchemaPolicyTest(unittest.TestCase):
+    """Docs must document extension + schemaVersion policy so operators need no chat history."""
+
+    def test_release_smoke_docs_extension_and_schema_policy(self):
+        docs = (ROOT / "docs" / "RELEASE-SMOKE.md").read_text(encoding="utf-8")
+        self.assertIn("Adding a scenario ID", docs)
+        self.assertIn("REQUIRED_SCENARIO_IDS", docs)
+        self.assertIn("schemaVersion", docs)
+        self.assertIn("bump", docs.lower())
+        self.assertIn("--preflight-only", docs)
+        self.assertIn("preflight-only", docs)
+
+    def test_validate_report_rejects_missing_required_ids(self):
+        preflight = smoke_lib.collect_preflight(ROOT, version="0.5.0")
+        partial = [
+            smoke_lib.scenario_result("preflight", name="p", result="pass"),
+            smoke_lib.scenario_result("check", name="c", result="pass"),
+        ]
+        report = smoke_lib.build_report(
+            preflight, partial, started_at=smoke_lib.utc_now_iso()
+        )
+        errors = smoke_lib.validate_report(
+            report, required_ids=smoke_lib.REQUIRED_SCENARIO_IDS
+        )
+        self.assertTrue(any("missing required scenario ids" in e for e in errors), errors)
 
 
 if __name__ == "__main__":

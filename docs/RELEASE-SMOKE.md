@@ -183,11 +183,14 @@ Optional flags:
 | `--overall-timeout SECS` | Wall-clock budget for the whole run (default 7200) |
 | `--skip-maven-local` | Skip Maven Local publish + consumer (hard `n/a` with reason) |
 | `--skip-recording` | Skip host native recording smoke (hard `n/a` with reason) |
+| `--preflight-only` | Run only preflight; remaining required IDs are hard `n/a` with reason `preflight-only mode; scenario not executed`. Validates report schema + matrix wiring without a multi-hour GO. **Not a release smoke GO.** |
 
 On Linux it supplies `xvfb-run -a` when `DISPLAY` is unset and records `environment.displayMode`
 as `xvfb-auto` or `real-display:$DISPLAY`. On Windows use the interactive PowerShell runner in the
 next section (shared stable scenario IDs and `schemaVersion` report shape).
 
+**Xvfb ≠ Wayland:** auto-Xvfb proves the X11 path only. Real portal consent/cancel requires a real
+Wayland session (manual cell below).
 ### Report artifacts
 
 Every run writes under `build/smoke/` (or `--out-dir`):
@@ -203,8 +206,44 @@ Report fields of note: `schemaVersion` (currently `1`), `version`, `base`, `sha`
 optional `reason` (required for hard `n/a`), timings, and log path.
 
 **Hard skips are fail-closed:** a hard scenario result of `n/a` without a non-empty `reason` is
-treated as `fail`. Soft cells may use `hard: false`.
+treated as `fail`. Soft cells may use `hard: false`. Missing a required scenario ID is also fail
+(Unix: `validate_report(..., required_ids=REQUIRED_SCENARIO_IDS)`; Windows: `RequiredScenarioIds`
+completeness check before exit).
 
+### schemaVersion bump policy
+
+`schemaVersion` lives in `scripts/smoke_lib.py` (`SCHEMA_VERSION`) and is mirrored as `1` in
+`scripts/windows-release-smoke.ps1`. **Bump only when report field names or semantics change
+incompatibly** (rename/remove a field, change meaning of an existing value). Additive optional
+fields and new scenario IDs do **not** require a bump — keep existing field names stable so older
+report consumers still parse. When you bump:
+
+1. Update `SCHEMA_VERSION` in `smoke_lib.py` and the Windows report writer.
+2. Extend `validate_report` / contract tests for the new shape.
+3. Note the bump in the release record so operators do not compare v1 and v2 rows as identical.
+
+### Adding a scenario ID (per-release delta or permanent baseline)
+
+Do **not** leave a one-release command only in chat. To add a reusable cell:
+
+1. Append a stable kebab-case ID to `REQUIRED_SCENARIO_IDS` in `scripts/smoke_lib.py` (or document
+   it as a **soft / delta-only** cell if it is not required on every cut — soft cells use
+   `hard: false` and need not be in `REQUIRED_SCENARIO_IDS`).
+2. Register the same ID on **both** entrypoints:
+   - Unix: `scripts/release-smoke.py` (`run_scenario` / `run_callable_scenario` / explicit
+     hard `n/a` with reason).
+   - Windows: `scripts/windows-release-smoke.ps1` (`RequiredScenarioIds` array + step that emits
+     the row; environment-impossible → hard `n/a` with reason, never silent omit).
+3. Extend contract tests:
+   - `.github/scripts/test-release-smoke-scripts.py` (`test_required_scenario_ids_are_stable`,
+     wiring asserts, any new fail-closed rule).
+   - `.github/scripts/test-windows-release-smoke-script.sh` (ID presence + any new policy needles).
+4. Document the cell in the stable scenario table above and in the automated-vs-manual matrix.
+5. Prefer forcing live UI with `gradle_ui_force_args()` / `--rerun-tasks --no-build-cache` when the
+   cell is UI-backed so cache-only cannot fake PASS.
+
+Per-release **delta** cells that will not stay permanent may live in
+`.plans/<version>-smoke.md` as manual recipes; promote them into the runner when they repeat.
 ### Stable scenario IDs
 
 Shared across macOS / Linux / Windows entrypoints (`scripts/smoke_lib.py` → `REQUIRED_SCENARIO_IDS`):
@@ -284,16 +323,21 @@ release SHA.
 
 ### Residual gaps for the 0.5.0 cut
 
-- Full multi-OS operator proof still needs a headed Windows interactive console for WGC and a Linux
-  box (Xvfb or real display) for the Unix entrypoint — unit tests + macOS are necessary but not
-  sufficient alone for a GO claim on all three OSes.
+- **Harness baseline (#398):** committed one-command entrypoints + shared `REQUIRED_SCENARIO_IDS`
+  + fail-closed reports are on main. Operator multi-OS proof for a given SHA should attach
+  `build/smoke/release-smoke.json` / `.md` (macOS + Linux) and `windows-release-smoke.json` /
+  `.md` (Windows) — not chat-only PASS. Use `--preflight-only` / `-PreflightOnly` only to
+  validate wiring; it is **not** a release GO.
+- **WGC / host-native-recording on Windows:** hard pass only from an **interactive desktop**
+  console. SSH runs must record hard `n/a` with reason (`displayMode: windows-ssh`) — never
+  treat SSH as visual PASS evidence.
 - **MCP lifecycle (#399 / #414)** is a **hard cell** on all three entrypoints when packaging is
   claimed: Unix `release-smoke.py` and Windows `windows-release-smoke.ps1` both require
   attach → cheap op → detach → session-gone (DaemonFixture MCP e2e) plus strict
-  `mcp-stdio-smoke.py` (tools/list includes `detach`; unknown detach is `isError`). Windows fixture
-  e2e is opt-in with the same `-Pspectre.agent.attachE2e.allowWindows=true` gate as agent UI e2e
-  (hosted `windows-latest` stays skip-safe; Mattone-class interactive desktops hard-pass). Soft
-  hard-`n/a` for “run MCP on Unix only” is no longer valid when packaging is claimed on Windows.
+  `mcp-stdio-smoke.py` (tools/list includes `detach`; unknown detach is `isError`). Packaging and
+  the MCP Gradle leg bake `-PVERSION_NAME=<smoke --version>` so `serverInfo.version` matches
+  `--expected-version`. Windows fixture e2e is opt-in with
+  `-Pspectre.agent.attachE2e.allowWindows=true` (hosted `windows-latest` stays skip-safe).
   Environment-impossible cases (no display, missing Python for the stdio leg, packaging skipped)
   remain hard `n/a` or `fail` with an explicit reason — never a fake PASS.
 - Optional `mcp-stdio-smoke.py --attach-pid <pid>` proves the same lifecycle over raw stdio when a
@@ -305,6 +349,9 @@ release SHA.
   `cli-user-flow` may still use Gradle with `--app-name ComposeFixtureMain`; prefer a healthy
   UP-TO-DATE fixture build so cold daemon start alone fits the budget. Prod-like launch remains
   the troubleshooting recommendation when Gradle is slow or flaky.
+- **Manual residual (not auto-green):** TCC / notarization / app seal; real Wayland portal
+  (Xvfb ≠ Wayland); public Homebrew/Scoop/archive after undraft; focus/lock keys; multi-monitor /
+  HiDPI; stock IntelliJ inject.
 
 ## Windows one-liner script
 
@@ -364,7 +411,7 @@ Flags:
 | `-SkipCli` | Skip package + `spectre launch` |
 | `-SkipPackageCli` | Reuse existing `spectre.exe` (still runs launch) |
 | `-SkipMavenLocal` | Skip Maven Local publication smoke |
-
+| `-PreflightOnly` | Preflight + full required-ID matrix as hard `n/a` with reason (schema self-check). **Not a release GO.** |
 This is **manual, operator-driven** automation — not hosted CI. Use it so release smoke is
 not multi-terminal faff. Prefer the logged-in interactive console for any WGC cell.
 

@@ -220,6 +220,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Skip host native recording smoke (records hard n/a with reason)",
     )
+    parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help=(
+            "Run only preflight and emit a full required-ID report with remaining "
+            "scenarios as hard n/a (reason: preflight-only). Not a release GO."
+        ),
+    )
     args = parser.parse_args(argv)
 
     system = platform.system()
@@ -258,10 +266,54 @@ def main(argv: list[str] | None = None) -> int:
     results.append(preflight_result)
     _print_result(preflight_result)
 
+    if args.preflight_only:
+        # Schema/orchestration self-check: every required ID present, none silently omitted.
+        # Remaining cells are explicit hard n/a so validate_report(required_ids=...) holds.
+        for sid in REQUIRED_SCENARIO_IDS:
+            if sid == "preflight":
+                continue
+            results.append(
+                scenario_result(
+                    sid,
+                    name=f"{sid} (not executed)",
+                    result="n/a",
+                    reason="preflight-only mode; scenario not executed",
+                    hard=True,
+                )
+            )
+            _print_result(results[-1])
+        finished_at = utc_now_iso()
+        overall_seconds = int(time.monotonic() - wall_start)
+        report = build_report(
+            preflight,
+            results,
+            started_at=started_at,
+            finished_at=finished_at,
+            overall_seconds=overall_seconds,
+        )
+        schema_errors = validate_report(report, required_ids=list(REQUIRED_SCENARIO_IDS))
+        json_path = out_dir / "release-smoke.json"
+        md_path = out_dir / "release-smoke.md"
+        write_json_report(json_path, report)
+        write_markdown_report(md_path, report)
+        print(f"Report JSON: {json_path}")
+        print(f"Report MD:   {md_path}")
+        print(f"displayMode: {preflight.environment.display_mode}")
+        print(f"SHA: {preflight.sha}  dirty={preflight.dirty}")
+        if schema_errors:
+            print("REPORT SCHEMA ERRORS:", file=sys.stderr)
+            for err in schema_errors:
+                print(f"  - {err}", file=sys.stderr)
+            return 2
+        if preflight_result.result == RESULT_FAIL:
+            print("PREFLIGHT-ONLY FAILED")
+            return 1
+        print("PREFLIGHT-ONLY OK (not a full release smoke GO)")
+        return 0
+
     gradle = str(ROOT / "gradlew")
     prefix = xvfb_prefix(system)
     force = gradle_ui_force_args()
-
     def add(item: ScenarioResult) -> None:
         results.append(item)
         _print_result(item)
@@ -378,11 +430,18 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # --- CLI package + native helper layout ---
+    # Bake --version into the package so MCP serverInfo.version matches strict stdio
+    # (default gradle.properties VERSION_NAME is 0.1.0-SNAPSHOT on main).
     target = host_cli_package_target(system)
     package_result = run_scenario(
         "cli-packaged",
         name=f"Release-shaped host CLI package (:cli:package{target})",
-        command=[gradle, f":cli:package{target}", "--console=plain"],
+        command=[
+            gradle,
+            f":cli:package{target}",
+            f"-PVERSION_NAME={args.version}",
+            "--console=plain",
+        ],
         cwd=ROOT,
         timeout=900,
         out_dir=out_dir,
@@ -458,6 +517,9 @@ def main(argv: list[str] | None = None) -> int:
                 *prefix,
                 gradle,
                 ":cli:test",
+                # Same VERSION_NAME as package so SpectreMcpStdioIntegrationTest
+                # expectedMcpVersion() matches packaged serverInfo.version.
+                f"-PVERSION_NAME={args.version}",
                 "--tests",
                 "*DaemonFixtureIntegrationTest.MCP stdio drives*",
                 "--tests",

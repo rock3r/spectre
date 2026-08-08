@@ -16,16 +16,24 @@ promotion, and undrafting.
 [docs/RELEASE-SMOKE.md](../../../docs/RELEASE-SMOKE.md):
 
 1. Diff since previous tag + capability matrix → baseline hard cells + **delta** hard cells.
-2. Run hard cells on macOS, headed Windows, and Linux as scoped.
-3. On Windows, prefer the one-liner (interactive logon session); see
-   [docs/RELEASE-SMOKE.md](../../../docs/RELEASE-SMOKE.md):
-   - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1` when PowerShell 7+ is installed
-   - `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1` on stock WinPS 5.1
-4. Produce a results table. **Hard red or empty hard cells → do not tag.**
-5. Soft cells (Experimental matrix, focus flakes, Hot Reload) may be notes only.
+2. Run the committed one-command harness on each OS (shared stable scenario IDs / `schemaVersion`
+   report under `build/smoke/`):
+   - **macOS / Linux:** `python3 scripts/release-smoke.py --version <X.Y.Z>`
+     → `build/smoke/release-smoke.json` + `.md`
+   - **Windows (interactive desktop for WGC):**
+     - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1` when PowerShell 7+ is installed
+     - `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1` on stock WinPS 5.1
+     → `build/smoke/windows-release-smoke.json` + `.md`
+   - Optional wiring check (not a GO): `--preflight-only` / `-PreflightOnly`
+3. Produce a results table from the reports. **Hard red or empty hard cells → do not tag.**
+4. Soft cells (Experimental matrix, focus flakes, Hot Reload) may be notes only.
+5. Manual residual only for TCC/notarization/seal, real Wayland portal, public Homebrew/Scoop/archive,
+   focus/lock keys, multi-monitor/HiDPI, stock IntelliJ — see RELEASE-SMOKE residual list.
 
 Every release needs its own scoped plan (new features + permanent CI gaps such as
-Windows agent inject). Do not skip smoke because `main` CI is green.
+Windows agent inject). Do not skip smoke because `main` CI is green. To add a reusable
+scenario ID, follow **Adding a scenario ID** in [docs/RELEASE-SMOKE.md](../../../docs/RELEASE-SMOKE.md)
+(`REQUIRED_SCENARIO_IDS` + both entrypoints + contract tests) — do not leave commands only in chat.
 
 ## Central Portal Check
 

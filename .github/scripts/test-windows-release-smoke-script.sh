@@ -81,6 +81,13 @@ grep -F -q 'windows-ssh' "$script" || fail "SSH displayMode honesty for WGC miss
 grep -F -q 'WGC requires native interactive console' "$script" || fail "WGC interactive-console N/A reason missing"
 grep -F -q 'displayMode' "$script" || fail "displayMode field missing from Windows harness"
 grep -F -q 'windows-release-smoke.json' "$script" || fail "Windows JSON report path missing"
+# Fail-closed matrix completeness + maven consumer + preflight-only (#398 harden)
+grep -F -q 'RequiredScenarioIds' "$script" || fail "Windows runner missing RequiredScenarioIds constant"
+grep -F -q 'missing required scenario id' "$script" || fail "Windows runner missing fail-closed required-ID validation"
+grep -F -q 'spectre-core-' "$script" || fail "Windows maven-local-consumer missing fresh jar resolve"
+grep -F -q 'PreflightOnly' "$script" || fail "Windows runner missing -PreflightOnly switch"
+grep -F -q 'preflight-only mode' "$script" || fail "Windows preflight-only N/A reason missing"
+grep -F -q -- '-PVERSION_NAME=' "$script" || fail "Windows CLI package must bake -Version into VERSION_NAME for MCP"
 
 # --- Optional: parse with pwsh when present (macOS/Linux CI agents may have it) ---
 # Note: this is PowerShell Core parse, not Desktop 5.1; ASCII byte check is the 5.1 stand-in.
