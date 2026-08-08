@@ -43,8 +43,11 @@ class McpStdioSmokeTest(unittest.TestCase):
             "for line in sys.stdin:\n"
             " r=json.loads(line); method=r.get('method')\n"
             " if method=='initialize': result={'protocolVersion':'2025-03-26','capabilities':{'tools':{}},'serverInfo':{'name':'spectre','version':version}}\n"
-            " elif method=='tools/list': result={'tools':[{'name':'list_processes'}]}\n"
-            " elif method=='tools/call': result={'content':[{'type':'text','text':'ok'}]}\n"
+            " elif method=='tools/list': result={'tools':[{'name':'list_processes'},{'name':'detach'}]}\n"
+            " elif method=='tools/call':\n"
+            "  name=(r.get('params') or {}).get('name')\n"
+            "  if name=='detach': result={'isError':True,'content':[{'type':'text','text':'session not found'}]}\n"
+            "  else: result={'content':[{'type':'text','text':'ok'}]}\n"
             " else: continue\n"
             " print(json.dumps({'jsonrpc':'2.0','id':r['id'],'result':result}), flush=True)\n"
         )
