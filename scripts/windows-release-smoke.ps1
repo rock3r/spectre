@@ -39,6 +39,9 @@ param(
     [switch] $SkipPackageCli,
     [switch] $SkipCheck,
     [switch] $SkipMavenLocal,
+    # Schema/preflight self-check only: remaining required IDs are hard n/a with reason.
+    # Not a release GO.
+    [switch] $PreflightOnly,
     [ValidateRange(1, 86400)][int] $AgentE2eTimeoutSeconds = 900,
     [ValidateRange(1, 86400)][int] $WgcTimeoutSeconds = 300,
     [ValidateRange(1, 86400)][int] $PackageCliTimeoutSeconds = 900,
@@ -47,6 +50,22 @@ param(
     [ValidateRange(1, 86400)][int] $MavenLocalTimeoutSeconds = 1200
 )
 
+# Must match scripts/smoke_lib.py REQUIRED_SCENARIO_IDS (fail-closed matrix completeness).
+$script:RequiredScenarioIds = @(
+    "preflight",
+    "check",
+    "junit-live",
+    "agent-attach-core",
+    "agent-contract-corpus",
+    "agent-inject",
+    "agent-launch-and-attach",
+    "cli-packaged",
+    "cli-native-helper-layout",
+    "cli-user-flow",
+    "mcp-sdk-flow",
+    "host-native-recording",
+    "maven-local-consumer"
+)
 $ErrorActionPreference = "Stop"
 # Avoid StrictMode edge cases with dynamic PSCustomObject / native interop on WinPS 5.1.
 Set-StrictMode -Version 1
@@ -475,7 +494,15 @@ try {
     }
     [void]$results.Add($pre)
 
-    if ($SkipCheck) {
+    if ($PreflightOnly) {
+        # Schema/orchestration self-check: every required ID present; none silently omitted.
+        foreach ($sid in $script:RequiredScenarioIds) {
+            if ($sid -eq "preflight") { continue }
+            [void]$results.Add((New-StepResult -Id $sid -Name ("{0} (not executed)" -f $sid) -Result "n/a" -Reason "preflight-only mode; scenario not executed"))
+        }
+        Write-Host "PREFLIGHT-ONLY: remaining scenarios recorded as hard n/a (not a full release smoke GO)" -ForegroundColor Yellow
+    }
+    elseif ($SkipCheck) {
         [void]$results.Add((New-StepResult -Id "check" -Name "./gradlew check" -Result "n/a" -Reason "skipped via -SkipCheck"))
     }
     else {
@@ -485,6 +512,7 @@ try {
         [void]$results.Add($step)
     }
 
+    if (-not $PreflightOnly) {
     # Live JUnit is Unix-primary in release-smoke.py; on Windows record explicit N/A unless expanded.
     [void]$results.Add((New-StepResult -Id "junit-live" -Name "Live JUnit failure artifacts/video and atomic capture" -Result "n/a" -Reason "Windows entrypoint prioritizes agent/WGC/CLI; run sample-desktop validationTest on macOS/Linux baseline"))
 
@@ -662,19 +690,32 @@ try {
     }
     else {
         $smokeVersion = ("{0}-rc.smoke" -f $Version)
-        $step = Invoke-Step -Id "maven-local-consumer" -Name "Maven Local publication + shape verify" -Action {
+        $step = Invoke-Step -Id "maven-local-consumer" -Name "Maven Local publication + fresh consumer" -Action {
             Invoke-Gradle -RepoRoot $repoRoot -TimeoutSeconds $MavenLocalTimeoutSeconds -LogName "maven-local" -GradleArgs @(
                 "verifyMavenLocalPublication",
                 ("-PVERSION_NAME={0}" -f $smokeVersion),
                 "-PstubMacHelperForTesting"
             )
+            # Fresh consumer: resolve published core jar from Maven Local (parity with Unix).
+            $jar = Join-Path $env:USERPROFILE (".m2\repository\dev\sebastiano\spectre\spectre-core\{0}\spectre-core-{0}.jar" -f $smokeVersion)
+            if (-not (Test-Path -LiteralPath $jar)) {
+                throw ("Maven Local core jar missing after publish: {0}" -f $jar)
+            }
+            $len = [int64](Get-Item -LiteralPath $jar).Length
+            if ($len -lt 1024) {
+                throw ("Maven Local core jar unexpectedly tiny ({0} bytes): {1}" -f $len, $jar)
+            }
+            Write-Host ("  maven local jar: {0} ({1} bytes)" -f $jar, $len) -ForegroundColor DarkGray
         }
         [void]$results.Add($step)
     }
 
+    } # end -not $PreflightOnly
+
     Write-Host ""
     Write-Host "==== Summary ====" -ForegroundColor White
     $failCount = 0
+    $seenIds = @{}
     foreach ($r in $results) {
         if ($null -eq $r) {
             Write-Host "FAIL   <null step result>" -ForegroundColor Red
@@ -682,6 +723,7 @@ try {
             continue
         }
         $id = [string]$r.id
+        if (-not [string]::IsNullOrWhiteSpace($id)) { $seenIds[$id] = $true }
         $result = [string]$r.result
         $secs = [int]$r.seconds
         $detail = [string]$r.detail
@@ -705,6 +747,16 @@ try {
         }
     }
 
+    # Fail-closed: every required stable ID must appear (no silent omit). Matches Unix validate_report.
+    $missingIds = @()
+    foreach ($req in $script:RequiredScenarioIds) {
+        if (-not $seenIds.ContainsKey($req)) {
+            $missingIds += $req
+            Write-Host ("FAIL   missing required scenario id: {0}" -f $req) -ForegroundColor Red
+            $failCount++
+        }
+    }
+
     $wall.Stop()
     $finishedAt = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
     $outDir = Join-Path $repoRoot "build\smoke"
@@ -715,8 +767,17 @@ try {
     Write-Host ("Logs:        {0}" -f $outDir)
 
     if ($failCount -gt 0) {
-        Write-Host ("FAILED ({0} hard step(s))" -f $failCount) -ForegroundColor Red
+        if ($missingIds.Count -gt 0) {
+            Write-Host ("FAILED (missing required scenario id(s): {0})" -f ($missingIds -join ", ")) -ForegroundColor Red
+        }
+        else {
+            Write-Host ("FAILED ({0} hard step(s))" -f $failCount) -ForegroundColor Red
+        }
         exit 1
+    }
+    if ($PreflightOnly) {
+        Write-Host "PREFLIGHT-ONLY OK (not a full release smoke GO)" -ForegroundColor Yellow
+        exit 0
     }
     Write-Host "ALL HARD SCENARIOS PASSED (or explicit N/A with reason)" -ForegroundColor Green
     exit 0

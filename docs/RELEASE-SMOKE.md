@@ -183,11 +183,14 @@ Optional flags:
 | `--overall-timeout SECS` | Wall-clock budget for the whole run (default 7200) |
 | `--skip-maven-local` | Skip Maven Local publish + consumer (hard `n/a` with reason) |
 | `--skip-recording` | Skip host native recording smoke (hard `n/a` with reason) |
+| `--preflight-only` | Run only preflight; remaining required IDs are hard `n/a` with reason `preflight-only mode; scenario not executed`. Validates report schema + matrix wiring without a multi-hour GO. **Not a release smoke GO.** |
 
 On Linux it supplies `xvfb-run -a` when `DISPLAY` is unset and records `environment.displayMode`
 as `xvfb-auto` or `real-display:$DISPLAY`. On Windows use the interactive PowerShell runner in the
 next section (shared stable scenario IDs and `schemaVersion` report shape).
 
+**Xvfb ≠ Wayland:** auto-Xvfb proves the X11 path only. Real portal consent/cancel requires a real
+Wayland session (manual cell below).
 ### Report artifacts
 
 Every run writes under `build/smoke/` (or `--out-dir`):
@@ -203,8 +206,44 @@ Report fields of note: `schemaVersion` (currently `1`), `version`, `base`, `sha`
 optional `reason` (required for hard `n/a`), timings, and log path.
 
 **Hard skips are fail-closed:** a hard scenario result of `n/a` without a non-empty `reason` is
-treated as `fail`. Soft cells may use `hard: false`.
+treated as `fail`. Soft cells may use `hard: false`. Missing a required scenario ID is also fail
+(Unix: `validate_report(..., required_ids=REQUIRED_SCENARIO_IDS)`; Windows: `RequiredScenarioIds`
+completeness check before exit).
 
+### schemaVersion bump policy
+
+`schemaVersion` lives in `scripts/smoke_lib.py` (`SCHEMA_VERSION`) and is mirrored as `1` in
+`scripts/windows-release-smoke.ps1`. **Bump only when report field names or semantics change
+incompatibly** (rename/remove a field, change meaning of an existing value). Additive optional
+fields and new scenario IDs do **not** require a bump — keep existing field names stable so older
+report consumers still parse. When you bump:
+
+1. Update `SCHEMA_VERSION` in `smoke_lib.py` and the Windows report writer.
+2. Extend `validate_report` / contract tests for the new shape.
+3. Note the bump in the release record so operators do not compare v1 and v2 rows as identical.
+
+### Adding a scenario ID (per-release delta or permanent baseline)
+
+Do **not** leave a one-release command only in chat. To add a reusable cell:
+
+1. Append a stable kebab-case ID to `REQUIRED_SCENARIO_IDS` in `scripts/smoke_lib.py` (or document
+   it as a **soft / delta-only** cell if it is not required on every cut — soft cells use
+   `hard: false` and need not be in `REQUIRED_SCENARIO_IDS`).
+2. Register the same ID on **both** entrypoints:
+   - Unix: `scripts/release-smoke.py` (`run_scenario` / `run_callable_scenario` / explicit
+     hard `n/a` with reason).
+   - Windows: `scripts/windows-release-smoke.ps1` (`RequiredScenarioIds` array + step that emits
+     the row; environment-impossible → hard `n/a` with reason, never silent omit).
+3. Extend contract tests:
+   - `.github/scripts/test-release-smoke-scripts.py` (`test_required_scenario_ids_are_stable`,
+     wiring asserts, any new fail-closed rule).
+   - `.github/scripts/test-windows-release-smoke-script.sh` (ID presence + any new policy needles).
+4. Document the cell in the stable scenario table above and in the automated-vs-manual matrix.
+5. Prefer forcing live UI with `gradle_ui_force_args()` / `--rerun-tasks --no-build-cache` when the
+   cell is UI-backed so cache-only cannot fake PASS.
+
+Per-release **delta** cells that will not stay permanent may live in
+`.plans/<version>-smoke.md` as manual recipes; promote them into the runner when they repeat.
 ### Stable scenario IDs
 
 Shared across macOS / Linux / Windows entrypoints (`scripts/smoke_lib.py` → `REQUIRED_SCENARIO_IDS`):
@@ -364,7 +403,7 @@ Flags:
 | `-SkipCli` | Skip package + `spectre launch` |
 | `-SkipPackageCli` | Reuse existing `spectre.exe` (still runs launch) |
 | `-SkipMavenLocal` | Skip Maven Local publication smoke |
-
+| `-PreflightOnly` | Preflight + full required-ID matrix as hard `n/a` with reason (schema self-check). **Not a release GO.** |
 This is **manual, operator-driven** automation — not hosted CI. Use it so release smoke is
 not multi-terminal faff. Prefer the logged-in interactive console for any WGC cell.
 

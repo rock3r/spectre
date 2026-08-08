@@ -220,6 +220,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Skip host native recording smoke (records hard n/a with reason)",
     )
+    parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help=(
+            "Run only preflight and emit a full required-ID report with remaining "
+            "scenarios as hard n/a (reason: preflight-only). Not a release GO."
+        ),
+    )
     args = parser.parse_args(argv)
 
     system = platform.system()
@@ -258,10 +266,54 @@ def main(argv: list[str] | None = None) -> int:
     results.append(preflight_result)
     _print_result(preflight_result)
 
+    if args.preflight_only:
+        # Schema/orchestration self-check: every required ID present, none silently omitted.
+        # Remaining cells are explicit hard n/a so validate_report(required_ids=...) holds.
+        for sid in REQUIRED_SCENARIO_IDS:
+            if sid == "preflight":
+                continue
+            results.append(
+                scenario_result(
+                    sid,
+                    name=f"{sid} (not executed)",
+                    result="n/a",
+                    reason="preflight-only mode; scenario not executed",
+                    hard=True,
+                )
+            )
+            _print_result(results[-1])
+        finished_at = utc_now_iso()
+        overall_seconds = int(time.monotonic() - wall_start)
+        report = build_report(
+            preflight,
+            results,
+            started_at=started_at,
+            finished_at=finished_at,
+            overall_seconds=overall_seconds,
+        )
+        schema_errors = validate_report(report, required_ids=list(REQUIRED_SCENARIO_IDS))
+        json_path = out_dir / "release-smoke.json"
+        md_path = out_dir / "release-smoke.md"
+        write_json_report(json_path, report)
+        write_markdown_report(md_path, report)
+        print(f"Report JSON: {json_path}")
+        print(f"Report MD:   {md_path}")
+        print(f"displayMode: {preflight.environment.display_mode}")
+        print(f"SHA: {preflight.sha}  dirty={preflight.dirty}")
+        if schema_errors:
+            print("REPORT SCHEMA ERRORS:", file=sys.stderr)
+            for err in schema_errors:
+                print(f"  - {err}", file=sys.stderr)
+            return 2
+        if preflight_result.result == RESULT_FAIL:
+            print("PREFLIGHT-ONLY FAILED")
+            return 1
+        print("PREFLIGHT-ONLY OK (not a full release smoke GO)")
+        return 0
+
     gradle = str(ROOT / "gradlew")
     prefix = xvfb_prefix(system)
     force = gradle_ui_force_args()
-
     def add(item: ScenarioResult) -> None:
         results.append(item)
         _print_result(item)
