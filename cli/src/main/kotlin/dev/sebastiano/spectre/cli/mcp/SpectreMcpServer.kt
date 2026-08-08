@@ -91,10 +91,11 @@ public object SpectreMcpServer {
             description =
                 "Detach a Spectre daemon session by session_id and return leftover capture cleanup " +
                     "summary (count, bytes, paths, prune command, skill hint). Fails closed when " +
-                    "the session is unknown or already detached.",
+                    "the session is unknown or already detached. Does not delete capture files; " +
+                    "prune stays explicit via pruneCommand when leftovers exist.",
             inputSchema = sessionSchema(),
         ) { call ->
-            request(DaemonRequest.Detach(call.requiredString("session_id"))).asResult {
+            request(DaemonRequest.Detach(call.requiredSessionId())).asResult {
                 it is DaemonResponse.Detached
             }
         }
@@ -570,10 +571,29 @@ public object SpectreMcpServer {
     private fun sessionSchema(): ToolSchema = schema("session_id" to "string")
 
     private fun CallToolRequest.callString(name: String): String =
-        arguments?.get(name)?.jsonPrimitive?.content
+        arguments?.get(name)?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
             ?: throw IllegalArgumentException("MCP tool requires a non-empty '$name' argument")
 
     private fun CallToolRequest.requiredString(name: String): String = callString(name)
+
+    /**
+     * session_id for detach (and similar fail-closed tools): must be a JSON string token that is
+     * non-blank. Numbers/booleans/objects must not stringify into a fabricated daemon lookup.
+     */
+    private fun CallToolRequest.requiredSessionId(): String {
+        val element =
+            arguments?.get("session_id")
+                ?: throw IllegalArgumentException(
+                    "MCP tool requires a non-empty 'session_id' argument"
+                )
+        val primitive =
+            element as? kotlinx.serialization.json.JsonPrimitive
+                ?: throw IllegalArgumentException("MCP tool argument 'session_id' must be a string")
+        require(primitive.isString) { "MCP tool argument 'session_id' must be a string" }
+        val content = primitive.content
+        require(content.isNotBlank()) { "MCP tool requires a non-empty 'session_id' argument" }
+        return content
+    }
 
     private fun CallToolRequest.optionalString(name: String): String? {
         val element = arguments?.get(name) ?: return null

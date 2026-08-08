@@ -214,6 +214,95 @@ class SpectreMcpServerTest {
     }
 
     @Test
+    fun `detach tool fails closed for empty session_id without reaching daemon`() = runBlocking {
+        var daemonReached = false
+        val server = SpectreMcpServer.create {
+            daemonReached = true
+            error("detach must not reach daemon with empty session_id")
+        }
+
+        val result = invokeTool(server, "detach", buildJsonObject { put("session_id", "") })
+
+        assertTrue(result.isError == true, "empty session_id must fail closed: $result")
+        assertTrue(!daemonReached, "empty session_id must fail at the tool boundary: $result")
+        val message = (result.content.single() as TextContent).text
+        assertTrue(
+            message.contains("session_id", ignoreCase = true),
+            "error should mention session_id, was: $message",
+        )
+    }
+
+    @Test
+    fun `detach tool fails closed for whitespace-only session_id without reaching daemon`() =
+        runBlocking {
+            var daemonReached = false
+            val server = SpectreMcpServer.create {
+                daemonReached = true
+                error("detach must not reach daemon with blank session_id")
+            }
+
+            val result =
+                invokeTool(server, "detach", buildJsonObject { put("session_id", "   \t") })
+
+            assertTrue(result.isError == true, "blank session_id must fail closed: $result")
+            assertTrue(!daemonReached, "blank session_id must fail at the tool boundary: $result")
+            val message = (result.content.single() as TextContent).text
+            assertTrue(
+                message.contains("session_id", ignoreCase = true),
+                "error should mention session_id, was: $message",
+            )
+        }
+
+    @Test
+    fun `detach tool fails closed for non-string session_id without reaching daemon`() =
+        runBlocking {
+            var daemonReached = false
+            val server = SpectreMcpServer.create {
+                daemonReached = true
+                error("detach must not reach daemon with non-string session_id")
+            }
+
+            val result = invokeTool(server, "detach", buildJsonObject { put("session_id", 42) })
+
+            assertTrue(result.isError == true, "numeric session_id must fail closed: $result")
+            assertTrue(
+                !daemonReached,
+                "non-string session_id must fail at the tool boundary: $result",
+            )
+            val message = (result.content.single() as TextContent).text
+            assertTrue(
+                message.contains("session_id", ignoreCase = true),
+                "error should mention session_id, was: $message",
+            )
+        }
+
+    @Test
+    fun `detach tool fails closed for object session_id without reaching daemon`() = runBlocking {
+        var daemonReached = false
+        val server = SpectreMcpServer.create {
+            daemonReached = true
+            error("detach must not reach daemon with object session_id")
+        }
+
+        val result =
+            invokeTool(
+                server,
+                "detach",
+                buildJsonObject { put("session_id", buildJsonObject { put("nested", "value") }) },
+            )
+
+        assertTrue(result.isError == true, "object session_id must fail closed: $result")
+        assertTrue(!daemonReached, "object session_id must fail at the tool boundary: $result")
+        val message = (result.content.single() as TextContent).text
+        assertTrue(
+            message.contains("session_id", ignoreCase = true) ||
+                message.contains("string", ignoreCase = true) ||
+                message.contains("Error executing tool", ignoreCase = true),
+            "error should identify bad session_id input, was: $message",
+        )
+    }
+
+    @Test
     fun `screenshot tool returns daemon PNG bytes as inline MCP image content`() {
         val result =
             DaemonResponse.Screenshot("session-42", byteArrayOf(1, 2, 3)).screenshotResult()

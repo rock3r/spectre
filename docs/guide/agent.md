@@ -535,11 +535,15 @@ Restart Claude Code after changing the configuration. It can then use these tool
    before further input.
 6. **`detach`** with the retained `sessionId` when finished — releases that session and returns
    leftover capture cleanup summary (count/bytes/paths + prune command when any exist). Unknown
-   or already-detached sessions fail closed (`isError`). Prefer `detach` over
-   `spectre daemon kill` (which drops **every** session).
+   or already-detached sessions fail closed (`isError`). Detach does **not** delete capture files;
+   run the summary’s `pruneCommand` when you want cleanup. Prefer `detach` over
+   `spectre daemon kill` (which drops **every** session). The shared daemon stays up after a
+   successful detach so you can `list_processes` / `attach` again.
 
 Full MCP tool names, input/output schemas, filesystem implications, and capture-mode
-distinctions: [CLI — MCP](cli.md#mcp).
+distinctions: [CLI — MCP](cli.md#mcp). MCP detach success JSON is the daemon `Detached` shape
+(`sessionId`, not CLI `--json` `id`) — see
+[Detach success body (MCP vs CLI)](cli.md#detach-success-body-mcp-vs-cli).
 
 Node keys are short-lived: get a fresh key with `tree` or `find` after an interaction changes the
 UI. On reload-aware sessions, keys are also invalidated after a successful hot reload settle —
