@@ -517,6 +517,9 @@ def main(argv: list[str] | None = None) -> int:
                 *prefix,
                 gradle,
                 ":cli:test",
+                # Same VERSION_NAME as package so SpectreMcpStdioIntegrationTest
+                # expectedMcpVersion() matches packaged serverInfo.version.
+                f"-PVERSION_NAME={args.version}",
                 "--tests",
                 "*DaemonFixtureIntegrationTest.MCP stdio drives*",
                 "--tests",

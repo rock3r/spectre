@@ -650,6 +650,9 @@ try {
                 # assumption-skip cannot UP-TO-DATE into a false hard pass.
                 Invoke-Gradle -RepoRoot $repoRoot -TimeoutSeconds $AgentE2eTimeoutSeconds -LogName "mcp-sdk-e2e" -GradleArgs @(
                     ":cli:test",
+                    # Same VERSION_NAME as package so SpectreMcpStdioIntegrationTest
+                    # expectedMcpVersion() matches packaged serverInfo.version.
+                    ("-PVERSION_NAME={0}" -f $Version),
                     "-Pspectre.agent.attachE2e.allowWindows=true",
                     "--tests", "*DaemonFixtureIntegrationTest.MCP stdio drives*",
                     "--tests", "*SpectreMcpStdioIntegrationTest*",
