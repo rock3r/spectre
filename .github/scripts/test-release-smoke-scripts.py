@@ -32,21 +32,50 @@ smoke_lib = load_smoke_lib()
 
 
 class McpStdioSmokeTest(unittest.TestCase):
-    def fake_server(self, *, banner: bool = False, version: str = "0.5.0") -> Path:
+    def fake_server(
+        self,
+        *,
+        banner: bool = False,
+        version: str = "0.5.0",
+        tools: list[str] | None = None,
+        lifecycle: bool = False,
+    ) -> Path:
         directory = Path(tempfile.mkdtemp())
         script = directory / "fake.py"
+        # Minimal tool surface for hard-pass without --attach-pid: list + detach + attach + tree.
+        default_tools = ["list_processes", "detach", "attach", "tree"]
+        tool_names = tools if tools is not None else default_tools
+        tools_json = json.dumps([{"name": n} for n in tool_names])
+        # When lifecycle=True, attach returns a session; tree succeeds once; detach ok then gone.
         script.write_text(
             "#!/usr/bin/env python3\n"
             "import json, sys\n"
             f"banner={banner!r}; version={version!r}\n"
+            f"tools={tools_json}\n"
+            f"lifecycle={lifecycle!r}\n"
+            "session=None\n"
+            "detached=False\n"
             "if banner: print('not-json', flush=True)\n"
             "for line in sys.stdin:\n"
             " r=json.loads(line); method=r.get('method')\n"
             " if method=='initialize': result={'protocolVersion':'2025-03-26','capabilities':{'tools':{}},'serverInfo':{'name':'spectre','version':version}}\n"
-            " elif method=='tools/list': result={'tools':[{'name':'list_processes'},{'name':'detach'}]}\n"
+            " elif method=='tools/list': result={'tools':tools}\n"
             " elif method=='tools/call':\n"
             "  name=(r.get('params') or {}).get('name')\n"
-            "  if name=='detach': result={'isError':True,'content':[{'type':'text','text':'session not found'}]}\n"
+            "  args=(r.get('params') or {}).get('arguments') or {}\n"
+            "  if name=='list_processes': result={'content':[{'type':'text','text':'[]'}]}\n"
+            "  elif name=='attach' and lifecycle:\n"
+            "   session='sess-1'; detached=False\n"
+            "   result={'content':[{'type':'text','text':json.dumps({'sessionId':session})}]}\n"
+            "  elif name=='tree' and lifecycle:\n"
+            "   if session and not detached: result={'content':[{'type':'text','text':'tree-ok'}]}\n"
+            "   else: result={'isError':True,'content':[{'type':'text','text':'session not found'}]}\n"
+            "  elif name=='detach':\n"
+            "   sid=args.get('session_id')\n"
+            "   if lifecycle and sid==session and not detached:\n"
+            "    detached=True\n"
+            "    result={'content':[{'type':'text','text':json.dumps({'sessionId':sid,'captureCount':0,'captureBytes':0,'capturePaths':[]})}]}\n"
+            "   else: result={'isError':True,'content':[{'type':'text','text':'session not found'}]}\n"
             "  else: result={'content':[{'type':'text','text':'ok'}]}\n"
             " else: continue\n"
             " print(json.dumps({'jsonrpc':'2.0','id':r['id'],'result':result}), flush=True)\n"
@@ -54,7 +83,7 @@ class McpStdioSmokeTest(unittest.TestCase):
         script.chmod(0o755)
         return script
 
-    def run_smoke(self, server: Path):
+    def run_smoke(self, server: Path, *extra_args: str):
         # Launch the fake server via the same interpreter: Windows cannot exec a
         # shebang-only .py (WinError 193). Production smoke still passes a real
         # packaged spectre binary as the command.
@@ -64,6 +93,7 @@ class McpStdioSmokeTest(unittest.TestCase):
                 str(MCP_SMOKE),
                 "--expected-version",
                 "0.5.0",
+                *extra_args,
                 "--",
                 sys.executable,
                 str(server),
@@ -76,6 +106,8 @@ class McpStdioSmokeTest(unittest.TestCase):
     def test_clean_server_passes(self):
         result = self.run_smoke(self.fake_server())
         self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("MCP SMOKE PASS", result.stdout)
+        self.assertIn("tools+unknown-detach", result.stdout)
 
     def test_stdout_pollution_fails(self):
         result = self.run_smoke(self.fake_server(banner=True))
@@ -86,6 +118,45 @@ class McpStdioSmokeTest(unittest.TestCase):
         result = self.run_smoke(self.fake_server(version="0.1.0"))
         self.assertNotEqual(0, result.returncode)
         self.assertIn("server version", result.stderr)
+
+    def test_missing_detach_fails(self):
+        result = self.run_smoke(
+            self.fake_server(tools=["list_processes", "attach", "tree"])
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("detach", result.stderr)
+
+    def test_unknown_detach_must_be_is_error(self):
+        directory = Path(tempfile.mkdtemp())
+        script = directory / "silent-detach.py"
+        # detach of unknown session silently succeeds — must fail closed.
+        script.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, sys\n"
+            "for line in sys.stdin:\n"
+            " r=json.loads(line); method=r.get('method')\n"
+            " if method=='initialize': result={'protocolVersion':'2025-03-26','capabilities':{'tools':{}},'serverInfo':{'name':'spectre','version':'0.5.0'}}\n"
+            " elif method=='tools/list': result={'tools':[{'name':'list_processes'},{'name':'detach'},{'name':'attach'},{'name':'tree'}]}\n"
+            " elif method=='tools/call':\n"
+            "  result={'content':[{'type':'text','text':'ok'}]}\n"
+            " else: continue\n"
+            " print(json.dumps({'jsonrpc':'2.0','id':r['id'],'result':result}), flush=True)\n"
+        )
+        script.chmod(0o755)
+        result = self.run_smoke(script)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("isError", result.stderr)
+
+    def test_attach_pid_lifecycle_passes(self):
+        result = self.run_smoke(
+            self.fake_server(lifecycle=True),
+            "--attach-pid",
+            "12345",
+            "--daemon-user",
+            "mcp-smoke-test-user",
+        )
+        self.assertEqual(0, result.returncode, result.stderr + result.stdout)
+        self.assertIn("attach/tree/detach/session-gone", result.stdout)
 
 
 class SmokeLibSchemaTest(unittest.TestCase):
@@ -287,6 +358,40 @@ class SmokeLibSchemaTest(unittest.TestCase):
         self.assertIn("runLinuxX11RecordingSmoke", text)
         self.assertIn("verifyMavenLocalPublication", text)
         self.assertIn("LaunchAndAttachIntegration", text)
+        # #414: hard pass requires fixture e2e lifecycle gate, not tools/list alone.
+        self.assertIn("assert_mcp_fixture_e2e_executed", text)
+        self.assertIn("attach/op/detach", text)
+
+    def test_assert_mcp_fixture_e2e_executed_rejects_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            results = root / "cli" / "build" / "test-results" / "test"
+            results.mkdir(parents=True)
+            (results / "TEST-mcp.xml").write_text(
+                '<?xml version="1.0"?>\n'
+                '<testsuite name="DaemonFixture" tests="1" failures="0" errors="0" skipped="1">\n'
+                '  <testcase name="MCP stdio drives a Compose fixture" classname="x">'
+                "<skipped/></testcase>\n"
+                "</testsuite>\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(RuntimeError) as ctx:
+                smoke_lib.assert_mcp_fixture_e2e_executed(root)
+            self.assertIn("skipped", str(ctx.exception).lower())
+
+    def test_assert_mcp_fixture_e2e_executed_accepts_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            results = root / "cli" / "build" / "test-results" / "test"
+            results.mkdir(parents=True)
+            (results / "TEST-mcp.xml").write_text(
+                '<?xml version="1.0"?>\n'
+                '<testsuite name="DaemonFixture" tests="1" failures="0" errors="0" skipped="0">\n'
+                '  <testcase name="MCP stdio drives a Compose fixture" classname="x" time="1.0"/>\n'
+                "</testsuite>\n",
+                encoding="utf-8",
+            )
+            smoke_lib.assert_mcp_fixture_e2e_executed(root)
 
 
 class ReleaseSmokeHelpTest(unittest.TestCase):
