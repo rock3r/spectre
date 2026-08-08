@@ -288,9 +288,13 @@ release SHA.
   sufficient alone for a GO claim on all three OSes.
 - Windows MCP packaged e2e remains hard `n/a` with reason until
   `DaemonFixtureIntegrationTest` is EnabledOnOs Windows (or a dedicated Windows MCP cell lands).
-- Issues **#399** (MCP per-session detach) and **#386** (Windows `launch --once` + Gradle
-  `JVM_ATTACHABLE`) are **not** required inside this harness; soft-document only if a scenario
-  already surfaces them.
+- Issue **#399** (MCP per-session detach) is **not** required inside this harness; soft-document
+  only if a scenario already surfaces it.
+- **#386** (Windows packaged `launch --once` + Gradle `JVM_ATTACHABLE`): product default for
+  Gradle-ish launches expands JVM_ATTACHABLE to 120s (matching agent e2e). The Windows one-liner
+  `cli-user-flow` may still use Gradle with `--app-name ComposeFixtureMain`; prefer a healthy
+  UP-TO-DATE fixture build so cold daemon start alone fits the budget. Prod-like launch remains
+  the troubleshooting recommendation when Gradle is slow or flaky.
 
 ## Windows one-liner script
 

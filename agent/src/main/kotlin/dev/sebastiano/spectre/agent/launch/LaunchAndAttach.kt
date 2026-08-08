@@ -128,13 +128,21 @@ public object LaunchAndAttach {
         spec: LaunchSpec,
     ): LaunchedSession {
         val launchedPid = process.pid()
+        // Gradle-ish: expand default JVM_ATTACHABLE budget (15s → 120s) so cold daemon + compile
+        // can finish before the app JVM is listed. Explicit timeouts (tests, callers) stay as-is.
+        val stageTimeouts =
+            if (prepared.gradleish) {
+                spec.stageTimeouts.forGradleishLaunch()
+            } else {
+                spec.stageTimeouts
+            }
         var attachedPid: Long? = null
         var automator: AttachedAutomator? = null
         var ready = false
         try {
             LaunchReadiness.awaitProcessAlive(
                 process,
-                spec.stageTimeouts.processAliveMs,
+                stageTimeouts.processAliveMs,
                 prepared.stdoutPath,
                 prepared.stderrPath,
             )
@@ -144,7 +152,7 @@ public object LaunchAndAttach {
                     launchedPid = launchedPid,
                     gradleish = prepared.gradleish,
                     nameFilter = spec.appJvmNameFilter,
-                    timeoutMs = spec.stageTimeouts.jvmAttachableMs,
+                    timeoutMs = stageTimeouts.jvmAttachableMs,
                     stdoutPath = prepared.stdoutPath,
                     stderrPath = prepared.stderrPath,
                 )
@@ -154,14 +162,14 @@ public object LaunchAndAttach {
                     attachedPid = attachedPid,
                     gradleish = prepared.gradleish,
                     attachOptions = spec.attachOptions,
-                    bootstrapTimeoutMs = spec.stageTimeouts.agentBootstrapMs,
+                    bootstrapTimeoutMs = stageTimeouts.agentBootstrapMs,
                     stdoutPath = prepared.stdoutPath,
                     stderrPath = prepared.stderrPath,
                 )
             LaunchReadiness.awaitFirstWindow(
                 automator = automator,
                 attachedPid = attachedPid,
-                timeoutMs = spec.stageTimeouts.firstWindowMs,
+                timeoutMs = stageTimeouts.firstWindowMs,
                 stdoutPath = prepared.stdoutPath,
                 stderrPath = prepared.stderrPath,
             )

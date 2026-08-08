@@ -106,7 +106,12 @@ internal object LaunchReadiness {
                             "daemon children)"
                     } else {
                         ""
-                    }),
+                    }) +
+                    // Cold daemon / compile often exceeds a tight budget while the client stays
+                    // alive — prefer prod-like launch when you control the build (#386).
+                    " Prefer a prod-like launch (java -jar / installDist) over ./gradlew when " +
+                    "possible; for Gradle, ensure the app has started (cold daemon + compile " +
+                    "can take >15s) and that --app-name matches the main class.",
         )
     }
 
