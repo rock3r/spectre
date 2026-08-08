@@ -38,14 +38,16 @@ internal constructor(
     private var shutdown: Boolean = false
 
     /**
-     * Dispatches a daemon request. Long waits (#201) run **outside** the registry monitor so a
-     * multi-second `waitForNode` does not freeze attach/ps for other clients.
+     * Dispatches a daemon request. Long waits (#201) and detach teardown (#413) run **outside** the
+     * registry monitor so a multi-second `waitForNode` / wait-drain does not freeze attach/ps (or
+     * sibling-session ops) for other clients.
      */
     public fun handle(request: DaemonRequest): DaemonResponse =
         when (request) {
             is DaemonRequest.WaitForNode,
             is DaemonRequest.WaitForVisualIdle,
             is DaemonRequest.WaitForReloadSettled -> handleWaitOutsideLock(request)
+            is DaemonRequest.Detach -> handleDetachOutsideLock(request.sessionId)
             else -> handleSynchronized(request)
         }
 
@@ -55,7 +57,7 @@ internal constructor(
             is DaemonRequest.Hello ->
                 DaemonResponse.Hello(daemonVersion = DaemonProtocol.CurrentVersion)
             is DaemonRequest.Attach -> attach(request.targetPid)
-            is DaemonRequest.Detach -> detach(request.sessionId)
+            is DaemonRequest.Detach -> error("detach must use handleDetachOutsideLock")
             DaemonRequest.ListSessions ->
                 DaemonResponse.Sessions(
                     sessions = sessionsByPid.values.map { it.summary }.sortedBy { it.targetPid }
@@ -312,21 +314,37 @@ internal constructor(
         )
     }
 
-    private fun detach(sessionId: String): DaemonResponse {
-        val removed =
-            sessionsByPid.entries.firstOrNull { (_, session) -> session.sessionId == sessionId }
-                ?: return DaemonResponse.Error(
-                    code = DaemonErrorCode.SessionNotFound,
-                    message = "session not found: $sessionId",
-                )
-        val remainingLive = sessionsByPid.values.map { it.sessionId }.toSet() - sessionId
-        val session = sessionsByPid.remove(removed.key)
-        // Let in-flight waits finish before tearing down the automator (see handleWaitOutsideLock).
-        session?.awaitIdleWaits()
-        // Finalize recording while other sessions are still known live (#185 review).
-        session?.automator?.finalizeRecording(remainingLive)
-        session?.hotReloadSession?.close()
-        session?.automator?.close()
+    /**
+     * Per-session detach (#399 / #413): remove the session under the monitor so sibling sessions
+     * stay operable, then tear down outside the lock so concurrent waits fail closed without
+     * freezing attach/ps for other clients.
+     *
+     * Order: drop from table → finalize recording → close automator (aborts in-flight waits) →
+     * drain wait counters. Preferred agent ordering is still stop recording → finish waits →
+     * detach; concurrent ops during detach fail closed.
+     */
+    private fun handleDetachOutsideLock(sessionId: String): DaemonResponse {
+        val (session, remainingLive) =
+            synchronized(this) {
+                if (shutdown) {
+                    return DaemonResponse.Error(
+                        code = DaemonErrorCode.ShutdownInProgress,
+                        message = "daemon is shutting down",
+                    )
+                }
+                val removed =
+                    sessionsByPid.entries.firstOrNull { (_, candidate) ->
+                        candidate.sessionId == sessionId
+                    } ?: return sessionNotFound(sessionId)
+                val live = sessionsByPid.values.map { it.sessionId }.toSet() - sessionId
+                checkNotNull(sessionsByPid.remove(removed.key)) to live
+            }
+        // Finalize while other sessions remain known live (#185); then close so in-flight waits
+        // observe a closed automator and fail closed instead of hanging on the full wait budget.
+        session.automator.finalizeRecording(remainingLive)
+        session.hotReloadSession?.close()
+        session.automator.close()
+        session.awaitIdleWaits()
         return CaptureSessionReport.forDetach(sessionId)
     }
 
@@ -476,16 +494,20 @@ internal constructor(
         return DaemonResponse.ShuttingDown
     }
 
-    @Synchronized
     override fun close() {
-        shutdown = true
-        val snapshot = sessionsByPid.values.toList()
-        sessionsByPid.clear()
-        // Outside the monitor after clear so wait finally-blocks can finish.
+        val snapshot =
+            synchronized(this) {
+                shutdown = true
+                val sessions = sessionsByPid.values.toList()
+                sessionsByPid.clear()
+                sessions
+            }
+        // Outside the monitor after clear so wait finally-blocks and sibling work can finish.
         snapshot.forEach { session ->
-            session.awaitIdleWaits()
+            runCatching { session.automator.finalizeRecording(emptySet()) }
             session.hotReloadSession?.close()
             session.automator.close()
+            session.awaitIdleWaits()
         }
     }
 }

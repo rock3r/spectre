@@ -4,6 +4,8 @@ import dev.sebastiano.spectre.agent.AtomicCaptureResult
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
+import java.io.IOException
+import java.util.concurrent.atomic.AtomicInteger
 
 @OptIn(ExperimentalSpectreAgentApi::class)
 internal class TestDaemonSessionAutomator(
@@ -38,13 +40,33 @@ internal class TestDaemonSessionAutomator(
         error("no recording is in progress")
     },
     private val recordingStatusResult: () -> RecordingStatus = { RecordingStatus(active = false) },
+    private val waitForNodeResult:
+        (tag: String?, text: String?, timeoutMs: Long, pollIntervalMs: Long) -> NodeSnapshotDto =
+        { _, _, _, _ ->
+            error("waitForNode not stubbed")
+        },
+    private val finalizeRecordingAction: (Set<String>) -> Unit = {},
     private val closeAction: () -> Unit = {},
 ) : DaemonSessionAutomator {
-    override fun windows(): List<WindowSummaryDto> = windowsResult()
+    val closeCount: AtomicInteger = AtomicInteger(0)
+    val finalizeCount: AtomicInteger = AtomicInteger(0)
 
-    override fun allNodes(): List<NodeSnapshotDto> = nodesResult()
+    @Volatile private var closed: Boolean = false
 
-    override fun findByTestTag(tag: String): List<NodeSnapshotDto> = findByTestTagResult(tag)
+    override fun windows(): List<WindowSummaryDto> {
+        ensureOpen("windows")
+        return windowsResult()
+    }
+
+    override fun allNodes(): List<NodeSnapshotDto> {
+        ensureOpen("allNodes")
+        return nodesResult()
+    }
+
+    override fun findByTestTag(tag: String): List<NodeSnapshotDto> {
+        ensureOpen("findByTestTag")
+        return findByTestTagResult(tag)
+    }
 
     override fun findByText(text: String, exact: Boolean): List<NodeSnapshotDto> = emptyList()
 
@@ -57,12 +79,18 @@ internal class TestDaemonSessionAutomator(
         text: String?,
         timeoutMs: Long,
         pollIntervalMs: Long,
-    ): NodeSnapshotDto = error("waitForNode not stubbed")
+    ): NodeSnapshotDto {
+        ensureOpen("waitForNode")
+        return waitForNodeResult(tag, text, timeoutMs, pollIntervalMs)
+    }
 
     override fun waitForVisualIdle(timeoutMs: Long, stableFrames: Int, pollIntervalMs: Long): Unit =
         Unit
 
-    override fun click(nodeKey: String): Unit = clickAction(nodeKey)
+    override fun click(nodeKey: String) {
+        ensureOpen("click")
+        clickAction(nodeKey)
+    }
 
     override fun doubleClick(nodeKey: String): Unit = Unit
 
@@ -85,8 +113,10 @@ internal class TestDaemonSessionAutomator(
 
     override fun typeText(text: String): Unit = typeTextAction(text)
 
-    override fun screenshot(windowIndex: Int?, surfaceId: String?, fullscreen: Boolean): ByteArray =
-        screenshotResult(windowIndex, surfaceId, fullscreen)
+    override fun screenshot(windowIndex: Int?, surfaceId: String?, fullscreen: Boolean): ByteArray {
+        ensureOpen("screenshot")
+        return screenshotResult(windowIndex, surfaceId, fullscreen)
+    }
 
     override fun capture(windowIndex: Int): AtomicCaptureResult = captureResult(windowIndex)
 
@@ -101,7 +131,18 @@ internal class TestDaemonSessionAutomator(
 
     override fun recordingStatus(): RecordingStatus = recordingStatusResult()
 
-    override fun finalizeRecording(remainingLiveSessionIds: Set<String>): Unit = Unit
+    override fun finalizeRecording(remainingLiveSessionIds: Set<String>) {
+        finalizeCount.incrementAndGet()
+        finalizeRecordingAction(remainingLiveSessionIds)
+    }
 
-    override fun close(): Unit = closeAction()
+    override fun close() {
+        closed = true
+        closeCount.incrementAndGet()
+        closeAction()
+    }
+
+    private fun ensureOpen(op: String) {
+        if (closed) throw IOException("session automator closed during $op")
+    }
 }

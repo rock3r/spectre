@@ -25,14 +25,16 @@ import java.security.MessageDigest
 import java.util.EnumSet
 import java.util.HexFormat
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Long-lived local daemon endpoint for the CLI/MCP protocol.
  *
- * The server accepts one request/response connection at a time. Automation sessions are inherently
- * serial, and the registry supplies deterministic lifecycle semantics for every connection.
+ * Each accepted client is handled on its own worker thread so a long wait on one connection does
+ * not block detach / attach / ps from another client (#201 / #413). Session lifecycle remains
+ * deterministic in [DaemonSessionRegistry].
  */
 public class DaemonServer
 @Throws(IOException::class)
@@ -45,9 +47,12 @@ public constructor(
     }
     private val running: AtomicBoolean = AtomicBoolean(true)
     private val closed: AtomicBoolean = AtomicBoolean(false)
+    /** Signaled when [close] finishes socket/parent teardown (accept may exit earlier). */
+    private val closeFinished: CountDownLatch = CountDownLatch(1)
     private val activityLock: Any = Any()
     private var lastActivityNanos: Long = System.nanoTime()
-    private val activeClient: AtomicReference<SocketChannel?> = AtomicReference(null)
+    /** Live client channels; connection close does not detach registry sessions (#413). */
+    private val activeClients: MutableSet<SocketChannel> = ConcurrentHashMap.newKeySet()
     private val socketProtection: DaemonSocketProtection =
         DaemonSocketProtection.forPath(socketPath)
     private val createdParents: List<Path> = socketProtection.createMissingParents(socketPath)
@@ -89,13 +94,23 @@ public constructor(
     public val listeningAt: Path
         get() = socketPath
 
-    /** Waits for the accept thread to exit, returning false only when [timeoutMillis] elapses. */
+    /**
+     * Waits for the accept thread to exit and for [close] teardown to finish (socket unlink +
+     * parent removal), returning false only when [timeoutMillis] elapses.
+     */
     @Throws(InterruptedException::class)
     public fun awaitTermination(timeoutMillis: Long = DEFAULT_TERMINATION_TIMEOUT_MILLIS): Boolean {
         require(timeoutMillis >= 0) { "timeoutMillis must be non-negative" }
-        if (timeoutMillis == 0L) return !acceptThread.isAlive
+        if (timeoutMillis == 0L) {
+            return !acceptThread.isAlive && (!closed.get() || closeFinished.count == 0L)
+        }
+        val deadlineNs = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
         acceptThread.join(timeoutMillis)
-        return !acceptThread.isAlive
+        if (acceptThread.isAlive) return false
+        if (!closed.get()) return true
+        val remainingMs =
+            TimeUnit.NANOSECONDS.toMillis((deadlineNs - System.nanoTime()).coerceAtLeast(0))
+        return closeFinished.await(remainingMs, TimeUnit.MILLISECONDS)
     }
 
     /** Milliseconds elapsed since the most recently received daemon request. */
@@ -106,7 +121,7 @@ public constructor(
         require(timeoutMillis > 0) { "timeoutMillis must be positive" }
         synchronized(activityLock) {
             if (
-                activeClient.get() != null ||
+                activeClients.isNotEmpty() ||
                     registry.hasSessions ||
                     idleMillisLocked() < timeoutMillis
             ) {
@@ -136,24 +151,34 @@ public constructor(
                     if (!running.get()) {
                         false
                     } else {
-                        activeClient.set(client)
+                        activeClients.add(client)
                         true
                     }
                 }
             if (!accepted) {
-                client.close()
+                runCatching { client.close() }
                 return
             }
-            @Suppress("TooGenericExceptionCaught")
-            try {
-                handleConnection(client)
-            } catch (exception: Exception) {
-                if (running.get()) logConnectionFailure(exception)
-            }
+            Thread(
+                    {
+                        @Suppress("TooGenericExceptionCaught")
+                        try {
+                            handleConnection(client)
+                        } catch (exception: Exception) {
+                            if (running.get()) logConnectionFailure(exception)
+                        }
+                    },
+                    "spectre-daemon-client",
+                )
+                .apply {
+                    isDaemon = true
+                    start()
+                }
         }
     }
 
     private fun handleConnection(client: SocketChannel) {
+        var shutdownAfterResponse = false
         try {
             client.use { channel ->
                 val input = Channels.newInputStream(channel)
@@ -167,18 +192,19 @@ public constructor(
                         handshakeComplete = response is DaemonResponse.Hello
                     }
                     val isShutdown = request is DaemonRequest.Shutdown && handshakeComplete
-                    try {
-                        DaemonWireCodec.writeResponse(output, response)
-                    } finally {
-                        // The registry transitions before the response is written. A disconnected
-                        // client must not leave this process listening in that shut-down state.
-                        if (isShutdown) close()
+                    DaemonWireCodec.writeResponse(output, response)
+                    if (isShutdown) {
+                        // Defer server close until this client channel is fully released so socket
+                        // ancestor dirs can be unlinked (Shutdown already closed the registry).
+                        shutdownAfterResponse = true
+                        return
                     }
-                    if (isShutdown) return
                 }
             }
         } finally {
-            synchronized(activityLock) { activeClient.compareAndSet(client, null) }
+            activeClients.remove(client)
+            // A disconnected client must not leave this process listening after Shutdown.
+            if (shutdownAfterResponse) close()
         }
     }
 
@@ -285,28 +311,46 @@ public constructor(
 
     /** Stops accepting clients and attempts to remove the socket plus server-created parents. */
     override fun close() {
-        if (!closed.compareAndSet(false, true)) return
-        running.set(false)
-        runCatching { registry.close() }
-        runCatching { activeClient.getAndSet(null)?.close() }
-        val removedSocket =
+        if (!closed.compareAndSet(false, true)) {
+            // Another closer is in progress or finished; wait so callers observe full teardown.
             runCatching {
-                    // Hold the same lock as stale recovery before closing the channel. Otherwise a
-                    // successor can bind after close and before this server unlinks the path.
-                    withStaleSocketRecoveryLock {
-                        try {
-                            serverChannel.close()
-                        } finally {
-                            // Keep the recovery lock until the delete has at least been attempted.
-                            // Retrying after releasing the lock could unlink a successor daemon.
-                            runCatching { Files.deleteIfExists(socketPath) }
+                closeFinished.await(DEFAULT_TERMINATION_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+            }
+            return
+        }
+        try {
+            running.set(false)
+            runCatching { registry.close() }
+            // Snapshot before close: client workers may remove themselves concurrently during
+            // shutdown.
+            val clients = ArrayList<SocketChannel>(activeClients.size)
+            activeClients.forEach { channel -> clients.add(channel) }
+            activeClients.clear()
+            clients.forEach { channel -> runCatching { channel.close() } }
+            val removedSocket =
+                runCatching {
+                        // Hold the same lock as stale recovery before closing the channel.
+                        // Otherwise a
+                        // successor can bind after close and before this server unlinks the path.
+                        withStaleSocketRecoveryLock {
+                            try {
+                                serverChannel.close()
+                            } finally {
+                                // Keep the recovery lock until the delete has at least been
+                                // attempted.
+                                // Retrying after releasing the lock could unlink a successor
+                                // daemon.
+                                runCatching { Files.deleteIfExists(socketPath) }
+                            }
                         }
                     }
-                }
-                .isSuccess
-        if (!removedSocket) runCatching { serverChannel.close() }
-        removeCreatedParents()
-        acceptThread.interrupt()
+                    .isSuccess
+            if (!removedSocket) runCatching { serverChannel.close() }
+            removeCreatedParents()
+            acceptThread.interrupt()
+        } finally {
+            closeFinished.countDown()
+        }
     }
 
     private fun removeCreatedParents() {

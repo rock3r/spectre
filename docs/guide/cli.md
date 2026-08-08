@@ -337,12 +337,22 @@ Spectre for tree, input, capture, and evidence.
 | Attach | `attach` → retain `sessionId` |
 | Drive | `tree` / `find` / input tools / waits |
 | Capture | `screenshot` (inline image), `capture` (paths on daemon FS), `record_*` (paths) |
-| Release session | **`detach`** with `session_id` — ends that session and returns leftover capture cleanup summary (same honesty as CLI `spectre detach`). Unknown / already-detached / blank `session_id` **fail closed** (`isError`). Detach does **not** delete capture files; prune stays explicit. Use `spectre daemon kill` only when you intend to drop **every** session. |
+| Release session | **`detach`** with `session_id` — ends **that** session only and returns leftover capture cleanup summary (same honesty as CLI `spectre detach`). Unknown / already-detached / blank `session_id` **fail closed** (`isError`). Sibling sessions stay attached. Detach does **not** delete capture files; prune stays explicit. Use `spectre daemon kill` only when you intend to drop **every** session. |
 
-Sessions created by MCP remain in the daemon until `detach`, daemon kill, or daemon
-teardown. Long agent workflows should call **`detach`** when finished so session and native
-resources do not leak. Successful detach leaves the **shared daemon running** so
-`list_processes` and a new `attach` still work.
+Sessions created by MCP remain in the daemon until **`detach`**, daemon kill, or daemon
+teardown. **MCP front-end exit does not detach** — kill/restart the MCP client or drop stdio
+and the daemon session stays until explicit `detach` / CLI / kill. Long agent workflows should
+call **`detach`** when finished so session and native resources do not leak. Successful detach
+leaves the **shared daemon running** so `list_processes` and a new `attach` still work.
+
+**Preferred cleanup order (multi-step agents):**
+
+1. **`record_stop`** if recording is active  
+2. Finish or abandon long **`wait_for_*`** calls  
+3. **`detach`** that `session_id`  
+
+Concurrent tools on a session while `detach` runs **fail closed** (actionable errors; no hang).
+Double-`detach` is the same fail-closed class as an unknown session.
 
 ### Tool inventory
 
