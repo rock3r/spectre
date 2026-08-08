@@ -677,19 +677,19 @@ class DaemonServerTest {
  */
 private fun assumeCanCreateSymbolicLinks() {
     val probeDir = Files.createTempDirectory("spectre-symlink-probe")
-    val canCreate =
-        try {
-            val link = probeDir.resolve("link")
-            Files.createSymbolicLink(link, probeDir.resolve("target-does-not-need-to-exist"))
-            Files.deleteIfExists(link)
-            true
-        } catch (_: java.nio.file.FileSystemException) {
-            false
-        } catch (_: UnsupportedOperationException) {
-            false
-        } finally {
-            Files.deleteIfExists(probeDir)
-        }
+    var canCreate = false
+    try {
+        val link = probeDir.resolve("link")
+        Files.createSymbolicLink(link, probeDir.resolve("target-does-not-need-to-exist"))
+        Files.deleteIfExists(link)
+        canCreate = true
+    } catch (_: java.nio.file.FileSystemException) {
+        canCreate = false
+    } catch (_: UnsupportedOperationException) {
+        canCreate = false
+    } finally {
+        Files.deleteIfExists(probeDir)
+    }
     assumeTrue(
         canCreate,
         "Host cannot create symbolic links (Windows: enable Developer Mode or grant " +
