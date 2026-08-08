@@ -68,6 +68,19 @@ grep -F -q '"--stop"' "$script" || fail "packaged Gradle-ish launch does not res
 
 # --- Shared schemaVersion report + stable scenario IDs (#398) ---
 grep -F -q 'schemaVersion' "$script" || fail "Windows report missing schemaVersion"
+grep -F -q 'Get-SmokeSchemaVersion' "$script" || fail "Windows must read SCHEMA_VERSION from smoke_lib.py"
+grep -F -q 'SCHEMA_VERSION' "$script" || fail "Windows schema reader must parse smoke_lib SCHEMA_VERSION"
+# Fail closed: no parallel hardcoded schemaVersion integer in the report writer (source of truth is smoke_lib).
+if grep -nE 'schemaVersion.*" -Value 1|schemaVersion.*\{0\}.*" -f 1\)' "$script" >/dev/null 2>&1; then
+  fail "Windows report still hardcodes schemaVersion 1; use Get-SmokeSchemaVersion"
+fi
+# Simpler drift guard: report writer must use \$schemaVersion variable, not a bare -Value 1 next to schemaVersion
+if grep -F -q 'Name "schemaVersion" -Value 1' "$script"; then
+  fail "Windows report hardcodes schemaVersion -Value 1; use Get-SmokeSchemaVersion"
+fi
+if grep -F -q 'schemaVersion**: {0}" -f 1)' "$script"; then
+  fail "Windows markdown hardcodes schemaVersion 1; use \$schemaVersion"
+fi
 grep -F -q 'Save-VersionedSmokeReport' "$script" || fail "Windows report writer missing"
 grep -F -q 'hard skip without N/A reason' "$script" || fail "fail-closed hard N/A policy missing"
 for scenario_id in \

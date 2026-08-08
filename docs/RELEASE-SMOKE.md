@@ -212,13 +212,15 @@ completeness check before exit).
 
 ### schemaVersion bump policy
 
-`schemaVersion` lives in `scripts/smoke_lib.py` (`SCHEMA_VERSION`) and is mirrored as `1` in
-`scripts/windows-release-smoke.ps1`. **Bump only when report field names or semantics change
-incompatibly** (rename/remove a field, change meaning of an existing value). Additive optional
-fields and new scenario IDs do **not** require a bump — keep existing field names stable so older
-report consumers still parse. When you bump:
+`schemaVersion` is defined once in `scripts/smoke_lib.py` as `SCHEMA_VERSION`. The Windows
+entrypoint (`scripts/windows-release-smoke.ps1`) reads that constant at report time via
+`Get-SmokeSchemaVersion` — do **not** hardcode a parallel integer in the PowerShell script.
+**Bump only when report field names or semantics change incompatibly** (rename/remove a field,
+change meaning of an existing value). Additive optional fields and new scenario IDs do **not**
+require a bump — keep existing field names stable so older report consumers still parse. When you
+bump:
 
-1. Update `SCHEMA_VERSION` in `smoke_lib.py` and the Windows report writer.
+1. Update `SCHEMA_VERSION` in `smoke_lib.py` only (Windows picks it up automatically).
 2. Extend `validate_report` / contract tests for the new shape.
 3. Note the bump in the release record so operators do not compare v1 and v2 rows as identical.
 
@@ -400,7 +402,8 @@ What it does (no second terminal), using the **same stable scenario IDs** as
 4. `cli-packaged` / `cli-native-helper-layout` / packaged `spectre launch --once` as `cli-user-flow`
 5. optional `maven-local-consumer` via `verifyMavenLocalPublication`
 
-Writes versioned `build/smoke/windows-release-smoke.json` + `.md` (`schemaVersion: 1`, full SHA,
+Writes versioned `build/smoke/windows-release-smoke.json` + `.md` (`schemaVersion` from
+`smoke_lib.SCHEMA_VERSION`, full SHA,
 dirty flag, `environment.displayMode`) and exits non-zero on any hard `fail`.
 
 Flags:

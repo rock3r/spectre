@@ -80,6 +80,21 @@ function Get-RepoRoot {
     return $root
 }
 
+# Single source of truth: scripts/smoke_lib.py SCHEMA_VERSION (do not hardcode a parallel constant).
+function Get-SmokeSchemaVersion {
+    param([Parameter(Mandatory = $true)][string] $RepoRoot)
+    $smokeLib = Join-Path $RepoRoot "scripts\smoke_lib.py"
+    if (-not (Test-Path -LiteralPath $smokeLib)) {
+        throw "smoke_lib.py missing at $smokeLib (required for schemaVersion)"
+    }
+    $text = [System.IO.File]::ReadAllText($smokeLib)
+    $m = [regex]::Match($text, '(?m)^SCHEMA_VERSION\s*=\s*(\d+)\s*$')
+    if (-not $m.Success) {
+        throw "Could not parse SCHEMA_VERSION from $smokeLib"
+    }
+    return [int]$m.Groups[1].Value
+}
+
 function ConvertTo-ArgString {
     # Start-Process on Windows PowerShell 5.1 is unreliable with string[] ArgumentList
     # ("argument types do not match"). Build one escaped argument string instead.
@@ -378,8 +393,10 @@ function Save-VersionedSmokeReport {
         [void]$scenarioList.Add($row)
     }
 
+    $schemaVersion = Get-SmokeSchemaVersion -RepoRoot $RepoRoot
+
     $report = New-Object PSObject
-    Add-Member -InputObject $report -MemberType NoteProperty -Name "schemaVersion" -Value 1
+    Add-Member -InputObject $report -MemberType NoteProperty -Name "schemaVersion" -Value $schemaVersion
     Add-Member -InputObject $report -MemberType NoteProperty -Name "version" -Value $Version
     Add-Member -InputObject $report -MemberType NoteProperty -Name "base" -Value $Base
     Add-Member -InputObject $report -MemberType NoteProperty -Name "sha" -Value $sha
@@ -402,7 +419,7 @@ function Save-VersionedSmokeReport {
     $md = New-Object System.Text.StringBuilder
     [void]$md.AppendLine("# Release smoke report (Windows)")
     [void]$md.AppendLine("")
-    [void]$md.AppendLine(("- **schemaVersion**: {0}" -f 1))
+    [void]$md.AppendLine(("- **schemaVersion**: {0}" -f $schemaVersion))
     [void]$md.AppendLine(("- **version**: {0}" -f $Version))
     [void]$md.AppendLine(("- **base**: {0}" -f $Base))
     [void]$md.AppendLine(("- **sha**: ``{0}``" -f $sha))

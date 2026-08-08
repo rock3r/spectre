@@ -21,8 +21,9 @@ from typing import Any, Callable, Mapping, MutableMapping, Sequence
 
 # Bump only when report field names/semantics change incompatibly (rename/remove a field,
 # or change meaning of an existing value). Additive optional fields and new scenario IDs
-# do not require a bump — keep field names stable. Mirror the integer in
-# scripts/windows-release-smoke.ps1 and update contract tests + docs/RELEASE-SMOKE.md.
+# do not require a bump — keep field names stable. Single source of truth: Windows
+# scripts/windows-release-smoke.ps1 reads this constant via Get-SmokeSchemaVersion.
+# Update contract tests + docs/RELEASE-SMOKE.md when bumping.
 SCHEMA_VERSION = 1
 
 # Stable scenario IDs shared across macOS / Linux / Windows. Every automated run
