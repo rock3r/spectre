@@ -221,7 +221,7 @@ Shared across macOS / Linux / Windows entrypoints (`scripts/smoke_lib.py` → `R
 | `cli-packaged` | Release-shaped host CLI packaging |
 | `cli-native-helper-layout` | Native-helper layout in package |
 | `cli-user-flow` | Packaged CLI user flow (ps/attach/tree/input/screenshots/detach) |
-| `mcp-sdk-flow` | Packaged MCP via official SDK / strict stdio |
+| `mcp-sdk-flow` | Packaged MCP attach/op/detach lifecycle + strict stdio |
 | `host-native-recording` | Host native recording smoke |
 | `maven-local-consumer` | Maven Local publication + fresh consumer |
 
@@ -237,7 +237,8 @@ The cross-platform runner covers the stable baseline that should not be reinvent
 - agent attach with preinstalled core, contract corpus, inject, and launch-and-attach
 - release-shaped packaged CLI construction + host native-helper layout checks
 - packaged CLI fixture user flow (ps/attach/find/input/fail-closed window screenshot/fullscreen/detach)
-- packaged MCP via official SDK e2e + strict stdio banner/version smoke
+- packaged MCP via official SDK e2e (**attach → op → detach → session-gone** required for hard
+  pass) + strict stdio (version / tools/list including `detach` / unknown-session detach `isError`)
 - host native recording smoke (macOS SCK region / Linux X11; Windows WGC via interactive PS script)
 - Maven Local `verifyMavenLocalPublication` + fresh consumer jar resolve
 
@@ -286,10 +287,19 @@ release SHA.
 - Full multi-OS operator proof still needs a headed Windows interactive console for WGC and a Linux
   box (Xvfb or real display) for the Unix entrypoint — unit tests + macOS are necessary but not
   sufficient alone for a GO claim on all three OSes.
-- Windows MCP packaged e2e remains hard `n/a` with reason until
-  `DaemonFixtureIntegrationTest` is EnabledOnOs Windows (or a dedicated Windows MCP cell lands).
-- Issue **#399** (MCP per-session detach) is **not** required inside this harness; soft-document
-  only if a scenario already surfaces it.
+- **MCP lifecycle (#399 / #414)** is a **hard cell** on all three entrypoints when packaging is
+  claimed: Unix `release-smoke.py` and Windows `windows-release-smoke.ps1` both require
+  attach → cheap op → detach → session-gone (DaemonFixture MCP e2e) plus strict
+  `mcp-stdio-smoke.py` (tools/list includes `detach`; unknown detach is `isError`). Windows fixture
+  e2e is opt-in with the same `-Pspectre.agent.attachE2e.allowWindows=true` gate as agent UI e2e
+  (hosted `windows-latest` stays skip-safe; Mattone-class interactive desktops hard-pass). Soft
+  hard-`n/a` for “run MCP on Unix only” is no longer valid when packaging is claimed on Windows.
+  Environment-impossible cases (no display, missing Python for the stdio leg, packaging skipped)
+  remain hard `n/a` or `fail` with an explicit reason — never a fake PASS.
+- Optional `mcp-stdio-smoke.py --attach-pid <pid>` proves the same lifecycle over raw stdio when a
+  live fixture PID is available; without a PID the script still fails closed on tools + unknown
+  detach. Release hard pass always rests on the fixture e2e leg for session-gone, not tools/list
+  alone.
 - **#386** (Windows packaged `launch --once` + Gradle `JVM_ATTACHABLE`): product default for
   Gradle-ish launches expands JVM_ATTACHABLE to 120s (matching agent e2e). The Windows one-liner
   `cli-user-flow` may still use Gradle with `--app-name ComposeFixtureMain`; prefer a healthy

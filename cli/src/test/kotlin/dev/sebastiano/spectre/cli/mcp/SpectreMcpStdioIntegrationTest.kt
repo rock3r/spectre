@@ -129,8 +129,9 @@ class SpectreMcpStdioIntegrationTest {
                     ),
                     client.listTools().tools.map { it.name }.toSet(),
                 )
-                // Tool invocation (attach → op → detach) is proven by
-                // DaemonFixtureIntegrationTest and scripts/mcp-stdio-smoke.py. Calling
+                // Tool invocation (attach → op → detach → session-gone) is proven by
+                // DaemonFixtureIntegrationTest (including Windows opt-in) and by
+                // scripts/mcp-stdio-smoke.py when --attach-pid is provided. Calling
                 // list_processes here would auto-start the shared per-user daemon and leave
                 // it idle until timeout, which this hermetic protocol test intentionally avoids.
             }

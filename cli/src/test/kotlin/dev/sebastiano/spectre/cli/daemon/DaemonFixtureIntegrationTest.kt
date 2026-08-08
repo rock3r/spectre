@@ -39,12 +39,19 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
 
-/** Verifies the daemon owns a real attached agent session across client connections. */
-@EnabledOnOs(OS.LINUX, OS.MAC)
+/**
+ * Verifies the daemon owns a real attached agent session across client connections.
+ *
+ * Linux/macOS run under normal CI when a display is available. Windows fixture attach is opt-in
+ * (same property as agent UI e2e: `-Pspectre.agent.attachE2e.allowWindows=true`) so hosted
+ * `windows-latest` stays skip-safe while Mattone-class desktops can hard-pass MCP lifecycle.
+ */
+@EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)
 class DaemonFixtureIntegrationTest {
     @Test
     fun `MCP stdio drives a Compose fixture through attach tree click and inline screenshot`() =
         runBlocking {
+            assumeWindowsDaemonFixtureE2eAllowed()
             assumeFalse(GraphicsEnvironment.isHeadless(), "Requires a Compose Desktop display")
             val daemonUser = "spectre-mcp-e2e-${UUID.randomUUID()}"
             val process = startMcpBinary(daemonUser)
@@ -116,7 +123,9 @@ class DaemonFixtureIntegrationTest {
                 process.destroyForcibly()
                 process.waitFor()
                 runCatching { runCliBinary(daemonUser, "daemon", "kill") }
-                deleteDaemonSocketAndParent(DaemonEndpoint.defaultSocketPath(userName = daemonUser))
+                deleteDaemonSocketAndParent(
+                    DaemonEndpoint.defaultSocketPath(userName = socketUserName(daemonUser))
+                )
             }
         }
 
@@ -156,6 +165,7 @@ class DaemonFixtureIntegrationTest {
 
     @Test
     fun `CLI binary drives a Compose fixture through ps attach find click and screenshot`() {
+        assumeWindowsDaemonFixtureE2eAllowed()
         assumeFalse(GraphicsEnvironment.isHeadless(), "Requires a Compose Desktop display")
         val daemonUser = "spectre-cli-e2e-${UUID.randomUUID()}"
         val screenshot = Files.createTempFile("spectre-cli-e2e-", ".png")
@@ -243,12 +253,15 @@ class DaemonFixtureIntegrationTest {
         } finally {
             runCatching { runCliBinary(daemonUser, "daemon", "kill") }
             Files.deleteIfExists(screenshot)
-            deleteDaemonSocketAndParent(DaemonEndpoint.defaultSocketPath(userName = daemonUser))
+            deleteDaemonSocketAndParent(
+                DaemonEndpoint.defaultSocketPath(userName = socketUserName(daemonUser))
+            )
         }
     }
 
     @Test
     fun `daemon attaches to a real Compose fixture and dispatches operations`() {
+        assumeWindowsDaemonFixtureE2eAllowed()
         assumeFalse(GraphicsEnvironment.isHeadless(), "Requires a Compose Desktop display")
         val socketPath = temporaryDaemonFixtureSocketPath()
         var daemon: Process? = null
@@ -514,9 +527,7 @@ private fun runCliBinary(daemonUser: String, vararg arguments: String): CliBinar
                     // Roast launches the bundled JVM directly rather than through Gradle's
                     // generated start script, so it cannot consume SPECTRE_OPTS. The JVM
                     // itself consumes JAVA_TOOL_OPTIONS before application startup.
-                    val daemonHome = Path.of("/tmp", daemonUser)
-                    environment()["JAVA_TOOL_OPTIONS"] =
-                        "-Duser.name=$daemonUser -Duser.home=$daemonHome -Djava.awt.headless=false"
+                    environment()["JAVA_TOOL_OPTIONS"] = daemonIsolationJvmToolOptions(daemonUser)
                 }
             }
             .start()
@@ -561,7 +572,19 @@ private fun runCliBinary(daemonUser: String, vararg arguments: String): CliBinar
     )
 }
 
+/**
+ * Starts the MCP stdio server. When `spectre.cli.distributionExecutable` is set (release-smoke /
+ * packaged path), drives the real Roast binary; otherwise uses the test runtime classpath.
+ */
 private fun startMcpBinary(daemonUser: String): Process {
+    val distributionExecutable = System.getProperty("spectre.cli.distributionExecutable")
+    if (distributionExecutable != null) {
+        return ProcessBuilder(distributionExecutable, "mcp")
+            .apply {
+                environment()["JAVA_TOOL_OPTIONS"] = daemonIsolationJvmToolOptions(daemonUser)
+            }
+            .start()
+    }
     val javaExe =
         if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "java.exe"
         else "java"
@@ -575,6 +598,63 @@ private fun startMcpBinary(daemonUser: String): Process {
             "mcp",
         )
         .start()
+}
+
+/**
+ * Roast isolation via JAVA_TOOL_OPTIONS.
+ *
+ * Unix uses `/tmp/...` for user.home so daemon lock/socket ancestor checks stay within the macOS
+ * `/tmp` → `/private/tmp` symlink exception (java.io.tmpdir under `/var/folders` is rejected). Fake
+ * `-Duser.name=` isolates the daemon socket (hashed into the path).
+ *
+ * Windows must keep the real OS user.name: EmbeddedAgentRuntime grants ACL read access by looking
+ * up that principal, and a synthetic name fails with "Failed to prepare the agent runtime". Isolate
+ * only via a dedicated temp user.home; teardown still kills the daemon.
+ */
+private fun daemonIsolationJvmToolOptions(daemonUser: String): String {
+    val osName = System.getProperty("os.name").orEmpty()
+    val windows = osName.startsWith("Windows", ignoreCase = true)
+    val daemonHome =
+        if (windows) {
+            Path.of(System.getProperty("java.io.tmpdir"), "spectre-daemon-home-$daemonUser")
+        } else {
+            Path.of("/tmp", "spectre-daemon-home-$daemonUser")
+        }
+    Files.createDirectories(daemonHome)
+    return if (windows) {
+        "-Duser.home=$daemonHome -Djava.awt.headless=false"
+    } else {
+        "-Duser.name=$daemonUser -Duser.home=$daemonHome -Djava.awt.headless=false"
+    }
+}
+
+/**
+ * Socket-path user for teardown. On Windows Roast isolation keeps the real OS user.name (see
+ * [daemonIsolationJvmToolOptions]); Unix tests hash the synthetic [daemonUser].
+ */
+private fun socketUserName(daemonUser: String): String {
+    val osName = System.getProperty("os.name").orEmpty()
+    return if (osName.startsWith("Windows", ignoreCase = true)) {
+        System.getProperty("user.name")
+    } else {
+        daemonUser
+    }
+}
+
+/**
+ * Same opt-in as agent attach UI e2e (`WindowsAttachE2eGate`): hosted Windows CI stays skip-safe;
+ * physical desktops pass `-Pspectre.agent.attachE2e.allowWindows=true`.
+ */
+private fun assumeWindowsDaemonFixtureE2eAllowed() {
+    val osName = System.getProperty("os.name").orEmpty()
+    if (!osName.startsWith("Windows", ignoreCase = true)) return
+    assumeTrue(
+        System.getProperty(WINDOWS_ATTACH_E2E_ALLOW_PROP) == "true",
+        "Windows daemon/MCP fixture e2e is opt-in (hosted CI has no reliable interactive desktop). " +
+            "On a physical desktop re-run with " +
+            "\"-Pspectre.agent.attachE2e.allowWindows=true\" " +
+            "(or -D$WINDOWS_ATTACH_E2E_ALLOW_PROP=true on the test JVM).",
+    )
 }
 
 /** Cast attach responses with a useful message when the daemon returns [DaemonResponse.Error]. */
@@ -805,5 +885,8 @@ private const val RECORD_START_TIMEOUT_SECONDS: Long = 10
 private const val RECORD_START_POLL_MILLIS: Long = 100
 private const val RECORD_AFTER_KILL_SETTLE_MILLIS: Long = 1_500
 private const val MIN_PNG_BYTES: Int = 100
+/** Must match agent module `WindowsAttachE2eGate.ALLOW_PROP` / cli test JVM forwarding. */
+private const val WINDOWS_ATTACH_E2E_ALLOW_PROP: String =
+    "dev.sebastiano.spectre.agent.attachE2e.allowWindows"
 private val PNG_MAGIC: ByteArray =
     byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)

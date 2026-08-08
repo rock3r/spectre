@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import signal
 import subprocess
 import sys
@@ -656,6 +657,48 @@ def host_cli_package_target(system: str | None = None, machine: str | None = Non
     if system == "Windows":
         return "WindowsX64"
     raise RuntimeError(f"unsupported host for CLI packaging: {system}/{machine}")
+
+
+def assert_mcp_fixture_e2e_executed(root: Path) -> None:
+    """Fail closed if DaemonFixture MCP e2e did not execute attach/op/detach.
+
+    JUnit assumption-skips still yield Gradle exit 0; tools/list-only is not enough for
+    hard mcp-sdk-flow pass after #414. Looks for the MCP fixture testcase in
+    cli/build/test-results/test/TEST-*.xml and rejects skipped/failed runs.
+    """
+    results_dir = root / "cli" / "build" / "test-results" / "test"
+    if not results_dir.is_dir():
+        raise RuntimeError(
+            f"MCP e2e test results missing under {results_dir} (Gradle did not write JUnit XML)"
+        )
+    xml_files = sorted(results_dir.glob("TEST-*.xml"))
+    if not xml_files:
+        raise RuntimeError(f"MCP e2e produced no TEST-*.xml under {results_dir}")
+    found_mcp = False
+    for path in xml_files:
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raise RuntimeError(f"unable to read {path}: {exc}") from exc
+        if "MCP stdio drives" not in raw:
+            continue
+        found_mcp = True
+        if "<skipped" in raw:
+            raise RuntimeError(
+                "MCP fixture e2e was skipped (assumption); hard pass requires "
+                "attach→op→detach on a headed display (Windows also needs "
+                "-Pspectre.agent.attachE2e.allowWindows=true)"
+            )
+        # failures/errors attributes on testsuite
+        for attr in ("failures", "errors"):
+            match = re.search(rf'{attr}="(\d+)"', raw)
+            if match and int(match.group(1)) > 0:
+                raise RuntimeError(
+                    f"MCP fixture e2e reported {attr}={match.group(1)} in {path.name}"
+                )
+        break
+    if not found_mcp:
+        raise RuntimeError(f"MCP fixture e2e testcase not found in JUnit XML under {results_dir}")
 
 
 def packaged_cli_executable(root: Path, system: str | None = None, machine: str | None = None) -> Path:
