@@ -323,16 +323,21 @@ release SHA.
 
 ### Residual gaps for the 0.5.0 cut
 
-- Full multi-OS operator proof still needs a headed Windows interactive console for WGC and a Linux
-  box (Xvfb or real display) for the Unix entrypoint — unit tests + macOS are necessary but not
-  sufficient alone for a GO claim on all three OSes.
+- **Harness baseline (#398):** committed one-command entrypoints + shared `REQUIRED_SCENARIO_IDS`
+  + fail-closed reports are on main. Operator multi-OS proof for a given SHA should attach
+  `build/smoke/release-smoke.json` / `.md` (macOS + Linux) and `windows-release-smoke.json` /
+  `.md` (Windows) — not chat-only PASS. Use `--preflight-only` / `-PreflightOnly` only to
+  validate wiring; it is **not** a release GO.
+- **WGC / host-native-recording on Windows:** hard pass only from an **interactive desktop**
+  console. SSH runs must record hard `n/a` with reason (`displayMode: windows-ssh`) — never
+  treat SSH as visual PASS evidence.
 - **MCP lifecycle (#399 / #414)** is a **hard cell** on all three entrypoints when packaging is
   claimed: Unix `release-smoke.py` and Windows `windows-release-smoke.ps1` both require
   attach → cheap op → detach → session-gone (DaemonFixture MCP e2e) plus strict
-  `mcp-stdio-smoke.py` (tools/list includes `detach`; unknown detach is `isError`). Windows fixture
-  e2e is opt-in with the same `-Pspectre.agent.attachE2e.allowWindows=true` gate as agent UI e2e
-  (hosted `windows-latest` stays skip-safe; Mattone-class interactive desktops hard-pass). Soft
-  hard-`n/a` for “run MCP on Unix only” is no longer valid when packaging is claimed on Windows.
+  `mcp-stdio-smoke.py` (tools/list includes `detach`; unknown detach is `isError`). Packaging and
+  the MCP Gradle leg bake `-PVERSION_NAME=<smoke --version>` so `serverInfo.version` matches
+  `--expected-version`. Windows fixture e2e is opt-in with
+  `-Pspectre.agent.attachE2e.allowWindows=true` (hosted `windows-latest` stays skip-safe).
   Environment-impossible cases (no display, missing Python for the stdio leg, packaging skipped)
   remain hard `n/a` or `fail` with an explicit reason — never a fake PASS.
 - Optional `mcp-stdio-smoke.py --attach-pid <pid>` proves the same lifecycle over raw stdio when a
@@ -344,6 +349,9 @@ release SHA.
   `cli-user-flow` may still use Gradle with `--app-name ComposeFixtureMain`; prefer a healthy
   UP-TO-DATE fixture build so cold daemon start alone fits the budget. Prod-like launch remains
   the troubleshooting recommendation when Gradle is slow or flaky.
+- **Manual residual (not auto-green):** TCC / notarization / app seal; real Wayland portal
+  (Xvfb ≠ Wayland); public Homebrew/Scoop/archive after undraft; focus/lock keys; multi-monitor /
+  HiDPI; stock IntelliJ inject.
 
 ## Windows one-liner script
 
