@@ -56,6 +56,11 @@ internal constructor(
             is DaemonRequest.WaitForReloadSettled -> handleWaitOutsideLock(request)
             is DaemonRequest.Attach -> attach(request.targetPid)
             is DaemonRequest.Detach -> handleDetachOutsideLock(request.sessionId)
+            // close() tears down outside the monitor; must not run under @Synchronized.
+            DaemonRequest.Shutdown -> {
+                close()
+                DaemonResponse.ShuttingDown
+            }
             else -> handleSynchronized(request)
         }
 
@@ -90,15 +95,12 @@ internal constructor(
             is DaemonRequest.StartRecording,
             is DaemonRequest.StopRecording,
             is DaemonRequest.RecordingStatus -> handleSessionCommand(request)
-            // Wait ops are dispatched by [handle] outside the monitor.
+            // Wait ops / detach / shutdown / attach are dispatched by [handle] outside the monitor.
             is DaemonRequest.WaitForNode,
             is DaemonRequest.WaitForVisualIdle,
             is DaemonRequest.WaitForReloadSettled ->
                 error("wait ops must use handleWaitOutsideLock")
-            DaemonRequest.Shutdown -> {
-                close()
-                DaemonResponse.ShuttingDown
-            }
+            DaemonRequest.Shutdown -> error("shutdown must use handle() outside the monitor")
         }
 
     private fun handleWaitOutsideLock(request: DaemonRequest): DaemonResponse {
@@ -565,7 +567,12 @@ internal constructor(
 private const val WAIT_DRAIN_TIMEOUT_MS: Long = 90_000
 private const val WAIT_DRAIN_MARGIN_MS: Long = 5_000
 private const val WAIT_DRAIN_POLL_MS: Long = 10
-private const val ATTACH_WAIT_DETACH_TIMEOUT_MS: Long = 90_000
+/**
+ * Attach must outlive detach's [DaemonSession.awaitIdleWaits] budget: max(default drain, tracked
+ * wait remaining + margin). Headroom covers long client wait timeouts still draining after close.
+ */
+private const val ATTACH_WAIT_DETACH_TIMEOUT_MS: Long =
+    WAIT_DRAIN_TIMEOUT_MS + WAIT_DRAIN_MARGIN_MS + 120_000
 private const val NANOS_PER_MS: Long = 1_000_000
 
 private data class DaemonSession(
