@@ -86,6 +86,18 @@ public object SpectreMcpServer {
                 daemonResponse is DaemonResponse.Attached
             }
         }
+        server.addTool(
+            name = "detach",
+            description =
+                "Detach a Spectre daemon session by session_id and return leftover capture cleanup " +
+                    "summary (count, bytes, paths, prune command, skill hint). Fails closed when " +
+                    "the session is unknown or already detached.",
+            inputSchema = sessionSchema(),
+        ) { call ->
+            request(DaemonRequest.Detach(call.requiredString("session_id"))).asResult {
+                it is DaemonResponse.Detached
+            }
+        }
     }
 
     @Suppress("LongMethod") // Session tool table includes #203 input verbs.

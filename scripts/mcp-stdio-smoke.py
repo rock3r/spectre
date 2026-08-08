@@ -51,7 +51,25 @@ def main() -> None:
     names = {tool.get("name") for tool in tools}
     if "list_processes" not in names:
         fail(f"tools/list missing list_processes: {sorted(names)}", process)
+    if "detach" not in names:
+        fail(f"tools/list missing detach: {sorted(names)}", process)
     request(3, "tools/call", {"name": "list_processes", "arguments": {}})
+    # Unknown / already-detached session must fail closed (not silent success).
+    process.stdin.write(json.dumps({
+        "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+        "params": {"name": "detach", "arguments": {"session_id": "mcp-smoke-missing-session"}},
+    }) + "\n")
+    process.stdin.flush()
+    detach_line = process.stdout.readline()
+    try:
+        detach_response = json.loads(detach_line)
+    except json.JSONDecodeError:
+        fail(f"non-JSON stdout for detach: {detach_line.rstrip()!r}", process)
+    if detach_response.get("id") != 4 or "result" not in detach_response:
+        fail(f"invalid detach response: {detach_response}", process)
+    detach_result = detach_response["result"]
+    if not detach_result.get("isError"):
+        fail(f"detach of unknown session must set isError: {detach_result}", process)
     process.stdin.close()
     try:
         process.wait(timeout=10)

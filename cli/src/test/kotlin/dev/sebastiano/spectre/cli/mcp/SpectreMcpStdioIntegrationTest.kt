@@ -107,6 +107,7 @@ class SpectreMcpStdioIntegrationTest {
                         "attach",
                         "capture",
                         "click",
+                        "detach",
                         "double_click",
                         "find",
                         "find_text",
@@ -128,10 +129,10 @@ class SpectreMcpStdioIntegrationTest {
                     ),
                     client.listTools().tools.map { it.name }.toSet(),
                 )
-                // Tool invocation is proven by scripts/mcp-stdio-smoke.py against packaged
-                // binaries. Calling list_processes here would auto-start the shared per-user
-                // daemon and leave it idle until timeout, which this hermetic protocol test
-                // intentionally avoids.
+                // Tool invocation (attach → op → detach) is proven by
+                // DaemonFixtureIntegrationTest and scripts/mcp-stdio-smoke.py. Calling
+                // list_processes here would auto-start the shared per-user daemon and leave
+                // it idle until timeout, which this hermetic protocol test intentionally avoids.
             }
         } finally {
             transport.close()

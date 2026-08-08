@@ -109,6 +109,7 @@ class DaemonFixtureIntegrationTest {
                     assertTrue(
                         java.util.Base64.getDecoder().decode(image.data).startsWith(PNG_MAGIC)
                     )
+                    assertMcpDetachReleasesSession(client, attached)
                 }
             } finally {
                 transport.close()
@@ -603,6 +604,48 @@ private suspend fun mcpText(client: Client, tool: String, arguments: Map<String,
     val result = client.callTool(tool, arguments)
     assertTrue(result.isError != true, "MCP $tool failed: ${result.content}")
     return (result.content.single() as TextContent).text
+}
+
+/** #399: detach returns cleanup summary and the daemon session is gone afterward. */
+private suspend fun assertMcpDetachReleasesSession(client: Client, sessionId: String) {
+    val detachText = mcpText(client, "detach", mapOf("session_id" to sessionId))
+    val detached = Json.parseToJsonElement(detachText).jsonObject
+    assertEquals(
+        sessionId,
+        detached.getValue("sessionId").jsonPrimitive.content,
+        "detach summary must echo the released session id",
+    )
+    assertTrue(
+        detached.containsKey("captureCount"),
+        "detach summary must include captureCount: $detachText",
+    )
+    assertTrue(
+        detached.containsKey("captureBytes"),
+        "detach summary must include captureBytes: $detachText",
+    )
+    assertTrue(
+        detached.containsKey("capturePaths"),
+        "detach summary must include capturePaths: $detachText",
+    )
+
+    val afterDetach = client.callTool("tree", mapOf("session_id" to sessionId))
+    assertTrue(
+        afterDetach.isError == true,
+        "session must be gone after detach; tree should fail closed: ${afterDetach.content}",
+    )
+    val afterMessage =
+        afterDetach.content.filterIsInstance<TextContent>().joinToString(" ") { it.text }
+    assertTrue(
+        afterMessage.contains("not found", ignoreCase = true) || afterMessage.contains(sessionId),
+        "post-detach error should mention missing session, was: $afterMessage",
+    )
+
+    // Second detach is fail-closed (not silent success / not daemon kill).
+    val doubleDetach = client.callTool("detach", mapOf("session_id" to sessionId))
+    assertTrue(
+        doubleDetach.isError == true,
+        "already-detached session must fail closed: ${doubleDetach.content}",
+    )
 }
 
 private data class CliBinaryResult(val exitCode: Int, val output: String, val errorOutput: String)

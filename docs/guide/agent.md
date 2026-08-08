@@ -533,8 +533,10 @@ Restart Claude Code after changing the configuration. It can then use these tool
 5. When the target runs under Compose Hot Reload: call `wait_for_reload_settled` **before**
    triggering a code reload (it must observe the settle chain), then re-run `tree` / `find`
    before further input.
-6. **End the session from the CLI** — MCP has no `detach` tool. Run
-   `spectre detach <sessionId>` or `spectre daemon kill` (drops every session).
+6. **`detach`** with the retained `sessionId` when finished — releases that session and returns
+   leftover capture cleanup summary (count/bytes/paths + prune command when any exist). Unknown
+   or already-detached sessions fail closed (`isError`). Prefer `detach` over
+   `spectre daemon kill` (which drops **every** session).
 
 Full MCP tool names, input/output schemas, filesystem implications, and capture-mode
 distinctions: [CLI — MCP](cli.md#mcp).
@@ -548,5 +550,6 @@ If the agent also has Compose Hot Reload’s MCP configured, do not alternate ra
 > If you have HR available and want quick sanity checks while iterating on a live app, use the
 > HR MCP; in any other case, Spectre is the right choice.
 
-Use `spectre detach <session-id>` to release one session, or `spectre daemon kill` to stop the
-shared daemon and discard all sessions when you are finished.
+Call the MCP **`detach`** tool (or `spectre detach <session-id>` from a shell) to release one
+session, or `spectre daemon kill` to stop the shared daemon and discard all sessions when you are
+finished.

@@ -337,10 +337,11 @@ Spectre for tree, input, capture, and evidence.
 | Attach | `attach` → retain `sessionId` |
 | Drive | `tree` / `find` / input tools / waits |
 | Capture | `screenshot` (inline image), `capture` (paths on daemon FS), `record_*` (paths) |
-| Release session | **No MCP `detach` tool today.** Use `spectre detach <session-id>` from a shell, or `spectre daemon kill` to drop every session. |
+| Release session | **`detach`** with `session_id` — ends that session and returns leftover capture cleanup summary (same honesty as CLI `spectre detach`). Unknown / already-detached sessions **fail closed** (`isError`). Use `spectre daemon kill` only when you intend to drop **every** session. |
 
-Sessions created by MCP remain in the daemon until CLI detach, daemon kill, or daemon
-teardown. Long agent workflows should detach explicitly via CLI when finished.
+Sessions created by MCP remain in the daemon until `detach`, daemon kill, or daemon
+teardown. Long agent workflows should call **`detach`** when finished so session and native
+resources do not leak.
 
 ### Tool inventory
 
@@ -351,6 +352,7 @@ Inputs use snake_case JSON fields. Successful non-screenshot tools return **JSON
 | --- | --- | --- | --- |
 | `list_processes` | — | — | `{ "processes": [ { pid, displayName, … } ] }` |
 | `attach` | `pid` (integer) | — | `{ "sessionId", "targetPid" }` |
+| `detach` | `session_id` | — | `{ "sessionId", "captureCount", "captureBytes", "capturePaths", "pruneCommand"?, "skillHint"? }` — prune/skill present when leftovers exist; unknown session → `isError` |
 | `windows` | `session_id` | — | `{ "sessionId", "windows": […] }` |
 | `tree` | `session_id` | — | `{ "sessionId", "nodes": […] }` |
 | `find` | `session_id`, `test_tag` | — | nodes list (exact test tag) |
@@ -374,7 +376,7 @@ Inputs use snake_case JSON fields. Successful non-screenshot tools return **JSON
 **Swipe (MCP):** pass either `from_node_key` + `to_node_key`, or all of
 `start_x` / `start_y` / `end_x` / `end_y` — not both.
 
-**Example — attach and find:**
+**Example — attach, find, detach:**
 
 ```json
 // tools/call attach
@@ -394,6 +396,9 @@ Inputs use snake_case JSON fields. Successful non-screenshot tools return **JSON
 
 // tools/call record_start
 { "session_id": "…", "fullscreen": true, "output_path": "/tmp/demo.mp4" }
+
+// tools/call detach  (release session; prune leftover captures if the summary says so)
+{ "session_id": "…" }
 ```
 
 ### Paths, filesystem, and capture modes (MCP)
