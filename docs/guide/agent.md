@@ -413,9 +413,12 @@ connection.
 - Long work (future waits, heavy capture) runs on a **worker thread**, not the accept loop —
   so cancel/detach stay responsive.
 - **Cancel** is an explicit wire op (`cancel` with the target `opId`), not socket-close.
-- Closing a CLI/MCP front-end during a long-poll should cancel the front-end's op via the
-  daemon without detaching the target session (daemon cancel-on-frontend-loss); the agent
-  transport itself only detaches on an explicit `detach` or handshake failure teardown.
+- Closing a CLI/MCP front-end during a long-poll cancels only that **front-end** connection's
+  in-flight work. The **daemon session stays attached** until an explicit `detach` (or daemon
+  kill / crash). Reconnect or use the CLI against the same session id — disconnect is not
+  detach and does not leave an undocumented zombie without a recovery path (see lifecycle
+  below). The agent transport itself only detaches on an explicit `detach` or handshake
+  failure teardown.
 
 
 Clients should branch on `category` (see `AgentErrorCategory` / `SpectreAgentException`),
@@ -533,12 +536,28 @@ Restart Claude Code after changing the configuration. It can then use these tool
 5. When the target runs under Compose Hot Reload: call `wait_for_reload_settled` **before**
    triggering a code reload (it must observe the settle chain), then re-run `tree` / `find`
    before further input.
-6. **`detach`** with the retained `sessionId` when finished — releases that session and returns
-   leftover capture cleanup summary (count/bytes/paths + prune command when any exist). Unknown
-   or already-detached sessions fail closed (`isError`). Detach does **not** delete capture files;
+6. **`detach`** with the retained `sessionId` when finished — releases **that** session only and
+   returns leftover capture cleanup summary (count/bytes/paths + prune command when any exist).
+   Unknown or already-detached sessions fail closed (`isError`). Sibling sessions stay attached;
+   `detach` is never “kill the daemon” or “release all.” Detach does **not** delete capture files;
    run the summary’s `pruneCommand` when you want cleanup. Prefer `detach` over
    `spectre daemon kill` (which drops **every** session). The shared daemon stays up after a
    successful detach so you can `list_processes` / `attach` again.
+
+### Agent session lifecycle (multi-session + disconnect)
+
+- **Preferred cleanup order:** stop any active recording (`record_stop`) → finish or abandon
+  long `wait_for_*` calls → **`detach`** that `sessionId`. Concurrent ops while detach runs
+  **fail closed** (actionable errors; no hang); do not rely on them succeeding mid-teardown.
+- **Two sessions:** attach A and B independently; detaching A leaves B usable. Post-detach
+  `tree` / `click` / `screenshot` on A fail closed with session-not-found honesty.
+- **Client disconnect ≠ detach.** Killing or restarting the MCP front-end (stdio death, agent
+  process exit) cancels in-flight **front-end** work only. The daemon keeps the target session
+  until an explicit `detach`, CLI `spectre detach <session-id>`, or `spectre daemon kill`. After
+  reconnect, list sessions / reuse the same `sessionId`, or detach deliberately — disconnect
+  does not create undocumented zombies and does not silently detach.
+- **Recovery after front-end death:** `spectre` CLI against the same user daemon
+  (`ps` / attach if needed / `tree` / `detach`), or a new MCP client talking to the same daemon.
 
 Full MCP tool names, input/output schemas, filesystem implications, and capture-mode
 distinctions: [CLI — MCP](cli.md#mcp). MCP detach success JSON is the daemon `Detached` shape

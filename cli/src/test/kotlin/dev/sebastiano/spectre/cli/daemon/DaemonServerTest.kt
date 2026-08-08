@@ -460,6 +460,211 @@ class DaemonServerTest {
             deleteTemporarySocketPath(socketPath)
         }
     }
+
+    // region #413 disconnect ≠ detach + concurrent multi-client detach
+
+    @Test
+    fun `client disconnect does not detach registry sessions`() {
+        val socketPath = temporarySocketPath()
+        val registry = DaemonSessionRegistry { TestDaemonSessionAutomator() }
+        val server = DaemonServer(socketPath, registry = registry)
+
+        try {
+            // One-shot attach (DaemonClient closes the connection after the response).
+            val attached =
+                assertIs<DaemonResponse.Attached>(
+                    DaemonClient(socketPath).request(DaemonRequest.Attach(4242))
+                )
+            assertEquals("pid-4242", attached.sessionId)
+
+            // New client after front-end death still sees the session and can operate it.
+            val listed =
+                assertIs<DaemonResponse.Sessions>(
+                    DaemonClient(socketPath).request(DaemonRequest.ListSessions)
+                )
+            assertEquals(
+                listOf(DaemonSessionSummary(sessionId = "pid-4242", targetPid = 4242)),
+                listed.sessions,
+            )
+            assertIs<DaemonResponse.Windows>(
+                DaemonClient(socketPath).request(DaemonRequest.Windows("pid-4242"))
+            )
+
+            // Explicit detach remains the recovery path.
+            assertIs<DaemonResponse.Detached>(
+                DaemonClient(socketPath).request(DaemonRequest.Detach("pid-4242"))
+            )
+            val after =
+                assertIs<DaemonResponse.Sessions>(
+                    DaemonClient(socketPath).request(DaemonRequest.ListSessions)
+                )
+            assertTrue(after.sessions.isEmpty())
+        } finally {
+            server.close()
+            assertTrue(server.awaitTermination())
+            deleteTemporarySocketPath(socketPath)
+        }
+    }
+
+    @Test
+    fun `mid-request client disconnect does not detach the target session`() {
+        val socketPath = temporarySocketPath()
+        val waitEntered = java.util.concurrent.CountDownLatch(1)
+        val holdWait = java.util.concurrent.CountDownLatch(1)
+        val registry = DaemonSessionRegistry {
+            TestDaemonSessionAutomator(
+                waitForNodeResult = { _, _, _, _ ->
+                    waitEntered.countDown()
+                    // Hold until the test finishes assertions, then fail closed.
+                    holdWait.await(5, java.util.concurrent.TimeUnit.SECONDS)
+                    throw java.io.IOException("client abandoned wait")
+                }
+            )
+        }
+        val server = DaemonServer(socketPath, registry = registry)
+
+        try {
+            assertIs<DaemonResponse.Attached>(
+                DaemonClient(socketPath).request(DaemonRequest.Attach(777))
+            )
+
+            val waitThread =
+                Thread(
+                    {
+                        SocketChannel.open(java.net.StandardProtocolFamily.UNIX).use { channel ->
+                            channel.connect(java.net.UnixDomainSocketAddress.of(socketPath))
+                            val input = Channels.newInputStream(channel)
+                            val output = Channels.newOutputStream(channel)
+                            DaemonWireCodec.writeRequest(
+                                output,
+                                DaemonRequest.Hello(DaemonProtocol.CurrentVersion),
+                            )
+                            DaemonWireCodec.readResponse(input)
+                            DaemonWireCodec.writeRequest(
+                                output,
+                                DaemonRequest.WaitForNode(
+                                    sessionId = "pid-777",
+                                    tag = "never",
+                                    timeoutMs = 60_000,
+                                ),
+                            )
+                            // Drop the front-end before reading a response (#413).
+                            check(waitEntered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                            // Channel closes on use{} exit while the daemon wait is still held.
+                        }
+                    },
+                    "spectre-test-mid-disconnect",
+                )
+            waitThread.start()
+            check(waitEntered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            waitThread.join(5_000)
+
+            // While the abandoned wait is still in flight, the session must remain operable.
+            val listed =
+                assertIs<DaemonResponse.Sessions>(
+                    DaemonClient(socketPath).request(DaemonRequest.ListSessions)
+                )
+            assertEquals(
+                listOf(DaemonSessionSummary(sessionId = "pid-777", targetPid = 777)),
+                listed.sessions,
+                "front-end disconnect must not silently detach the daemon session",
+            )
+            assertIs<DaemonResponse.Windows>(
+                DaemonClient(socketPath).request(DaemonRequest.Windows("pid-777"))
+            )
+
+            holdWait.countDown()
+            assertIs<DaemonResponse.Detached>(
+                DaemonClient(socketPath).request(DaemonRequest.Detach("pid-777"))
+            )
+        } finally {
+            holdWait.countDown()
+            server.close()
+            assertTrue(server.awaitTermination())
+            deleteTemporarySocketPath(socketPath)
+        }
+    }
+
+    @Test
+    fun `concurrent wait and detach from separate clients fail closed without hang`() {
+        val socketPath = temporarySocketPath()
+        val waitEntered = java.util.concurrent.CountDownLatch(1)
+        val closedDuringWait = java.util.concurrent.CountDownLatch(1)
+        val registry = DaemonSessionRegistry {
+            TestDaemonSessionAutomator(
+                waitForNodeResult = { _, _, _, _ ->
+                    waitEntered.countDown()
+                    check(closedDuringWait.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                        "detach did not close automator while wait was in flight"
+                    }
+                    throw java.io.IOException("session closed during waitForNode")
+                },
+                closeAction = { closedDuringWait.countDown() },
+            )
+        }
+        val server = DaemonServer(socketPath, registry = registry)
+
+        try {
+            assertIs<DaemonResponse.Attached>(
+                DaemonClient(socketPath).request(DaemonRequest.Attach(888))
+            )
+
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(2)
+            try {
+                val waitFuture =
+                    pool.submit<DaemonResponse> {
+                        DaemonClient(socketPath)
+                            .request(
+                                DaemonRequest.WaitForNode(
+                                    sessionId = "pid-888",
+                                    tag = "never",
+                                    timeoutMs = 60_000,
+                                )
+                            )
+                    }
+                check(waitEntered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+
+                val detachStarted = System.nanoTime()
+                val detached =
+                    assertIs<DaemonResponse.Detached>(
+                        DaemonClient(socketPath).request(DaemonRequest.Detach("pid-888"))
+                    )
+                assertEquals("pid-888", detached.sessionId)
+                val detachMs =
+                    java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(
+                        System.nanoTime() - detachStarted
+                    )
+                assertTrue(
+                    detachMs < 10_000,
+                    "multi-client detach must not hang on the full wait budget (took ${detachMs}ms)",
+                )
+
+                val waitError =
+                    assertIs<DaemonResponse.Error>(
+                        waitFuture.get(5, java.util.concurrent.TimeUnit.SECONDS)
+                    )
+                assertEquals(DaemonErrorCode.OperationFailed, waitError.code)
+
+                val listed =
+                    assertIs<DaemonResponse.Sessions>(
+                        DaemonClient(socketPath).request(DaemonRequest.ListSessions)
+                    )
+                assertTrue(listed.sessions.isEmpty())
+
+                assertIs<DaemonResponse.Attached>(
+                    DaemonClient(socketPath).request(DaemonRequest.Attach(999))
+                )
+            } finally {
+                pool.shutdownNow()
+            }
+        } finally {
+            server.close()
+            assertTrue(server.awaitTermination())
+            deleteTemporarySocketPath(socketPath)
+        }
+    }
+
+    // endregion
 }
 
 private fun temporarySocketPath(): Path =
