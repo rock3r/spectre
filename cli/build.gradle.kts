@@ -15,6 +15,7 @@ import org.gradle.api.tasks.application.CreateStartScripts
 import org.gradle.api.tasks.bundling.Zip
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.gradle.jvm.toolchain.JavaToolchainService
+import org.gradle.process.CommandLineArgumentProvider
 
 plugins {
     application
@@ -476,4 +477,23 @@ tasks.withType<Test>().configureEach {
     providers.systemProperty("spectre.cli.distributionExecutable").orNull?.let { executable ->
         systemProperty("spectre.cli.distributionExecutable", executable)
     }
+    // Same opt-in as :agent:test Windows attach UI e2e. Hosted windows-latest stays skip-safe;
+    // Mattone / interactive desktops pass -Pspectre.agent.attachE2e.allowWindows=true for
+    // DaemonFixtureIntegrationTest MCP/CLI fixture cells (#414).
+    val allowWindowsAttachE2e =
+        providers
+            .gradleProperty("spectre.agent.attachE2e.allowWindows")
+            .orElse(providers.systemProperty("dev.sebastiano.spectre.agent.attachE2e.allowWindows"))
+            .orElse("")
+    inputs.property("spectre.agent.attachE2e.allowWindows", allowWindowsAttachE2e)
+    jvmArgumentProviders.add(
+        CommandLineArgumentProvider {
+            val allowWin = allowWindowsAttachE2e.get().takeIf { it.isNotBlank() }
+            if (allowWin != null) {
+                listOf("-Ddev.sebastiano.spectre.agent.attachE2e.allowWindows=$allowWin")
+            } else {
+                emptyList()
+            }
+        }
+    )
 }

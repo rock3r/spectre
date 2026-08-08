@@ -30,6 +30,7 @@ from smoke_lib import (  # noqa: E402
     RESULT_FAIL,
     RESULT_PASS,
     ScenarioResult,
+    assert_mcp_fixture_e2e_executed,
     build_report,
     collect_preflight,
     gradle_ui_force_args,
@@ -421,7 +422,7 @@ def main(argv: list[str] | None = None) -> int:
         add(
             scenario_result(
                 "mcp-sdk-flow",
-                name="Packaged MCP via official SDK (initialize/tools/list/attach/tree/input/capture)",
+                name="Packaged MCP attach/op/detach lifecycle + strict stdio",
                 result=RESULT_FAIL,
                 detail=f"packaged executable missing: {executable}",
             )
@@ -447,10 +448,12 @@ def main(argv: list[str] | None = None) -> int:
                 overall_deadline=overall_deadline,
             )
         )
-        # MCP via official Kotlin SDK (fixture e2e) + fail-closed stdio banner/version smoke.
+        # MCP via official Kotlin SDK: fixture attach → op → detach session-gone is required
+        # for hard pass after #399/#414 (tools/list + unknown-detach alone is insufficient).
+        mcp_name = "Packaged MCP attach/op/detach lifecycle + strict stdio"
         mcp_sdk = run_scenario(
             "mcp-sdk-flow",
-            name="Packaged MCP via official SDK (initialize/tools/list/attach/tree/input/capture)",
+            name=mcp_name,
             command=[
                 *prefix,
                 gradle,
@@ -468,41 +471,57 @@ def main(argv: list[str] | None = None) -> int:
             overall_deadline=overall_deadline,
         )
         if mcp_sdk.result == RESULT_PASS:
-            strict = run_scenario(
-                "mcp-sdk-flow",
-                name="Packaged MCP strict stdio (banner/version/tools/list)",
-                command=[
-                    sys.executable,
-                    str(ROOT / "scripts" / "mcp-stdio-smoke.py"),
-                    "--expected-version",
-                    args.version,
-                    "--",
-                    str(executable),
-                ],
-                cwd=ROOT,
-                timeout=60,
-                out_dir=out_dir,
-                overall_deadline=overall_deadline,
-            )
-            # Merge seconds/detail: fail closed if either leg fails.
-            if strict.result != RESULT_PASS:
+            # Fail closed if the fixture e2e was assumption-skipped (Gradle exit 0).
+            try:
+                assert_mcp_fixture_e2e_executed(ROOT)
+            except RuntimeError as exc:
                 mcp_sdk = scenario_result(
                     "mcp-sdk-flow",
-                    name=mcp_sdk.name,
+                    name=mcp_name,
                     result=RESULT_FAIL,
-                    seconds=mcp_sdk.seconds + strict.seconds,
-                    detail=f"strict stdio smoke: {strict.detail or strict.result}",
-                    log=strict.log or mcp_sdk.log,
-                )
-            else:
-                mcp_sdk = scenario_result(
-                    "mcp-sdk-flow",
-                    name=mcp_sdk.name,
-                    result=RESULT_PASS,
-                    seconds=mcp_sdk.seconds + strict.seconds,
-                    detail="SDK e2e + strict stdio",
+                    seconds=mcp_sdk.seconds,
+                    detail=str(exc),
                     log=mcp_sdk.log,
                 )
+            else:
+                strict = run_scenario(
+                    "mcp-sdk-flow",
+                    name="Packaged MCP strict stdio (version/tools/list/unknown-detach)",
+                    command=[
+                        sys.executable,
+                        str(ROOT / "scripts" / "mcp-stdio-smoke.py"),
+                        "--expected-version",
+                        args.version,
+                        "--",
+                        str(executable),
+                    ],
+                    cwd=ROOT,
+                    timeout=60,
+                    out_dir=out_dir,
+                    overall_deadline=overall_deadline,
+                )
+                # Merge seconds/detail: fail closed if either leg fails.
+                if strict.result != RESULT_PASS:
+                    mcp_sdk = scenario_result(
+                        "mcp-sdk-flow",
+                        name=mcp_name,
+                        result=RESULT_FAIL,
+                        seconds=mcp_sdk.seconds + strict.seconds,
+                        detail=f"strict stdio smoke: {strict.detail or strict.result}",
+                        log=strict.log or mcp_sdk.log,
+                    )
+                else:
+                    mcp_sdk = scenario_result(
+                        "mcp-sdk-flow",
+                        name=mcp_name,
+                        result=RESULT_PASS,
+                        seconds=mcp_sdk.seconds + strict.seconds,
+                        detail=(
+                            "SDK e2e attach/op/detach session-gone + strict stdio "
+                            "(tools + unknown detach isError)"
+                        ),
+                        log=mcp_sdk.log,
+                    )
         add(mcp_sdk)
 
     # --- host native recording ---

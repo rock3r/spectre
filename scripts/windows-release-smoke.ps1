@@ -229,6 +229,63 @@ function Get-PackagedSpectre {
     return $null
 }
 
+function Get-PythonForSmoke {
+    # Prefer a real python.exe (Mattone: Local\Programs\Python\Python313). The `py` launcher
+    # is resolved to sys.executable so Invoke-Native can run the smoke script without -3.
+    $candidates = @("python", "python3", "py")
+    foreach ($name in $candidates) {
+        $cmd = Get-Command $name -ErrorAction SilentlyContinue
+        if ($null -eq $cmd) { continue }
+        $path = [string]$cmd.Source
+        if ([string]::IsNullOrWhiteSpace($path)) { continue }
+        try {
+            if ($name -eq "py") {
+                $exe = & $path -3 -c "import sys; print(sys.executable)" 2>$null
+            }
+            else {
+                $exe = & $path -c "import sys; print(sys.executable)" 2>$null
+            }
+            if ($LASTEXITCODE -ne 0) { continue }
+            $resolved = ([string]$exe).Trim()
+            if (-not [string]::IsNullOrWhiteSpace($resolved) -and (Test-Path -LiteralPath $resolved)) {
+                return $resolved
+            }
+        }
+        catch { }
+    }
+    return $null
+}
+
+function Assert-McpFixtureE2eExecuted {
+    param([Parameter(Mandatory = $true)][string] $RepoRoot)
+    # JUnit XML under cli/build/test-results/test - require the MCP fixture testcase ran
+    # (not skipped). tools/list-only is insufficient for hard pass after #414.
+    $resultsDir = Join-Path $RepoRoot "cli\build\test-results\test"
+    if (-not (Test-Path -LiteralPath $resultsDir)) {
+        throw "MCP e2e test results missing under $resultsDir (Gradle did not write JUnit XML)"
+    }
+    $xmlFiles = @(Get-ChildItem -LiteralPath $resultsDir -Filter "TEST-*.xml" -ErrorAction SilentlyContinue)
+    if ($xmlFiles.Count -eq 0) {
+        throw "MCP e2e produced no TEST-*.xml under $resultsDir"
+    }
+    $foundMcp = $false
+    foreach ($f in $xmlFiles) {
+        $raw = [string](Get-Content -LiteralPath $f.FullName -Raw -ErrorAction SilentlyContinue)
+        if ([string]::IsNullOrWhiteSpace($raw)) { continue }
+        if ($raw -notmatch "MCP stdio drives") { continue }
+        $foundMcp = $true
+        if ($raw -match "<skipped") {
+            throw "MCP fixture e2e was skipped (assumption); hard pass requires attach/op/detach on a headed desktop with -Pspectre.agent.attachE2e.allowWindows=true"
+        }
+        if ($raw -match 'failures="[1-9]' -or $raw -match 'errors="[1-9]') {
+            throw "MCP fixture e2e reported failures/errors in $($f.Name)"
+        }
+    }
+    if (-not $foundMcp) {
+        throw "MCP fixture e2e testcase not found in JUnit XML under $resultsDir"
+    }
+}
+
 function Get-GitText {
     param([string] $RepoRoot, [string[]] $GitArgs)
     try {
@@ -550,14 +607,54 @@ try {
         }
         [void]$results.Add($step)
 
-        [void]$results.Add((New-StepResult -Id "mcp-sdk-flow" -Name "Packaged MCP via official SDK" -Result "n/a" -Reason "MCP packaged e2e is automated on macOS/Linux release-smoke.py; re-run there or extend Windows when DaemonFixtureIntegration is EnabledOnOs Windows"))
+        # #414: hard mcp-sdk-flow when packaging is claimed - attach/op/detach lifecycle via
+        # DaemonFixture MCP e2e (Windows opt-in attach gate) + strict mcp-stdio-smoke.py.
+        $mcpName = "Packaged MCP attach/op/detach lifecycle + strict stdio"
+        if (-not $spectrePath) {
+            [void]$results.Add((New-StepResult -Id "mcp-sdk-flow" -Name $mcpName -Result "fail" -Detail "packaged spectre.exe missing; cannot run MCP lifecycle"))
+        }
+        else {
+            $mcpStep = Invoke-Step -Id "mcp-sdk-flow" -Name $mcpName -Action {
+                # Fixture attach e2e (same opt-in as agent UI cells). Forces re-run so a prior
+                # assumption-skip cannot UP-TO-DATE into a false hard pass.
+                Invoke-Gradle -RepoRoot $repoRoot -TimeoutSeconds $AgentE2eTimeoutSeconds -LogName "mcp-sdk-e2e" -GradleArgs @(
+                    ":cli:test",
+                    "-Pspectre.agent.attachE2e.allowWindows=true",
+                    "--tests", "*DaemonFixtureIntegrationTest.MCP stdio drives*",
+                    "--tests", "*SpectreMcpStdioIntegrationTest*",
+                    ("-Dspectre.cli.distributionExecutable={0}" -f $spectrePath),
+                    "--rerun-tasks",
+                    "--no-build-cache"
+                )
+                # Fail closed if the MCP fixture test was assumption-skipped (no fake PASS).
+                Assert-McpFixtureE2eExecuted -RepoRoot $repoRoot
+                $python = Get-PythonForSmoke
+                if (-not $python) {
+                    throw "Python 3 not found (python/py/python3); required for mcp-stdio-smoke.py strict leg"
+                }
+                $smokeScript = Join-Path $repoRoot "scripts\mcp-stdio-smoke.py"
+                if (-not (Test-Path -LiteralPath $smokeScript)) {
+                    throw "mcp-stdio-smoke.py missing at $smokeScript"
+                }
+                Invoke-Native -FilePath $python -WorkingDirectory $repoRoot -TimeoutSeconds 60 -LogName "mcp-stdio-smoke" -Arguments @(
+                    $smokeScript,
+                    "--expected-version", $Version,
+                    "--",
+                    $spectrePath
+                )
+            }
+            if ($mcpStep.result -eq "pass") {
+                $mcpStep.detail = "SDK e2e attach/op/detach session-gone + strict stdio (tools + unknown detach isError)"
+            }
+            [void]$results.Add($mcpStep)
+        }
     }
     else {
         $reason = "skipped via -SkipCli"
         [void]$results.Add((New-StepResult -Id "cli-packaged" -Name "Release-shaped host CLI package" -Result "n/a" -Reason $reason))
         [void]$results.Add((New-StepResult -Id "cli-native-helper-layout" -Name "Native-helper layout in packaged CLI" -Result "n/a" -Reason $reason))
         [void]$results.Add((New-StepResult -Id "cli-user-flow" -Name "Packaged CLI user flow" -Result "n/a" -Reason $reason))
-        [void]$results.Add((New-StepResult -Id "mcp-sdk-flow" -Name "Packaged MCP via official SDK" -Result "n/a" -Reason $reason))
+        [void]$results.Add((New-StepResult -Id "mcp-sdk-flow" -Name "Packaged MCP attach/op/detach lifecycle + strict stdio" -Result "n/a" -Reason $reason))
     }
 
     if ($SkipMavenLocal) {
