@@ -125,20 +125,23 @@ def main() -> None:
 
     env: dict[str, str] | None = None
     if args.daemon_user:
-        # Match DaemonFixture isolation: Unix prefers /tmp (macOS symlink exception);
-        # Windows uses the process temp directory.
+        # Match DaemonFixture isolation:
+        # - Unix: /tmp home + synthetic user.name (socket hash isolation; macOS /tmp symlink OK)
+        # - Windows: dedicated temp home only — keep real user.name so EmbeddedAgentRuntime
+        #   ACL principal lookup succeeds (synthetic names fail agent-runtime install).
         if sys.platform.startswith("win"):
             home = Path(tempfile.gettempdir()) / f"spectre-mcp-smoke-home-{args.daemon_user}"
+            isolation = f"-Duser.home={home} -Djava.awt.headless=false"
         else:
             home = Path("/tmp") / f"spectre-mcp-smoke-home-{args.daemon_user}"
+            isolation = (
+                f"-Duser.name={args.daemon_user} "
+                f"-Duser.home={home} "
+                f"-Djava.awt.headless=false"
+            )
         home.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
         existing = env.get("JAVA_TOOL_OPTIONS", "").strip()
-        isolation = (
-            f"-Duser.name={args.daemon_user} "
-            f"-Duser.home={home} "
-            f"-Djava.awt.headless=false"
-        )
         env["JAVA_TOOL_OPTIONS"] = f"{existing} {isolation}".strip()
 
     process = subprocess.Popen(
