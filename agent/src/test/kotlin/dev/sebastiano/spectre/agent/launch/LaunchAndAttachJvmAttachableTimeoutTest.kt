@@ -28,7 +28,18 @@ class LaunchAndAttachJvmAttachableTimeoutTest {
             if (isWindows) {
                 val bat =
                     Paths.get(captureDir.toString(), "gradlew.bat").also {
-                        Files.writeString(it, "@echo off\r\ntimeout /t 30 /nobreak >nul\r\n")
+                        // Prefer ping over `timeout`: under non-console redirected I/O, Windows
+                        // `timeout` can abort immediately (same as
+                        // LaunchAndAttachGradleClientDeathTest).
+                        // ~30s live client so we hit JVM_ATTACHABLE, not PROCESS_ALIVE.
+                        Files.writeString(
+                            it,
+                            """
+                            @echo off
+                            ping -n 31 127.0.0.1 >nul
+                            """
+                                .trimIndent() + "\r\n",
+                        )
                     }
                 listOf(bat.toString(), ":app:run")
             } else {
