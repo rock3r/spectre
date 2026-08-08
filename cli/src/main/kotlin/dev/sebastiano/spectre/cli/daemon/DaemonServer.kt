@@ -197,11 +197,8 @@ public constructor(
                         // listening after Shutdown (registry is already closed by handleRequest).
                         shutdownAfterResponse = true
                     }
-                    try {
-                        DaemonWireCodec.writeResponse(output, response)
-                    } finally {
-                        if (isShutdown) return
-                    }
+                    runCatching { DaemonWireCodec.writeResponse(output, response) }
+                    if (isShutdown) break
                 }
             }
         } finally {
