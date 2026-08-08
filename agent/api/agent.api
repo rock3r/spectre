@@ -294,6 +294,7 @@ public final class dev/sebastiano/spectre/agent/launch/LaunchStageTimeouts {
 	public static final field Companion Ldev/sebastiano/spectre/agent/launch/LaunchStageTimeouts$Companion;
 	public static final field DEFAULT_AGENT_BOOTSTRAP_MS J
 	public static final field DEFAULT_FIRST_WINDOW_MS J
+	public static final field DEFAULT_GRADLE_JVM_ATTACHABLE_MS J
 	public static final field DEFAULT_JVM_ATTACHABLE_MS J
 	public static final field DEFAULT_PROCESS_ALIVE_MS J
 	public fun <init> ()V
@@ -306,6 +307,7 @@ public final class dev/sebastiano/spectre/agent/launch/LaunchStageTimeouts {
 	public final fun copy (JJJJ)Ldev/sebastiano/spectre/agent/launch/LaunchStageTimeouts;
 	public static synthetic fun copy$default (Ldev/sebastiano/spectre/agent/launch/LaunchStageTimeouts;JJJJILjava/lang/Object;)Ldev/sebastiano/spectre/agent/launch/LaunchStageTimeouts;
 	public fun equals (Ljava/lang/Object;)Z
+	public final fun forGradleishLaunch ()Ldev/sebastiano/spectre/agent/launch/LaunchStageTimeouts;
 	public final fun getAgentBootstrapMs ()J
 	public final fun getFirstWindowMs ()J
 	public final fun getJvmAttachableMs ()J

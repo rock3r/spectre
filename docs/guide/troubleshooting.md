@@ -24,6 +24,13 @@ found in time. Pass `LaunchSpec.appJvmNameFilter` / `spectre launch --app-name
 <MainClass>` so discovery can match the app among daemon children. Never kill the
 Gradle daemon to "fix" teardown — the harness only tears down the discovered app JVM.
 
+Cold Gradle daemons (for example after `./gradlew --stop`) and first-time compile of
+the app module can take longer than a direct `java` boot. Spectre expands the default
+JVM_ATTACHABLE budget to **120s** for Gradle-ish launches that leave stage timeouts at
+defaults; set `LaunchStageTimeouts.jvmAttachableMs` explicitly if you need a different
+budget. If the timeout still fires, check captured stdout/stderr for compile errors
+before assuming a name-filter miss.
+
 You will also see a loud **Gradle-ish** warning naming daemon, sandbox, and JEP 451
 caveats. Prefer a prod-like launch (`java -jar`, installDist) when you control the build.
 

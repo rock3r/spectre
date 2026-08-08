@@ -524,6 +524,11 @@ try {
             # extracted runtime path and make the next launch hand that path to a fresh JVM while
             # Windows still has transient file state around it. Use a fresh daemon for this
             # independent packaged-CLI cell.
+            #
+            # Product (#386): Gradle-ish launch expands default JVM_ATTACHABLE to 120s so cold
+            # daemon start after --stop can finish before the app JVM is listed. Outer
+            # CliLaunchTimeoutSeconds (default 300) must stay above that product budget.
+            # Prefer UP-TO-DATE :agent-test-fixture classes (agent e2e above usually ensures this).
             $gradlew = Join-Path $repoRoot "gradlew.bat"
             Invoke-Native -FilePath $gradlew -WorkingDirectory $repoRoot -TimeoutSeconds 60 -LogName "gradle-stop-before-cli" -Arguments @(
                 "--stop"
@@ -533,7 +538,7 @@ try {
                 throw "spectre.exe not found under cli\build\construo\windowsX64\roast\ -- run without -SkipPackageCli"
             }
             Write-Host ("  using {0}" -f $spectre) -ForegroundColor DarkGray
-            Write-Host "  note: Gradle-ish launch warning is expected for ':agent-test-fixture:run'" -ForegroundColor DarkGray
+            Write-Host "  note: Gradle-ish launch warning is expected for ':agent-test-fixture:run' (product JVM_ATTACHABLE budget 120s for Gradle)" -ForegroundColor DarkGray
             Invoke-Native -FilePath $spectre -WorkingDirectory $repoRoot -TimeoutSeconds $CliLaunchTimeoutSeconds -LogName "spectre-launch" -Arguments @(
                 "launch",
                 "--once",
