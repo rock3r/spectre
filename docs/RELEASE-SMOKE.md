@@ -331,6 +331,10 @@ release SHA.
 - **WGC / host-native-recording on Windows:** hard pass only from an **interactive desktop**
   console. SSH runs must record hard `n/a` with reason (`displayMode: windows-ssh`) — never
   treat SSH as visual PASS evidence.
+- **`agent-attach-core` on Windows SSH:** `AgentAttachIntegration` e2e includes WGC node
+  screenshots (#362). Under `windows-ssh` the harness records hard `n/a` with reason (same class
+  as WGC recording). Re-run from an interactive console for hard PASS of attach screenshot parity.
+  Inject / launch-and-attach remain SSH-runnable semantics cells.
 - **MCP lifecycle (#399 / #414)** is a **hard cell** on all three entrypoints when packaging is
   claimed: Unix `release-smoke.py` and Windows `windows-release-smoke.ps1` both require
   attach → cheap op → detach → session-gone (DaemonFixture MCP e2e) plus strict

@@ -517,16 +517,24 @@ try {
     [void]$results.Add((New-StepResult -Id "junit-live" -Name "Live JUnit failure artifacts/video and atomic capture" -Result "n/a" -Reason "Windows entrypoint prioritizes agent/WGC/CLI; run sample-desktop validationTest on macOS/Linux baseline"))
 
     if (-not $SkipAgentE2e) {
-        $step = Invoke-Step -Id "agent-attach-core" -Name "Agent attach with preinstalled core" -Action {
-            Invoke-Gradle -RepoRoot $repoRoot -TimeoutSeconds $AgentE2eTimeoutSeconds -LogName "agent-attach" -GradleArgs @(
-                ":agent:test",
-                "-Pspectre.agent.attachE2e.allowWindows=true",
-                "--tests", "*AgentAttachIntegration*",
-                "--rerun-tasks",
-                "--no-build-cache"
-            )
+        # AgentAttachIntegration e2e includes WGC node screenshots (#362). Under SSH that is the
+        # same environment-impossible class as host-native-recording -- hard n/a, never fake PASS.
+        $attachDisplayMode = Get-DisplayModeWindows
+        if ($attachDisplayMode -eq "windows-ssh") {
+            [void]$results.Add((New-StepResult -Id "agent-attach-core" -Name "Agent attach with preinstalled core" -Result "n/a" -Reason "AgentAttachIntegration e2e includes WGC node screenshots; SSH cannot provide honest visual evidence (exit 5 / 0x80070424). Re-run from interactive console for hard PASS"))
         }
-        [void]$results.Add($step)
+        else {
+            $step = Invoke-Step -Id "agent-attach-core" -Name "Agent attach with preinstalled core" -Action {
+                Invoke-Gradle -RepoRoot $repoRoot -TimeoutSeconds $AgentE2eTimeoutSeconds -LogName "agent-attach" -GradleArgs @(
+                    ":agent:test",
+                    "-Pspectre.agent.attachE2e.allowWindows=true",
+                    "--tests", "*AgentAttachIntegration*",
+                    "--rerun-tasks",
+                    "--no-build-cache"
+                )
+            }
+            [void]$results.Add($step)
+        }
 
         [void]$results.Add((New-StepResult -Id "agent-contract-corpus" -Name "Agent contract corpus" -Result "n/a" -Reason "Windows agent corpus is covered by attach/inject/launch cells; full AgentContractCorpus stays on Linux/macOS Xvfb matrix"))
 
