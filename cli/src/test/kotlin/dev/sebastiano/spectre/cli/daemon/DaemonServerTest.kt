@@ -15,6 +15,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeTrue
 
 @OptIn(ExperimentalSpectreAgentApi::class)
 class DaemonServerTest {
@@ -347,6 +348,7 @@ class DaemonServerTest {
 
     @Test
     fun `preserves a dangling symlink in the socket path`() {
+        assumeCanCreateSymbolicLinks()
         val temporaryDirectory = Files.createTempDirectory("spectre-daemon-test")
         val danglingLink = temporaryDirectory.resolve("link")
         Files.createSymbolicLink(danglingLink, temporaryDirectory.resolve("missing-target"))
@@ -364,6 +366,7 @@ class DaemonServerTest {
 
     @Test
     fun `refuses a socket parent that is a symbolic link`() {
+        assumeCanCreateSymbolicLinks()
         val temporaryDirectory = Files.createTempDirectory("spectre-daemon-test")
         val socketDirectory = Files.createDirectory(temporaryDirectory.resolve("socket-directory"))
         val socketLink = temporaryDirectory.resolve("socket-link")
@@ -665,6 +668,34 @@ class DaemonServerTest {
     }
 
     // endregion
+}
+
+/**
+ * Windows requires Developer Mode or SeCreateSymbolicLinkPrivilege for [Files.createSymbolicLink].
+ * Without it the probe throws [java.nio.file.FileSystemException] and symlink-guard unit tests must
+ * assumption-skip rather than fail closed the whole `check` gate.
+ */
+private fun assumeCanCreateSymbolicLinks() {
+    val probeDir = Files.createTempDirectory("spectre-symlink-probe")
+    val canCreate =
+        try {
+            val link = probeDir.resolve("link")
+            Files.createSymbolicLink(link, probeDir.resolve("target-does-not-need-to-exist"))
+            Files.deleteIfExists(link)
+            true
+        } catch (_: java.nio.file.FileSystemException) {
+            false
+        } catch (_: UnsupportedOperationException) {
+            false
+        } finally {
+            Files.deleteIfExists(probeDir)
+        }
+    assumeTrue(
+        canCreate,
+        "Host cannot create symbolic links (Windows: enable Developer Mode or grant " +
+            "SeCreateSymbolicLinkPrivilege). Symlink socket-parent guards stay covered on hosts " +
+            "that can create links.",
+    )
 }
 
 private fun temporarySocketPath(): Path =

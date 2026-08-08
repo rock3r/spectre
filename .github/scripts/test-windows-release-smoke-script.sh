@@ -79,6 +79,7 @@ do
 done
 grep -F -q 'windows-ssh' "$script" || fail "SSH displayMode honesty for WGC missing"
 grep -F -q 'WGC requires native interactive console' "$script" || fail "WGC interactive-console N/A reason missing"
+grep -F -q 'AgentAttachIntegration e2e includes WGC node screenshots' "$script" || fail "SSH agent-attach-core hard n/a reason missing"
 grep -F -q 'displayMode' "$script" || fail "displayMode field missing from Windows harness"
 grep -F -q 'windows-release-smoke.json' "$script" || fail "Windows JSON report path missing"
 # Fail-closed matrix completeness + maven consumer + preflight-only (#398 harden)
