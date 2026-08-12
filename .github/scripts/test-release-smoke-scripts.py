@@ -410,6 +410,10 @@ class ReleaseSmokeHelpTest(unittest.TestCase):
         self.assertIn("--skip-recording", result.stdout)
         self.assertIn("--preflight-only", result.stdout)
 
+    @unittest.skipIf(
+        platform.system() == "Windows",
+        "Unix release-smoke entrypoint intentionally rejects Windows",
+    )
     def test_preflight_only_emits_full_required_matrix_with_na_reason(self):
         """Drive the real entrypoint: --preflight-only must not invent PASS for hard cells."""
         with tempfile.TemporaryDirectory() as tmp:

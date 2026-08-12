@@ -67,6 +67,11 @@ fi
 
 # Preserve the release artifacts and seal checks needed by B8/B16.
 grep -Fq 'name: mac-helper' "$reusable" || fail "reusable workflow must upload mac-helper"
+grep -Fq 'SpectreCaptureHelper.app.tar.gz' "$reusable" \
+  || fail "helper artifact must be archived to preserve executable modes"
+helper_extract_count="$(cat "$release" "$reusable" | grep -Fc 'tar -xzf "$RUNNER_TEMP/mac-helper-artifact/SpectreCaptureHelper.app.tar.gz"')"
+[[ "$helper_extract_count" -eq 2 ]] \
+  || fail "CLI and publish jobs must unpack the helper archive (found $helper_extract_count)"
 grep -Fq 'name: mac-cli-bundles' "$reusable" || fail "reusable workflow must upload mac-cli-bundles"
 grep -Fq 'xcrun stapler staple "$app"' "$reusable" || fail "CLI app must be stapled"
 grep -Fq 'xcrun stapler validate "$app"' "$reusable" || fail "CLI app staple must be validated"
@@ -75,8 +80,10 @@ verify_count="$(grep -Fc 'codesign --verify --deep --strict --verbose=4 "$app"' 
   || fail "CLI app must be deep+strict verified before and after stapling"
 
 # Operators need a copy/paste pre-tag recipe and an explicit artifact-only safety boundary.
-grep -Fq 'gh workflow run notarize-macos.yml' "$release_smoke" \
-  || fail "RELEASE-SMOKE.md must document the on-demand command"
+grep -Fq 'run_url="$(gh workflow run notarize-macos.yml' "$release_smoke" \
+  || fail "RELEASE-SMOKE.md must capture the exact dispatched run URL"
+grep -Fq 'run_id="${run_url##*/}"' "$release_smoke" \
+  || fail "RELEASE-SMOKE.md must derive the run ID from that URL"
 grep -Fq 'does not publish to Central or create a GitHub release' "$publishing" \
   || fail "PUBLISHING.md must document the artifact-only boundary"
 

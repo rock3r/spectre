@@ -148,15 +148,19 @@ jobs:
               -PuniversalHelper \
               -PnotarizeScreenCaptureKitHelper
 
+      - name: Archive notarised mac helper
+        # upload-artifact normalizes file modes. Wrap the signed app in tar so its executable
+        # bit survives download for publication and the operator's B8 live-SCK smoke.
+        run: |
+          tar -czf "$RUNNER_TEMP/SpectreCaptureHelper.app.tar.gz" \
+            -C recording/build/generated/screenCaptureHelper/native/macos \
+            SpectreCaptureHelper.app
+
       - name: Upload notarised mac helper artefact
         uses: actions/upload-artifact@v4
         with:
           name: mac-helper
-          # Upload the parent `macos/` directory so the artefact root keeps the
-          # `SpectreCaptureHelper.app` name. Passing the `.app` path itself makes
-          # upload-artifact@v4 strip that directory name (Contents/ lands at the
-          # root), which would break `-PprebuiltMacHelperPath=.../SpectreCaptureHelper.app`.
-          path: recording/build/generated/screenCaptureHelper/native/macos/
+          path: ${{ runner.temp }}/SpectreCaptureHelper.app.tar.gz
           if-no-files-found: error
           retention-days: 7
 
@@ -205,7 +209,17 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: mac-helper
-          path: ${{ runner.temp }}/mac-helper
+          path: ${{ runner.temp }}/mac-helper-artifact
+
+      - name: Extract notarised mac helper
+        run: |
+          mkdir -p "$RUNNER_TEMP/mac-helper"
+          tar -xzf "$RUNNER_TEMP/mac-helper-artifact/SpectreCaptureHelper.app.tar.gz" \
+            -C "$RUNNER_TEMP/mac-helper"
+          test -x "$RUNNER_TEMP/mac-helper/SpectreCaptureHelper.app/Contents/MacOS/spectre-screencapture"
+          codesign --verify --deep --strict --verbose=4 \
+            "$RUNNER_TEMP/mac-helper/SpectreCaptureHelper.app"
+          xcrun stapler validate "$RUNNER_TEMP/mac-helper/SpectreCaptureHelper.app"
 
       - name: Import Developer ID certificate
         env:

@@ -307,10 +307,12 @@ that SHA has landed on `main`:
 
 ```shell
 sha="$(git rev-parse HEAD)"
-gh workflow run notarize-macos.yml \
+run_url="$(gh workflow run notarize-macos.yml \
   --ref main \
   -f ref="$sha" \
-  -f version=0.5.0-rc.smoke
+  -f version=0.5.0-rc.smoke)"
+run_id="${run_url##*/}"
+echo "$run_url"
 ```
 
 The workflow rejects commits that are not reachable from the repository's default branch. It calls
@@ -318,15 +320,19 @@ the same reusable signing jobs as `release.yml`, but it never publishes to Centr
 GitHub release. After the run finishes, download its two artifacts:
 
 ```shell
-run_id="$(gh run list --workflow notarize-macos.yml --branch main --limit 1 \
-  --json databaseId --jq '.[0].databaseId')"
 gh run watch "$run_id"
-gh run download "$run_id" -n mac-helper -D build/notarized-smoke/mac-helper
+gh run download "$run_id" -n mac-helper -D build/notarized-smoke/mac-helper-artifact
 gh run download "$run_id" -n mac-cli-bundles -D build/notarized-smoke/mac-cli-bundles
+mkdir -p build/notarized-smoke/mac-helper
+tar -xzf build/notarized-smoke/mac-helper-artifact/SpectreCaptureHelper.app.tar.gz \
+  -C build/notarized-smoke/mac-helper
+test -x \
+  build/notarized-smoke/mac-helper/SpectreCaptureHelper.app/Contents/MacOS/spectre-screencapture
 ```
 
-Use `build/notarized-smoke/mac-helper/SpectreCaptureHelper.app` for the B8 TCC/live-SCK check. For
-B16, run the committed verifier on the host-architecture archive (replace `macosArm64` with
+The helper is intentionally archived before artifact upload because GitHub normalizes raw artifact
+file modes. Use `build/notarized-smoke/mac-helper/SpectreCaptureHelper.app` for the B8 TCC/live-SCK
+check. For B16, run the committed verifier on the host-architecture archive (replace `macosArm64` with
 `macosX64` on Intel):
 
 ```shell

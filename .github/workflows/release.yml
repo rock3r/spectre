@@ -299,7 +299,14 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: mac-helper
-          path: ${{ runner.temp }}/mac-helper
+          path: ${{ runner.temp }}/mac-helper-artifact
+
+      - name: Extract notarised mac helper
+        run: |
+          mkdir -p "$RUNNER_TEMP/mac-helper"
+          tar -xzf "$RUNNER_TEMP/mac-helper-artifact/SpectreCaptureHelper.app.tar.gz" \
+            -C "$RUNNER_TEMP/mac-helper"
+          test -x "$RUNNER_TEMP/mac-helper/SpectreCaptureHelper.app/Contents/MacOS/spectre-screencapture"
 
       - name: Download signed and notarised macOS CLI bundles
         uses: actions/download-artifact@v4
