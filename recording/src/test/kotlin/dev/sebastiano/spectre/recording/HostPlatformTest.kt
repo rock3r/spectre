@@ -1,6 +1,5 @@
 package dev.sebastiano.spectre.recording
 
-import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertFalse
 

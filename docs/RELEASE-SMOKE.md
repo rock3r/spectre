@@ -299,6 +299,52 @@ coverage to the runner rather than leaving a one-release command only in chat.
 | Focus / lock keys / multi-monitor / HiDPI | Soft / env-dependent | Operator notes |
 | Stock IntelliJ inject | Soft recipe | Manual when claimed in notes |
 
+### On-demand pre-tag macOS notarization
+
+The tag workflow notarizes the macOS helper and CLI bundles, but B8/B16 need release-signed
+artifacts **before** the tag. Run the artifact-only workflow against the intended release SHA after
+that SHA has landed on `main`:
+
+```shell
+sha="$(git rev-parse HEAD)"
+run_url="$(gh workflow run notarize-macos.yml \
+  --ref main \
+  -f ref="$sha" \
+  -f version=0.5.0-rc.smoke)"
+run_id="${run_url##*/}"
+echo "$run_url"
+```
+
+The workflow rejects commits that are not reachable from the repository's default branch. It calls
+the same reusable signing jobs as `release.yml`, but it never publishes to Central or creates a
+GitHub release. After the run finishes, download its two artifacts:
+
+```shell
+gh run watch "$run_id"
+gh run download "$run_id" -n mac-helper -D build/notarized-smoke/mac-helper-artifact
+gh run download "$run_id" -n mac-cli-bundles -D build/notarized-smoke/mac-cli-bundles
+mkdir -p build/notarized-smoke/mac-helper
+tar -xzf build/notarized-smoke/mac-helper-artifact/SpectreCaptureHelper.app.tar.gz \
+  -C build/notarized-smoke/mac-helper
+test -x \
+  build/notarized-smoke/mac-helper/SpectreCaptureHelper.app/Contents/MacOS/spectre-screencapture
+```
+
+The helper is intentionally archived before artifact upload because GitHub normalizes raw artifact
+file modes. Use `build/notarized-smoke/mac-helper/SpectreCaptureHelper.app` for the B8 TCC/live-SCK
+check. For B16, run the committed verifier on the host-architecture archive (replace `macosArm64` with
+`macosX64` on Intel):
+
+```shell
+bash .github/scripts/verify-macos-cli-bundle.sh \
+  build/notarized-smoke/mac-cli-bundles/spectre-macosArm64.zip \
+  0.5.0-rc.smoke
+```
+
+Record the workflow run URL and exact resolved SHA in the release smoke results. The workflow proves
+Developer ID signing, notarization, stapling, and archive seal; the local live capture is still
+required because GitHub-hosted macOS runners cannot grant Screen Recording TCC.
+
 ### Manual cells that remain
 
 These cannot currently be made portable and fail-closed by the baseline runner:

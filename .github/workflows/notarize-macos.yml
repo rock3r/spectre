@@ -1,0 +1,46 @@
+name: Notarize macOS artifacts
+
+# Operator-triggered pre-tag path for release-smoke B8/B16. It calls the trusted main-branch
+# reusable workflow, which validates the requested build ref before running privileged jobs.
+# This path only uploads workflow artifacts: no Central publication and no GitHub release mutation.
+
+run-name: Notarize macOS artifacts for ${{ inputs.ref }} (${{ inputs.version }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit or ref from the repository's default-branch history.
+        required: true
+        default: main
+        type: string
+      version:
+        description: SemVer stamped into smoke CLI bundles (for example 0.5.0-rc.smoke).
+        required: true
+        default: 0.5.0-rc.smoke
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: notarize-macos-${{ inputs.ref }}
+  cancel-in-progress: false
+
+jobs:
+  notarize:
+    name: Sign, notarize, and staple
+    # Pin privileged workflow code to the trusted default branch. Validation also lives inside
+    # that reusable workflow, so dispatching this wrapper from another branch cannot bypass it.
+    uses: rock3r/spectre/.github/workflows/macos-release-artifacts.yml@main
+    with:
+      ref: ${{ inputs.ref }}
+      version: ${{ inputs.version }}
+    secrets:
+      APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+      APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+      APPLE_SIGNING_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_SIGNING_KEYCHAIN_PASSWORD }}
+      APPLE_DEVELOPER_IDENTITY: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}
+      APPLE_NOTARY_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY }}
+      APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+      APPLE_NOTARY_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER }}

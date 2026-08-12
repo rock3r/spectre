@@ -2,12 +2,14 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
-workflow="$repo_root/.github/workflows/release.yml"
+workflow="$repo_root/.github/workflows/macos-release-artifacts.yml"
 verifier="$repo_root/.github/scripts/verify-macos-cli-bundle.sh"
 seal_probe="$repo_root/.github/scripts/test-macos-cli-seal-preservation.sh"
+workflow_contract="$repo_root/.github/scripts/test-macos-release-artifact-workflows.sh"
 
 test -x "$verifier"
 test -x "$seal_probe"
+test -x "$workflow_contract"
 grep -Fq 'verify-macos-cli-bundle.sh "$archive" "$RELEASE_VERSION"' "$workflow"
 grep -Fq 'app="$workspace/$expected_root/Spectre.app"' "$verifier"
 grep -Fq 'codesign --verify --deep --strict --verbose=4 "$app"' "$verifier"
@@ -21,13 +23,14 @@ deep_strict_count="$(
   grep -c 'codesign --verify --deep --strict --verbose=4 "\$app"' "$workflow" || true
 )"
 if [[ "$deep_strict_count" -lt 2 ]]; then
-  echo "release.yml must codesign --verify --deep --strict at least twice (pre- and post-staple)" >&2
+  echo "macos-release-artifacts.yml must deep+strict verify before and after stapling" >&2
   exit 1
 fi
 # Guard against reintroducing non-deep intermediate verifies on the app bundle.
 if grep -E 'codesign --verify --strict --verbose=4 "\$app"' "$workflow" | grep -vq -- '--deep'; then
-  echo "release.yml still has codesign --verify --strict without --deep on \$app" >&2
+  echo "macos-release-artifacts.yml has a non-deep strict verify on \$app" >&2
   exit 1
 fi
 
+bash "$workflow_contract"
 bash "$seal_probe"

@@ -14,7 +14,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 formula="$root/Formula/spectre.rb"
-workflow="$root/.github/workflows/release.yml"
+workflow="$root/.github/workflows/macos-release-artifacts.yml"
 verifier="$root/.github/scripts/verify-macos-cli-bundle.sh"
 
 test -f "$formula"
@@ -27,7 +27,7 @@ deep_strict_count="$(
   grep -c 'codesign --verify --deep --strict --verbose=4 "\$app"' "$workflow" || true
 )"
 if [[ "$deep_strict_count" -lt 2 ]]; then
-  echo "release.yml must deep+strict verify the app at least twice (pre/post staple)" >&2
+  echo "macos-release-artifacts.yml must deep+strict verify pre/post staple" >&2
   exit 1
 fi
 
