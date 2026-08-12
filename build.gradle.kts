@@ -168,9 +168,14 @@ val verifyMacosCliBundleReleaseContract by
         inputs
             .files(
                 ".github/workflows/release.yml",
+                ".github/workflows/macos-release-artifacts.yml",
+                ".github/workflows/notarize-macos.yml",
                 ".github/scripts/verify-macos-cli-bundle.sh",
                 ".github/scripts/test-verify-macos-cli-bundle.sh",
                 ".github/scripts/test-macos-cli-seal-preservation.sh",
+                ".github/scripts/test-macos-release-artifact-workflows.sh",
+                "docs/PUBLISHING.md",
+                "docs/RELEASE-SMOKE.md",
                 "Formula/spectre.rb",
             )
             .withPathSensitivity(PathSensitivity.RELATIVE)

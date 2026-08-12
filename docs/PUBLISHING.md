@@ -64,6 +64,21 @@ Jobs on tag push (order simplified; see the workflow for the full graph):
    remains the canonical host for library modules only; the CLI is never uploaded there. Do not
    attach a partial library jar set to the GitHub release.
 
+## On-demand pre-tag macOS artifacts
+
+[`.github/workflows/notarize-macos.yml`](https://github.com/rock3r/spectre/blob/main/.github/workflows/notarize-macos.yml)
+can be dispatched for a commit reachable from `main`. It calls the same reusable macOS helper and
+CLI signing jobs as the tag release, then uploads the `mac-helper` and `mac-cli-bundles` workflow
+artifacts. This path **does not publish to Central or create a GitHub release**. Use it to obtain
+Developer ID signed, notarized, and stapled artifacts for the pre-tag B8/B16 checks documented in
+[Release smoke](RELEASE-SMOKE.md#on-demand-pre-tag-macos-notarization).
+
+The tag workflow passes its exact `${{ github.sha }}` to the reusable workflow. The manual wrapper
+pins the privileged reusable workflow definition to `main`; that trusted workflow resolves the
+requested ref to a full SHA and rejects it unless it is in the default branch's history. Dispatching
+the wrapper from a feature branch therefore cannot redirect privileged Gradle execution to
+unreviewed workflow or build code.
+
 ## CLI package channels
 
 The Spectre repository also hosts its release manifests: `Formula/spectre.rb` is the Homebrew

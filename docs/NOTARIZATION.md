@@ -49,6 +49,13 @@ distributed artifact.
 rebuild under the same install path without expecting a re-prompt — keep release identity on the
 release path only.
 
+For pre-tag release smoke, dispatch the artifact-only
+[`notarize-macos.yml`](https://github.com/rock3r/spectre/blob/main/.github/workflows/notarize-macos.yml)
+workflow. It uses the same signing implementation as the tag release and uploads the notarized
+helper plus both stapled CLI bundles without publishing anything. See
+[Release smoke](RELEASE-SMOKE.md#on-demand-pre-tag-macos-notarization) for the command and local
+B8/B16 verification steps.
+
 ## Local setup
 
 Install Xcode or the Xcode Command Line Tools so these commands are available:
