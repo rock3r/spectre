@@ -127,7 +127,7 @@ jobs:
         # per-artifact 502s on cold macOS runners; the plugin documents this fallback property.
         run: |
           ./gradlew :sample-intellij-plugin:uiTest \
-            -Dorg.jetbrains.intellij.platform.useCacheRedirector=false
+            -Porg.jetbrains.intellij.platform.useCacheRedirector=false
         # Use bash explicitly on Windows so the `./gradlew` invocation is identical across the
         # non-Linux legs. Default Windows shell is pwsh which has different path-resolution
         # semantics for `./` prefixes; bash keeps the script identical to ci.yml + windows.yml.
@@ -142,7 +142,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           xvfb-run -a ./gradlew :sample-intellij-plugin:uiTest \
-            -Dorg.jetbrains.intellij.platform.useCacheRedirector=false
+            -Porg.jetbrains.intellij.platform.useCacheRedirector=false
         shell: bash
 
       # Capture artefacts on failure so post-mortem doesn't require re-running the test.

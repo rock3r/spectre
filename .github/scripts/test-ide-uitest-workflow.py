@@ -4,11 +4,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "ide-uitest.yml"
-DIRECT_REPOSITORY_FLAG = "-Dorg.jetbrains.intellij.platform.useCacheRedirector=false"
+DIRECT_REPOSITORY_FLAG = "-Porg.jetbrains.intellij.platform.useCacheRedirector=false"
+FORBIDDEN_SYSTEM_PROPERTY = "-Dorg.jetbrains.intellij.platform.useCacheRedirector=false"
 
 
 def main() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
+    if FORBIDDEN_SYSTEM_PROPERTY in text:
+        raise SystemExit("Cache Redirector setting must be a Gradle project property (-P), not -D")
     count = text.count(DIRECT_REPOSITORY_FLAG)
     if count != 2:
         raise SystemExit(
