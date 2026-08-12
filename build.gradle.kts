@@ -203,6 +203,25 @@ val verifyWindowsReleaseSmokeScript by
         outputs.upToDateWhen { false }
     }
 
+val verifyIdeUiTestWorkflow by
+    tasks.registering(Exec::class) {
+        description = "Asserts the IDE UI workflow uses reliable direct JetBrains repositories."
+        group = "verification"
+        workingDir = rootProject.layout.projectDirectory.asFile
+        commandLine("python3", ".github/scripts/test-ide-uitest-workflow.py")
+        onlyIf("Host with python3") {
+            runCatching { ProcessBuilder("python3", "--version").start().waitFor() == 0 }
+                .getOrDefault(false)
+        }
+        inputs
+            .files(
+                ".github/workflows/ide-uitest.yml",
+                ".github/scripts/test-ide-uitest-workflow.py",
+            )
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+        outputs.upToDateWhen { false }
+    }
+
 val verifyReleaseSmokeScripts by
     tasks.registering(Exec::class) {
         description = "Contract tests for cross-platform release-smoke orchestration and MCP stdio."
@@ -253,6 +272,7 @@ tasks.named("check") {
         verifyReleaseVersionScript,
         verifyMacosCliBundleReleaseContract,
         verifyWindowsReleaseSmokeScript,
+        verifyIdeUiTestWorkflow,
         verifyReleaseSmokeScripts,
         buildSrcUnitTests,
     )
