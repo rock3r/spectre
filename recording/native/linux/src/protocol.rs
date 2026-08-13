@@ -38,6 +38,10 @@ pub struct StartCommand {
     pub cursor_mode: CursorMode,
     pub frame_rate: u32,
     pub region: Region,
+    /// AWT virtual-desktop size in the same pixel space as [region], when known.
+    /// Used to convert mixed HiDPI AWT/XWayland coordinates onto the portal stream.
+    #[serde(default)]
+    pub screen_size: Option<[i32; 2]>,
     pub output: String,
     pub codec: String,
 }
@@ -54,6 +58,9 @@ pub struct ScreenshotCommand {
     pub window_title: Option<String>,
     pub cursor_mode: CursorMode,
     pub region: Region,
+    /// AWT virtual-desktop size in the same pixel space as [region], when known.
+    #[serde(default)]
+    pub screen_size: Option<[i32; 2]>,
     pub output: String,
 }
 

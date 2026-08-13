@@ -60,15 +60,20 @@ fn run_wayland(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
     fcntl(session.pipewire_fd, FcntlArg::F_SETFD(flags))
         .context("fcntl(F_SETFD, !CLOEXEC) on PipeWire FD")?;
 
-    // 3. Translate the AWT-screen region into stream-relative coordinates. The portal hands
-    // us a stream covering one monitor (or the user-selected window); its top-left is in
-    // monitor coords, which can be non-(0,0) on multi-monitor setups. Our AWT-side region is
-    // already relative to the screen origin, so subtract the stream position.
-    let stream_relative_region = crate::protocol::Region {
-        x: start.region.x - session.stream.position.0,
-        y: start.region.y - session.stream.position.1,
-        width: start.region.width,
-        height: start.region.height,
+    // 3. Translate the AWT-screen region into stream-relative coordinates.
+    // Window-source crops are already stream-relative (GTK frame extents). Monitor/region
+    // crops may be in a mixed AWT/XWayland pixel space; convert then clamp.
+    let stream_relative_region = if start.target == CaptureTarget::Window {
+        crate::stream_region::clamp_region_to_stream(start.region, session.stream.size)
+            .context("clamping window-source crop to portal stream")?
+    } else {
+        crate::stream_region::map_awt_region_to_stream(
+            start.region,
+            session.stream.position,
+            session.stream.size,
+            start.screen_size.map(|s| (s[0], s[1])),
+        )
+        .context("mapping AWT region onto portal stream")?
     };
 
     let argv = build_pipewire_argv(

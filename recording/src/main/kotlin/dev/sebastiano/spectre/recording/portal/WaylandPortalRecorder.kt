@@ -3,7 +3,9 @@ package dev.sebastiano.spectre.recording.portal
 import dev.sebastiano.spectre.recording.Recorder
 import dev.sebastiano.spectre.recording.RecordingHandle
 import dev.sebastiano.spectre.recording.RecordingOptions
+import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
+import java.awt.Toolkit
 import java.io.BufferedReader
 import java.io.IOException
 import java.io.InputStreamReader
@@ -335,6 +337,12 @@ private constructor(
                         width = region.width,
                         height = region.height,
                     ),
+                screenSize =
+                    if (sourceTypes == listOf(SourceType.WINDOW)) {
+                        null
+                    } else {
+                        awtVirtualDesktopSize()
+                    },
                 output = output.toAbsolutePath().toString(),
                 codec = options.codec,
             )
@@ -346,6 +354,13 @@ private constructor(
 // `private companion object const val` is JVM-public on the outer class; file-level `private`
 // compiles to a private static final on the synthetic Kt facade.
 private const val MALFORMED_LINE_PREVIEW_LENGTH: Int = 200
+
+internal fun awtVirtualDesktopSize(): List<Int>? {
+    if (GraphicsEnvironment.isHeadless()) return null
+    val size = Toolkit.getDefaultToolkit().screenSize ?: return null
+    if (size.width <= 0 || size.height <= 0) return null
+    return listOf(size.width, size.height)
+}
 
 internal const val DEFAULT_STARTED_TIMEOUT_MS: Long = 90_000
 internal const val DEFAULT_SHUTDOWN_GRACE_MS: Long = 30_000

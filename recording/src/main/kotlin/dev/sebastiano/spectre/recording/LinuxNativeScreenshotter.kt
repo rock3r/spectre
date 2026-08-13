@@ -9,6 +9,7 @@ import dev.sebastiano.spectre.recording.portal.Event
 import dev.sebastiano.spectre.recording.portal.Region
 import dev.sebastiano.spectre.recording.portal.SourceType
 import dev.sebastiano.spectre.recording.portal.WaylandHelperBinaryExtractor
+import dev.sebastiano.spectre.recording.portal.awtVirtualDesktopSize
 import dev.sebastiano.spectre.recording.portal.queryGtkFrameExtentsViaXprop
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import java.awt.Insets
@@ -82,6 +83,7 @@ internal constructor(
                 windowTitle = title,
                 cursorMode = CursorMode.HIDDEN,
                 region = region.toProtocolRegion(),
+                screenSize = null,
                 output = tempPng().toAbsolutePath().toString(),
             )
         )
@@ -98,6 +100,7 @@ internal constructor(
                     if (wayland) null else displayNameProvider()?.takeIf { it.isNotBlank() },
                 cursorMode = CursorMode.HIDDEN,
                 region = region.toProtocolRegion(),
+                screenSize = if (wayland) awtVirtualDesktopSize() else null,
                 output = tempPng().toAbsolutePath().toString(),
             )
         )
