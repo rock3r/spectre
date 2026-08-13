@@ -172,7 +172,7 @@ def _packaged_cli_portal_env(env: dict[str, str] | None) -> dict[str, str] | Non
     if env is None:
         return None
     packaged = dict(env)
-    packaged.pop("SPECTRE_WAYLAND_HELPER", None)
+    packaged["SPECTRE_WAYLAND_HELPER"] = ""
     return packaged
 
 

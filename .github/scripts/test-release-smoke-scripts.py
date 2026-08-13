@@ -596,7 +596,7 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
             }
         )
         self.assertEqual("/tmp/tokens", env["SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"])
-        self.assertNotIn("SPECTRE_WAYLAND_HELPER", env)
+        self.assertEqual("", env["SPECTRE_WAYLAND_HELPER"])
 
     def test_wayland_portal_ui_prefix_is_empty(self):
         self.assertEqual([], self.rs._ui_prefix("Linux", wayland_portal=True))
