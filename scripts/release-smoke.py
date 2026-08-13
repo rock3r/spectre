@@ -15,7 +15,6 @@ See docs/RELEASE-SMOKE.md and scripts/smoke_lib.py for scenario IDs.
 from __future__ import annotations
 
 import argparse
-import os
 import platform
 import subprocess
 import sys
@@ -35,8 +34,6 @@ from smoke_lib import (  # noqa: E402
     assert_mcp_fixture_e2e_executed,
     WAYLAND_PORTAL_WARMUP_TOKEN_KEYS,
     linux_portal_token_path,
-    window_hidden_token_warmup_command,
-    window_hidden_token_warmup_payload,
     build_report,
     collect_preflight,
     gradle_ui_force_args,
@@ -349,7 +346,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         print(
-            "portal-token-warmup: approve Share + Remember once; later cells reuse the token",
+            "portal-token-warmup: approve Share + Remember for the whole screen; "
+            "later monitor ScreenCast cells reuse that token. Window-source prompts "
+            "are per-window and may still appear.",
             flush=True,
         )
         scenario_env = prepare_linux_portal_token_env(ROOT, out_dir)
@@ -388,43 +387,6 @@ def main(argv: list[str] | None = None) -> int:
                 env=scenario_env,
                 overall_deadline=overall_deadline,
             )
-            if warmup.result == RESULT_PASS:
-                shot = out_dir / "wayland-window-hidden-warmup.png"
-
-                def warm_window_hidden() -> None:
-                    command = window_hidden_token_warmup_command(scenario_env, shot)
-                    completed = subprocess.run(
-                        command,
-                        input=window_hidden_token_warmup_payload(shot),
-                        text=True,
-                        cwd=ROOT,
-                        env={**os.environ, **scenario_env},
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        timeout=120,
-                        check=False,
-                    )
-                    if completed.returncode != 0:
-                        raise RuntimeError(
-                            "window-hidden helper warmup failed: "
-                            f"exit {completed.returncode}\n{completed.stdout}"
-                        )
-
-                window_warmup = run_callable_scenario(
-                    "portal-token-warmup",
-                    name="Capture window-hidden ScreenCast restore token",
-                    action=warm_window_hidden,
-                    out_dir=out_dir,
-                )
-                if window_warmup.result != RESULT_PASS:
-                    warmup = scenario_result(
-                        "portal-token-warmup",
-                        name=window_warmup.name,
-                        result=RESULT_FAIL,
-                        seconds=warmup.seconds + window_warmup.seconds,
-                        detail=window_warmup.detail or "window-hidden token warmup failed",
-                        log=window_warmup.log or warmup.log,
-                    )
             if warmup.result == RESULT_PASS:
                 try:
                     assert_linux_portal_tokens_captured(

@@ -646,11 +646,7 @@ def gradle_ui_force_args() -> list[str]:
 
 WAYLAND_RESTORE_TOKEN_PREFIX = "wayland-screencast-restore-token-"
 WAYLAND_PORTAL_SMOKE_TOKEN_KEY = "monitor-embedded"
-WAYLAND_PORTAL_WINDOW_TOKEN_KEY = "window-hidden"
-WAYLAND_PORTAL_WARMUP_TOKEN_KEYS: tuple[str, ...] = (
-    WAYLAND_PORTAL_SMOKE_TOKEN_KEY,
-    WAYLAND_PORTAL_WINDOW_TOKEN_KEY,
-)
+WAYLAND_PORTAL_WARMUP_TOKEN_KEYS: tuple[str, ...] = (WAYLAND_PORTAL_SMOKE_TOKEN_KEY,)
 WAYLAND_HELPER_NAME = "spectre-wayland-helper"
 
 
@@ -761,33 +757,6 @@ def prepare_linux_portal_token_env(root: Path, out_dir: Path) -> dict[str, str]:
     if helper is not None:
         env["SPECTRE_WAYLAND_HELPER"] = str(helper)
     return env
-
-
-def window_hidden_token_warmup_command(
-    env: Mapping[str, str],
-    output: Path,
-) -> list[str]:
-    helper = env.get("SPECTRE_WAYLAND_HELPER") or ""
-    if not helper or not Path(helper).is_file():
-        raise RuntimeError(
-            "SPECTRE_WAYLAND_HELPER is required to warm the window-hidden restore token"
-        )
-    return [helper]
-
-
-def window_hidden_token_warmup_payload(output: Path) -> str:
-    return json.dumps(
-        {
-            "command": "screenshot",
-            "backend": "wayland_portal",
-            "target": "window",
-            "source_types": ["window"],
-            "cursor_mode": "hidden",
-            "region": {"x": 0, "y": 0, "width": 64, "height": 64},
-            "output": str(output),
-        },
-        separators=(",", ":"),
-    ) + "\n"
 
 
 def linux_portal_token_path(

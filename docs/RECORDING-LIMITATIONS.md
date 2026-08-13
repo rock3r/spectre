@@ -69,8 +69,9 @@ interactive and not automatable. Spectre's `spectre-wayland-helper` uses portal
 
 - **First run** (no token, or compositor rejects a stale token): the portal dialog is
   shown. A human must accept once. Release smoke does this up front as `portal-token-warmup`
-  and pins `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` + `SPECTRE_WAYLAND_HELPER` so later cells reuse
-  the same helper identity and token file.
+  for the **monitor-embedded** grant and pins `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` +
+  `SPECTRE_WAYLAND_HELPER` so later monitor ScreenCast cells reuse that token. Window-source
+  tokens are bound to the picked window and are not pre-warmed against an unrelated window.
 - **Later CLI/agent sessions**: the helper reuses the stored token so no dialog appears
   (validated on GNOME/mutter; other compositors are best-effort). Tokens are single-use at
   the portal: each successful `Start` writes a replacement file. A cancelled dialog never

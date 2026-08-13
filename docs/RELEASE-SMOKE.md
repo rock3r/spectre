@@ -283,7 +283,7 @@ The cross-platform runner covers the stable baseline that should not be reinvent
   pass) + strict stdio (version / tools/list including `detach` / unknown-session detach `isError`)
 - host native recording smoke (macOS SCK region / Linux X11; Windows WGC via interactive PS script)
 - Maven Local `verifyMavenLocalPublication` + fresh consumer jar resolve
-- Linux Wayland `portal-token-warmup`: one `:recording:runWaylandPortalSmoke` with a pinned `SPECTRE_WAYLAND_HELPER` + `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` under `build/smoke/wayland-restore-tokens/`. Approve **Share** + **Remember** once; later Gradle cells inherit that env so they reuse the token instead of prompting again. Xvfb / macOS / Windows record hard `n/a`.
+- Linux Wayland `portal-token-warmup`: one `:recording:runWaylandPortalSmoke` with a pinned `SPECTRE_WAYLAND_HELPER` + `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` under `build/smoke/wayland-restore-tokens/`. Approve **Share** + **Remember** for the **whole screen**; later monitor ScreenCast cells reuse that token. Window-source prompts are per-window and may still appear. Xvfb / macOS / Windows record hard `n/a`.
 
 Each release still needs delta cells based on `git log <previous-tag>..HEAD`. Add reusable delta
 coverage to the runner rather than leaving a one-release command only in chat.
@@ -361,8 +361,9 @@ These cannot currently be made portable and fail-closed by the baseline runner:
 - **Wayland portal:** Xvfb proves X11 only. On a real Wayland desktop the Unix harness now runs
   `portal-token-warmup` first (`:recording:runWaylandPortalSmoke`) and pins
   `SPECTRE_WAYLAND_HELPER` + `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` for the rest of the run. Approve
-  **Share** + **Remember** once at that prompt; later ScreenCast cells should reuse the token.
-  JBR `java.awt.Robot` / Remote Desktop prompts are a separate app identity and may still appear.
+  **Share** + **Remember** for the whole screen; later monitor ScreenCast cells reuse that token.
+  Window-source, JBR `java.awt.Robot`, and Remote Desktop prompts are separate identities and may
+  still appear.
 - **Homebrew/Scoop/public archives:** after the draft artifacts exist, install through the real
   package manager and rerun launcher/MCP smoke. Local packaging does not prove channel metadata.
 - **Input focus/lock keys:** real Robot input uses global desktop state. Record focus failures and
