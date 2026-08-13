@@ -601,9 +601,51 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
         self.assertEqual("/tmp/tokens", env["SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"])
         self.assertEqual("", env["SPECTRE_WAYLAND_HELPER"])
 
-    def test_wayland_portal_ui_prefix_is_empty(self):
+    def test_wayland_portal_ui_prefix_is_empty_only_for_seat_bound_cells(self):
         self.assertEqual([], self.rs._ui_prefix("Linux", wayland_portal=True))
         self.assertIsInstance(self.rs._ui_prefix("Linux", wayland_portal=False), list)
+
+    def test_robot_cells_keep_xvfb_after_wayland_portal_warmup(self):
+        # Helper restore tokens do not cover JBR Robot / Remote Desktop. After
+        # portal warmup, check/attach/corpus must still use xvfb-run or each JVM
+        # pops a new compositor dialog on the seat. Ignore an inherited DISPLAY.
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "xvfb-run"
+            fake.write_text("#!/bin/sh\n", encoding="utf-8")
+            fake.chmod(0o755)
+            previous_path = os.environ.get("PATH", "")
+            previous_display = os.environ.get("DISPLAY")
+            os.environ["PATH"] = f"{tmp}{os.pathsep}{previous_path}"
+            os.environ["DISPLAY"] = ":0"
+            try:
+                self.assertEqual(
+                    ["xvfb-run", "-a"],
+                    self.rs._robot_ui_prefix("Linux", wayland_portal=True),
+                )
+                self.assertEqual(
+                    ["xvfb-run", "-a"],
+                    self.rs._robot_ui_prefix("Linux", wayland_portal=False),
+                )
+                self.assertEqual([], smoke_lib.xvfb_prefix("Linux"))
+                robot_env = self.rs._robot_env(
+                    {
+                        "SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": "/tmp/tokens",
+                        "WAYLAND_DISPLAY": "wayland-0",
+                        "XDG_SESSION_TYPE": "wayland",
+                    }
+                )
+                self.assertEqual("x11", robot_env["SPECTRE_CAPTURE_BACKEND"])
+                self.assertEqual("", robot_env["WAYLAND_DISPLAY"])
+                self.assertEqual("x11", robot_env["XDG_SESSION_TYPE"])
+                self.assertEqual(
+                    "/tmp/tokens", robot_env["SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"]
+                )
+            finally:
+                os.environ["PATH"] = previous_path
+                if previous_display is None:
+                    os.environ.pop("DISPLAY", None)
+                else:
+                    os.environ["DISPLAY"] = previous_display
 
     def test_assert_linux_portal_tokens_captured_requires_restore_file(self):
         with tempfile.TemporaryDirectory() as tmp:

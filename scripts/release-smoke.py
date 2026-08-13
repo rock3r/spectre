@@ -42,6 +42,7 @@ from smoke_lib import (  # noqa: E402
     packaged_cli_executable,
     portal_token_warmup_skip_reason,
     prepare_linux_portal_token_env,
+    robot_xvfb_prefix,
     run_callable_scenario,
     run_scenario,
     scenario_result,
@@ -165,6 +166,31 @@ def _ui_prefix(system: str, *, wayland_portal: bool = False) -> list[str]:
     if wayland_portal:
         return []
     return xvfb_prefix(system)
+
+
+def _robot_ui_prefix(system: str, *, wayland_portal: bool = False) -> list[str]:
+    """Prefix for JBR/AWT Robot cells.
+
+    Helper ScreenCast restore tokens do not cover Robot / Remote Desktop. Even
+    after a successful Wayland portal warmup, these cells must stay off the
+    seated compositor or each JVM pops a new Share dialog.
+    """
+    del wayland_portal
+    return robot_xvfb_prefix(system)
+
+
+def _robot_env(env: dict[str, str] | None) -> dict[str, str]:
+    """Force Robot cells onto X11/Xvfb even when the login session is Wayland.
+
+    Nested xvfb-run inherits WAYLAND_DISPLAY from the seat. Empty values are
+    stripped by run_command, so clearing that variable plus SPECTRE_CAPTURE_BACKEND=x11
+    keeps JBR Robot off xdg-desktop-portal.
+    """
+    robot = dict(env or {})
+    robot["SPECTRE_CAPTURE_BACKEND"] = "x11"
+    robot["WAYLAND_DISPLAY"] = ""
+    robot["XDG_SESSION_TYPE"] = "x11"
+    return robot
 
 
 def _packaged_cli_portal_env(env: dict[str, str] | None) -> dict[str, str] | None:
@@ -356,8 +382,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(
             "portal-token-warmup: approve Share + Remember for the whole screen; "
-            "later monitor ScreenCast cells reuse that token. Window-source prompts "
-            "are per-window and may still appear.",
+            "only helper monitor ScreenCast cells reuse that token. Robot-backed "
+            "cells stay under xvfb-run. Window-source prompts are per-window.",
             flush=True,
         )
         scenario_env = prepare_linux_portal_token_env(ROOT, out_dir)
@@ -415,7 +441,8 @@ def main(argv: list[str] | None = None) -> int:
                 scenario_env = None
             add(warmup)
 
-    prefix = _ui_prefix(system, wayland_portal=scenario_env is not None)
+    seat_prefix = _ui_prefix(system, wayland_portal=scenario_env is not None)
+    robot_prefix = _robot_ui_prefix(system, wayland_portal=scenario_env is not None)
 
     # --- check ---
     if args.skip_check:
@@ -433,11 +460,11 @@ def main(argv: list[str] | None = None) -> int:
             run_scenario(
                 "check",
                 name="./gradlew check",
-                command=[gradle, "check", "--console=plain"],
+                command=[*robot_prefix, gradle, "check", "--console=plain"],
                 cwd=ROOT,
                 timeout=1200,
                 out_dir=out_dir,
-                env=scenario_env,
+                env=_robot_env(scenario_env),
                 overall_deadline=overall_deadline,
             )
         )
@@ -447,11 +474,11 @@ def main(argv: list[str] | None = None) -> int:
         run_scenario(
             "junit-live",
             name="Live JUnit failure artifacts/video and atomic capture",
-            command=[*prefix, gradle, ":sample-desktop:validationTest", *force],
+            command=[*robot_prefix, gradle, ":sample-desktop:validationTest", *force],
             cwd=ROOT,
             timeout=900,
             out_dir=out_dir,
-            env=scenario_env,
+            env=_robot_env(scenario_env),
             overall_deadline=overall_deadline,
         )
     )
@@ -462,7 +489,7 @@ def main(argv: list[str] | None = None) -> int:
             "agent-attach-core",
             name="Agent attach with preinstalled core",
             command=[
-                *prefix,
+                *robot_prefix,
                 gradle,
                 ":agent:test",
                 "--tests",
@@ -472,7 +499,7 @@ def main(argv: list[str] | None = None) -> int:
             cwd=ROOT,
             timeout=600,
             out_dir=out_dir,
-            env=scenario_env,
+            env=_robot_env(scenario_env),
             overall_deadline=overall_deadline,
         )
     )
@@ -481,7 +508,7 @@ def main(argv: list[str] | None = None) -> int:
             "agent-contract-corpus",
             name="Agent contract corpus",
             command=[
-                *prefix,
+                *robot_prefix,
                 gradle,
                 ":agent:test",
                 "--tests",
@@ -491,7 +518,7 @@ def main(argv: list[str] | None = None) -> int:
             cwd=ROOT,
             timeout=600,
             out_dir=out_dir,
-            env=scenario_env,
+            env=_robot_env(scenario_env),
             overall_deadline=overall_deadline,
         )
     )
@@ -500,7 +527,7 @@ def main(argv: list[str] | None = None) -> int:
             "agent-inject",
             name="Injected attach without preinstalled core",
             command=[
-                *prefix,
+                *robot_prefix,
                 gradle,
                 ":agent:test",
                 "--tests",
@@ -510,7 +537,7 @@ def main(argv: list[str] | None = None) -> int:
             cwd=ROOT,
             timeout=600,
             out_dir=out_dir,
-            env=scenario_env,
+            env=_robot_env(scenario_env),
             overall_deadline=overall_deadline,
         )
     )
@@ -519,7 +546,7 @@ def main(argv: list[str] | None = None) -> int:
             "agent-launch-and-attach",
             name="Launch-and-attach",
             command=[
-                *prefix,
+                *robot_prefix,
                 gradle,
                 ":agent:test",
                 "--tests",
@@ -529,7 +556,7 @@ def main(argv: list[str] | None = None) -> int:
             cwd=ROOT,
             timeout=600,
             out_dir=out_dir,
-            env=scenario_env,
+            env=_robot_env(scenario_env),
             overall_deadline=overall_deadline,
         )
     )
@@ -599,7 +626,7 @@ def main(argv: list[str] | None = None) -> int:
                 "cli-user-flow",
                 name="Packaged CLI user flow (ps/attach/tree/input/capture/detach)",
                 command=[
-                    *prefix,
+                    *robot_prefix,
                     gradle,
                     ":cli:test",
                     "--tests",
@@ -610,7 +637,7 @@ def main(argv: list[str] | None = None) -> int:
                 cwd=ROOT,
                 timeout=600,
                 out_dir=out_dir,
-                env=_packaged_cli_portal_env(scenario_env),
+                env=_robot_env(_packaged_cli_portal_env(scenario_env)),
                 overall_deadline=overall_deadline,
             )
         )
@@ -621,7 +648,7 @@ def main(argv: list[str] | None = None) -> int:
             "mcp-sdk-flow",
             name=mcp_name,
             command=[
-                *prefix,
+                *robot_prefix,
                 gradle,
                 ":cli:test",
                 # Same VERSION_NAME as package so SpectreMcpStdioIntegrationTest
@@ -637,7 +664,7 @@ def main(argv: list[str] | None = None) -> int:
             cwd=ROOT,
             timeout=600,
             out_dir=out_dir,
-            env=_packaged_cli_portal_env(scenario_env),
+            env=_robot_env(_packaged_cli_portal_env(scenario_env)),
             overall_deadline=overall_deadline,
         )
         if mcp_sdk.result == RESULT_PASS:
@@ -724,7 +751,7 @@ def main(argv: list[str] | None = None) -> int:
             run_scenario(
                 "host-native-recording",
                 name=f"Host native recording ({recording_task})",
-                command=[*prefix, gradle, recording_task, "--console=plain"],
+                command=[*seat_prefix, gradle, recording_task, "--console=plain"],
                 cwd=ROOT,
                 timeout=300,
                 out_dir=out_dir,

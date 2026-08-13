@@ -824,6 +824,19 @@ def xvfb_prefix(system: str | None = None) -> list[str]:
     return []
 
 
+def robot_xvfb_prefix(system: str | None = None) -> list[str]:
+    """Always wrap JBR/AWT Robot cells in Xvfb on Linux.
+
+    Unlike [xvfb_prefix], this ignores an inherited seated DISPLAY. Helper
+    ScreenCast restore tokens do not cover Robot / Remote Desktop, so Robot
+    cells must not reuse the compositor seat after portal warmup.
+    """
+    system = system or platform.system()
+    if system == "Linux" and _which("xvfb-run"):
+        return ["xvfb-run", "-a"]
+    return []
+
+
 def host_cli_package_target(system: str | None = None, machine: str | None = None) -> str:
     system = system or platform.system()
     machine = machine or platform.machine()
