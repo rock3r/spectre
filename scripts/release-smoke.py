@@ -167,6 +167,15 @@ def _ui_prefix(system: str, *, wayland_portal: bool = False) -> list[str]:
     return xvfb_prefix(system)
 
 
+def _packaged_cli_portal_env(env: dict[str, str] | None) -> dict[str, str] | None:
+    """Keep the restore-token dir, but use the packaged helper rather than the staged binary."""
+    if env is None:
+        return None
+    packaged = dict(env)
+    packaged.pop("SPECTRE_WAYLAND_HELPER", None)
+    return packaged
+
+
 def _maven_local_version(release_version: str) -> str:
     # Keep smoke publication off the SNAPSHOT and release coordinates consumers might already have.
     return f"{release_version}-rc.smoke"
@@ -601,7 +610,7 @@ def main(argv: list[str] | None = None) -> int:
                 cwd=ROOT,
                 timeout=600,
                 out_dir=out_dir,
-                env=scenario_env,
+                env=_packaged_cli_portal_env(scenario_env),
                 overall_deadline=overall_deadline,
             )
         )
@@ -628,7 +637,7 @@ def main(argv: list[str] | None = None) -> int:
             cwd=ROOT,
             timeout=600,
             out_dir=out_dir,
-            env=scenario_env,
+            env=_packaged_cli_portal_env(scenario_env),
             overall_deadline=overall_deadline,
         )
         if mcp_sdk.result == RESULT_PASS:

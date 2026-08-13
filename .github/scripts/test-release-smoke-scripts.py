@@ -581,6 +581,23 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
             )
             self.assertNotIn("SPECTRE_WAYLAND_HELPER", env)
 
+    def test_prepare_linux_portal_token_env_clears_path_override(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out_dir = root / "build" / "smoke"
+            env = smoke_lib.prepare_linux_portal_token_env(root, out_dir)
+            self.assertEqual("", env.get("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH"))
+
+    def test_packaged_cli_env_drops_helper_override(self):
+        env = self.rs._packaged_cli_portal_env(
+            {
+                "SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": "/tmp/tokens",
+                "SPECTRE_WAYLAND_HELPER": "/tmp/helper",
+            }
+        )
+        self.assertEqual("/tmp/tokens", env["SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"])
+        self.assertNotIn("SPECTRE_WAYLAND_HELPER", env)
+
     def test_wayland_portal_ui_prefix_is_empty(self):
         self.assertEqual([], self.rs._ui_prefix("Linux", wayland_portal=True))
         self.assertIsInstance(self.rs._ui_prefix("Linux", wayland_portal=False), list)

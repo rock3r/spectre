@@ -487,6 +487,10 @@ def run_command(
     if env is not None:
         merged_env = os.environ.copy()
         merged_env.update(env)
+        # Empty values unset inherited overrides (e.g. SPECTRE_WAYLAND_RESTORE_TOKEN_PATH).
+        for key, value in list(merged_env.items()):
+            if key in env and value == "":
+                del merged_env[key]
 
     remaining = timeout
     if overall_deadline is not None:
@@ -752,7 +756,11 @@ def prepare_linux_portal_token_env(root: Path, out_dir: Path) -> dict[str, str]:
     token_dir = Path(out_dir) / "wayland-restore-tokens"
     token_dir.mkdir(parents=True, exist_ok=True)
     token_dir.chmod(0o700)
-    env = {"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(token_dir)}
+    env = {
+        "SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(token_dir),
+        # PATH takes precedence over DIR in the helper. Unset any inherited override.
+        "SPECTRE_WAYLAND_RESTORE_TOKEN_PATH": "",
+    }
     helper = linux_wayland_helper_path(root)
     if helper is not None:
         env["SPECTRE_WAYLAND_HELPER"] = str(helper)
