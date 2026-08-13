@@ -14,13 +14,17 @@ import javax.swing.JFrame
  */
 internal object SmokeWindowPlacement {
     fun placeOnVisibleScreen(frame: JFrame, preferredSize: Dimension) {
-        val screen = visibleScreenBounds()
+        val placed = placedBounds(visibleScreenBounds(), preferredSize)
+        frame.setSize(placed.width, placed.height)
+        frame.setLocation(placed.x, placed.y)
+    }
+
+    fun placedBounds(screen: Rectangle, preferredSize: Dimension): Rectangle {
         val width = preferredSize.width.coerceAtMost(screen.width).coerceAtLeast(1)
         val height = preferredSize.height.coerceAtMost(screen.height).coerceAtLeast(1)
-        frame.setSize(width, height)
         val x = screen.x + ((screen.width - width) / 2).coerceAtLeast(0)
         val y = screen.y + ((screen.height - height) / 2).coerceAtLeast(0)
-        frame.setLocation(x, y)
+        return Rectangle(x, y, width, height)
     }
 
     fun visibleScreenBounds(

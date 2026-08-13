@@ -1,11 +1,8 @@
 package dev.sebastiano.spectre.recording.portal
 
 import java.awt.Dimension
-import java.awt.GraphicsEnvironment
 import java.awt.Insets
 import java.awt.Rectangle
-import javax.swing.JFrame
-import javax.swing.SwingUtilities
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -22,37 +19,17 @@ class SmokeWindowPlacementTest {
     }
 
     @Test
-    fun `placeOnVisibleScreen keeps a 480x240 window inside the screen`() {
-        assumeDisplay()
-        val frame = JFrame("placement")
-        try {
-            SwingUtilities.invokeAndWait {
-                frame.isUndecorated = true
-                SmokeWindowPlacement.placeOnVisibleScreen(frame, Dimension(480, 240))
-                frame.pack()
-            }
-            val screen = GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds
-            val bounds = frame.bounds
-            assertTrue(bounds.width <= 480, "width=${bounds.width}")
-            assertTrue(bounds.height <= 240, "height=${bounds.height}")
-            assertTrue(
-                screen.contains(bounds) || intersectsFullyInside(screen, bounds),
-                "placed=$bounds screen=$screen",
-            )
-        } finally {
-            SwingUtilities.invokeAndWait { frame.dispose() }
-        }
+    fun `centered 480x240 window stays inside a 1536-wide screen`() {
+        val screen = Rectangle(0, 0, 1536, 864)
+        val placed = SmokeWindowPlacement.placedBounds(screen, Dimension(480, 240))
+        assertEquals(Rectangle(528, 312, 480, 240), placed)
+        assertTrue(screen.contains(placed), "placed=$placed screen=$screen")
     }
 
-    private fun assumeDisplay() {
-        org.junit.jupiter.api.Assumptions.assumeFalse(
-            GraphicsEnvironment.isHeadless(),
-            "Needs a display to place a JFrame",
-        )
-    }
-
-    private fun intersectsFullyInside(screen: Rectangle, bounds: Rectangle): Boolean {
-        val intersection = screen.intersection(bounds)
-        return intersection == bounds && !intersection.isEmpty
+    @Test
+    fun `window larger than the screen is clamped to the visible area`() {
+        val screen = Rectangle(0, 0, 800, 600)
+        val placed = SmokeWindowPlacement.placedBounds(screen, Dimension(2000, 1800))
+        assertEquals(screen, placed)
     }
 }
