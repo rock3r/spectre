@@ -43,6 +43,7 @@ from smoke_lib import (  # noqa: E402
     portal_token_warmup_skip_reason,
     prepare_linux_portal_token_env,
     robot_xvfb_prefix,
+    robot_xvfb_unavailable_reason,
     run_callable_scenario,
     run_scenario,
     scenario_result,
@@ -177,6 +178,21 @@ def _robot_ui_prefix(system: str, *, wayland_portal: bool = False) -> list[str]:
     """
     del wayland_portal
     return robot_xvfb_prefix(system)
+
+
+def _robot_cell_blocked_result(
+    scenario_id: str, name: str, system: str
+) -> ScenarioResult | None:
+    reason = robot_xvfb_unavailable_reason(system)
+    if reason is None:
+        return None
+    return scenario_result(
+        scenario_id,
+        name=name,
+        result=RESULT_FAIL,
+        detail=reason,
+        hard=True,
+    )
 
 
 def _robot_env(env: dict[str, str] | None) -> dict[str, str]:
@@ -456,8 +472,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     else:
+        blocked = _robot_cell_blocked_result("check", "./gradlew check", system)
         add(
-            run_scenario(
+            blocked
+            or run_scenario(
                 "check",
                 name="./gradlew check",
                 command=[*robot_prefix, gradle, "check", "--console=plain"],
@@ -470,8 +488,14 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     # --- live JUnit failure artifacts/video + atomic capture ---
+    blocked = _robot_cell_blocked_result(
+        "junit-live",
+        "Live JUnit failure artifacts/video and atomic capture",
+        system,
+    )
     add(
-        run_scenario(
+        blocked
+        or run_scenario(
             "junit-live",
             name="Live JUnit failure artifacts/video and atomic capture",
             command=[*robot_prefix, gradle, ":sample-desktop:validationTest", *force],
@@ -484,82 +508,41 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # --- agent attach / corpus / inject / launch-and-attach ---
-    add(
-        run_scenario(
+    for scenario_id, name, test_filter in (
+        (
             "agent-attach-core",
-            name="Agent attach with preinstalled core",
-            command=[
-                *robot_prefix,
-                gradle,
-                ":agent:test",
-                "--tests",
-                "*AgentAttachIntegration*",
-                *force,
-            ],
-            cwd=ROOT,
-            timeout=600,
-            out_dir=out_dir,
-            env=_robot_env(scenario_env),
-            overall_deadline=overall_deadline,
-        )
-    )
-    add(
-        run_scenario(
-            "agent-contract-corpus",
-            name="Agent contract corpus",
-            command=[
-                *robot_prefix,
-                gradle,
-                ":agent:test",
-                "--tests",
-                "*AgentContractCorpus*",
-                *force,
-            ],
-            cwd=ROOT,
-            timeout=600,
-            out_dir=out_dir,
-            env=_robot_env(scenario_env),
-            overall_deadline=overall_deadline,
-        )
-    )
-    add(
-        run_scenario(
+            "Agent attach with preinstalled core",
+            "*AgentAttachIntegration*",
+        ),
+        ("agent-contract-corpus", "Agent contract corpus", "*AgentContractCorpus*"),
+        (
             "agent-inject",
-            name="Injected attach without preinstalled core",
-            command=[
-                *robot_prefix,
-                gradle,
-                ":agent:test",
-                "--tests",
-                "*AgentInjectAttachIntegration*",
-                *force,
-            ],
-            cwd=ROOT,
-            timeout=600,
-            out_dir=out_dir,
-            env=_robot_env(scenario_env),
-            overall_deadline=overall_deadline,
+            "Injected attach without preinstalled core",
+            "*AgentInjectAttachIntegration*",
+        ),
+        ("agent-launch-and-attach", "Launch-and-attach", "*LaunchAndAttachIntegration*"),
+    ):
+        blocked = _robot_cell_blocked_result(scenario_id, name, system)
+        add(
+            blocked
+            or run_scenario(
+                scenario_id,
+                name=name,
+                command=[
+                    *robot_prefix,
+                    gradle,
+                    ":agent:test",
+                    "--tests",
+                    test_filter,
+                    *force,
+                ],
+                cwd=ROOT,
+                timeout=600,
+                out_dir=out_dir,
+                env=_robot_env(scenario_env),
+                overall_deadline=overall_deadline,
+            )
         )
-    )
-    add(
-        run_scenario(
-            "agent-launch-and-attach",
-            name="Launch-and-attach",
-            command=[
-                *robot_prefix,
-                gradle,
-                ":agent:test",
-                "--tests",
-                "*LaunchAndAttachIntegration*",
-                *force,
-            ],
-            cwd=ROOT,
-            timeout=600,
-            out_dir=out_dir,
-            env=_robot_env(scenario_env),
-            overall_deadline=overall_deadline,
-        )
-    )
 
     # --- CLI package + native helper layout ---
     # Bake --version into the package so MCP serverInfo.version matches strict stdio
@@ -621,8 +604,14 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         # CLI path: ps, attach, find/click, fail-closed window screenshot, fullscreen, cleanup.
+        blocked = _robot_cell_blocked_result(
+            "cli-user-flow",
+            "Packaged CLI user flow (ps/attach/tree/input/capture/detach)",
+            system,
+        )
         add(
-            run_scenario(
+            blocked
+            or run_scenario(
                 "cli-user-flow",
                 name="Packaged CLI user flow (ps/attach/tree/input/capture/detach)",
                 command=[
@@ -644,7 +633,8 @@ def main(argv: list[str] | None = None) -> int:
         # MCP via official Kotlin SDK: fixture attach → op → detach session-gone is required
         # for hard pass after #399/#414 (tools/list + unknown-detach alone is insufficient).
         mcp_name = "Packaged MCP attach/op/detach lifecycle + strict stdio"
-        mcp_sdk = run_scenario(
+        blocked = _robot_cell_blocked_result("mcp-sdk-flow", mcp_name, system)
+        mcp_sdk = blocked or run_scenario(
             "mcp-sdk-flow",
             name=mcp_name,
             command=[

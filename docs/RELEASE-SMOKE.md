@@ -364,7 +364,8 @@ These cannot currently be made portable and fail-closed by the baseline runner:
   for the whole screen once. Only helper monitor ScreenCast cells stay on the seat
   (`host-native-recording`). `check`, attach, corpus, inject, CLI, and MCP stay under
   `xvfb-run` even when `DISPLAY=:0`, because JBR `java.awt.Robot` and Remote Desktop are a
-  different app identity and would otherwise pop a new compositor dialog per JVM.
+  different app identity and would otherwise pop a new compositor dialog per JVM. Missing
+  `xvfb-run` is a hard fail for those cells, not a fallback onto the seat.
 - **Homebrew/Scoop/public archives:** after the draft artifacts exist, install through the real
   package manager and rerun launcher/MCP smoke. Local packaging does not prove channel metadata.
 - **Input focus/lock keys:** real Robot input uses global desktop state. Record focus failures and

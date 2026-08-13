@@ -605,6 +605,18 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
         self.assertEqual([], self.rs._ui_prefix("Linux", wayland_portal=True))
         self.assertIsInstance(self.rs._ui_prefix("Linux", wayland_portal=False), list)
 
+    def test_missing_xvfb_run_fails_robot_cells_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            previous_path = os.environ.get("PATH", "")
+            os.environ["PATH"] = tmp
+            try:
+                self.assertEqual([], smoke_lib.robot_xvfb_prefix("Linux"))
+                reason = smoke_lib.robot_xvfb_unavailable_reason("Linux")
+                self.assertIsNotNone(reason)
+                self.assertIn("xvfb-run", reason or "")
+            finally:
+                os.environ["PATH"] = previous_path
+
     def test_robot_cells_keep_xvfb_after_wayland_portal_warmup(self):
         # Helper restore tokens do not cover JBR Robot / Remote Desktop. After
         # portal warmup, check/attach/corpus must still use xvfb-run or each JVM
