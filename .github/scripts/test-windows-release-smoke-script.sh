@@ -86,7 +86,7 @@ grep -F -q 'hard skip without N/A reason' "$script" || fail "fail-closed hard N/
 for scenario_id in \
   preflight check junit-live agent-attach-core agent-contract-corpus agent-inject \
   agent-launch-and-attach cli-packaged cli-native-helper-layout cli-user-flow \
-  mcp-sdk-flow host-native-recording maven-local-consumer
+  mcp-sdk-flow host-native-recording maven-local-consumer portal-token-warmup
 do
   grep -F -q "$scenario_id" "$script" || fail "Windows runner missing stable scenario id: $scenario_id"
 done

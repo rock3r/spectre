@@ -42,6 +42,7 @@ REQUIRED_SCENARIO_IDS: tuple[str, ...] = (
     "mcp-sdk-flow",
     "host-native-recording",
     "maven-local-consumer",
+    "portal-token-warmup",
 )
 
 RESULT_PASS = "pass"
@@ -486,6 +487,10 @@ def run_command(
     if env is not None:
         merged_env = os.environ.copy()
         merged_env.update(env)
+        # Empty values unset inherited overrides (e.g. SPECTRE_WAYLAND_RESTORE_TOKEN_PATH).
+        for key, value in list(merged_env.items()):
+            if key in env and value == "":
+                del merged_env[key]
 
     remaining = timeout
     if overall_deadline is not None:
@@ -641,6 +646,174 @@ def gradle_ui_force_args() -> list[str]:
         "--no-build-cache",
         "--console=plain",
     ]
+
+
+WAYLAND_RESTORE_TOKEN_PREFIX = "wayland-screencast-restore-token-"
+WAYLAND_PORTAL_SMOKE_TOKEN_KEY = "monitor-embedded"
+WAYLAND_PORTAL_WARMUP_TOKEN_KEYS: tuple[str, ...] = (WAYLAND_PORTAL_SMOKE_TOKEN_KEY,)
+WAYLAND_HELPER_NAME = "spectre-wayland-helper"
+
+
+def is_linux_wayland_portal_session(
+    env: Mapping[str, str] | None = None,
+    *,
+    display_is_pure_x11: Callable[[str], bool] | None = None,
+) -> bool:
+    """True when this process should use seated Wayland portal warmup."""
+    environ = env or os.environ
+    override = (environ.get("SPECTRE_CAPTURE_BACKEND") or "").strip().lower()
+    if override in {"x11", "xorg", "xvfb"}:
+        return False
+    if override in {"wayland", "portal"}:
+        return True
+    session = (environ.get("XDG_SESSION_TYPE") or "").strip().lower()
+    if session == "x11":
+        return False
+    display = (environ.get("DISPLAY") or "").strip()
+    probe = display_is_pure_x11 or linux_display_is_pure_x11
+    if display and probe(display):
+        # Nested xvfb-run on a Wayland login inherits WAYLAND_DISPLAY, but windows live
+        # on the Xvfb DISPLAY. Real Wayland+XWayland (XWAYLAND extension) stays portal.
+        return False
+    wayland_display = (environ.get("WAYLAND_DISPLAY") or "").strip()
+    runtime_dir = (environ.get("XDG_RUNTIME_DIR") or "").strip()
+    if wayland_display:
+        if runtime_dir:
+            return (Path(runtime_dir) / wayland_display).exists()
+        return True
+    return session == "wayland"
+
+
+def linux_display_is_pure_x11(display: str) -> bool:
+    """Best-effort Xvfb / non-XWayland probe. Unknown displays are not treated as Xvfb."""
+    if not display:
+        return False
+    try:
+        completed = subprocess.run(
+            ["xdpyinfo", "-display", display],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    output = completed.stdout or ""
+    if completed.returncode != 0 or not output.strip():
+        return False
+    return "XWAYLAND" not in output.upper()
+
+
+def portal_token_warmup_skip_reason(
+    env: Mapping[str, str] | None = None,
+    system: str | None = None,
+) -> str | None:
+    """Hard N/A reason when ScreenCast restore-token warmup cannot run."""
+    host = system or platform.system()
+    if host != "Linux":
+        return f"{host} does not use xdg-desktop-portal ScreenCast restore tokens"
+    if not is_linux_wayland_portal_session(env):
+        return "Linux Wayland portal token warmup requires a real Wayland session"
+    return None
+
+
+def linux_wayland_helper_candidates(root: Path) -> list[Path]:
+    machine = platform.machine()
+    arch = "aarch64" if machine in {"arm64", "aarch64"} else "x86_64"
+    return [
+        root
+        / "recording"
+        / "build"
+        / "generated"
+        / "waylandHelper"
+        / "native"
+        / "linux"
+        / arch
+        / WAYLAND_HELPER_NAME,
+        root / "recording" / "native" / "linux" / "target" / "release" / WAYLAND_HELPER_NAME,
+        root
+        / "recording-linux"
+        / "build"
+        / "resources"
+        / "main"
+        / "native"
+        / "linux"
+        / arch
+        / WAYLAND_HELPER_NAME,
+    ]
+
+
+def linux_wayland_helper_path(root: Path) -> Path | None:
+    for candidate in linux_wayland_helper_candidates(root):
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def prepare_linux_portal_token_env(root: Path, out_dir: Path) -> dict[str, str]:
+    """Pin a restore-token dir, and a helper binary when one is already staged."""
+    token_dir = Path(out_dir) / "wayland-restore-tokens"
+    token_dir.mkdir(parents=True, exist_ok=True)
+    token_dir.chmod(0o700)
+    env = {
+        "SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(token_dir),
+        # PATH takes precedence over DIR in the helper. Unset any inherited override.
+        "SPECTRE_WAYLAND_RESTORE_TOKEN_PATH": "",
+    }
+    helper = linux_wayland_helper_path(root)
+    if helper is not None:
+        env["SPECTRE_WAYLAND_HELPER"] = str(helper)
+    return env
+
+
+def linux_portal_token_path(
+    env: Mapping[str, str],
+    token_key: str = WAYLAND_PORTAL_SMOKE_TOKEN_KEY,
+) -> Path:
+    token_dir = Path(env.get("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR") or "")
+    return token_dir / f"{WAYLAND_RESTORE_TOKEN_PREFIX}{token_key}"
+
+
+def assert_linux_portal_tokens_captured(
+    env: Mapping[str, str],
+    *,
+    token_keys: Sequence[str] = WAYLAND_PORTAL_WARMUP_TOKEN_KEYS,
+    expected_mtime_ns: Mapping[str, int] | int | None = None,
+) -> None:
+    token_dir = Path(env.get("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR") or "")
+    if not token_dir.is_dir():
+        raise RuntimeError(
+            "ScreenCast restore token dir missing: "
+            f"{token_dir or '(SPECTRE_WAYLAND_RESTORE_TOKEN_DIR unset)'}"
+        )
+    missing: list[str] = []
+    stale: list[str] = []
+    for token_key in token_keys:
+        path = linux_portal_token_path(env, token_key)
+        if not path.is_file() or not path.read_text(encoding="utf-8").strip():
+            missing.append(path.name)
+            continue
+        if expected_mtime_ns is None:
+            continue
+        required = (
+            expected_mtime_ns.get(token_key)
+            if isinstance(expected_mtime_ns, Mapping)
+            else expected_mtime_ns
+        )
+        if required is not None and path.stat().st_mtime_ns < required:
+            stale.append(path.name)
+    if missing:
+        raise RuntimeError(
+            "missing ScreenCast restore token(s) "
+            f"{', '.join(missing)} under {token_dir}; approve Share + Remember "
+            "for monitor and window during portal-token-warmup"
+        )
+    if stale:
+        raise RuntimeError(
+            "ScreenCast restore token(s) not refreshed by this warmup: "
+            f"{', '.join(stale)}; later cells may prompt again"
+        )
 
 
 def xvfb_prefix(system: str | None = None) -> list[str]:

@@ -64,7 +64,8 @@ $script:RequiredScenarioIds = @(
     "cli-user-flow",
     "mcp-sdk-flow",
     "host-native-recording",
-    "maven-local-consumer"
+    "maven-local-consumer",
+    "portal-token-warmup"
 )
 $ErrorActionPreference = "Stop"
 # Avoid StrictMode edge cases with dynamic PSCustomObject / native interop on WinPS 5.1.
@@ -715,6 +716,8 @@ try {
         [void]$results.Add((New-StepResult -Id "cli-user-flow" -Name "Packaged CLI user flow" -Result "n/a" -Reason $reason))
         [void]$results.Add((New-StepResult -Id "mcp-sdk-flow" -Name "Packaged MCP attach/op/detach lifecycle + strict stdio" -Result "n/a" -Reason $reason))
     }
+
+    [void]$results.Add((New-StepResult -Id "portal-token-warmup" -Name "Capture persistent ScreenCast restore token" -Result "n/a" -Reason "Windows does not use xdg-desktop-portal ScreenCast restore tokens"))
 
     if ($SkipMavenLocal) {
         [void]$results.Add((New-StepResult -Id "maven-local-consumer" -Name "Maven Local publication + fresh consumer" -Result "n/a" -Reason "skipped via -SkipMavenLocal"))

@@ -178,6 +178,7 @@ class SmokeLibSchemaTest(unittest.TestCase):
             "mcp-sdk-flow",
             "host-native-recording",
             "maven-local-consumer",
+            "portal-token-warmup",
         }
         self.assertEqual(expected, set(smoke_lib.REQUIRED_SCENARIO_IDS))
 
@@ -356,6 +357,8 @@ class SmokeLibSchemaTest(unittest.TestCase):
         self.assertIn("gradle_ui_force_args", text)
         self.assertIn("runMacOsSckRegionSmoke", text)
         self.assertIn("runLinuxX11RecordingSmoke", text)
+        self.assertIn("runWaylandPortalSmoke", text)
+        self.assertIn("portal-token-warmup", text)
         self.assertIn("verifyMavenLocalPublication", text)
         self.assertIn("LaunchAndAttachIntegration", text)
         # #414: hard pass requires fixture e2e lifecycle gate, not tools/list alone.
@@ -477,6 +480,10 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
         self.assertEqual(
             ":recording:runLinuxX11RecordingSmoke", self.rs._host_recording_task("Linux")
         )
+        self.assertEqual(
+            ":recording:runWaylandPortalSmoke",
+            self.rs._host_recording_task("Linux", wayland_portal=True),
+        )
         self.assertIsNone(self.rs._host_recording_task("Windows"))
 
     def test_native_helper_layout_check_requires_executable(self):
@@ -494,6 +501,141 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             self.rs._fresh_consumer_check(ROOT, "0.0.0-does-not-exist-smoke")
         self.assertIn("missing", str(ctx.exception).lower())
+
+    def test_linux_portal_session_is_detected_from_wayland_socket(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = Path(tmp) / "runtime"
+            runtime.mkdir()
+            (runtime / "wayland-0").touch()
+            self.assertTrue(
+                smoke_lib.is_linux_wayland_portal_session(
+                    {
+                        "WAYLAND_DISPLAY": "wayland-0",
+                        "XDG_RUNTIME_DIR": str(runtime),
+                    }
+                )
+            )
+            self.assertFalse(
+                smoke_lib.is_linux_wayland_portal_session(
+                    {
+                        "DISPLAY": ":99",
+                        "XDG_SESSION_TYPE": "x11",
+                    }
+                )
+            )
+            self.assertFalse(
+                smoke_lib.is_linux_wayland_portal_session(
+                    {
+                        "DISPLAY": ":99",
+                        "XDG_SESSION_TYPE": "wayland",
+                        "WAYLAND_DISPLAY": "wayland-0",
+                        "XDG_RUNTIME_DIR": str(runtime),
+                    },
+                    display_is_pure_x11=lambda _display: True,
+                )
+            )
+            self.assertTrue(
+                smoke_lib.is_linux_wayland_portal_session(
+                    {
+                        "DISPLAY": ":0",
+                        "XDG_SESSION_TYPE": "wayland",
+                        "WAYLAND_DISPLAY": "wayland-0",
+                        "XDG_RUNTIME_DIR": str(runtime),
+                    },
+                    display_is_pure_x11=lambda _display: False,
+                )
+            )
+            self.assertFalse(
+                smoke_lib.is_linux_wayland_portal_session(
+                    {
+                        "SPECTRE_CAPTURE_BACKEND": "x11",
+                        "WAYLAND_DISPLAY": "wayland-0",
+                        "XDG_RUNTIME_DIR": str(runtime),
+                    }
+                )
+            )
+
+    def test_prepare_linux_portal_token_env_pins_helper_and_token_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            helper = smoke_lib.linux_wayland_helper_candidates(root)[0]
+            helper.parent.mkdir(parents=True)
+            helper.write_text("#!/bin/sh\n", encoding="utf-8")
+            helper.chmod(0o755)
+            out_dir = root / "build" / "smoke"
+            env = smoke_lib.prepare_linux_portal_token_env(root, out_dir)
+            token_dir = Path(env["SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"])
+            self.assertEqual(out_dir / "wayland-restore-tokens", token_dir)
+            self.assertTrue(token_dir.is_dir())
+            self.assertEqual(str(helper), env["SPECTRE_WAYLAND_HELPER"])
+            self.assertEqual("0700", oct(token_dir.stat().st_mode)[-4:])
+
+    def test_prepare_linux_portal_token_env_without_helper_omits_override(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out_dir = root / "build" / "smoke"
+            env = smoke_lib.prepare_linux_portal_token_env(root, out_dir)
+            self.assertEqual(
+                str(out_dir / "wayland-restore-tokens"),
+                env["SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"],
+            )
+            self.assertNotIn("SPECTRE_WAYLAND_HELPER", env)
+
+    def test_prepare_linux_portal_token_env_clears_path_override(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out_dir = root / "build" / "smoke"
+            env = smoke_lib.prepare_linux_portal_token_env(root, out_dir)
+            self.assertEqual("", env.get("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH"))
+
+    def test_packaged_cli_env_drops_helper_override(self):
+        env = self.rs._packaged_cli_portal_env(
+            {
+                "SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": "/tmp/tokens",
+                "SPECTRE_WAYLAND_HELPER": "/tmp/helper",
+            }
+        )
+        self.assertEqual("/tmp/tokens", env["SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"])
+        self.assertEqual("", env["SPECTRE_WAYLAND_HELPER"])
+
+    def test_wayland_portal_ui_prefix_is_empty(self):
+        self.assertEqual([], self.rs._ui_prefix("Linux", wayland_portal=True))
+        self.assertIsInstance(self.rs._ui_prefix("Linux", wayland_portal=False), list)
+
+    def test_assert_linux_portal_tokens_captured_requires_restore_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            token_dir = Path(tmp) / "tokens"
+            token_dir.mkdir()
+            stale = token_dir / "wayland-screencast-restore-token-window-hidden"
+            stale.write_text("old\n", encoding="utf-8")
+            with self.assertRaises(RuntimeError) as ctx:
+                smoke_lib.assert_linux_portal_tokens_captured(
+                    {"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(token_dir)}
+                )
+            self.assertIn("monitor-embedded", str(ctx.exception).lower())
+            target = token_dir / "wayland-screencast-restore-token-monitor-embedded"
+            target.write_text("token-abc\n", encoding="utf-8")
+            before = target.stat().st_mtime_ns
+            with self.assertRaises(RuntimeError):
+                smoke_lib.assert_linux_portal_tokens_captured(
+                    {"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(token_dir)},
+                    expected_mtime_ns=before + 1,
+                )
+            smoke_lib.assert_linux_portal_tokens_captured(
+                {"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(token_dir)},
+                expected_mtime_ns=before,
+            )
+
+    def test_portal_token_warmup_is_na_on_non_wayland(self):
+        result = smoke_lib.portal_token_warmup_skip_reason(
+            {"DISPLAY": ":99", "XDG_SESSION_TYPE": "x11"},
+            system="Linux",
+        )
+        self.assertIsNotNone(result)
+        self.assertIn("Wayland", result or "")
+        darwin = smoke_lib.portal_token_warmup_skip_reason(system="Darwin")
+        self.assertIsNotNone(darwin)
+        self.assertIn("does not use", darwin or "")
 
 
 class DocsAndSchemaPolicyTest(unittest.TestCase):
