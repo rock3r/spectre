@@ -68,9 +68,14 @@ interactive and not automatable. Spectre's `spectre-wayland-helper` uses portal
 `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR`).
 
 - **First run** (no token, or compositor rejects a stale token): the portal dialog is
-  shown. A human must accept once.
+  shown. A human must accept once. Release smoke does this up front as `portal-token-warmup`
+  and pins `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` + `SPECTRE_WAYLAND_HELPER` so later cells reuse
+  the same helper identity and token file.
 - **Later CLI/agent sessions**: the helper reuses the stored token so no dialog appears
-  (validated on GNOME/mutter; other compositors are best-effort).
+  (validated on GNOME/mutter; other compositors are best-effort). Tokens are single-use at
+  the portal: each successful `Start` writes a replacement file. A cancelled dialog never
+  stores a token. JBR `java.awt.Robot` ScreenCast / Remote Desktop prompts use a different
+  app identity and are not covered by this file.
 - **Invalidation**: if Start/SelectSources rejects the token, Spectre clears the file and
   retries interactively once, printing a clear message on stderr.
 

@@ -30,6 +30,7 @@ from smoke_lib import (  # noqa: E402
     RESULT_FAIL,
     RESULT_PASS,
     ScenarioResult,
+    assert_linux_portal_tokens_captured,
     assert_mcp_fixture_e2e_executed,
     build_report,
     collect_preflight,
@@ -37,6 +38,8 @@ from smoke_lib import (  # noqa: E402
     hard_failures,
     host_cli_package_target,
     packaged_cli_executable,
+    portal_token_warmup_skip_reason,
+    prepare_linux_portal_token_env,
     run_callable_scenario,
     run_scenario,
     scenario_result,
@@ -145,10 +148,12 @@ def _assert_helper_near_executable(executable: Path, system: str) -> None:
             raise RuntimeError(f"Linux launcher unexpectedly tiny: {executable}")
 
 
-def _host_recording_task(system: str) -> str | None:
+def _host_recording_task(system: str, *, wayland_portal: bool = False) -> str | None:
     if system == "Darwin":
         return ":recording:runMacOsSckRegionSmoke"
     if system == "Linux":
+        if wayland_portal:
+            return ":recording:runWaylandPortalSmoke"
         return ":recording:runLinuxX11RecordingSmoke"
     return None
 
@@ -314,9 +319,67 @@ def main(argv: list[str] | None = None) -> int:
     gradle = str(ROOT / "gradlew")
     prefix = xvfb_prefix(system)
     force = gradle_ui_force_args()
+    scenario_env: dict[str, str] | None = None
     def add(item: ScenarioResult) -> None:
         results.append(item)
         _print_result(item)
+
+    # --- Linux Wayland portal token warmup ---
+    portal_skip = portal_token_warmup_skip_reason(system=system)
+    if portal_skip is not None:
+        add(
+            scenario_result(
+                "portal-token-warmup",
+                name="Capture persistent ScreenCast restore token",
+                result="n/a",
+                reason=portal_skip,
+                hard=True,
+            )
+        )
+    else:
+        print(
+            "portal-token-warmup: approve Share + Remember once; later cells reuse the token",
+            flush=True,
+        )
+        try:
+            scenario_env = prepare_linux_portal_token_env(ROOT, out_dir)
+        except RuntimeError as error:
+            add(
+                scenario_result(
+                    "portal-token-warmup",
+                    name="Capture persistent ScreenCast restore token",
+                    result="fail",
+                    detail=str(error),
+                    hard=True,
+                )
+            )
+        else:
+            warmup = run_scenario(
+                "portal-token-warmup",
+                name="Capture persistent ScreenCast restore token",
+                command=[gradle, ":recording:runWaylandPortalSmoke", "--console=plain"],
+                cwd=ROOT,
+                timeout=180,
+                out_dir=out_dir,
+                env=scenario_env,
+                overall_deadline=overall_deadline,
+            )
+            if warmup.result == RESULT_PASS:
+                try:
+                    assert_linux_portal_tokens_captured(scenario_env)
+                except RuntimeError as error:
+                    warmup = scenario_result(
+                        "portal-token-warmup",
+                        name=warmup.name,
+                        result=RESULT_FAIL,
+                        seconds=warmup.seconds,
+                        detail=str(error),
+                        log=warmup.log,
+                    )
+                    scenario_env = None
+            else:
+                scenario_env = None
+            add(warmup)
 
     # --- check ---
     if args.skip_check:
@@ -338,6 +401,7 @@ def main(argv: list[str] | None = None) -> int:
                 cwd=ROOT,
                 timeout=1200,
                 out_dir=out_dir,
+                env=scenario_env,
                 overall_deadline=overall_deadline,
             )
         )
@@ -351,6 +415,7 @@ def main(argv: list[str] | None = None) -> int:
             cwd=ROOT,
             timeout=900,
             out_dir=out_dir,
+            env=scenario_env,
             overall_deadline=overall_deadline,
         )
     )
@@ -371,6 +436,7 @@ def main(argv: list[str] | None = None) -> int:
             cwd=ROOT,
             timeout=600,
             out_dir=out_dir,
+            env=scenario_env,
             overall_deadline=overall_deadline,
         )
     )
@@ -389,6 +455,7 @@ def main(argv: list[str] | None = None) -> int:
             cwd=ROOT,
             timeout=600,
             out_dir=out_dir,
+            env=scenario_env,
             overall_deadline=overall_deadline,
         )
     )
@@ -407,6 +474,7 @@ def main(argv: list[str] | None = None) -> int:
             cwd=ROOT,
             timeout=600,
             out_dir=out_dir,
+            env=scenario_env,
             overall_deadline=overall_deadline,
         )
     )
@@ -425,6 +493,7 @@ def main(argv: list[str] | None = None) -> int:
             cwd=ROOT,
             timeout=600,
             out_dir=out_dir,
+            env=scenario_env,
             overall_deadline=overall_deadline,
         )
     )
@@ -445,6 +514,7 @@ def main(argv: list[str] | None = None) -> int:
         cwd=ROOT,
         timeout=900,
         out_dir=out_dir,
+        env=scenario_env,
         overall_deadline=overall_deadline,
     )
     add(package_result)
@@ -504,6 +574,7 @@ def main(argv: list[str] | None = None) -> int:
                 cwd=ROOT,
                 timeout=600,
                 out_dir=out_dir,
+                env=scenario_env,
                 overall_deadline=overall_deadline,
             )
         )
@@ -530,6 +601,7 @@ def main(argv: list[str] | None = None) -> int:
             cwd=ROOT,
             timeout=600,
             out_dir=out_dir,
+            env=scenario_env,
             overall_deadline=overall_deadline,
         )
         if mcp_sdk.result == RESULT_PASS:
@@ -560,6 +632,7 @@ def main(argv: list[str] | None = None) -> int:
                     cwd=ROOT,
                     timeout=60,
                     out_dir=out_dir,
+                    env=scenario_env,
                     overall_deadline=overall_deadline,
                 )
                 # Merge seconds/detail: fail closed if either leg fails.
@@ -587,7 +660,9 @@ def main(argv: list[str] | None = None) -> int:
         add(mcp_sdk)
 
     # --- host native recording ---
-    recording_task = _host_recording_task(system)
+    recording_task = _host_recording_task(
+        system, wayland_portal=scenario_env is not None
+    )
     if args.skip_recording:
         add(
             scenario_result(
@@ -617,6 +692,7 @@ def main(argv: list[str] | None = None) -> int:
                 cwd=ROOT,
                 timeout=300,
                 out_dir=out_dir,
+                env=scenario_env,
                 overall_deadline=overall_deadline,
             )
         )
@@ -653,6 +729,7 @@ def main(argv: list[str] | None = None) -> int:
             cwd=ROOT,
             timeout=1200,
             out_dir=out_dir,
+            env=scenario_env,
             overall_deadline=overall_deadline,
         )
         if maven_result.result == RESULT_PASS:

@@ -42,6 +42,7 @@ REQUIRED_SCENARIO_IDS: tuple[str, ...] = (
     "mcp-sdk-flow",
     "host-native-recording",
     "maven-local-consumer",
+    "portal-token-warmup",
 )
 
 RESULT_PASS = "pass"
@@ -641,6 +642,108 @@ def gradle_ui_force_args() -> list[str]:
         "--no-build-cache",
         "--console=plain",
     ]
+
+
+WAYLAND_RESTORE_TOKEN_PREFIX = "wayland-screencast-restore-token-"
+WAYLAND_HELPER_NAME = "spectre-wayland-helper"
+
+
+def is_linux_wayland_portal_session(
+    env: Mapping[str, str] | None = None,
+) -> bool:
+    """True when this process can talk to a seated Wayland portal."""
+    environ = env or os.environ
+    session = (environ.get("XDG_SESSION_TYPE") or "").strip().lower()
+    if session == "x11":
+        return False
+    wayland_display = (environ.get("WAYLAND_DISPLAY") or "").strip()
+    runtime_dir = (environ.get("XDG_RUNTIME_DIR") or "").strip()
+    if wayland_display:
+        if runtime_dir:
+            socket_path = Path(runtime_dir) / wayland_display
+            if socket_path.exists():
+                return True
+            return False
+        return True
+    return session == "wayland"
+
+
+def portal_token_warmup_skip_reason(
+    env: Mapping[str, str] | None = None,
+    system: str | None = None,
+) -> str | None:
+    """Hard N/A reason when ScreenCast restore-token warmup cannot run."""
+    host = system or platform.system()
+    if host != "Linux":
+        return f"{host} does not use xdg-desktop-portal ScreenCast restore tokens"
+    if not is_linux_wayland_portal_session(env):
+        return "Linux Wayland portal token warmup requires a real Wayland session"
+    return None
+
+
+def linux_wayland_helper_candidates(root: Path) -> list[Path]:
+    machine = platform.machine()
+    arch = "aarch64" if machine in {"arm64", "aarch64"} else "x86_64"
+    return [
+        root
+        / "recording"
+        / "build"
+        / "generated"
+        / "waylandHelper"
+        / "native"
+        / "linux"
+        / arch
+        / WAYLAND_HELPER_NAME,
+        root / "recording" / "native" / "linux" / "target" / "release" / WAYLAND_HELPER_NAME,
+        root
+        / "recording-linux"
+        / "build"
+        / "resources"
+        / "main"
+        / "native"
+        / "linux"
+        / arch
+        / WAYLAND_HELPER_NAME,
+    ]
+
+
+def linux_wayland_helper_path(root: Path) -> Path:
+    for candidate in linux_wayland_helper_candidates(root):
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    searched = ", ".join(str(path) for path in linux_wayland_helper_candidates(root))
+    raise RuntimeError(f"spectre-wayland-helper not found; searched: {searched}")
+
+
+def prepare_linux_portal_token_env(root: Path, out_dir: Path) -> dict[str, str]:
+    """Pin one helper binary + restore-token dir for the whole smoke run."""
+    token_dir = Path(out_dir) / "wayland-restore-tokens"
+    token_dir.mkdir(parents=True, exist_ok=True)
+    token_dir.chmod(0o700)
+    helper = linux_wayland_helper_path(root)
+    return {
+        "SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(token_dir),
+        "SPECTRE_WAYLAND_HELPER": str(helper),
+    }
+
+
+def assert_linux_portal_tokens_captured(env: Mapping[str, str]) -> None:
+    token_dir = Path(env.get("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR") or "")
+    if not token_dir.is_dir():
+        raise RuntimeError(
+            "ScreenCast restore token dir missing: "
+            f"{token_dir or '(SPECTRE_WAYLAND_RESTORE_TOKEN_DIR unset)'}"
+        )
+    captured = [
+        path
+        for path in token_dir.glob(f"{WAYLAND_RESTORE_TOKEN_PREFIX}*")
+        if path.is_file() and path.read_text(encoding="utf-8").strip()
+    ]
+    if not captured:
+        raise RuntimeError(
+            f"no ScreenCast restore token under {token_dir}; approve Share + Remember "
+            "once during portal-token-warmup"
+        )
 
 
 def xvfb_prefix(system: str | None = None) -> list[str]:
