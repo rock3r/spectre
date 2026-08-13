@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.recording.portal
 import dev.sebastiano.spectre.recording.Recorder
 import dev.sebastiano.spectre.recording.RecordingHandle
 import dev.sebastiano.spectre.recording.RecordingOptions
+import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
 import java.io.BufferedReader
 import java.io.IOException
@@ -335,6 +336,12 @@ private constructor(
                         width = region.width,
                         height = region.height,
                     ),
+                screenSize =
+                    if (sourceTypes == listOf(SourceType.WINDOW)) {
+                        null
+                    } else {
+                        awtDisplayBoundsContaining(region)?.toWire()
+                    },
                 output = output.toAbsolutePath().toString(),
                 codec = options.codec,
             )
@@ -346,6 +353,26 @@ private constructor(
 // `private companion object const val` is JVM-public on the outer class; file-level `private`
 // compiles to a private static final on the synthetic Kt facade.
 private const val MALFORMED_LINE_PREVIEW_LENGTH: Int = 200
+
+internal fun awtDisplayBoundsContaining(
+    region: Rectangle,
+    displays: List<Rectangle> = currentAwtDisplayBounds(),
+): Rectangle? {
+    if (displays.isEmpty()) return null
+    val centerX = region.centerX
+    val centerY = region.centerY
+    return displays.firstOrNull { it.contains(centerX, centerY) }
+        ?: displays.firstOrNull { it.intersects(region) }
+}
+
+internal fun Rectangle.toWire(): List<Int> = listOf(x, y, width, height)
+
+private fun currentAwtDisplayBounds(): List<Rectangle> {
+    if (GraphicsEnvironment.isHeadless()) return emptyList()
+    return GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices.map { device ->
+        device.defaultConfiguration.bounds
+    }
+}
 
 internal const val DEFAULT_STARTED_TIMEOUT_MS: Long = 90_000
 internal const val DEFAULT_SHUTDOWN_GRACE_MS: Long = 30_000

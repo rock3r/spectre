@@ -37,6 +37,7 @@ internal sealed interface Command {
         @SerialName("cursor_mode") val cursorMode: CursorMode,
         @SerialName("frame_rate") val frameRate: Int,
         @SerialName("region") val region: Region,
+        @SerialName("screen_size") val screenSize: List<Int>? = null,
         @SerialName("output") val output: String,
         @SerialName("codec") val codec: String,
     ) : Command
@@ -51,6 +52,7 @@ internal sealed interface Command {
         @SerialName("window_title") val windowTitle: String? = null,
         @SerialName("cursor_mode") val cursorMode: CursorMode,
         @SerialName("region") val region: Region,
+        @SerialName("screen_size") val screenSize: List<Int>? = null,
         @SerialName("output") val output: String,
     ) : Command
 

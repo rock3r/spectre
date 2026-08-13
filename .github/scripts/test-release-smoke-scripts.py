@@ -568,7 +568,10 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
             self.assertEqual(out_dir / "wayland-restore-tokens", token_dir)
             self.assertTrue(token_dir.is_dir())
             self.assertEqual(str(helper), env["SPECTRE_WAYLAND_HELPER"])
-            self.assertEqual("0700", oct(token_dir.stat().st_mode)[-4:])
+            if os.name == "nt":
+                self.assertTrue(token_dir.is_dir())
+            else:
+                self.assertEqual("0700", oct(token_dir.stat().st_mode)[-4:])
 
     def test_prepare_linux_portal_token_env_without_helper_omits_override(self):
         with tempfile.TemporaryDirectory() as tmp:

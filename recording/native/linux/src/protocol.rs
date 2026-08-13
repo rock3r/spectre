@@ -38,6 +38,12 @@ pub struct StartCommand {
     pub cursor_mode: CursorMode,
     pub frame_rate: u32,
     pub region: Region,
+    /// AWT bounds of the display that contains [region], when known.
+    /// Origin + size in the same pixel space as [region]. Used to convert mixed
+    /// HiDPI AWT/XWayland coordinates onto the selected portal stream — never the
+    /// primary `Toolkit.screenSize`, which is wrong for a secondary monitor.
+    #[serde(default)]
+    pub screen_size: Option<[i32; 4]>,
     pub output: String,
     pub codec: String,
 }
@@ -54,6 +60,9 @@ pub struct ScreenshotCommand {
     pub window_title: Option<String>,
     pub cursor_mode: CursorMode,
     pub region: Region,
+    /// AWT bounds of the display that contains [region], when known (`x,y,w,h`).
+    #[serde(default)]
+    pub screen_size: Option<[i32; 4]>,
     pub output: String,
 }
 

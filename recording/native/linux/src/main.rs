@@ -20,6 +20,7 @@ mod portal;
 mod protocol;
 mod recorder;
 mod screenshot;
+mod stream_region;
 
 use anyhow::Result;
 use protocol::{Command, Event};

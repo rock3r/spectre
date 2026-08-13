@@ -81,13 +81,6 @@ pub fn build_pipewire_argv(
             region.height
         );
     }
-    if region.x < 0 || region.y < 0 {
-        bail!(
-            "region origin must be non-negative for the videocrop filter, was ({}, {})",
-            region.x,
-            region.y
-        );
-    }
     if pipewire_fd < 0 {
         bail!(
             "pipewire_fd must be a valid Unix FD (>= 0), was {}. Did OpenPipeWireRemote \
@@ -103,25 +96,12 @@ pub fn build_pipewire_argv(
             stream_h
         );
     }
-    let region_right = region.x as i64 + region.width as i64;
-    let region_bottom = region.y as i64 + region.height as i64;
-    if region_right > stream_w as i64 {
-        bail!(
-            "region right edge {} exceeds stream width {}",
-            region_right,
-            stream_w
-        );
-    }
-    if region_bottom > stream_h as i64 {
-        bail!(
-            "region bottom edge {} exceeds stream height {}",
-            region_bottom,
-            stream_h
-        );
-    }
-    let top = region.y as u32;
+    let clipped = crate::stream_region::clamp_region_to_stream(region, stream_size)?;
+    let region_right = clipped.x as i64 + clipped.width as i64;
+    let region_bottom = clipped.y as i64 + clipped.height as i64;
+    let top = clipped.y as u32;
     let bottom = stream_h - region_bottom as u32;
-    let left = region.x as u32;
+    let left = clipped.x as u32;
     let right = stream_w - region_right as u32;
     // Cursor is rendered into the captured frames by PipeWire (cursor_mode=EMBEDDED on
     // SelectSources). gst-launch's pipewiresrc has no per-element cursor knob — the
@@ -345,13 +325,6 @@ fn pipewire_crop_insets(
     stream_size: (u32, u32),
 ) -> Result<(u32, u32, u32, u32)> {
     validate_positive_region(region)?;
-    if region.x < 0 || region.y < 0 {
-        bail!(
-            "region origin must be non-negative for the videocrop filter, was ({}, {})",
-            region.x,
-            region.y
-        );
-    }
     if pipewire_fd < 0 {
         bail!(
             "pipewire_fd must be a valid Unix FD (>= 0), was {}. Did OpenPipeWireRemote \
@@ -367,26 +340,13 @@ fn pipewire_crop_insets(
             stream_h
         );
     }
-    let region_right = region.x as i64 + region.width as i64;
-    let region_bottom = region.y as i64 + region.height as i64;
-    if region_right > stream_w as i64 {
-        bail!(
-            "region right edge {} exceeds stream width {}",
-            region_right,
-            stream_w
-        );
-    }
-    if region_bottom > stream_h as i64 {
-        bail!(
-            "region bottom edge {} exceeds stream height {}",
-            region_bottom,
-            stream_h
-        );
-    }
+    let clipped = crate::stream_region::clamp_region_to_stream(region, stream_size)?;
+    let region_right = clipped.x as i64 + clipped.width as i64;
+    let region_bottom = clipped.y as i64 + clipped.height as i64;
     Ok((
-        region.y as u32,
+        clipped.y as u32,
         stream_h - region_bottom as u32,
-        region.x as u32,
+        clipped.x as u32,
         stream_w - region_right as u32,
     ))
 }
@@ -577,64 +537,70 @@ mod tests {
     }
 
     #[test]
-    fn argv_rejects_negative_region_origin() {
-        // videocrop's pixel-inset form would underflow if origin < 0, producing nonsense
-        // crops. Reject up-front so a misconfigured caller doesn't silently produce a
-        // black mp4 the way the JVM/JNR-POSIX bake-off attempt did.
-        let bad_x = build_pipewire_argv(
+    fn argv_clamps_negative_origin_that_still_intersects_the_stream() {
+        let argv = build_pipewire_argv(
             42,
             17,
-            region(-1, 0, 100, 100),
+            region(-20, -10, 100, 100),
             (1920, 1080),
             30,
             true,
             &PathBuf::from("/tmp/x"),
             "libx264",
+        )
+        .expect("partially off-stream origin should clamp");
+        assert_contains_sequence(
+            &argv,
+            &[
+                "videocrop",
+                "top=0",
+                "bottom=990",
+                "left=0",
+                "right=1840",
+            ],
         );
-        assert!(bad_x.is_err(), "negative x should be rejected");
-        let bad_y = build_pipewire_argv(
-            42,
-            17,
-            region(0, -10, 100, 100),
-            (1920, 1080),
-            30,
-            true,
-            &PathBuf::from("/tmp/x"),
-            "libx264",
-        );
-        assert!(bad_y.is_err(), "negative y should be rejected");
     }
 
     #[test]
-    fn argv_rejects_region_exceeding_stream_bounds() {
-        let too_wide = build_pipewire_argv(
+    fn argv_clamps_region_that_overflows_stream_bounds() {
+        // A leftover overflow after mixed-space conversion, or a window larger than the
+        // granted stream, must crop rather than fail the recording.
+        let argv = build_pipewire_argv(
             42,
             17,
-            region(0, 0, 2000, 100),
-            (1920, 1080),
+            region(1362, 0, 480, 240),
+            (1536, 864),
+            30,
+            true,
+            &PathBuf::from("/tmp/x"),
+            "libx264",
+        )
+        .expect("overflowing region should clamp to the visible stream");
+        assert_contains_sequence(
+            &argv,
+            &[
+                "videocrop",
+                "top=0",
+                "bottom=624",
+                "left=1362",
+                "right=0",
+            ],
+        );
+    }
+
+    #[test]
+    fn argv_rejects_region_with_empty_stream_intersection() {
+        let miss = build_pipewire_argv(
+            42,
+            17,
+            region(2000, 0, 480, 240),
+            (1536, 864),
             30,
             true,
             &PathBuf::from("/tmp/x"),
             "libx264",
         );
-        assert!(
-            too_wide.is_err(),
-            "region wider than stream should be rejected"
-        );
-        let too_tall = build_pipewire_argv(
-            42,
-            17,
-            region(0, 0, 100, 2000),
-            (1920, 1080),
-            30,
-            true,
-            &PathBuf::from("/tmp/x"),
-            "libx264",
-        );
-        assert!(
-            too_tall.is_err(),
-            "region taller than stream should be rejected"
-        );
+        assert!(miss.is_err(), "region entirely off-stream should still fail");
     }
 
     #[test]

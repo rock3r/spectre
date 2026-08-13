@@ -68,11 +68,19 @@ fn run_wayland_screenshot(command: &ScreenshotCommand, output: &PathBuf) -> Resu
     .context("portal screenshot handshake")?;
     ensure_window_source_if_requested(command.target, session.stream.source_type)?;
     clear_cloexec(session.pipewire_fd).context("allowing PipeWire FD inheritance")?;
-    let stream_relative_region = crate::protocol::Region {
-        x: command.region.x - session.stream.position.0,
-        y: command.region.y - session.stream.position.1,
-        width: command.region.width,
-        height: command.region.height,
+    let stream_relative_region = if command.target == CaptureTarget::Window {
+        crate::stream_region::clamp_region_to_stream(command.region, session.stream.size)
+            .context("clamping window-source screenshot crop to portal stream")?
+    } else {
+        crate::stream_region::map_awt_region_to_stream(
+            command.region,
+            session.stream.position,
+            session.stream.size,
+            command
+                .screen_size
+                .and_then(crate::stream_region::screen_size_to_region),
+        )
+        .context("mapping AWT screenshot region onto portal stream")?
     };
     let argv = build_pipewire_png_argv(
         session.stream.node_id,

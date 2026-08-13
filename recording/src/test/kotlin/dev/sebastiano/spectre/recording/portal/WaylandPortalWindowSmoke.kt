@@ -132,7 +132,10 @@ private fun openSmokeWindow(): Pair<JFrame, JLabel> {
                 contentPane = panel
                 preferredSize = Dimension(WINDOW_WIDTH, WINDOW_HEIGHT)
                 pack()
-                setLocationRelativeTo(null)
+                SmokeWindowPlacement.placeOnVisibleScreen(
+                    this,
+                    Dimension(WINDOW_WIDTH, WINDOW_HEIGHT),
+                )
                 isVisible = true
                 toFront()
                 requestFocus()

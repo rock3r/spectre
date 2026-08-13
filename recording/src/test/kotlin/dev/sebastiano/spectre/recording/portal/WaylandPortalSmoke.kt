@@ -58,7 +58,7 @@ private fun runSmoke() {
     Thread.sleep(WINDOW_SETTLE_MS)
 
     val recorder = WaylandPortalRecorder()
-    val frameBoundsAtStart = frame.bounds
+    val frameBoundsAtStart = java.awt.Rectangle(frame.locationOnScreen, frame.size)
     println(
         "(NOTE: a compositor permission dialog will pop on first run today; pick the monitor " +
             "with the JFrame and click \"Share.\" Subsequent runs reuse the grant silently.)"
@@ -138,7 +138,10 @@ private fun openSmokeWindow(): Pair<JFrame, JLabel> {
                 contentPane = panel
                 preferredSize = Dimension(WINDOW_WIDTH, WINDOW_HEIGHT)
                 pack()
-                setLocationRelativeTo(null)
+                SmokeWindowPlacement.placeOnVisibleScreen(
+                    this,
+                    Dimension(WINDOW_WIDTH, WINDOW_HEIGHT),
+                )
                 isVisible = true
                 toFront()
                 requestFocus()
