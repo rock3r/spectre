@@ -18,6 +18,13 @@ pub fn map_awt_region_to_stream(
     stream_size: (u32, u32),
     awt_display: Option<Region>,
 ) -> Result<Region> {
+    if region.width <= 0 || region.height <= 0 {
+        bail!(
+            "region must have positive dimensions, was {}x{}",
+            region.width,
+            region.height
+        );
+    }
     let relative = match awt_display.filter(|d| d.width > 0 && d.height > 0) {
         Some(display) => {
             let local = Region {
@@ -182,6 +189,21 @@ mod tests {
         let err = clamp_region_to_stream(region(2000, 0, 480, 240), (1536, 864)).unwrap_err();
         assert!(
             err.to_string().contains("does not intersect"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn rejects_non_positive_region_before_scale() {
+        let err = map_awt_region_to_stream(
+            region(100, 100, 0, 240),
+            (0, 0),
+            (1536, 864),
+            Some(region(0, 0, 2560, 1440)),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("positive dimensions"),
             "{err:#}"
         );
     }
