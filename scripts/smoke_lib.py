@@ -707,24 +707,23 @@ def linux_wayland_helper_candidates(root: Path) -> list[Path]:
     ]
 
 
-def linux_wayland_helper_path(root: Path) -> Path:
+def linux_wayland_helper_path(root: Path) -> Path | None:
     for candidate in linux_wayland_helper_candidates(root):
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
-    searched = ", ".join(str(path) for path in linux_wayland_helper_candidates(root))
-    raise RuntimeError(f"spectre-wayland-helper not found; searched: {searched}")
+    return None
 
 
 def prepare_linux_portal_token_env(root: Path, out_dir: Path) -> dict[str, str]:
-    """Pin one helper binary + restore-token dir for the whole smoke run."""
+    """Pin a restore-token dir, and a helper binary when one is already staged."""
     token_dir = Path(out_dir) / "wayland-restore-tokens"
     token_dir.mkdir(parents=True, exist_ok=True)
     token_dir.chmod(0o700)
+    env = {"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(token_dir)}
     helper = linux_wayland_helper_path(root)
-    return {
-        "SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(token_dir),
-        "SPECTRE_WAYLAND_HELPER": str(helper),
-    }
+    if helper is not None:
+        env["SPECTRE_WAYLAND_HELPER"] = str(helper)
+    return env
 
 
 def assert_linux_portal_tokens_captured(env: Mapping[str, str]) -> None:

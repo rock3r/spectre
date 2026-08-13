@@ -158,6 +158,13 @@ def _host_recording_task(system: str, *, wayland_portal: bool = False) -> str | 
     return None
 
 
+def _ui_prefix(system: str, *, wayland_portal: bool = False) -> list[str]:
+    """Xvfb only for X11 Linux. A real Wayland portal JFrame must stay on the seat."""
+    if wayland_portal:
+        return []
+    return xvfb_prefix(system)
+
+
 def _maven_local_version(release_version: str) -> str:
     # Keep smoke publication off the SNAPSHOT and release coordinates consumers might already have.
     return f"{release_version}-rc.smoke"
@@ -317,7 +324,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     gradle = str(ROOT / "gradlew")
-    prefix = xvfb_prefix(system)
     force = gradle_ui_force_args()
     scenario_env: dict[str, str] | None = None
     def add(item: ScenarioResult) -> None:
@@ -341,19 +347,24 @@ def main(argv: list[str] | None = None) -> int:
             "portal-token-warmup: approve Share + Remember once; later cells reuse the token",
             flush=True,
         )
-        try:
-            scenario_env = prepare_linux_portal_token_env(ROOT, out_dir)
-        except RuntimeError as error:
-            add(
-                scenario_result(
-                    "portal-token-warmup",
-                    name="Capture persistent ScreenCast restore token",
-                    result="fail",
-                    detail=str(error),
-                    hard=True,
-                )
+        scenario_env = prepare_linux_portal_token_env(ROOT, out_dir)
+        if "SPECTRE_WAYLAND_HELPER" not in scenario_env:
+            staged = run_scenario(
+                "portal-token-warmup",
+                name="Stage spectre-wayland-helper for token warmup",
+                command=[gradle, ":recording:assembleWaylandHelper", "--console=plain"],
+                cwd=ROOT,
+                timeout=600,
+                out_dir=out_dir,
+                env=scenario_env,
+                overall_deadline=overall_deadline,
             )
-        else:
+            if staged.result != RESULT_PASS:
+                add(staged)
+                scenario_env = None
+            else:
+                scenario_env = prepare_linux_portal_token_env(ROOT, out_dir)
+        if scenario_env is not None:
             warmup = run_scenario(
                 "portal-token-warmup",
                 name="Capture persistent ScreenCast restore token",
@@ -380,6 +391,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 scenario_env = None
             add(warmup)
+
+    prefix = _ui_prefix(system, wayland_portal=scenario_env is not None)
 
     # --- check ---
     if args.skip_check:
