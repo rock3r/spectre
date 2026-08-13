@@ -42,6 +42,8 @@ from smoke_lib import (  # noqa: E402
     packaged_cli_executable,
     portal_token_warmup_skip_reason,
     prepare_linux_portal_token_env,
+    robot_xvfb_prefix,
+    robot_xvfb_unavailable_reason,
     run_callable_scenario,
     run_scenario,
     scenario_result,
@@ -165,6 +167,46 @@ def _ui_prefix(system: str, *, wayland_portal: bool = False) -> list[str]:
     if wayland_portal:
         return []
     return xvfb_prefix(system)
+
+
+def _robot_ui_prefix(system: str, *, wayland_portal: bool = False) -> list[str]:
+    """Prefix for JBR/AWT Robot cells.
+
+    Helper ScreenCast restore tokens do not cover Robot / Remote Desktop. Even
+    after a successful Wayland portal warmup, these cells must stay off the
+    seated compositor or each JVM pops a new Share dialog.
+    """
+    del wayland_portal
+    return robot_xvfb_prefix(system)
+
+
+def _robot_cell_blocked_result(
+    scenario_id: str, name: str, system: str
+) -> ScenarioResult | None:
+    reason = robot_xvfb_unavailable_reason(system)
+    if reason is None:
+        return None
+    return scenario_result(
+        scenario_id,
+        name=name,
+        result=RESULT_FAIL,
+        detail=reason,
+        hard=True,
+    )
+
+
+def _robot_env(env: dict[str, str] | None) -> dict[str, str]:
+    """Force Robot cells onto X11/Xvfb even when the login session is Wayland.
+
+    Nested xvfb-run inherits WAYLAND_DISPLAY from the seat. Empty values are
+    stripped by run_command, so clearing that variable plus SPECTRE_CAPTURE_BACKEND=x11
+    keeps JBR Robot off xdg-desktop-portal.
+    """
+    robot = dict(env or {})
+    robot["SPECTRE_CAPTURE_BACKEND"] = "x11"
+    robot["WAYLAND_DISPLAY"] = ""
+    robot["XDG_SESSION_TYPE"] = "x11"
+    return robot
 
 
 def _packaged_cli_portal_env(env: dict[str, str] | None) -> dict[str, str] | None:
@@ -356,8 +398,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(
             "portal-token-warmup: approve Share + Remember for the whole screen; "
-            "later monitor ScreenCast cells reuse that token. Window-source prompts "
-            "are per-window and may still appear.",
+            "only helper monitor ScreenCast cells reuse that token. Robot-backed "
+            "cells stay under xvfb-run. Window-source prompts are per-window.",
             flush=True,
         )
         scenario_env = prepare_linux_portal_token_env(ROOT, out_dir)
@@ -415,7 +457,8 @@ def main(argv: list[str] | None = None) -> int:
                 scenario_env = None
             add(warmup)
 
-    prefix = _ui_prefix(system, wayland_portal=scenario_env is not None)
+    seat_prefix = _ui_prefix(system, wayland_portal=scenario_env is not None)
+    robot_prefix = _robot_ui_prefix(system, wayland_portal=scenario_env is not None)
 
     # --- check ---
     if args.skip_check:
@@ -429,110 +472,77 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     else:
+        blocked = _robot_cell_blocked_result("check", "./gradlew check", system)
         add(
-            run_scenario(
+            blocked
+            or run_scenario(
                 "check",
                 name="./gradlew check",
-                command=[gradle, "check", "--console=plain"],
+                command=[*robot_prefix, gradle, "check", "--console=plain"],
                 cwd=ROOT,
                 timeout=1200,
                 out_dir=out_dir,
-                env=scenario_env,
+                env=_robot_env(scenario_env),
                 overall_deadline=overall_deadline,
             )
         )
 
     # --- live JUnit failure artifacts/video + atomic capture ---
+    blocked = _robot_cell_blocked_result(
+        "junit-live",
+        "Live JUnit failure artifacts/video and atomic capture",
+        system,
+    )
     add(
-        run_scenario(
+        blocked
+        or run_scenario(
             "junit-live",
             name="Live JUnit failure artifacts/video and atomic capture",
-            command=[*prefix, gradle, ":sample-desktop:validationTest", *force],
+            command=[*robot_prefix, gradle, ":sample-desktop:validationTest", *force],
             cwd=ROOT,
             timeout=900,
             out_dir=out_dir,
-            env=scenario_env,
+            env=_robot_env(scenario_env),
             overall_deadline=overall_deadline,
         )
     )
 
     # --- agent attach / corpus / inject / launch-and-attach ---
-    add(
-        run_scenario(
+    for scenario_id, name, test_filter in (
+        (
             "agent-attach-core",
-            name="Agent attach with preinstalled core",
-            command=[
-                *prefix,
-                gradle,
-                ":agent:test",
-                "--tests",
-                "*AgentAttachIntegration*",
-                *force,
-            ],
-            cwd=ROOT,
-            timeout=600,
-            out_dir=out_dir,
-            env=scenario_env,
-            overall_deadline=overall_deadline,
-        )
-    )
-    add(
-        run_scenario(
-            "agent-contract-corpus",
-            name="Agent contract corpus",
-            command=[
-                *prefix,
-                gradle,
-                ":agent:test",
-                "--tests",
-                "*AgentContractCorpus*",
-                *force,
-            ],
-            cwd=ROOT,
-            timeout=600,
-            out_dir=out_dir,
-            env=scenario_env,
-            overall_deadline=overall_deadline,
-        )
-    )
-    add(
-        run_scenario(
+            "Agent attach with preinstalled core",
+            "*AgentAttachIntegration*",
+        ),
+        ("agent-contract-corpus", "Agent contract corpus", "*AgentContractCorpus*"),
+        (
             "agent-inject",
-            name="Injected attach without preinstalled core",
-            command=[
-                *prefix,
-                gradle,
-                ":agent:test",
-                "--tests",
-                "*AgentInjectAttachIntegration*",
-                *force,
-            ],
-            cwd=ROOT,
-            timeout=600,
-            out_dir=out_dir,
-            env=scenario_env,
-            overall_deadline=overall_deadline,
+            "Injected attach without preinstalled core",
+            "*AgentInjectAttachIntegration*",
+        ),
+        ("agent-launch-and-attach", "Launch-and-attach", "*LaunchAndAttachIntegration*"),
+    ):
+        blocked = _robot_cell_blocked_result(scenario_id, name, system)
+        add(
+            blocked
+            or run_scenario(
+                scenario_id,
+                name=name,
+                command=[
+                    *robot_prefix,
+                    gradle,
+                    ":agent:test",
+                    "--tests",
+                    test_filter,
+                    *force,
+                ],
+                cwd=ROOT,
+                timeout=600,
+                out_dir=out_dir,
+                env=_robot_env(scenario_env),
+                overall_deadline=overall_deadline,
+            )
         )
-    )
-    add(
-        run_scenario(
-            "agent-launch-and-attach",
-            name="Launch-and-attach",
-            command=[
-                *prefix,
-                gradle,
-                ":agent:test",
-                "--tests",
-                "*LaunchAndAttachIntegration*",
-                *force,
-            ],
-            cwd=ROOT,
-            timeout=600,
-            out_dir=out_dir,
-            env=scenario_env,
-            overall_deadline=overall_deadline,
-        )
-    )
 
     # --- CLI package + native helper layout ---
     # Bake --version into the package so MCP serverInfo.version matches strict stdio
@@ -594,12 +604,18 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         # CLI path: ps, attach, find/click, fail-closed window screenshot, fullscreen, cleanup.
+        blocked = _robot_cell_blocked_result(
+            "cli-user-flow",
+            "Packaged CLI user flow (ps/attach/tree/input/capture/detach)",
+            system,
+        )
         add(
-            run_scenario(
+            blocked
+            or run_scenario(
                 "cli-user-flow",
                 name="Packaged CLI user flow (ps/attach/tree/input/capture/detach)",
                 command=[
-                    *prefix,
+                    *robot_prefix,
                     gradle,
                     ":cli:test",
                     "--tests",
@@ -610,18 +626,19 @@ def main(argv: list[str] | None = None) -> int:
                 cwd=ROOT,
                 timeout=600,
                 out_dir=out_dir,
-                env=_packaged_cli_portal_env(scenario_env),
+                env=_robot_env(_packaged_cli_portal_env(scenario_env)),
                 overall_deadline=overall_deadline,
             )
         )
         # MCP via official Kotlin SDK: fixture attach → op → detach session-gone is required
         # for hard pass after #399/#414 (tools/list + unknown-detach alone is insufficient).
         mcp_name = "Packaged MCP attach/op/detach lifecycle + strict stdio"
-        mcp_sdk = run_scenario(
+        blocked = _robot_cell_blocked_result("mcp-sdk-flow", mcp_name, system)
+        mcp_sdk = blocked or run_scenario(
             "mcp-sdk-flow",
             name=mcp_name,
             command=[
-                *prefix,
+                *robot_prefix,
                 gradle,
                 ":cli:test",
                 # Same VERSION_NAME as package so SpectreMcpStdioIntegrationTest
@@ -637,7 +654,7 @@ def main(argv: list[str] | None = None) -> int:
             cwd=ROOT,
             timeout=600,
             out_dir=out_dir,
-            env=_packaged_cli_portal_env(scenario_env),
+            env=_robot_env(_packaged_cli_portal_env(scenario_env)),
             overall_deadline=overall_deadline,
         )
         if mcp_sdk.result == RESULT_PASS:
@@ -724,7 +741,7 @@ def main(argv: list[str] | None = None) -> int:
             run_scenario(
                 "host-native-recording",
                 name=f"Host native recording ({recording_task})",
-                command=[*prefix, gradle, recording_task, "--console=plain"],
+                command=[*seat_prefix, gradle, recording_task, "--console=plain"],
                 cwd=ROOT,
                 timeout=300,
                 out_dir=out_dir,
