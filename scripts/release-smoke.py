@@ -32,6 +32,7 @@ from smoke_lib import (  # noqa: E402
     ScenarioResult,
     assert_linux_portal_tokens_captured,
     assert_mcp_fixture_e2e_executed,
+    linux_portal_token_path,
     build_report,
     collect_preflight,
     gradle_ui_force_args,
@@ -365,6 +366,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 scenario_env = prepare_linux_portal_token_env(ROOT, out_dir)
         if scenario_env is not None:
+            token_path = linux_portal_token_path(scenario_env)
+            before_mtime = token_path.stat().st_mtime_ns + 1 if token_path.is_file() else 0
             warmup = run_scenario(
                 "portal-token-warmup",
                 name="Capture persistent ScreenCast restore token",
@@ -377,7 +380,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             if warmup.result == RESULT_PASS:
                 try:
-                    assert_linux_portal_tokens_captured(scenario_env)
+                    assert_linux_portal_tokens_captured(
+                        scenario_env, expected_mtime_ns=before_mtime
+                    )
                 except RuntimeError as error:
                     warmup = scenario_result(
                         "portal-token-warmup",

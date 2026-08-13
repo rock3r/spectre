@@ -645,6 +645,7 @@ def gradle_ui_force_args() -> list[str]:
 
 
 WAYLAND_RESTORE_TOKEN_PREFIX = "wayland-screencast-restore-token-"
+WAYLAND_PORTAL_SMOKE_TOKEN_KEY = "monitor-embedded"
 WAYLAND_HELPER_NAME = "spectre-wayland-helper"
 
 
@@ -757,22 +758,35 @@ def prepare_linux_portal_token_env(root: Path, out_dir: Path) -> dict[str, str]:
     return env
 
 
-def assert_linux_portal_tokens_captured(env: Mapping[str, str]) -> None:
+def linux_portal_token_path(
+    env: Mapping[str, str],
+    token_key: str = WAYLAND_PORTAL_SMOKE_TOKEN_KEY,
+) -> Path:
+    token_dir = Path(env.get("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR") or "")
+    return token_dir / f"{WAYLAND_RESTORE_TOKEN_PREFIX}{token_key}"
+
+
+def assert_linux_portal_tokens_captured(
+    env: Mapping[str, str],
+    *,
+    token_key: str = WAYLAND_PORTAL_SMOKE_TOKEN_KEY,
+    expected_mtime_ns: int | None = None,
+) -> None:
     token_dir = Path(env.get("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR") or "")
     if not token_dir.is_dir():
         raise RuntimeError(
             "ScreenCast restore token dir missing: "
             f"{token_dir or '(SPECTRE_WAYLAND_RESTORE_TOKEN_DIR unset)'}"
         )
-    captured = [
-        path
-        for path in token_dir.glob(f"{WAYLAND_RESTORE_TOKEN_PREFIX}*")
-        if path.is_file() and path.read_text(encoding="utf-8").strip()
-    ]
-    if not captured:
+    path = linux_portal_token_path(env, token_key)
+    if not path.is_file() or not path.read_text(encoding="utf-8").strip():
         raise RuntimeError(
-            f"no ScreenCast restore token under {token_dir}; approve Share + Remember "
+            f"missing {path.name} under {token_dir}; approve Share + Remember "
             "once during portal-token-warmup"
+        )
+    if expected_mtime_ns is not None and path.stat().st_mtime_ns < expected_mtime_ns:
+        raise RuntimeError(
+            f"{path.name} was not refreshed by this warmup; later cells may prompt again"
         )
 
 

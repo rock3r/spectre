@@ -589,16 +589,24 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             token_dir = Path(tmp) / "tokens"
             token_dir.mkdir()
+            stale = token_dir / "wayland-screencast-restore-token-window-hidden"
+            stale.write_text("old\n", encoding="utf-8")
             with self.assertRaises(RuntimeError) as ctx:
                 smoke_lib.assert_linux_portal_tokens_captured(
                     {"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(token_dir)}
                 )
-            self.assertIn("restore token", str(ctx.exception).lower())
-            (token_dir / "wayland-screencast-restore-token-monitor-embedded").write_text(
-                "token-abc\n", encoding="utf-8"
-            )
+            self.assertIn("monitor-embedded", str(ctx.exception).lower())
+            target = token_dir / "wayland-screencast-restore-token-monitor-embedded"
+            target.write_text("token-abc\n", encoding="utf-8")
+            before = target.stat().st_mtime_ns
+            with self.assertRaises(RuntimeError):
+                smoke_lib.assert_linux_portal_tokens_captured(
+                    {"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(token_dir)},
+                    expected_mtime_ns=before + 1,
+                )
             smoke_lib.assert_linux_portal_tokens_captured(
-                {"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(token_dir)}
+                {"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(token_dir)},
+                expected_mtime_ns=before,
             )
 
     def test_portal_token_warmup_is_na_on_non_wayland(self):
