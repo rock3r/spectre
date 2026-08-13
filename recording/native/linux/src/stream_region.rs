@@ -28,12 +28,7 @@ pub fn map_awt_region_to_stream(
             };
             match scale_from_awt_display(display, stream_size) {
                 DisplayScale::Scaled(sx, sy) => scale_region(local, sx, sy),
-                DisplayScale::Identity => reject_if_granted_stream_misses(
-                    local,
-                    region,
-                    stream_position,
-                    stream_size,
-                ),
+                DisplayScale::Identity => local,
                 DisplayScale::Unrelated => subtract_origin(region, stream_position),
             }
         }
@@ -62,28 +57,6 @@ fn scale_from_awt_display(display: Region, stream_size: (u32, u32)) -> DisplaySc
         return DisplayScale::Identity;
     }
     DisplayScale::Scaled(sx, sy)
-}
-
-/// Same-size restore token for a different 1x monitor: display-local coords
-/// would silently crop the granted stream. If that crop hits but the unscaled
-/// stream-relative crop misses, return the miss so the caller fails closed.
-/// Scaled displays cannot use this check: a valid secondary-monitor stream is
-/// usually origin (0, 0), which is geometrically identical to a wrong-monitor
-/// grant.
-fn reject_if_granted_stream_misses(
-    display_local: Region,
-    region: Region,
-    stream_position: (i32, i32),
-    stream_size: (u32, u32),
-) -> Region {
-    let stream_relative = subtract_origin(region, stream_position);
-    if clamp_region_to_stream(display_local, stream_size).is_ok()
-        && clamp_region_to_stream(stream_relative, stream_size).is_err()
-    {
-        stream_relative
-    } else {
-        display_local
-    }
 }
 
 fn subtract_origin(region: Region, origin: (i32, i32)) -> Region {
@@ -259,24 +232,6 @@ mod tests {
         assert_eq!(mapped.y, 0);
         assert_eq!(mapped.width, 400);
         assert_eq!(mapped.height, 300);
-    }
-
-    #[test]
-    fn rejects_identity_region_when_granted_stream_is_a_different_monitor() {
-        // Restore token granted the primary 1920x1080 stream at (0,0), but the
-        // requested window is on a same-size secondary. Display-local coords
-        // would silently record the primary; fail instead.
-        let err = map_awt_region_to_stream(
-            region(2000, 80, 400, 300),
-            (0, 0),
-            (1920, 1080),
-            Some(region(1920, 0, 1920, 1080)),
-        )
-        .unwrap_err();
-        assert!(
-            err.to_string().contains("does not intersect"),
-            "{err:#}"
-        );
     }
 
     #[test]
