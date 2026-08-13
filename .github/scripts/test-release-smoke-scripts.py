@@ -581,6 +581,21 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
             )
             self.assertNotIn("SPECTRE_WAYLAND_HELPER", env)
 
+    def test_window_hidden_warmup_command_requires_helper(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out_dir = root / "build" / "smoke"
+            env = smoke_lib.prepare_linux_portal_token_env(root, out_dir)
+            with self.assertRaises(RuntimeError):
+                smoke_lib.window_hidden_token_warmup_command(env, root / "shot.png")
+            helper = smoke_lib.linux_wayland_helper_candidates(root)[0]
+            helper.parent.mkdir(parents=True)
+            helper.write_text("#!/bin/sh\n", encoding="utf-8")
+            helper.chmod(0o755)
+            env = smoke_lib.prepare_linux_portal_token_env(root, out_dir)
+            command = smoke_lib.window_hidden_token_warmup_command(env, root / "shot.png")
+            self.assertEqual(str(helper), command[0])
+
     def test_wayland_portal_ui_prefix_is_empty(self):
         self.assertEqual([], self.rs._ui_prefix("Linux", wayland_portal=True))
         self.assertIsInstance(self.rs._ui_prefix("Linux", wayland_portal=False), list)
@@ -596,13 +611,20 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
                     {"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(token_dir)}
                 )
             self.assertIn("monitor-embedded", str(ctx.exception).lower())
-            target = token_dir / "wayland-screencast-restore-token-monitor-embedded"
-            target.write_text("token-abc\n", encoding="utf-8")
-            before = target.stat().st_mtime_ns
+            for key in smoke_lib.WAYLAND_PORTAL_WARMUP_TOKEN_KEYS:
+                path = token_dir / f"wayland-screencast-restore-token-{key}"
+                path.write_text(f"{key}\n", encoding="utf-8")
+            before = {
+                key: (token_dir / f"wayland-screencast-restore-token-{key}").stat().st_mtime_ns
+                for key in smoke_lib.WAYLAND_PORTAL_WARMUP_TOKEN_KEYS
+            }
+            stale = {
+                key: mtime + 1 for key, mtime in before.items()
+            }
             with self.assertRaises(RuntimeError):
                 smoke_lib.assert_linux_portal_tokens_captured(
                     {"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(token_dir)},
-                    expected_mtime_ns=before + 1,
+                    expected_mtime_ns=stale,
                 )
             smoke_lib.assert_linux_portal_tokens_captured(
                 {"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(token_dir)},

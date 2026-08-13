@@ -646,6 +646,11 @@ def gradle_ui_force_args() -> list[str]:
 
 WAYLAND_RESTORE_TOKEN_PREFIX = "wayland-screencast-restore-token-"
 WAYLAND_PORTAL_SMOKE_TOKEN_KEY = "monitor-embedded"
+WAYLAND_PORTAL_WINDOW_TOKEN_KEY = "window-hidden"
+WAYLAND_PORTAL_WARMUP_TOKEN_KEYS: tuple[str, ...] = (
+    WAYLAND_PORTAL_SMOKE_TOKEN_KEY,
+    WAYLAND_PORTAL_WINDOW_TOKEN_KEY,
+)
 WAYLAND_HELPER_NAME = "spectre-wayland-helper"
 
 
@@ -758,6 +763,33 @@ def prepare_linux_portal_token_env(root: Path, out_dir: Path) -> dict[str, str]:
     return env
 
 
+def window_hidden_token_warmup_command(
+    env: Mapping[str, str],
+    output: Path,
+) -> list[str]:
+    helper = env.get("SPECTRE_WAYLAND_HELPER") or ""
+    if not helper or not Path(helper).is_file():
+        raise RuntimeError(
+            "SPECTRE_WAYLAND_HELPER is required to warm the window-hidden restore token"
+        )
+    return [helper]
+
+
+def window_hidden_token_warmup_payload(output: Path) -> str:
+    return json.dumps(
+        {
+            "command": "screenshot",
+            "backend": "wayland_portal",
+            "target": "window",
+            "source_types": ["window"],
+            "cursor_mode": "hidden",
+            "region": {"x": 0, "y": 0, "width": 64, "height": 64},
+            "output": str(output),
+        },
+        separators=(",", ":"),
+    ) + "\n"
+
+
 def linux_portal_token_path(
     env: Mapping[str, str],
     token_key: str = WAYLAND_PORTAL_SMOKE_TOKEN_KEY,
@@ -769,8 +801,8 @@ def linux_portal_token_path(
 def assert_linux_portal_tokens_captured(
     env: Mapping[str, str],
     *,
-    token_key: str = WAYLAND_PORTAL_SMOKE_TOKEN_KEY,
-    expected_mtime_ns: int | None = None,
+    token_keys: Sequence[str] = WAYLAND_PORTAL_WARMUP_TOKEN_KEYS,
+    expected_mtime_ns: Mapping[str, int] | int | None = None,
 ) -> None:
     token_dir = Path(env.get("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR") or "")
     if not token_dir.is_dir():
@@ -778,15 +810,32 @@ def assert_linux_portal_tokens_captured(
             "ScreenCast restore token dir missing: "
             f"{token_dir or '(SPECTRE_WAYLAND_RESTORE_TOKEN_DIR unset)'}"
         )
-    path = linux_portal_token_path(env, token_key)
-    if not path.is_file() or not path.read_text(encoding="utf-8").strip():
-        raise RuntimeError(
-            f"missing {path.name} under {token_dir}; approve Share + Remember "
-            "once during portal-token-warmup"
+    missing: list[str] = []
+    stale: list[str] = []
+    for token_key in token_keys:
+        path = linux_portal_token_path(env, token_key)
+        if not path.is_file() or not path.read_text(encoding="utf-8").strip():
+            missing.append(path.name)
+            continue
+        if expected_mtime_ns is None:
+            continue
+        required = (
+            expected_mtime_ns.get(token_key)
+            if isinstance(expected_mtime_ns, Mapping)
+            else expected_mtime_ns
         )
-    if expected_mtime_ns is not None and path.stat().st_mtime_ns < expected_mtime_ns:
+        if required is not None and path.stat().st_mtime_ns < required:
+            stale.append(path.name)
+    if missing:
         raise RuntimeError(
-            f"{path.name} was not refreshed by this warmup; later cells may prompt again"
+            "missing ScreenCast restore token(s) "
+            f"{', '.join(missing)} under {token_dir}; approve Share + Remember "
+            "for monitor and window during portal-token-warmup"
+        )
+    if stale:
+        raise RuntimeError(
+            "ScreenCast restore token(s) not refreshed by this warmup: "
+            f"{', '.join(stale)}; later cells may prompt again"
         )
 
 
