@@ -18,17 +18,25 @@ pub fn map_awt_region_to_stream(
     stream_size: (u32, u32),
     awt_display: Option<Region>,
 ) -> Result<Region> {
-    let relative = match scale_from_awt_display(awt_display, stream_size) {
-        Some((sx, sy, origin)) => scale_region(
-            Region {
-                x: region.x - origin.0,
-                y: region.y - origin.1,
+    let relative = match awt_display.filter(|d| d.width > 0 && d.height > 0) {
+        Some(display) => {
+            let local = Region {
+                x: region.x - display.x,
+                y: region.y - display.y,
                 width: region.width,
                 height: region.height,
-            },
-            sx,
-            sy,
-        ),
+            };
+            match scale_from_awt_display(display, stream_size) {
+                DisplayScale::Scaled(sx, sy) => scale_region(local, sx, sy),
+                DisplayScale::Identity => local,
+                DisplayScale::Unrelated => Region {
+                    x: region.x - stream_position.0,
+                    y: region.y - stream_position.1,
+                    width: region.width,
+                    height: region.height,
+                },
+            }
+        }
         None => Region {
             x: region.x - stream_position.0,
             y: region.y - stream_position.1,
@@ -39,27 +47,26 @@ pub fn map_awt_region_to_stream(
     clamp_region_to_stream(relative, stream_size)
 }
 
-fn scale_from_awt_display(
-    awt_display: Option<Region>,
-    stream_size: (u32, u32),
-) -> Option<(f64, f64, (i32, i32))> {
-    let display = awt_display?;
-    if display.width <= 0 || display.height <= 0 {
-        return None;
-    }
+enum DisplayScale {
+    Scaled(f64, f64),
+    Identity,
+    Unrelated,
+}
+
+fn scale_from_awt_display(display: Region, stream_size: (u32, u32)) -> DisplayScale {
     let (stream_w, stream_h) = stream_size;
     if stream_w == 0 || stream_h == 0 {
-        return None;
+        return DisplayScale::Unrelated;
     }
     let sx = stream_w as f64 / display.width as f64;
     let sy = stream_h as f64 / display.height as f64;
     if (sx - sy).abs() > ASPECT_MATCH_EPSILON {
-        return None;
+        return DisplayScale::Unrelated;
     }
     if (sx - 1.0).abs() < IDENTITY_SCALE_EPSILON && (sy - 1.0).abs() < IDENTITY_SCALE_EPSILON {
-        return None;
+        return DisplayScale::Identity;
     }
-    Some((sx, sy, (display.x, display.y)))
+    DisplayScale::Scaled(sx, sy)
 }
 
 fn scale_region(region: Region, sx: f64, sy: f64) -> Region {
@@ -224,6 +231,24 @@ mod tests {
         .unwrap();
         assert_eq!(mapped.x, 80);
         assert_eq!(mapped.y, 0);
+        assert_eq!(mapped.width, 400);
+        assert_eq!(mapped.height, 300);
+    }
+
+    #[test]
+    fn keeps_selected_display_origin_when_that_display_is_identity_scaled() {
+        // Preceding 2560x1440@1.66 (AWT) / 1536x864 (portal), then a 1920x1080@1x
+        // secondary. AWT origin 2560 != portal origin 1536; subtracting stream
+        // position would shift the crop by 1024.
+        let mapped = map_awt_region_to_stream(
+            region(2640, 80, 400, 300),
+            (1536, 0),
+            (1920, 1080),
+            Some(region(2560, 0, 1920, 1080)),
+        )
+        .unwrap();
+        assert_eq!(mapped.x, 80);
+        assert_eq!(mapped.y, 80);
         assert_eq!(mapped.width, 400);
         assert_eq!(mapped.height, 300);
     }
