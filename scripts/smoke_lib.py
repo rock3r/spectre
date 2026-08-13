@@ -650,22 +650,53 @@ WAYLAND_HELPER_NAME = "spectre-wayland-helper"
 
 def is_linux_wayland_portal_session(
     env: Mapping[str, str] | None = None,
+    *,
+    display_is_pure_x11: Callable[[str], bool] | None = None,
 ) -> bool:
-    """True when this process can talk to a seated Wayland portal."""
+    """True when this process should use seated Wayland portal warmup."""
     environ = env or os.environ
+    override = (environ.get("SPECTRE_CAPTURE_BACKEND") or "").strip().lower()
+    if override in {"x11", "xorg", "xvfb"}:
+        return False
+    if override in {"wayland", "portal"}:
+        return True
     session = (environ.get("XDG_SESSION_TYPE") or "").strip().lower()
     if session == "x11":
+        return False
+    display = (environ.get("DISPLAY") or "").strip()
+    probe = display_is_pure_x11 or linux_display_is_pure_x11
+    if display and probe(display):
+        # Nested xvfb-run on a Wayland login inherits WAYLAND_DISPLAY, but windows live
+        # on the Xvfb DISPLAY. Real Wayland+XWayland (XWAYLAND extension) stays portal.
         return False
     wayland_display = (environ.get("WAYLAND_DISPLAY") or "").strip()
     runtime_dir = (environ.get("XDG_RUNTIME_DIR") or "").strip()
     if wayland_display:
         if runtime_dir:
-            socket_path = Path(runtime_dir) / wayland_display
-            if socket_path.exists():
-                return True
-            return False
+            return (Path(runtime_dir) / wayland_display).exists()
         return True
     return session == "wayland"
+
+
+def linux_display_is_pure_x11(display: str) -> bool:
+    """Best-effort Xvfb / non-XWayland probe. Unknown displays are not treated as Xvfb."""
+    if not display:
+        return False
+    try:
+        completed = subprocess.run(
+            ["xdpyinfo", "-display", display],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    output = completed.stdout or ""
+    if completed.returncode != 0 or not output.strip():
+        return False
+    return "XWAYLAND" not in output.upper()
 
 
 def portal_token_warmup_skip_reason(

@@ -523,6 +523,37 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
                     }
                 )
             )
+            self.assertFalse(
+                smoke_lib.is_linux_wayland_portal_session(
+                    {
+                        "DISPLAY": ":99",
+                        "XDG_SESSION_TYPE": "wayland",
+                        "WAYLAND_DISPLAY": "wayland-0",
+                        "XDG_RUNTIME_DIR": str(runtime),
+                    },
+                    display_is_pure_x11=lambda _display: True,
+                )
+            )
+            self.assertTrue(
+                smoke_lib.is_linux_wayland_portal_session(
+                    {
+                        "DISPLAY": ":0",
+                        "XDG_SESSION_TYPE": "wayland",
+                        "WAYLAND_DISPLAY": "wayland-0",
+                        "XDG_RUNTIME_DIR": str(runtime),
+                    },
+                    display_is_pure_x11=lambda _display: False,
+                )
+            )
+            self.assertFalse(
+                smoke_lib.is_linux_wayland_portal_session(
+                    {
+                        "SPECTRE_CAPTURE_BACKEND": "x11",
+                        "WAYLAND_DISPLAY": "wayland-0",
+                        "XDG_RUNTIME_DIR": str(runtime),
+                    }
+                )
+            )
 
     def test_prepare_linux_portal_token_env_pins_helper_and_token_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
