@@ -71,7 +71,7 @@ fn run_wayland(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
             start.region,
             session.stream.position,
             session.stream.size,
-            start.screen_size.map(|s| (s[0], s[1])),
+            start.screen_size.and_then(crate::stream_region::screen_size_to_region),
         )
         .context("mapping AWT region onto portal stream")?
     };

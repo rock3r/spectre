@@ -169,10 +169,11 @@ interactive and not automatable. Spectre's `spectre-wayland-helper` uses portal
 
   **HiDPI / mixed AWT and portal coordinates.** On fractional-scale Wayland, AWT/XWayland
   often reports a larger virtual desktop than the ScreenCast stream (for example 2560×1440
-  versus a 1536×864 portal stream). Region capture converts the AWT rectangle into stream
-  pixels when the two sizes share an aspect ratio, then clamps any leftover overflow. A
-  region that misses the granted stream entirely still fails. Window-source crops are
-  already stream-relative and are only clamped.
+  versus a 1536×864 portal stream). Region capture sends the AWT bounds of the display
+  that contains the requested rectangle and converts that rectangle into stream pixels
+  when the two sizes share an aspect ratio, then clamps any leftover overflow. A region
+  that misses the granted stream entirely still fails. Window-source crops are already
+  stream-relative and are only clamped.
 
   Wayland still screenshots use the same portal grant model as video. They are supported
   only when the compositor's ScreenCast portal can provide the requested monitor or window

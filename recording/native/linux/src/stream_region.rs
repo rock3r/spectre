@@ -6,7 +6,9 @@ use anyhow::{bail, Result};
 /// Convert an AWT screen-pixel [region] into a PipeWire stream-relative crop.
 ///
 /// Mixed-space HiDPI (XWayland 2560×1440 vs a 1536×864 portal stream) is scaled
-/// when the AWT virtual desktop and the stream share an aspect ratio. Multi-monitor
+/// when the selected AWT display and the stream share an aspect ratio. The optional
+/// [awt_display] is that display's origin + size in AWT pixels — never the primary
+/// `Toolkit.screenSize`, which is wrong for a secondary monitor. Multi-monitor
 /// virtual desktops that do not match the selected stream are left unscaled and
 /// only translated by [stream_position]. A leftover overflow then clamps; a miss
 /// is still an error.
@@ -14,42 +16,50 @@ pub fn map_awt_region_to_stream(
     region: Region,
     stream_position: (i32, i32),
     stream_size: (u32, u32),
-    awt_screen_size: Option<(i32, i32)>,
+    awt_display: Option<Region>,
 ) -> Result<Region> {
-    let scaled = match scale_from_awt_screen(awt_screen_size, stream_size) {
-        Some((sx, sy)) => scale_region(region, sx, sy),
-        None => region,
-    };
-    let relative = Region {
-        x: scaled.x - stream_position.0,
-        y: scaled.y - stream_position.1,
-        width: scaled.width,
-        height: scaled.height,
+    let relative = match scale_from_awt_display(awt_display, stream_size) {
+        Some((sx, sy, origin)) => scale_region(
+            Region {
+                x: region.x - origin.0,
+                y: region.y - origin.1,
+                width: region.width,
+                height: region.height,
+            },
+            sx,
+            sy,
+        ),
+        None => Region {
+            x: region.x - stream_position.0,
+            y: region.y - stream_position.1,
+            width: region.width,
+            height: region.height,
+        },
     };
     clamp_region_to_stream(relative, stream_size)
 }
 
-fn scale_from_awt_screen(
-    awt_screen_size: Option<(i32, i32)>,
+fn scale_from_awt_display(
+    awt_display: Option<Region>,
     stream_size: (u32, u32),
-) -> Option<(f64, f64)> {
-    let (awt_w, awt_h) = awt_screen_size?;
-    if awt_w <= 0 || awt_h <= 0 {
+) -> Option<(f64, f64, (i32, i32))> {
+    let display = awt_display?;
+    if display.width <= 0 || display.height <= 0 {
         return None;
     }
     let (stream_w, stream_h) = stream_size;
     if stream_w == 0 || stream_h == 0 {
         return None;
     }
-    let sx = stream_w as f64 / awt_w as f64;
-    let sy = stream_h as f64 / awt_h as f64;
+    let sx = stream_w as f64 / display.width as f64;
+    let sy = stream_h as f64 / display.height as f64;
     if (sx - sy).abs() > ASPECT_MATCH_EPSILON {
         return None;
     }
     if (sx - 1.0).abs() < IDENTITY_SCALE_EPSILON && (sy - 1.0).abs() < IDENTITY_SCALE_EPSILON {
         return None;
     }
-    Some((sx, sy))
+    Some((sx, sy, (display.x, display.y)))
 }
 
 fn scale_region(region: Region, sx: f64, sy: f64) -> Region {
@@ -58,6 +68,21 @@ fn scale_region(region: Region, sx: f64, sy: f64) -> Region {
         y: (region.y as f64 * sy).round() as i32,
         width: (region.width as f64 * sx).round().max(1.0) as i32,
         height: (region.height as f64 * sy).round().max(1.0) as i32,
+    }
+}
+
+/// Parse optional `screen_size` wire payload (`[x, y, width, height]`).
+pub fn screen_size_to_region(values: [i32; 4]) -> Option<Region> {
+    let region = Region {
+        x: values[0],
+        y: values[1],
+        width: values[2],
+        height: values[3],
+    };
+    if region.width <= 0 || region.height <= 0 {
+        None
+    } else {
+        Some(region)
     }
 }
 
@@ -163,7 +188,7 @@ mod tests {
             region(1362, 100, 480, 240),
             (0, 0),
             (1536, 864),
-            Some((2560, 1440)),
+            Some(region(0, 0, 2560, 1440)),
         )
         .unwrap();
         assert_eq!(mapped.x, 817);
@@ -194,12 +219,30 @@ mod tests {
             region(2000, 0, 400, 300),
             (1920, 0),
             (1920, 1080),
-            Some((3840, 1080)),
+            Some(region(0, 0, 3840, 1080)),
         )
         .unwrap();
         assert_eq!(mapped.x, 80);
         assert_eq!(mapped.y, 0);
         assert_eq!(mapped.width, 400);
         assert_eq!(mapped.height, 300);
+    }
+
+    #[test]
+    fn scales_secondary_display_relative_to_that_display_origin() {
+        // Primary 1920x1080 at (0,0); selected secondary 2560x1440 at (1920,0) with
+        // a 1536x864 portal stream. Scaling against the primary size would apply a
+        // spurious 4/3 transform.
+        let mapped = map_awt_region_to_stream(
+            region(2000, 100, 480, 240),
+            (0, 0),
+            (1536, 864),
+            Some(region(1920, 0, 2560, 1440)),
+        )
+        .unwrap();
+        assert_eq!(mapped.x, 48);
+        assert_eq!(mapped.y, 60);
+        assert_eq!(mapped.width, 288);
+        assert_eq!(mapped.height, 144);
     }
 }

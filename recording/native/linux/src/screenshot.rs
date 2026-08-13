@@ -76,7 +76,9 @@ fn run_wayland_screenshot(command: &ScreenshotCommand, output: &PathBuf) -> Resu
             command.region,
             session.stream.position,
             session.stream.size,
-            command.screen_size.map(|s| (s[0], s[1])),
+            command
+                .screen_size
+                .and_then(crate::stream_region::screen_size_to_region),
         )
         .context("mapping AWT screenshot region onto portal stream")?
     };

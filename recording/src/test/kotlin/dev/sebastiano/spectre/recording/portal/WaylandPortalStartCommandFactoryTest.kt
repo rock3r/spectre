@@ -11,16 +11,16 @@ import org.junit.jupiter.api.Assumptions.assumeFalse
 
 class WaylandPortalStartCommandFactoryTest {
     @Test
-    fun `monitor start includes AWT virtual desktop size`() {
+    fun `monitor start includes the AWT display that contains the region`() {
         assumeFalse(GraphicsEnvironment.isHeadless())
+        val region = Rectangle(10, 20, 480, 240)
         val command =
             WaylandPortalRecorder.defaultStartCommandFactory(listOf(SourceType.MONITOR))(
-                Rectangle(10, 20, 480, 240),
+                region,
                 Path.of("/tmp/out.mp4"),
                 RecordingOptions(),
             )
-        val screen = awtVirtualDesktopSize()
-        assertEquals(screen, command.screenSize)
+        assertEquals(awtDisplayBoundsContaining(region)?.toWire(), command.screenSize)
         assertEquals(Region(10, 20, 480, 240), command.region)
     }
 

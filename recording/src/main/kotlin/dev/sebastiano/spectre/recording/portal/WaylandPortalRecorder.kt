@@ -5,7 +5,6 @@ import dev.sebastiano.spectre.recording.RecordingHandle
 import dev.sebastiano.spectre.recording.RecordingOptions
 import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
-import java.awt.Toolkit
 import java.io.BufferedReader
 import java.io.IOException
 import java.io.InputStreamReader
@@ -341,7 +340,7 @@ private constructor(
                     if (sourceTypes == listOf(SourceType.WINDOW)) {
                         null
                     } else {
-                        awtVirtualDesktopSize()
+                        awtDisplayBoundsContaining(region)?.toWire()
                     },
                 output = output.toAbsolutePath().toString(),
                 codec = options.codec,
@@ -355,11 +354,24 @@ private constructor(
 // compiles to a private static final on the synthetic Kt facade.
 private const val MALFORMED_LINE_PREVIEW_LENGTH: Int = 200
 
-internal fun awtVirtualDesktopSize(): List<Int>? {
-    if (GraphicsEnvironment.isHeadless()) return null
-    val size = Toolkit.getDefaultToolkit().screenSize ?: return null
-    if (size.width <= 0 || size.height <= 0) return null
-    return listOf(size.width, size.height)
+internal fun awtDisplayBoundsContaining(
+    region: Rectangle,
+    displays: List<Rectangle> = currentAwtDisplayBounds(),
+): Rectangle? {
+    if (displays.isEmpty()) return null
+    val centerX = region.centerX
+    val centerY = region.centerY
+    return displays.firstOrNull { it.contains(centerX, centerY) }
+        ?: displays.firstOrNull { it.intersects(region) }
+}
+
+internal fun Rectangle.toWire(): List<Int> = listOf(x, y, width, height)
+
+private fun currentAwtDisplayBounds(): List<Rectangle> {
+    if (GraphicsEnvironment.isHeadless()) return emptyList()
+    return GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices.map { device ->
+        device.defaultConfiguration.bounds
+    }
 }
 
 internal const val DEFAULT_STARTED_TIMEOUT_MS: Long = 90_000
