@@ -13,14 +13,13 @@ import java.awt.datatransfer.UnsupportedFlavorException
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.awt.image.BufferedImage
+import java.util.concurrent.atomic.AtomicReference
 import javax.swing.SwingUtilities
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 public class RobotDriver
@@ -860,36 +859,31 @@ internal fun interpolateSwipePoints(
 }
 
 /**
- * Last Spectre-issued pointer position for one [RobotDriver]. Read-modify-write of that position is
- * mutex-protected so concurrent `moveBy` calls cannot apply two deltas from the same base. Gestures
- * themselves are *not* held under the mutex: a synthetic longClick/swipe that delays while holding
- * it would deadlock an EDT `moveTo` (`invokeAndWait` cannot run until the lock is released, and the
- * lock holder cannot release until `invokeAndWait` returns).
+ * Last Spectre-issued pointer position for one [RobotDriver]. Stored as one atomic [Point] so a
+ * concurrent reader cannot observe a torn `(x, y)`. No mutex: holding a lock across
+ * `robot.mouseMove` deadlocks an EDT `moveTo`/`moveBy` against a synthetic adapter's
+ * `invokeAndWait`. Concurrent pointer ops on one driver are not a supported contract.
  */
 private class PointerPositionTracker {
-    private val mutex = Mutex()
-    private var last: Point? = null
+    private val last = AtomicReference<Point?>(null)
 
-    suspend fun moveTo(robot: RobotAdapter, x: Int, y: Int) {
-        mutex.withLock {
-            robot.mouseMove(x, y)
-            last = Point(x, y)
-        }
+    fun moveTo(robot: RobotAdapter, x: Int, y: Int) {
+        robot.mouseMove(x, y)
+        last.set(Point(x, y))
     }
 
-    suspend fun moveBy(robot: RobotAdapter, deltaX: Int, deltaY: Int) {
+    fun moveBy(robot: RobotAdapter, deltaX: Int, deltaY: Int) {
         // Headless must reject before the relative-position check: no successful headless
         // move can ever initialize [last], so evaluating it first would turn every
         // headless moveBy into IllegalStateException instead of UnsupportedOperationException.
         robot.requireInputSupported()
-        mutex.withLock {
-            val origin =
-                checkNotNull(last) {
-                    "moveBy requires a prior Spectre pointer move; call moveTo(...) first"
-                }
-            robot.mouseMove(origin.x + deltaX, origin.y + deltaY)
-            last = Point(origin.x + deltaX, origin.y + deltaY)
-        }
+        val origin =
+            checkNotNull(last.get()) {
+                "moveBy requires a prior Spectre pointer move; call moveTo(...) first"
+            }
+        val next = Point(origin.x + deltaX, origin.y + deltaY)
+        robot.mouseMove(next.x, next.y)
+        last.set(next)
     }
 }
 
