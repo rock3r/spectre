@@ -275,7 +275,7 @@ jobs:
             -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/SpectreCaptureHelper.app"
 
           for target in macosX64 macosArm64; do
-            archive="cli/build/construo/distributions/spectre-${target}.zip"
+            archive="cli/build/construo/distributions/${target}/spectre-${target}.zip"
             workspace="$RUNNER_TEMP/spectre-${target}"
             root="$workspace/spectre-cli-$RELEASE_VERSION"
             app="$root/Spectre.app"
@@ -380,13 +380,21 @@ jobs:
             ls -la "$published_app/Contents/MacOS/"
           done
 
+          # Flatten zip names for mac-cli-bundles so B16 download stays
+          # build/notarized-smoke/mac-cli-bundles/spectre-${target}.zip.
+          mkdir -p "$RUNNER_TEMP/mac-cli-bundles"
+          for target in macosX64 macosArm64; do
+            cp "cli/build/construo/distributions/${target}/spectre-${target}.zip" \
+              "$RUNNER_TEMP/mac-cli-bundles/spectre-${target}.zip"
+          done
+
       - name: Upload signed and notarised macOS CLI bundles
         uses: actions/upload-artifact@v4
         with:
           name: mac-cli-bundles
           path: |
-            cli/build/construo/distributions/spectre-macosX64.zip
-            cli/build/construo/distributions/spectre-macosArm64.zip
+            ${{ runner.temp }}/mac-cli-bundles/spectre-macosX64.zip
+            ${{ runner.temp }}/mac-cli-bundles/spectre-macosArm64.zip
           if-no-files-found: error
           retention-days: 7
 

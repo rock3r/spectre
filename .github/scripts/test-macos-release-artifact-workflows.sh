@@ -87,4 +87,8 @@ grep -Fq 'run_id="${run_url##*/}"' "$release_smoke" \
 grep -Fq 'does not publish to Central or create a GitHub release' "$publishing" \
   || fail "PUBLISHING.md must document the artifact-only boundary"
 
+# Dual macOS Roast package+verify in one Gradle graph must be dest-isolated
+# (shared construo/distributions is a Gradle 9 implicit-dependency / B16 blocker).
+bash "$root/.github/scripts/test-macos-roast-dual-package-graph.sh"
+
 echo "test-macos-release-artifact-workflows: OK"

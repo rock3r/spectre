@@ -174,6 +174,8 @@ val verifyMacosCliBundleReleaseContract by
                 ".github/scripts/test-verify-macos-cli-bundle.sh",
                 ".github/scripts/test-macos-cli-seal-preservation.sh",
                 ".github/scripts/test-macos-release-artifact-workflows.sh",
+                ".github/scripts/test-macos-roast-dual-package-graph.sh",
+                ".github/scripts/inspect-macos-roast-package-dests.init.gradle.kts",
                 "docs/PUBLISHING.md",
                 "docs/RELEASE-SMOKE.md",
                 "Formula/spectre.rb",
