@@ -313,13 +313,16 @@ def main(argv: list[str] | None = None) -> int:
         # :recording:buildWaylandHelper then cannot start cargo.
         apply_linux_toolchain_path()
         # A leftover Gradle daemon started without that PATH still cannot exec cargo.
-        subprocess.run(
-            [str(ROOT / "gradlew"), "--stop"],
-            cwd=ROOT,
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        # Never --stop during --preflight-only: verifyReleaseSmokeScripts invokes that
+        # entrypoint under ./gradlew check and a stop kills the parent daemon.
+        if not args.preflight_only:
+            subprocess.run(
+                [str(ROOT / "gradlew"), "--stop"],
+                cwd=ROOT,
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
     if system == "Windows":
         print(
             "Use scripts/windows-release-smoke.ps1 from the interactive desktop "

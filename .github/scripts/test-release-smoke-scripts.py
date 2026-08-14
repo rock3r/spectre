@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -484,6 +485,10 @@ class SmokeLibSchemaTest(unittest.TestCase):
         self.assertIn("*PointerMoveLive*", text)
         # Non-login SSH / xvfb-run must still see rustup cargo for helper rebuilds.
         self.assertIn("apply_linux_toolchain_path", text)
+        # Nested buildSrc test must not start a daemon that --stops parent ./gradlew check.
+        root_build = (ROOT / "build.gradle.kts").read_text(encoding="utf-8")
+        self.assertIn('"--no-daemon"', root_build)
+        self.assertIn("buildSrc", root_build)
 
     def test_assert_mcp_fixture_e2e_executed_rejects_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -573,6 +578,50 @@ class ReleaseSmokeHelpTest(unittest.TestCase):
                 self.assertIn("preflight-only", by_id[sid]["reason"])
             # Must not claim a full hard GO.
             self.assertNotIn("ALL HARD SCENARIOS PASSED", result.stdout)
+
+    def test_preflight_only_does_not_stop_gradle_daemon_on_linux(self):
+        """--preflight-only is invoked from :check; gradlew --stop kills that daemon."""
+        spec = importlib.util.spec_from_file_location(
+            "release_smoke_preflight_stop", RELEASE_SMOKE
+        )
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        stop_cmds: list[list[str]] = []
+        real_run = module.subprocess.run
+
+        def wrapped(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args")
+            if isinstance(cmd, (list, tuple)) and "--stop" in cmd:
+                stop_cmds.append(list(cmd))
+                return subprocess.CompletedProcess(cmd, 0)
+            return real_run(*args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            with (
+                unittest.mock.patch.object(module.platform, "system", return_value="Linux"),
+                unittest.mock.patch.object(module.subprocess, "run", side_effect=wrapped),
+            ):
+                code = module.main(
+                    [
+                        "--version",
+                        "0.5.0",
+                        "--base",
+                        "v0.4.1",
+                        "--preflight-only",
+                        "--out-dir",
+                        str(out),
+                    ]
+                )
+        self.assertEqual(0, code)
+        self.assertEqual(
+            [],
+            stop_cmds,
+            "release-smoke --preflight-only must not invoke gradlew --stop "
+            "(verifyReleaseSmokeScripts runs this under ./gradlew check)",
+        )
 
 
 class ReleaseSmokeHelperLogicTest(unittest.TestCase):

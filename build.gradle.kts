@@ -262,7 +262,9 @@ val buildSrcUnitTests by
         val wrapperName = if (isWindows) "gradlew.bat" else "gradlew"
         val wrapper = rootProject.layout.projectDirectory.file(wrapperName).asFile.absolutePath
         // On Windows, Exec launches the .bat directly. On Unix, the shell script is executable.
-        commandLine(wrapper, "-p", "buildSrc", "test")
+        // --no-daemon: a nested client that starts its own daemon stops the parent
+        // ./gradlew check daemon ("busy ... could not be reused" then stop).
+        commandLine(wrapper, "-p", "buildSrc", "test", "--no-daemon")
         // Nested Gradle manages its own up-to-date checks; always re-enter so check is honest.
         outputs.upToDateWhen { false }
     }
