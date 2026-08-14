@@ -329,18 +329,23 @@ class RobotDriverTest {
     @Test
     fun `concurrent moveBy applies each delta against the previous completed move`() {
         val firstHold = CountDownLatch(1)
-        val secondInFlight = CountDownLatch(1)
+        val secondContended = CountDownLatch(1)
         val robot = RecordingRobotAdapter()
         val driver = RobotDriver(robot, RecordingClipboardAdapter())
         runBlocking { driver.moveTo(screenX = 0, screenY = 0) }
         var firstLock = true
-        driver.installPointerLockHook {
-            if (firstLock) {
-                firstLock = false
-                firstHold.countDown()
-                check(secondInFlight.await(2, TimeUnit.SECONDS)) { "second moveBy never started" }
-            }
-        }
+        driver.installPointerLockHooks(
+            onAcquired = {
+                if (firstLock) {
+                    firstLock = false
+                    firstHold.countDown()
+                    check(secondContended.await(2, TimeUnit.SECONDS)) {
+                        "second moveBy never contended the pointer lock"
+                    }
+                }
+            },
+            onContended = { secondContended.countDown() },
+        )
 
         val first = Thread({ runBlocking { driver.moveBy(deltaX = 1, deltaY = 0) } }, "moveBy-x")
         val second =
@@ -349,7 +354,6 @@ class RobotDriverTest {
                     check(firstHold.await(2, TimeUnit.SECONDS)) {
                         "first moveBy never acquired the pointer lock"
                     }
-                    secondInFlight.countDown()
                     runBlocking { driver.moveBy(deltaX = 0, deltaY = 1) }
                 },
                 "moveBy-y",
@@ -373,19 +377,22 @@ class RobotDriverTest {
     @Test
     fun `concurrent moveTo cannot sneak between click press and release`() {
         val clickHold = CountDownLatch(1)
-        val moveToInFlight = CountDownLatch(1)
+        val moveToContended = CountDownLatch(1)
         val robot = RecordingRobotAdapter()
         val driver = RobotDriver(robot, RecordingClipboardAdapter())
         var firstLock = true
-        driver.installPointerLockHook {
-            if (firstLock) {
-                firstLock = false
-                clickHold.countDown()
-                check(moveToInFlight.await(2, TimeUnit.SECONDS)) {
-                    "concurrent moveTo never started"
+        driver.installPointerLockHooks(
+            onAcquired = {
+                if (firstLock) {
+                    firstLock = false
+                    clickHold.countDown()
+                    check(moveToContended.await(2, TimeUnit.SECONDS)) {
+                        "concurrent moveTo never contended the pointer lock"
+                    }
                 }
-            }
-        }
+            },
+            onContended = { moveToContended.countDown() },
+        )
         val clicker = Thread({ runBlocking { driver.click(10, 20) } }, "clicker")
         val mover =
             Thread(
@@ -393,7 +400,6 @@ class RobotDriverTest {
                     check(clickHold.await(2, TimeUnit.SECONDS)) {
                         "click never acquired the pointer lock"
                     }
-                    moveToInFlight.countDown()
                     runBlocking { driver.moveTo(screenX = 99, screenY = 99) }
                 },
                 "mover",

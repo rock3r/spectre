@@ -341,9 +341,10 @@ internal constructor(
         runOffEdt { pointer.moveBy(robot, deltaX, deltaY) }
     }
 
-    /** Test-only hook so concurrent pointer races can park after lock acquisition. */
-    internal fun installPointerLockHook(hook: (() -> Unit)?) {
-        pointer.onLockAcquired = hook
+    /** Test-only hooks so concurrent pointer races can park the holder until a waiter contends. */
+    internal fun installPointerLockHooks(onAcquired: (() -> Unit)?, onContended: (() -> Unit)?) {
+        pointer.onLockAcquired = onAcquired
+        pointer.onLockContended = onContended
     }
 
     /**
@@ -885,10 +886,14 @@ private class PointerPositionTracker {
     private var last: Point? = null
 
     internal var onLockAcquired: (() -> Unit)? = null
+    internal var onLockContended: (() -> Unit)? = null
 
-    suspend fun <T> withLock(block: suspend PointerSession.() -> T): T = mutex.withLock {
-        onLockAcquired?.invoke()
-        PointerSession().block()
+    suspend fun <T> withLock(block: suspend PointerSession.() -> T): T {
+        if (mutex.isLocked) onLockContended?.invoke()
+        return mutex.withLock {
+            onLockAcquired?.invoke()
+            PointerSession().block()
+        }
     }
 
     suspend fun moveTo(robot: RobotAdapter, x: Int, y: Int) {
