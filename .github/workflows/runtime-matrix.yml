@@ -260,8 +260,21 @@ jobs:
 
       - name: Install Linux display + native build deps
         run: |
+          # Same capture stack as same-JDK Linux cells. The attach e2e stills use the
+          # bundled helper's X11 backend (gstreamer ximagesrc); x11-utils provides
+          # xdpyinfo/xprop so inherited Wayland env on ubuntu-latest cannot misroute
+          # the helper onto the portal path.
           sudo apt-get update
-          sudo apt-get install -y xvfb libdbus-1-dev pkg-config
+          sudo apt-get install -y \
+            xvfb \
+            libdbus-1-dev \
+            pkg-config \
+            gstreamer1.0-tools \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-ugly \
+            gstreamer1.0-plugins-bad \
+            x11-utils
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -270,6 +283,7 @@ jobs:
         env:
           SPECTRE_FIXTURE_JAVA_HOME: ${{ steps.fixture-jdk.outputs.path }}
           SPECTRE_MATRIX_JAVA_HOME: ${{ steps.attacher-jdk.outputs.path }}
+          SPECTRE_CAPTURE_BACKEND: x11
         shell: bash
         run: |
           set -euo pipefail

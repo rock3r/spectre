@@ -70,6 +70,17 @@ grep -q "SPECTRE_MATRIX_JAVA_HOME" "$script_dir/../../build.gradle.kts" ||
 grep -q "Install JDK (JetBrains JBR) attempt 3" "$action" ||
   fail "setup-matrix-jdk must retry JetBrains JBR install (attempt 3 step missing)"
 
+# mixed-attach Linux cells compile the capture helper and take window stills. They must
+# install the same GStreamer + x11-utils stack as same-JDK cells; otherwise the helper
+# X11 backend fails while same-runtime cells stay green (#326 / mixed attach 2026-08-14).
+mixed_block="$(awk '/^  mixed-attach:/{flag=1} flag && /^  [a-z].*:/{if(!/^  mixed-attach:/) exit} flag' "$workflow")"
+[[ -n "$mixed_block" ]] || fail "could not isolate mixed-attach job from runtime-matrix.yml"
+for needle in gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-ugly gstreamer1.0-plugins-bad x11-utils SPECTRE_CAPTURE_BACKEND; do
+  printf '%s' "$mixed_block" | grep -q "$needle" ||
+    fail "mixed-attach job missing $needle (required for Linux helper stills under xvfb)"
+done
+
 # Release workflow must depend on the matrix gate.
 release="$script_dir/../workflows/release.yml"
 grep -q 'runtime-matrix.yml' "$release" || fail "release.yml must call runtime-matrix.yml"
