@@ -89,9 +89,6 @@ class HotReloadDaemonFixtureE2eTest {
                             }
                             .sessionId
                     val preKey = assertStampedPreReloadTree(client, sessionId)
-                    // Stamped keys prove the daemon created a reload-aware session; give the
-                    // Tooling client a moment to finish connect + fan-out subscribe after attach.
-                    Thread.sleep(1_500)
                     awaitSettledAfterBroadcast(client, sessionId, server)
                     assertStaleKeyRejected(client, sessionId, preKey)
                     assertPostReloadClick(client, sessionId)
@@ -134,7 +131,7 @@ class HotReloadDaemonFixtureE2eTest {
                         client.request(
                             DaemonRequest.WaitForReloadSettled(
                                 sessionId = sessionId,
-                                timeoutMs = 30_000,
+                                timeoutMs = SETTLE_WAIT_TIMEOUT_MS,
                             )
                         )
                     )
@@ -143,8 +140,24 @@ class HotReloadDaemonFixtureE2eTest {
                 "hr-daemon-e2e-wait",
             )
             .start()
-        Thread.sleep(300)
+        // Reuse one request id. The daemon Tooling client may still be connecting, so a single
+        // broadcast after a sleep is lost; the settle machine ignores duplicate ids once armed.
         val request = OrchestrationMessage.ReloadClassesRequest()
+        val deadlineNs =
+            System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SETTLE_BROADCAST_BUDGET_MS)
+        while (!waitDone.await(SETTLE_BROADCAST_GAP_MS, TimeUnit.MILLISECONDS)) {
+            if (System.nanoTime() >= deadlineNs) break
+            broadcastSyntheticReload(server, request)
+        }
+        assertTrue(waitDone.await(5, TimeUnit.SECONDS), "waitForReloadSettled hung")
+        val outcome = outcomeRef.get()
+        assertIs<DaemonResponse.Completed>(outcome, "expected settle Completed, got $outcome")
+    }
+
+    private fun broadcastSyntheticReload(
+        server: OrchestrationHandle,
+        request: OrchestrationMessage.ReloadClassesRequest,
+    ) {
         server sendBlocking request
         server sendBlocking
             OrchestrationMessage.ReloadClassesResult(
@@ -157,8 +170,6 @@ class HotReloadDaemonFixtureE2eTest {
                 reloadRequestId = request.messageId,
                 iteration = 1,
             )
-        assertTrue(waitDone.await(40, TimeUnit.SECONDS), "waitForReloadSettled hung")
-        assertIs<DaemonResponse.Completed>(outcomeRef.get())
     }
 
     private fun assertStaleKeyRejected(client: DaemonClient, sessionId: String, preKey: String) {
@@ -323,5 +334,11 @@ class HotReloadDaemonFixtureE2eTest {
             process.destroyForcibly()
             process.waitFor(5, TimeUnit.SECONDS)
         }
+    }
+
+    private companion object {
+        const val SETTLE_WAIT_TIMEOUT_MS: Long = 30_000
+        const val SETTLE_BROADCAST_BUDGET_MS: Long = 25_000
+        const val SETTLE_BROADCAST_GAP_MS: Long = 200
     }
 }
