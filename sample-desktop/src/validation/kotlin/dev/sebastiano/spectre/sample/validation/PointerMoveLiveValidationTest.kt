@@ -103,7 +103,10 @@ class PointerMoveLiveValidationTest {
     }
 }
 
-/** Hover is last in the picker LazyColumn, so it is not composed until the list is scrolled. */
+/**
+ * Hover is last in the picker LazyColumn. Scroll it into composition, then select via the Compose
+ * OnClick action. A synthetic Robot click after scroll misses on Xvfb (Linux smoke).
+ */
 private suspend fun ComposeAutomator.openHoverScenario() {
     if (findOneByTestTag("scenario.hover") == null) {
         val picker = waitForTestTag("scenario.picker")
@@ -115,5 +118,11 @@ private suspend fun ComposeAutomator.openHoverScenario() {
             null
         }
     }
-    navigateToScenario("scenario.hover")
+    val entry = waitForTestTag("scenario.hover")
+    performSemanticsClick(entry)
+    eventually(description = "scenario.hover content to appear") {
+        val title = findOneByTestTag("scenario.title") ?: return@eventually null
+        if (title.text == "Pointer hover") title else null
+    }
+    waitForTestTag("hoverStatus")
 }
