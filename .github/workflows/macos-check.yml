@@ -141,8 +141,8 @@ jobs:
       - name: Smoke the unpacked CLI distribution against the Compose fixture
         run: |
           case "$(uname -m)" in
-            arm64) target="MacosArm64"; archive="cli/build/construo/distributions/spectre-macosArm64.zip" ;;
-            x86_64) target="MacosX64"; archive="cli/build/construo/distributions/spectre-macosX64.zip" ;;
+            arm64) target="MacosArm64"; archive="cli/build/construo/distributions/macosArm64/spectre-macosArm64.zip" ;;
+            x86_64) target="MacosX64"; archive="cli/build/construo/distributions/macosX64/spectre-macosX64.zip" ;;
             *) echo "Unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
           esac
           ./gradlew ":cli:package$target"

@@ -169,6 +169,9 @@ val verifyMacosCliBundleReleaseContract by
             .files(
                 ".github/workflows/release.yml",
                 ".github/workflows/macos-release-artifacts.yml",
+                ".github/workflows/macos-check.yml",
+                ".github/workflows/validation-linux.yml",
+                ".github/workflows/validation-windows.yml",
                 ".github/workflows/notarize-macos.yml",
                 ".github/scripts/verify-macos-cli-bundle.sh",
                 ".github/scripts/test-verify-macos-cli-bundle.sh",

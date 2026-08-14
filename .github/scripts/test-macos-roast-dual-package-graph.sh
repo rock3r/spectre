@@ -84,4 +84,27 @@ fi
 grep -Fq '$RUNNER_TEMP/mac-cli-bundles/spectre-${target}.zip' "$workflow" \
   || fail "workflow must flatten isolated dest zips to \$RUNNER_TEMP/mac-cli-bundles/spectre-\${target}.zip"
 
+# Dest isolation applies to every Roast package*. CI that unzips or uploads those
+# zips must read construo/distributions/<target>/spectre-<target>.zip, not the
+# old flat construo/distributions/spectre-*.zip path.
+flat_hits="$(
+  grep -R --line-number --include='*.yml' --include='*.yaml' --include='*.py' \
+    -e 'construo/distributions/spectre-' \
+    "$root/.github/workflows" "$root/scripts" || true
+)"
+if [[ -n "$flat_hits" ]]; then
+  echo "$flat_hits" >&2
+  fail "stale flat construo/distributions/spectre-*.zip path after per-target dest isolation"
+fi
+for expected in \
+  'cli/build/construo/distributions/macosArm64/spectre-macosArm64.zip' \
+  'cli/build/construo/distributions/macosX64/spectre-macosX64.zip' \
+  'cli/build/construo/distributions/linuxX64/spectre-linuxX64.zip' \
+  'cli/build/construo/distributions/linuxArm64/spectre-linuxArm64.zip' \
+  'cli/build/construo/distributions/windowsX64/spectre-windowsX64.zip'
+do
+  grep -R --quiet --include='*.yml' --include='*.yaml' -F "$expected" "$root/.github/workflows" \
+    || fail "workflows must consume isolated zip $expected"
+done
+
 echo "test-macos-roast-dual-package-graph: OK"
