@@ -19,6 +19,8 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 public class RobotDriver
@@ -40,9 +42,7 @@ internal constructor(
 
     public constructor(robot: Robot) : this(AwtRobotAdapter(robot))
 
-    @Volatile private var lastPointerX: Int = 0
-    @Volatile private var lastPointerY: Int = 0
-    @Volatile private var hasLastPointer: Boolean = false
+    private val pointer = PointerPositionTracker()
 
     /**
      * Dispatches a single left-button click at the given screen coordinates: move, press, release.
@@ -54,7 +54,7 @@ internal constructor(
     public suspend fun click(screenX: Int, screenY: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
-            movePointer(screenX, screenY)
+            pointer.moveTo(robot, screenX, screenY)
             robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
             robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
         }
@@ -71,7 +71,7 @@ internal constructor(
     public suspend fun doubleClick(screenX: Int, screenY: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
-            movePointer(screenX, screenY)
+            pointer.moveTo(robot, screenX, screenY)
             repeat(DOUBLE_CLICK_COUNT) {
                 robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
                 robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
@@ -97,7 +97,7 @@ internal constructor(
     ) {
         tccGuard.requireAccessibility()
         runOffEdt {
-            movePointer(screenX, screenY)
+            pointer.moveTo(robot, screenX, screenY)
             robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
             try {
                 delay(holdFor)
@@ -134,11 +134,11 @@ internal constructor(
             val points = interpolateSwipePoints(startX, startY, endX, endY, steps)
             val pausePerStepMs = swipePauseMillis(duration, steps, autoDelayMs = robot.autoDelayMs)
             val firstPoint = points.first()
-            movePointer(firstPoint.x, firstPoint.y)
+            pointer.moveTo(robot, firstPoint.x, firstPoint.y)
             robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
             try {
                 for (point in points.drop(1)) {
-                    movePointer(point.x, point.y)
+                    pointer.moveTo(robot, point.x, point.y)
                     if (pausePerStepMs > 0) {
                         delay(pausePerStepMs.milliseconds)
                     }
@@ -298,7 +298,7 @@ internal constructor(
     public suspend fun scrollWheel(screenX: Int, screenY: Int, wheelClicks: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
-            movePointer(screenX, screenY)
+            pointer.moveTo(robot, screenX, screenY)
             robot.mouseWheel(wheelClicks)
         }
     }
@@ -313,7 +313,7 @@ internal constructor(
      */
     public suspend fun moveTo(screenX: Int, screenY: Int) {
         tccGuard.requireAccessibility()
-        runOffEdt { movePointer(screenX, screenY) }
+        runOffEdt { pointer.moveTo(robot, screenX, screenY) }
     }
 
     /**
@@ -327,17 +327,8 @@ internal constructor(
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
     public suspend fun moveBy(deltaX: Int, deltaY: Int) {
-        check(hasLastPointer) {
-            "moveBy requires a prior Spectre pointer move; call moveTo(...) first"
-        }
-        moveTo(screenX = lastPointerX + deltaX, screenY = lastPointerY + deltaY)
-    }
-
-    private fun movePointer(x: Int, y: Int) {
-        robot.mouseMove(x, y)
-        lastPointerX = x
-        lastPointerY = y
-        hasLastPointer = true
+        tccGuard.requireAccessibility()
+        runOffEdt { pointer.moveBy(robot, deltaX, deltaY) }
     }
 
     /**
@@ -856,6 +847,35 @@ internal fun interpolateSwipePoints(
             val progress = step.toFloat() / steps
             add(Point(lerp(startX, endX, progress), lerp(startY, endY, progress)))
         }
+    }
+}
+
+/**
+ * Last Spectre-issued pointer position for one [RobotDriver]. Absolute and relative moves share one
+ * mutex so concurrent `moveBy` / `moveTo` / click calls cannot tear the stored `(x, y)` or apply
+ * two deltas from the same base.
+ */
+private class PointerPositionTracker {
+    private val mutex = Mutex()
+    private var last: Point? = null
+
+    suspend fun moveTo(robot: RobotAdapter, x: Int, y: Int) {
+        mutex.withLock { moveToUnlocked(robot, x, y) }
+    }
+
+    suspend fun moveBy(robot: RobotAdapter, deltaX: Int, deltaY: Int) {
+        mutex.withLock {
+            val origin =
+                checkNotNull(last) {
+                    "moveBy requires a prior Spectre pointer move; call moveTo(...) first"
+                }
+            moveToUnlocked(robot, origin.x + deltaX, origin.y + deltaY)
+        }
+    }
+
+    private fun moveToUnlocked(robot: RobotAdapter, x: Int, y: Int) {
+        robot.mouseMove(x, y)
+        last = Point(x, y)
     }
 }
 

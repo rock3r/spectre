@@ -14,6 +14,8 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.ZERO
 import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.runTest
 
 class RobotDriverTest {
@@ -321,6 +323,27 @@ class RobotDriverTest {
 
         assertTrue(error.message?.contains("moveBy") == true)
         assertEquals(emptyList(), robot.events)
+    }
+
+    @Test
+    fun `concurrent moveBy applies each delta against the previous completed move`() = runTest {
+        val robot = RecordingRobotAdapter()
+        val driver = RobotDriver(robot, RecordingClipboardAdapter())
+
+        driver.moveTo(screenX = 0, screenY = 0)
+        awaitAll(
+            async { driver.moveBy(deltaX = 1, deltaY = 0) },
+            async { driver.moveBy(deltaX = 0, deltaY = 1) },
+        )
+
+        // Either interleaving is valid; both deltas must compose rather than overwrite.
+        assertEquals(listOf("move(0,0)") + robot.events.drop(1), robot.events)
+        assertEquals("move(1,1)", robot.events.last())
+        assertEquals(3, robot.events.size)
+        assertTrue(
+            robot.events[1] == "move(1,0)" || robot.events[1] == "move(0,1)",
+            "expected one single-axis hop first, got ${robot.events}",
+        )
     }
 
     @Test
