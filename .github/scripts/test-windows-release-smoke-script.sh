@@ -86,7 +86,7 @@ grep -F -q 'hard skip without N/A reason' "$script" || fail "fail-closed hard N/
 for scenario_id in \
   preflight check junit-live agent-attach-core agent-contract-corpus agent-inject \
   agent-launch-and-attach cli-packaged cli-native-helper-layout cli-user-flow \
-  mcp-sdk-flow host-native-recording maven-local-consumer portal-token-warmup
+  mcp-sdk-flow host-native-recording maven-local-consumer portal-token-warmup pointer-move
 do
   grep -F -q "$scenario_id" "$script" || fail "Windows runner missing stable scenario id: $scenario_id"
 done
@@ -102,6 +102,9 @@ grep -F -q 'spectre-core-' "$script" || fail "Windows maven-local-consumer missi
 grep -F -q 'PreflightOnly' "$script" || fail "Windows runner missing -PreflightOnly switch"
 grep -F -q 'preflight-only mode' "$script" || fail "Windows preflight-only N/A reason missing"
 grep -F -q -- '-PVERSION_NAME=' "$script" || fail "Windows CLI package must bake -Version into VERSION_NAME for MCP"
+grep -F -q 'Get-PointerMoveSkipReason' "$script" || fail "Windows runner missing #433 pointer-move source probe"
+grep -F -q '*PointerMoveLive*' "$script" || fail "Windows runner missing PointerMoveLive test filter"
+grep -F -q 'Assert-PointerMoveLiveExecuted' "$script" || fail "Windows runner missing PointerMoveLive fail-closed XML gate"
 
 # --- Optional: parse with pwsh when present (macOS/Linux CI agents may have it) ---
 # Note: this is PowerShell Core parse, not Desktop 5.1; ASCII byte check is the 5.1 stand-in.

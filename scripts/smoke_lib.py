@@ -43,6 +43,7 @@ REQUIRED_SCENARIO_IDS: tuple[str, ...] = (
     "host-native-recording",
     "maven-local-consumer",
     "portal-token-warmup",
+    "pointer-move",
 )
 
 RESULT_PASS = "pass"
@@ -902,6 +903,77 @@ def assert_mcp_fixture_e2e_executed(root: Path) -> None:
         break
     if not found_mcp:
         raise RuntimeError(f"MCP fixture e2e testcase not found in JUnit XML under {results_dir}")
+
+
+_COMPOSE_AUTOMATOR_KT = Path(
+    "core/src/main/kotlin/dev/sebastiano/spectre/core/ComposeAutomator.kt"
+)
+_MOVE_TO_FUN = re.compile(
+    r"^\s*(?:public\s+)?(?:suspend\s+)?fun\s+moveTo\s*\(",
+    re.MULTILINE,
+)
+_MOVE_BY_FUN = re.compile(
+    r"^\s*(?:public\s+)?(?:suspend\s+)?fun\s+moveBy\s*\(",
+    re.MULTILINE,
+)
+
+
+def pointer_move_api_skip_reason(root: Path) -> str | None:
+    """Hard N/A until ComposeAutomator exposes moveTo/moveBy (#433)."""
+    path = Path(root) / _COMPOSE_AUTOMATOR_KT
+    if not path.is_file():
+        return "ComposeAutomator.kt missing; cannot prove #433 pointer-move verbs"
+    text = path.read_text(encoding="utf-8")
+    missing: list[str] = []
+    if _MOVE_TO_FUN.search(text) is None:
+        missing.append("moveTo")
+    if _MOVE_BY_FUN.search(text) is None:
+        missing.append("moveBy")
+    if not missing:
+        return None
+    return "ComposeAutomator." + "/".join(missing) + " not shipped (#433)"
+
+
+def assert_pointer_move_live_executed(root: Path) -> None:
+    """Fail closed if PointerMoveLive validation was skipped or never ran.
+
+    Gradle --tests can exit 0 when JUnit assumptions skip every method. Hard
+    pointer-move pass requires the live hover test to actually execute.
+    """
+    results_dir = root / "sample-desktop" / "build" / "test-results" / "validationTest"
+    if not results_dir.is_dir():
+        raise RuntimeError(
+            f"pointer-move test results missing under {results_dir} "
+            "(Gradle did not write validationTest JUnit XML)"
+        )
+    xml_files = sorted(results_dir.glob("TEST-*.xml"))
+    if not xml_files:
+        raise RuntimeError(f"pointer-move produced no TEST-*.xml under {results_dir}")
+    found = False
+    for path in xml_files:
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raise RuntimeError(f"unable to read {path}: {exc}") from exc
+        if "PointerMoveLive" not in raw:
+            continue
+        found = True
+        if "<skipped" in raw:
+            raise RuntimeError(
+                "PointerMoveLive validation was skipped (assumption); hard pass "
+                "requires a headed display and shipped moveTo/moveBy (#433)"
+            )
+        for attr in ("failures", "errors"):
+            match = re.search(rf'{attr}="(\d+)"', raw)
+            if match and int(match.group(1)) > 0:
+                raise RuntimeError(
+                    f"PointerMoveLive reported {attr}={match.group(1)} in {path.name}"
+                )
+        break
+    if not found:
+        raise RuntimeError(
+            f"PointerMoveLive testcase not found in JUnit XML under {results_dir}"
+        )
 
 
 def packaged_cli_executable(root: Path, system: str | None = None, machine: str | None = None) -> Path:

@@ -65,7 +65,8 @@ $script:RequiredScenarioIds = @(
     "mcp-sdk-flow",
     "host-native-recording",
     "maven-local-consumer",
-    "portal-token-warmup"
+    "portal-token-warmup",
+    "pointer-move"
 )
 $ErrorActionPreference = "Stop"
 # Avoid StrictMode edge cases with dynamic PSCustomObject / native interop on WinPS 5.1.
@@ -321,6 +322,50 @@ function Assert-McpFixtureE2eExecuted {
     }
 }
 
+function Get-PointerMoveSkipReason {
+    param([Parameter(Mandatory = $true)][string] $RepoRoot)
+    $path = Join-Path $RepoRoot "core\src\main\kotlin\dev\sebastiano\spectre\core\ComposeAutomator.kt"
+    if (-not (Test-Path -LiteralPath $path)) {
+        return "ComposeAutomator.kt missing; cannot prove #433 pointer-move verbs"
+    }
+    $text = [string](Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue)
+    $hasMoveTo = $text -match '(?m)^\s*(public\s+)?(suspend\s+)?fun\s+moveTo\s*\('
+    $hasMoveBy = $text -match '(?m)^\s*(public\s+)?(suspend\s+)?fun\s+moveBy\s*\('
+    if ($hasMoveTo -and $hasMoveBy) { return $null }
+    $missing = @()
+    if (-not $hasMoveTo) { $missing += "moveTo" }
+    if (-not $hasMoveBy) { $missing += "moveBy" }
+    return ("ComposeAutomator.{0} not shipped (#433)" -f ($missing -join "/"))
+}
+
+function Assert-PointerMoveLiveExecuted {
+    param([Parameter(Mandatory = $true)][string] $RepoRoot)
+    $resultsDir = Join-Path $RepoRoot "sample-desktop\build\test-results\validationTest"
+    if (-not (Test-Path -LiteralPath $resultsDir)) {
+        throw "pointer-move test results missing under $resultsDir (Gradle did not write validationTest JUnit XML)"
+    }
+    $xmlFiles = @(Get-ChildItem -LiteralPath $resultsDir -Filter "TEST-*.xml" -ErrorAction SilentlyContinue)
+    if ($xmlFiles.Count -eq 0) {
+        throw "pointer-move produced no TEST-*.xml under $resultsDir"
+    }
+    $found = $false
+    foreach ($f in $xmlFiles) {
+        $raw = [string](Get-Content -LiteralPath $f.FullName -Raw -ErrorAction SilentlyContinue)
+        if ([string]::IsNullOrWhiteSpace($raw)) { continue }
+        if ($raw -notmatch "PointerMoveLive") { continue }
+        $found = $true
+        if ($raw -match "<skipped") {
+            throw "PointerMoveLive validation was skipped (assumption); hard pass requires a headed display and shipped moveTo/moveBy (#433)"
+        }
+        if ($raw -match 'failures="[1-9]' -or $raw -match 'errors="[1-9]') {
+            throw "PointerMoveLive reported failures/errors in $($f.Name)"
+        }
+    }
+    if (-not $found) {
+        throw "PointerMoveLive testcase not found in JUnit XML under $resultsDir"
+    }
+}
+
 function Get-GitText {
     param([string] $RepoRoot, [string[]] $GitArgs)
     try {
@@ -533,6 +578,23 @@ try {
     if (-not $PreflightOnly) {
     # Live JUnit is Unix-primary in release-smoke.py; on Windows record explicit N/A unless expanded.
     [void]$results.Add((New-StepResult -Id "junit-live" -Name "Live JUnit failure artifacts/video and atomic capture" -Result "n/a" -Reason "Windows entrypoint prioritizes agent/WGC/CLI; run sample-desktop validationTest on macOS/Linux baseline"))
+
+    $pointerSkip = Get-PointerMoveSkipReason -RepoRoot $repoRoot
+    if ($pointerSkip) {
+        [void]$results.Add((New-StepResult -Id "pointer-move" -Name "In-process moveTo/moveBy hover without click" -Result "n/a" -Reason $pointerSkip))
+    }
+    else {
+        $step = Invoke-Step -Id "pointer-move" -Name "In-process moveTo/moveBy hover without click" -Action {
+            Invoke-Gradle -RepoRoot $repoRoot -TimeoutSeconds $AgentE2eTimeoutSeconds -LogName "pointer-move" -GradleArgs @(
+                ":sample-desktop:validationTest",
+                "--tests", "*PointerMoveLive*",
+                "--rerun-tasks",
+                "--no-build-cache"
+            )
+            Assert-PointerMoveLiveExecuted -RepoRoot $repoRoot
+        }
+        [void]$results.Add($step)
+    }
 
     if (-not $SkipAgentE2e) {
         # AgentAttachIntegration e2e includes WGC node screenshots (#362). Under SSH that is the

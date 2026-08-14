@@ -38,6 +38,7 @@ class ScenariosTest {
         assertTrue("Focus traversal" in titles)
         assertTrue("Scrollable list" in titles)
         assertTrue("HiDPI coordinate targets" in titles)
+        assertTrue("Pointer hover" in titles)
     }
 
     @Test

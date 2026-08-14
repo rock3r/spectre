@@ -32,6 +32,7 @@ from smoke_lib import (  # noqa: E402
     ScenarioResult,
     assert_linux_portal_tokens_captured,
     assert_mcp_fixture_e2e_executed,
+    assert_pointer_move_live_executed,
     WAYLAND_PORTAL_WARMUP_TOKEN_KEYS,
     linux_portal_token_path,
     build_report,
@@ -40,6 +41,7 @@ from smoke_lib import (  # noqa: E402
     hard_failures,
     host_cli_package_target,
     packaged_cli_executable,
+    pointer_move_api_skip_reason,
     portal_token_warmup_skip_reason,
     prepare_linux_portal_token_env,
     robot_xvfb_prefix,
@@ -506,6 +508,52 @@ def main(argv: list[str] | None = None) -> int:
             overall_deadline=overall_deadline,
         )
     )
+
+    # --- #433 pointer-move live hover ---
+    pointer_name = "In-process moveTo/moveBy hover without click"
+    pointer_skip = pointer_move_api_skip_reason(ROOT)
+    if pointer_skip is not None:
+        add(
+            scenario_result(
+                "pointer-move",
+                name=pointer_name,
+                result="n/a",
+                reason=pointer_skip,
+                hard=True,
+            )
+        )
+    else:
+        blocked = _robot_cell_blocked_result("pointer-move", pointer_name, system)
+        pointer = blocked or run_scenario(
+            "pointer-move",
+            name=pointer_name,
+            command=[
+                *robot_prefix,
+                gradle,
+                ":sample-desktop:validationTest",
+                "--tests",
+                "*PointerMoveLive*",
+                *force,
+            ],
+            cwd=ROOT,
+            timeout=600,
+            out_dir=out_dir,
+            env=_robot_env(scenario_env),
+            overall_deadline=overall_deadline,
+        )
+        if pointer.result == RESULT_PASS:
+            try:
+                assert_pointer_move_live_executed(ROOT)
+            except RuntimeError as exc:
+                pointer = scenario_result(
+                    "pointer-move",
+                    name=pointer_name,
+                    result=RESULT_FAIL,
+                    seconds=pointer.seconds,
+                    detail=str(exc),
+                    log=pointer.log,
+                )
+        add(pointer)
 
     # --- agent attach / corpus / inject / launch-and-attach ---
     for scenario_id, name, test_filter in (

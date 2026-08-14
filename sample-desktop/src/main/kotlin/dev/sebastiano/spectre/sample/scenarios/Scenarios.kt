@@ -18,4 +18,5 @@ val ALL_SCENARIOS: List<Scenario> =
         JDialogScenario,
         RecompositionStressScenario,
         AnimationScenario,
+        HoverScenario,
     )

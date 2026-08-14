@@ -179,8 +179,73 @@ class SmokeLibSchemaTest(unittest.TestCase):
             "host-native-recording",
             "maven-local-consumer",
             "portal-token-warmup",
+            "pointer-move",
         }
         self.assertEqual(expected, set(smoke_lib.REQUIRED_SCENARIO_IDS))
+
+    def test_pointer_move_api_skip_reason_when_verbs_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            automator = (
+                root
+                / "core/src/main/kotlin/dev/sebastiano/spectre/core/ComposeAutomator.kt"
+            )
+            automator.parent.mkdir(parents=True)
+            automator.write_text("class ComposeAutomator {\n    fun click(node: Any) {}\n}\n")
+            reason = smoke_lib.pointer_move_api_skip_reason(root)
+            self.assertIsNotNone(reason)
+            self.assertIn("#433", reason)
+
+    def test_pointer_move_api_skip_reason_when_verbs_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            automator = (
+                root
+                / "core/src/main/kotlin/dev/sebastiano/spectre/core/ComposeAutomator.kt"
+            )
+            automator.parent.mkdir(parents=True)
+            automator.write_text(
+                "class ComposeAutomator {\n"
+                "    public suspend fun moveTo(node: Any) {}\n"
+                "    public suspend fun moveBy(deltaX: Int, deltaY: Int) {}\n"
+                "}\n"
+            )
+            self.assertIsNone(smoke_lib.pointer_move_api_skip_reason(root))
+
+    def test_pointer_move_api_skip_reason_matches_this_checkout(self):
+        automator = (
+            ROOT / "core/src/main/kotlin/dev/sebastiano/spectre/core/ComposeAutomator.kt"
+        )
+        text = automator.read_text(encoding="utf-8")
+        shipped = (
+            smoke_lib._MOVE_TO_FUN.search(text) is not None
+            and smoke_lib._MOVE_BY_FUN.search(text) is not None
+        )
+        reason = smoke_lib.pointer_move_api_skip_reason(ROOT)
+        if shipped:
+            self.assertIsNone(reason)
+        else:
+            self.assertIsNotNone(reason)
+            self.assertIn("#433", reason)
+
+    def test_assert_pointer_move_live_executed_rejects_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            results = (
+                root / "sample-desktop" / "build" / "test-results" / "validationTest"
+            )
+            results.mkdir(parents=True)
+            (results / "TEST-pointer.xml").write_text(
+                '<?xml version="1.0"?>\n'
+                '<testsuite name="PointerMoveLive" tests="1" failures="0" '
+                'errors="0" skipped="1">\n'
+                '  <testcase name="moveTo node hovers" classname="x">'
+                "<skipped/></testcase>\n"
+                "</testsuite>\n"
+            )
+            with self.assertRaises(RuntimeError) as raised:
+                smoke_lib.assert_pointer_move_live_executed(root)
+            self.assertIn("skipped", str(raised.exception))
 
     def test_hard_na_without_reason_becomes_fail(self):
         result = smoke_lib.scenario_result(
@@ -366,6 +431,9 @@ class SmokeLibSchemaTest(unittest.TestCase):
         self.assertIn("attach/op/detach", text)
         # Package must bake --version so MCP serverInfo matches strict stdio (not SNAPSHOT).
         self.assertIn("-PVERSION_NAME=", text)
+        # #433: live pointer-move cell must stay fail-closed once moveTo/moveBy ship.
+        self.assertIn("pointer_move_api_skip_reason", text)
+        self.assertIn("*PointerMoveLive*", text)
 
     def test_assert_mcp_fixture_e2e_executed_rejects_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:

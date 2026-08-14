@@ -266,6 +266,7 @@ Shared across macOS / Linux / Windows entrypoints (`scripts/smoke_lib.py` → `R
 | `host-native-recording` | Host native recording smoke |
 | `maven-local-consumer` | Maven Local publication + fresh consumer |
 | `portal-token-warmup` | Linux Wayland: one interactive ScreenCast grant at run start, then reuse the stored restore token. Hard `n/a` on macOS/Windows/Xvfb. |
+| `pointer-move` | In-process `moveTo` / `moveBy` hover without click (`:sample-desktop:validationTest --tests '*PointerMoveLive*'`). Hard `n/a` only if the verbs disappear from `ComposeAutomator`. |
 
 The Unix runner registers **every** required ID end-to-end (fail-closed). Environment-impossible
 cells must be explicit hard `n/a` with reason — never a silent omit or fake `pass`.
@@ -284,6 +285,7 @@ The cross-platform runner covers the stable baseline that should not be reinvent
 - host native recording smoke (macOS SCK region / Linux X11; Windows WGC via interactive PS script)
 - Maven Local `verifyMavenLocalPublication` + fresh consumer jar resolve
 - Linux Wayland `portal-token-warmup`: one `:recording:runWaylandPortalSmoke` with a pinned `SPECTRE_WAYLAND_HELPER` + `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` under `build/smoke/wayland-restore-tokens/`. Approve **Share** + **Remember** for the **whole screen**; only later helper monitor ScreenCast cells (`host-native-recording`) reuse that token. Robot-backed cells stay under `xvfb-run`. Window-source prompts are per-window and may still appear. Xvfb / macOS / Windows record hard `n/a`.
+- `pointer-move` ([#433](https://github.com/rock3r/spectre/issues/433) / [#435](https://github.com/rock3r/spectre/pull/435)): live hover via `moveTo(node)` / `moveBy` / `moveTo(x, y)` against the sample `scenario.hover` fixture, with JUnit XML fail-closed so assumption-skips cannot fake PASS. If `ComposeAutomator` ever loses both verbs the cell is hard `n/a` with reason. This is the in-process gap; CLI / MCP / agent verbs are a follow-up.
 
 Each release still needs delta cells based on `git log <previous-tag>..HEAD`. Add reusable delta
 coverage to the runner rather than leaving a one-release command only in chat.
@@ -294,6 +296,7 @@ coverage to the runner rather than leaving a one-release command only in chat.
 | --- | --- | --- |
 | Preflight / check / agent attach·inject·launch / CLI package / MCP SDK / Maven Local | `release-smoke.py` (macOS/Linux); Windows PS shares IDs | — |
 | Live JUnit failure artifacts/video + atomic capture | `release-smoke.py` → `junit-live` | Windows: run on macOS/Linux baseline (hard `n/a` on Windows entrypoint with reason) |
+| Pointer-move hover (#433 / #435) | Unix + Windows `pointer-move` → `*PointerMoveLive*` | Fail-closed on all three OSes; hard `n/a` only if the verbs disappear |
 | Host native recording | macOS SCK + Linux X11 in `release-smoke.py`; WGC in Windows PS when **interactive** | SSH WGC is N/A (not PASS) |
 | TCC / notarization / app seal | — | macOS recipes below |
 | Real Wayland portal | — | Real Wayland session (Xvfb ≠ Wayland) |
@@ -409,6 +412,11 @@ release SHA.
   `cli-user-flow` may still use Gradle with `--app-name ComposeFixtureMain`; prefer a healthy
   UP-TO-DATE fixture build so cold daemon start alone fits the budget. Prod-like launch remains
   the troubleshooting recommendation when Gradle is slow or flaky.
+- **#433 / #435 pointer-move:** verbs shipped on `main` (`433dd5b`). Unix and Windows run
+  `:sample-desktop:validationTest --tests '*PointerMoveLive*'` with `--rerun-tasks
+  --no-build-cache` and reject assumption-skips via JUnit XML. A hard `n/a` now means the
+  source probe could not see `moveTo`/`moveBy` — treat that as a regression, not a skip.
+  CLI / MCP / agent verbs are still a follow-up.
 - **Manual residual (not auto-green):** TCC / notarization / app seal; first Wayland ScreenCast
   consent during `portal-token-warmup` (later cells reuse the restore token); public
   Homebrew/Scoop/archive after undraft; focus/lock keys; multi-monitor / HiDPI; stock IntelliJ
@@ -450,12 +458,13 @@ What it does (no second terminal), using the **same stable scenario IDs** as
 `scripts/release-smoke.py` / `scripts/smoke_lib.py`:
 
 1. `preflight` + optional `check`
-2. Agent UI e2e: `agent-attach-core`, `agent-inject`, `agent-launch-and-attach`
+2. `pointer-move` — live `moveTo`/`moveBy` hover (`*PointerMoveLive*`)
+3. Agent UI e2e: `agent-attach-core`, `agent-inject`, `agent-launch-and-attach`
    (`-Pspectre.agent.attachE2e.allowWindows=true`, properly quoted for PowerShell)
-3. `host-native-recording` — WGC region smoke only when `displayMode` is interactive
+4. `host-native-recording` — WGC region smoke only when `displayMode` is interactive
    (SSH → hard `n/a` with reason, never fake PASS)
-4. `cli-packaged` / `cli-native-helper-layout` / packaged `spectre launch --once` as `cli-user-flow`
-5. optional `maven-local-consumer` via `verifyMavenLocalPublication`
+5. `cli-packaged` / `cli-native-helper-layout` / packaged `spectre launch --once` as `cli-user-flow`
+6. optional `maven-local-consumer` via `verifyMavenLocalPublication`
 
 Writes versioned `build/smoke/windows-release-smoke.json` + `.md` (`schemaVersion` from
 `smoke_lib.SCHEMA_VERSION`, full SHA,
