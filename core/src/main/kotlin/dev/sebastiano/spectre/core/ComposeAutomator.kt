@@ -144,6 +144,28 @@ private constructor(
         robotDriver.longClick(center.x, center.y, holdFor)
     }
 
+    /** Moves the pointer to [node]'s centre without pressing a button. */
+    public suspend fun moveTo(node: AutomatorNode) {
+        val center = node.centerOnScreen
+        robotDriver.moveTo(center.x, center.y)
+    }
+
+    /**
+     * Moves the pointer to screen coordinates (same space as [swipe]) without pressing a button.
+     */
+    public suspend fun moveTo(x: Int, y: Int) {
+        robotDriver.moveTo(x, y)
+    }
+
+    /**
+     * Moves the pointer by [deltaX], [deltaY] relative to the last Spectre-issued pointer position
+     * on this automator's [RobotDriver]. Throws [IllegalStateException] if no Spectre pointer move
+     * has happened yet.
+     */
+    public suspend fun moveBy(deltaX: Int, deltaY: Int) {
+        robotDriver.moveBy(deltaX, deltaY)
+    }
+
     public suspend fun swipe(
         startX: Int,
         startY: Int,

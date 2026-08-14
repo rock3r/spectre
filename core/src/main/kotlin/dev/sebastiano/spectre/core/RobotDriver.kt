@@ -13,6 +13,7 @@ import java.awt.datatransfer.UnsupportedFlavorException
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.awt.image.BufferedImage
+import java.util.concurrent.atomic.AtomicReference
 import javax.swing.SwingUtilities
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -40,6 +41,8 @@ internal constructor(
 
     public constructor(robot: Robot) : this(AwtRobotAdapter(robot))
 
+    private val pointer = PointerPositionTracker()
+
     /**
      * Dispatches a single left-button click at the given screen coordinates: move, press, release.
      *
@@ -50,7 +53,7 @@ internal constructor(
     public suspend fun click(screenX: Int, screenY: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
-            robot.mouseMove(screenX, screenY)
+            pointer.moveTo(robot, screenX, screenY)
             robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
             robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
         }
@@ -67,7 +70,7 @@ internal constructor(
     public suspend fun doubleClick(screenX: Int, screenY: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
-            robot.mouseMove(screenX, screenY)
+            pointer.moveTo(robot, screenX, screenY)
             repeat(DOUBLE_CLICK_COUNT) {
                 robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
                 robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
@@ -93,7 +96,7 @@ internal constructor(
     ) {
         tccGuard.requireAccessibility()
         runOffEdt {
-            robot.mouseMove(screenX, screenY)
+            pointer.moveTo(robot, screenX, screenY)
             robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
             try {
                 delay(holdFor)
@@ -130,11 +133,11 @@ internal constructor(
             val points = interpolateSwipePoints(startX, startY, endX, endY, steps)
             val pausePerStepMs = swipePauseMillis(duration, steps, autoDelayMs = robot.autoDelayMs)
             val firstPoint = points.first()
-            robot.mouseMove(firstPoint.x, firstPoint.y)
+            pointer.moveTo(robot, firstPoint.x, firstPoint.y)
             robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
             try {
                 for (point in points.drop(1)) {
-                    robot.mouseMove(point.x, point.y)
+                    pointer.moveTo(robot, point.x, point.y)
                     if (pausePerStepMs > 0) {
                         delay(pausePerStepMs.milliseconds)
                     }
@@ -294,9 +297,37 @@ internal constructor(
     public suspend fun scrollWheel(screenX: Int, screenY: Int, wheelClicks: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
-            robot.mouseMove(screenX, screenY)
+            pointer.moveTo(robot, screenX, screenY)
             robot.mouseWheel(wheelClicks)
         }
+    }
+
+    /**
+     * Moves the pointer to ([screenX], [screenY]) without pressing or releasing any button. Use
+     * this for hover, tooltip, and "park the pointer" cases that `click` / `swipe` cannot express
+     * because they always press.
+     *
+     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
+     */
+    public suspend fun moveTo(screenX: Int, screenY: Int) {
+        tccGuard.requireAccessibility()
+        runOffEdt { pointer.moveTo(robot, screenX, screenY) }
+    }
+
+    /**
+     * Moves the pointer by ([deltaX], [deltaY]) relative to the last Spectre-issued pointer
+     * position (`click`, `doubleClick`, `longClick`, `swipe`, `scrollWheel`, [moveTo], or a
+     * previous [moveBy]). Does not read the OS cursor — synthetic and headless backends have no
+     * real cursor, and `java.awt.MouseInfo` is a different coordinate story.
+     *
+     * Throws [IllegalStateException] if no Spectre pointer move has happened yet on this driver.
+     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
+     */
+    public suspend fun moveBy(deltaX: Int, deltaY: Int) {
+        tccGuard.requireAccessibility()
+        runOffEdt { pointer.moveBy(robot, deltaX, deltaY) }
     }
 
     /**
@@ -482,6 +513,13 @@ internal interface RobotAdapter : ScreenCaptureAdapter {
 
     fun mouseMove(x: Int, y: Int)
 
+    /**
+     * Throws when this adapter cannot dispatch input (the headless backend). Default is a no-op so
+     * real and synthetic adapters stay silent. Used by [RobotDriver.moveBy] so the headless
+     * [UnsupportedOperationException] contract is evaluated before the relative-position check.
+     */
+    fun requireInputSupported() = Unit
+
     fun mousePress(buttons: Int)
 
     fun mouseRelease(buttons: Int)
@@ -615,6 +653,8 @@ private object HeadlessThrowingRobotAdapter : RobotAdapter {
     override val requiresOffEdt: Boolean = false
 
     override fun mouseMove(x: Int, y: Int): Unit = throwHeadless("mouseMove")
+
+    override fun requireInputSupported(): Unit = throwHeadless("moveBy")
 
     override fun mousePress(buttons: Int): Unit = throwHeadless("mousePress")
 
@@ -815,6 +855,35 @@ internal fun interpolateSwipePoints(
             val progress = step.toFloat() / steps
             add(Point(lerp(startX, endX, progress), lerp(startY, endY, progress)))
         }
+    }
+}
+
+/**
+ * Last Spectre-issued pointer position for one [RobotDriver]. Stored as one atomic [Point] so a
+ * concurrent reader cannot observe a torn `(x, y)`. No mutex: holding a lock across
+ * `robot.mouseMove` deadlocks an EDT `moveTo`/`moveBy` against a synthetic adapter's
+ * `invokeAndWait`. Concurrent pointer ops on one driver are not a supported contract.
+ */
+private class PointerPositionTracker {
+    private val last = AtomicReference<Point?>(null)
+
+    fun moveTo(robot: RobotAdapter, x: Int, y: Int) {
+        robot.mouseMove(x, y)
+        last.set(Point(x, y))
+    }
+
+    fun moveBy(robot: RobotAdapter, deltaX: Int, deltaY: Int) {
+        // Headless must reject before the relative-position check: no successful headless
+        // move can ever initialize [last], so evaluating it first would turn every
+        // headless moveBy into IllegalStateException instead of UnsupportedOperationException.
+        robot.requireInputSupported()
+        val origin =
+            checkNotNull(last.get()) {
+                "moveBy requires a prior Spectre pointer move; call moveTo(...) first"
+            }
+        val next = Point(origin.x + deltaX, origin.y + deltaY)
+        robot.mouseMove(next.x, next.y)
+        last.set(next)
     }
 }
 

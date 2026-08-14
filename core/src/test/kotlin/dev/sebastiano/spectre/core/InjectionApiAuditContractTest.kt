@@ -39,7 +39,16 @@ class InjectionApiAuditContractTest {
 
         // Geometry-only Robot verbs that must remain listed for inject/read-only design.
         for (verb in
-            listOf("click", "doubleClick", "longClick", "swipe", "scrollWheel", "typeText")) {
+            listOf(
+                "click",
+                "doubleClick",
+                "longClick",
+                "swipe",
+                "scrollWheel",
+                "moveTo",
+                "moveBy",
+                "typeText",
+            )) {
             assertContains(text, verb)
         }
 

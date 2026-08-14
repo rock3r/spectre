@@ -120,6 +120,8 @@ against the target:
 | `doubleClick(x, y)` | Robot ×2 | No | Yes | **OS-only** |
 | `longClick(x, y, hold)` | Robot press + delay + release | No | Yes | **OS-only** |
 | `swipe(x1,y1 → x2,y2)` | Robot interpolated move | No | Yes | **OS-only** |
+| `moveTo(x, y)` | `Robot.mouseMove` | No | Yes (for UI targeting) | **OS-only** |
+| `moveBy(dX, dY)` | `Robot.mouseMove` from last Spectre pointer | No | No (relative) | **OS-only** |
 | `scrollWheel(x, y, clicks)` | `Robot.mouseWheel` | No | Yes (position) | **OS-only** |
 | `typeText` / `pasteText` / `clearAndTypeText` | Robot keys / clipboard | No | No for type/paste; clearAndType needs click geometry first | **OS-only** (focus must already be correct) |
 | `pressKey` / `pressEnter` | Robot keys | No | No | **OS-only** |
@@ -148,6 +150,8 @@ window), these verbs need **no further Compose API**:
 | `doubleClick` | Center | |
 | `longClick` | Center | Hold duration |
 | `swipe` (coord or node-to-node) | Start/end centers | |
+| `moveTo` | Center or raw coords | Hover; no button press |
+| `moveBy` | None (relative to last Spectre move) | Fails if no prior move |
 | `scrollWheel` | Center + wheel delta | |
 | `typeText` | None (keyboard) | Requires correct focus beforehand (`click` or `focusWindow`) |
 | `pasteText` | None | Same focus caveat |

@@ -70,7 +70,7 @@ The API is split into two layers:
   selectors don't have `findOneBy…` variants — call `.firstOrNull()` on the list result
   yourself if you want one.) These do a single read against the current semantics state
   and return what they see.
-- **Interactions** — `click`, `doubleClick`, `longClick`, `swipe`, `scrollWheel`,
+- **Interactions** — `click`, `doubleClick`, `longClick`, `moveTo`, `moveBy`, `swipe`, `scrollWheel`,
   `typeText`, `pasteText`, `clearAndTypeText`, `pressKey`, `pressEnter`, `screenshot`. These dispatch
   input via `RobotDriver` (or capture pixels).
 

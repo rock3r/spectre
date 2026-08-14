@@ -60,7 +60,7 @@ out of scope.
 
 | Capability | Surface | Default exposure |
 | --- | --- | --- |
-| Move mouse / press keys | `RobotDriver.click`, `swipe`, `pressKey`, `scrollWheel` | In-process; trusted-local HTTP via `/spectre/click` |
+| Move mouse / press keys | `RobotDriver.click`, `moveTo`, `moveBy`, `swipe`, `pressKey`, `scrollWheel` | In-process; trusted-local HTTP via `/spectre/click` |
 | Modify clipboard | `RobotDriver.pasteText` (save / set / paste / restore) | In-process |
 | Capture pixels | `RobotDriver.screenshot(region)` — **captures any rectangle of the virtual desktop**, not just the app under test; `AutoScreenshotter` for native/window-targeted still screenshots where available | In-process; trusted-local HTTP via `/spectre/screenshot` for `RobotDriver`; `AutoScreenshotter` is in-process only |
 | Record video | `AutoRecorder`, native recorders, deprecated explicit `FfmpegRecorder`, `WaylandPortalRecorder` | In-process only |

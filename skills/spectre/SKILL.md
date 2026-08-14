@@ -165,6 +165,8 @@ post-HiDPI), `centerOnScreen`. Tree navigation via `children`/`parent`.
 All `suspend` on `ComposeAutomator`:
 
 - `click(node)`, `doubleClick(node)`, `longClick(node, holdFor = 500.milliseconds)`
+- `moveTo(node)`, `moveTo(x, y)`, `moveBy(deltaX, deltaY)` — button-up pointer moves for hover;
+  `moveBy` is relative to the last Spectre-issued pointer position and throws if none exists
 - `swipe(from, to, steps, duration)` or `swipe(startX, startY, endX, endY, …)`
 - `scrollWheel(node, wheelClicks)`
 - `typeText("hello")` — types supported ASCII text via key events without using
