@@ -8,14 +8,15 @@ import java.awt.datatransfer.Transferable
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.awt.image.BufferedImage
+import java.util.concurrent.CyclicBarrier
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.ZERO
 import kotlin.time.Duration.Companion.milliseconds
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 
 class RobotDriverTest {
@@ -326,18 +327,41 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `concurrent moveBy applies each delta against the previous completed move`() = runTest {
-        val robot = RecordingRobotAdapter()
+    fun `concurrent moveBy applies each delta against the previous completed move`() {
+        var delayMoves = false
+        val start = CyclicBarrier(2)
+        val robot =
+            RecordingRobotAdapter(
+                beforeMove = { if (delayMoves) Thread.sleep(POINTER_RACE_WINDOW_MS) }
+            )
         val driver = RobotDriver(robot, RecordingClipboardAdapter())
+        runBlocking { driver.moveTo(screenX = 0, screenY = 0) }
+        delayMoves = true
 
-        driver.moveTo(screenX = 0, screenY = 0)
-        awaitAll(
-            async { driver.moveBy(deltaX = 1, deltaY = 0) },
-            async { driver.moveBy(deltaX = 0, deltaY = 1) },
-        )
+        val first =
+            Thread(
+                {
+                    start.await(2, TimeUnit.SECONDS)
+                    runBlocking { driver.moveBy(deltaX = 1, deltaY = 0) }
+                },
+                "moveBy-x",
+            )
+        val second =
+            Thread(
+                {
+                    start.await(2, TimeUnit.SECONDS)
+                    runBlocking { driver.moveBy(deltaX = 0, deltaY = 1) }
+                },
+                "moveBy-y",
+            )
+        first.start()
+        second.start()
+        first.join(JOIN_TIMEOUT_MS)
+        second.join(JOIN_TIMEOUT_MS)
+        assertTrue(!first.isAlive && !second.isAlive, "moveBy threads did not finish")
 
-        // Either interleaving is valid; both deltas must compose rather than overwrite.
-        assertEquals(listOf("move(0,0)") + robot.events.drop(1), robot.events)
+        // Without the pointer mutex both threads would read the same origin during the sleep
+        // and the last position would be (1,0) or (0,1), not the composed (1,1).
         assertEquals("move(1,1)", robot.events.last())
         assertEquals(3, robot.events.size)
         assertTrue(
@@ -347,14 +371,34 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `concurrent moveTo cannot sneak between click press and release`() = runTest {
-        val robot = RecordingRobotAdapter()
+    fun `concurrent moveTo cannot sneak between click press and release`() {
+        val start = CyclicBarrier(2)
+        val robot =
+            RecordingRobotAdapter(
+                afterMove = { x, y -> if (x == 10 && y == 20) Thread.sleep(POINTER_RACE_WINDOW_MS) }
+            )
         val driver = RobotDriver(robot, RecordingClipboardAdapter())
-
-        awaitAll(
-            async { driver.click(10, 20) },
-            async { driver.moveTo(screenX = 99, screenY = 99) },
-        )
+        val clicker =
+            Thread(
+                {
+                    start.await(2, TimeUnit.SECONDS)
+                    runBlocking { driver.click(10, 20) }
+                },
+                "clicker",
+            )
+        val mover =
+            Thread(
+                {
+                    start.await(2, TimeUnit.SECONDS)
+                    runBlocking { driver.moveTo(screenX = 99, screenY = 99) }
+                },
+                "mover",
+            )
+        clicker.start()
+        mover.start()
+        clicker.join(JOIN_TIMEOUT_MS)
+        mover.join(JOIN_TIMEOUT_MS)
+        assertTrue(!clicker.isAlive && !mover.isAlive, "pointer threads did not finish")
 
         val clickStart = robot.events.indexOf("move(10,20)")
         check(clickStart >= 0) { "expected click move in ${robot.events}" }
@@ -646,6 +690,8 @@ private class RecordingRobotAdapter(
     private val drainAfterPaste: Boolean = false,
     initialCapsLockOn: Boolean = false,
     private val allowCapsLockWrite: Boolean = true,
+    private val beforeMove: (() -> Unit)? = null,
+    private val afterMove: ((Int, Int) -> Unit)? = null,
 ) : RobotAdapter {
     override val requiresOffEdt: Boolean = false
     val events = mutableListOf<String>()
@@ -659,7 +705,11 @@ private class RecordingRobotAdapter(
         sharedLog?.add("robot:$event")
     }
 
-    override fun mouseMove(x: Int, y: Int) = log("move($x,$y)")
+    override fun mouseMove(x: Int, y: Int) {
+        beforeMove?.invoke()
+        log("move($x,$y)")
+        afterMove?.invoke(x, y)
+    }
 
     override fun mousePress(buttons: Int) = log("press($buttons)")
 
@@ -775,3 +825,6 @@ private class LatentClipboardAdapter(
         }
     }
 }
+
+private const val POINTER_RACE_WINDOW_MS: Long = 50L
+private const val JOIN_TIMEOUT_MS: Long = 2_000L
