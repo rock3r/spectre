@@ -312,6 +312,14 @@ def main(argv: list[str] | None = None) -> int:
         # Non-login SSH PATH lacks ~/.cargo/bin; xvfb-run inherits that and
         # :recording:buildWaylandHelper then cannot start cargo.
         apply_linux_toolchain_path()
+        # A leftover Gradle daemon started without that PATH still cannot exec cargo.
+        subprocess.run(
+            [str(ROOT / "gradlew"), "--stop"],
+            cwd=ROOT,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
     if system == "Windows":
         print(
             "Use scripts/windows-release-smoke.ps1 from the interactive desktop "
