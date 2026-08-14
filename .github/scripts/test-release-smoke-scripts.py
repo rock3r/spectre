@@ -163,6 +163,54 @@ class SmokeLibSchemaTest(unittest.TestCase):
     def test_schema_version_constant(self):
         self.assertEqual(1, smoke_lib.SCHEMA_VERSION)
 
+    def test_linux_toolchain_path_prepends_cargo_bin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cargo_home = Path(tmp) / "cargo-home"
+            cargo_bin = cargo_home / "bin"
+            cargo_bin.mkdir(parents=True)
+            environ = {"PATH": "/usr/bin", "CARGO_HOME": str(cargo_home)}
+            result = smoke_lib.linux_toolchain_path(environ)
+            parts = result.split(os.pathsep)
+            self.assertEqual(str(cargo_bin), parts[0])
+            self.assertIn("/usr/bin", parts)
+
+    def test_linux_toolchain_path_does_not_duplicate_cargo_bin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cargo_home = Path(tmp) / "cargo-home"
+            cargo_bin = cargo_home / "bin"
+            cargo_bin.mkdir(parents=True)
+            already = os.pathsep.join([str(cargo_bin), "/usr/bin"])
+            environ = {"PATH": already, "CARGO_HOME": str(cargo_home)}
+            result = smoke_lib.linux_toolchain_path(environ)
+            self.assertEqual(1, result.split(os.pathsep).count(str(cargo_bin)))
+
+    def test_linux_toolchain_path_inherits_os_path_when_overlay_omits_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cargo_home = Path(tmp) / "cargo-home"
+            cargo_bin = cargo_home / "bin"
+            cargo_bin.mkdir(parents=True)
+            old_path = os.environ.get("PATH")
+            os.environ["PATH"] = "/usr/bin:/bin"
+            try:
+                result = smoke_lib.linux_toolchain_path({"CARGO_HOME": str(cargo_home)})
+            finally:
+                if old_path is None:
+                    del os.environ["PATH"]
+                else:
+                    os.environ["PATH"] = old_path
+            self.assertIn("/usr/bin", result.split(os.pathsep))
+            self.assertEqual(str(cargo_bin), result.split(os.pathsep)[0])
+
+    def test_apply_linux_toolchain_path_mutates_environ(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cargo_home = Path(tmp) / "cargo-home"
+            (cargo_home / "bin").mkdir(parents=True)
+            environ = {"PATH": "/bin", "CARGO_HOME": str(cargo_home)}
+            smoke_lib.apply_linux_toolchain_path(environ)
+            self.assertTrue(
+                environ["PATH"].startswith(str(cargo_home / "bin") + os.pathsep)
+            )
+
     def test_required_scenario_ids_are_stable(self):
         expected = {
             "preflight",
@@ -434,6 +482,8 @@ class SmokeLibSchemaTest(unittest.TestCase):
         # #433: live pointer-move cell must stay fail-closed once moveTo/moveBy ship.
         self.assertIn("pointer_move_api_skip_reason", text)
         self.assertIn("*PointerMoveLive*", text)
+        # Non-login SSH / xvfb-run must still see rustup cargo for helper rebuilds.
+        self.assertIn("apply_linux_toolchain_path", text)
 
     def test_assert_mcp_fixture_e2e_executed_rejects_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:

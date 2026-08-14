@@ -30,6 +30,7 @@ from smoke_lib import (  # noqa: E402
     RESULT_FAIL,
     RESULT_PASS,
     ScenarioResult,
+    apply_linux_toolchain_path,
     assert_linux_portal_tokens_captured,
     assert_mcp_fixture_e2e_executed,
     assert_pointer_move_live_executed,
@@ -216,6 +217,7 @@ def _robot_env(env: dict[str, str] | None) -> dict[str, str]:
     robot["SPECTRE_CAPTURE_BACKEND"] = "x11"
     robot["WAYLAND_DISPLAY"] = ""
     robot["XDG_SESSION_TYPE"] = "x11"
+    apply_linux_toolchain_path(robot)
     return robot
 
 
@@ -306,6 +308,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     system = platform.system()
+    if system == "Linux":
+        # Non-login SSH PATH lacks ~/.cargo/bin; xvfb-run inherits that and
+        # :recording:buildWaylandHelper then cannot start cargo.
+        apply_linux_toolchain_path()
     if system == "Windows":
         print(
             "Use scripts/windows-release-smoke.ps1 from the interactive desktop "

@@ -817,6 +817,33 @@ def assert_linux_portal_tokens_captured(
         )
 
 
+def linux_toolchain_path(environ: Mapping[str, str] | None = None) -> str:
+    """PATH that includes rustup/cargo for non-login SSH and xvfb-run children.
+
+    Login shells source ~/.cargo/env. Release-smoke is started from a non-login
+    SSH session whose PATH is /usr/bin:..., so `:recording:buildWaylandHelper`
+    dies with "command 'cargo'" when `--rerun-tasks` rebuilds the helper.
+    """
+    overlay = dict(environ or {})
+    current = overlay.get("PATH", os.environ.get("PATH", ""))
+    parts = [p for p in current.split(os.pathsep) if p]
+    cargo_home_raw = overlay.get("CARGO_HOME") or os.environ.get("CARGO_HOME")
+    cargo_home = Path(cargo_home_raw) if cargo_home_raw else Path.home() / ".cargo"
+    cargo_bin = cargo_home / "bin"
+    if cargo_bin.is_dir() and str(cargo_bin) not in parts:
+        parts.insert(0, str(cargo_bin))
+    return os.pathsep.join(parts)
+
+
+def apply_linux_toolchain_path(
+    environ: MutableMapping[str, str] | None = None,
+) -> str:
+    """Write [linux_toolchain_path] into PATH on the given mapping (default os.environ)."""
+    target: MutableMapping[str, str] = os.environ if environ is None else environ
+    target["PATH"] = linux_toolchain_path(target)
+    return target["PATH"]
+
+
 def xvfb_prefix(system: str | None = None) -> list[str]:
     system = system or platform.system()
     if system == "Linux" and not os.environ.get("DISPLAY", "").strip():

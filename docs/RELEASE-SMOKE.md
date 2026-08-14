@@ -417,6 +417,12 @@ release SHA.
   --no-build-cache` and reject assumption-skips via JUnit XML. A hard `n/a` now means the
   source probe could not see `moveTo`/`moveBy` — treat that as a regression, not a skip.
   CLI / MCP / agent verbs are still a follow-up.
+- **Linux helper `cargo` on Robot cells:** Unix harness prepends `$CARGO_HOME/bin` or
+  `~/.cargo/bin` to PATH. Non-login SSH + `xvfb-run` otherwise cannot start
+  `:recording:buildWaylandHelper` when `--rerun-tasks` rebuilds the helper. Do **not**
+  move JBR Robot cells onto the seated Wayland display to dodge this — helper ScreenCast
+  restore tokens do not cover OpenJDK/JBR Robot (new unparented Share / Remote Desktop
+  dialogs per JVM; see #432).
 - **Manual residual (not auto-green):** TCC / notarization / app seal; first Wayland ScreenCast
   consent during `portal-token-warmup` (later cells reuse the restore token); public
   Homebrew/Scoop/archive after undraft; focus/lock keys; multi-monitor / HiDPI; stock IntelliJ
