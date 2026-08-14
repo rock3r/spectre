@@ -54,11 +54,9 @@ internal constructor(
     public suspend fun click(screenX: Int, screenY: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
-            pointer.withLock {
-                moveTo(robot, screenX, screenY)
-                robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
-                robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
-            }
+            pointer.moveTo(robot, screenX, screenY)
+            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
+            robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
         }
     }
 
@@ -73,12 +71,10 @@ internal constructor(
     public suspend fun doubleClick(screenX: Int, screenY: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
-            pointer.withLock {
-                moveTo(robot, screenX, screenY)
-                repeat(DOUBLE_CLICK_COUNT) {
-                    robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
-                    robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
-                }
+            pointer.moveTo(robot, screenX, screenY)
+            repeat(DOUBLE_CLICK_COUNT) {
+                robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
+                robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
             }
         }
     }
@@ -101,14 +97,12 @@ internal constructor(
     ) {
         tccGuard.requireAccessibility()
         runOffEdt {
-            pointer.withLock {
-                moveTo(robot, screenX, screenY)
-                robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
-                try {
-                    delay(holdFor)
-                } finally {
-                    robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
-                }
+            pointer.moveTo(robot, screenX, screenY)
+            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
+            try {
+                delay(holdFor)
+            } finally {
+                robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
             }
         }
     }
@@ -140,19 +134,17 @@ internal constructor(
             val points = interpolateSwipePoints(startX, startY, endX, endY, steps)
             val pausePerStepMs = swipePauseMillis(duration, steps, autoDelayMs = robot.autoDelayMs)
             val firstPoint = points.first()
-            pointer.withLock {
-                moveTo(robot, firstPoint.x, firstPoint.y)
-                robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
-                try {
-                    for (point in points.drop(1)) {
-                        moveTo(robot, point.x, point.y)
-                        if (pausePerStepMs > 0) {
-                            delay(pausePerStepMs.milliseconds)
-                        }
+            pointer.moveTo(robot, firstPoint.x, firstPoint.y)
+            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
+            try {
+                for (point in points.drop(1)) {
+                    pointer.moveTo(robot, point.x, point.y)
+                    if (pausePerStepMs > 0) {
+                        delay(pausePerStepMs.milliseconds)
                     }
-                } finally {
-                    robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
                 }
+            } finally {
+                robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
             }
         }
     }
@@ -306,10 +298,8 @@ internal constructor(
     public suspend fun scrollWheel(screenX: Int, screenY: Int, wheelClicks: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
-            pointer.withLock {
-                moveTo(robot, screenX, screenY)
-                robot.mouseWheel(wheelClicks)
-            }
+            pointer.moveTo(robot, screenX, screenY)
+            robot.mouseWheel(wheelClicks)
         }
     }
 
@@ -339,12 +329,6 @@ internal constructor(
     public suspend fun moveBy(deltaX: Int, deltaY: Int) {
         tccGuard.requireAccessibility()
         runOffEdt { pointer.moveBy(robot, deltaX, deltaY) }
-    }
-
-    /** Test-only hooks so concurrent pointer races can park the holder until a waiter contends. */
-    internal fun installPointerLockHooks(onAcquired: (() -> Unit)?, onContended: (() -> Unit)?) {
-        pointer.onLockAcquired = onAcquired
-        pointer.onLockContended = onContended
     }
 
     /**
@@ -876,28 +860,21 @@ internal fun interpolateSwipePoints(
 }
 
 /**
- * Last Spectre-issued pointer position for one [RobotDriver]. Absolute and relative moves, plus the
- * rest of each pointer gesture (press / drag / wheel), share one mutex so concurrent `moveBy` /
- * `moveTo` / click calls cannot tear the stored `(x, y)`, apply two deltas from the same base, or
- * press at a coordinate another coroutine just moved to.
+ * Last Spectre-issued pointer position for one [RobotDriver]. Read-modify-write of that position is
+ * mutex-protected so concurrent `moveBy` calls cannot apply two deltas from the same base. Gestures
+ * themselves are *not* held under the mutex: a synthetic longClick/swipe that delays while holding
+ * it would deadlock an EDT `moveTo` (`invokeAndWait` cannot run until the lock is released, and the
+ * lock holder cannot release until `invokeAndWait` returns).
  */
 private class PointerPositionTracker {
     private val mutex = Mutex()
     private var last: Point? = null
 
-    internal var onLockAcquired: (() -> Unit)? = null
-    internal var onLockContended: (() -> Unit)? = null
-
-    suspend fun <T> withLock(block: suspend PointerSession.() -> T): T {
-        if (mutex.isLocked) onLockContended?.invoke()
-        return mutex.withLock {
-            onLockAcquired?.invoke()
-            PointerSession().block()
-        }
-    }
-
     suspend fun moveTo(robot: RobotAdapter, x: Int, y: Int) {
-        withLock { moveTo(robot, x, y) }
+        mutex.withLock {
+            robot.mouseMove(x, y)
+            last = Point(x, y)
+        }
     }
 
     suspend fun moveBy(robot: RobotAdapter, deltaX: Int, deltaY: Int) {
@@ -905,19 +882,13 @@ private class PointerPositionTracker {
         // move can ever initialize [last], so evaluating it first would turn every
         // headless moveBy into IllegalStateException instead of UnsupportedOperationException.
         robot.requireInputSupported()
-        withLock {
+        mutex.withLock {
             val origin =
                 checkNotNull(last) {
                     "moveBy requires a prior Spectre pointer move; call moveTo(...) first"
                 }
-            moveTo(robot, origin.x + deltaX, origin.y + deltaY)
-        }
-    }
-
-    inner class PointerSession {
-        fun moveTo(robot: RobotAdapter, x: Int, y: Int) {
-            robot.mouseMove(x, y)
-            last = Point(x, y)
+            robot.mouseMove(origin.x + deltaX, origin.y + deltaY)
+            last = Point(origin.x + deltaX, origin.y + deltaY)
         }
     }
 }
