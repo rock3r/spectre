@@ -347,6 +347,28 @@ class RobotDriverTest {
     }
 
     @Test
+    fun `concurrent moveTo cannot sneak between click press and release`() = runTest {
+        val robot = RecordingRobotAdapter()
+        val driver = RobotDriver(robot, RecordingClipboardAdapter())
+
+        awaitAll(
+            async { driver.click(10, 20) },
+            async { driver.moveTo(screenX = 99, screenY = 99) },
+        )
+
+        val clickStart = robot.events.indexOf("move(10,20)")
+        check(clickStart >= 0) { "expected click move in ${robot.events}" }
+        assertEquals(
+            listOf(
+                "move(10,20)",
+                "press(${InputEvent.BUTTON1_DOWN_MASK})",
+                "release(${InputEvent.BUTTON1_DOWN_MASK})",
+            ),
+            robot.events.subList(clickStart, clickStart + 3),
+        )
+    }
+
+    @Test
     fun `pasteText waits for the clipboard to reflect the new text before dispatching paste`() =
         runTest {
             // Simulate a slow OS pasteboard: the first N reads after setContents still return the
