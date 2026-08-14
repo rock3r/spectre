@@ -341,6 +341,11 @@ internal constructor(
         runOffEdt { pointer.moveBy(robot, deltaX, deltaY) }
     }
 
+    /** Test-only hook so concurrent pointer races can park after lock acquisition. */
+    internal fun installPointerLockHook(hook: (() -> Unit)?) {
+        pointer.onLockAcquired = hook
+    }
+
     /**
      * Presses [keyCode] (a `java.awt.event.KeyEvent.VK_*` constant) with any AWT modifier-mask bits
      * set in [modifiers] (`InputEvent.SHIFT_DOWN_MASK`, `CTRL_DOWN_MASK`, etc.). Modifier keys are
@@ -524,6 +529,13 @@ internal interface RobotAdapter : ScreenCaptureAdapter {
 
     fun mouseMove(x: Int, y: Int)
 
+    /**
+     * Throws when this adapter cannot dispatch input (the headless backend). Default is a no-op so
+     * real and synthetic adapters stay silent. Used by [RobotDriver.moveBy] so the headless
+     * [UnsupportedOperationException] contract is evaluated before the relative-position check.
+     */
+    fun requireInputSupported() = Unit
+
     fun mousePress(buttons: Int)
 
     fun mouseRelease(buttons: Int)
@@ -657,6 +669,8 @@ private object HeadlessThrowingRobotAdapter : RobotAdapter {
     override val requiresOffEdt: Boolean = false
 
     override fun mouseMove(x: Int, y: Int): Unit = throwHeadless("mouseMove")
+
+    override fun requireInputSupported(): Unit = throwHeadless("moveBy")
 
     override fun mousePress(buttons: Int): Unit = throwHeadless("mousePress")
 
@@ -870,7 +884,10 @@ private class PointerPositionTracker {
     private val mutex = Mutex()
     private var last: Point? = null
 
+    internal var onLockAcquired: (() -> Unit)? = null
+
     suspend fun <T> withLock(block: suspend PointerSession.() -> T): T = mutex.withLock {
+        onLockAcquired?.invoke()
         PointerSession().block()
     }
 
@@ -879,6 +896,10 @@ private class PointerPositionTracker {
     }
 
     suspend fun moveBy(robot: RobotAdapter, deltaX: Int, deltaY: Int) {
+        // Headless must reject before the relative-position check: no successful headless
+        // move can ever initialize [last], so evaluating it first would turn every
+        // headless moveBy into IllegalStateException instead of UnsupportedOperationException.
+        robot.requireInputSupported()
         withLock {
             val origin =
                 checkNotNull(last) {
