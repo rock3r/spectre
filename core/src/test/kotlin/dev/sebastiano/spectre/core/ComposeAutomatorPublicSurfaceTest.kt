@@ -347,6 +347,8 @@ class ComposeAutomatorPublicSurfaceTest {
                 "click",
                 "doubleClick",
                 "longClick",
+                "moveTo",
+                "moveBy",
                 "swipe",
                 "scrollWheel",
                 "typeText",

@@ -40,6 +40,10 @@ internal constructor(
 
     public constructor(robot: Robot) : this(AwtRobotAdapter(robot))
 
+    @Volatile private var lastPointerX: Int = 0
+    @Volatile private var lastPointerY: Int = 0
+    @Volatile private var hasLastPointer: Boolean = false
+
     /**
      * Dispatches a single left-button click at the given screen coordinates: move, press, release.
      *
@@ -50,7 +54,7 @@ internal constructor(
     public suspend fun click(screenX: Int, screenY: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
-            robot.mouseMove(screenX, screenY)
+            movePointer(screenX, screenY)
             robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
             robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
         }
@@ -67,7 +71,7 @@ internal constructor(
     public suspend fun doubleClick(screenX: Int, screenY: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
-            robot.mouseMove(screenX, screenY)
+            movePointer(screenX, screenY)
             repeat(DOUBLE_CLICK_COUNT) {
                 robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
                 robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
@@ -93,7 +97,7 @@ internal constructor(
     ) {
         tccGuard.requireAccessibility()
         runOffEdt {
-            robot.mouseMove(screenX, screenY)
+            movePointer(screenX, screenY)
             robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
             try {
                 delay(holdFor)
@@ -130,11 +134,11 @@ internal constructor(
             val points = interpolateSwipePoints(startX, startY, endX, endY, steps)
             val pausePerStepMs = swipePauseMillis(duration, steps, autoDelayMs = robot.autoDelayMs)
             val firstPoint = points.first()
-            robot.mouseMove(firstPoint.x, firstPoint.y)
+            movePointer(firstPoint.x, firstPoint.y)
             robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
             try {
                 for (point in points.drop(1)) {
-                    robot.mouseMove(point.x, point.y)
+                    movePointer(point.x, point.y)
                     if (pausePerStepMs > 0) {
                         delay(pausePerStepMs.milliseconds)
                     }
@@ -294,9 +298,46 @@ internal constructor(
     public suspend fun scrollWheel(screenX: Int, screenY: Int, wheelClicks: Int) {
         tccGuard.requireAccessibility()
         runOffEdt {
-            robot.mouseMove(screenX, screenY)
+            movePointer(screenX, screenY)
             robot.mouseWheel(wheelClicks)
         }
+    }
+
+    /**
+     * Moves the pointer to ([screenX], [screenY]) without pressing or releasing any button. Use
+     * this for hover, tooltip, and "park the pointer" cases that `click` / `swipe` cannot express
+     * because they always press.
+     *
+     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
+     */
+    public suspend fun moveTo(screenX: Int, screenY: Int) {
+        tccGuard.requireAccessibility()
+        runOffEdt { movePointer(screenX, screenY) }
+    }
+
+    /**
+     * Moves the pointer by ([deltaX], [deltaY]) relative to the last Spectre-issued pointer
+     * position (`click`, `doubleClick`, `longClick`, `swipe`, `scrollWheel`, [moveTo], or a
+     * previous [moveBy]). Does not read the OS cursor — synthetic and headless backends have no
+     * real cursor, and `java.awt.MouseInfo` is a different coordinate story.
+     *
+     * Throws [IllegalStateException] if no Spectre pointer move has happened yet on this driver.
+     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
+     */
+    public suspend fun moveBy(deltaX: Int, deltaY: Int) {
+        check(hasLastPointer) {
+            "moveBy requires a prior Spectre pointer move; call moveTo(...) first"
+        }
+        moveTo(screenX = lastPointerX + deltaX, screenY = lastPointerY + deltaY)
+    }
+
+    private fun movePointer(x: Int, y: Int) {
+        robot.mouseMove(x, y)
+        lastPointerX = x
+        lastPointerY = y
+        hasLastPointer = true
     }
 
     /**

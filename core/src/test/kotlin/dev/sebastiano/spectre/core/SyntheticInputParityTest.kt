@@ -129,6 +129,34 @@ class SyntheticInputParityTest {
 
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+    fun `moveTo emits MOUSE_MOVED without press release or click`() {
+        assumeLiveAwtAvailable()
+        val target = MouseTargetPanel()
+        val frame = showFrameOnEdt(target)
+        try {
+            val (cx, cy) = frame.targetCenterOnScreen(target)
+            val driver = RobotDriver.synthetic(frame.frame)
+            runBlocking { driver.moveTo(cx, cy) }
+            drainEdt()
+
+            val types = target.events.map { it.id }
+            assertTrue(types.contains(MouseEvent.MOUSE_MOVED), "expected MOUSE_MOVED, got $types")
+            assertTrue(
+                types.none {
+                    it == MouseEvent.MOUSE_PRESSED ||
+                        it == MouseEvent.MOUSE_RELEASED ||
+                        it == MouseEvent.MOUSE_CLICKED ||
+                        it == MouseEvent.MOUSE_DRAGGED
+                },
+                "moveTo must not press, release, click, or drag, got $types",
+            )
+        } finally {
+            disposeFrame(frame.frame)
+        }
+    }
+
+    @Test
+    @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     fun `swipe between distinct points emits no MOUSE_CLICKED`() {
         assumeLiveAwtAvailable()
         val target = MouseTargetPanel()
@@ -539,7 +567,9 @@ class SyntheticInputParityTest {
             events.add(e)
         }
 
-        override fun mouseMoved(e: MouseEvent) = Unit
+        override fun mouseMoved(e: MouseEvent) {
+            events.add(e)
+        }
     }
 
     private class KeyEventRecorder(private val events: MutableList<KeyEvent>) : KeyListener {

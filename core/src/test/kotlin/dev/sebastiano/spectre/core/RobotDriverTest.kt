@@ -240,6 +240,90 @@ class RobotDriverTest {
     }
 
     @Test
+    fun `moveTo moves without pressing or releasing`() = runTest {
+        val robot = RecordingRobotAdapter()
+        val driver = RobotDriver(robot, RecordingClipboardAdapter())
+
+        driver.moveTo(screenX = 10, screenY = 20)
+
+        assertEquals(listOf("move(10,20)"), robot.events)
+    }
+
+    @Test
+    fun `moveBy offsets from the last Spectre-issued pointer position`() = runTest {
+        val robot = RecordingRobotAdapter()
+        val driver = RobotDriver(robot, RecordingClipboardAdapter())
+
+        driver.moveTo(screenX = 10, screenY = 20)
+        driver.moveBy(deltaX = 5, deltaY = -3)
+
+        assertEquals(listOf("move(10,20)", "move(15,17)"), robot.events)
+    }
+
+    @Test
+    fun `moveBy after click offsets from the click target`() = runTest {
+        val robot = RecordingRobotAdapter()
+        val driver = RobotDriver(robot, RecordingClipboardAdapter())
+
+        driver.click(10, 20)
+        driver.moveBy(deltaX = 4, deltaY = 6)
+
+        assertEquals(
+            listOf(
+                "move(10,20)",
+                "press(${InputEvent.BUTTON1_DOWN_MASK})",
+                "release(${InputEvent.BUTTON1_DOWN_MASK})",
+                "move(14,26)",
+            ),
+            robot.events,
+        )
+    }
+
+    @Test
+    fun `moveBy after swipe offsets from the swipe end`() = runTest {
+        val robot = RecordingRobotAdapter()
+        val driver = RobotDriver(robot, RecordingClipboardAdapter())
+
+        driver.swipe(startX = 10, startY = 20, endX = 40, endY = 50, steps = 3, duration = ZERO)
+        driver.moveBy(deltaX = 1, deltaY = 2)
+
+        assertEquals(
+            listOf(
+                "move(10,20)",
+                "press(${InputEvent.BUTTON1_DOWN_MASK})",
+                "move(20,30)",
+                "move(30,40)",
+                "move(40,50)",
+                "release(${InputEvent.BUTTON1_DOWN_MASK})",
+                "move(41,52)",
+            ),
+            robot.events,
+        )
+    }
+
+    @Test
+    fun `moveBy after scrollWheel offsets from the wheel position`() = runTest {
+        val robot = RecordingRobotAdapter()
+        val driver = RobotDriver(robot, RecordingClipboardAdapter())
+
+        driver.scrollWheel(screenX = 8, screenY = 12, wheelClicks = 1)
+        driver.moveBy(deltaX = -2, deltaY = 3)
+
+        assertEquals(listOf("move(8,12)", "mouseWheel(1)", "move(6,15)"), robot.events)
+    }
+
+    @Test
+    fun `moveBy without a prior Spectre pointer move fails loudly`() = runTest {
+        val robot = RecordingRobotAdapter()
+        val driver = RobotDriver(robot, RecordingClipboardAdapter())
+
+        val error = assertFailsWith<IllegalStateException> { driver.moveBy(deltaX = 1, deltaY = 1) }
+
+        assertTrue(error.message?.contains("moveBy") == true)
+        assertEquals(emptyList(), robot.events)
+    }
+
+    @Test
     fun `pasteText waits for the clipboard to reflect the new text before dispatching paste`() =
         runTest {
             // Simulate a slow OS pasteboard: the first N reads after setContents still return the
@@ -346,6 +430,30 @@ class RobotDriverTest {
     }
 
     @Test
+    fun `moveTo consults the TCC guard before invoking the robot`() = runTest {
+        val guard = RecordingTccGuard()
+        val robot = RecordingRobotAdapter()
+        val driver = RobotDriver(robot, RecordingClipboardAdapter(), guard)
+
+        driver.moveTo(screenX = 10, screenY = 20)
+
+        assertEquals(1, guard.accessibilityCalls)
+        assertEquals(0, guard.screenRecordingCalls)
+        assertEquals(listOf("move(10,20)"), robot.events)
+    }
+
+    @Test
+    fun `moveTo that fails the accessibility check does not dispatch any input`() = runTest {
+        val guard = RecordingTccGuard(accessibilityThrows = true)
+        val robot = RecordingRobotAdapter()
+        val driver = RobotDriver(robot, RecordingClipboardAdapter(), guard)
+
+        assertFailsWith<IllegalStateException> { driver.moveTo(screenX = 10, screenY = 20) }
+
+        assertEquals(emptyList(), robot.events)
+    }
+
+    @Test
     fun `screenshot consults the screen-recording guard before capturing`() {
         val guard = RecordingTccGuard()
         val robot = RecordingRobotAdapter()
@@ -444,6 +552,19 @@ class RobotDriverTest {
         assertFailsWith<UnsupportedOperationException> {
             driver.swipe(startX = 0, startY = 0, endX = 1, endY = 1, steps = 1, duration = ZERO)
         }
+    }
+
+    @Test
+    fun `headless moveTo throws UnsupportedOperationException`() = runTest {
+        val driver = RobotDriver.headless()
+        assertFailsWith<UnsupportedOperationException> { driver.moveTo(screenX = 0, screenY = 0) }
+    }
+
+    @Test
+    fun `headless moveBy without a prior Spectre pointer move fails loudly`() = runTest {
+        val driver = RobotDriver.headless()
+        val error = assertFailsWith<IllegalStateException> { driver.moveBy(deltaX = 1, deltaY = 1) }
+        assertTrue(error.message?.contains("moveBy") == true)
     }
 }
 

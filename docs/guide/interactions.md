@@ -3,8 +3,8 @@
 The interaction layer of `ComposeAutomator` sits on top of `RobotDriver` and dispatches
 mouse, keyboard, and clipboard input to whatever surface the target node lives in.
 
-All interaction methods (`click`, `doubleClick`, `longClick`, `swipe`, `scrollWheel`,
-`typeText`, `clearAndTypeText`, `pressKey`, `pressEnter`) are `suspend` — call them
+All interaction methods (`click`, `doubleClick`, `longClick`, `moveTo`, `moveBy`, `swipe`,
+`scrollWheel`, `typeText`, `clearAndTypeText`, `pressKey`, `pressEnter`) are `suspend` — call them
 from a coroutine. Real `java.awt.Robot` work runs inline when the caller is already
 off the AWT event dispatch thread, and hops to `Dispatchers.IO` only when needed to
 keep EDT callers from blocking the UI. Internal sleeps use `delay` rather than
@@ -30,6 +30,26 @@ automator.longClick(send, holdFor = 600.milliseconds)
 
 All click helpers resolve the node's `centerOnScreen` and dispatch through `RobotDriver`,
 which compensates for HiDPI/display scaling.
+
+## Mouse: hover and pointer moves
+
+```kotlin
+val send = automator.findOneByTestTag("Send") ?: error("button missing")
+
+// park the pointer on a node (hover / tooltip) without clicking
+automator.moveTo(send)
+
+// raw screen coordinates (same space as swipe)
+automator.moveTo(x = 240, y = 80)
+
+// offset from the last Spectre-issued pointer position
+automator.moveBy(deltaX = 12, deltaY = -4)
+```
+
+`moveTo` / `moveBy` never press or release a button. `moveBy` is relative to the last
+Spectre-issued move on this automator's `RobotDriver` (`click`, `doubleClick`, `longClick`,
+`swipe`, `scrollWheel`, `moveTo`, or a previous `moveBy`) — it does not read the OS cursor.
+If no Spectre move has happened yet, `moveBy` throws `IllegalStateException`.
 
 ## Mouse: swipes and scrolling
 
