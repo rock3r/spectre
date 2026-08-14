@@ -46,6 +46,18 @@ class HotReloadPortDiscoveryTest {
     }
 
     @Test
+    fun `linux proc cmdline splits nul separated tokens including dashD port`() {
+        val raw =
+            "java\u0000-Dcompose.reload.orchestration.port=19191\u0000Main\u0000".toByteArray(
+                Charsets.UTF_8
+            )
+        val args = HotReloadPortDiscovery.parseLinuxProcCmdline(raw)
+        assertEquals(listOf("java", "-Dcompose.reload.orchestration.port=19191", "Main"), args)
+        val found = HotReloadPortDiscovery.parsePortFromJvmArgs(args)
+        assertEquals(19191, found?.port)
+    }
+
+    @Test
     fun `jvm args dashD port property is discovered`() {
         val found =
             HotReloadPortDiscovery.parsePortFromJvmArgs(

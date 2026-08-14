@@ -106,6 +106,13 @@ public object HotReloadPortDiscovery {
         return null
     }
 
+    /**
+     * Splits a Linux `/proc/<pid>/cmdline` blob (NUL-separated, often trailing NUL) into argv
+     * tokens. [ProcessHandle.info.arguments] is frequently empty for other PIDs on Linux.
+     */
+    public fun parseLinuxProcCmdline(raw: ByteArray): List<String> =
+        raw.toString(Charsets.UTF_8).split('\u0000').filter { it.isNotEmpty() }
+
     private fun readProcessArguments(targetPid: Long): List<String>? {
         val handle =
             try {
@@ -117,8 +124,10 @@ public object HotReloadPortDiscovery {
             }
         val info = handle.info()
         val args: Optional<Array<String>> = info.arguments()
-        if (args.isEmpty) return null
-        return args.get().toList()
+        if (!args.isEmpty) return args.get().toList()
+        val procCmdline = Path.of("/proc", targetPid.toString(), "cmdline")
+        if (!procCmdline.isRegularFile()) return null
+        return runCatching { parseLinuxProcCmdline(Files.readAllBytes(procCmdline)) }.getOrNull()
     }
 
     private const val MAX_TCP_PORT: Int = 65_535
