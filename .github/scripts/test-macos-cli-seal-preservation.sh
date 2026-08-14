@@ -43,8 +43,8 @@ if [[ -z "$app" ]]; then
   # mutation probe (structural contracts above still run on every host).
   for candidate in \
     "${SPECTRE_CLI_ZIP:-}" \
-    "$root/cli/build/construo/distributions/spectre-macosArm64.zip" \
-    "$root/cli/build/construo/distributions/spectre-macosX64.zip"
+    "$root/cli/build/construo/distributions/macosArm64/spectre-macosArm64.zip" \
+    "$root/cli/build/construo/distributions/macosX64/spectre-macosX64.zip"
   do
     if [[ -n "$candidate" && -f "$candidate" ]]; then
       workspace="$(mktemp -d "${TMPDIR:-/tmp}/spectre-seal-probe.XXXXXX")"

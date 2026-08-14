@@ -8,6 +8,7 @@ import dev.sebastiano.spectre.build.VerifyCliShadowJar
 import dev.sebastiano.spectre.build.VerifyRoastCliDistribution
 import dev.sebastiano.spectre.build.VerifyRoastCliNativeLayout
 import io.github.fourlastor.construo.Target
+import io.github.fourlastor.construo.task.PackageTask
 import io.github.fourlastor.construo.task.jvm.CreateRuntimeImageTask as ConstruoCreateRuntimeImageTask
 import io.github.fourlastor.construo.task.jvm.RoastTask
 import org.gradle.api.tasks.Copy
@@ -262,7 +263,9 @@ val verifyRoastCliDistribution =
         val hostTarget = hostRoastTarget()
         dependsOn(tasks.named("package${hostTarget.taskSuffix}"))
         artifact.set(
-            layout.buildDirectory.file("construo/distributions/spectre-${hostTarget.name}.zip")
+            layout.buildDirectory.file(
+                "construo/distributions/${hostTarget.name}/spectre-${hostTarget.name}.zip"
+            )
         )
         launcherPath.set(hostTarget.launcherPath(project.version.toString()))
         runtimeJavaPath.set(hostTarget.runtimeJavaPath(project.version.toString()))
@@ -375,7 +378,14 @@ private fun wirePerTargetRoastNativeFiltering(roastTargets: List<String>) {
             dependsOn(filterTask)
             jarFile.set(filterTask.flatMap { it.outputJar })
         }
-        val packageTask = tasks.named("package$taskSuffix")
+        // Per-target dest dirs so :cli:packageMacosX64 :cli:packageMacosArm64 in one
+        // Gradle graph is race-free. Shared construo/distributions is an implicit
+        // dependency: verifyRoastCliNativeLayoutMacosX64 reads that directory while
+        // packageMacosArm64 writes it (B16 / Gradle 9).
+        val packageTask = tasks.named<PackageTask>("package$taskSuffix")
+        packageTask.configure {
+            destinationDirectory.set(layout.buildDirectory.dir("construo/distributions/$target"))
+        }
         val layoutVerify =
             tasks.register<VerifyRoastCliNativeLayout>("verifyRoastCliNativeLayout$taskSuffix") {
                 description =
@@ -383,7 +393,7 @@ private fun wirePerTargetRoastNativeFiltering(roastTargets: List<String>) {
                 group = "verification"
                 dependsOn(packageTask)
                 artifact.set(
-                    layout.buildDirectory.file("construo/distributions/spectre-$target.zip")
+                    layout.buildDirectory.file("construo/distributions/$target/spectre-$target.zip")
                 )
                 roastTargetName.set(target)
             }

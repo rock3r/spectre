@@ -101,7 +101,15 @@ def _native_helper_layout_check(root: Path, system: str) -> None:
     }.get(target)
     if not roast_name:
         raise RuntimeError(f"unknown package target {target}")
-    zip_path = root / "cli" / "build" / "construo" / "distributions" / f"spectre-{roast_name}.zip"
+    zip_path = (
+        root
+        / "cli"
+        / "build"
+        / "construo"
+        / "distributions"
+        / roast_name
+        / f"spectre-{roast_name}.zip"
+    )
     if not zip_path.is_file():
         # Fall back to inspecting the unpacked launcher tree for host helpers.
         executable = packaged_cli_executable(root, system)

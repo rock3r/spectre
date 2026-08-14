@@ -229,7 +229,7 @@ jobs:
         if: always()
         run: |
           ./gradlew :cli:packageLinuxX64
-          archive="cli/build/construo/distributions/spectre-linuxX64.zip"
+          archive="cli/build/construo/distributions/linuxX64/spectre-linuxX64.zip"
           distribution="$RUNNER_TEMP/spectre-cli"
           unzip -q "$archive" -d "$distribution"
           launcher="$(find "$distribution" -name spectre -type f -print -quit)"

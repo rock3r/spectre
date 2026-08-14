@@ -386,9 +386,9 @@ jobs:
           gh release view "$GITHUB_REF_NAME" \
             || gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME"
           gh release upload "$GITHUB_REF_NAME" \
-            "cli/build/construo/distributions/spectre-linuxX64.zip" \
-            "cli/build/construo/distributions/spectre-linuxArm64.zip" \
+            "cli/build/construo/distributions/linuxX64/spectre-linuxX64.zip" \
+            "cli/build/construo/distributions/linuxArm64/spectre-linuxArm64.zip" \
             "$RUNNER_TEMP/mac-cli-bundles/spectre-macosX64.zip" \
             "$RUNNER_TEMP/mac-cli-bundles/spectre-macosArm64.zip" \
-            "cli/build/construo/distributions/spectre-windowsX64.zip" \
+            "cli/build/construo/distributions/windowsX64/spectre-windowsX64.zip" \
             --clobber
