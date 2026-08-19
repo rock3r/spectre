@@ -173,9 +173,8 @@ private class RootCommand(
     /**
      * IPC frame write budget for this invocation, and for the daemon if this invocation starts it.
      *
-     * A daemon that is already running keeps the budget it booted with — restart it (`spectre
-     * daemon stop`) to change it. Raising the budget on one hop is never harmful on its own:
-     * readers accept frames up to a fixed ceiling regardless of their own budget.
+     * A daemon that is already running keeps the budget it booted with, so asking for a different
+     * one is refused at the handshake rather than half-applied — see `frameBudgetMismatchFailure`.
      */
     private val maxFrameBytes: Int? by
         option(
@@ -183,7 +182,9 @@ private class RootCommand(
                 help =
                     "Largest IPC frame payload, e.g. 64MiB (default) or 256MiB. Raise it for " +
                         "multi-monitor HiDPI fullscreen screenshots. Overrides " +
-                        "\$SPECTRE_MAX_FRAME_BYTES; applies to a daemon this command starts.",
+                        "\$SPECTRE_MAX_FRAME_BYTES. Applies to a daemon this command starts; " +
+                        "against an already-running daemon on another budget it fails rather " +
+                        "than half-applying (run `spectre daemon kill` first).",
             )
             .convert { raw ->
                 FrameLimits.parseMaxFrameBytes(raw)

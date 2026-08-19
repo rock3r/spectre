@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import dev.sebastiano.spectre.agent.transport.FrameLimits
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
 import java.nio.channels.Channels
@@ -55,7 +56,7 @@ class DaemonProcessTest {
                     DaemonRequest.Hello(DaemonProtocol.CurrentVersion),
                 )
                 assertEquals(
-                    DaemonResponse.Hello(DaemonProtocol.CurrentVersion),
+                    DaemonResponse.Hello(DaemonProtocol.CurrentVersion, FrameLimits.maxFrameBytes),
                     DaemonWireCodec.readResponse(input),
                 )
             }
@@ -110,7 +111,7 @@ class DaemonProcessTest {
                     DaemonRequest.Hello(DaemonProtocol.CurrentVersion),
                 )
                 assertEquals(
-                    DaemonResponse.Hello(DaemonProtocol.CurrentVersion),
+                    DaemonResponse.Hello(DaemonProtocol.CurrentVersion, FrameLimits.maxFrameBytes),
                     DaemonWireCodec.readResponse(input),
                 )
                 DaemonWireCodec.writeRequest(output, DaemonRequest.Shutdown)

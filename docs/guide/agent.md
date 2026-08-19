@@ -422,13 +422,26 @@ Propagation matters, because three processes are involved:
 
 - The **CLI** applies the value to itself.
 - A **daemon this invocation starts** inherits it on its command line. A daemon that is *already
-  running* keeps the budget it booted with — restart it (`spectre daemon stop`) to change it.
+  running* keeps the budget it booted with, and reports it in the handshake — so asking for a
+  different one **fails loudly** rather than half-applying:
+
+  ```text
+  Cannot honour --max-frame-bytes=256MiB (268435456 bytes): the running Spectre daemon started
+  with 64MiB (67108864 bytes), and a daemon keeps the budget it booted with. Run
+  `spectre daemon kill` and retry so the new budget applies to the daemon and to the JVMs it
+  injects.
+  ```
+
+  Only an explicit request is refused. Leaving the budget at its default asks for nothing, so a
+  daemon running something larger is accepted silently — readers take frames up to the ceiling
+  whatever their own budget. A daemon too old to report its budget cannot have been started with
+  the requested one, so it is refused the same way rather than assumed compatible.
 - The **injected agent** cannot read the daemon's environment, and it is the process that writes
   the bulky screenshot frames, so the daemon forwards its resolved budget in `agentArgs` (see
   below). It applies before the agent's IPC server accepts a request.
 
-Because readers are permissive up to the ceiling, a partial rollout (say, a raised CLI against an
-older daemon) degrades to the lower of the two budgets rather than breaking.
+Because readers are permissive up to the ceiling, no hop ever rejects a frame a peer legitimately
+sent; the refusal above is about the *request* not being honourable, not about the wire.
 
 #### Over-budget behaviour
 

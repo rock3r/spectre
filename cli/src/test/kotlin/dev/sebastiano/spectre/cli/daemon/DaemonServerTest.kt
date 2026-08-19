@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.cli.daemon
 
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.transport.FrameLimits
 import java.nio.channels.Channels
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
@@ -147,7 +148,7 @@ class DaemonServerTest {
                     DaemonRequest.Hello(DaemonProtocol.CurrentVersion),
                 )
                 assertEquals(
-                    DaemonResponse.Hello(DaemonProtocol.CurrentVersion),
+                    DaemonResponse.Hello(DaemonProtocol.CurrentVersion, FrameLimits.maxFrameBytes),
                     DaemonWireCodec.readResponse(input),
                 )
                 DaemonWireCodec.writeRequest(output, DaemonRequest.ListSessions)
@@ -206,7 +207,7 @@ class DaemonServerTest {
                     DaemonRequest.Hello(DaemonProtocol.CurrentVersion),
                 )
                 assertEquals(
-                    DaemonResponse.Hello(DaemonProtocol.CurrentVersion),
+                    DaemonResponse.Hello(DaemonProtocol.CurrentVersion, FrameLimits.maxFrameBytes),
                     DaemonWireCodec.readResponse(input),
                 )
             }
@@ -402,7 +403,7 @@ class DaemonServerTest {
                     DaemonRequest.Hello(DaemonProtocol.CurrentVersion),
                 )
                 assertEquals(
-                    DaemonResponse.Hello(DaemonProtocol.CurrentVersion),
+                    DaemonResponse.Hello(DaemonProtocol.CurrentVersion, FrameLimits.maxFrameBytes),
                     DaemonWireCodec.readResponse(input),
                 )
 
@@ -448,7 +449,7 @@ class DaemonServerTest {
                     DaemonRequest.Hello(DaemonProtocol.CurrentVersion),
                 )
                 assertEquals(
-                    DaemonResponse.Hello(DaemonProtocol.CurrentVersion),
+                    DaemonResponse.Hello(DaemonProtocol.CurrentVersion, FrameLimits.maxFrameBytes),
                     DaemonWireCodec.readResponse(input),
                 )
                 DaemonWireCodec.writeRequest(output, DaemonRequest.ListSessions)

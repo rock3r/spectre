@@ -1,5 +1,8 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.transport.DEFAULT_MAX_FRAME_BYTES
+import dev.sebastiano.spectre.agent.transport.FrameLimits
 import java.io.EOFException
 import java.io.IOException
 import java.net.SocketException
@@ -12,6 +15,7 @@ import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 
 /** One-request client for the local Spectre daemon protocol. */
+@OptIn(ExperimentalSpectreAgentApi::class)
 public class DaemonClient(public val socketPath: Path) : AutoCloseable {
     /** Starts the daemon when its endpoint is absent, then sends [request]. */
     @Throws(IOException::class)
@@ -75,6 +79,11 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
                         daemonCompatibilityFailure(requiredVersion, response.daemonVersion)
                     )
                 }
+                frameBudgetMismatchFailure(
+                        requested = FrameLimits.maxFrameBytes,
+                        daemonBudget = response.maxFrameBytes,
+                    )
+                    ?.let { throw IOException(it) }
             }
             is DaemonResponse.Error ->
                 throw IOException(daemonHandshakeFailure(requiredVersion, response))
@@ -96,6 +105,38 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
 
 internal class DaemonConnectionClosedException(cause: Throwable? = null) :
     IOException("Daemon closed the connection during handshake", cause)
+
+/**
+ * Explains why a requested frame budget cannot take effect, or `null` when it can.
+ *
+ * The daemon is long-lived and shared, so it keeps the budget it booted with: `--max-frame-bytes`
+ * on a later invocation would otherwise apply to the CLI alone while the two hops that actually
+ * carry a screenshot — target to daemon, daemon to CLI — stayed on the old value.
+ *
+ * Only an explicit request is worth failing over. A client left on [DEFAULT_MAX_FRAME_BYTES] asked
+ * for nothing, and readers accept frames up to the fixed ceiling whatever their own budget, so a
+ * daemon running something larger is harmless. A daemon too old to report its budget cannot have
+ * been started with the requested one, so it is refused the same way rather than assumed.
+ */
+@OptIn(ExperimentalSpectreAgentApi::class)
+internal fun frameBudgetMismatchFailure(requested: Int, daemonBudget: Int?): String? {
+    if (requested == DEFAULT_MAX_FRAME_BYTES) return null
+    if (daemonBudget == requested) return null
+    val running =
+        if (daemonBudget == null) "a version that predates the setting"
+        else "${renderFrameBudget(daemonBudget)} (${daemonBudget} bytes)"
+    return "Cannot honour --max-frame-bytes=${renderFrameBudget(requested)} " +
+        "(${requested} bytes): the running Spectre daemon started with $running, and a daemon " +
+        "keeps the budget it booted with. Run `spectre daemon kill` and retry so the new budget " +
+        "applies to the daemon and to the JVMs it injects."
+}
+
+/** Renders [bytes] in the largest binary unit that divides it, matching what the flag accepts. */
+internal fun renderFrameBudget(bytes: Int): String {
+    val units = listOf("GiB" to (1 shl 30), "MiB" to (1 shl 20), "KiB" to (1 shl 10))
+    val unit = units.firstOrNull { (_, size) -> bytes >= size && bytes % size == 0 }
+    return if (unit == null) "$bytes bytes" else "${bytes / unit.second}${unit.first}"
+}
 
 internal fun daemonCompatibilityFailure(
     required: DaemonProtocolVersion,

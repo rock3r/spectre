@@ -11,7 +11,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 11)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 12)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -281,8 +281,16 @@ public sealed interface DaemonRequest {
 @OptIn(ExperimentalSpectreAgentApi::class)
 @Serializable
 public sealed interface DaemonResponse {
+    /**
+     * @property maxFrameBytes the frame write budget this daemon booted with. `null` from a daemon
+     *   that predates budget reporting, which is indistinguishable from "not the budget you asked
+     *   for" — see `frameBudgetMismatchFailure`.
+     */
     @Serializable
-    public data class Hello(public val daemonVersion: DaemonProtocolVersion) : DaemonResponse
+    public data class Hello(
+        public val daemonVersion: DaemonProtocolVersion,
+        public val maxFrameBytes: Int? = null,
+    ) : DaemonResponse
 
     @Serializable
     @SerialName("attached")
