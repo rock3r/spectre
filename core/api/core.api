@@ -109,6 +109,8 @@ public final class dev/sebastiano/spectre/core/ComposeAutomator {
 	public final fun screenshot (Ldev/sebastiano/spectre/core/AutomatorNode;)Ljava/awt/image/BufferedImage;
 	public final fun screenshot (Ljava/awt/Rectangle;)Ljava/awt/image/BufferedImage;
 	public static synthetic fun screenshot$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/awt/Rectangle;ILjava/lang/Object;)Ljava/awt/image/BufferedImage;
+	public final fun screenshotAtDeviceScale (Ljava/awt/Rectangle;)Ljava/awt/image/BufferedImage;
+	public static synthetic fun screenshotAtDeviceScale$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/awt/Rectangle;ILjava/lang/Object;)Ljava/awt/image/BufferedImage;
 	public final fun scrollWheel (Ldev/sebastiano/spectre/core/AutomatorNode;ILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun surfaceIds ()Ljava/util/List;
 	public final fun swipe-x2RqbK4 (IIIIIJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -197,6 +199,8 @@ public final class dev/sebastiano/spectre/core/RobotDriver {
 	public static synthetic fun pressKey$default (Ldev/sebastiano/spectre/core/RobotDriver;IILkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun screenshot (Ljava/awt/Rectangle;)Ljava/awt/image/BufferedImage;
 	public static synthetic fun screenshot$default (Ldev/sebastiano/spectre/core/RobotDriver;Ljava/awt/Rectangle;ILjava/lang/Object;)Ljava/awt/image/BufferedImage;
+	public final fun screenshotAtDeviceScale (Ljava/awt/Rectangle;)Ljava/awt/image/BufferedImage;
+	public static synthetic fun screenshotAtDeviceScale$default (Ldev/sebastiano/spectre/core/RobotDriver;Ljava/awt/Rectangle;ILjava/lang/Object;)Ljava/awt/image/BufferedImage;
 	public final fun scrollWheel (IIILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun swipe-x2RqbK4 (IIIIIJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun swipe-x2RqbK4$default (Ldev/sebastiano/spectre/core/RobotDriver;IIIIIJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;

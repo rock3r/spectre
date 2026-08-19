@@ -8,8 +8,6 @@ import androidx.compose.ui.semantics.getOrNull
 import dev.sebastiano.spectre.core.capture.AtomicCapture
 import dev.sebastiano.spectre.core.capture.AtomicCaptureBuilder
 import dev.sebastiano.spectre.core.capture.CaptureNodeSnapshot
-import dev.sebastiano.spectre.core.capture.cropImageToScreenRegion
-import dev.sebastiano.spectre.core.capture.normalizeImageToScreenBounds
 import dev.sebastiano.spectre.core.perf.ExperimentalSpectreApi
 import dev.sebastiano.spectre.core.perf.RecompositionMonitor
 import java.awt.Rectangle
@@ -271,9 +269,28 @@ private constructor(
      * sRGB pixels as a [BufferedImage]. Delegates to [RobotDriver.screenshot] — see that method's
      * KDoc for colour-space, focus-overlay, and per-platform TCC / Wayland gotchas before using the
      * result for pixel-level assertions.
+     *
+     * **Dimensions.** One pixel per logical screen unit, so image coordinates equal screen
+     * coordinates even on a scaled display. Use [screenshotAtDeviceScale] when you want the
+     * screen-pixel resolution Spectre's still artifacts and recordings use.
      */
     public fun screenshot(region: Rectangle? = null): BufferedImage =
         screenCaptureBackend.captureRegion(region)
+
+    /**
+     * Captures the given screen [region] (or the entire virtual desktop, if `null`) at the
+     * display's **device** resolution, and returns sRGB pixels as a [BufferedImage].
+     *
+     * Identical to [screenshot] except for dimensions: a 400x300dp region yields an 800x600 pixel
+     * image on a 2x display instead of 400x300, matching the resolution `Recorder` writes for the
+     * same region. Delegates to [RobotDriver.screenshotAtDeviceScale] — see that method's KDoc for
+     * the mixed-density rule and the same colour-space / TCC / Wayland caveats as [screenshot].
+     *
+     * This backs Spectre's still artifacts. Use [screenshot] when you want image coordinates to
+     * equal screen coordinates.
+     */
+    public fun screenshotAtDeviceScale(region: Rectangle? = null): BufferedImage =
+        screenCaptureBackend.captureStillRegion(region)
 
     /**
      * Captures the on-screen bounds of [node] as an sRGB [BufferedImage].
@@ -281,6 +298,9 @@ private constructor(
      * Captures through the optional native window backend. If that backend cannot identify or
      * capture the tracked window, this method fails rather than substituting a screen-region crop.
      * Use [screenshot] with an explicit [Rectangle] when screen-region capture is intended.
+     *
+     * **Dimensions.** Screen pixels, not dp: [node] bounds of 400x300dp yield an 800x600 pixel
+     * image on a 2x display. Divide by the window's density scale to get back to logical units.
      */
     public fun screenshot(node: AutomatorNode): BufferedImage {
         val geometry = readOnEdt {
@@ -305,6 +325,9 @@ private constructor(
      * Captures through the optional native window backend. If that backend cannot identify or
      * capture the tracked window, this method fails rather than substituting a screen-region crop.
      * Use [screenshot] with an explicit [Rectangle] when screen-region capture is intended.
+     *
+     * **Dimensions.** Screen pixels, not dp: a 1600x1000dp Compose surface yields a 3200x2000 pixel
+     * image on a 2x display, matching what `Recorder` writes for the same window.
      */
     public fun screenshot(windowIndex: Int): BufferedImage {
         refreshWindows()
@@ -334,6 +357,12 @@ private constructor(
      * as [screenshot] with a [windowIndex] (fails loudly rather than substituting a screen-region
      * crop after a native failure). Without that backend (e.g. inject payload that omits
      * recording), the still is a Robot region capture of the Compose surface.
+     *
+     * The PNG is **screen-pixel** sized, not dp sized: a 1600x1000dp window on a 2x display
+     * produces a 3200x2000 pixel PNG, the same resolution `Recorder` writes for that window.
+     * `capture.json` reports the exact PNG size as `window.imageWidth` / `imageHeight`, keeps
+     * `window.boundsScreen` in logical units, and records the density as `densityScaleX` /
+     * `densityScaleY`.
      *
      * Node bounds in the returned document use **image-pixel space of the PNG as primary** and
      * screen space as secondary. Callers that want files on disk should pass the result through
@@ -402,7 +431,7 @@ private constructor(
                 )
             } else {
                 WindowCapture(
-                    image = screenCaptureBackend.captureRegion(pre.captureRegion),
+                    image = screenCaptureBackend.captureStillRegion(pre.captureRegion),
                     boundsOnScreen = pre.captureRegion,
                 )
             }
@@ -738,18 +767,11 @@ private constructor(
         region: Rectangle,
         windowBounds: Rectangle = trackedWindow.window.bounds,
         frameInsets: java.awt.Insets = frameInsets(trackedWindow.window),
-    ): WindowCapture {
-        val capture = screenCaptureBackend.captureWindow(trackedWindow, windowBounds, frameInsets)
-        val normalizedImage = normalizeImageToScreenBounds(capture.image, capture.boundsOnScreen)
-        if (capture.boundsOnScreen == region) {
-            return WindowCapture(normalizedImage, capture.boundsOnScreen)
-        }
-        val visibleRegion = region.intersection(capture.boundsOnScreen)
-        return WindowCapture(
-            image = cropImageToScreenRegion(normalizedImage, visibleRegion, capture.boundsOnScreen),
-            boundsOnScreen = visibleRegion,
+    ): WindowCapture =
+        windowStillForRegion(
+            screenCaptureBackend.captureWindow(trackedWindow, windowBounds, frameInsets),
+            region,
         )
-    }
 
     private fun frameInsets(window: java.awt.Window): java.awt.Insets =
         (window as? java.awt.Frame)?.insets ?: java.awt.Insets(0, 0, 0, 0)

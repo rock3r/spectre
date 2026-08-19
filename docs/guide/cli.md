@@ -248,7 +248,7 @@ Three different surfaces — pick intentionally:
 
 | Surface | CLI | What you get | Targeting notes |
 | --- | --- | --- | --- |
-| **Fullscreen screenshot** | `screenshot … --fullscreen` | Single PNG of the **full virtual desktop** | **Only** screen-pixel mode on the attach/CLI path. Default / `--window` / `--surface` **fail closed** (occlusion/privacy risk). MCP returns inline PNG bytes, not a path. |
+| **Fullscreen screenshot** | `screenshot … --fullscreen` | Single PNG of the **full virtual desktop** | **Only** whole-desktop mode on the attach/CLI path. Default / `--window` / `--surface` **fail closed** (occlusion/privacy risk). MCP returns inline PNG bytes, not a path. |
 | **Atomic capture** | `capture` | Window PNG + full semantics tree on **daemon disk** (`capture.json` + `screenshot.png`) | `--window` default **0**. Summary only on stdout/MCP (paths + counts). See [Atomic capture](capture.md). |
 | **Recording** | `record start` / `stop` / `status` | MP4 path on **daemon filesystem** | Default: tracked **window index 0**. `--fullscreen` = **primary display only** (not multi-monitor). Returns **paths**, never video bytes. |
 
@@ -273,6 +273,12 @@ spectre captures prune --keep 20
 spectre captures prune --session <session-id>
 spectre captures prune --older-than 7d --include-out-dir --force
 ```
+
+All three write **screen-pixel** sized output, not dp sized: on a 2× display a 1600×1000dp
+window yields a 3200×2000 pixel PNG and an equally sized MP4. `capture.json` reports the exact
+PNG size in `window.imageWidth` / `imageHeight`. The one exception is a `--fullscreen` still too
+large for the attach transport's 16 MiB frame, which falls back to logical resolution rather than
+failing — see [Atomic capture — Pixel scale](capture.md#pixel-scale).
 
 `captures list` shows size and live/closed status. `captures prune` supports `--keep N`,
 `--older-than` (`30s` / `5m` / `24h` / `7d`), `--all`, `--session <id>`, `--force` (override

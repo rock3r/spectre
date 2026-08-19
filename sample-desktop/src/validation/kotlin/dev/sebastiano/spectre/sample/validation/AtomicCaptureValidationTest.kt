@@ -33,6 +33,9 @@ class AtomicCaptureValidationTest {
 
     private val fixture = SampleAppFixture(title = "Spectre atomic capture validation")
 
+    /** Rounding slack: capture regions are integer dp, so the PNG ratio can drift a hair. */
+    private val PNG_SCALE_TOLERANCE: Double = 0.02
+
     @BeforeAll
     fun start() {
         assumeFalse(GraphicsEnvironment.isHeadless(), "Needs a real AWT display")
@@ -108,15 +111,32 @@ class AtomicCaptureValidationTest {
             assertEquals(window.imageHeight, png.height)
             assertTargetPixelsPresent(png, node.boundsImage)
 
-            // Density is recorded from the graphics transform; PNG scale may differ (synthetic
-            // screenshots often yield 1:1 AWT↔image while densityScale reports Retina 2.0). The
-            // image-space transform must still reconcile boundsScreen with the actual PNG size.
+            // Stills are screen-pixel sized, so the PNG must be the logical window bounds scaled
+            // by the display density — on a 2x display a 1600x1000dp surface is a 3200x2000 PNG.
+            // This is the end-to-end guard against silently resampling native stills back to 1x.
             assertTrue(window.densityScaleX > 0.0 && window.densityScaleY > 0.0)
             val scaleFromPixelsX =
                 window.imageWidth.toDouble() / window.boundsScreen.width.toDouble()
             val scaleFromPixelsY =
                 window.imageHeight.toDouble() / window.boundsScreen.height.toDouble()
-            assertTrue(scaleFromPixelsX > 0.0 && scaleFromPixelsY > 0.0)
+            println(
+                "[atomic-capture] png=${window.imageWidth}x${window.imageHeight} " +
+                    "boundsScreen=${window.boundsScreen.width}x${window.boundsScreen.height} " +
+                    "density=${window.densityScaleX}x${window.densityScaleY} " +
+                    "pngScale=${scaleFromPixelsX}x$scaleFromPixelsY"
+            )
+            assertEquals(
+                window.densityScaleX,
+                scaleFromPixelsX,
+                PNG_SCALE_TOLERANCE,
+                "PNG width must be the logical width at display density, not dp-sized",
+            )
+            assertEquals(
+                window.densityScaleY,
+                scaleFromPixelsY,
+                PNG_SCALE_TOLERANCE,
+                "PNG height must be the logical height at display density, not dp-sized",
+            )
 
             // Second target: relative geometry in image space must preserve the 2:1 dp ratio
             // (160dp x, 80dp y) regardless of absolute density — HiDPI-scaled config coverage.

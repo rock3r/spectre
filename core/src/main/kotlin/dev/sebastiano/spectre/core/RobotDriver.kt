@@ -356,9 +356,11 @@ internal constructor(
      *
      * **Dimensions.** The returned image is sized to the requested *logical* [region] regardless of
      * display DPI scaling — `java.awt.Robot.createScreenCapture` downsamples HiDPI device pixels to
-     * the logical rectangle, so a 60×60 request yields a 60×60 image even on a 2× display. The
-     * device-resolution pixels are reachable only via `createMultiResolutionScreenCapture`, which
-     * this path deliberately does not use.
+     * the logical rectangle, so a 60×60 request yields a 60×60 image even on a 2× display. That 1:1
+     * screen↔image mapping is the point of this method: `boundsOnScreen` doubles as an image offset
+     * without a density conversion. When you want the device-resolution pixels instead — which is
+     * what Spectre's still artifacts and recordings use — call [screenshotAtDeviceScale], which
+     * reaches them via `createMultiResolutionScreenCapture`.
      *
      * **Colour space.** The returned image is sRGB (`TYPE_INT_ARGB` / sRGB `ColorModel`), matching
      * `java.awt.Robot.createScreenCapture`'s contract. Pixel values are post-display-pipeline: what
@@ -413,6 +415,31 @@ internal constructor(
         tccGuard.requireScreenRecording()
         val captureRegion = region ?: screenCapture.defaultScreenshotRegion()
         return screenCapture.createScreenCapture(captureRegion)
+    }
+
+    /**
+     * Captures the given screen [region] (or the entire virtual desktop, if `null`) at the
+     * display's **device** resolution.
+     *
+     * Same pixels, colour space, permission model, and trust boundary as [screenshot] — the only
+     * difference is dimensions. Where [screenshot] returns one pixel per logical unit (a 400x300
+     * request yields 400x300 even on a 2x display), this returns the backing-store pixels: 800x600
+     * for that same request at 2x, matching what `Recorder` writes for the region. On a 1x display
+     * the two are identical.
+     *
+     * This is what Spectre's still **artifacts** use (capture PNGs, CLI/MCP screenshots) so a still
+     * and a recording of the same surface agree on resolution. Prefer [screenshot] when you are
+     * asserting on pixels addressed by screen coordinates, since the 1:1 mapping is what makes
+     * `boundsOnScreen` usable as an image offset without a density conversion.
+     *
+     * On a multi-monitor desktop with mixed densities, the densest variant available for the
+     * requested rectangle wins; lower-density displays inside it are upscaled by the OS rather than
+     * dropped.
+     */
+    public fun screenshotAtDeviceScale(region: Rectangle? = null): BufferedImage {
+        tccGuard.requireScreenRecording()
+        val captureRegion = region ?: screenCapture.defaultScreenshotRegion()
+        return screenCapture.createDeviceScaleScreenCapture(captureRegion)
     }
 
     private suspend fun runOffEdt(block: suspend () -> Unit) = runOffEdt(robot, block)
@@ -564,6 +591,14 @@ internal interface ScreenCaptureAdapter {
 
     fun createScreenCapture(region: Rectangle): BufferedImage
 
+    /**
+     * Device-resolution counterpart of [createScreenCapture]. The default keeps the logical-size
+     * behaviour so synthetic, headless, and test adapters need no extra plumbing; only the real
+     * `java.awt.Robot` adapter can reach the backing-store pixels.
+     */
+    fun createDeviceScaleScreenCapture(region: Rectangle): BufferedImage =
+        createScreenCapture(region)
+
     fun defaultScreenshotRegion(): Rectangle = virtualDesktopBounds()
 }
 
@@ -637,6 +672,11 @@ private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) :
 
     override fun createScreenCapture(region: Rectangle): BufferedImage =
         robot.createScreenCapture(region)
+
+    // createScreenCapture downsamples HiDPI device pixels to the logical rectangle; the
+    // multi-resolution call is the only way to reach the backing store (see RobotDriver KDoc).
+    override fun createDeviceScaleScreenCapture(region: Rectangle): BufferedImage =
+        highestResolutionVariant(robot.createMultiResolutionScreenCapture(region), region)
 
     override fun waitForIdle() = robot.waitForIdle()
 

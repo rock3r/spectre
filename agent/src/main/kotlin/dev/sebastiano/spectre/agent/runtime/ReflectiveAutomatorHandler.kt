@@ -7,6 +7,7 @@ import dev.sebastiano.spectre.agent.resolveScreenshotTarget
 import dev.sebastiano.spectre.agent.transport.AgentRequest
 import dev.sebastiano.spectre.agent.transport.AgentRequestHandler
 import dev.sebastiano.spectre.agent.transport.AgentResponse
+import dev.sebastiano.spectre.agent.transport.MAX_FRAME_BYTES
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.RectDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
@@ -17,6 +18,14 @@ import java.io.ByteArrayOutputStream
 import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
 import javax.imageio.ImageIO
+
+/**
+ * Largest still PNG the handler will put on the wire before dropping back to logical resolution.
+ *
+ * The CBOR envelope around the bytes is a few hundred bytes; the headroom below keeps a still that
+ * passes this check from failing the framing guard afterwards.
+ */
+private const val DEFAULT_MAX_STILL_PNG_BYTES: Int = MAX_FRAME_BYTES - 64 * 1024
 
 /**
  * [AgentRequestHandler] that drives a Spectre `ComposeAutomator` instance entirely through
@@ -41,6 +50,7 @@ import javax.imageio.ImageIO
 internal class ReflectiveAutomatorHandler(
     private val automator: Any,
     private val isTargetJvmFocused: () -> Boolean = ::targetJvmHasKeyboardFocus,
+    private val maxStillPngBytes: Int = DEFAULT_MAX_STILL_PNG_BYTES,
 ) : AgentRequestHandler {
 
     private val automatorClass: Class<*> = automator.javaClass
@@ -386,22 +396,44 @@ internal class ReflectiveAutomatorHandler(
             )
         }
 
-        val regionScreenshotMethod =
-            regionScreenshotMethodOrError()
-                ?: return AgentResponse.Error(
-                    message =
-                        "ComposeAutomator does not expose screenshot(Rectangle?) on this build",
-                    category =
-                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory
-                            .UnsupportedOperation
-                            .wireName,
-                )
+        val deviceScaleMethod = deviceScaleScreenshotMethodOrError()
+        val regionMethod = regionScreenshotMethodOrError()
+        if (deviceScaleMethod == null && regionMethod == null) {
+            return AgentResponse.Error(
+                message = "ComposeAutomator does not expose screenshot(Rectangle?) on this build",
+                category =
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.UnsupportedOperation
+                        .wireName,
+            )
+        }
 
         // Only Fullscreen remains (explicit opt-in). null region = full virtual desktop (#289).
         check(target is ScreenshotTarget.Fullscreen)
-        val image = regionScreenshotMethod.invoke(automator, null) as BufferedImage
-        return AgentResponse.Screenshot(imageToPng(image))
+        return AgentResponse.Screenshot(fullscreenStillPng(deviceScaleMethod, regionMethod))
     }
+
+    /**
+     * Encodes the fullscreen still, preferring screen pixels but staying inside the frame budget.
+     *
+     * Screen-pixel stills carry 4x the pixels of the logical ones on a 2x display, and the whole
+     * virtual desktop is the one still whose size no caller bounds — a multi-monitor HiDPI desktop
+     * can encode past [MAX_FRAME_BYTES], which would fail the request outright. Falling back to the
+     * logical still keeps a command that works today working; callers that need to know which they
+     * got can compare the PNG size against the desktop's logical bounds.
+     */
+    private fun fullscreenStillPng(deviceScaleMethod: Method?, regionMethod: Method?): ByteArray {
+        // Older injected cores expose only screenshot(Rectangle?). The caller rejects the request
+        // before this point when neither method is present, so one of the two is always non-null.
+        if (deviceScaleMethod == null) {
+            return encodeFullscreenStill(checkNotNull(regionMethod))
+        }
+        val deviceScalePng = encodeFullscreenStill(deviceScaleMethod)
+        if (regionMethod == null || deviceScalePng.size <= maxStillPngBytes) return deviceScalePng
+        return encodeFullscreenStill(regionMethod)
+    }
+
+    private fun encodeFullscreenStill(method: Method): ByteArray =
+        imageToPng(method.invoke(automator, null) as BufferedImage)
 
     /**
      * Capture a node's on-screen bounds (#362).
@@ -478,7 +510,9 @@ internal class ReflectiveAutomatorHandler(
      * bridge is absent, the node overload is missing, or native returns a degenerate crop.
      *
      * Region capture uses a **defensive copy** of the AWT rectangle: live `boundsOnScreen` getters
-     * return snapshots that must not be mutated by `Robot.createScreenCapture` / AWT.
+     * return snapshots that must not be mutated by `Robot.createScreenCapture` / AWT. It prefers
+     * the device-scale call so a fallback node still keeps the same screen-pixel scale the native
+     * path produces; a node rectangle is small enough that the frame budget is never in play.
      */
     private fun captureNodeScreenshotPreferNative(
         node: Any,
@@ -495,7 +529,8 @@ internal class ReflectiveAutomatorHandler(
                 if (!isNativeWindowCaptureUnavailable(ex)) throw ex
             }
         }
-        val regionScreenshotMethod = regionScreenshotMethodOrError() ?: return null
+        val regionScreenshotMethod =
+            deviceScaleScreenshotMethodOrError() ?: regionScreenshotMethodOrError() ?: return null
         val image = regionScreenshotMethod.invoke(automator, captureBounds) as BufferedImage
         check(isPlausibleNodeCapture(image, captureBounds)) {
             "Region node screenshot ${image.width}x${image.height} is implausible for " +
@@ -541,6 +576,18 @@ internal class ReflectiveAutomatorHandler(
     private fun regionScreenshotMethodOrError(): Method? =
         automatorClass.methods.firstOrNull {
             it.name == "screenshot" &&
+                it.parameterTypes.size == 1 &&
+                it.parameterTypes[0].name == AWT_RECTANGLE_FQN
+        }
+
+    /**
+     * `screenshotAtDeviceScale(region: Rectangle?)` — the screen-pixel still counterpart of
+     * `screenshot(Rectangle?)`. Absent on targets running a Spectre core older than the
+     * device-scale still contract, which is why callers treat it as optional.
+     */
+    private fun deviceScaleScreenshotMethodOrError(): Method? =
+        automatorClass.methods.firstOrNull {
+            it.name == "screenshotAtDeviceScale" &&
                 it.parameterTypes.size == 1 &&
                 it.parameterTypes[0].name == AWT_RECTANGLE_FQN
         }

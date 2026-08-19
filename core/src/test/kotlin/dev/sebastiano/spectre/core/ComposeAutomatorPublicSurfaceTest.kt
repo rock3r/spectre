@@ -359,6 +359,7 @@ class ComposeAutomatorPublicSurfaceTest {
                 "focusWindow",
                 "performSemanticsClick",
                 "screenshot",
+                "screenshotAtDeviceScale",
                 "capture",
                 "registerIdlingResource",
                 "unregisterIdlingResource",

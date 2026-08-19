@@ -224,8 +224,8 @@ private class ScreenshotCommand(
         option(
                 "--fullscreen",
                 help =
-                    "Capture the full virtual desktop (explicit opt-in; the only screen-pixel " +
-                        "mode on this CLI path).",
+                    "Capture the full virtual desktop (explicit opt-in; the only whole-desktop " +
+                        "mode on this CLI path). The PNG is screen-pixel sized, not dp sized.",
             )
             .flag(default = false)
     private val json: Boolean by option("--json").flag(default = false)
