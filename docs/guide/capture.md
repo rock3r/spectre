@@ -107,11 +107,15 @@ the JUnit failure artifacts below.
 
     `spectre screenshot --fullscreen` is the one still whose size nothing bounds — a multi-monitor
     HiDPI desktop can encode past the attach transport's frame budget (64 MiB by default, which
-    holds a worst-case 4K desktop). When the screen-pixel PNG would not fit, Spectre falls back to
-    a **logical**-resolution desktop still rather than failing the command. Compare the PNG size
+    holds a worst-case 4K desktop). When the screen-pixel PNG would not fit, Spectre drops to a
+    **logical**-resolution desktop still rather than failing the command. Compare the PNG size
     against your desktop's logical bounds if you need to know which one you got, and raise
     `--max-frame-bytes` / `$SPECTRE_MAX_FRAME_BYTES` to get the full-resolution still — see
     [Agent — Payload limits](agent.md#payload-limits-204).
+
+    That drop is best-effort, not a guarantee: below a certain budget no desktop screenshot fits at
+    any resolution, so there is nothing to degrade to. If even the logical still overruns you get a
+    `payloadTooLarge` error naming the flag that fixes it, rather than a silent failure.
 
     On a **mixed-density multi-monitor** desktop a fullscreen still is also bounded by
     `java.awt.Robot`, which derives one scale from the display under the centre of the captured

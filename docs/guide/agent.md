@@ -462,7 +462,7 @@ Exceeding the write budget is **fail-closed**:
 - Parity CI can rely on deterministic taxonomy behaviour instead of size-threshold flakes.
 
 The one exception is the **fullscreen still**, whose size nothing bounds: rather than failing, it
-falls back to logical resolution. See
+drops to logical resolution first, and only reports `payloadTooLarge` if even that overruns. See
 [Atomic capture — Pixel scale](capture.md#pixel-scale).
 
 Spill-to-file for large captures remains a higher-level concern (capture directories / daemon

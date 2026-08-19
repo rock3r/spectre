@@ -4,6 +4,7 @@ package dev.sebastiano.spectre.agent.runtime
 
 import dev.sebastiano.spectre.agent.ScreenshotTarget
 import dev.sebastiano.spectre.agent.resolveScreenshotTarget
+import dev.sebastiano.spectre.agent.transport.AgentErrorCategory
 import dev.sebastiano.spectre.agent.transport.AgentRequest
 import dev.sebastiano.spectre.agent.transport.AgentRequestHandler
 import dev.sebastiano.spectre.agent.transport.AgentResponse
@@ -413,7 +414,7 @@ internal class ReflectiveAutomatorHandler(
 
         // Only Fullscreen remains (explicit opt-in). null region = full virtual desktop (#289).
         check(target is ScreenshotTarget.Fullscreen)
-        return AgentResponse.Screenshot(fullscreenStillPng(deviceScaleMethod, regionMethod))
+        return fullscreenStill(deviceScaleMethod, regionMethod)
     }
 
     /**
@@ -421,20 +422,39 @@ internal class ReflectiveAutomatorHandler(
      *
      * Screen-pixel stills carry 4x the pixels of the logical ones on a 2x display, and the whole
      * virtual desktop is the one still whose size no caller bounds — a multi-monitor HiDPI desktop
-     * can encode past the frame budget, which would fail the request outright. Falling back to the
-     * logical still keeps a command that works today working; callers that need to know which they
-     * got can compare the PNG size against the desktop's logical bounds.
+     * can encode past the frame budget, which would fail the request outright. Dropping to the
+     * logical still keeps a command that works today working.
+     *
+     * That fallback is best-effort, not a guarantee: with a small budget no desktop screenshot fits
+     * at any resolution, so there is nothing to degrade to. When even the logical still overruns,
+     * this reports [AgentErrorCategory.PayloadTooLarge] naming the flag that fixes it, rather than
+     * letting the framing layer substitute its own generic message further downstream.
      */
-    private fun fullscreenStillPng(deviceScaleMethod: Method?, regionMethod: Method?): ByteArray {
+    private fun fullscreenStill(deviceScaleMethod: Method?, regionMethod: Method?): AgentResponse {
         // Older injected cores expose only screenshot(Rectangle?). The caller rejects the request
         // before this point when neither method is present, so one of the two is always non-null.
-        if (deviceScaleMethod == null) {
-            return encodeFullscreenStill(checkNotNull(regionMethod))
+        if (deviceScaleMethod != null) {
+            val deviceScalePng = encodeFullscreenStill(deviceScaleMethod)
+            if (regionMethod == null || deviceScalePng.size <= maxStillPngBytes) {
+                return stillWithinBudget(deviceScalePng)
+            }
         }
-        val deviceScalePng = encodeFullscreenStill(deviceScaleMethod)
-        if (regionMethod == null || deviceScalePng.size <= maxStillPngBytes) return deviceScalePng
-        return encodeFullscreenStill(regionMethod)
+        return stillWithinBudget(encodeFullscreenStill(checkNotNull(regionMethod)))
     }
+
+    private fun stillWithinBudget(png: ByteArray): AgentResponse =
+        if (png.size <= maxStillPngBytes) {
+            AgentResponse.Screenshot(png)
+        } else {
+            AgentResponse.Error(
+                message =
+                    "Fullscreen still is too large for the agent IPC frame limit " +
+                        "(png=${png.size}B, max≈${maxStillPngBytes}B) even at logical resolution. " +
+                        "Raise the budget with --max-frame-bytes / SPECTRE_MAX_FRAME_BYTES, or " +
+                        "capture a window instead of the whole desktop.",
+                category = AgentErrorCategory.PayloadTooLarge.wireName,
+            )
+        }
 
     private fun encodeFullscreenStill(method: Method): ByteArray =
         imageToPng(method.invoke(automator, null) as BufferedImage)
