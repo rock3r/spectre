@@ -343,7 +343,7 @@ hierarchy.
 
 After the UDS connects, the first exchange is always:
 
-1. Client → `hello` with `protocolVersion` (currently `2` — `ProtocolVersion.CURRENT`)
+1. Client → `hello` with `protocolVersion` (currently `3` — `ProtocolVersion.CURRENT`)
 2. Runtime → `helloAck` with the same version, or `error` with category
    `protocolMismatch`
 
@@ -351,6 +351,13 @@ While the agent API is experimental, compatibility is **exact-match**. A version
 mismatch fails attach with a clear `IOException` / `SpectreAgentException` rather than
 proceeding and hanging on later frames. From 1.0 the rule may become additive-compatible
 (min/max range); that change will bump `ProtocolVersion.CURRENT` and this section.
+
+Revisions so far: **v1** bare request/response frames after `hello`; **v2** (#200) operation
+envelopes with op ids, cancel, and deadline budgets; **v3** bulk payloads (`pngBytes`,
+`captureJsonUtf8`) as CBOR byte strings rather than integer arrays. v3 is the reason the
+handshake matters for more than op availability — it is a *representation* change that the
+type system cannot see, so peers must be refused at `hello` rather than at the frame that
+carries a screenshot.
 
 ### Unknown operations
 
