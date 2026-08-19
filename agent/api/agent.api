@@ -424,6 +424,7 @@ public final class dev/sebastiano/spectre/agent/transport/Framing {
 public final class dev/sebastiano/spectre/agent/transport/FramingKt {
 	public static final field DEFAULT_MAX_FRAME_BYTES I
 	public static final field MAX_FRAME_BYTES_CEILING I
+	public static final field MIN_MAX_FRAME_BYTES I
 }
 
 public final class dev/sebastiano/spectre/agent/transport/NodeSnapshotDto {

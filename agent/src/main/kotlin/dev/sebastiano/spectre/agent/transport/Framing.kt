@@ -21,6 +21,17 @@ import java.nio.ByteOrder
 @ExperimentalSpectreAgentApi public const val DEFAULT_MAX_FRAME_BYTES: Int = 64 * 1024 * 1024
 
 /**
+ * Smallest usable write budget.
+ *
+ * A budget only has to be "positive and under the ceiling" to look valid, but one too small to
+ * frame the protocol's own Hello/HelloAck makes *every* operation fail — including the `spectre
+ * daemon kill` the mismatch error tells users to run, so the configuration cannot even be undone
+ * from the CLI. Control frames are tens of bytes; this floor sits far above them while still
+ * catching the plausible typo of writing a megabyte count without its suffix.
+ */
+@ExperimentalSpectreAgentApi public const val MIN_MAX_FRAME_BYTES: Int = 64 * 1024
+
+/**
  * Hard upper bound on any frame length, whatever the writer's budget.
  *
  * [readFrame] allocates the payload buffer up front from a length it has not yet validated against
@@ -85,7 +96,10 @@ public object FrameLimits {
      *   [MAX_FRAME_BYTES_CEILING], since a reader would refuse the frames it produced.
      */
     public fun configure(bytes: Int) {
-        require(bytes > 0) { "$ENV_VAR must be a positive size, got $bytes" }
+        require(bytes >= MIN_MAX_FRAME_BYTES) {
+            "$ENV_VAR=$bytes is below the $MIN_MAX_FRAME_BYTES-byte minimum; a budget that small " +
+                "cannot carry the protocol's own frames, so nothing would work"
+        }
         require(bytes <= MAX_FRAME_BYTES_CEILING) {
             "$ENV_VAR=$bytes exceeds the frame ceiling $MAX_FRAME_BYTES_CEILING; " +
                 "readers would refuse frames that large"
@@ -108,9 +122,17 @@ public object FrameLimits {
     public fun resolveBudget(getenv: (String) -> String?): Int =
         resolveRequest(getenv) ?: DEFAULT_MAX_FRAME_BYTES
 
-    /** The explicitly requested budget from [getenv], or `null` when the variable asks nothing. */
+    /**
+     * The explicitly requested budget from [getenv], or `null` when the variable asks nothing.
+     *
+     * A value below [MIN_MAX_FRAME_BYTES] is treated like an unparseable one — ignored in favour of
+     * the default — rather than failing startup, matching [resolveBudget]'s contract that a bad
+     * tuning knob must not stop a daemon from booting.
+     */
     public fun resolveRequest(getenv: (String) -> String?): Int? =
-        parseMaxFrameBytes(getenv(ENV_VAR))?.coerceAtMost(MAX_FRAME_BYTES_CEILING)
+        parseMaxFrameBytes(getenv(ENV_VAR))
+            ?.takeIf { it >= MIN_MAX_FRAME_BYTES }
+            ?.coerceAtMost(MAX_FRAME_BYTES_CEILING)
 
     /**
      * Parses a byte count with an optional binary suffix (`512`, `128k`, `64M`, `64MiB`, `1G`).

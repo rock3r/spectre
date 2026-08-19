@@ -32,9 +32,13 @@ class AttachOptionsTest {
     }
 
     @Test
+    fun `a budget too small for protocol frames is rejected at construction`() {
+        assertFailsWith<IllegalArgumentException> { AttachOptions(maxFrameBytes = 1) }
+    }
+
+    @Test
     fun `a usable budget and the unset default are both accepted`() {
         AttachOptions(maxFrameBytes = MAX_FRAME_BYTES_CEILING)
-        AttachOptions(maxFrameBytes = 1)
         AttachOptions(maxFrameBytes = null)
     }
 }

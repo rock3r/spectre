@@ -75,6 +75,27 @@ class FrameLimitsTest {
     }
 
     @Test
+    fun `refuses a budget too small to carry the protocol's own frames`() {
+        // A budget of 1 is "positive and under the ceiling" but cannot even frame a Hello, so
+        // every operation fails — including the `spectre daemon kill` used to recover.
+        assertFailsWith<IllegalArgumentException> { FrameLimits.configure(1) }
+        assertFailsWith<IllegalArgumentException> { FrameLimits.configure(MIN_MAX_FRAME_BYTES - 1) }
+        FrameLimits.configure(MIN_MAX_FRAME_BYTES)
+        FrameLimits.resetToEnvironment()
+    }
+
+    @Test
+    fun `an environment budget below the minimum falls back to the default`() {
+        assertEquals(
+            DEFAULT_MAX_FRAME_BYTES,
+            FrameLimits.resolveBudget { name -> if (name == FrameLimits.ENV_VAR) "1" else null },
+        )
+        assertNull(
+            FrameLimits.resolveRequest { name -> if (name == FrameLimits.ENV_VAR) "1" else null }
+        )
+    }
+
+    @Test
     fun `configure refuses a budget above the read ceiling`() {
         assertFailsWith<IllegalArgumentException> {
                 FrameLimits.configure(MAX_FRAME_BYTES_CEILING + 1)
@@ -132,8 +153,8 @@ class FrameLimitsTest {
     fun `configure applies and restores a budget`() {
         val original = FrameLimits.maxFrameBytes
         try {
-            FrameLimits.configure(1234)
-            assertEquals(1234, FrameLimits.maxFrameBytes)
+            FrameLimits.configure(MIN_MAX_FRAME_BYTES)
+            assertEquals(MIN_MAX_FRAME_BYTES, FrameLimits.maxFrameBytes)
         } finally {
             FrameLimits.configure(original)
         }

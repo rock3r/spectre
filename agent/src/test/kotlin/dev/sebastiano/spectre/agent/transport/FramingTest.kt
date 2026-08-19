@@ -95,7 +95,7 @@ class FramingTest {
         // Readers must not reject what a peer on a larger budget legitimately sent; the header
         // below claims 1 MiB against a 64 KiB write budget, so only the payload read should fail.
         val restore = FrameLimits.maxFrameBytes
-        FrameLimits.configure(64 * 1024)
+        FrameLimits.configure(MIN_MAX_FRAME_BYTES)
         try {
             val header = ByteArrayInputStream(byteArrayOf(0x00, 0x10, 0x00, 0x00))
             assertFailsWith<java.io.EOFException> { Framing.readFrame(header) }
@@ -107,10 +107,10 @@ class FramingTest {
     @Test
     fun `writeFrame throws when payload exceeds the configured budget`() {
         val restore = FrameLimits.maxFrameBytes
-        FrameLimits.configure(1024)
+        FrameLimits.configure(MIN_MAX_FRAME_BYTES)
         try {
             assertFailsWith<IllegalArgumentException> {
-                Framing.writeFrame(ByteArrayOutputStream(), ByteArray(1025))
+                Framing.writeFrame(ByteArrayOutputStream(), ByteArray(MIN_MAX_FRAME_BYTES + 1))
             }
         } finally {
             FrameLimits.configure(restore)

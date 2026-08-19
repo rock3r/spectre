@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.agent
 
 import dev.sebastiano.spectre.agent.transport.MAX_FRAME_BYTES_CEILING
+import dev.sebastiano.spectre.agent.transport.MIN_MAX_FRAME_BYTES
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.UUID
@@ -51,7 +52,10 @@ public data class AttachOptions(
         // attach() report success while the target silently kept its own and later rejected
         // captures this caller sized for. Fail at the mistake instead.
         if (maxFrameBytes != null) {
-            require(maxFrameBytes > 0) { "maxFrameBytes must be positive, got $maxFrameBytes" }
+            require(maxFrameBytes >= MIN_MAX_FRAME_BYTES) {
+                "maxFrameBytes=$maxFrameBytes is below the $MIN_MAX_FRAME_BYTES-byte minimum; " +
+                    "a budget that small cannot carry the protocol's own frames"
+            }
             require(maxFrameBytes <= MAX_FRAME_BYTES_CEILING) {
                 "maxFrameBytes=$maxFrameBytes exceeds the frame ceiling " +
                     "$MAX_FRAME_BYTES_CEILING; readers would refuse frames that large"
