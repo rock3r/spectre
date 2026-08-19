@@ -436,7 +436,8 @@ internal constructor(
      * the *centre* of [region], not per display, so a rectangle spanning monitors of different
      * densities is captured at the centre display's scale: parts on lower-density displays are
      * upscaled, and — when the centre lands on the lower-density monitor — the higher-density parts
-     * are downsampled. Single-display captures and window-scoped stills are unaffected; see
+     * are downsampled. Single-display captures are unaffected, as are window-scoped stills while
+     * the native still bridge is present — but not the Robot fallback used when it is absent; see
      * [highestResolutionVariant].
      */
     public fun screenshotAtDeviceScale(region: Rectangle? = null): BufferedImage {

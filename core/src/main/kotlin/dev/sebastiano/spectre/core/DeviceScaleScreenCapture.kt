@@ -18,8 +18,12 @@ import java.awt.image.MultiResolutionImage
  * different densities is therefore captured at the centre display's scale — so a rectangle centred
  * on a 1x monitor yields no 2x variant at all, and the Retina portion stays downsampled. Capturing
  * each intersecting display at its own scale and composing them would lift that limit; it is not
- * something variant selection can fix. Window-scoped stills are unaffected: they go through the
- * native helpers, which use the target window's own screen scale.
+ * something variant selection can fix.
+ *
+ * Window-scoped stills escape it only while the native still bridge is present, since those helpers
+ * use the target window's own screen scale. Without `spectre-recording` on the target's classpath
+ * the window still is a Robot region capture too, so a window straddling displays of different
+ * densities shares the limit above.
  *
  * [region] is the requested logical rectangle, used only to ask for a base variant when a backend
  * reports no variants at all.
