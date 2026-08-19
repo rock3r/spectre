@@ -8,12 +8,21 @@ import java.awt.image.MultiResolutionImage
 /**
  * Picks the densest variant of a multi-resolution screen capture.
  *
- * `Robot.createMultiResolutionScreenCapture` returns one variant per distinct display scale the
- * requested rectangle touches. Taking the largest is what makes a still match the recorder on a
- * Retina display, and it degrades correctly elsewhere: on a 1x display there is a single variant,
- * and across mixed densities the densest one upscales the lower-density displays rather than
- * dropping them. [region] is the requested logical rectangle, used only to ask for a base variant
- * when a backend reports no variants at all.
+ * Taking the largest variant is what makes a still match the recorder on a Retina display, and it
+ * degrades safely on a 1x display, where there is a single variant.
+ *
+ * **Mixed-density desktops are bounded by the JDK, not by this function.**
+ * `Robot.createMultiResolutionScreenCapture` does not capture per display: `Robot`'s
+ * `createCompatibleImage` resolves one `GraphicsConfiguration` from the *centre* of the requested
+ * rectangle and offers variants for that display's scale alone. A region spanning monitors of
+ * different densities is therefore captured at the centre display's scale — so a rectangle centred
+ * on a 1x monitor yields no 2x variant at all, and the Retina portion stays downsampled. Capturing
+ * each intersecting display at its own scale and composing them would lift that limit; it is not
+ * something variant selection can fix. Window-scoped stills are unaffected: they go through the
+ * native helpers, which use the target window's own screen scale.
+ *
+ * [region] is the requested logical rectangle, used only to ask for a base variant when a backend
+ * reports no variants at all.
  */
 internal fun highestResolutionVariant(
     capture: MultiResolutionImage,

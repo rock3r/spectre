@@ -284,7 +284,8 @@ private constructor(
      * Identical to [screenshot] except for dimensions: a 400x300dp region yields an 800x600 pixel
      * image on a 2x display instead of 400x300, matching the resolution `Recorder` writes for the
      * same region. Delegates to [RobotDriver.screenshotAtDeviceScale] — see that method's KDoc for
-     * the mixed-density rule and the same colour-space / TCC / Wayland caveats as [screenshot].
+     * the mixed-density limitation and the same colour-space / TCC / Wayland caveats as
+     * [screenshot].
      *
      * This backs Spectre's still artifacts. Use [screenshot] when you want image coordinates to
      * equal screen coordinates.

@@ -66,6 +66,15 @@ class FrameLimitsTest {
     }
 
     @Test
+    fun `a suffixed size that would wrap Long is rejected, not silently shrunk`() {
+        // 18014398509481985 * 1024 wraps to 1024: without an overflow guard this configures a
+        // 1KiB budget and every ordinary IPC response then fails to frame.
+        assertNull(FrameLimits.parseMaxFrameBytes("18014398509481985k"))
+        assertNull(FrameLimits.parseMaxFrameBytes("9007199254740993M"))
+        assertNull(FrameLimits.parseMaxFrameBytes("${Long.MAX_VALUE}G"))
+    }
+
+    @Test
     fun `configure refuses a budget above the read ceiling`() {
         assertFailsWith<IllegalArgumentException> {
                 FrameLimits.configure(MAX_FRAME_BYTES_CEILING + 1)

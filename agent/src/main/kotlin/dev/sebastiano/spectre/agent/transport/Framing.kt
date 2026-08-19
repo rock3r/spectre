@@ -117,8 +117,9 @@ public object FrameLimits {
      *
      * Returns `null` for anything that is not a positive size that fits an [Int] — including
      * decimal-suffixed forms like `12MB`, so a value that looks like it means 12 million bytes is
-     * never silently read as 12 MiB. Overflow returns `null` instead of wrapping, which would
-     * shrink the budget when the caller asked to raise it.
+     * never silently read as 12 MiB. Overflow returns `null` instead of wrapping, both when the
+     * mantissa alone exceeds [Int] and when multiplying it by the suffix would wrap [Long]; either
+     * would shrink the budget when the caller asked to raise it.
      */
     @Suppress("ReturnCount")
     public fun parseMaxFrameBytes(raw: String?): Int? {
@@ -136,6 +137,10 @@ public object FrameLimits {
                 "gib" -> 1024L * 1024L * 1024L
                 else -> return null
             }
+        // Check before multiplying: a huge mantissa with a suffix can wrap Long back into a small
+        // positive value, so "18014398509481985k" would otherwise silently configure a 1KiB budget
+        // instead of being rejected, and every ordinary IPC response would then fail to frame.
+        if (digits > Long.MAX_VALUE / multiplier) return null
         val bytes = digits * multiplier
         if (bytes <= 0L || bytes > Int.MAX_VALUE.toLong()) return null
         return bytes.toInt()

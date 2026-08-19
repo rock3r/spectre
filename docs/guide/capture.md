@@ -113,6 +113,12 @@ the JUnit failure artifacts below.
     `--max-frame-bytes` / `$SPECTRE_MAX_FRAME_BYTES` to get the full-resolution still — see
     [Agent — Payload limits](agent.md#payload-limits-204).
 
+    On a **mixed-density multi-monitor** desktop a fullscreen still is also bounded by
+    `java.awt.Robot`, which derives one scale from the display under the centre of the captured
+    rectangle rather than capturing each display at its own. The still comes back at that display's
+    scale, so a desktop centred on a 1x monitor downsamples the Retina parts. Window-scoped stills
+    are unaffected — they use the target window's own screen scale.
+
     Window-scoped stills are bounded by the window, so they effectively never hit the budget. A
     `capture` of an extremely large window on a high-density display is the exception: it fails
     loudly with a `payloadTooLarge` error rather than downgrading, because `capture.json` records

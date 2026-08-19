@@ -432,9 +432,12 @@ internal constructor(
      * asserting on pixels addressed by screen coordinates, since the 1:1 mapping is what makes
      * `boundsOnScreen` usable as an image offset without a density conversion.
      *
-     * On a multi-monitor desktop with mixed densities, the densest variant available for the
-     * requested rectangle wins; lower-density displays inside it are upscaled by the OS rather than
-     * dropped.
+     * **Mixed-density desktops.** `java.awt.Robot` derives one capture scale from the display under
+     * the *centre* of [region], not per display, so a rectangle spanning monitors of different
+     * densities is captured at the centre display's scale: parts on lower-density displays are
+     * upscaled, and — when the centre lands on the lower-density monitor — the higher-density parts
+     * are downsampled. Single-display captures and window-scoped stills are unaffected; see
+     * [highestResolutionVariant].
      */
     public fun screenshotAtDeviceScale(region: Rectangle? = null): BufferedImage {
         tccGuard.requireScreenRecording()
