@@ -60,8 +60,17 @@ public object DaemonProtocol {
                 }
             is DaemonRequest.StopRecording,
             is DaemonRequest.RecordingStatus -> versionFor(RECORDING_SESSION_INTRODUCED_MINOR)
-            is DaemonRequest.Capture -> versionFor(CAPTURE_INTRODUCED_MINOR)
-            is DaemonRequest.Screenshot -> versionFor(SCREENSHOT_TARGETING_INTRODUCED_MINOR)
+            // Each still op needs the minor that introduced it *and* the minor its pixels
+            // changed in: an older daemon answers these "successfully" but with dp-sized stills.
+            is DaemonRequest.Capture ->
+                versionFor(maxOf(CAPTURE_INTRODUCED_MINOR, SCREEN_PIXEL_STILLS_INTRODUCED_MINOR))
+            is DaemonRequest.Screenshot ->
+                versionFor(
+                    maxOf(
+                        SCREENSHOT_TARGETING_INTRODUCED_MINOR,
+                        SCREEN_PIXEL_STILLS_INTRODUCED_MINOR,
+                    )
+                )
         }
 
     private fun versionFor(minor: Int): DaemonProtocolVersion =
@@ -85,6 +94,17 @@ public object DaemonProtocol {
     private const val SELECTOR_PARITY_INTRODUCED_MINOR: Int = 10
     /** waitForReloadSettled for Compose Hot Reload awareness (#211). */
     private const val RELOAD_SETTLE_INTRODUCED_MINOR: Int = 11
+
+    /**
+     * Screen-pixel stills, the 64 MiB frame budget, and `Hello.maxFrameBytes`.
+     *
+     * A behaviour floor rather than a capability one. The daemon endpoint is `daemon-v1.sock`,
+     * stable across minors, so an upgraded CLI reaches a daemon still running the previous build —
+     * which would answer `capture` and `screenshot` perfectly well, just with dp-sized pixels on
+     * the old 16 MiB budget, and the upgrade would silently do nothing. Requiring 1.12 turns that
+     * into the existing "daemon protocol is too old, run `spectre daemon kill`" error instead.
+     */
+    private const val SCREEN_PIXEL_STILLS_INTRODUCED_MINOR: Int = 12
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)

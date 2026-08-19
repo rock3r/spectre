@@ -77,7 +77,7 @@ Library details live in `:core` under `dev.sebastiano.spectre.core.capture`.
 ## Pixel scale
 
 `screenshot.png` is written at **screen-pixel** size, not dp size — the same rule
-[recording](https://github.com/rock3r/spectre/blob/main/docs/RECORDING-LIMITATIONS.md) follows.
+[recording](../RECORDING-LIMITATIONS.md) follows.
 A 1600×1000dp window on a 2× display produces a **3200×2000 pixel** PNG. On a 1× display the two
 sizes coincide.
 
