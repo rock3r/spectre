@@ -1,7 +1,7 @@
 package dev.sebastiano.spectre.agent.runtime
 
 import dev.sebastiano.spectre.agent.transport.AgentResponse
-import dev.sebastiano.spectre.agent.transport.MAX_FRAME_BYTES
+import dev.sebastiano.spectre.agent.transport.FrameLimits
 
 /**
  * Invokes `ComposeAutomator.capture` reflectively and maps the result onto the agent wire
@@ -48,7 +48,7 @@ internal object AtomicCaptureReflectiveMapper {
         // CBOR envelope is larger than raw bytes; leave headroom so Framing.writeFrame does not
         // kill the connection after a successful capture.
         val rawBytes = pngBytes.size.toLong() + captureJsonUtf8.size.toLong()
-        val maxRawPayload = (MAX_FRAME_BYTES * 3L) / 4L
+        val maxRawPayload = (FrameLimits.maxFrameBytes * 3L) / 4L
         if (rawBytes > maxRawPayload) {
             return AgentResponse.Error(
                 "Atomic capture is too large for the agent IPC frame limit " +

@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.agent.runtime
 
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.transport.FrameLimits
 import dev.sebastiano.spectre.agent.transport.IpcServer
 import java.lang.instrument.Instrumentation
 import java.nio.file.Path
@@ -18,9 +19,9 @@ import java.util.concurrent.atomic.AtomicReference
  * Both go through [bootstrap]:
  * 1. Locate Spectre on the target's classpath via [AgentBootstrap.findSpectreClassLoader].
  * 2. Reflectively construct a `ComposeAutomator.inProcess(...)` instance in that classloader.
- * 3. If `agentArgs` carries a UDS path, start an [IpcServer] there that dispatches
- *    [dev.sebastiano.spectre.agent.transport.AgentRequest]s against the automator via
- *    [ReflectiveAutomatorHandler].
+ * 3. If `agentArgs` carries a UDS path (see [AgentBootstrapArgs] for the accepted forms), start an
+ *    [IpcServer] there that dispatches [dev.sebastiano.spectre.agent.transport.AgentRequest]s
+ *    against the automator via [ReflectiveAutomatorHandler].
  *
  * **Failure propagation**: any exception thrown by [bootstrap] escapes [premain] / [agentmain]. The
  * JVM's `loadClassAndStartAgent` rethrows it, which causes `VirtualMachine.loadAgent` on the
@@ -100,7 +101,18 @@ public object SpectreAgent {
             val automator = createAutomatorReflectively(loader)
             System.err.println("[spectre-agent] ComposeAutomator ready: $automator")
 
-            val udsPath = agentArgs.takeUnless { it.isNullOrBlank() }?.let(Path::of)
+            val parsedArgs = AgentBootstrapArgs.parse(agentArgs)
+            // The attacher's frame budget has to be adopted before the IPC server can answer: this
+            // JVM writes the bulky screenshot frames and cannot read the daemon's environment.
+            parsedArgs.maxFrameBytes?.let { budget ->
+                runCatching { FrameLimits.configure(budget) }
+                    .onFailure {
+                        System.err.println(
+                            "[spectre-agent] ignoring invalid maxFrameBytes=$budget: ${it.message}"
+                        )
+                    }
+            }
+            val udsPath = parsedArgs.udsPath?.let(Path::of)
             if (udsPath == null) {
                 // No UDS path means manual diagnostic mode: report window count to stderr so a
                 // user can verify Spectre is correctly on a target's classpath.

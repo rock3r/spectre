@@ -32,12 +32,18 @@ import java.util.UUID
  *   directory, you own that parent directory's permissions; Spectre only tightens directories it
  *   creates itself.
  * @property attachTimeoutMs how long to wait for the agent's bootstrap + IPC server to come up.
+ * @property maxFrameBytes IPC frame write budget the injected agent should adopt. `null` (default)
+ *   forwards this process's own budget, so a daemon started with `SPECTRE_MAX_FRAME_BYTES` or
+ *   `--max-frame-bytes` propagates it to every JVM it injects. The target cannot read the
+ *   attacher's environment, and it is the side that writes screenshot frames, so this is the only
+ *   channel that reaches it.
  */
 @ExperimentalSpectreAgentApi
 public data class AttachOptions(
     public val agentJarPath: Path? = null,
     public val udsPath: Path? = null,
     public val attachTimeoutMs: Long = DEFAULT_ATTACH_TIMEOUT_MS,
+    public val maxFrameBytes: Int? = null,
 ) {
     public companion object {
         public const val DEFAULT_ATTACH_TIMEOUT_MS: Long = 5_000

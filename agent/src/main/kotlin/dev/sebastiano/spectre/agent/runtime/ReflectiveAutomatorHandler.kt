@@ -7,7 +7,7 @@ import dev.sebastiano.spectre.agent.resolveScreenshotTarget
 import dev.sebastiano.spectre.agent.transport.AgentRequest
 import dev.sebastiano.spectre.agent.transport.AgentRequestHandler
 import dev.sebastiano.spectre.agent.transport.AgentResponse
-import dev.sebastiano.spectre.agent.transport.MAX_FRAME_BYTES
+import dev.sebastiano.spectre.agent.transport.FrameLimits
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.RectDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
@@ -19,13 +19,17 @@ import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
 import javax.imageio.ImageIO
 
+/** Headroom for the CBOR envelope wrapped around a still's bytes before it is framed. */
+private const val STILL_ENVELOPE_HEADROOM_BYTES: Int = 64 * 1024
+
 /**
  * Largest still PNG the handler will put on the wire before dropping back to logical resolution.
  *
- * The CBOR envelope around the bytes is a few hundred bytes; the headroom below keeps a still that
- * passes this check from failing the framing guard afterwards.
+ * Derived from the configured frame budget so raising `SPECTRE_MAX_FRAME_BYTES` raises this too;
+ * the headroom keeps a still that passes this check from failing the framing guard afterwards.
  */
-private const val DEFAULT_MAX_STILL_PNG_BYTES: Int = MAX_FRAME_BYTES - 64 * 1024
+private fun defaultMaxStillPngBytes(): Int =
+    (FrameLimits.maxFrameBytes - STILL_ENVELOPE_HEADROOM_BYTES).coerceAtLeast(1)
 
 /**
  * [AgentRequestHandler] that drives a Spectre `ComposeAutomator` instance entirely through
@@ -50,7 +54,7 @@ private const val DEFAULT_MAX_STILL_PNG_BYTES: Int = MAX_FRAME_BYTES - 64 * 1024
 internal class ReflectiveAutomatorHandler(
     private val automator: Any,
     private val isTargetJvmFocused: () -> Boolean = ::targetJvmHasKeyboardFocus,
-    private val maxStillPngBytes: Int = DEFAULT_MAX_STILL_PNG_BYTES,
+    private val maxStillPngBytes: Int = defaultMaxStillPngBytes(),
 ) : AgentRequestHandler {
 
     private val automatorClass: Class<*> = automator.javaClass
@@ -417,7 +421,7 @@ internal class ReflectiveAutomatorHandler(
      *
      * Screen-pixel stills carry 4x the pixels of the logical ones on a 2x display, and the whole
      * virtual desktop is the one still whose size no caller bounds — a multi-monitor HiDPI desktop
-     * can encode past [MAX_FRAME_BYTES], which would fail the request outright. Falling back to the
+     * can encode past the frame budget, which would fail the request outright. Falling back to the
      * logical still keeps a command that works today working; callers that need to know which they
      * got can compare the PNG size against the desktop's logical bounds.
      */

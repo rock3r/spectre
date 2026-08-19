@@ -92,7 +92,7 @@ internal object FrameIoDeadline {
             header[0] = first.toByte()
             readFully(input, header, offset = 1, length = HEADER_BYTES - 1)
             val frameLength = ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN).int
-            check(frameLength in 0..MAX_FRAME_BYTES) {
+            check(frameLength in 0..MAX_FRAME_BYTES_CEILING) {
                 val headerDump = header.joinToString(",") { it.toInt().toString() }
                 "Invalid frame length $frameLength (header bytes: $headerDump)"
             }

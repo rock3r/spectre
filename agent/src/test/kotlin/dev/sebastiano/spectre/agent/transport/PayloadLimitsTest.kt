@@ -28,40 +28,49 @@ class PayloadLimitsTest {
 
     @Test
     fun `oversized screenshot response returns payloadTooLarge`() {
+        // Shrink the budget rather than allocating a real one: this exercises the same guard, and
+        // proves FrameLimits.configure actually reaches the write path, without a 64 MiB array.
+        val restore = FrameLimits.maxFrameBytes
+        FrameLimits.configure(TEST_FRAME_BUDGET_BYTES)
         // A PNG larger than the frame budget once wrapped in OpResponse CBOR.
-        val hugePng = ByteArray(MAX_FRAME_BYTES) { 0xAB.toByte() }
-        IpcServer(
-                udsPath,
-                AgentRequestHandler { request ->
-                    when (request) {
-                        is AgentRequest.Screenshot -> AgentResponse.Screenshot(pngBytes = hugePng)
-                        AgentRequest.Ping -> AgentResponse.Pong
-                        else -> AgentResponse.Ok
-                    }
-                },
-            )
-            .use {
-                awaitSocket(udsPath)
-                IpcClient(udsPath).use { client ->
-                    val response =
-                        client.send(
-                            AgentRequest.Screenshot(
-                                windowIndex = 0,
-                                surfaceId = null,
-                                fullscreen = false,
+        val hugePng = ByteArray(TEST_FRAME_BUDGET_BYTES) { 0xAB.toByte() }
+        try {
+            IpcServer(
+                    udsPath,
+                    AgentRequestHandler { request ->
+                        when (request) {
+                            is AgentRequest.Screenshot ->
+                                AgentResponse.Screenshot(pngBytes = hugePng)
+                            AgentRequest.Ping -> AgentResponse.Pong
+                            else -> AgentResponse.Ok
+                        }
+                    },
+                )
+                .use {
+                    awaitSocket(udsPath)
+                    IpcClient(udsPath).use { client ->
+                        val response =
+                            client.send(
+                                AgentRequest.Screenshot(
+                                    windowIndex = 0,
+                                    surfaceId = null,
+                                    fullscreen = false,
+                                )
                             )
+                        val err = assertIs<AgentResponse.Error>(response)
+                        assertEquals(AgentErrorCategory.PayloadTooLarge.wireName, err.category)
+                        assertTrue(
+                            err.message.contains("MAX_FRAME_BYTES") ||
+                                err.message.contains("payload", ignoreCase = true),
+                            "expected size-limit message; got: ${err.message}",
                         )
-                    val err = assertIs<AgentResponse.Error>(response)
-                    assertEquals(AgentErrorCategory.PayloadTooLarge.wireName, err.category)
-                    assertTrue(
-                        err.message.contains("MAX_FRAME_BYTES") ||
-                            err.message.contains("payload", ignoreCase = true),
-                        "expected size-limit message; got: ${err.message}",
-                    )
-                    // Connection stays usable after a payloadTooLarge error.
-                    assertEquals(AgentResponse.Pong, client.send(AgentRequest.Ping))
+                        // Connection stays usable after a payloadTooLarge error.
+                        assertEquals(AgentResponse.Pong, client.send(AgentRequest.Ping))
+                    }
                 }
-            }
+        } finally {
+            FrameLimits.configure(restore)
+        }
     }
 
     @Test
@@ -69,15 +78,20 @@ class PayloadLimitsTest {
         val err =
             AgentResponse.Error(
                 message =
-                    "Response payload size ${MAX_FRAME_BYTES + 1} exceeds " +
-                        "MAX_FRAME_BYTES=$MAX_FRAME_BYTES",
+                    "Response payload size ${DEFAULT_MAX_FRAME_BYTES + 1} exceeds " +
+                        "MAX_FRAME_BYTES=$DEFAULT_MAX_FRAME_BYTES",
                 category = AgentErrorCategory.PayloadTooLarge.wireName,
             )
         val bytes = WireCodec.encode(OpResponse(opId = 1L, body = err))
         assertTrue(
-            bytes.size < MAX_FRAME_BYTES,
+            bytes.size < DEFAULT_MAX_FRAME_BYTES,
             "taxonomy error itself must always fit under the frame cap (${bytes.size})",
         )
+    }
+
+    private companion object {
+        /** Small enough to keep the oversized-payload array cheap, large enough to frame. */
+        const val TEST_FRAME_BUDGET_BYTES: Int = 256 * 1024
     }
 
     private fun awaitSocket(path: Path, timeoutMs: Long = 5_000) {

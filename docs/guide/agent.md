@@ -390,17 +390,74 @@ window+screen rects.
 
 ### Payload limits (#204)
 
-Each IPC frame is length-prefixed and hard-capped at **16 MiB** (`MAX_FRAME_BYTES`). This is a
-**fail-closed** policy:
+Each IPC frame is length-prefixed, with **two** separate bounds:
 
-- Responses that encode larger than the cap (e.g. a huge screenshot) are **not** truncated or
-  spilled to disk by the agent transport. The runtime replies with `error` category
-  **`payloadTooLarge`** and a message that includes the sizes.
+| Bound | Value | Applies to |
+|---|---|---|
+| Write budget | **64 MiB** default (`DEFAULT_MAX_FRAME_BYTES`), configurable | the payload a process will send |
+| Read ceiling | **512 MiB** fixed (`MAX_FRAME_BYTES_CEILING`) | the length a process will accept from a header |
+
+They are deliberately different. The read ceiling exists because `readFrame` allocates the payload
+buffer from a length it has not yet validated, so it bounds what a corrupt or desynchronised header
+can make a reader allocate. Keeping it fixed and well above the write budget means two endpoints on
+different budgets can never strand a response: a reader always accepts what any legitimately
+configured writer sends.
+
+The write budget is sized for the bulkiest payload, screenshots, in their worst case. PNG can only
+approach raw bytes-per-pixel on incompressible content, so a 3840x2160 desktop tops out near 25 MB
+of 24-bit sRGB; 64 MiB clears that with room for a dual-4K desktop.
+
+#### Raising the budget
+
+Larger multi-monitor HiDPI rigs (dual-5K and up) can exceed the default. Raise it with either:
+
+```shell
+export SPECTRE_MAX_FRAME_BYTES=256MiB   # bytes, or a binary suffix: 512, 128k, 64M, 64MiB, 1G
+spectre --max-frame-bytes 256MiB capture <session-id>
+```
+
+The flag overrides the environment variable. Both accept up to the 512 MiB read ceiling.
+
+Propagation matters, because three processes are involved:
+
+- The **CLI** applies the value to itself.
+- A **daemon this invocation starts** inherits it on its command line. A daemon that is *already
+  running* keeps the budget it booted with — restart it (`spectre daemon stop`) to change it.
+- The **injected agent** cannot read the daemon's environment, and it is the process that writes
+  the bulky screenshot frames, so the daemon forwards its resolved budget in `agentArgs` (see
+  below). It applies before the agent's IPC server accepts a request.
+
+Because readers are permissive up to the ceiling, a partial rollout (say, a raised CLI against an
+older daemon) degrades to the lower of the two budgets rather than breaking.
+
+#### Over-budget behaviour
+
+Exceeding the write budget is **fail-closed**:
+
+- Responses that encode larger than the budget are **not** truncated or spilled to disk by the
+  agent transport. The runtime replies with `error` category **`payloadTooLarge`** and a message
+  that includes the sizes.
 - The connection stays open; subsequent ops on the same session continue normally.
 - Parity CI can rely on deterministic taxonomy behaviour instead of size-threshold flakes.
 
+The one exception is the **fullscreen still**, whose size nothing bounds: rather than failing, it
+falls back to logical resolution. See
+[Atomic capture — Pixel scale](capture.md#pixel-scale).
+
 Spill-to-file for large captures remains a higher-level concern (capture directories / daemon
 shared FS from #181); the wire layer does not invent a second path for oversized frames.
+
+#### `agentArgs` format
+
+`-javaagent:spectre-agent-runtime.jar=<agentArgs>` accepts two forms:
+
+| Form | Example | Used by |
+|---|---|---|
+| Bare UDS path | `/tmp/sp-a-123-abcd/agent.sock` | hand-written `-javaagent:` lines; still supported |
+| Structured | `uds=/tmp/sp-a-123-abcd/agent.sock,maxFrameBytes=268435456` | the daemon, when it has a non-default budget to pass |
+
+The structured form is recognised by the `uds=` prefix. Unknown keys and unparseable values are
+ignored rather than failing the attach, so a newer daemon can still drive an older runtime.
 
 HTTP maps `payloadTooLarge` → **413 Payload Too Large**.
 

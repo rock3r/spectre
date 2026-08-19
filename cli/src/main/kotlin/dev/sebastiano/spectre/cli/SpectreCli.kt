@@ -7,6 +7,7 @@ import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.clikt.core.parse
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.parameters.arguments.argument
+import com.github.ajalt.clikt.parameters.options.convert
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
@@ -14,6 +15,7 @@ import com.github.ajalt.clikt.parameters.types.int
 import com.github.ajalt.clikt.parameters.types.long
 import com.github.ajalt.clikt.parameters.types.path
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.transport.FrameLimits
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import dev.sebastiano.spectre.cli.daemon.CaptureSessionReport
@@ -168,7 +170,37 @@ private class RootCommand(
         )
     }
 
-    override fun run(): Unit = Unit
+    /**
+     * IPC frame write budget for this invocation, and for the daemon if this invocation starts it.
+     *
+     * A daemon that is already running keeps the budget it booted with — restart it (`spectre
+     * daemon stop`) to change it. Raising the budget on one hop is never harmful on its own:
+     * readers accept frames up to a fixed ceiling regardless of their own budget.
+     */
+    private val maxFrameBytes: Int? by
+        option(
+                "--max-frame-bytes",
+                help =
+                    "Largest IPC frame payload, e.g. 64MiB (default) or 256MiB. Raise it for " +
+                        "multi-monitor HiDPI fullscreen screenshots. Overrides " +
+                        "\$SPECTRE_MAX_FRAME_BYTES; applies to a daemon this command starts.",
+            )
+            .convert { raw ->
+                FrameLimits.parseMaxFrameBytes(raw)
+                    ?: throw CliktError(
+                        "--max-frame-bytes must be a positive size (e.g. 64MiB), got '$raw'"
+                    )
+            }
+
+    override fun run() {
+        maxFrameBytes?.let { budget ->
+            try {
+                FrameLimits.configure(budget)
+            } catch (exception: IllegalArgumentException) {
+                throw CliktError(exception.message ?: "invalid --max-frame-bytes", exception)
+            }
+        }
+    }
 }
 
 private class McpCommand(private val request: (DaemonRequest) -> DaemonResponse) :

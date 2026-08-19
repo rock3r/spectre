@@ -84,23 +84,42 @@ class FramingTest {
     }
 
     @Test
-    fun `readFrame throws IllegalStateException on length above MAX_FRAME_BYTES`() {
-        // 32 MiB > 16 MiB cap.
-        val tooBig = ByteArrayInputStream(byteArrayOf(0x02, 0, 0, 0))
+    fun `readFrame throws IllegalStateException on length above the read ceiling`() {
+        // 0x40000000 = 1 GiB > the 512 MiB ceiling.
+        val tooBig = ByteArrayInputStream(byteArrayOf(0x40, 0, 0, 0))
         assertFailsWith<IllegalStateException> { Framing.readFrame(tooBig) }
     }
 
     @Test
-    fun `writeFrame throws when payload exceeds MAX_FRAME_BYTES`() {
-        val oversized = ByteArray(MAX_FRAME_BYTES + 1)
-        assertFailsWith<IllegalArgumentException> {
-            Framing.writeFrame(ByteArrayOutputStream(), oversized)
+    fun `readFrame accepts a length above this process's write budget`() {
+        // Readers must not reject what a peer on a larger budget legitimately sent; the header
+        // below claims 1 MiB against a 64 KiB write budget, so only the payload read should fail.
+        val restore = FrameLimits.maxFrameBytes
+        FrameLimits.configure(64 * 1024)
+        try {
+            val header = ByteArrayInputStream(byteArrayOf(0x00, 0x10, 0x00, 0x00))
+            assertFailsWith<java.io.EOFException> { Framing.readFrame(header) }
+        } finally {
+            FrameLimits.configure(restore)
         }
     }
 
     @Test
-    fun `roundtrip handles a payload exactly at MAX_FRAME_BYTES`() {
-        // Smaller test version: 1 MiB. We don't want a 16 MiB allocation per test run for
+    fun `writeFrame throws when payload exceeds the configured budget`() {
+        val restore = FrameLimits.maxFrameBytes
+        FrameLimits.configure(1024)
+        try {
+            assertFailsWith<IllegalArgumentException> {
+                Framing.writeFrame(ByteArrayOutputStream(), ByteArray(1025))
+            }
+        } finally {
+            FrameLimits.configure(restore)
+        }
+    }
+
+    @Test
+    fun `roundtrip handles a large payload well under the budget`() {
+        // Smaller test version: 1 MiB. We don't want a full-budget allocation per test run for
         // CI hygiene; the boundary logic is identical at any size below the cap.
         val payload = ByteArray(1 shl 20) { (it % 256).toByte() }
         val buffer = ByteArrayOutputStream()

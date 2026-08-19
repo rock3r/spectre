@@ -106,15 +106,17 @@ the JUnit failure artifacts below.
 !!! note "Oversized fullscreen stills degrade instead of failing"
 
     `spectre screenshot --fullscreen` is the one still whose size nothing bounds — a multi-monitor
-    HiDPI desktop can encode past the attach transport's 16 MiB frame limit. When the screen-pixel
-    PNG would not fit, Spectre falls back to a **logical**-resolution desktop still rather than
-    failing the command. Compare the PNG size against your desktop's logical bounds if you need to
-    know which one you got.
+    HiDPI desktop can encode past the attach transport's frame budget (64 MiB by default, which
+    holds a worst-case 4K desktop). When the screen-pixel PNG would not fit, Spectre falls back to
+    a **logical**-resolution desktop still rather than failing the command. Compare the PNG size
+    against your desktop's logical bounds if you need to know which one you got, and raise
+    `--max-frame-bytes` / `$SPECTRE_MAX_FRAME_BYTES` to get the full-resolution still — see
+    [Agent — Payload limits](agent.md#payload-limits-204).
 
-    Window-scoped stills are bounded by the window, so they effectively never hit the limit. A
+    Window-scoped stills are bounded by the window, so they effectively never hit the budget. A
     `capture` of an extremely large window on a high-density display is the exception: it fails
     loudly with a `payloadTooLarge` error rather than downgrading, because `capture.json` records
-    the PNG's exact size and must keep agreeing with it.
+    the PNG's exact size and must keep agreeing with it. Raise the budget and retry.
 
 The one deliberate exception is in-process `ComposeAutomator.screenshot(region)`, which stays
 **logical**-sized so image coordinates equal screen coordinates — that 1:1 mapping is what makes it
