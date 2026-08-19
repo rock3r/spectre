@@ -184,12 +184,14 @@ public constructor(
                 val input = Channels.newInputStream(channel)
                 val output = Channels.newOutputStream(channel)
                 var handshakeComplete = false
+                var handshakeVersion: DaemonProtocolVersion? = null
                 while (running.get()) {
                     val request = DaemonWireCodec.readRequest(input) ?: return
                     synchronized(activityLock) { lastActivityNanos = System.nanoTime() }
-                    val response = handleRequest(request, handshakeComplete)
+                    val response = handleRequest(request, handshakeComplete, handshakeVersion)
                     if (request is DaemonRequest.Hello) {
                         handshakeComplete = response is DaemonResponse.Hello
+                        handshakeVersion = request.clientVersion.takeIf { handshakeComplete }
                     }
                     val isShutdown = request is DaemonRequest.Shutdown && handshakeComplete
                     if (isShutdown) {
@@ -209,7 +211,11 @@ public constructor(
         }
     }
 
-    private fun handleRequest(request: DaemonRequest, handshakeComplete: Boolean): DaemonResponse =
+    private fun handleRequest(
+        request: DaemonRequest,
+        handshakeComplete: Boolean,
+        handshakeVersion: DaemonProtocolVersion?,
+    ): DaemonResponse =
         when (request) {
             is DaemonRequest.Hello ->
                 when (
@@ -224,6 +230,26 @@ public constructor(
                             code = DaemonErrorCode.ProtocolError,
                             message = "incompatible daemon protocol version",
                         )
+                }
+            is DaemonRequest.Screenshot ->
+                if (!handshakeComplete) {
+                    DaemonResponse.Error(
+                        code = DaemonErrorCode.ProtocolError,
+                        message = "send a compatible Hello request before session commands",
+                    )
+                } else if (
+                    handshakeVersion != null &&
+                        DaemonProtocol.clientPredatesBinaryPayloads(handshakeVersion)
+                ) {
+                    DaemonResponse.Error(
+                        code = DaemonErrorCode.ProtocolError,
+                        message =
+                            "This Spectre client is too old for the running daemon: screenshot " +
+                                "PNG bytes are sent in a format it cannot decode. Upgrade the " +
+                                "client, or run `spectre daemon kill` and retry with it.",
+                    )
+                } else {
+                    registry.handle(request)
                 }
             else ->
                 if (handshakeComplete) registry.handle(request)

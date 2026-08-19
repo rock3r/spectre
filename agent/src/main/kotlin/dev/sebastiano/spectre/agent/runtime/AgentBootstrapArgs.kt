@@ -17,8 +17,12 @@ import dev.sebastiano.spectre.agent.transport.FrameLimits
  * The structured form is recognised by the `uds=` prefix, which a UDS path never starts with.
  * Values are percent-escaped, so a caller-supplied UDS path containing `,` or `=` survives the
  * round trip instead of truncating and leaving the target bound to a different socket. Unknown keys
- * and unparseable values are ignored rather than failing the attach — a newer daemon injecting an
- * older runtime should still get a working session, just without the newer knob.
+ * and unparseable values are ignored rather than failing the attach, so a runtime that understands
+ * this format but not a newer key still gets a working session. That tolerance does not extend to a
+ * runtime predating the format itself: it would read the whole string as a socket path and bind the
+ * wrong one. Pairing a mismatched runtime JAR is only reachable through
+ * `AttachOptions.agentJarPath` or the runtime-jar system property, and the agent protocol's
+ * exact-match handshake rejects the pairing once it binds.
  */
 @ExperimentalSpectreAgentApi
 public object AgentBootstrapArgs {

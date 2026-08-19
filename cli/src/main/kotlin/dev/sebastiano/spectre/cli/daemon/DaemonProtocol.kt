@@ -29,6 +29,24 @@ public object DaemonProtocol {
             else -> VersionCompatibility.Compatible
         }
 
+    /**
+     * True when [handshake] predates the byte-string payload encoding.
+     *
+     * Newer daemons otherwise serve older clients happily, and that still holds for every op whose
+     * response carries no bulk bytes. `Screenshot` is the exception: from
+     * [SCREEN_PIXEL_STILLS_INTRODUCED_MINOR] on, `pngBytes` goes out as a CBOR byte string, which a
+     * client built earlier decodes as an integer array.
+     *
+     * The check is per request rather than at the handshake because `DaemonRequest.Hello` carries
+     * the *minimum* version the pending request needs, not the client's build: a current CLI
+     * running `ps` legitimately announces 1.3. A current CLI issuing a screenshot announces 1.12,
+     * because [minimumDaemonVersion] floors that op there — so an announcement below the floor on a
+     * screenshot is exactly an old client.
+     */
+    internal fun clientPredatesBinaryPayloads(handshake: DaemonProtocolVersion): Boolean =
+        handshake.major == CurrentVersion.major &&
+            handshake.minor < SCREEN_PIXEL_STILLS_INTRODUCED_MINOR
+
     internal fun minimumDaemonVersion(request: DaemonRequest): DaemonProtocolVersion =
         when (request) {
             is DaemonRequest.Hello -> versionFor(MINIMUM_PROTOCOL_MINOR)
@@ -105,7 +123,7 @@ public object DaemonProtocol {
      * the old 16 MiB budget, and the upgrade would silently do nothing. Requiring 1.12 turns that
      * into the existing "daemon protocol is too old, run `spectre daemon kill`" error instead.
      */
-    private const val SCREEN_PIXEL_STILLS_INTRODUCED_MINOR: Int = 12
+    internal const val SCREEN_PIXEL_STILLS_INTRODUCED_MINOR: Int = 12
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)

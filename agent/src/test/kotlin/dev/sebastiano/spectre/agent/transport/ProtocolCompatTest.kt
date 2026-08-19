@@ -24,6 +24,16 @@ import org.junit.jupiter.api.condition.OS
  */
 @EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)
 class ProtocolCompatTest {
+
+    @Test
+    fun `the byte-string payload encoding has its own protocol revision`() {
+        // AttachOptions.agentJarPath and the runtime-jar system property let a caller pair this
+        // library with a runtime built on either side of the @ByteString change. Both would
+        // otherwise advertise the same version, pass the exact-match handshake, and only fail when
+        // a screenshot came back in the encoding the peer does not speak.
+        assertEquals(3, ProtocolVersion.CURRENT, "bump this when the wire representation changes")
+    }
+
     private val udsPath: Path =
         udsBase().resolve("sp-pc-${UUID.randomUUID().toString().take(8)}.sock")
 
