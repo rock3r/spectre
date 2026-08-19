@@ -14,15 +14,16 @@ import dev.sebastiano.spectre.agent.transport.FrameLimits
  *   to arrive here — including when that budget is the default, since the target may carry a
  *   `SPECTRE_MAX_FRAME_BYTES` of its own that must not silently win.
  *
- * The structured form is recognised by the `uds=` prefix, which a UDS path never starts with.
- * Values are percent-escaped, so a caller-supplied UDS path containing `,` or `=` survives the
- * round trip instead of truncating and leaving the target bound to a different socket. Unknown keys
- * and unparseable values are ignored rather than failing the attach, so a runtime that understands
- * this format but not a newer key still gets a working session. That tolerance does not extend to a
- * runtime predating the format itself: it would read the whole string as a socket path and bind the
- * wrong one. Pairing a mismatched runtime JAR is only reachable through
- * `AttachOptions.agentJarPath` or the runtime-jar system property, and the agent protocol's
- * exact-match handshake rejects the pairing once it binds.
+ * The structured form is recognised by a `uds=` prefix *and* at least one further `,`-separated
+ * field, which everything [render] emits carries. A bare path is only misread if it both starts
+ * with `uds=` and contains a comma. Values are percent-escaped, so a caller-supplied UDS path
+ * containing `,` or `=` survives the round trip instead of truncating and leaving the target bound
+ * to a different socket. Unknown keys and unparseable values are ignored rather than failing the
+ * attach, so a runtime that understands this format but not a newer key still gets a working
+ * session. That tolerance does not extend to a runtime predating the format itself: it would read
+ * the whole string as a socket path and bind the wrong one. Pairing a mismatched runtime JAR is
+ * only reachable through `AttachOptions.agentJarPath` or the runtime-jar system property, and the
+ * agent protocol's exact-match handshake rejects the pairing once it binds.
  */
 @ExperimentalSpectreAgentApi
 public object AgentBootstrapArgs {
@@ -33,7 +34,12 @@ public object AgentBootstrapArgs {
     /** Parses [agentArgs]; a null/blank string means diagnostic mode (no UDS, no IPC server). */
     public fun parse(agentArgs: String?): Parsed {
         val text = agentArgs?.trim()?.takeIf { it.isNotEmpty() } ?: return Parsed(null, null)
-        if (!text.startsWith(STRUCTURED_PREFIX)) return Parsed(text, null)
+        // Prefix *and* a separator: `uds=agent.sock` is a legal relative path, and everything
+        // render() emits carries at least one more field, so requiring both keeps that path bare
+        // instead of silently binding `agent.sock` while the attacher waits on `uds=agent.sock`.
+        if (!text.startsWith(STRUCTURED_PREFIX) || !text.contains(SEPARATOR)) {
+            return Parsed(text, null)
+        }
         val entries =
             text.split(SEPARATOR).mapNotNull { entry ->
                 val key = entry.substringBefore(KEY_VALUE, missingDelimiterValue = "")

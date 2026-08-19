@@ -484,8 +484,10 @@ shared FS from #181); the wire layer does not invent a second path for oversized
 | Bare UDS path | `/tmp/sp-a-123-abcd/agent.sock` | hand-written `-javaagent:` lines; still **accepted** |
 | Structured | `uds=/tmp/sp-a-123-abcd/agent.sock,maxFrameBytes=268435456` | everything Spectre **emits** |
 
-The structured form is recognised by the `uds=` prefix. Values are percent-escaped, so a
-caller-supplied UDS path containing `,` or `=` survives the round trip instead of truncating.
+The structured form is recognised by a `uds=` prefix *and* at least one further `,`-separated
+field, so a hand-written bare path that happens to start with `uds=` is still read as a path.
+Values are percent-escaped, so a caller-supplied UDS path containing `,` or `=` survives the round
+trip instead of truncating.
 Unknown keys and unparseable values are ignored rather than failing the attach, so a newer daemon
 can still drive an older runtime.
 

@@ -29,6 +29,16 @@ class AgentBootstrapArgsTest {
     }
 
     @Test
+    fun `a bare relative path that starts with uds= is not mistaken for structured args`() {
+        // Both are legal POSIX names. Everything Spectre renders carries at least one more field,
+        // so requiring the separator keeps the pathological bare path working.
+        val parsed = AgentBootstrapArgs.parse("uds=agent.sock")
+
+        assertEquals("uds=agent.sock", parsed.udsPath)
+        assertNull(parsed.maxFrameBytes)
+    }
+
+    @Test
     fun `structured args carry the uds path and the frame budget`() {
         val parsed = AgentBootstrapArgs.parse("uds=/tmp/sp-a-1/agent.sock,maxFrameBytes=134217728")
 
@@ -38,7 +48,7 @@ class AgentBootstrapArgsTest {
 
     @Test
     fun `structured args tolerate a missing budget`() {
-        val parsed = AgentBootstrapArgs.parse("uds=/tmp/sp-a-1/agent.sock")
+        val parsed = AgentBootstrapArgs.parse("uds=/tmp/sp-a-1/agent.sock,futureKnob=7")
 
         assertEquals("/tmp/sp-a-1/agent.sock", parsed.udsPath)
         assertNull(parsed.maxFrameBytes)
