@@ -74,6 +74,52 @@ class FrameLimitsTest {
     }
 
     @Test
+    fun `nothing is requested until something asks`() {
+        val restore = FrameLimits.maxFrameBytes
+        try {
+            FrameLimits.resetToEnvironment()
+            assertNull(
+                FrameLimits.requestedMaxFrameBytes,
+                "an unset environment must not look like an explicit request",
+            )
+            assertEquals(DEFAULT_MAX_FRAME_BYTES, FrameLimits.maxFrameBytes)
+        } finally {
+            FrameLimits.configure(restore)
+        }
+    }
+
+    @Test
+    fun `a request equal to the default is still a request`() {
+        val restore = FrameLimits.maxFrameBytes
+        try {
+            FrameLimits.configure(DEFAULT_MAX_FRAME_BYTES)
+            assertEquals(
+                DEFAULT_MAX_FRAME_BYTES,
+                FrameLimits.requestedMaxFrameBytes,
+                "intent must not be inferred from the value matching the default",
+            )
+        } finally {
+            FrameLimits.configure(restore)
+        }
+    }
+
+    @Test
+    fun `an environment override counts as a request`() {
+        assertEquals(
+            32 * 1024 * 1024,
+            FrameLimits.resolveRequest { name ->
+                if (name == FrameLimits.ENV_VAR) "32MiB" else null
+            },
+        )
+        assertNull(FrameLimits.resolveRequest { null })
+        assertNull(
+            FrameLimits.resolveRequest { name ->
+                if (name == FrameLimits.ENV_VAR) "banana" else null
+            }
+        )
+    }
+
+    @Test
     fun `configure applies and restores a budget`() {
         val original = FrameLimits.maxFrameBytes
         try {

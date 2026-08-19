@@ -1,7 +1,6 @@
 package dev.sebastiano.spectre.cli.daemon
 
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
-import dev.sebastiano.spectre.agent.transport.DEFAULT_MAX_FRAME_BYTES
 import dev.sebastiano.spectre.agent.transport.FrameLimits
 import java.io.EOFException
 import java.io.IOException
@@ -80,7 +79,7 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
                     )
                 }
                 frameBudgetMismatchFailure(
-                        requested = FrameLimits.maxFrameBytes,
+                        requested = FrameLimits.requestedMaxFrameBytes,
                         daemonBudget = response.maxFrameBytes,
                     )
                     ?.let { throw IOException(it) }
@@ -113,14 +112,16 @@ internal class DaemonConnectionClosedException(cause: Throwable? = null) :
  * on a later invocation would otherwise apply to the CLI alone while the two hops that actually
  * carry a screenshot — target to daemon, daemon to CLI — stayed on the old value.
  *
- * Only an explicit request is worth failing over. A client left on [DEFAULT_MAX_FRAME_BYTES] asked
- * for nothing, and readers accept frames up to the fixed ceiling whatever their own budget, so a
- * daemon running something larger is harmless. A daemon too old to report its budget cannot have
- * been started with the requested one, so it is refused the same way rather than assumed.
+ * Only an explicit request is worth failing over, which is why [requested] is nullable rather than
+ * compared against [DEFAULT_MAX_FRAME_BYTES]: a client that asked for nothing is happy with any
+ * daemon, since readers accept frames up to the fixed ceiling whatever their own budget, while a
+ * client that explicitly asked for the default-sized budget is still asking. A daemon too old to
+ * report its budget cannot have been started with the requested one, so it is refused the same way
+ * rather than assumed.
  */
 @OptIn(ExperimentalSpectreAgentApi::class)
-internal fun frameBudgetMismatchFailure(requested: Int, daemonBudget: Int?): String? {
-    if (requested == DEFAULT_MAX_FRAME_BYTES) return null
+internal fun frameBudgetMismatchFailure(requested: Int?, daemonBudget: Int?): String? {
+    if (requested == null) return null
     if (daemonBudget == requested) return null
     val running =
         if (daemonBudget == null) "a version that predates the setting"

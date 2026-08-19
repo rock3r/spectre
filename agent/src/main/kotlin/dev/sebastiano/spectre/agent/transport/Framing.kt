@@ -59,14 +59,27 @@ public object FrameLimits {
     /** Environment variable that overrides [DEFAULT_MAX_FRAME_BYTES]. */
     public const val ENV_VAR: String = "SPECTRE_MAX_FRAME_BYTES"
 
-    @Volatile private var budget: Int = resolveBudget(System::getenv)
+    @Volatile private var request: Int? = resolveRequest(System::getenv)
+    @Volatile private var budget: Int = request ?: DEFAULT_MAX_FRAME_BYTES
 
     /** Largest payload this process will write into a single frame. */
     public val maxFrameBytes: Int
         get() = budget
 
     /**
-     * Overrides the write budget for this process.
+     * The budget this process was explicitly asked for, or `null` when nothing asked.
+     *
+     * Distinct from [maxFrameBytes] on purpose: an explicit request that happens to equal
+     * [DEFAULT_MAX_FRAME_BYTES] is still a request, and callers that propagate or validate the
+     * setting must not infer intent from the value. Asking for 64MiB while a daemon runs 128MiB is
+     * a real conflict, and a spawned process must be told 64MiB rather than left to re-read an
+     * environment that says otherwise.
+     */
+    public val requestedMaxFrameBytes: Int?
+        get() = request
+
+    /**
+     * Overrides the write budget for this process, and records it as an explicit request.
      *
      * @throws IllegalArgumentException if [bytes] is not positive or exceeds
      *   [MAX_FRAME_BYTES_CEILING], since a reader would refuse the frames it produced.
@@ -78,6 +91,13 @@ public object FrameLimits {
                 "readers would refuse frames that large"
         }
         budget = bytes
+        request = bytes
+    }
+
+    /** Drops any [configure] call and re-resolves from the environment, as at process start. */
+    public fun resetToEnvironment() {
+        request = resolveRequest(System::getenv)
+        budget = request ?: DEFAULT_MAX_FRAME_BYTES
     }
 
     /**
@@ -85,10 +105,12 @@ public object FrameLimits {
      * value falls back to [DEFAULT_MAX_FRAME_BYTES] rather than failing process startup: a bad
      * tuning knob should not stop the daemon from booting.
      */
-    public fun resolveBudget(getenv: (String) -> String?): Int {
-        val parsed = parseMaxFrameBytes(getenv(ENV_VAR)) ?: return DEFAULT_MAX_FRAME_BYTES
-        return parsed.coerceAtMost(MAX_FRAME_BYTES_CEILING)
-    }
+    public fun resolveBudget(getenv: (String) -> String?): Int =
+        resolveRequest(getenv) ?: DEFAULT_MAX_FRAME_BYTES
+
+    /** The explicitly requested budget from [getenv], or `null` when the variable asks nothing. */
+    public fun resolveRequest(getenv: (String) -> String?): Int? =
+        parseMaxFrameBytes(getenv(ENV_VAR))?.coerceAtMost(MAX_FRAME_BYTES_CEILING)
 
     /**
      * Parses a byte count with an optional binary suffix (`512`, `128k`, `64M`, `64MiB`, `1G`).

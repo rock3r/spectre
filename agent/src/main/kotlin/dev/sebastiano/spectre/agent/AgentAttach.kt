@@ -1,7 +1,6 @@
 package dev.sebastiano.spectre.agent
 
 import dev.sebastiano.spectre.agent.runtime.AgentBootstrapArgs
-import dev.sebastiano.spectre.agent.transport.DEFAULT_MAX_FRAME_BYTES
 import dev.sebastiano.spectre.agent.transport.FrameLimits
 import dev.sebastiano.spectre.agent.transport.IpcClient
 import java.io.IOException
@@ -31,16 +30,16 @@ public object AgentAttach {
     /**
      * Builds the `agentArgs` string for [pid]'s injected runtime.
      *
-     * Stays on the bare-UDS-path form while this process runs the default frame budget, so an older
-     * agent runtime keeps parsing it; only a configured budget triggers the structured form.
+     * Always carries the budget, including the default one. The target may have been launched with
+     * a `SPECTRE_MAX_FRAME_BYTES` of its own, and letting that win would leave the daemon and the
+     * JVM it injected disagreeing about the hop between them — a 16MiB target under a 64MiB daemon
+     * would fail captures the daemon could carry.
      */
-    private fun agentArgsFor(options: AttachOptions, udsPath: Path): String {
-        val budget = options.maxFrameBytes ?: FrameLimits.maxFrameBytes
-        return AgentBootstrapArgs.render(
+    private fun agentArgsFor(options: AttachOptions, udsPath: Path): String =
+        AgentBootstrapArgs.render(
             udsPath = udsPath.toString(),
-            maxFrameBytes = budget.takeIf { it != DEFAULT_MAX_FRAME_BYTES },
+            maxFrameBytes = options.maxFrameBytes ?: FrameLimits.maxFrameBytes,
         )
-    }
 
     /** Attach to the JVM identified by [pid] and return a connected [AttachedAutomator]. */
     @Throws(SpectreAttachException::class)

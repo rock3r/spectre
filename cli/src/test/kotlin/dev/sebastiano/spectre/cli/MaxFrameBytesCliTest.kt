@@ -5,6 +5,7 @@ import dev.sebastiano.spectre.agent.transport.FrameLimits
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -17,7 +18,7 @@ class MaxFrameBytesCliTest {
 
     private val original = FrameLimits.maxFrameBytes
 
-    @AfterTest fun restore() = FrameLimits.configure(original)
+    @AfterTest fun restore() = FrameLimits.resetToEnvironment()
 
     @Test
     fun `applies the budget before the command runs`() {
@@ -59,6 +60,10 @@ class MaxFrameBytesCliTest {
             "error should name the offending option: $err",
         )
         assertEquals(original, FrameLimits.maxFrameBytes, "a rejected value must not be applied")
+        assertNull(
+            FrameLimits.requestedMaxFrameBytes,
+            "a rejected value must not count as a request",
+        )
     }
 
     @Test

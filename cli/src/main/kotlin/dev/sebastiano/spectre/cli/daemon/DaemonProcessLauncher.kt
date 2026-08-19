@@ -1,7 +1,6 @@
 package dev.sebastiano.spectre.cli.daemon
 
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
-import dev.sebastiano.spectre.agent.transport.DEFAULT_MAX_FRAME_BYTES
 import dev.sebastiano.spectre.agent.transport.FrameLimits
 import java.io.IOException
 import java.nio.file.Files
@@ -60,11 +59,13 @@ public class DaemonProcessLauncher(
         add(DAEMON_MAIN_CLASS)
         add("--socket")
         add(socketPath.toString())
-        // Only pin the budget when this process is running a non-default one, so an ordinary
-        // daemon keeps inheriting whatever the shipped default becomes.
-        if (FrameLimits.maxFrameBytes != DEFAULT_MAX_FRAME_BYTES) {
+        // Pin the budget whenever one was explicitly asked for, even if it equals the default:
+        // the daemon inherits this process's environment, so `--max-frame-bytes 64MiB` over a
+        // `SPECTRE_MAX_FRAME_BYTES=128MiB` would otherwise boot the daemon on 128MiB. With no
+        // explicit request the daemon resolves the same environment and lands on the same value.
+        FrameLimits.requestedMaxFrameBytes?.let { budget ->
             add("--max-frame-bytes")
-            add(FrameLimits.maxFrameBytes.toString())
+            add(budget.toString())
         }
     }
 

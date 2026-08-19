@@ -432,10 +432,12 @@ Propagation matters, because three processes are involved:
   injects.
   ```
 
-  Only an explicit request is refused. Leaving the budget at its default asks for nothing, so a
-  daemon running something larger is accepted silently — readers take frames up to the ceiling
-  whatever their own budget. A daemon too old to report its budget cannot have been started with
-  the requested one, so it is refused the same way rather than assumed compatible.
+  Only an explicit request is refused, and *explicit* means the option or the variable was
+  present — not that its value differs from the default. Asking for `64MiB` against a `128MiB`
+  daemon is a conflict like any other. Leaving the budget alone asks for nothing, so a daemon
+  running something larger is accepted silently: readers take frames up to the ceiling whatever
+  their own budget. A daemon too old to report its budget cannot have been started with the
+  requested one, so it is refused the same way rather than assumed compatible.
 - The **injected agent** cannot read the daemon's environment, and it is the process that writes
   the bulky screenshot frames, so the daemon forwards its resolved budget in `agentArgs` (see
   below). It applies before the agent's IPC server accepts a request.
@@ -466,11 +468,18 @@ shared FS from #181); the wire layer does not invent a second path for oversized
 
 | Form | Example | Used by |
 |---|---|---|
-| Bare UDS path | `/tmp/sp-a-123-abcd/agent.sock` | hand-written `-javaagent:` lines; still supported |
-| Structured | `uds=/tmp/sp-a-123-abcd/agent.sock,maxFrameBytes=268435456` | the daemon, when it has a non-default budget to pass |
+| Bare UDS path | `/tmp/sp-a-123-abcd/agent.sock` | hand-written `-javaagent:` lines; still **accepted** |
+| Structured | `uds=/tmp/sp-a-123-abcd/agent.sock,maxFrameBytes=268435456` | everything Spectre **emits** |
 
-The structured form is recognised by the `uds=` prefix. Unknown keys and unparseable values are
-ignored rather than failing the attach, so a newer daemon can still drive an older runtime.
+The structured form is recognised by the `uds=` prefix. Values are percent-escaped, so a
+caller-supplied UDS path containing `,` or `=` survives the round trip instead of truncating.
+Unknown keys and unparseable values are ignored rather than failing the attach, so a newer daemon
+can still drive an older runtime.
+
+Spectre always emits the budget, **including the default one**. The target may have been launched
+with a `SPECTRE_MAX_FRAME_BYTES` of its own, and letting that win would leave the daemon and the
+JVM it injected disagreeing about the hop between them — a 16MiB target under a 64MiB daemon would
+fail captures the daemon could carry.
 
 HTTP maps `payloadTooLarge` → **413 Payload Too Large**.
 

@@ -49,19 +49,23 @@ class DaemonFrameBudgetTest {
     }
 
     @Test
-    fun `launcher omits the budget option when the default is in effect`() {
-        val command = DaemonProcessLauncher(Path.of("/tmp/spectre.sock")).command()
+    fun `launcher omits the budget option when nothing was asked for`() {
+        try {
+            FrameLimits.resetToEnvironment()
+            val command = DaemonProcessLauncher(Path.of("/tmp/spectre.sock")).command()
 
-        assertTrue(command.contains("--socket"))
-        assertTrue(
-            !command.contains("--max-frame-bytes"),
-            "an unconfigured daemon should inherit the default, not pin it: $command",
-        )
+            assertTrue(command.contains("--socket"))
+            assertTrue(
+                !command.contains("--max-frame-bytes"),
+                "an unconfigured daemon resolves the same environment: $command",
+            )
+        } finally {
+            FrameLimits.resetToEnvironment()
+        }
     }
 
     @Test
     fun `launcher forwards a configured budget to the daemon process`() {
-        val original = FrameLimits.maxFrameBytes
         try {
             FrameLimits.configure(DEFAULT_MAX_FRAME_BYTES * 2)
             val command = DaemonProcessLauncher(Path.of("/tmp/spectre.sock")).command()
@@ -70,7 +74,23 @@ class DaemonFrameBudgetTest {
             assertTrue(index >= 0, "configured budget must reach the daemon: $command")
             assertEquals((DEFAULT_MAX_FRAME_BYTES * 2).toString(), command[index + 1])
         } finally {
-            FrameLimits.configure(original)
+            FrameLimits.resetToEnvironment()
+        }
+    }
+
+    @Test
+    fun `launcher forwards an explicit default-sized budget`() {
+        // The daemon inherits this process's environment, so `--max-frame-bytes 64MiB` layered
+        // over SPECTRE_MAX_FRAME_BYTES=128MiB must be pinned or the daemon re-reads 128MiB.
+        try {
+            FrameLimits.configure(DEFAULT_MAX_FRAME_BYTES)
+            val command = DaemonProcessLauncher(Path.of("/tmp/spectre.sock")).command()
+
+            val index = command.indexOf("--max-frame-bytes")
+            assertTrue(index >= 0, "an explicit default must still be pinned: $command")
+            assertEquals(DEFAULT_MAX_FRAME_BYTES.toString(), command[index + 1])
+        } finally {
+            FrameLimits.resetToEnvironment()
         }
     }
 }

@@ -25,13 +25,12 @@ import org.junit.jupiter.api.condition.OS
 class DaemonFrameBudgetE2eTest {
 
     private val socketPath: Path = temporarySocketPath()
-    private val original = FrameLimits.maxFrameBytes
     private var daemon: Process? = null
 
     @AfterTest
     fun cleanUp() {
         daemon?.destroyForcibly()?.waitFor()
-        FrameLimits.configure(original)
+        FrameLimits.resetToEnvironment()
         Files.deleteIfExists(socketPath)
         Files.deleteIfExists(socketPath.parent)
         Files.deleteIfExists(socketPath.parent.parent)
@@ -45,6 +44,20 @@ class DaemonFrameBudgetE2eTest {
                 DaemonResponse.Sessions(emptyList()),
                 startDaemonWith(client, BOOTED_BUDGET),
             )
+        }
+    }
+
+    @Test
+    fun `an explicit default-sized budget is checked against the daemon too`() {
+        DaemonClient(socketPath).use { client ->
+            startDaemonWith(client, BOOTED_BUDGET)
+
+            FrameLimits.configure(DEFAULT_MAX_FRAME_BYTES)
+            val failure =
+                runCatching { client.request(DaemonRequest.ListSessions) }.exceptionOrNull()
+                    ?: fail("an explicit request must be checked whatever its value")
+
+            assertTrue(failure.message.orEmpty().contains("64MiB"), failure.message.orEmpty())
         }
     }
 
@@ -72,7 +85,7 @@ class DaemonFrameBudgetE2eTest {
         DaemonClient(socketPath).use { client ->
             startDaemonWith(client, BOOTED_BUDGET)
 
-            FrameLimits.configure(DEFAULT_MAX_FRAME_BYTES)
+            FrameLimits.resetToEnvironment()
             assertEquals(
                 DaemonResponse.Sessions(emptyList()),
                 client.request(DaemonRequest.ListSessions),

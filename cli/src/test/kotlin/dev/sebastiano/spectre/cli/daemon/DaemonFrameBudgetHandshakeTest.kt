@@ -24,14 +24,33 @@ class DaemonFrameBudgetHandshakeTest {
     fun `an unconfigured client accepts whatever the daemon booted with`() {
         // Nothing was asked for, and readers accept frames up to the ceiling regardless of their
         // own budget, so a daemon on a larger budget is not a problem worth failing over.
+        assertNull(frameBudgetMismatchFailure(requested = null, daemonBudget = 256 * MIB))
+        assertNull(frameBudgetMismatchFailure(requested = null, daemonBudget = null))
+    }
+
+    @Test
+    fun `an explicit request for the default budget is still checked`() {
+        // Intent cannot be read off the value: asking for 64MiB against a 128MiB daemon is a
+        // conflict just like any other, and treating it as "unconfigured" would hide it.
+        val failure =
+            assertNotNull(
+                frameBudgetMismatchFailure(
+                    requested = DEFAULT_MAX_FRAME_BYTES,
+                    daemonBudget = 128 * MIB,
+                )
+            )
+
+        assertTrue(failure.contains("64MiB"), failure)
+        assertTrue(failure.contains("128MiB"), failure)
+    }
+
+    @Test
+    fun `an explicit request matching the daemon is accepted`() {
         assertNull(
             frameBudgetMismatchFailure(
                 requested = DEFAULT_MAX_FRAME_BYTES,
-                daemonBudget = 256 * MIB,
+                daemonBudget = DEFAULT_MAX_FRAME_BYTES,
             )
-        )
-        assertNull(
-            frameBudgetMismatchFailure(requested = DEFAULT_MAX_FRAME_BYTES, daemonBudget = null)
         )
     }
 
