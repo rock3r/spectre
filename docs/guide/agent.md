@@ -407,6 +407,12 @@ The write budget is sized for the bulkiest payload, screenshots, in their worst 
 approach raw bytes-per-pixel on incompressible content, so a 3840x2160 desktop tops out near 25 MB
 of 24-bit sRGB; 64 MiB clears that with room for a dual-4K desktop.
 
+That arithmetic only holds because bulk fields (`pngBytes`, `captureJsonUtf8`) are annotated
+`@ByteString` and therefore encode as CBOR byte strings. Without it kotlinx serializes each signed
+byte as its own integer, inflating the framed response to roughly **1.8x** the payload — which
+would silently invalidate every budget on this page, since they are all expressed against payload
+size. `WirePayloadEncodingTest` pins the encoding.
+
 #### Raising the budget
 
 Larger multi-monitor HiDPI rigs (dual-5K and up) can exceed the default. Raise it with either:

@@ -6,6 +6,7 @@ import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.cbor.ByteString
 import kotlinx.serialization.cbor.Cbor
 
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
@@ -358,8 +359,10 @@ public sealed interface DaemonResponse {
 
     @Serializable
     @SerialName("screenshot")
-    public data class Screenshot(public val sessionId: String, public val pngBytes: ByteArray) :
-        DaemonResponse {
+    public data class Screenshot(
+        public val sessionId: String,
+        @ByteString public val pngBytes: ByteArray,
+    ) : DaemonResponse {
         override fun equals(other: Any?): Boolean =
             other is Screenshot &&
                 sessionId == other.sessionId &&
