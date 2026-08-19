@@ -175,6 +175,7 @@ private class RootCommand(
      *
      * A daemon that is already running keeps the budget it booted with, so asking for a different
      * one is refused at the handshake rather than half-applied — see `frameBudgetMismatchFailure`.
+     * Scoped to one invocation: each `run` re-resolves from the environment before applying it.
      */
     private val maxFrameBytes: Int? by
         option(
@@ -194,6 +195,10 @@ private class RootCommand(
             }
 
     override fun run() {
+        // Re-resolve per invocation: SpectreCli.run can be called repeatedly in one process, and a
+        // --max-frame-bytes from an earlier call would otherwise leave this one silently requesting
+        // a budget it never asked for — enough to fail the daemon handshake or boot a daemon on it.
+        FrameLimits.resetToEnvironment()
         maxFrameBytes?.let { budget ->
             try {
                 FrameLimits.configure(budget)

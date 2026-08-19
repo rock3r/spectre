@@ -43,6 +43,28 @@ class MaxFrameBytesCliTest {
     }
 
     @Test
+    fun `each invocation resolves its own budget`() {
+        // SpectreCli.run is reusable, so a --max-frame-bytes from one call must not leave the
+        // next one silently requesting a budget it never asked for — which would then either fail
+        // the daemon handshake or boot a daemon on a value the user did not choose.
+        val budgets = mutableListOf<Int?>()
+        val cli =
+            SpectreCli(
+                request = {
+                    budgets += FrameLimits.requestedMaxFrameBytes
+                    error("stop after observing the budget")
+                },
+                output = StringBuilder(),
+                errorOutput = StringBuilder(),
+            )
+
+        runCatching { cli.run(listOf("--max-frame-bytes", "128MiB", "windows", "session-1")) }
+        runCatching { cli.run(listOf("windows", "session-1")) }
+
+        assertEquals(listOf<Int?>(128 * 1024 * 1024, null), budgets)
+    }
+
+    @Test
     fun `rejects a size it cannot parse instead of falling back`() {
         val err = StringBuilder()
         val cli =
