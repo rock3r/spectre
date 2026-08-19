@@ -15,15 +15,18 @@ import dev.sebastiano.spectre.agent.transport.FrameLimits
  *   `SPECTRE_MAX_FRAME_BYTES` of its own that must not silently win.
  *
  * The structured form is recognised by a `uds=` prefix *and* at least one further `,`-separated
- * field, which everything [render] emits carries. A bare path is only misread if it both starts
- * with `uds=` and contains a comma. Values are percent-escaped, so a caller-supplied UDS path
- * containing `,` or `=` survives the round trip instead of truncating and leaving the target bound
- * to a different socket. Unknown keys and unparseable values are ignored rather than failing the
- * attach, so a runtime that understands this format but not a newer key still gets a working
- * session. That tolerance does not extend to a runtime predating the format itself: it would read
- * the whole string as a socket path and bind the wrong one. Pairing a mismatched runtime JAR is
- * only reachable through `AttachOptions.agentJarPath` or the runtime-jar system property, and the
- * agent protocol's exact-match handshake rejects the pairing once it binds.
+ * field, which everything [render] emits carries. A bare path is therefore only misread if it both
+ * starts with `uds=` and contains a comma (`uds=agent,1.sock`). Every prefix-based discriminator
+ * has some such filename; this one is documented rather than chased, since Spectre only emits the
+ * structured form and the bare form exists for hand-written `-javaagent:` lines. Values are
+ * percent-escaped, so a caller-supplied UDS path containing `,` or `=` survives the round trip
+ * instead of truncating and leaving the target bound to a different socket. Unknown keys and
+ * unparseable values are ignored rather than failing the attach, so a runtime that understands this
+ * format but not a newer key still gets a working session. That tolerance does not extend to a
+ * runtime predating the format itself: it would read the whole string as a socket path and bind the
+ * wrong one. Pairing a mismatched runtime JAR is only reachable through
+ * `AttachOptions.agentJarPath` or the runtime-jar system property, and the agent protocol's
+ * exact-match handshake rejects the pairing once it binds.
  */
 @ExperimentalSpectreAgentApi
 public object AgentBootstrapArgs {

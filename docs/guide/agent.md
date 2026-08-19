@@ -485,11 +485,21 @@ shared FS from #181); the wire layer does not invent a second path for oversized
 | Structured | `uds=/tmp/sp-a-123-abcd/agent.sock,maxFrameBytes=268435456` | everything Spectre **emits** |
 
 The structured form is recognised by a `uds=` prefix *and* at least one further `,`-separated
-field, so a hand-written bare path that happens to start with `uds=` is still read as a path.
-Values are percent-escaped, so a caller-supplied UDS path containing `,` or `=` survives the round
-trip instead of truncating.
-Unknown keys and unparseable values are ignored rather than failing the attach, so a newer daemon
-can still drive an older runtime.
+field. Values Spectre emits are percent-escaped, so a UDS path containing `,` or `=` survives the
+round trip instead of truncating. The one shape that stays ambiguous is a **hand-written** bare
+path that both starts with `uds=` and contains a comma — `uds=agent,1.sock` is read as structured.
+Any prefix-based discriminator has such a case; this one is documented rather than chased, since
+Spectre only ever emits the structured form and the bare form exists for `-javaagent:` lines you
+write yourself.
+
+Unknown keys and unparseable values are ignored rather than failing the attach, so a runtime that
+understands this format but not a newer key still gets a working session. That tolerance does not
+extend to a runtime predating the format: it reads the whole string as a socket path, binds
+somewhere else, and the attach times out. Spectre resolves the runtime JAR from the attacher, so
+that pairing is only reachable by overriding it (`AttachOptions.agentJarPath` or the runtime-jar
+system property), the bootstrap timeout names the possibility, and `ProtocolVersion.CURRENT` is
+bumped whenever the payload representation changes so a mismatched pair fails the handshake rather
+than a later frame.
 
 Spectre always emits the budget, **including the default one**. The target may have been launched
 with a `SPECTRE_MAX_FRAME_BYTES` of its own, and letting that win would leave the daemon and the
