@@ -86,7 +86,12 @@ internal fun cropImageToScreenRegion(
 }
 
 /**
- * Converts a native device-pixel capture into one pixel per logical screen unit before cropping.
+ * Converts a native device-pixel capture into one pixel per logical screen unit.
+ *
+ * This is a **frame-hashing** helper, not a still-capture one: visual-idle sampling wants small,
+ * cheap, density-independent frames. Still artifacts must keep the backend's device pixels (see
+ * [dev.sebastiano.spectre.core.windowStillForRegion]) so a PNG and a recording of the same window
+ * agree on resolution — resampling them here is what made HiDPI stills 1x.
  */
 internal fun normalizeImageToScreenBounds(
     image: BufferedImage,

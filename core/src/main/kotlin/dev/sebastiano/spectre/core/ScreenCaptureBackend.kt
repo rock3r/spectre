@@ -2,6 +2,7 @@
 
 package dev.sebastiano.spectre.core
 
+import dev.sebastiano.spectre.core.capture.cropImageToScreenRegion
 import java.awt.Frame
 import java.awt.Insets
 import java.awt.Rectangle
@@ -12,7 +13,19 @@ import java.nio.file.Path
 
 /** Internal capture seam for explicit screen regions and identity-preserving native windows. */
 internal interface ScreenCaptureBackend {
+    /**
+     * Logical-size region capture: one pixel per AWT screen unit regardless of display density.
+     * This is the cheap frame source for visual-idle hashing and the backing call for the public
+     * `screenshot(region)` API, whose 1:1 screen↔image mapping callers assert against.
+     */
     fun captureRegion(region: Rectangle? = null): BufferedImage
+
+    /**
+     * Screen-pixel region capture for still **artifacts** (capture PNGs, CLI/MCP screenshots). A
+     * 400x300dp region on a 2x display yields a 800x600 pixel PNG, matching what `Recorder` writes
+     * for the same region. See [captureRegion] for the logical-size counterpart.
+     */
+    fun captureStillRegion(region: Rectangle? = null): BufferedImage
 
     fun captureWindow(
         window: TrackedWindow,
@@ -21,9 +34,33 @@ internal interface ScreenCaptureBackend {
     ): WindowCapture
 }
 
-/** Pixels from a tracked window and the screen-space rectangle those pixels represent. */
+/**
+ * Pixels from a tracked window and the screen-space rectangle those pixels represent.
+ *
+ * The two are in **different units** whenever the display is scaled: native still helpers hand back
+ * backing-store pixels (3200x2000 for a 1600x1000dp window at 2x) while [boundsOnScreen] stays in
+ * AWT logical units. Consumers that need to map between them must go through
+ * [dev.sebastiano.spectre.core.capture.screenRectToImageRect] rather than assuming 1:1.
+ */
 internal data class WindowCapture(val image: BufferedImage, val boundsOnScreen: Rectangle)
 
+/**
+ * Narrows a native window capture to [region] while preserving its device-pixel resolution.
+ *
+ * The crop runs in image space via [cropImageToScreenRegion], so a 2x still stays 2x; only the
+ * reported [WindowCapture.boundsOnScreen] is expressed in logical units. Downsampling here instead
+ * would make every still 1x while the recorder kept writing screen-pixel video for the same window.
+ */
+internal fun windowStillForRegion(capture: WindowCapture, region: Rectangle): WindowCapture {
+    if (capture.boundsOnScreen == region) return capture
+    val visibleRegion = region.intersection(capture.boundsOnScreen)
+    return WindowCapture(
+        image = cropImageToScreenRegion(capture.image, visibleRegion, capture.boundsOnScreen),
+        boundsOnScreen = visibleRegion,
+    )
+}
+
+@Suppress("LongParameterList") // Every collaborator is a seam the capture tests substitute.
 internal class PlatformScreenCaptureBackend(
     private val regionCapture: (Rectangle?) -> BufferedImage,
     private val nativeCapture: (Frame) -> BufferedImage,
@@ -38,17 +75,22 @@ internal class PlatformScreenCaptureBackend(
                 isWayland = isWaylandSession(),
             )
         },
+    private val deviceScaleRegionCapture: (Rectangle?) -> BufferedImage = regionCapture,
 ) : ScreenCaptureBackend {
     internal constructor(
         robotDriver: RobotDriver
     ) : this(
-        robotDriver::screenshot,
-        defaultNativeCapture(),
-        { robotDriver.allowsPlatformCapture },
-        ::defaultNativeCaptureDisambiguatesTitles,
+        regionCapture = robotDriver::screenshot,
+        nativeCapture = defaultNativeCapture(),
+        nativeCaptureEnabled = { robotDriver.allowsPlatformCapture },
+        nativeCaptureDisambiguatesTitles = ::defaultNativeCaptureDisambiguatesTitles,
+        deviceScaleRegionCapture = robotDriver::screenshotAtDeviceScale,
     )
 
     override fun captureRegion(region: Rectangle?): BufferedImage = regionCapture(region)
+
+    override fun captureStillRegion(region: Rectangle?): BufferedImage =
+        deviceScaleRegionCapture(region)
 
     override fun captureWindow(
         window: TrackedWindow,

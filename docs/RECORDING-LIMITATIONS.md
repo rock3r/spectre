@@ -283,6 +283,9 @@ compositor and not raw framebuffer reads.
 
 - The recorded resolution is the **screen-pixel** size of the region, not the dp size. A 400×300dp
   region on a 2× display becomes an 800×600 pixel video.
+- Still capture follows the same rule, so a `spectre capture` PNG and a recording of the same
+  window come out at the same resolution. See
+  [Atomic capture — Pixel scale](guide/capture.md#pixel-scale).
 - `Rectangle` coordinates passed to `start(...)` are in screen pixels. If you derive the region
   from `AutomatorNode.boundsOnScreen` you get the right thing for free; if you derive it from
   `boundsInWindow` you have to apply the density yourself.

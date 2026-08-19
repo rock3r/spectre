@@ -51,7 +51,10 @@ public class AgentBootstrapTimeoutException(udsPath: java.nio.file.Path, timeout
     SpectreAttachException(
         "Agent runtime did not bind UDS path $udsPath within ${timeoutMs} ms. Check the " +
             "target JVM's stderr for `[spectre-agent]` diagnostic lines or an " +
-            "AgentInitializationException with the underlying cause."
+            "AgentInitializationException with the underlying cause. If the runtime JAR was " +
+            "chosen explicitly (AttachOptions.agentJarPath or the runtimeJar system property), " +
+            "check it matches this library: a runtime older than structured agent arguments " +
+            "treats the whole argument string as the socket path and binds somewhere else."
     )
 
 /**

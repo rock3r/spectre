@@ -74,9 +74,85 @@ pixels stay decision-grade across native still-helper latency.
 
 Library details live in `:core` under `dev.sebastiano.spectre.core.capture`.
 
+## Pixel scale
+
+`screenshot.png` is written at **screen-pixel** size, not dp size — the same rule
+[recording](../RECORDING-LIMITATIONS.md) follows.
+A 1600×1000dp window on a 2× display produces a **3200×2000 pixel** PNG. On a 1× display the two
+sizes coincide.
+
+`capture.json` always states which is which, so nothing has to be inferred from the file:
+
+| Field | Units | 1600×1000dp window at 2× |
+|---|---|---|
+| `window.imageWidth` / `imageHeight` | PNG pixels | `3200` / `2000` |
+| `window.boundsScreen` | logical screen units | `width: 1600, height: 1000` |
+| `window.densityScaleX` / `densityScaleY` | ratio | `2.0` / `2.0` |
+| `nodes[].boundsImage` | PNG pixels | scales with the PNG |
+| `nodes[].boundsScreen` | logical screen units | use this for input targeting |
+
+Two consequences worth knowing:
+
+- **Node bounds do not need a density conversion.** `boundsImage` is derived from the actual PNG
+  size, so it addresses the PNG correctly at any scale. Keep using `boundsScreen` for clicks —
+  input coordinates stay logical.
+- **Comparing PNGs across machines needs care.** The same UI captured on a 1× and a 2× display
+  yields different pixel dimensions. Normalise with `densityScale*`, or assert on `boundsScreen`.
+
+This applies to every still Spectre writes — `spectre capture`, `spectre screenshot --fullscreen`,
+in-process `screenshot(windowIndex)` / `screenshot(node)` / `screenshotAtDeviceScale(region)`, and
+the JUnit failure artifacts below.
+
+!!! warning "One exception: an older `spectre-core` in the target application"
+
+    On the attach path the pixels come from the `spectre-core` already on the **target's**
+    classpath, not from the CLI. A target running a core older than screen-pixel stills has no
+    `screenshotAtDeviceScale`, so `screenshot --fullscreen` falls back to its logical-size
+    `screenshot(region)` and `capture` uses that core's own still behaviour — the command succeeds
+    and returns a **dp-sized** PNG. This is deliberate: refusing would break attach against
+    applications Spectre otherwise drives fine.
+
+    `capture.json` still describes what you actually got, so the check is the same one as always —
+    compare `window.imageWidth` against `window.boundsScreen.width`. Bump the `spectre-core`
+    dependency in the target application to get screen-pixel stills.
+
+!!! note "Oversized fullscreen stills degrade instead of failing"
+
+    `spectre screenshot --fullscreen` is the one still whose size nothing bounds — a multi-monitor
+    HiDPI desktop can encode past the attach transport's frame budget (64 MiB by default, which
+    holds a worst-case 4K desktop). When the screen-pixel PNG would not fit, Spectre drops to a
+    **logical**-resolution desktop still rather than failing the command. Compare the PNG size
+    against your desktop's logical bounds if you need to know which one you got, and raise
+    `--max-frame-bytes` / `$SPECTRE_MAX_FRAME_BYTES` to get the full-resolution still — see
+    [Agent — Payload limits](agent.md#payload-limits-204).
+
+    That drop is best-effort, not a guarantee: below a certain budget no desktop screenshot fits at
+    any resolution, so there is nothing to degrade to. If even the logical still overruns you get a
+    `payloadTooLarge` error naming the flag that fixes it, rather than a silent failure.
+
+    On a **mixed-density multi-monitor** desktop a fullscreen still is also bounded by
+    `java.awt.Robot`, which derives one scale from the display under the centre of the captured
+    rectangle rather than capturing each display at its own. The still comes back at that display's
+    scale, so a desktop centred on a 1x monitor downsamples the Retina parts.
+
+    Window-scoped stills escape this only while `spectre-recording` is on the target's classpath,
+    because the native helpers use the target window's own screen scale. Without it a window still
+    is a Robot region capture too, so a window straddling displays of different densities shares
+    the limit.
+
+    Window-scoped stills are bounded by the window, so they effectively never hit the budget. A
+    `capture` of an extremely large window on a high-density display is the exception: it fails
+    loudly with a `payloadTooLarge` error rather than downgrading, because `capture.json` records
+    the PNG's exact size and must keep agreeing with it. Raise the budget and retry.
+
+The one deliberate exception is in-process `ComposeAutomator.screenshot(region)`, which stays
+**logical**-sized so image coordinates equal screen coordinates — that 1:1 mapping is what makes it
+useful for pixel assertions addressed by `boundsOnScreen`. Call `screenshotAtDeviceScale(region)`
+for the screen-pixel version of the same region.
+
 ## Failure artifacts from JUnit
 
 On a **failed** Spectre JUnit test, `ComposeAutomatorExtension` / `ComposeAutomatorRule`
 write the same `capture.json` + `screenshot.png` layout under `build/reports/spectre/`
-(not `$TMPDIR`). See [JUnit integration — Failure artifacts](junit.md#failure-artifacts)
+(not `$TMPDIR`), at the same screen-pixel scale — they go through `capture()` too. See [JUnit integration — Failure artifacts](junit.md#failure-artifacts)
 and the CI upload snippet in [Running on CI](ci.md#failure-artifacts).

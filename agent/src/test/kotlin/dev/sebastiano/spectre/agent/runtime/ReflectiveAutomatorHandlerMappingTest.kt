@@ -317,30 +317,6 @@ class ReflectiveAutomatorHandlerMappingTest {
     }
 
     @Test
-    fun `Screenshot op with fullscreen true calls screenshot(Rectangle) with null`() {
-        var receivedArg: Any? = "<not invoked>"
-        val image = java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_ARGB)
-        val automator =
-            FakeAutomator(
-                screenshotImpl = { region ->
-                    receivedArg = region
-                    image
-                }
-            )
-        val handler = ReflectiveAutomatorHandler(automator)
-
-        val response = handler.handle(AgentRequest.Screenshot(fullscreen = true))
-        check(response is AgentResponse.Screenshot) {
-            "expected Screenshot, got ${response::class.simpleName}: $response"
-        }
-        assertEquals(
-            null,
-            receivedArg,
-            "handler must call screenshot(null) only for explicit fullscreen",
-        )
-    }
-
-    @Test
     fun `Screenshot op with explicit window index fails closed without region crop`() {
         var regionInvoked = false
         val targetBounds = Rectangle(5, 6, 200, 200)

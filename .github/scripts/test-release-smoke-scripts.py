@@ -191,7 +191,9 @@ class SmokeLibSchemaTest(unittest.TestCase):
             cargo_bin = cargo_home / "bin"
             cargo_bin.mkdir(parents=True)
             old_path = os.environ.get("PATH")
-            os.environ["PATH"] = "/usr/bin:/bin"
+            # os.pathsep, not ":" — on Windows the hardcoded colon left PATH as a single
+            # unsplittable entry and this assertion failed for the separator, not the behaviour.
+            os.environ["PATH"] = os.pathsep.join(["/usr/bin", "/bin"])
             try:
                 result = smoke_lib.linux_toolchain_path({"CARGO_HOME": str(cargo_home)})
             finally:

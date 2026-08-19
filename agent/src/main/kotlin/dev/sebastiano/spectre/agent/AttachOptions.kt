@@ -1,5 +1,7 @@
 package dev.sebastiano.spectre.agent
 
+import dev.sebastiano.spectre.agent.transport.MAX_FRAME_BYTES_CEILING
+import dev.sebastiano.spectre.agent.transport.MIN_MAX_FRAME_BYTES
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.UUID
@@ -32,13 +34,35 @@ import java.util.UUID
  *   directory, you own that parent directory's permissions; Spectre only tightens directories it
  *   creates itself.
  * @property attachTimeoutMs how long to wait for the agent's bootstrap + IPC server to come up.
+ * @property maxFrameBytes IPC frame write budget the injected agent should adopt. `null` (default)
+ *   forwards this process's own budget, so a daemon started with `SPECTRE_MAX_FRAME_BYTES` or
+ *   `--max-frame-bytes` propagates it to every JVM it injects. The target cannot read the
+ *   attacher's environment, and it is the side that writes screenshot frames, so this is the only
+ *   channel that reaches it.
  */
 @ExperimentalSpectreAgentApi
 public data class AttachOptions(
     public val agentJarPath: Path? = null,
     public val udsPath: Path? = null,
     public val attachTimeoutMs: Long = DEFAULT_ATTACH_TIMEOUT_MS,
+    public val maxFrameBytes: Int? = null,
 ) {
+    init {
+        // The agent logs and ignores a budget it cannot apply, so an unusable value here would let
+        // attach() report success while the target silently kept its own and later rejected
+        // captures this caller sized for. Fail at the mistake instead.
+        if (maxFrameBytes != null) {
+            require(maxFrameBytes >= MIN_MAX_FRAME_BYTES) {
+                "maxFrameBytes=$maxFrameBytes is below the $MIN_MAX_FRAME_BYTES-byte minimum; " +
+                    "a budget that small cannot carry the protocol's own frames"
+            }
+            require(maxFrameBytes <= MAX_FRAME_BYTES_CEILING) {
+                "maxFrameBytes=$maxFrameBytes exceeds the frame ceiling " +
+                    "$MAX_FRAME_BYTES_CEILING; readers would refuse frames that large"
+            }
+        }
+    }
+
     public companion object {
         public const val DEFAULT_ATTACH_TIMEOUT_MS: Long = 5_000
 

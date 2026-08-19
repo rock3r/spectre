@@ -1,5 +1,7 @@
 package dev.sebastiano.spectre.agent
 
+import dev.sebastiano.spectre.agent.runtime.AgentBootstrapArgs
+import dev.sebastiano.spectre.agent.transport.FrameLimits
 import dev.sebastiano.spectre.agent.transport.IpcClient
 import java.io.IOException
 import java.nio.file.Files
@@ -25,6 +27,20 @@ import java.nio.file.Paths
 @ExperimentalSpectreAgentApi
 public object AgentAttach {
 
+    /**
+     * Builds the `agentArgs` string for [pid]'s injected runtime.
+     *
+     * Always carries the budget, including the default one. The target may have been launched with
+     * a `SPECTRE_MAX_FRAME_BYTES` of its own, and letting that win would leave the daemon and the
+     * JVM it injected disagreeing about the hop between them — a 16MiB target under a 64MiB daemon
+     * would fail captures the daemon could carry.
+     */
+    private fun agentArgsFor(options: AttachOptions, udsPath: Path): String =
+        AgentBootstrapArgs.render(
+            udsPath = udsPath.toString(),
+            maxFrameBytes = options.maxFrameBytes ?: FrameLimits.maxFrameBytes,
+        )
+
     /** Attach to the JVM identified by [pid] and return a connected [AttachedAutomator]. */
     @Throws(SpectreAttachException::class)
     public fun attach(pid: Long, options: AttachOptions = AttachOptions()): AttachedAutomator {
@@ -42,7 +58,7 @@ public object AgentAttach {
 
         val (vmClass, vm) = openVirtualMachine(pid)
         try {
-            loadAgentReflectively(vmClass, vm, agentJar.toString(), udsPath.toString())
+            loadAgentReflectively(vmClass, vm, agentJar.toString(), agentArgsFor(options, udsPath))
         } finally {
             detachVirtualMachine(vmClass, vm)
         }

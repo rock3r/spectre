@@ -1,13 +1,16 @@
 package dev.sebastiano.spectre.agent.runtime
 
 import dev.sebastiano.spectre.agent.transport.AgentResponse
-import dev.sebastiano.spectre.agent.transport.MAX_FRAME_BYTES
+import dev.sebastiano.spectre.agent.transport.FrameLimits
 
 /**
  * Invokes `ComposeAutomator.capture` reflectively and maps the result onto the agent wire
  * [AgentResponse.Capture] envelope.
  */
 internal object AtomicCaptureReflectiveMapper {
+
+    /** Field names, ints, and discriminators around the two byte strings — a few hundred bytes. */
+    private const val CAPTURE_ENVELOPE_HEADROOM_BYTES: Long = 64L * 1024L
 
     fun invoke(automator: Any, windowIndex: Int): AgentResponse {
         // `ComposeAutomator.capture(windowIndex: Int = 0)` is a single Kotlin method with a
@@ -45,15 +48,20 @@ internal object AtomicCaptureReflectiveMapper {
         val pngBytes = resultClass.getMethod("getPngBytes").invoke(result) as ByteArray
         val captureJson = resultClass.getMethod("getCaptureJson").invoke(result) as String
         val captureJsonUtf8 = captureJson.toByteArray(Charsets.UTF_8)
-        // CBOR envelope is larger than raw bytes; leave headroom so Framing.writeFrame does not
-        // kill the connection after a successful capture.
+        // Both bulk fields are @ByteString, so the CBOR envelope around them is a small constant
+        // rather than a multiple of their size — reserve that constant instead of a percentage, or
+        // raising the budget would not make the extra budget usable.
         val rawBytes = pngBytes.size.toLong() + captureJsonUtf8.size.toLong()
-        val maxRawPayload = (MAX_FRAME_BYTES * 3L) / 4L
+        val maxRawPayload = FrameLimits.maxFrameBytes.toLong() - CAPTURE_ENVELOPE_HEADROOM_BYTES
         if (rawBytes > maxRawPayload) {
             return AgentResponse.Error(
-                "Atomic capture is too large for the agent IPC frame limit " +
-                    "(png+json=${rawBytes}B, max≈${maxRawPayload}B). Capture a smaller window " +
-                    "or reduce UI density; a path-based transfer is tracked with payload limits."
+                message =
+                    "Atomic capture is too large for the agent IPC frame limit " +
+                        "(png+json=${rawBytes}B, max≈${maxRawPayload}B). Raise the budget with " +
+                        "--max-frame-bytes / SPECTRE_MAX_FRAME_BYTES, or capture a smaller window.",
+                category =
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.PayloadTooLarge
+                        .wireName,
             )
         }
         return AgentResponse.Capture(

@@ -343,7 +343,7 @@ hierarchy.
 
 After the UDS connects, the first exchange is always:
 
-1. Client → `hello` with `protocolVersion` (currently `2` — `ProtocolVersion.CURRENT`)
+1. Client → `hello` with `protocolVersion` (currently `3` — `ProtocolVersion.CURRENT`)
 2. Runtime → `helloAck` with the same version, or `error` with category
    `protocolMismatch`
 
@@ -351,6 +351,13 @@ While the agent API is experimental, compatibility is **exact-match**. A version
 mismatch fails attach with a clear `IOException` / `SpectreAgentException` rather than
 proceeding and hanging on later frames. From 1.0 the rule may become additive-compatible
 (min/max range); that change will bump `ProtocolVersion.CURRENT` and this section.
+
+Revisions so far: **v1** bare request/response frames after `hello`; **v2** (#200) operation
+envelopes with op ids, cancel, and deadline budgets; **v3** bulk payloads (`pngBytes`,
+`captureJsonUtf8`) as CBOR byte strings rather than integer arrays. v3 is the reason the
+handshake matters for more than op availability — it is a *representation* change that the
+type system cannot see, so peers must be refused at `hello` rather than at the frame that
+carries a screenshot.
 
 ### Unknown operations
 
@@ -390,17 +397,114 @@ window+screen rects.
 
 ### Payload limits (#204)
 
-Each IPC frame is length-prefixed and hard-capped at **16 MiB** (`MAX_FRAME_BYTES`). This is a
-**fail-closed** policy:
+Each IPC frame is length-prefixed, with **two** separate bounds:
 
-- Responses that encode larger than the cap (e.g. a huge screenshot) are **not** truncated or
-  spilled to disk by the agent transport. The runtime replies with `error` category
-  **`payloadTooLarge`** and a message that includes the sizes.
+| Bound | Value | Applies to |
+|---|---|---|
+| Write budget | **64 MiB** default (`DEFAULT_MAX_FRAME_BYTES`), configurable | the payload a process will send |
+| Read ceiling | **512 MiB** fixed (`MAX_FRAME_BYTES_CEILING`) | the length a process will accept from a header |
+
+They are deliberately different. The read ceiling exists because `readFrame` allocates the payload
+buffer from a length it has not yet validated, so it bounds what a corrupt or desynchronised header
+can make a reader allocate. Keeping it fixed and well above the write budget means two endpoints on
+different budgets can never strand a response: a reader always accepts what any legitimately
+configured writer sends.
+
+The write budget is sized for the bulkiest payload, screenshots, in their worst case. PNG can only
+approach raw bytes-per-pixel on incompressible content, so a 3840x2160 desktop tops out near 25 MB
+of 24-bit sRGB; 64 MiB clears that with room for a dual-4K desktop.
+
+That arithmetic only holds because bulk fields (`pngBytes`, `captureJsonUtf8`) are annotated
+`@ByteString` and therefore encode as CBOR byte strings. Without it kotlinx serializes each signed
+byte as its own integer, inflating the framed response to roughly **1.8x** the payload — which
+would silently invalidate every budget on this page, since they are all expressed against payload
+size. `WirePayloadEncodingTest` pins the encoding.
+
+#### Raising the budget
+
+Larger multi-monitor HiDPI rigs (dual-5K and up) can exceed the default. Raise it with either:
+
+```shell
+export SPECTRE_MAX_FRAME_BYTES=256MiB   # bytes, or a binary suffix: 512, 128k, 64M, 64MiB, 1G
+spectre --max-frame-bytes 256MiB capture <session-id>
+```
+
+The flag overrides the environment variable. Both accept up to the 512 MiB read ceiling.
+
+Propagation matters, because three processes are involved:
+
+- The **CLI** applies the value to itself.
+- A **daemon this invocation starts** inherits it on its command line. A daemon that is *already
+  running* keeps the budget it booted with, and reports it in the handshake — so asking for a
+  different one **fails loudly** rather than half-applying:
+
+  ```text
+  Cannot honour --max-frame-bytes=256MiB (268435456 bytes): the running Spectre daemon started
+  with 64MiB (67108864 bytes), and a daemon keeps the budget it booted with. Run
+  `spectre daemon kill` and retry so the new budget applies to the daemon and to the JVMs it
+  injects.
+  ```
+
+  Only an explicit request is refused, and *explicit* means the option or the variable was
+  present — not that its value differs from the default. Asking for `64MiB` against a `128MiB`
+  daemon is a conflict like any other. Leaving the budget alone asks for nothing, so a daemon
+  running something larger is accepted silently: readers take frames up to the ceiling whatever
+  their own budget. A daemon too old to report its budget cannot have been started with the
+  requested one, so it is refused the same way rather than assumed compatible.
+- The **injected agent** cannot read the daemon's environment, and it is the process that writes
+  the bulky screenshot frames, so the daemon forwards its resolved budget in `agentArgs` (see
+  below). It applies before the agent's IPC server accepts a request.
+
+Because readers are permissive up to the ceiling, no hop ever rejects a frame a peer legitimately
+sent; the refusal above is about the *request* not being honourable, not about the wire.
+
+#### Over-budget behaviour
+
+Exceeding the write budget is **fail-closed**:
+
+- Responses that encode larger than the budget are **not** truncated or spilled to disk by the
+  agent transport. The runtime replies with `error` category **`payloadTooLarge`** and a message
+  that includes the sizes.
 - The connection stays open; subsequent ops on the same session continue normally.
 - Parity CI can rely on deterministic taxonomy behaviour instead of size-threshold flakes.
 
+The one exception is the **fullscreen still**, whose size nothing bounds: rather than failing, it
+drops to logical resolution first, and only reports `payloadTooLarge` if even that overruns. See
+[Atomic capture — Pixel scale](capture.md#pixel-scale).
+
 Spill-to-file for large captures remains a higher-level concern (capture directories / daemon
 shared FS from #181); the wire layer does not invent a second path for oversized frames.
+
+#### `agentArgs` format
+
+`-javaagent:spectre-agent-runtime.jar=<agentArgs>` accepts two forms:
+
+| Form | Example | Used by |
+|---|---|---|
+| Bare UDS path | `/tmp/sp-a-123-abcd/agent.sock` | hand-written `-javaagent:` lines; still **accepted** |
+| Structured | `uds=/tmp/sp-a-123-abcd/agent.sock,maxFrameBytes=268435456` | everything Spectre **emits** |
+
+The structured form is recognised by a `uds=` prefix *and* at least one further `,`-separated
+field. Values Spectre emits are percent-escaped, so a UDS path containing `,` or `=` survives the
+round trip instead of truncating. The one shape that stays ambiguous is a **hand-written** bare
+path that both starts with `uds=` and contains a comma — `uds=agent,1.sock` is read as structured.
+Any prefix-based discriminator has such a case; this one is documented rather than chased, since
+Spectre only ever emits the structured form and the bare form exists for `-javaagent:` lines you
+write yourself.
+
+Unknown keys and unparseable values are ignored rather than failing the attach, so a runtime that
+understands this format but not a newer key still gets a working session. That tolerance does not
+extend to a runtime predating the format: it reads the whole string as a socket path, binds
+somewhere else, and the attach times out. Spectre resolves the runtime JAR from the attacher, so
+that pairing is only reachable by overriding it (`AttachOptions.agentJarPath` or the runtime-jar
+system property), the bootstrap timeout names the possibility, and `ProtocolVersion.CURRENT` is
+bumped whenever the payload representation changes so a mismatched pair fails the handshake rather
+than a later frame.
+
+Spectre always emits the budget, **including the default one**. The target may have been launched
+with a `SPECTRE_MAX_FRAME_BYTES` of its own, and letting that win would leave the daemon and the
+JVM it injected disagreeing about the hop between them — a 16MiB target under a 64MiB daemon would
+fail captures the daemon could carry.
 
 HTTP maps `payloadTooLarge` → **413 Payload Too Large**.
 

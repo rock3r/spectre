@@ -6,7 +6,9 @@ import dev.sebastiano.spectre.agent.transport.RectDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlinx.serialization.ExperimentalSerializationApi
 
 @OptIn(ExperimentalSerializationApi::class)
@@ -72,18 +74,7 @@ class DaemonHandshakeTest {
             DaemonProtocolVersion(major = 1, minor = 6),
             DaemonProtocol.minimumDaemonVersion(DaemonRequest.RecordingStatus("session-1234")),
         )
-        assertEquals(
-            DaemonProtocolVersion(major = 1, minor = 5),
-            DaemonProtocol.minimumDaemonVersion(
-                DaemonRequest.Capture(sessionId = "session-1234", windowIndex = 0)
-            ),
-        )
-        assertEquals(
-            DaemonProtocolVersion(major = 1, minor = 7),
-            DaemonProtocol.minimumDaemonVersion(
-                DaemonRequest.Screenshot(sessionId = "session-1234")
-            ),
-        )
+        // Capture and Screenshot moved to the screen-pixel floor; see the dedicated test below.
         assertEquals(
             DaemonProtocolVersion(major = 1, minor = 8),
             DaemonProtocol.minimumDaemonVersion(
@@ -122,6 +113,52 @@ class DaemonHandshakeTest {
             DaemonProtocolVersion(major = 1, minor = 11),
             DaemonProtocol.minimumDaemonVersion(
                 DaemonRequest.WaitForReloadSettled(sessionId = "session-1234")
+            ),
+        )
+    }
+
+    @Test
+    fun `a handshake below the byte-string floor marks an old client`() {
+        // Screenshot pngBytes now go out as a CBOR byte string, which a 1.7-1.11 client decodes as
+        // an integer array. Since minimumDaemonVersion floors screenshots at 1.12, anything lower
+        // announced for that op is an old client rather than a newer one asking for less.
+        assertTrue(
+            DaemonProtocol.clientPredatesBinaryPayloads(
+                DaemonProtocolVersion(major = 1, minor = 11)
+            )
+        )
+        assertTrue(
+            DaemonProtocol.clientPredatesBinaryPayloads(DaemonProtocolVersion(major = 1, minor = 7))
+        )
+    }
+
+    @Test
+    fun `a current handshake is not treated as an old client`() {
+        assertFalse(DaemonProtocol.clientPredatesBinaryPayloads(DaemonProtocol.CurrentVersion))
+        assertFalse(
+            DaemonProtocol.clientPredatesBinaryPayloads(
+                DaemonProtocol.minimumDaemonVersion(
+                    DaemonRequest.Screenshot(sessionId = "session-1234", fullscreen = true)
+                )
+            )
+        )
+    }
+
+    @Test
+    fun `still requests require the screen-pixel daemon`() {
+        // The daemon endpoint is `daemon-v1.sock`, stable across minors, so an upgraded CLI reaches
+        // a daemon that is still running the previous build. Without this floor it would keep
+        // serving dp-sized stills on the old 16 MiB budget and the upgrade would silently no-op.
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 12),
+            DaemonProtocol.minimumDaemonVersion(
+                DaemonRequest.Capture(sessionId = "session-1234", windowIndex = 0, outDir = null)
+            ),
+        )
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 12),
+            DaemonProtocol.minimumDaemonVersion(
+                DaemonRequest.Screenshot(sessionId = "session-1234", fullscreen = true)
             ),
         )
     }

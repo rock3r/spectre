@@ -332,8 +332,9 @@ internal class MultiplexedIpcSession(
         body: AgentResponse,
     ) {
         val payload = WireCodec.encode(OpResponse(opId = opId, body = body))
+        val budget = FrameLimits.maxFrameBytes
         val toWrite =
-            if (payload.size <= MAX_FRAME_BYTES) {
+            if (payload.size <= budget) {
                 payload
             } else {
                 // Fail closed with a small taxonomy error instead of throwing mid-write (#204).
@@ -344,7 +345,7 @@ internal class MultiplexedIpcSession(
                             AgentResponse.Error(
                                 message =
                                     "Response payload size ${payload.size} exceeds " +
-                                        "MAX_FRAME_BYTES=$MAX_FRAME_BYTES",
+                                        "MAX_FRAME_BYTES=$budget",
                                 category = AgentErrorCategory.PayloadTooLarge.wireName,
                             ),
                     )

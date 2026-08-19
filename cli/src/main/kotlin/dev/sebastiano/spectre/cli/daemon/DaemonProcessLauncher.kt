@@ -1,10 +1,13 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.transport.FrameLimits
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 
 /** Starts a detached JVM hosting [DaemonMain] for one local socket endpoint. */
+@OptIn(ExperimentalSpectreAgentApi::class)
 public class DaemonProcessLauncher(
     private val socketPath: Path,
     private val javaExecutable: String = defaultJavaExecutable(),
@@ -56,6 +59,14 @@ public class DaemonProcessLauncher(
         add(DAEMON_MAIN_CLASS)
         add("--socket")
         add(socketPath.toString())
+        // Pin the budget whenever one was explicitly asked for, even if it equals the default:
+        // the daemon inherits this process's environment, so `--max-frame-bytes 64MiB` over a
+        // `SPECTRE_MAX_FRAME_BYTES=128MiB` would otherwise boot the daemon on 128MiB. With no
+        // explicit request the daemon resolves the same environment and lands on the same value.
+        FrameLimits.requestedMaxFrameBytes?.let { budget ->
+            add("--max-frame-bytes")
+            add(budget.toString())
+        }
     }
 
     private fun agentRuntimePropertyArgument(): List<String> =

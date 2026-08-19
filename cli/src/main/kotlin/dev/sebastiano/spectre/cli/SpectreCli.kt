@@ -7,6 +7,7 @@ import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.clikt.core.parse
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.parameters.arguments.argument
+import com.github.ajalt.clikt.parameters.options.convert
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
@@ -14,6 +15,7 @@ import com.github.ajalt.clikt.parameters.types.int
 import com.github.ajalt.clikt.parameters.types.long
 import com.github.ajalt.clikt.parameters.types.path
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.transport.FrameLimits
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import dev.sebastiano.spectre.cli.daemon.CaptureSessionReport
@@ -168,7 +170,43 @@ private class RootCommand(
         )
     }
 
-    override fun run(): Unit = Unit
+    /**
+     * IPC frame write budget for this invocation, and for the daemon if this invocation starts it.
+     *
+     * A daemon that is already running keeps the budget it booted with, so asking for a different
+     * one is refused at the handshake rather than half-applied — see `frameBudgetMismatchFailure`.
+     * Scoped to one invocation: each `run` re-resolves from the environment before applying it.
+     */
+    private val maxFrameBytes: Int? by
+        option(
+                "--max-frame-bytes",
+                help =
+                    "Largest IPC frame payload, e.g. 64MiB (default) or 256MiB. Raise it for " +
+                        "multi-monitor HiDPI fullscreen screenshots. Overrides " +
+                        "\$SPECTRE_MAX_FRAME_BYTES. Applies to a daemon this command starts; " +
+                        "against an already-running daemon on another budget it fails rather " +
+                        "than half-applying (run `spectre daemon kill` first).",
+            )
+            .convert { raw ->
+                FrameLimits.parseMaxFrameBytes(raw)
+                    ?: throw CliktError(
+                        "--max-frame-bytes must be a positive size (e.g. 64MiB), got '$raw'"
+                    )
+            }
+
+    override fun run() {
+        // Re-resolve per invocation: SpectreCli.run can be called repeatedly in one process, and a
+        // --max-frame-bytes from an earlier call would otherwise leave this one silently requesting
+        // a budget it never asked for — enough to fail the daemon handshake or boot a daemon on it.
+        FrameLimits.resetToEnvironment()
+        maxFrameBytes?.let { budget ->
+            try {
+                FrameLimits.configure(budget)
+            } catch (exception: IllegalArgumentException) {
+                throw CliktError(exception.message ?: "invalid --max-frame-bytes", exception)
+            }
+        }
+    }
 }
 
 private class McpCommand(private val request: (DaemonRequest) -> DaemonResponse) :
@@ -224,8 +262,8 @@ private class ScreenshotCommand(
         option(
                 "--fullscreen",
                 help =
-                    "Capture the full virtual desktop (explicit opt-in; the only screen-pixel " +
-                        "mode on this CLI path).",
+                    "Capture the full virtual desktop (explicit opt-in; the only whole-desktop " +
+                        "mode on this CLI path). The PNG is screen-pixel sized, not dp sized.",
             )
             .flag(default = false)
     private val json: Boolean by option("--json").flag(default = false)

@@ -6,12 +6,13 @@ import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.cbor.ByteString
 import kotlinx.serialization.cbor.Cbor
 
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 11)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 12)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -27,6 +28,24 @@ public object DaemonProtocol {
             daemon.minor < client.minor -> VersionCompatibility.DaemonTooOld
             else -> VersionCompatibility.Compatible
         }
+
+    /**
+     * True when [handshake] predates the byte-string payload encoding.
+     *
+     * Newer daemons otherwise serve older clients happily, and that still holds for every op whose
+     * response carries no bulk bytes. `Screenshot` is the exception: from
+     * [SCREEN_PIXEL_STILLS_INTRODUCED_MINOR] on, `pngBytes` goes out as a CBOR byte string, which a
+     * client built earlier decodes as an integer array.
+     *
+     * The check is per request rather than at the handshake because `DaemonRequest.Hello` carries
+     * the *minimum* version the pending request needs, not the client's build: a current CLI
+     * running `ps` legitimately announces 1.3. A current CLI issuing a screenshot announces 1.12,
+     * because [minimumDaemonVersion] floors that op there — so an announcement below the floor on a
+     * screenshot is exactly an old client.
+     */
+    internal fun clientPredatesBinaryPayloads(handshake: DaemonProtocolVersion): Boolean =
+        handshake.major == CurrentVersion.major &&
+            handshake.minor < SCREEN_PIXEL_STILLS_INTRODUCED_MINOR
 
     internal fun minimumDaemonVersion(request: DaemonRequest): DaemonProtocolVersion =
         when (request) {
@@ -60,8 +79,17 @@ public object DaemonProtocol {
                 }
             is DaemonRequest.StopRecording,
             is DaemonRequest.RecordingStatus -> versionFor(RECORDING_SESSION_INTRODUCED_MINOR)
-            is DaemonRequest.Capture -> versionFor(CAPTURE_INTRODUCED_MINOR)
-            is DaemonRequest.Screenshot -> versionFor(SCREENSHOT_TARGETING_INTRODUCED_MINOR)
+            // Each still op needs the minor that introduced it *and* the minor its pixels
+            // changed in: an older daemon answers these "successfully" but with dp-sized stills.
+            is DaemonRequest.Capture ->
+                versionFor(maxOf(CAPTURE_INTRODUCED_MINOR, SCREEN_PIXEL_STILLS_INTRODUCED_MINOR))
+            is DaemonRequest.Screenshot ->
+                versionFor(
+                    maxOf(
+                        SCREENSHOT_TARGETING_INTRODUCED_MINOR,
+                        SCREEN_PIXEL_STILLS_INTRODUCED_MINOR,
+                    )
+                )
         }
 
     private fun versionFor(minor: Int): DaemonProtocolVersion =
@@ -85,6 +113,17 @@ public object DaemonProtocol {
     private const val SELECTOR_PARITY_INTRODUCED_MINOR: Int = 10
     /** waitForReloadSettled for Compose Hot Reload awareness (#211). */
     private const val RELOAD_SETTLE_INTRODUCED_MINOR: Int = 11
+
+    /**
+     * Screen-pixel stills, the 64 MiB frame budget, and `Hello.maxFrameBytes`.
+     *
+     * A behaviour floor rather than a capability one. The daemon endpoint is `daemon-v1.sock`,
+     * stable across minors, so an upgraded CLI reaches a daemon still running the previous build —
+     * which would answer `capture` and `screenshot` perfectly well, just with dp-sized pixels on
+     * the old 16 MiB budget, and the upgrade would silently do nothing. Requiring 1.12 turns that
+     * into the existing "daemon protocol is too old, run `spectre daemon kill`" error instead.
+     */
+    internal const val SCREEN_PIXEL_STILLS_INTRODUCED_MINOR: Int = 12
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)
@@ -281,8 +320,16 @@ public sealed interface DaemonRequest {
 @OptIn(ExperimentalSpectreAgentApi::class)
 @Serializable
 public sealed interface DaemonResponse {
+    /**
+     * @property maxFrameBytes the frame write budget this daemon booted with. `null` from a daemon
+     *   that predates budget reporting, which is indistinguishable from "not the budget you asked
+     *   for" — see `frameBudgetMismatchFailure`.
+     */
     @Serializable
-    public data class Hello(public val daemonVersion: DaemonProtocolVersion) : DaemonResponse
+    public data class Hello(
+        public val daemonVersion: DaemonProtocolVersion,
+        public val maxFrameBytes: Int? = null,
+    ) : DaemonResponse
 
     @Serializable
     @SerialName("attached")
@@ -330,8 +377,10 @@ public sealed interface DaemonResponse {
 
     @Serializable
     @SerialName("screenshot")
-    public data class Screenshot(public val sessionId: String, public val pngBytes: ByteArray) :
-        DaemonResponse {
+    public data class Screenshot(
+        public val sessionId: String,
+        @ByteString public val pngBytes: ByteArray,
+    ) : DaemonResponse {
         override fun equals(other: Any?): Boolean =
             other is Screenshot &&
                 sessionId == other.sessionId &&

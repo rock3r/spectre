@@ -113,6 +113,12 @@ Stable API surface — a schema bump is a skill bump (release checklist).
 | `boundsImage` | **Primary** — pixels of `screenshot.png` |
 | `boundsScreen` | Secondary — screen-space for input targeting |
 
+`screenshot.png` is **screen-pixel** sized, so on a 2× display it is twice the dp size of the
+window and `window.imageWidth` ≠ `window.boundsScreen.width`. Use `boundsImage` to address the
+PNG and `boundsScreen` to target input — neither needs a manual density conversion.
+`window.densityScaleX` / `densityScaleY` report the ratio when you need to compare captures taken
+on displays with different densities.
+
 `summary.textedNodeCount` counts nodes with non-empty `text` **or** `editableText`.
 
 ## jq recipes

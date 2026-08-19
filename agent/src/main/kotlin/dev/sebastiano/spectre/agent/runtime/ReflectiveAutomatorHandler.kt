@@ -4,9 +4,11 @@ package dev.sebastiano.spectre.agent.runtime
 
 import dev.sebastiano.spectre.agent.ScreenshotTarget
 import dev.sebastiano.spectre.agent.resolveScreenshotTarget
+import dev.sebastiano.spectre.agent.transport.AgentErrorCategory
 import dev.sebastiano.spectre.agent.transport.AgentRequest
 import dev.sebastiano.spectre.agent.transport.AgentRequestHandler
 import dev.sebastiano.spectre.agent.transport.AgentResponse
+import dev.sebastiano.spectre.agent.transport.FrameLimits
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.RectDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
@@ -17,6 +19,18 @@ import java.io.ByteArrayOutputStream
 import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
 import javax.imageio.ImageIO
+
+/** Headroom for the CBOR envelope wrapped around a still's bytes before it is framed. */
+private const val STILL_ENVELOPE_HEADROOM_BYTES: Int = 64 * 1024
+
+/**
+ * Largest still PNG the handler will put on the wire before dropping back to logical resolution.
+ *
+ * Derived from the configured frame budget so raising `SPECTRE_MAX_FRAME_BYTES` raises this too;
+ * the headroom keeps a still that passes this check from failing the framing guard afterwards.
+ */
+private fun defaultMaxStillPngBytes(): Int =
+    (FrameLimits.maxFrameBytes - STILL_ENVELOPE_HEADROOM_BYTES).coerceAtLeast(1)
 
 /**
  * [AgentRequestHandler] that drives a Spectre `ComposeAutomator` instance entirely through
@@ -41,6 +55,7 @@ import javax.imageio.ImageIO
 internal class ReflectiveAutomatorHandler(
     private val automator: Any,
     private val isTargetJvmFocused: () -> Boolean = ::targetJvmHasKeyboardFocus,
+    private val maxStillPngBytes: Int = defaultMaxStillPngBytes(),
 ) : AgentRequestHandler {
 
     private val automatorClass: Class<*> = automator.javaClass
@@ -386,22 +401,63 @@ internal class ReflectiveAutomatorHandler(
             )
         }
 
-        val regionScreenshotMethod =
-            regionScreenshotMethodOrError()
-                ?: return AgentResponse.Error(
-                    message =
-                        "ComposeAutomator does not expose screenshot(Rectangle?) on this build",
-                    category =
-                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory
-                            .UnsupportedOperation
-                            .wireName,
-                )
+        val deviceScaleMethod = deviceScaleScreenshotMethodOrError()
+        val regionMethod = regionScreenshotMethodOrError()
+        if (deviceScaleMethod == null && regionMethod == null) {
+            return AgentResponse.Error(
+                message = "ComposeAutomator does not expose screenshot(Rectangle?) on this build",
+                category =
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.UnsupportedOperation
+                        .wireName,
+            )
+        }
 
         // Only Fullscreen remains (explicit opt-in). null region = full virtual desktop (#289).
         check(target is ScreenshotTarget.Fullscreen)
-        val image = regionScreenshotMethod.invoke(automator, null) as BufferedImage
-        return AgentResponse.Screenshot(imageToPng(image))
+        return fullscreenStill(deviceScaleMethod, regionMethod)
     }
+
+    /**
+     * Encodes the fullscreen still, preferring screen pixels but staying inside the frame budget.
+     *
+     * Screen-pixel stills carry 4x the pixels of the logical ones on a 2x display, and the whole
+     * virtual desktop is the one still whose size no caller bounds — a multi-monitor HiDPI desktop
+     * can encode past the frame budget, which would fail the request outright. Dropping to the
+     * logical still keeps a command that works today working.
+     *
+     * That fallback is best-effort, not a guarantee: with a small budget no desktop screenshot fits
+     * at any resolution, so there is nothing to degrade to. When even the logical still overruns,
+     * this reports [AgentErrorCategory.PayloadTooLarge] naming the flag that fixes it, rather than
+     * letting the framing layer substitute its own generic message further downstream.
+     */
+    private fun fullscreenStill(deviceScaleMethod: Method?, regionMethod: Method?): AgentResponse {
+        // Older injected cores expose only screenshot(Rectangle?). The caller rejects the request
+        // before this point when neither method is present, so one of the two is always non-null.
+        if (deviceScaleMethod != null) {
+            val deviceScalePng = encodeFullscreenStill(deviceScaleMethod)
+            if (regionMethod == null || deviceScalePng.size <= maxStillPngBytes) {
+                return stillWithinBudget(deviceScalePng)
+            }
+        }
+        return stillWithinBudget(encodeFullscreenStill(checkNotNull(regionMethod)))
+    }
+
+    private fun stillWithinBudget(png: ByteArray): AgentResponse =
+        if (png.size <= maxStillPngBytes) {
+            AgentResponse.Screenshot(png)
+        } else {
+            AgentResponse.Error(
+                message =
+                    "Fullscreen still is too large for the agent IPC frame limit " +
+                        "(png=${png.size}B, max≈${maxStillPngBytes}B) even at logical resolution. " +
+                        "Raise the budget with --max-frame-bytes / SPECTRE_MAX_FRAME_BYTES, or " +
+                        "capture a window instead of the whole desktop.",
+                category = AgentErrorCategory.PayloadTooLarge.wireName,
+            )
+        }
+
+    private fun encodeFullscreenStill(method: Method): ByteArray =
+        imageToPng(method.invoke(automator, null) as BufferedImage)
 
     /**
      * Capture a node's on-screen bounds (#362).
@@ -478,7 +534,9 @@ internal class ReflectiveAutomatorHandler(
      * bridge is absent, the node overload is missing, or native returns a degenerate crop.
      *
      * Region capture uses a **defensive copy** of the AWT rectangle: live `boundsOnScreen` getters
-     * return snapshots that must not be mutated by `Robot.createScreenCapture` / AWT.
+     * return snapshots that must not be mutated by `Robot.createScreenCapture` / AWT. It prefers
+     * the device-scale call so a fallback node still keeps the same screen-pixel scale the native
+     * path produces; a node rectangle is small enough that the frame budget is never in play.
      */
     private fun captureNodeScreenshotPreferNative(
         node: Any,
@@ -495,7 +553,8 @@ internal class ReflectiveAutomatorHandler(
                 if (!isNativeWindowCaptureUnavailable(ex)) throw ex
             }
         }
-        val regionScreenshotMethod = regionScreenshotMethodOrError() ?: return null
+        val regionScreenshotMethod =
+            deviceScaleScreenshotMethodOrError() ?: regionScreenshotMethodOrError() ?: return null
         val image = regionScreenshotMethod.invoke(automator, captureBounds) as BufferedImage
         check(isPlausibleNodeCapture(image, captureBounds)) {
             "Region node screenshot ${image.width}x${image.height} is implausible for " +
@@ -541,6 +600,18 @@ internal class ReflectiveAutomatorHandler(
     private fun regionScreenshotMethodOrError(): Method? =
         automatorClass.methods.firstOrNull {
             it.name == "screenshot" &&
+                it.parameterTypes.size == 1 &&
+                it.parameterTypes[0].name == AWT_RECTANGLE_FQN
+        }
+
+    /**
+     * `screenshotAtDeviceScale(region: Rectangle?)` — the screen-pixel still counterpart of
+     * `screenshot(Rectangle?)`. Absent on targets running a Spectre core older than the
+     * device-scale still contract, which is why callers treat it as optional.
+     */
+    private fun deviceScaleScreenshotMethodOrError(): Method? =
+        automatorClass.methods.firstOrNull {
+            it.name == "screenshotAtDeviceScale" &&
                 it.parameterTypes.size == 1 &&
                 it.parameterTypes[0].name == AWT_RECTANGLE_FQN
         }

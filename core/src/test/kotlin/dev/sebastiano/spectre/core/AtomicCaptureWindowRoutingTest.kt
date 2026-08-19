@@ -50,20 +50,12 @@ class AtomicCaptureWindowRoutingTest {
                     windowBounds,
                     Insets(24, 0, 0, 0),
                 )
-            // Production crops the native frame to the Compose surface (screenshotTrackedRegion).
-            val cropped =
-                dev.sebastiano.spectre.core.capture.cropImageToScreenRegion(
-                    dev.sebastiano.spectre.core.capture.normalizeImageToScreenBounds(
-                        capture.image,
-                        capture.boundsOnScreen,
-                    ),
-                    surface.intersection(capture.boundsOnScreen),
-                    capture.boundsOnScreen,
-                )
+            // Same call production makes to crop the native frame to the Compose surface.
+            val cropped = windowStillForRegion(capture, surface)
             assertEquals(1, windowCalls)
             assertEquals(0, regionCalls)
-            assertEquals(160, cropped.width)
-            assertEquals(96, cropped.height)
+            assertEquals(160, cropped.image.width)
+            assertEquals(96, cropped.image.height)
         } finally {
             frame.dispose()
         }

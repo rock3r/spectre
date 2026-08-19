@@ -1,10 +1,15 @@
-@file:OptIn(dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi::class)
+@file:OptIn(
+    dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi::class,
+    kotlinx.serialization.ExperimentalSerializationApi::class,
+)
 
 package dev.sebastiano.spectre.agent.transport
 
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.cbor.ByteString
 
 /**
  * Wire protocol between Spectre's attach-side client and the in-target agent runtime.
@@ -308,7 +313,7 @@ internal sealed interface AgentResponse {
     /** Reply to [AgentRequest.Screenshot] — raw PNG bytes (not base64). */
     @Serializable
     @SerialName("screenshot")
-    data class Screenshot(val pngBytes: ByteArray) : AgentResponse {
+    data class Screenshot(@ByteString val pngBytes: ByteArray) : AgentResponse {
         // ByteArray needs explicit equals/hashCode because Kotlin uses array identity by default
         // for data class auto-generated equals. Tests rely on structural comparison.
         override fun equals(other: Any?): Boolean =
@@ -327,8 +332,8 @@ internal sealed interface AgentResponse {
     data class Capture(
         val windowIndex: Int,
         val schemaVersion: Int,
-        val captureJsonUtf8: ByteArray,
-        val pngBytes: ByteArray,
+        @ByteString val captureJsonUtf8: ByteArray,
+        @ByteString val pngBytes: ByteArray,
         val nodeCount: Int,
         val taggedNodeCount: Int,
         val textedNodeCount: Int,

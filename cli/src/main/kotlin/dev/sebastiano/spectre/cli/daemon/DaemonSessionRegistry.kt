@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.cli.daemon
 import dev.sebastiano.spectre.agent.AgentAttach
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.SpectreAttachException
+import dev.sebastiano.spectre.agent.transport.FrameLimits
 import dev.sebastiano.spectre.cli.hotreload.HotReloadCapability
 import dev.sebastiano.spectre.cli.hotreload.HotReloadPortDiscovery
 import dev.sebastiano.spectre.cli.hotreload.HotReloadSession
@@ -68,7 +69,10 @@ internal constructor(
     private fun handleSynchronized(request: DaemonRequest): DaemonResponse =
         when (request) {
             is DaemonRequest.Hello ->
-                DaemonResponse.Hello(daemonVersion = DaemonProtocol.CurrentVersion)
+                DaemonResponse.Hello(
+                    daemonVersion = DaemonProtocol.CurrentVersion,
+                    maxFrameBytes = FrameLimits.maxFrameBytes,
+                )
             is DaemonRequest.Attach -> error("attach must use attach() outside the monitor")
             is DaemonRequest.Detach -> error("detach must use handleDetachOutsideLock")
             DaemonRequest.ListSessions ->
