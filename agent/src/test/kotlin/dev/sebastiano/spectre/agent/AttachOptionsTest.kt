@@ -2,59 +2,39 @@
 
 package dev.sebastiano.spectre.agent
 
-import java.nio.file.Path
+import dev.sebastiano.spectre.agent.transport.MAX_FRAME_BYTES_CEILING
 import kotlin.test.Test
-import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
-import org.junit.jupiter.api.condition.EnabledOnOs
-import org.junit.jupiter.api.condition.OS
 
+/**
+ * A budget the target cannot apply must fail at the caller, not in the injected JVM. The agent logs
+ * and ignores a bad value so a tuning mistake cannot break the attach, which means an unvalidated
+ * option would let `attach()` report success while the target silently kept its own budget and
+ * later rejected captures the caller sized for.
+ */
 class AttachOptionsTest {
-    // ---- base-dir selection (pure, platform-agnostic) ----
 
     @Test
-    fun `udsBaseDir uses the JVM temp dir on Windows`() {
-        assertEquals(
-            "C:\\Users\\x\\AppData\\Local\\Temp",
-            AttachOptions.udsBaseDir("Windows 11", "C:\\Users\\x\\AppData\\Local\\Temp"),
-        )
+    fun `a budget above the read ceiling is rejected at construction`() {
+        val failure =
+            assertFailsWith<IllegalArgumentException> {
+                AttachOptions(maxFrameBytes = MAX_FRAME_BYTES_CEILING + 1)
+            }
+
+        assertTrue(failure.message.orEmpty().contains("ceiling", ignoreCase = true), "$failure")
     }
 
     @Test
-    fun `udsBaseDir uses slash tmp on POSIX`() {
-        assertEquals("/tmp", AttachOptions.udsBaseDir("Linux", "/var/folders/ignored"))
-        assertEquals("/tmp", AttachOptions.udsBaseDir("Mac OS X", "/var/folders/ignored"))
-    }
-
-    // ---- default path structure (platform-agnostic) ----
-
-    @Test
-    fun `defaultUdsPath ends in the per-attach dir plus agent socket`() {
-        val p = AttachOptions.defaultUdsPath(1234L)
-        assertEquals("agent.sock", p.fileName.toString())
-        assertTrue(
-            p.parent.fileName.toString().startsWith("sp-a-1234-"),
-            "per-attach dir should be sp-a-<pid>-<uuid>, got ${p.parent.fileName}",
-        )
-    }
-
-    // ---- real path per platform ----
-
-    @Test
-    @EnabledOnOs(OS.WINDOWS)
-    fun `defaultUdsPath is absolute and under the JVM temp dir on Windows`() {
-        val p = AttachOptions.defaultUdsPath(1234L)
-        assertTrue(p.isAbsolute, "UDS path must be absolute on Windows, got $p")
-        assertTrue(
-            p.startsWith(Path.of(System.getProperty("java.io.tmpdir"))),
-            "UDS path must live under java.io.tmpdir (%TEMP%) on Windows, got $p",
-        )
+    fun `a non-positive budget is rejected at construction`() {
+        assertFailsWith<IllegalArgumentException> { AttachOptions(maxFrameBytes = 0) }
+        assertFailsWith<IllegalArgumentException> { AttachOptions(maxFrameBytes = -1) }
     }
 
     @Test
-    @EnabledOnOs(OS.LINUX, OS.MAC)
-    fun `defaultUdsPath is under slash tmp on POSIX`() {
-        val p = AttachOptions.defaultUdsPath(1234L)
-        assertTrue(p.startsWith(Path.of("/tmp")), "UDS path must live under /tmp on POSIX, got $p")
+    fun `a usable budget and the unset default are both accepted`() {
+        AttachOptions(maxFrameBytes = MAX_FRAME_BYTES_CEILING)
+        AttachOptions(maxFrameBytes = 1)
+        AttachOptions(maxFrameBytes = null)
     }
 }

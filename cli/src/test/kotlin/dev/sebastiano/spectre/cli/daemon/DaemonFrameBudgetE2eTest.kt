@@ -81,6 +81,24 @@ class DaemonFrameBudgetE2eTest {
     }
 
     @Test
+    fun `a refused client can still run the recovery command`() {
+        // The refusal tells the user to run `spectre daemon kill`, which inherits the same
+        // SPECTRE_MAX_FRAME_BYTES and would hit the same check. Shutdown must stay reachable or
+        // the documented recovery path is a dead end and the daemon has to be killed by hand.
+        DaemonClient(socketPath).use { client ->
+            startDaemonWith(client, BOOTED_BUDGET)
+
+            FrameLimits.configure(REQUESTED_BUDGET)
+            assertTrue(
+                runCatching { client.request(DaemonRequest.ListSessions) }.isFailure,
+                "ordinary requests must still be refused",
+            )
+
+            assertEquals(DaemonResponse.ShuttingDown, client.request(DaemonRequest.Shutdown))
+        }
+    }
+
+    @Test
     fun `an unconfigured client works against a daemon on a raised budget`() {
         DaemonClient(socketPath).use { client ->
             startDaemonWith(client, BOOTED_BUDGET)

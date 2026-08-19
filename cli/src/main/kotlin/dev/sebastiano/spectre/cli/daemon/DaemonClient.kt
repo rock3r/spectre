@@ -78,11 +78,13 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
                         daemonCompatibilityFailure(requiredVersion, response.daemonVersion)
                     )
                 }
-                frameBudgetMismatchFailure(
-                        requested = FrameLimits.requestedMaxFrameBytes,
-                        daemonBudget = response.maxFrameBytes,
-                    )
-                    ?.let { throw IOException(it) }
+                if (!ignoresFrameBudget(request)) {
+                    frameBudgetMismatchFailure(
+                            requested = FrameLimits.requestedMaxFrameBytes,
+                            daemonBudget = response.maxFrameBytes,
+                        )
+                        ?.let { throw IOException(it) }
+                }
             }
             is DaemonResponse.Error ->
                 throw IOException(daemonHandshakeFailure(requiredVersion, response))
@@ -104,6 +106,16 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
 
 internal class DaemonConnectionClosedException(cause: Throwable? = null) :
     IOException("Daemon closed the connection during handshake", cause)
+
+/**
+ * Requests exempt from the frame-budget check.
+ *
+ * The mismatch error tells the user to run `spectre daemon kill`, which inherits the same
+ * `SPECTRE_MAX_FRAME_BYTES` and would hit the same check — leaving the documented recovery path a
+ * dead end and the daemon killable only by hand. Shutdown carries no bulky payload, so exempting it
+ * costs nothing.
+ */
+internal fun ignoresFrameBudget(request: DaemonRequest): Boolean = request is DaemonRequest.Shutdown
 
 /**
  * Explains why a requested frame budget cannot take effect, or `null` when it can.
