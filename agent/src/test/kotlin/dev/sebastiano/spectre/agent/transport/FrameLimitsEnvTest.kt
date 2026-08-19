@@ -4,6 +4,7 @@ package dev.sebastiano.spectre.agent.transport
 
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -47,18 +48,32 @@ class FrameLimitsEnvTest {
             builder.environment()[FrameLimits.ENV_VAR] = override
         }
         val process = builder.start()
-        val output = process.inputStream.bufferedReader().use { it.readText() }
-        assertTrue(
-            process.waitFor(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS),
-            "probe JVM did not exit in time",
+        // Drain on a daemon thread rather than readText() on this one: reading to EOF before
+        // waitFor has no timeout, so a probe JVM that never exits would hang the test — and the
+        // whole CI job — instead of failing. Same shape as core's bounded xdpyinfo probe.
+        val output = AtomicReference("")
+        val drain =
+            Thread({ runCatching { output.set(process.inputStream.bufferedReader().readText()) } })
+                .apply {
+                    isDaemon = true
+                    start()
+                }
+        val exited = process.waitFor(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        if (!exited) process.destroyForcibly()
+        drain.join(DRAIN_JOIN_MS)
+        assertTrue(exited, "probe JVM did not exit in time; output so far:\n${output.get()}")
+        assertEquals(
+            0,
+            process.exitValue(),
+            "probe JVM failed to start FrameLimits:\n${output.get()}",
         )
-        assertEquals(0, process.exitValue(), "probe JVM failed to start FrameLimits:\n$output")
-        return output.trim().lines().last()
+        return output.get().trim().lines().last()
     }
 
     private companion object {
         const val PROBE_MAIN_CLASS: String =
             "dev.sebastiano.spectre.agent.transport.FrameLimitsEnvProbeKt"
         const val PROBE_TIMEOUT_SECONDS: Long = 60
+        const val DRAIN_JOIN_MS: Long = 5_000
     }
 }
