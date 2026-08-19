@@ -103,6 +103,19 @@ This applies to every still Spectre writes — `spectre capture`, `spectre scree
 in-process `screenshot(windowIndex)` / `screenshot(node)` / `screenshotAtDeviceScale(region)`, and
 the JUnit failure artifacts below.
 
+!!! warning "One exception: an older `spectre-core` in the target application"
+
+    On the attach path the pixels come from the `spectre-core` already on the **target's**
+    classpath, not from the CLI. A target running a core older than screen-pixel stills has no
+    `screenshotAtDeviceScale`, so `screenshot --fullscreen` falls back to its logical-size
+    `screenshot(region)` and `capture` uses that core's own still behaviour — the command succeeds
+    and returns a **dp-sized** PNG. This is deliberate: refusing would break attach against
+    applications Spectre otherwise drives fine.
+
+    `capture.json` still describes what you actually got, so the check is the same one as always —
+    compare `window.imageWidth` against `window.boundsScreen.width`. Bump the `spectre-core`
+    dependency in the target application to get screen-pixel stills.
+
 !!! note "Oversized fullscreen stills degrade instead of failing"
 
     `spectre screenshot --fullscreen` is the one still whose size nothing bounds — a multi-monitor
