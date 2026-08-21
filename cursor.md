@@ -11,6 +11,11 @@ labels, checks, merges). An authenticated token is already in the environment.
 Do **not** use built-in PR/issue tools (`ManagePullRequest`, GitHub MCP write APIs, or
 similar). Prefer `gh` even when another tool is offered.
 
+On Cursor Cloud, `gh` reads work (`gh pr view`, `gh run list`, `gh run view`). GraphQL
+writes (`gh pr create`, `gh pr edit`, `gh pr comment`) currently fail with
+`Resource not accessible by integration` on the issued token. Still use `gh` for
+every GitHub call it can perform; do not silently switch tools.
+
 Typical commands:
 
 ```bash
