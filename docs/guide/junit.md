@@ -88,7 +88,10 @@ When the UI under test is a **separate JVM** (prod-like `java -jar`, installDist
 `./gradlew :app:run` with warnings), use `LaunchAndAttachExtension` (JUnit 5) or
 `LaunchAndAttachRule` (JUnit 4) from `:testing`. They call the shared agent launch core
 before each test and tear the process tree down after — the same lifecycle window
-`ComposeAutomatorExtension` / `ComposeAutomatorRule` use. Failure-artifact capture is
+`ComposeAutomatorExtension` / `ComposeAutomatorRule` use. The launched app does **not**
+need a preinstalled `spectre-core` dependency: attach uses the same two-path bootstrap as
+[agent attach](agent.md) (inject when Compose is present and core is not). Prefer
+preinstalled core when you control the app build. Failure-artifact capture is
 wired into those automator wrappers (see [Failure artifacts](#failure-artifacts)); keep
 the automator rule/extension innermost if you also use launch-and-attach so capture still
 sees open windows.

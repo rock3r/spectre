@@ -15,10 +15,13 @@ compatibility: Requires a Compose Desktop or Compose Multiplatform (desktop targ
 
 Spectre automates live Compose Desktop UIs by reading the semantics tree and dispatching real OS input. Full docs and API reference: **[spectre.sebastiano.dev](https://spectre.sebastiano.dev)**
 
+For the longer agent skill (selectors, recording, agent attach, IntelliJ), use **`spectre`** /
+`skills/spectre/SKILL.md`. For atomic `capture.json` workflows, use **`spectre-capture`**.
+
 ## Spectre vs `ComposeTestRule`
 
 - **`ComposeTestRule`** (`compose-ui-test`) — tests a composable in isolation, without launching a real app. Right for unit and component tests.
-- **Spectre** — automates a fully running app end-to-end: the local process, a separate JVM via HTTP, or an IntelliJ plugin hosting Compose UI. Right when you need the whole app stack in motion, for UI automation and user-journey level validation.
+- **Spectre** — automates a fully running app end-to-end: the local process, a separate JVM via HTTP or Java-agent attach, or an IntelliJ plugin hosting Compose UI. Right when you need the whole app stack in motion, for UI automation and user-journey level validation.
 
 If you're testing an individual composable in isolation → use `ComposeTestRule`. If you're automating a full app → use Spectre.
 
@@ -26,7 +29,8 @@ If you're testing an individual composable in isolation → use `ComposeTestRule
 
 - **Use `runSpectreTest`, not `runTest`.** `runTest` collapses `delay()` to zero, which silently breaks `longClick` hold durations, `swipe` step pacing, and clipboard-settle polling. Prefer `runSpectreTest` from the testing module (real wall time + leak detection); plain `runBlocking` is a fallback.
 - **Selectors are non-waiting.** Every `findBy...` / `findOneBy...` call reads the semantics tree once. Call `waitForNode` before querying any node that might not exist yet.
-- **EDT rule.** `waitForIdle` and `waitForVisualIdle` throw `IllegalStateException` when called from the AWT event dispatch thread. Standard JUnit test methods run off the EDT so this isn't normally an issue; if you call them from the EDT, wrap with `withContext(Dispatchers.Default)`.
+- **EDT rule.** All three wait helpers (`waitForNode`, `waitForIdle`, and `waitForVisualIdle`) throw `IllegalStateException` when called from the AWT event dispatch thread. Standard JUnit test methods run off the EDT so this isn't normally an issue; if you call them from the EDT, wrap with `withContext(Dispatchers.Default)`.
+- **Expression-body tests.** Write `@Test fun mySpec(): Unit = runSpectreTest { ... }`. JUnit 5.14+ rejects non-void test methods, and Kotlin infers the return type from the last expression in the `runSpectreTest` body.
 
 ## Setup
 
@@ -44,6 +48,8 @@ dependencies {
 
     // optional:
     testImplementation("dev.sebastiano.spectre:spectre-server:$spectreVersion") // cross-JVM HTTP transport
+    testImplementation("dev.sebastiano.spectre:spectre-agent:$spectreVersion") // agent attach API
+    testRuntimeOnly("dev.sebastiano.spectre:spectre-agent-runtime:$spectreVersion") // loadable Java agent
 }
 ```
 
@@ -64,7 +70,7 @@ class MyTest {
     val automatorExt = ComposeAutomatorExtension()
 
     @Test
-    fun myTest() = runSpectreTest {
+    fun myTest(): Unit = runSpectreTest {
         launchMyApp()  // your responsibility — Spectre manages the automator, not the window
         val automator = automatorExt.automator
         automator.waitForNode(tag = "root-content")
@@ -87,7 +93,7 @@ import org.junit.jupiter.api.extension.ExtendWith
 @ExtendWith(ComposeAutomatorExtension::class)
 class MyTest {
     @Test
-    fun myTest(automator: ComposeAutomator) = runSpectreTest {
+    fun myTest(automator: ComposeAutomator): Unit = runSpectreTest {
         launchMyApp()
         automator.waitForNode(tag = "root-content")
         // interact and assert
@@ -123,8 +129,9 @@ automator.longClick(node, holdFor = 600.milliseconds)
 automator.swipe(from = firstNode, to = lastNode)
 automator.swipe(startX = 100, startY = 400, endX = 100, endY = 100, steps = 16, duration = 200.milliseconds)
 automator.scrollWheel(listNode, wheelClicks = 5)   // negative = scroll up
-automator.typeText("hello")                        // clipboard-based; works for non-ASCII
-automator.clearAndTypeText(node, "replacement")    // click + clear + type in one call
+automator.typeText("hello")                        // key events; supported ASCII only
+automator.pasteText("こんにちは")                   // clipboard paste for large or Unicode text
+automator.clearAndTypeText(node, "replacement")    // click + clear + typeText
 automator.pressKey(KeyEvent.VK_TAB)
 automator.pressKey(KeyEvent.VK_S, modifiers = InputEvent.CTRL_DOWN_MASK)
 automator.pressEnter()
@@ -134,10 +141,12 @@ val img = automator.screenshot(windowIndex = 0)         // native single-window 
 val img = automator.screenshot(node)                    // native window capture; needs recording + platform helper
 ```
 
+`typeText` dispatches key press/release pairs and does not touch the clipboard. Use `pasteText` for large strings or arbitrary Unicode.
+
 ## Synchronization
 
 ```kotlin
-// After launching — poll until a node appears (EDT-safe)
+// After launching — poll until a node appears
 automator.waitForNode(tag = "root-content")
 
 // After an interaction — wait for semantics tree + idling resources to settle
@@ -156,15 +165,16 @@ automator.waitForVisualIdle()  // pixels settled
 val result = automator.findOneByTestTag("Result")
 ```
 
-All three wait helpers are `suspend`. Default timeout is 5 s; all parameters are tunable.
+All three wait helpers are `suspend` and **must not** be called from the AWT EDT. Default timeout is 5 s; all parameters are tunable.
 
 ## Input drivers
 
 Use `ComposeAutomator.inProcess()` (the default) for most tests — it uses a real `java.awt.Robot` and moves the actual cursor. Switch drivers only when needed:
 
-- `RobotDriver.synthetic(window)` — synthetic AWT events posted directly into the window's event queue; no real cursor motion, safe for parallel test runs.
+- `RobotDriver.synthetic(rootWindow = window)` — synthetic AWT events posted directly into the window's event queue; no real cursor motion, safe for parallel test runs.
 - `RobotDriver.headless()` — read-only; every input or screenshot call throws `UnsupportedOperationException`. Semantics-tree reads still work.
 - `ComposeAutomator.http("localhost", 7654)` — cross-JVM via HTTP; requires the `:server` module running in the target process.
+- `AgentAttach.attach(pid)` — attach to a **running** Compose JVM. The target does **not** need `spectre-core` preinstalled: when core is absent, the agent runtime injects nested `META-INF/spectre/inject-runtime.jar`. Prefer a `spectre-core` dependency when you control the target build. The attacher needs `spectre-agent` plus `spectre-agent-runtime`.
 
 ---
 

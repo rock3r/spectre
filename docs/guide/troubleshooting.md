@@ -36,10 +36,14 @@ caveats. Prefer a prod-like launch (`java -jar`, installDist) when you control t
 
 ### "Agent bootstrap failed (AGENT_BOOTSTRAP)"
 
-The target JVM was found but the agent did not bind its UDS in time, or
-`ComposeAutomator` was not on the target classpath. Ensure the app depends on
-`spectre-core`, and for direct launches that Spectre injects
-`-XX:+EnableDynamicAgentLoading` (Gradle launches must set that flag in the build).
+The target JVM was found but the agent did not bind its UDS in time, bootstrap
+could not find or inject `ComposeAutomator`, or the target has no Compose host.
+Prefer a `spectre-core` dependency on the app (instrumented attach). If the target
+is Compose-only, current `spectre-agent-runtime` jars inject nested
+`META-INF/spectre/inject-runtime.jar` automatically — a missing core dependency is
+no longer a hard requirement. Direct launches that Spectre starts get
+`-XX:+EnableDynamicAgentLoading`; Gradle launches must set that flag in the build.
+See [Agent attach](agent.md#injection-without-preinstalled-core).
 
 ### "Attached but no window (FIRST_WINDOW)"
 
@@ -61,7 +65,7 @@ bounded worker that enforces the timeout, so the helpers raise
 `IllegalStateException` instead. The exact wait name in the message tells you which
 call to wrap.
 
-JUnit test methods don't run on the EDT, so a a `runSpectreTest { … }` body is fine (or plain `runBlocking` as a fallback)
+JUnit test methods don't run on the EDT, so a `runSpectreTest { … }` body is fine (or plain `runBlocking` as a fallback)
 there — no `withContext` needed. The error appears when the call originates from a
 coroutine on `Dispatchers.Main` or any Swing-backed dispatcher, e.g.:
 

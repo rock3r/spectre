@@ -64,8 +64,8 @@ npx skills add rock3r/spectre --skill spectre
   window/region recording and still screenshots. Runtime machines need Windows 10 version
   1903+, .NET 8 Desktop Runtime, and Windows App Runtime 1.8; contributors building the
   helper need the .NET 8 SDK.
-- `agent` — experimental local attach transport for driving a Spectre-instrumented JVM from a
-  separate process.
+- `agent` — experimental local attach transport for driving a running Compose JVM from a
+  separate process (preinstalled `spectre-core` preferred; inject when the target has no core).
 - `agent-runtime` — loadable Java-agent runtime jar used by `agent` when attaching to a target JVM.
 - `testing` — JUnit 5 extension and JUnit 4 rule.
 - `sample-desktop` — Compose Desktop app for manual smokes.
