@@ -1,0 +1,8 @@
+---
+description: Cursor-only operating instructions live in cursor.md, not AGENTS.md.
+alwaysApply: true
+---
+
+Follow `cursor.md` at the repository root for all Cursor-specific instructions
+(GitHub `gh` usage, Cursor Cloud caveats). Do not put Cursor-only notes in
+`AGENTS.md` or `CLAUDE.md`.
