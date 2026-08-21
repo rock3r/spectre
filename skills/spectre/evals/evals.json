@@ -9,7 +9,7 @@
         "Uses ComposeAutomatorExtension (the JUnit 5 wrapper) — not ComposeAutomatorRule",
         "Registers the extension with @RegisterExtension",
         "Uses @JvmField on the extension field",
-        "Wraps the test body in runBlocking { ... } and NOT in runTest",
+        "Wraps the test body in runSpectreTest { ... } and NOT in runTest or runBlocking",
         "Calls a wait (waitForNode or waitForVisualIdle or waitForIdle) before reading post-click state",
         "Uses click() — not performSemanticsClick — on the Increment node",
         "Locates nodes via findOneByTestTag",
@@ -35,7 +35,7 @@
         "Recommends switching to RobotDriver.synthetic(...) as the primary fix",
         "Identifies that RobotDriver.synthetic takes a rootWindow (the top-level java.awt.Window)",
         "Wires the driver via the factory-form trailing lambda on ComposeAutomatorExtension/Rule (e.g. ComposeAutomatorExtension { ComposeAutomator.inProcess(robotDriver = ...) }) — NOT via a non-existent robotDriver = named arg on the extension/rule itself",
-        "Imports dev.sebastiano.spectre.core.synthetic (since synthetic is an extension on RobotDriver.Companion)",
+        "Uses RobotDriver.synthetic(rootWindow = ...) from RobotDriver's companion (import RobotDriver; there is no separate synthetic extension import)",
         "Does NOT recommend disabling parallelism / lowering maxParallelForks as the fix",
         "Does NOT recommend performSemanticsClick as the primary fix"
       ]
@@ -47,7 +47,7 @@
       "assertions": [
         "Uses ComposeAutomatorRule (the JUnit 4 wrapper) — not ComposeAutomatorExtension",
         "Annotates the rule with @get:Rule (Kotlin-correct form)",
-        "Wraps test body in runBlocking { ... } and NOT in runTest",
+        "Wraps the test body in runSpectreTest { ... } and NOT in runTest or runBlocking",
         "Types the email into EmailField via typeText or clearAndTypeText",
         "Calls click on the LoginButton node",
         "Uses waitForNode(tag = \"Dashboard\") (or equivalent) to wait for the dashboard"

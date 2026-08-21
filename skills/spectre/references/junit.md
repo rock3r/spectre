@@ -111,6 +111,37 @@ ComposeAutomatorExtension(
 )
 ```
 
+## Launch-and-attach (separate UI JVM)
+
+When the UI under test is a **separate JVM** (prod-like `java -jar`,
+`installDist`, or `./gradlew :app:run` with warnings), use
+`LaunchAndAttachExtension` (JUnit 5) or `LaunchAndAttachRule` (JUnit 4)
+instead of only `ComposeAutomatorExtension` / `ComposeAutomatorRule`. They
+call the shared agent launch core, attach, and tear the process tree down
+after each test. The launched app does **not** have to preinstall
+`spectre-core` — attach injects it when Compose is present — but
+preinstalled core is still the preferred target shape.
+
+```kotlin
+@JvmField
+@RegisterExtension
+val launchExt =
+    LaunchAndAttachExtension(
+        LaunchSpec(
+            command =
+                listOf(
+                    "${System.getProperty("java.home")}/bin/java",
+                    "-jar",
+                    "app/build/libs/app.jar",
+                )
+        )
+    )
+```
+
+Keep a `ComposeAutomatorExtension` / `Rule` innermost if you also want
+in-process failure artifacts. Full recipe: user guide
+[JUnit — Launch-and-attach](https://spectre.sebastiano.dev/guide/junit/).
+
 ## Lifecycle notes
 
 - The extension/rule does **not** open a Compose window for you. Launch your

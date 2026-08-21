@@ -11,11 +11,13 @@ internal sealed class SpectreAgentBootstrapException(message: String) : RuntimeE
 
 /**
  * Thrown by [AgentBootstrap] when no class with the fully-qualified name
- * `dev.sebastiano.spectre.core.ComposeAutomator` is found among the target JVM's loaded classes.
+ * `dev.sebastiano.spectre.core.ComposeAutomator` is found among the target JVM's loaded classes
+ * **and** nested inject-runtime bootstrap cannot supply one.
  *
- * The thin-agent design (UC-1 in the issue #153 workshop plan) requires the target application to
- * already have Spectre on its classpath. This exception is the agent's way of saying "you attached
- * to a JVM that doesn't have Spectre — add the dependency and try again".
+ * Prefer a preinstalled `spectre-core` dependency on the target. When core is absent, bootstrap
+ * tries `META-INF/spectre/inject-runtime.jar` from the agent runtime jar. This exception means both
+ * paths failed — typically a runtime jar built without the inject payload, or a target with neither
+ * Spectre nor a usable inject jar.
  */
 internal class SpectreNotOnClasspathException :
     SpectreAgentBootstrapException(
