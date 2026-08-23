@@ -55,7 +55,7 @@ internal class CoordinatorLeaseService(
     @Synchronized
     fun acquire(message: CoordinatorWireMessage): CompletableFuture<CoordinatorWireMessage> {
         val request = wireMapper.toAcquireRequest(message)
-        if (requestTracker.isDisconnected(request.owner.clientId)) {
+        if (!requestTracker.isConnected(request.owner.clientId)) {
             return CompletableFuture.completedFuture(
                 error("CLIENT_DISCONNECTED", "Client session disconnected")
             )
@@ -307,17 +307,17 @@ internal class CoordinatorLeaseService(
 
 private class AcquisitionRequestTracker {
     private val cancelledBeforeAcquire = LinkedHashSet<CancelledAcquire>()
-    private val disconnectedClients = mutableSetOf<String>()
+    private val connectedClients = mutableSetOf<String>()
     private val grantsByRequest = mutableMapOf<CancelledAcquire, LeaseToken>()
 
-    fun isDisconnected(clientId: String): Boolean = clientId in disconnectedClients
+    fun isConnected(clientId: String): Boolean = clientId in connectedClients
 
     fun markConnected(clientId: String) {
-        disconnectedClients -= clientId
+        connectedClients += clientId
     }
 
     fun markDisconnected(clientId: String) {
-        disconnectedClients += clientId
+        connectedClients -= clientId
     }
 
     fun consumeCancellation(clientId: String, requestId: String): Boolean =

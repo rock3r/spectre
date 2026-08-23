@@ -16,6 +16,28 @@ import kotlin.test.assertTrue
 class CoordinatorLeaseServiceTest {
 
     @Test
+    fun `acquire requires a session opened in the current coordinator epoch`() {
+        val service =
+            CoordinatorLeaseService(
+                epoch = "replacement-epoch",
+                heartbeatTimeout = Duration.ofSeconds(5),
+                revokeGrace = Duration.ofSeconds(1),
+                recoveryGrace = Duration.ofSeconds(1),
+            )
+        try {
+            val staleEpochResponse = service.acquire(acquire("stale", "old-client")).get()
+
+            assertFalse(staleEpochResponse.ok)
+            assertEquals("CLIENT_DISCONNECTED", staleEpochResponse.errorCode)
+
+            service.openSession("old-client")
+            assertTrue(service.acquire(acquire("current", "old-client")).get().ok)
+        } finally {
+            service.close()
+        }
+    }
+
+    @Test
     fun `cancelling an unknown request does not disconnect an active lease`() {
         val service =
             CoordinatorLeaseService(
@@ -25,6 +47,7 @@ class CoordinatorLeaseServiceTest {
                 recoveryGrace = Duration.ofSeconds(1),
             )
         try {
+            service.openSession("client")
             val grant =
                 service
                     .acquire(
@@ -76,6 +99,8 @@ class CoordinatorLeaseServiceTest {
                 recoveryGrace = Duration.ofSeconds(1),
             )
         try {
+            service.openSession("holder-client")
+            service.openSession("waiting-client")
             service.acquire(acquire("holder", "holder-client")).get(1, TimeUnit.SECONDS)
             val queued = service.acquire(acquire("waiting", "waiting-client"))
 
@@ -99,6 +124,7 @@ class CoordinatorLeaseServiceTest {
                 recoveryGrace = Duration.ofSeconds(1),
             )
         try {
+            service.openSession("closed-client")
             service.disconnect("closed-client")
 
             val response = service.acquire(acquire("late", "closed-client")).get()
@@ -120,6 +146,7 @@ class CoordinatorLeaseServiceTest {
                 recoveryGrace = Duration.ofSeconds(1),
             )
         try {
+            service.openSession("client")
             service.cancel(
                 CoordinatorWireMessage(
                     kind = CoordinatorWireKind.CANCEL,
@@ -148,6 +175,8 @@ class CoordinatorLeaseServiceTest {
                 recoveryGrace = Duration.ofSeconds(1),
             )
         try {
+            service.openSession("interrupted-client")
+            service.openSession("next-client")
             service.acquire(acquire("unobserved", "interrupted-client")).get()
 
             service.cancel(
@@ -180,6 +209,8 @@ class CoordinatorLeaseServiceTest {
                 recoveryLedger = ledger,
             )
         try {
+            service.openSession("first-client")
+            service.openSession("second-client")
             val first = service.acquire(acquire("first", "first-client")).get()
             val queued = service.acquire(acquire("second", "second-client"))
             assertTrue(

@@ -57,8 +57,18 @@ internal class MultiplexedIpcSession(
             }
         val inFlight = ConcurrentHashMap<Long, OpSlot>()
         val writeLock = Any()
+        val detachRequested = AtomicBoolean(false)
         try {
-            serveOps(input, output, workers, inputWorker, deadlineScheduler, inFlight, writeLock)
+            serveOps(
+                input,
+                output,
+                workers,
+                inputWorker,
+                deadlineScheduler,
+                inFlight,
+                writeLock,
+                detachRequested,
+            )
         } finally {
             inFlight.values.forEach { it.abortRunningWork() }
             inFlight.clear()
@@ -66,7 +76,12 @@ internal class MultiplexedIpcSession(
             workers.shutdownNow()
             inputWorker.shutdownNow()
             runCatching { workers.awaitTermination(WORKER_SHUTDOWN_SEC, TimeUnit.SECONDS) }
-            runCatching { inputWorker.awaitTermination(WORKER_SHUTDOWN_SEC, TimeUnit.SECONDS) }
+            val inputWaitInterrupted = awaitInputWorkerTermination(inputWorker)
+            try {
+                if (detachRequested.get()) onDetach()
+            } finally {
+                if (inputWaitInterrupted) Thread.currentThread().interrupt()
+            }
         }
     }
 
@@ -78,6 +93,7 @@ internal class MultiplexedIpcSession(
         deadlineScheduler: ScheduledExecutorService,
         inFlight: ConcurrentHashMap<Long, OpSlot>,
         writeLock: Any,
+        detachRequested: AtomicBoolean,
     ) {
         while (running.get()) {
             // Channel-close deadlines may surface as SocketTimeoutException or as a
@@ -102,7 +118,7 @@ internal class MultiplexedIpcSession(
             when (val body = op.body) {
                 is AgentRequest.Cancel -> handleCancel(body, op.opId, output, writeLock, inFlight)
                 AgentRequest.Detach -> {
-                    handleDetach(op.opId, output, writeLock, inFlight)
+                    handleDetach(op.opId, output, writeLock, inFlight, detachRequested)
                     return
                 }
                 else ->
@@ -180,6 +196,7 @@ internal class MultiplexedIpcSession(
         output: OutputStream,
         writeLock: Any,
         inFlight: ConcurrentHashMap<Long, OpSlot>,
+        detachRequested: AtomicBoolean,
     ) {
         inFlight.values.forEach { it.abortRunningWork() }
         inFlight.clear()
@@ -187,8 +204,20 @@ internal class MultiplexedIpcSession(
             writeOpResponse(output, writeLock, opId, AgentResponse.Detached)
         } finally {
             running.set(false)
-            onDetach()
+            detachRequested.set(true)
         }
+    }
+
+    private fun awaitInputWorkerTermination(inputWorker: ExecutorService): Boolean {
+        var interrupted = false
+        while (!inputWorker.isTerminated) {
+            try {
+                inputWorker.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS)
+            } catch (_: InterruptedException) {
+                interrupted = true
+            }
+        }
+        return interrupted
     }
 
     private fun dispatchOp(

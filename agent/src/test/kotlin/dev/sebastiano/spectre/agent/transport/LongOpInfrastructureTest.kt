@@ -10,6 +10,7 @@ import kotlin.io.path.deleteIfExists
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.condition.EnabledOnOs
@@ -27,6 +28,67 @@ class LongOpInfrastructureTest {
     @AfterTest
     fun cleanUp() {
         runCatching { udsPath.deleteIfExists() }
+    }
+
+    @Test
+    fun `detach retains target input resources until active input finishes`() {
+        val inputStarted = CountDownLatch(1)
+        val allowInputToFinish = CountDownLatch(1)
+        val detached = CountDownLatch(1)
+        val server =
+            IpcServer(
+                udsPath,
+                AgentRequestHandler { request ->
+                    when (request) {
+                        is AgentRequest.Click -> {
+                            inputStarted.countDown()
+                            var finished = false
+                            while (!finished) {
+                                try {
+                                    allowInputToFinish.await()
+                                    finished = true
+                                } catch (_: InterruptedException) {
+                                    // A native input call can outlive interruption. Model that
+                                    // contract so detach must retain coordination until return.
+                                }
+                            }
+                            AgentResponse.Ok
+                        }
+                        else -> AgentResponse.Ok
+                    }
+                },
+                onDetach = { detached.countDown() },
+            )
+        server.use {
+            awaitSocket(udsPath)
+            IpcClient(udsPath).use { client ->
+                val inputThread =
+                    Thread {
+                            runCatching { client.send(AgentRequest.Click(nodeKey = "target-node")) }
+                        }
+                        .apply {
+                            isDaemon = true
+                            start()
+                        }
+
+                assertTrue(inputStarted.await(3, TimeUnit.SECONDS), "input op never started")
+                assertEquals(AgentResponse.Detached, client.send(AgentRequest.Detach))
+                try {
+                    assertFalse(
+                        detached.await(200, TimeUnit.MILLISECONDS),
+                        "detach released target resources while input was still active",
+                    )
+                } finally {
+                    allowInputToFinish.countDown()
+                }
+
+                assertTrue(
+                    detached.await(3, TimeUnit.SECONDS),
+                    "detach did not release target resources after input finished",
+                )
+                inputThread.join(3_000)
+            }
+        }
     }
 
     @Test
