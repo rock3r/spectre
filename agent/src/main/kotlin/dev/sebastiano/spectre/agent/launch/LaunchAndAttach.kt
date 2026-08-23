@@ -41,14 +41,18 @@ public object LaunchAndAttach {
         for (warning in prepared.warnings) {
             warningSink(warning)
         }
+        // #446: sample the wall clock *before* the process exists, so the fallback boundary can
+        // never land after the app JVM this launch is about to start. Erring early only risks
+        // admitting a stale candidate, which pid ordering and the name filter still narrow;
+        // erring late would reject the real app JVM on every poll until the stage times out.
+        val launchedAt = Instant.now()
         val process = startProcess(prepared.command, spec, prepared.stdoutPath, prepared.stderrPath)
-        // #446: read the launch boundary here, the earliest point at which the process exists. A
-        // gradle-ish client can be reaped almost immediately, and a reaped process reports no
-        // start instant — so this must not wait until a later readiness stage.
+        // Read the OS start time at the earliest point the process exists: a gradle-ish client can
+        // be reaped almost immediately, and a reaped process reports no start instant at all.
         val launchBoundary =
             LaunchReadiness.launchBoundary(
                 osStartInstant = process.info().startInstant().orElse(null),
-                observedAt = Instant.now(),
+                observedAt = launchedAt,
             )
         return attachAfterStart(process, prepared, spec, launchBoundary)
     }

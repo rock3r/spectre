@@ -127,6 +127,23 @@ class LaunchDescendantDiscoveryTest {
     }
 
     @Test
+    fun `the fallback boundary is sampled before the client process is created`() {
+        // Ordering invariant that no unit test can observe directly: when the OS hides the client's
+        // start time, the fallback must be read before startProcess. Sampled after, a fast Gradle
+        // task could spawn the app JVM first, making the legitimate candidate look like it
+        // predates the launch — and discovery would then reject it on every poll until timeout.
+        val source =
+            repoRoot()
+                .resolve(
+                    "agent/src/main/kotlin/dev/sebastiano/spectre/agent/launch/LaunchAndAttach.kt"
+                )
+                .readText()
+        val nowAt = source.indexOf("Instant.now()")
+        val startAt = source.indexOf("startProcess(prepared.command")
+        assertTrue(nowAt in 0..<startAt, "Instant.now()=$nowAt must precede startProcess=$startAt")
+    }
+
+    @Test
     fun `selectAppJvm keeps rejecting a leftover after the gradle client has exited`() {
         // Gradle-ish discovery deliberately keeps polling after the client exits — the app JVM is
         // a daemon child that often appears later. Once the client is reaped,
@@ -175,6 +192,15 @@ class LaunchDescendantDiscoveryTest {
      * The #446 process layout: a gradlew client, a long-lived Gradle daemon, a leftover fixture
      * from an earlier run hanging off that daemon, and the fixture this launch actually started.
      */
+    private fun repoRoot(): java.io.File {
+        var candidate: java.io.File? = java.io.File("").absoluteFile
+        while (candidate != null) {
+            if (java.io.File(candidate, "settings.gradle.kts").isFile) return candidate
+            candidate = candidate.parentFile
+        }
+        error("Could not locate the Spectre repo root")
+    }
+
     private class GradleLaunchScenario(
         includeFreshFixture: Boolean = true,
         private val startTimesKnown: Boolean = true,
