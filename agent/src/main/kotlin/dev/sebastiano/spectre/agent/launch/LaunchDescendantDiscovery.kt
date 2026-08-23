@@ -31,8 +31,20 @@ public object LaunchDescendantDiscovery {
      * @param nameFilter case-insensitive substring of the app's main-class display name. Required
      *   to safely pick among daemon children on machines with concurrent Gradle apps.
      */
-    public fun discoverAppJvm(clientPid: Long, nameFilter: String?): Long? =
-        selectAppJvm(clientPid = clientPid, nameFilter = nameFilter)
+    public fun discoverAppJvm(
+        clientPid: Long,
+        nameFilter: String?,
+        /**
+         * When the launch began, used to reject JVMs that predate it (see [predatesLaunch]).
+         *
+         * Callers that poll must capture this **once, while the client is still alive** and pass
+         * the same value every time. Gradle-ish discovery deliberately keeps running after the
+         * client exits, and a reaped pid no longer resolves to a [ProcessHandle] — so re-deriving
+         * the boundary per poll would silently fail open exactly when the gate matters most.
+         */
+        clientStart: Instant? = processStartInstant(clientPid),
+    ): Long? =
+        selectAppJvm(clientPid = clientPid, nameFilter = nameFilter, clientStart = clientStart)
 
     /**
      * [discoverAppJvm] with its process facts injectable, so the selection rules can be tested
@@ -41,20 +53,20 @@ public object LaunchDescendantDiscovery {
     internal fun selectAppJvm(
         clientPid: Long,
         nameFilter: String?,
+        clientStart: Instant?,
         listed: List<JvmProcessInfo> =
             runCatching { SpectreProcesses.listJvmProcesses() }.getOrDefault(emptyList()),
         descendantsOf: (Long) -> Set<Long> = ::descendantPidsOf,
         parentOf: (Long) -> Long? = ::parentPid,
         startInstantOf: (Long) -> Instant? = ::processStartInstant,
         nativeFallback: (Long, Set<Long>, String?) -> Long? = { client, daemons, filter ->
-            discoverByNativeTree(client, daemons, filter, startInstantOf)
+            discoverByNativeTree(client, daemons, filter, clientStart, startInstantOf)
         },
     ): Long? {
         if (listed.isEmpty()) return null
 
         val daemonPids =
             listed.filter { isGradleDaemonDisplayName(it.displayName) }.map { it.pid }.toSet()
-        val clientStart = startInstantOf(clientPid)
         val nonDaemon = listed.filter { info ->
             info.pid != clientPid &&
                 !isGradleDaemonDisplayName(info.displayName) &&
@@ -113,7 +125,8 @@ public object LaunchDescendantDiscovery {
         return candidateStart.isBefore(clientStart)
     }
 
-    private fun processStartInstant(pid: Long): Instant? =
+    /** Best-effort process start time; empty on hosts or permission setups that hide it. */
+    internal fun processStartInstant(pid: Long): Instant? =
         ProcessHandle.of(pid).flatMap { it.info().startInstant() }.orElse(null)
 
     /**
@@ -124,6 +137,7 @@ public object LaunchDescendantDiscovery {
         clientPid: Long,
         daemonPids: Set<Long>,
         nameFilter: String?,
+        clientStart: Instant?,
         startInstantOf: (Long) -> Instant?,
     ): Long? {
         val roots = buildList {
@@ -133,7 +147,6 @@ public object LaunchDescendantDiscovery {
             }
         }
         val daemonPidSet = daemonPids // roots may include daemon pids as walk roots only
-        val clientStart = startInstantOf(clientPid)
         return roots
             .asSequence()
             .flatMap { root -> descendantPidsOf(root).asSequence() }

@@ -52,6 +52,11 @@ internal object LaunchReadiness {
         stderrPath: Path,
     ): Long {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        // #446: pin the launch boundary now, while the client is still alive. Gradle-ish discovery
+        // below deliberately keeps polling after the client exits, and a reaped pid no longer
+        // resolves to a ProcessHandle — re-deriving this per poll would hand predatesLaunch a null
+        // boundary and silently re-admit every JVM the gate exists to reject.
+        val clientStart = process.info().startInstant().orElse(null)
         while (System.nanoTime() < deadline) {
             if (!gradleish) {
                 // Direct: client is the target. Stage PROCESS_ALIVE established the process is
@@ -65,7 +70,7 @@ internal object LaunchReadiness {
             // Gradle-ish: keep discovering after the client exits. The app JVM is often a
             // daemon child (not a ProcessHandle descendant of ./gradlew); tasks that fork and
             // return still need the remaining stage budget to observe the app.
-            val pid = LaunchDescendantDiscovery.discoverAppJvm(launchedPid, nameFilter)
+            val pid = LaunchDescendantDiscovery.discoverAppJvm(launchedPid, nameFilter, clientStart)
             if (pid != null) return pid
             sleepQuietly(POLL_MS)
         }

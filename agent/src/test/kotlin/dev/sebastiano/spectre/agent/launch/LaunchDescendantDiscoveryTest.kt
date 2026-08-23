@@ -110,6 +110,23 @@ class LaunchDescendantDiscoveryTest {
     }
 
     @Test
+    fun `selectAppJvm keeps rejecting a leftover after the gradle client has exited`() {
+        // Gradle-ish discovery deliberately keeps polling after the client exits — the app JVM is
+        // a daemon child that often appears later. Once the client is reaped,
+        // ProcessHandle.of(clientPid) is empty, so a boundary resolved per poll would be null and
+        // predatesLaunch would fail open, re-admitting the very leftover the gate exists to
+        // reject. The boundary has to be captured once, while the client is alive.
+        val scenario = GradleLaunchScenario(includeFreshFixture = false, clientReaped = true)
+        assertNull(scenario.select(nameFilter = "ComposeFixtureMain"))
+    }
+
+    @Test
+    fun `selectAppJvm still finds the fresh fixture after the gradle client has exited`() {
+        val scenario = GradleLaunchScenario(clientReaped = true)
+        assertEquals(scenario.freshFixturePid, scenario.select(nameFilter = "ComposeFixtureMain"))
+    }
+
+    @Test
     fun `selectAppJvm falls back to the highest matching pid when start times are unknown`() {
         // Fail-open: with no start times to compare, selection is exactly what it was before the
         // gate — highest matching pid, leftover included. Worse than the gate, better than no
@@ -128,13 +145,15 @@ class LaunchDescendantDiscoveryTest {
     private class GradleLaunchScenario(
         includeFreshFixture: Boolean = true,
         private val startTimesKnown: Boolean = true,
+        /** The gradlew client has been reaped, so its pid no longer resolves to a handle. */
+        private val clientReaped: Boolean = false,
     ) {
         val clientPid: Long = 12_300
         val daemonPid: Long = 12_310
         val leftoverFixturePid: Long = 12_900
         val freshFixturePid: Long = 12_672
 
-        private val launchedAt: Instant = Instant.parse("2026-08-23T10:00:00Z")
+        val launchedAt: Instant = Instant.parse("2026-08-23T10:00:00Z")
 
         private val listed: List<JvmProcessInfo> = buildList {
             add(JvmProcessInfo(daemonPid, "org.gradle.launcher.daemon.bootstrap.GradleDaemon 8.14"))
@@ -166,10 +185,16 @@ class LaunchDescendantDiscoveryTest {
             LaunchDescendantDiscovery.selectAppJvm(
                 clientPid = clientPid,
                 nameFilter = nameFilter,
+                // Captured once by awaitJvmAttachable while the client was still alive.
+                clientStart = launchedAt.takeIf { startTimesKnown },
                 listed = listed,
                 descendantsOf = { emptySet() },
                 parentOf = { pid -> daemonPid.takeIf { pid != daemonPid && pid != clientPid } },
-                startInstantOf = { pid -> startInstants[pid].takeIf { startTimesKnown } },
+                startInstantOf = { pid ->
+                    startInstants[pid].takeIf {
+                        startTimesKnown && !(clientReaped && pid == clientPid)
+                    }
+                },
                 nativeFallback = { _, _, _ -> null },
             )
     }
