@@ -110,6 +110,23 @@ class LaunchDescendantDiscoveryTest {
     }
 
     @Test
+    fun `the launch boundary prefers the OS start time when it is available`() {
+        val osStart = Instant.parse("2026-08-23T10:00:00Z")
+        val observed = Instant.parse("2026-08-23T10:00:01Z")
+        assertEquals(osStart, LaunchReadiness.launchBoundary(osStart, observed))
+    }
+
+    @Test
+    fun `the launch boundary is never null even when the OS hides the start time`() {
+        // A gradle-ish client can survive awaitProcessAlive and be reaped moments later, and a
+        // reaped process reports no start instant. A null boundary makes predatesLaunch fail open,
+        // which is exactly what the gate must never do — so fall back to when the launch call
+        // created the process. Safe, because the app JVM cannot predate its own launch.
+        val observed = Instant.parse("2026-08-23T10:00:01Z")
+        assertEquals(observed, LaunchReadiness.launchBoundary(null, observed))
+    }
+
+    @Test
     fun `selectAppJvm keeps rejecting a leftover after the gradle client has exited`() {
         // Gradle-ish discovery deliberately keeps polling after the client exits — the app JVM is
         // a daemon child that often appears later. Once the client is reaped,

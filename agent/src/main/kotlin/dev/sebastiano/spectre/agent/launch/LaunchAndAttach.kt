@@ -5,6 +5,7 @@ import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Instant
 
 /**
  * Launch a command, wait through staged readiness, attach Spectre, and return a [LaunchedSession]
@@ -41,7 +42,15 @@ public object LaunchAndAttach {
             warningSink(warning)
         }
         val process = startProcess(prepared.command, spec, prepared.stdoutPath, prepared.stderrPath)
-        return attachAfterStart(process, prepared, spec)
+        // #446: read the launch boundary here, the earliest point at which the process exists. A
+        // gradle-ish client can be reaped almost immediately, and a reaped process reports no
+        // start instant — so this must not wait until a later readiness stage.
+        val launchBoundary =
+            LaunchReadiness.launchBoundary(
+                osStartInstant = process.info().startInstant().orElse(null),
+                observedAt = Instant.now(),
+            )
+        return attachAfterStart(process, prepared, spec, launchBoundary)
     }
 
     /** Default warning destination — stderr so interactive tools and CI logs surface it. */
@@ -126,6 +135,7 @@ public object LaunchAndAttach {
         process: Process,
         prepared: PreparedLaunch,
         spec: LaunchSpec,
+        launchBoundary: Instant,
     ): LaunchedSession {
         val launchedPid = process.pid()
         // Gradle-ish: expand default JVM_ATTACHABLE budget (15s → 120s) so cold daemon + compile
@@ -155,6 +165,7 @@ public object LaunchAndAttach {
                     timeoutMs = stageTimeouts.jvmAttachableMs,
                     stdoutPath = prepared.stdoutPath,
                     stderrPath = prepared.stderrPath,
+                    clientStart = launchBoundary,
                 )
             automator =
                 LaunchReadiness.awaitAgentBootstrap(
