@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.agent.launch
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.JvmProcessInfo
 import dev.sebastiano.spectre.agent.SpectreProcesses
+import java.time.Instant
 import kotlin.streams.asSequence
 
 /**
@@ -14,6 +15,8 @@ import kotlin.streams.asSequence
  * Safety rules:
  * - Never returns a Gradle daemon display-name match.
  * - Never returns an arbitrary machine-wide JVM.
+ * - Never returns a JVM that was already running when the launch began — it belongs to something
+ *   else, however well its main class matches (#446). See [predatesLaunch].
  * - Daemon-child candidates are only considered when [nameFilter] is set (shared daemons often host
  *   unrelated app JVMs).
  * - Without [nameFilter], only ProcessHandle descendants of the client are considered
@@ -28,20 +31,61 @@ public object LaunchDescendantDiscovery {
      * @param nameFilter case-insensitive substring of the app's main-class display name. Required
      *   to safely pick among daemon children on machines with concurrent Gradle apps.
      */
-    public fun discoverAppJvm(clientPid: Long, nameFilter: String?): Long? {
-        val listed = runCatching { SpectreProcesses.listJvmProcesses() }.getOrDefault(emptyList())
+    public fun discoverAppJvm(
+        clientPid: Long,
+        nameFilter: String?,
+        /**
+         * When the launch began, used to reject JVMs that predate it (see [predatesLaunch]).
+         *
+         * Callers that poll must capture this **once, while the client is still alive** and pass
+         * the same value every time. Gradle-ish discovery deliberately keeps running after the
+         * client exits, and a reaped pid no longer resolves to a [ProcessHandle] — so re-deriving
+         * the boundary per poll would silently fail open exactly when the gate matters most.
+         */
+        clientStart: Instant? = processStartInstant(clientPid),
+    ): Long? =
+        selectAppJvm(clientPid = clientPid, nameFilter = nameFilter, clientStart = clientStart)
+
+    /**
+     * [discoverAppJvm] with its process facts injectable, so the selection rules can be tested
+     * against a fixed process layout instead of whatever happens to be running (#446).
+     */
+    internal fun selectAppJvm(
+        clientPid: Long,
+        nameFilter: String?,
+        clientStart: Instant?,
+        listed: List<JvmProcessInfo> =
+            runCatching { SpectreProcesses.listJvmProcesses() }.getOrDefault(emptyList()),
+        descendantsOf: (Long) -> Set<Long> = ::descendantPidsOf,
+        parentOf: (Long) -> Long? = ::parentPid,
+        startInstantOf: (Long) -> Instant? = ::processStartInstant,
+        nativeFallback: (Long, Set<Long>, String?) -> Long? = { client, daemons, filter ->
+            discoverByNativeTree(client, daemons, filter, clientStart, startInstantOf)
+        },
+    ): Long? {
         if (listed.isEmpty()) return null
 
         val daemonPids =
             listed.filter { isGradleDaemonDisplayName(it.displayName) }.map { it.pid }.toSet()
         val nonDaemon = listed.filter { info ->
-            info.pid != clientPid && !isGradleDaemonDisplayName(info.displayName)
+            info.pid != clientPid &&
+                !isGradleDaemonDisplayName(info.displayName) &&
+                // A JVM that was already running when this launch started belongs to something
+                // else — a leftover fixture, or a sibling e2e sharing the daemon (#446).
+                !predatesLaunch(startInstantOf(info.pid), clientStart)
         }
-        if (nonDaemon.isEmpty()) return null
+        if (nonDaemon.isEmpty()) {
+            // Every Attach-visible JVM is either a daemon or predates the launch. That does not
+            // mean the target is absent: VirtualMachine.list() lags behind spawn, and
+            // -XX:-UsePerfData hides a JVM from it entirely. The native walk is the fallback for
+            // exactly that case, so do not short-circuit past it (#446).
+            val walkRoots = if (nameFilter.isNullOrBlank()) emptySet() else daemonPids
+            return nativeFallback(clientPid, walkRoots, nameFilter)
+        }
 
-        val clientDescendants = descendantPidsOf(clientPid)
+        val clientDescendants = descendantsOf(clientPid)
         val childOfDaemon = nonDaemon.filter { info ->
-            val parent = parentPid(info.pid) ?: return@filter false
+            val parent = parentOf(info.pid) ?: return@filter false
             parent in daemonPids
         }
 
@@ -66,21 +110,31 @@ public object LaunchDescendantDiscovery {
                     return it
                 }
             // Native process-tree fallback: hsperfdata/list can lag behind spawn.
-            return discoverByNativeTree(
-                clientPid = clientPid,
-                daemonPids = daemonPids,
-                nameFilter = nameFilter,
-            )
+            return nativeFallback(clientPid, daemonPids, nameFilter)
         }
 
         // No name filter: only client descendants (never unfiltered daemon children).
         return nonDaemon.filter { it.pid in clientDescendants }.maxByOrNull { it.pid }?.pid
-            ?: discoverByNativeTree(
-                clientPid = clientPid,
-                daemonPids = emptySet(), // no unfiltered daemon walk without nameFilter
-                nameFilter = null,
-            )
+            // No unfiltered daemon walk without nameFilter.
+            ?: nativeFallback(clientPid, emptySet(), null)
     }
+
+    /**
+     * True when [candidateStart] proves the candidate JVM was already running before the launch
+     * began at [clientStart], so it cannot be the JVM this launch started.
+     *
+     * Fails open. Not every platform and permission setup exposes process start times, and losing
+     * discovery entirely would be far worse than the race this guards — so an unknown instant on
+     * either side keeps the candidate. Equal instants keep it too: process clocks are coarse.
+     */
+    internal fun predatesLaunch(candidateStart: Instant?, clientStart: Instant?): Boolean {
+        if (candidateStart == null || clientStart == null) return false
+        return candidateStart.isBefore(clientStart)
+    }
+
+    /** Best-effort process start time; empty on hosts or permission setups that hide it. */
+    internal fun processStartInstant(pid: Long): Instant? =
+        ProcessHandle.of(pid).flatMap { it.info().startInstant() }.orElse(null)
 
     /**
      * Walk [ProcessHandle] descendants when Attach list is incomplete. With [nameFilter], also walk
@@ -90,6 +144,8 @@ public object LaunchDescendantDiscovery {
         clientPid: Long,
         daemonPids: Set<Long>,
         nameFilter: String?,
+        clientStart: Instant?,
+        startInstantOf: (Long) -> Instant?,
     ): Long? {
         val roots = buildList {
             add(clientPid)
@@ -103,6 +159,9 @@ public object LaunchDescendantDiscovery {
             .flatMap { root -> descendantPidsOf(root).asSequence() }
             .filter { pid -> pid != clientPid }
             .filter { pid -> pid !in daemonPidSet }
+            // Same rule as the listed-JVM path: this launch cannot have started a JVM that was
+            // already running when it began (#446).
+            .filter { pid -> !predatesLaunch(startInstantOf(pid), clientStart) }
             .filter { pid -> looksLikeJavaProcess(pid) }
             .filter { pid -> !commandLineLooksLikeGradleDaemon(pid) }
             .filter { pid -> nameFilter.isNullOrBlank() || commandLineContains(pid, nameFilter) }

@@ -12,6 +12,7 @@ import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Instant
 import java.util.concurrent.TimeUnit
 
 /** Per-stage readiness polls for [LaunchAndAttach]. */
@@ -42,6 +43,19 @@ internal object LaunchReadiness {
         }
     }
 
+    /**
+     * The boundary handed to app-JVM discovery: when this launch began.
+     *
+     * Prefers [osStartInstant], the launched process's own start time, and falls back to
+     * [observedAt] — the moment the launch call created it. Never null, because a null boundary
+     * makes [LaunchDescendantDiscovery.predatesLaunch] fail open, which is exactly what the gate
+     * must not do (#446). A gradle-ish client can be reaped moments after it starts, and a reaped
+     * process reports no start instant at all. The fallback is safe: the app JVM this launch is
+     * waiting for cannot have started before the launch created its client.
+     */
+    internal fun launchBoundary(osStartInstant: Instant?, observedAt: Instant): Instant =
+        osStartInstant ?: observedAt
+
     fun awaitJvmAttachable(
         process: Process,
         launchedPid: Long,
@@ -50,6 +64,14 @@ internal object LaunchReadiness {
         timeoutMs: Long,
         stdoutPath: Path,
         stderrPath: Path,
+        /**
+         * When this launch began, captured by the caller at process creation — see
+         * [launchBoundary]. Gradle-ish discovery below deliberately keeps polling after the client
+         * exits, and a reaped pid no longer resolves to a `ProcessHandle`, so deriving this here
+         * would hand [LaunchDescendantDiscovery.predatesLaunch] a null boundary and silently
+         * re-admit every JVM the gate exists to reject (#446).
+         */
+        clientStart: Instant,
     ): Long {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
         while (System.nanoTime() < deadline) {
@@ -65,7 +87,7 @@ internal object LaunchReadiness {
             // Gradle-ish: keep discovering after the client exits. The app JVM is often a
             // daemon child (not a ProcessHandle descendant of ./gradlew); tasks that fork and
             // return still need the remaining stage budget to observe the app.
-            val pid = LaunchDescendantDiscovery.discoverAppJvm(launchedPid, nameFilter)
+            val pid = LaunchDescendantDiscovery.discoverAppJvm(launchedPid, nameFilter, clientStart)
             if (pid != null) return pid
             sleepQuietly(POLL_MS)
         }

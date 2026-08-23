@@ -247,7 +247,8 @@ public final class dev/sebastiano/spectre/agent/launch/LaunchCommandRewriter {
 
 public final class dev/sebastiano/spectre/agent/launch/LaunchDescendantDiscovery {
 	public static final field INSTANCE Ldev/sebastiano/spectre/agent/launch/LaunchDescendantDiscovery;
-	public final fun discoverAppJvm (JLjava/lang/String;)Ljava/lang/Long;
+	public final fun discoverAppJvm (JLjava/lang/String;Ljava/time/Instant;)Ljava/lang/Long;
+	public static synthetic fun discoverAppJvm$default (Ldev/sebastiano/spectre/agent/launch/LaunchDescendantDiscovery;JLjava/lang/String;Ljava/time/Instant;ILjava/lang/Object;)Ljava/lang/Long;
 	public final fun isGradleDaemonDisplayName (Ljava/lang/String;)Z
 }
 

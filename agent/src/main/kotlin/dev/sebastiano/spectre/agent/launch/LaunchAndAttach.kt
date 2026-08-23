@@ -5,6 +5,7 @@ import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Instant
 
 /**
  * Launch a command, wait through staged readiness, attach Spectre, and return a [LaunchedSession]
@@ -40,8 +41,20 @@ public object LaunchAndAttach {
         for (warning in prepared.warnings) {
             warningSink(warning)
         }
+        // #446: sample the wall clock *before* the process exists, so the fallback boundary can
+        // never land after the app JVM this launch is about to start. Erring early only risks
+        // admitting a stale candidate, which pid ordering and the name filter still narrow;
+        // erring late would reject the real app JVM on every poll until the stage times out.
+        val launchedAt = Instant.now()
         val process = startProcess(prepared.command, spec, prepared.stdoutPath, prepared.stderrPath)
-        return attachAfterStart(process, prepared, spec)
+        // Read the OS start time at the earliest point the process exists: a gradle-ish client can
+        // be reaped almost immediately, and a reaped process reports no start instant at all.
+        val launchBoundary =
+            LaunchReadiness.launchBoundary(
+                osStartInstant = process.info().startInstant().orElse(null),
+                observedAt = launchedAt,
+            )
+        return attachAfterStart(process, prepared, spec, launchBoundary)
     }
 
     /** Default warning destination — stderr so interactive tools and CI logs surface it. */
@@ -126,6 +139,7 @@ public object LaunchAndAttach {
         process: Process,
         prepared: PreparedLaunch,
         spec: LaunchSpec,
+        launchBoundary: Instant,
     ): LaunchedSession {
         val launchedPid = process.pid()
         // Gradle-ish: expand default JVM_ATTACHABLE budget (15s → 120s) so cold daemon + compile
@@ -155,6 +169,7 @@ public object LaunchAndAttach {
                     timeoutMs = stageTimeouts.jvmAttachableMs,
                     stdoutPath = prepared.stdoutPath,
                     stderrPath = prepared.stderrPath,
+                    clientStart = launchBoundary,
                 )
             automator =
                 LaunchReadiness.awaitAgentBootstrap(
