@@ -14,7 +14,20 @@ class DesktopIdentityResolverTest {
 
     @Test
     fun `equivalent local X11 display spellings resolve to one resource`() {
-        val variants = listOf(":0", ":0.0", ":0.1", "unix:0", "unix:0.1", "unix/:0", "unix/:0.99")
+        val variants =
+            listOf(
+                ":0",
+                ":0.0",
+                ":0.1",
+                "unix:0",
+                "unix:0.1",
+                "unix/:0",
+                "unix/:0.99",
+                "localhost:0",
+                "localhost:0.1",
+                "127.0.0.1:0",
+                "127.0.0.1:0.99",
+            )
 
         val keys = variants.map { display ->
             resolver.resolve(
