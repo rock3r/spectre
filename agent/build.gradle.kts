@@ -116,6 +116,12 @@ tasks.withType<Test>().configureEach {
             .orElse(providers.systemProperty("dev.sebastiano.spectre.agent.realKeyboard"))
             .orElse("")
     inputs.property("spectre.agent.realKeyboard", realKeyboardE2e)
+    // `CI` is the other half of the gate: with no property set, RealKeyboardE2eGate flips from
+    // disabled to enabled purely because the env var changed. Without it as an input, a CI run
+    // could stay UP-TO-DATE on (or restore from cache) a developer-mode result where the Robot
+    // keyboard path was skipped, silently dropping the coverage CI is supposed to provide.
+    val realKeyboardCi = providers.environmentVariable("CI").orElse("")
+    inputs.property("spectre.agent.realKeyboard.ci", realKeyboardCi)
 
     jvmArgumentProviders.add(
         CommandLineArgumentProvider {
