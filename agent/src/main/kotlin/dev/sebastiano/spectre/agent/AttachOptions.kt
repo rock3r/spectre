@@ -133,10 +133,17 @@ public data class AttachOptions(
          * Builds `<base>/[perAttachDir]/agent.sock` for each of [baseCandidates] in order and
          * returns the first one that fits the platform's `sun_path` budget.
          *
+         * Each candidate is resolved to an absolute path *before* it is measured. A relative
+         * `java.io.tmpdir` (`-Djava.io.tmpdir=tmp`) is legal and the JVM does not normalise it, so
+         * measuring the short relative spelling would accept a candidate the target then binds as
+         * `<cwd>/<base>/…` — over the limit, with the good fallback already passed over.
+         *
          * @throws UdsPathTooLongException when every candidate overflows the budget.
          */
         internal fun selectUdsPath(baseCandidates: List<String>, perAttachDir: String): Path {
-            val paths = baseCandidates.map { Paths.get(it, perAttachDir, SOCKET_FILE_NAME) }
+            val paths = baseCandidates.map {
+                Paths.get(it, perAttachDir, SOCKET_FILE_NAME).toAbsolutePath()
+            }
             return paths.firstOrNull { !UdsPathLimits.exceedsLimit(it) }
                 ?: throw UdsPathTooLongException(paths)
         }

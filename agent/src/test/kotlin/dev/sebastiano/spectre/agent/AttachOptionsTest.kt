@@ -123,6 +123,32 @@ class AttachOptionsTest {
     }
 
     @Test
+    fun `selectUdsPath measures a relative base after resolving it`() {
+        // A relative java.io.tmpdir (`-Djava.io.tmpdir=tmp`) is legal and the JVM does not
+        // normalise it. Measuring the short relative spelling would accept a candidate that the
+        // target then binds as <cwd>/<base>/... — over the limit, with the good fallback already
+        // skipped. Raised as P2 by Codex review on PR #445.
+        val perAttachDir = "sp-a-1234-a1b2c3d4"
+        val tailBytes = UdsPathLimits.byteLength(Path.of(perAttachDir, "agent.sock"))
+        // Sized so the relative spelling lands exactly on the limit; resolving it against any
+        // working directory at all must push it over.
+        val relativeBase = "r".repeat(UdsPathLimits.maxPathBytes - tailBytes - 1)
+        val relativePath = Path.of(relativeBase, perAttachDir, "agent.sock")
+        assertEquals(UdsPathLimits.maxPathBytes, UdsPathLimits.byteLength(relativePath))
+
+        val selected = AttachOptions.selectUdsPath(listOf(relativeBase, "/tmp"), perAttachDir)
+
+        assertEquals(Path.of("/tmp", perAttachDir, "agent.sock").toAbsolutePath(), selected)
+    }
+
+    @Test
+    fun `selectUdsPath always returns an absolute path`() {
+        val selected = AttachOptions.selectUdsPath(listOf("/tmp"), "sp-a-1234-a1b2c3d4")
+
+        assertTrue(selected.isAbsolute, "selected UDS path should be absolute, got $selected")
+    }
+
+    @Test
     fun `selectUdsPath fails with an actionable message when no candidate fits`() {
         val deepBase = "/deep/" + "d".repeat(120)
         val perAttachDir = "sp-a-1234-a1b2c3d4"
