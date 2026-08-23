@@ -29,6 +29,10 @@ on:
       - "agent/**"
       - "agent-runtime/**"
       - "agent-test-fixture/**"
+      # `:cli` runs SpectreMcpStdioIntegrationTest, which has only ever failed on Windows
+      # (#455). Without this path, a Windows-only fix in `:cli` cannot be verified before
+      # merge and `:cli` regressions reach main before CI sees them.
+      - "cli/**"
       - "recording/**"
       - "recording-linux/**"
       - "recording-macos/**"
@@ -48,6 +52,10 @@ on:
       - "agent/**"
       - "agent-runtime/**"
       - "agent-test-fixture/**"
+      # `:cli` runs SpectreMcpStdioIntegrationTest, which has only ever failed on Windows
+      # (#455). Without this path, a Windows-only fix in `:cli` cannot be verified before
+      # merge and `:cli` regressions reach main before CI sees them.
+      - "cli/**"
       - "recording/**"
       - "recording-linux/**"
       - "recording-macos/**"
