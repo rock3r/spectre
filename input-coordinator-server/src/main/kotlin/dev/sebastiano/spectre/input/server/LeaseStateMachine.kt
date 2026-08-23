@@ -210,7 +210,11 @@ internal class LeaseStateMachine(
         return false
     }
 
-    fun release(token: LeaseToken, advanceQueue: Boolean = true): ReleaseResult {
+    fun release(
+        token: LeaseToken,
+        advanceQueue: Boolean = true,
+        beforeFinalRelease: () -> Unit = {},
+    ): ReleaseResult {
         val state =
             resources[token.resourceKey]
                 ?: return ReleaseResult.Rejected(LeaseErrorCode.STALE_LEASE)
@@ -218,8 +222,11 @@ internal class LeaseStateMachine(
         transitions.validationError(token, holder)?.let {
             return ReleaseResult.Rejected(it)
         }
-        holder.depth -= 1
-        if (holder.depth > 0) return ReleaseResult.StillHeld(holder.depth)
+        if (holder.depth > 1) {
+            holder.depth -= 1
+            return ReleaseResult.StillHeld(holder.depth)
+        }
+        beforeFinalRelease()
         state.holder = null
         return ReleaseResult.Released(if (advanceQueue) transitions.grantNext(state) else null)
     }

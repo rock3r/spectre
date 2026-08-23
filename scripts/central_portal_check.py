@@ -32,6 +32,8 @@ COMPONENTS = (
     "spectre-agent",
     "spectre-agent-runtime",
     "spectre-core",
+    "spectre-input-coordinator",
+    "spectre-input-coordinator-server",
     "spectre-recording",
     "spectre-recording-linux",
     "spectre-recording-macos",

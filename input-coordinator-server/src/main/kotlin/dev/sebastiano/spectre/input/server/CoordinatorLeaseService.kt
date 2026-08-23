@@ -97,9 +97,14 @@ internal class CoordinatorLeaseService(
     }
 
     private fun releaseToken(token: LeaseToken): CoordinatorWireMessage {
-        return when (val result = machine.release(token)) {
+        val result =
+            try {
+                machine.release(token) { recoveryLedger?.clear(token.leaseId) }
+            } catch (_: IOException) {
+                return error("RECOVERY_PERSISTENCE_FAILED", "Could not persist lease release")
+            }
+        return when (result) {
             is ReleaseResult.Released -> {
-                recoveryLedger?.clear(token.leaseId)
                 result.nextGrant?.let(::completeGrant)
                 success()
             }

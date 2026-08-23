@@ -84,9 +84,16 @@ internal class RecoveryLedger(private val path: Path, private val heartbeatTimeo
 
     @Synchronized
     fun clear(leaseId: String) {
-        if (current.remove(leaseId) == null) return
+        val removed = current.remove(leaseId) ?: return
+        val wasRecoveryLease = leaseId in recoveryLeaseIds
         recoveryLeaseIds -= leaseId
-        persist()
+        try {
+            persist()
+        } catch (failure: IOException) {
+            current[leaseId] = removed
+            if (wasRecoveryLease) recoveryLeaseIds += leaseId
+            throw failure
+        }
     }
 
     @Synchronized

@@ -281,6 +281,60 @@ class CoordinatorLeaseServiceTest {
         }
     }
 
+    @Test
+    fun `failed recovery clear retains the holder and queued handoff`() {
+        val directory = Files.createTempDirectory("spc-service-ledger-clear-")
+        val path = directory.resolve("recovery.properties")
+        val service =
+            CoordinatorLeaseService(
+                epoch = "epoch",
+                heartbeatTimeout = Duration.ofSeconds(5),
+                revokeGrace = Duration.ofSeconds(1),
+                recoveryGrace = Duration.ofSeconds(1),
+                recoveryLedger = RecoveryLedger(path, Duration.ofSeconds(5)),
+            )
+        try {
+            service.openSession("holder-client")
+            service.openSession("waiting-client")
+            val holder = service.acquire(acquire("holder", "holder-client")).get()
+            val waiting = service.acquire(acquire("waiting", "waiting-client"))
+            Files.delete(path)
+            Files.createDirectory(path)
+            Files.writeString(path.resolve("blocker"), "prevent ledger deletion")
+
+            val failedRelease = service.release(tokenMessage(holder, "holder-client"))
+
+            assertFalse(failedRelease.ok)
+            assertEquals("RECOVERY_PERSISTENCE_FAILED", failedRelease.errorCode)
+            val status =
+                assertNotNull(
+                    service
+                        .status(
+                            CoordinatorWireMessage(
+                                kind = CoordinatorWireKind.STATUS,
+                                resourceKey = "test/desktop",
+                            )
+                        )
+                        .status
+                )
+            assertEquals("holder-client", assertNotNull(status.holder).clientId)
+            assertEquals(1, status.waiters.size)
+
+            Files.delete(path.resolve("blocker"))
+            Files.delete(path)
+            assertTrue(service.release(tokenMessage(holder, "holder-client")).ok)
+            val handedOff = waiting.get(1, TimeUnit.SECONDS)
+            assertTrue(handedOff.ok)
+            assertTrue(service.release(tokenMessage(handedOff, "waiting-client")).ok)
+        } finally {
+            service.close()
+            Files.deleteIfExists(path.resolveSibling("${path.fileName}.tmp"))
+            if (Files.isDirectory(path)) Files.deleteIfExists(path.resolve("blocker"))
+            Files.deleteIfExists(path)
+            Files.deleteIfExists(directory)
+        }
+    }
+
     private fun acquire(requestId: String, clientId: String): CoordinatorWireMessage =
         CoordinatorWireMessage(
             kind = CoordinatorWireKind.ACQUIRE,

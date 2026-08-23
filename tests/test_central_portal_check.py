@@ -81,7 +81,17 @@ class CentralPortalCheckTest(unittest.TestCase):
             "spectre-core-0.2.0.jar.asc.sha512",
             files,
         )
-        self.assertEqual(len(files), 450)
+        self.assertIn(
+            "dev/sebastiano/spectre/spectre-input-coordinator/0.2.0/"
+            "spectre-input-coordinator-0.2.0.jar",
+            files,
+        )
+        self.assertIn(
+            "dev/sebastiano/spectre/spectre-input-coordinator-server/0.2.0/"
+            "spectre-input-coordinator-server-0.2.0.pom.asc.sha512",
+            files,
+        )
+        self.assertEqual(len(files), 550)
 
     def test_agent_runtime_manifest_validation(self):
         jar = self._jar(
