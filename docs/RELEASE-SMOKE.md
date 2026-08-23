@@ -522,9 +522,13 @@ Optional **full UI e2e** on a physical Windows desktop (not hosted CI default):
   --tests '*AgentAttachIntegration*'
 ```
 
-`-Pspectre.agent.realKeyboard=true` keeps the Robot keyboard paths — `AgentAttachIntegrationTest`'s
-`typeText` subpath and the corpus' `press-key-tab-after-focus` scenario. Both are opt-in off CI so
+`-Pspectre.agent.realKeyboard=true` keeps the Robot `typeText` subpath, which is opt-in off CI so
 `./gradlew check` stays runnable on a machine in use. Leave the smoke desktop idle while it runs.
+
+This Windows recipe does **not** cover `press-key-tab-after-focus`: that scenario lives in
+`AgentContractCorpusTest`, which the command above does not select and which is
+`@EnabledOnOs(LINUX, MAC)` anyway. On Linux and macOS the same property gates both paths — see the
+`agent-contract-corpus` scenario in [scripts/release-smoke.py](https://github.com/rock3r/spectre/blob/main/scripts/release-smoke.py).
 
 See [Agent attach](guide/agent.md). Do not enable this property on headless
 `windows-latest` as a fail-closed gate without a headed runner story.
