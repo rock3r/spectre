@@ -90,7 +90,7 @@ automator.withExclusiveInput(InputLeaseOptions(ownerLabel = "submits checkout"))
     click(email)
     typeText("alice@example.com")
     click(submit)
-    waitForIdle()
+    automator.waitForIdle()
 }
 ```
 

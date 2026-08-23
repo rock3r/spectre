@@ -45,7 +45,7 @@ automator.withExclusiveInput(InputLeaseOptions(ownerLabel = "fills login form"))
     click(username)
     typeText("alice")
     click(submit)
-    waitForIdle()
+    automator.waitForIdle()
 }
 ```
 
