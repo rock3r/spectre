@@ -19,6 +19,50 @@ import kotlin.test.assertTrue
 class CoordinatorForcedRecoveryPersistenceTest {
 
     @Test
+    fun `failed cancellation release disconnects the affected session`() {
+        val directory = Files.createTempDirectory("spc-service-cancel-clear-")
+        val path = directory.resolve("recovery.properties")
+        val service =
+            CoordinatorLeaseService(
+                epoch = "epoch",
+                heartbeatTimeout = Duration.ofSeconds(5),
+                revokeGrace = Duration.ofSeconds(1),
+                recoveryGrace = Duration.ofSeconds(1),
+                recoveryLedger = RecoveryLedger(path, Duration.ofSeconds(5)),
+            )
+        try {
+            service.openSession("interrupted-client")
+            service.acquire(acquire("unobserved", "interrupted-client")).get()
+            Files.delete(path)
+            Files.createDirectory(path)
+            Files.writeString(path.resolve("blocker"), "prevent ledger deletion")
+
+            service.cancel(
+                CoordinatorWireMessage(
+                    kind = CoordinatorWireKind.CANCEL,
+                    requestId = "unobserved",
+                    clientId = "interrupted-client",
+                    resourceKey = "test/desktop",
+                )
+            )
+
+            assertEquals(null, status(service).holder)
+            val rejected =
+                service.acquire(acquire("late", "interrupted-client")).get(1, TimeUnit.SECONDS)
+            assertFalse(rejected.ok)
+            assertEquals("CLIENT_DISCONNECTED", rejected.errorCode)
+
+            Files.delete(path.resolve("blocker"))
+            Files.delete(path)
+            service.openSession("successor-client")
+            val successor = service.acquire(acquire("successor", "successor-client")).get()
+            assertTrue(service.release(tokenMessage(successor, "successor-client")).ok)
+        } finally {
+            cleanUp(service, path, directory)
+        }
+    }
+
+    @Test
     fun `failed forced revoke clear retains the fenced holder and queued handoff`() {
         val directory = Files.createTempDirectory("spc-service-ledger-force-clear-")
         val path = directory.resolve("recovery.properties")

@@ -158,7 +158,8 @@ internal class CoordinatorLeaseService(
             } else {
                 // ACQUIRE won but its response was lost. Release only that exact hold; unrelated
                 // requests sharing the client session remain live.
-                releaseToken(ambiguousGrant)
+                val release = releaseToken(ambiguousGrant)
+                if (!release.ok) disconnect(clientId)
             }
         }
         return success()
