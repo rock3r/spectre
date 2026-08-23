@@ -37,11 +37,14 @@ class ExperimentalInputCoordinationApiTest {
         )
 
         val composeSource =
-            Path.of("src/main/kotlin/dev/sebastiano/spectre/core/ComposeAutomator.kt").readText()
+            Path.of("src/main/kotlin/dev/sebastiano/spectre/core/ComposeAutomator.kt")
+                .readNormalizedText()
         val robotSource =
-            Path.of("src/main/kotlin/dev/sebastiano/spectre/core/RobotDriver.kt").readText()
+            Path.of("src/main/kotlin/dev/sebastiano/spectre/core/RobotDriver.kt")
+                .readNormalizedText()
         val scopeSource =
-            Path.of("src/main/kotlin/dev/sebastiano/spectre/core/ExclusiveInputScope.kt").readText()
+            Path.of("src/main/kotlin/dev/sebastiano/spectre/core/ExclusiveInputScope.kt")
+                .readNormalizedText()
         assertTrue(
             composeSource.contains(
                 "@ExperimentalSpectreInputCoordinationApi\n    public val inputCapabilities"
@@ -67,3 +70,5 @@ class ExperimentalInputCoordinationApiTest {
             }
     }
 }
+
+private fun Path.readNormalizedText(): String = readText().replace("\r\n", "\n")
