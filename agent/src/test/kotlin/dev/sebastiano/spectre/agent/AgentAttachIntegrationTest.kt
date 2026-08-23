@@ -10,6 +10,7 @@ import dev.sebastiano.spectre.agent.fixture.TAG_TEXT_FIELD
 import dev.sebastiano.spectre.agent.launch.LaunchReadiness
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
+import dev.sebastiano.spectre.testing.contract.RealKeyboardGate
 import java.awt.GraphicsEnvironment
 import java.io.BufferedReader
 import java.io.IOException
@@ -51,7 +52,7 @@ import org.junit.jupiter.api.condition.OS
  * - `click(buttonKey)` bare-throws on any wire-level error. Focused-field `typeText("x")` also
  *   bare-throws except for CI-only macOS focus handoff loss, where the already-covered
  *   real-keyboard subpath is skipped after the attach/click/focus contract has been proven. The
- *   real-keyboard subpath itself only runs when [RealKeyboardE2eGate] allows it (#444).
+ *   real-keyboard subpath itself only runs when [RealKeyboardGate] allows it (#444).
  *
  * The pure-mapping correctness (getter names, `Rectangle → RectDto`, screenshot's `Rectangle?`
  * lookup, refresh-before-read contract) is *also* covered at the unit level in
@@ -76,7 +77,7 @@ import org.junit.jupiter.api.condition.OS
  * - Skipped when `dev.sebastiano.spectre.agent.runtimeJar` isn't set. Gradle's `:agent:test` task
  *   sets it from the `:agent-runtime:jar` output.
  * - The real-keyboard subpath (click-to-focus + `typeText`) is **opt-in off CI** via
- *   [RealKeyboardE2eGate]: it needs the fixture window to own OS keyboard focus for the whole run,
+ *   [RealKeyboardGate]: it needs the fixture window to own OS keyboard focus for the whole run,
  *   which a developer machine in use cannot guarantee, and `./gradlew check` is the documented
  *   pre-push gate (#444). Everything else — attach, `windows()`, `findByTestTag`, `click()`, window
  *   identity, screenshot — runs on every host. When the subpath does run, real-keyboard `typeText`
@@ -217,17 +218,15 @@ class AgentAttachIntegrationTest {
                 textFieldKey.isNotBlank(),
                 "iteration $iteration: text field node key should be non-blank; got '$textFieldKey'",
             )
-            if (RealKeyboardE2eGate.isEnabled()) {
+            if (RealKeyboardGate.isEnabled()) {
                 automator.exerciseRealKeyboard(textFieldKey, iteration = iteration)
             } else {
                 System.err.println(
                     "iteration $iteration: skipped the real-keyboard subpath — click-to-focus on " +
                         "$textFieldKey, typeText('$TYPED_CHARACTER'), and the typed-character " +
                         "assertion. It needs the fixture window to own OS keyboard focus for the " +
-                        "whole run, which a machine in use cannot guarantee (#444). CI runs it by " +
-                        "default; on an idle desktop pass " +
-                        "\"-Pspectre.agent.realKeyboard=true\" (or " +
-                        "-D${RealKeyboardE2eGate.ENABLE_PROP}=true on the test JVM)."
+                        "whole run, which a machine in use cannot guarantee (#444). " +
+                        RealKeyboardGate.ENABLE_HINT
                 )
             }
         }
@@ -465,7 +464,7 @@ class AgentAttachIntegrationTest {
 
     /**
      * The Robot-backed keyboard subpath: click the field until Compose reports it focused, type one
-     * character, then assert the field received it. Gated by [RealKeyboardE2eGate] because it needs
+     * character, then assert the field received it. Gated by [RealKeyboardGate] because it needs
      * the fixture window to own OS keyboard focus throughout (#444).
      */
     private fun AttachedAutomator.exerciseRealKeyboard(textFieldKey: String, iteration: Int) {

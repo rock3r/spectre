@@ -415,10 +415,13 @@ public object AutomatorContractCorpus {
                 "scrolled=${label.key}"
             }
         out +=
-            scenario("press-key-tab-after-focus", driver.transport) {
+            scenario(PressKeyAfterFocus.SCENARIO_ID, driver.transport) {
                 // Focus the text field first so OS keyboard focus is on the target JVM.
                 // Retry click+pressKey: macOS JBR often needs a settle window after click
                 // (see PressKeyAfterFocus / matrix residuals on jbr-21/jbr-25 macos).
+                // Real-keyboard paths are opt-in off CI (RealKeyboardGate, #449); when the gate
+                // is off PressKeyAfterFocus records RealKeyboardGate.SKIPPED_DETAIL and never
+                // touches the driver, so `./gradlew check` survives a desktop in use.
                 val field =
                     driver.findByTestTag(ContractFixtureTags.TEXT_FIELD).firstOrNull()
                         ?: error("fixture text field missing")

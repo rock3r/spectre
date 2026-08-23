@@ -10,6 +10,9 @@ package dev.sebastiano.spectre.testing.contract
  * window with an `inputRejected` / "OS keyboard focus" error. Raising the window via focusWindow,
  * re-click, and short backoff makes the matrix cell durable without soft-skipping the keyboard
  * path.
+ *
+ * The whole path is opt-in off CI behind [RealKeyboardGate] (#449): it steals OS keyboard focus, so
+ * it cannot run on a machine someone is using.
  */
 public object PressKeyAfterFocus {
     /** Substring present in agent focus-rejection messages (typeText and pressKey). */
@@ -18,6 +21,9 @@ public object PressKeyAfterFocus {
 
     /** Default AWT `KeyEvent.VK_TAB`. */
     public const val DEFAULT_KEY_CODE_TAB: Int = 9
+
+    /** [AutomatorContractCorpus] scenario id this helper backs. */
+    public const val SCENARIO_ID: String = "press-key-tab-after-focus"
 
     private const val DEFAULT_MAX_ATTEMPTS: Int = 8
     private const val BASE_SLEEP_MS: Long = 50L
@@ -30,8 +36,22 @@ public object PressKeyAfterFocus {
         maxAttempts: Int = DEFAULT_MAX_ATTEMPTS,
         sleepMs: (attemptIndex: Int) -> Long = { attempt -> BASE_SLEEP_MS * (attempt + 1) },
         sleeper: (Long) -> Unit = { ms -> Thread.sleep(ms) },
+        gateEnabled: Boolean = RealKeyboardGate.isEnabled(),
+        warn: (String) -> Unit = { message -> System.err.println(message) },
     ): String {
         require(maxAttempts > 0) { "maxAttempts must be positive" }
+        if (!gateEnabled) {
+            // Do not touch the driver at all. focusWindow and click are themselves focus-stealing,
+            // so "try it and tolerate the failure" would still disrupt whoever is using the
+            // machine — the exact thing the gate exists to prevent.
+            warn(
+                "Skipped contract corpus scenario `$SCENARIO_ID`: it raises the fixture window, " +
+                    "clicks the text field, and sends real Robot key code $keyCode, so it needs " +
+                    "the fixture window to own OS keyboard focus for the whole run (#449). " +
+                    RealKeyboardGate.ENABLE_HINT
+            )
+            return RealKeyboardGate.SKIPPED_DETAIL
+        }
         var lastError: Throwable? = null
         repeat(maxAttempts) { attempt ->
             // #364: expressible remediation for the pressKey focus-rejection error text.

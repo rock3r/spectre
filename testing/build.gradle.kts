@@ -1,3 +1,5 @@
+import dev.sebastiano.spectre.build.forwardRealKeyboardGate
+
 plugins {
     alias(libs.plugins.detekt)
     alias(libs.plugins.ktfmt)
@@ -45,4 +47,10 @@ dependencies {
     // Live recording uses sample-desktop validation runtimeOnly and :agent testRuntimeOnly.
 }
 
-tasks.withType<Test>().configureEach { useJUnitPlatform() }
+// Real-keyboard (Robot) opt-in (#444, #449). The shared contract corpus can reach
+// `press-key-tab-after-focus`, which steals OS keyboard focus, so this module's test tasks
+// honour the same gate and the same `-Pspectre.agent.realKeyboard` property as `:agent`.
+tasks.withType<Test>().configureEach {
+    useJUnitPlatform()
+    forwardRealKeyboardGate(providers)
+}

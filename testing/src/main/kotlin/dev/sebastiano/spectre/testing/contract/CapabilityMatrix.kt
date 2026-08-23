@@ -239,37 +239,10 @@ public object CapabilityMatrix {
                 rationale = "Display-backed HTTP typeText fixture not yet on CI.",
             )
         )
-        add(
-            CapabilityCell(
-                operation = AutomatorOperation.TypeText,
-                transport = AutomatorTransport.Agent,
-                platform = PlatformPrerequisite.LinuxXvfb,
-                state = CellState.Experimental,
-                evidence = listOf(agentAttachLegacyLinux),
-                rationale =
-                    "AgentAttachIntegrationTest exercises typeText against the fixture, but " +
-                        "CI may soft-skip on OS keyboard focus loss after Compose focus is proven. " +
-                        "Not a Supported cell until typeText is fail-closed without silent skip.",
-            )
-        )
-        add(
-            CapabilityCell(
-                operation = AutomatorOperation.TypeText,
-                transport = AutomatorTransport.Agent,
-                platform = PlatformPrerequisite.MacOsDesktop,
-                state = CellState.Experimental,
-                evidence = listOf(agentAttachLegacyMacOs),
-                rationale =
-                    "Same CI focus-loss soft-skip as Linux Xvfb; attach/click remain Supported " +
-                        "via the contract corpus. Full keyboard parity is experimental on CI.",
-            )
-        )
-        add(
-            CapabilityCell(
-                operation = AutomatorOperation.TypeText,
-                transport = AutomatorTransport.Agent,
-                platform = PlatformPrerequisite.WindowsDesktop,
-                state = CellState.NotYetCiExecuted,
+        addAll(
+            agentTypeTextCapabilityCells(
+                agentAttachLegacyLinux = agentAttachLegacyLinux,
+                agentAttachLegacyMacOs = agentAttachLegacyMacOs,
             )
         )
 
@@ -500,9 +473,8 @@ public object CapabilityMatrix {
         )
 
         // #201–#203 agent fixture-backed cells (AgentContractCorpusTest under Xvfb/macOS).
-        // PressKey is Supported on Linux Xvfb only: macOS hosted runners (esp. JBR) often
-        // fail OS keyboard focus after click the same way typeText does; corpus soft-skips
-        // that scenario on macOS CI after retries (PressKeyAfterFocus) — never on Linux.
+        // The keyboard rows of this family live in agentPressKeyCapabilityCells below; see its
+        // KDoc for why their evidence is CI-only (RealKeyboardGate, #449).
         for (op in
             listOf(
                 AutomatorOperation.WaitForNode,
@@ -532,28 +504,8 @@ public object CapabilityMatrix {
                 )
             )
         }
-        add(
-            CapabilityCell(
-                operation = AutomatorOperation.PressKey,
-                transport = AutomatorTransport.Agent,
-                platform = PlatformPrerequisite.LinuxXvfb,
-                state = CellState.Supported,
-                evidence = listOf(agentLinuxXvfb),
-            )
-        )
-        add(
-            CapabilityCell(
-                operation = AutomatorOperation.PressKey,
-                transport = AutomatorTransport.Agent,
-                platform = PlatformPrerequisite.MacOsDesktop,
-                state = CellState.Experimental,
-                evidence = listOf(agentMacOs),
-                rationale =
-                    "AgentContractCorpus exercises pressKey after click; hosted macOS (JBR and " +
-                        "sometimes Temurin) may soft-skip on OS keyboard focus loss after retries " +
-                        "on macOS CI only (same class as typeText). Linux stays fail-closed. " +
-                        "Not Supported until fail-closed without skip.",
-            )
+        addAll(
+            agentPressKeyCapabilityCells(agentLinuxXvfb = agentLinuxXvfb, agentMacOs = agentMacOs)
         )
         addAll(
             focusWindowCapabilityCells(
