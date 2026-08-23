@@ -125,14 +125,18 @@ class AttachOptionsTest {
     @Test
     fun `selectUdsPath fails with an actionable message when no candidate fits`() {
         val deepBase = "/deep/" + "d".repeat(120)
+        val perAttachDir = "sp-a-1234-a1b2c3d4"
 
         val ex =
             assertFailsWith<UdsPathTooLongException> {
-                AttachOptions.selectUdsPath(listOf(deepBase), "sp-a-1234-a1b2c3d4")
+                AttachOptions.selectUdsPath(listOf(deepBase), perAttachDir)
             }
 
+        // Compare against the path as the platform renders it: on Windows `Paths.get` normalises
+        // the separators, so the raw `/deep/...` string is not a substring of the message.
+        val rejected = Path.of(deepBase, perAttachDir, "agent.sock").toString()
         val message = ex.message.orEmpty()
-        assertTrue(deepBase in message, "message should name the candidate, got: $message")
+        assertTrue(rejected in message, "message should name the rejected path, got: $message")
         assertTrue(
             "${UdsPathLimits.maxPathBytes}" in message,
             "message should name the sun_path limit, got: $message",
