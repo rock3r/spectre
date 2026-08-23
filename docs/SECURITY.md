@@ -58,10 +58,11 @@ out of scope.
    credentials, or prompts.
 
    Revocation requires the exact observed lease ID. Normal revoke fences the owner and waits for
-   cleanup acknowledgement or confirmed exit. `--force` may advance after grace and is recorded as
-   `unsafeTakeover=true`; it cannot retract an uninterruptible native call and never kills a
+   cleanup acknowledgement or confirmed exit. `--force` is an explicit unsafe decision recorded
+   as `unsafeTakeover=true`; it cannot retract an uninterruptible native call and never kills a
    process. Coordinator restart enters recovery quarantine rather than assuming the desktop is
-   free.
+   free, and that quarantine never expires automatically. An operator must inspect it and force
+   recovery with the exact predecessor lease ID.
 6. **Bundled native helpers are trusted artifacts.** Spectre extracts and executes Swift
    (`spectre-screencapture`), Rust/Linux (`spectre-wayland-helper`), and Windows
    (`spectre-window-capture.exe`) helpers from the published jar

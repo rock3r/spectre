@@ -108,7 +108,7 @@ class LeaseStateMachineTest {
     }
 
     @Test
-    fun `restart recovery quarantines resource until expiry or exact-id unsafe recovery`() {
+    fun `restart recovery remains quarantined until exact-id unsafe recovery`() {
         val record =
             RecoveryRecord(
                 resourceKey = resource,
@@ -121,10 +121,9 @@ class LeaseStateMachineTest {
 
         assertEquals(1, machine.acquire(request("b", ownerB)).queuedPosition())
         assertEquals("old-lease", machine.status(resource).quarantine?.predecessorLeaseId)
-        clock.advanceBy(124)
-        assertTrue(machine.expire().isEmpty())
-        clock.advanceBy(1)
-        assertEquals(ownerB, machine.expire().single().owner)
+        clock.advanceBy(1_000_000)
+        assertTrue(machine.expire().none { it.grant != null })
+        assertEquals("old-lease", machine.status(resource).quarantine?.predecessorLeaseId)
 
         val forcedMachine = machine(recoveryRecord = record)
         forcedMachine.acquire(request("c", ownerC))

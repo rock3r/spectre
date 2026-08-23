@@ -4,6 +4,9 @@ package dev.sebastiano.spectre.input.server
 
 import dev.sebastiano.spectre.input.CoordinatorWireKind
 import dev.sebastiano.spectre.input.CoordinatorWireMessage
+import dev.sebastiano.spectre.input.DesktopResourceKey
+import dev.sebastiano.spectre.input.LeaseOwner
+import dev.sebastiano.spectre.input.LeaseToken
 import java.nio.file.Files
 import java.time.Duration
 import java.util.concurrent.TimeUnit
@@ -112,6 +115,117 @@ class CoordinatorLeaseServiceTest {
             assertEquals("CLIENT_DISCONNECTED", response.errorCode)
         } finally {
             service.close()
+        }
+    }
+
+    @Test
+    fun `disconnect cleanup continues when recovery persistence fails`() {
+        val directory = Files.createTempDirectory("spc-service-disconnect-ledger-")
+        val path = directory.resolve("recovery.properties")
+        val service =
+            CoordinatorLeaseService(
+                epoch = "epoch",
+                heartbeatTimeout = Duration.ofSeconds(5),
+                revokeGrace = Duration.ofSeconds(1),
+                recoveryGrace = Duration.ofSeconds(1),
+                recoveryLedger = RecoveryLedger(path, Duration.ofSeconds(5)),
+            )
+        try {
+            service.openSession("holder-client")
+            service.acquire(acquire("holder", "holder-client")).get()
+            Files.delete(path)
+            Files.createDirectory(path)
+            Files.writeString(path.resolve("blocker"), "prevent ledger deletion")
+
+            service.disconnect("holder-client")
+
+            val status =
+                assertNotNull(
+                    service
+                        .status(
+                            CoordinatorWireMessage(
+                                kind = CoordinatorWireKind.STATUS,
+                                resourceKey = "test/desktop",
+                            )
+                        )
+                        .status
+                )
+            assertNull(status.holder)
+
+            Files.delete(path.resolve("blocker"))
+            Files.delete(path)
+            service.openSession("successor-client")
+            val successor = service.acquire(acquire("successor", "successor-client")).get()
+            assertTrue(successor.ok)
+            assertTrue(service.release(tokenMessage(successor, "successor-client")).ok)
+        } finally {
+            service.close()
+            Files.deleteIfExists(path.resolveSibling("${path.fileName}.tmp"))
+            if (Files.isDirectory(path)) Files.deleteIfExists(path.resolve("blocker"))
+            Files.deleteIfExists(path)
+            Files.deleteIfExists(directory)
+        }
+    }
+
+    @Test
+    fun `restart quarantine stays closed and waiter expiry survives ledger IO failure`() {
+        val directory = Files.createTempDirectory("spc-service-recovery-expiry-")
+        val path = directory.resolve("recovery.properties")
+        val ledger = RecoveryLedger(path, Duration.ofMillis(-1))
+        ledger.record(
+            LeaseGrant(
+                requestId = "predecessor-request",
+                owner = LeaseOwner("predecessor-client", 1),
+                token =
+                    LeaseToken(
+                        coordinatorEpoch = "predecessor-epoch",
+                        leaseId = "predecessor-lease",
+                        resourceKey = DesktopResourceKey("test/desktop"),
+                        fence = 1,
+                    ),
+            )
+        )
+        val restartedLedger = RecoveryLedger(path, Duration.ofSeconds(5))
+        val recoveryRecord = assertNotNull(restartedLedger.load())
+        Files.delete(path)
+        Files.createDirectory(path)
+        Files.writeString(path.resolve("blocker"), "prevent ledger deletion")
+        val service =
+            CoordinatorLeaseService(
+                epoch = "replacement-epoch",
+                heartbeatTimeout = Duration.ofSeconds(5),
+                revokeGrace = Duration.ofSeconds(1),
+                recoveryGrace = Duration.ZERO,
+                recoveryRecord = recoveryRecord,
+                recoveryLedger = restartedLedger,
+            )
+        try {
+            service.openSession("waiting-client")
+            val waiting =
+                service.acquire(acquire("waiting", "waiting-client").copy(timeoutMillis = 50))
+
+            val response = waiting.get(1, TimeUnit.SECONDS)
+
+            assertFalse(response.ok)
+            assertEquals("ACQUIRE_TIMEOUT", response.errorCode)
+            val status =
+                assertNotNull(
+                    service
+                        .status(
+                            CoordinatorWireMessage(
+                                kind = CoordinatorWireKind.STATUS,
+                                resourceKey = "test/desktop",
+                            )
+                        )
+                        .status
+                )
+            assertEquals("predecessor-lease", assertNotNull(status.quarantine).predecessorLeaseId)
+        } finally {
+            service.close()
+            Files.deleteIfExists(path.resolveSibling("${path.fileName}.tmp"))
+            if (Files.isDirectory(path)) Files.deleteIfExists(path.resolve("blocker"))
+            Files.deleteIfExists(path)
+            Files.deleteIfExists(directory)
         }
     }
 

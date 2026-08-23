@@ -59,28 +59,7 @@ class RecoveryLedgerTest {
     }
 
     @Test
-    fun `expiry pruning never removes a live runtime record`() {
-        val directory = Files.createTempDirectory("spc-ledger-")
-        val path = directory.resolve("recovery.properties")
-        try {
-            val ledger = RecoveryLedger(path, Duration.ofMillis(-1))
-            val activeGrant = grant("lease-live", "desktop-live", "client-live")
-            ledger.record(activeGrant)
-
-            ledger.clearExpiredRecovery(Duration.ZERO)
-            ledger.heartbeat(activeGrant.token)
-
-            val recovered = RecoveryLedger(path, Duration.ofMinutes(1)).load()
-            assertEquals("lease-live", assertNotNull(recovered).leaseId)
-        } finally {
-            Files.deleteIfExists(path.resolveSibling("${path.fileName}.tmp"))
-            Files.deleteIfExists(path)
-            Files.deleteIfExists(directory)
-        }
-    }
-
-    @Test
-    fun `expiry pruning removes an eligible record loaded into restart quarantine`() {
+    fun `loaded restart record remains until explicitly cleared`() {
         val directory = Files.createTempDirectory("spc-ledger-")
         val path = directory.resolve("recovery.properties")
         try {
@@ -89,7 +68,11 @@ class RecoveryLedgerTest {
             val restarted = RecoveryLedger(path, Duration.ofMinutes(1))
             assertNotNull(restarted.load())
 
-            restarted.clearExpiredRecovery(Duration.ZERO)
+            assertEquals(
+                "lease-recovery",
+                assertNotNull(RecoveryLedger(path, Duration.ofMinutes(1)).load()).leaseId,
+            )
+            restarted.clear("lease-recovery")
 
             assertNull(RecoveryLedger(path, Duration.ofMinutes(1)).load())
         } finally {

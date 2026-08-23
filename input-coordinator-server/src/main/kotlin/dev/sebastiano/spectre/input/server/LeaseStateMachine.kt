@@ -289,16 +289,7 @@ internal class LeaseStateMachine(
                     reason = "heartbeat expired",
                 )
             }
-            if (state.quarantine?.releaseEligibleAtMillis?.let { now >= it } == true) {
-                state.quarantine = null
-            }
             if (state.holder == null && state.quarantine == null && globalQuarantine == null) {
-                transitions.grantNext(state)?.let { events += ExpiryEvent(grant = it) }
-            }
-        }
-        if (globalQuarantine?.releaseEligibleAtMillis?.let { now >= it } == true) {
-            globalQuarantine = null
-            resources.values.forEach { state ->
                 transitions.grantNext(state)?.let { events += ExpiryEvent(grant = it) }
             }
         }
@@ -327,11 +318,13 @@ internal class LeaseStateMachine(
         observedLeaseId: String,
         requesterLabel: String,
         reason: String,
+        beforeRecovery: () -> Unit = {},
     ): RecoveryResult {
         globalQuarantine?.let { quarantine ->
             if (quarantine.record.leaseId != observedLeaseId) {
                 return RecoveryResult.Rejected(LeaseErrorCode.STALE_LEASE)
             }
+            beforeRecovery()
             globalQuarantine = null
             auditRecords.recordRecoveryTakeover(
                 clock.nowMillis(),
@@ -352,6 +345,7 @@ internal class LeaseStateMachine(
         if (quarantine.record.leaseId != observedLeaseId) {
             return RecoveryResult.Rejected(LeaseErrorCode.STALE_LEASE)
         }
+        beforeRecovery()
         entry.quarantine = null
         auditRecords.recordRecoveryTakeover(
             clock.nowMillis(),
@@ -371,6 +365,7 @@ internal class LeaseStateMachine(
         requesterLabel: String,
         reason: String,
         force: Boolean,
+        beforeForcedRevocation: () -> Unit = {},
     ): RevokeResult {
         val (state, holder) =
             resources.values.firstNotNullOfOrNull { state ->
@@ -380,7 +375,10 @@ internal class LeaseStateMachine(
             } ?: return RevokeResult.Rejected(LeaseErrorCode.STALE_LEASE)
         if (holder.status == LeaseStatus.HELD) {
             transitions.beginRevocation(state, holder, requesterLabel, reason)
-            if (force && revokeGraceMillis == 0L) return forceRevocation(state, holder)
+            if (force && revokeGraceMillis == 0L) {
+                beforeForcedRevocation()
+                return forceRevocation(state, holder)
+            }
             return if (force) {
                 RevokeResult.Rejected(LeaseErrorCode.REVOKE_GRACE_ACTIVE)
             } else {
@@ -392,6 +390,7 @@ internal class LeaseStateMachine(
         if (clock.nowMillis() - requestedAt < revokeGraceMillis) {
             return RevokeResult.Rejected(LeaseErrorCode.REVOKE_GRACE_ACTIVE)
         }
+        beforeForcedRevocation()
         return forceRevocation(state, holder)
     }
 

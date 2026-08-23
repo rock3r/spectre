@@ -141,13 +141,15 @@ Revoke is compare-and-revoke. Copy the exact current lease ID from `status`; a s
 revoke a newer holder. Normal revoke fences the owner and allows its cleanup path to finish.
 
 !!! danger "Forced recovery can overlap native input"
-    `--force` is an unsafe recovery escape hatch after grace. It records the reason and returns
+    `--force` is an explicit unsafe recovery escape hatch. It records the reason and returns
     `unsafeTakeover=true`, but it cannot prove an in-flight native call has stopped and never kills
-    the holder process. Use it only after inspecting the exact current lease and deciding that
-    restoring progress is worth possible overlapping input.
+    the holder process. Use it only after inspecting the exact current lease, allowing a reasonable
+    cleanup interval, and deciding that restoring progress is worth possible overlapping input.
 
 Coordinator restart enters recovery quarantine instead of assuming the desktop is free. Corrupt
-or ambiguous recovery state quarantines conservatively until an exact forced recovery decision.
+or ambiguous recovery state quarantines conservatively. Restart quarantine never expires
+automatically because Spectre cannot prove that predecessor native input has stopped; it remains
+closed until an operator makes an exact-ID forced recovery decision.
 
 ## Platform and trust boundaries
 

@@ -22,7 +22,7 @@ internal class CoordinatorLeaseService(
     val epoch: String,
     heartbeatTimeout: Duration,
     private val revokeGrace: Duration,
-    private val recoveryGrace: Duration,
+    recoveryGrace: Duration,
     recoveryRecord: RecoveryRecord? = null,
     private val recoveryLedger: RecoveryLedger? = null,
 ) : AutoCloseable {
@@ -216,9 +216,16 @@ internal class CoordinatorLeaseService(
         val quarantine =
             machine.status(DesktopResourceKey(requireNotNull(message.resourceKey))).quarantine
         if (quarantine?.predecessorLeaseId == leaseId && message.force) {
-            return when (val result = machine.forceRecover(leaseId, requesterLabel, reason)) {
+            val result =
+                try {
+                    machine.forceRecover(leaseId, requesterLabel, reason) {
+                        recoveryLedger?.clear(leaseId)
+                    }
+                } catch (_: IOException) {
+                    return error("RECOVERY_PERSISTENCE_FAILED", "Could not persist forced recovery")
+                }
+            return when (result) {
                 is RecoveryResult.Recovered -> {
-                    recoveryLedger?.clear(leaseId)
                     requestTracker.forgetLease(leaseId)
                     result.nextGrants.forEach(::completeGrant)
                     success(unsafeTakeover = result.unsafeTakeover)
@@ -226,10 +233,17 @@ internal class CoordinatorLeaseService(
                 is RecoveryResult.Rejected -> error(result.code.name, "Recovery was rejected")
             }
         }
-        return when (val result = machine.revoke(leaseId, requesterLabel, reason, message.force)) {
+        val result =
+            try {
+                machine.revoke(leaseId, requesterLabel, reason, message.force) {
+                    recoveryLedger?.clear(leaseId)
+                }
+            } catch (_: IOException) {
+                return error("RECOVERY_PERSISTENCE_FAILED", "Could not persist forced recovery")
+            }
+        return when (result) {
             is RevokeResult.Requested -> success(unsafeTakeover = result.unsafeTakeover)
             is RevokeResult.Forced -> {
-                recoveryLedger?.clear(leaseId)
                 requestTracker.forgetLease(leaseId)
                 result.nextGrant?.let(::completeGrant)
                 success(unsafeTakeover = result.unsafeTakeover)
@@ -266,7 +280,6 @@ internal class CoordinatorLeaseService(
 
     @Synchronized
     private fun expire() {
-        recoveryLedger?.clearExpiredRecovery(recoveryGrace)
         machine.expire().forEach { event ->
             event.grant?.let(::completeGrant)
             event.timeout?.let { timeout ->

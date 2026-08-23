@@ -20,16 +20,13 @@ import java.util.concurrent.TimeUnit
 
 internal class RecoveryLedger(private val path: Path, private val heartbeatTimeout: Duration) {
     private val current = mutableMapOf<String, LedgerRecord>()
-    private val recoveryLeaseIds = mutableSetOf<String>()
 
     @Synchronized
     fun load(): RecoveryRecord? {
         if (!Files.exists(path)) return null
         val record = runCatching(::read).getOrElse { corruptRecord() }
         current.clear()
-        recoveryLeaseIds.clear()
         current[record.leaseId] = record
-        recoveryLeaseIds += record.leaseId
         val remainingMillis =
             (record.heartbeatExpiryEpochMillis - System.currentTimeMillis()).coerceAtLeast(0)
         return RecoveryRecord(
@@ -57,14 +54,11 @@ internal class RecoveryLedger(private val path: Path, private val heartbeatTimeo
                 blocksAllResources = false,
             )
         val previous = current.put(record.leaseId, record)
-        val wasRecoveryLease = record.leaseId in recoveryLeaseIds
-        recoveryLeaseIds -= record.leaseId
         try {
             persist()
         } catch (failure: IOException) {
             if (previous == null) current.remove(record.leaseId)
             else current[record.leaseId] = previous
-            if (wasRecoveryLease) recoveryLeaseIds += record.leaseId
             throw failure
         }
     }
@@ -72,7 +66,6 @@ internal class RecoveryLedger(private val path: Path, private val heartbeatTimeo
     @Synchronized
     fun heartbeat(token: LeaseToken) {
         val record = current[token.leaseId] ?: return
-        recoveryLeaseIds -= token.leaseId
         val refreshed =
             record.copy(
                 heartbeatExpiryEpochMillis =
@@ -85,46 +78,26 @@ internal class RecoveryLedger(private val path: Path, private val heartbeatTimeo
     @Synchronized
     fun clear(leaseId: String) {
         val removed = current.remove(leaseId) ?: return
-        val wasRecoveryLease = leaseId in recoveryLeaseIds
-        recoveryLeaseIds -= leaseId
         try {
             persist()
         } catch (failure: IOException) {
             current[leaseId] = removed
-            if (wasRecoveryLease) recoveryLeaseIds += leaseId
             throw failure
         }
     }
 
     @Synchronized
-    fun clearClient(clientId: String) {
+    fun clearClient(clientId: String): Boolean {
         val removedLeaseIds =
             current.values.filter { it.clientId == clientId }.mapTo(mutableSetOf()) { it.leaseId }
-        if (removedLeaseIds.isEmpty()) return
+        if (removedLeaseIds.isEmpty()) return true
         current.keys.removeAll(removedLeaseIds)
-        recoveryLeaseIds.removeAll(removedLeaseIds)
-        persist()
-    }
-
-    @Synchronized
-    fun clearExpiredRecovery(recoveryGrace: Duration) {
-        val graceMillis = recoveryGrace.toMillis()
-        val now = System.currentTimeMillis()
-        val expiredLeaseIds =
-            recoveryLeaseIds.filterTo(mutableSetOf()) { leaseId ->
-                val record = current[leaseId] ?: return@filterTo true
-                val eligibleAt =
-                    if (Long.MAX_VALUE - record.heartbeatExpiryEpochMillis < graceMillis) {
-                        Long.MAX_VALUE
-                    } else {
-                        record.heartbeatExpiryEpochMillis + graceMillis
-                    }
-                now >= eligibleAt
-            }
-        if (expiredLeaseIds.isEmpty()) return
-        current.keys.removeAll(expiredLeaseIds)
-        recoveryLeaseIds.removeAll(expiredLeaseIds)
-        persist()
+        return try {
+            persist()
+            true
+        } catch (_: IOException) {
+            false
+        }
     }
 
     private fun read(): LedgerRecord {
