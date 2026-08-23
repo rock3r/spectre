@@ -48,7 +48,7 @@ See [Agent attach](agent.md#injection-without-preinstalled-core).
 ### "Unix domain path too long" / `UdsPathTooLongException`
 
 The socket path the agent binds must fit the operating system's `sockaddr_un.sun_path`
-field: 103 usable bytes on macOS, 107 on Linux and Windows. Longer paths are refused by
+field: 102 usable bytes on macOS, 106 on Linux and Windows. Longer paths are refused by
 the kernel.
 
 Spectre picks a default path that fits. It uses `/tmp` on Linux and macOS. On Windows it

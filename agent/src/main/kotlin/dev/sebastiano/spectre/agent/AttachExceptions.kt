@@ -159,7 +159,8 @@ public class AttachInterruptedException(udsPath: java.nio.file.Path, cause: Inte
 
 /**
  * Thrown when a Unix Domain Socket path is longer than the platform's `sockaddr_un.sun_path` can
- * hold (103 usable bytes on macOS, 107 on Linux and Windows).
+ * hold (102 usable bytes on macOS, 106 on Linux and Windows — the JDK reserves two bytes of the
+ * 104/108-byte field, not one; see `UdsPathLimits`).
  *
  * The kernel rejects such a path at `bind` time, and because the agent binds inside the *target*
  * JVM the caller would otherwise see only "agent failed to initialize", with `SocketException: Unix

@@ -34,7 +34,7 @@ import java.util.UUID
  *   so concurrent attaches don't collide — see [defaultUdsPath] for how `<base>` is picked). If you
  *   override this with a path under an existing directory, you own that parent directory's
  *   permissions; Spectre only tightens directories it creates itself. The path must fit the
- *   platform's `sockaddr_un.sun_path` budget (103 bytes on macOS, 107 elsewhere); `attach` rejects
+ *   platform's `sockaddr_un.sun_path` budget (102 bytes on macOS, 106 elsewhere); `attach` rejects
  *   longer paths up front with [UdsPathTooLongException].
  * @property attachTimeoutMs how long to wait for the agent's bootstrap + IPC server to come up.
  * @property maxFrameBytes IPC frame write budget the injected agent should adopt. `null` (default)

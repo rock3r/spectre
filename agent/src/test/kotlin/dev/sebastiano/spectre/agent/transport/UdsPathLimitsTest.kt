@@ -20,6 +20,11 @@ class UdsPathLimitsTest {
         // Two, not one. Measured with a real bind: macOS (sun_path 104) takes 102 and refuses
         // 103; Windows (sun_path 108) takes 106 and refuses 107. The boundary test below
         // re-measures this on whatever host runs it.
+        //
+        // If these numbers ever change, four places mirror them and the compiler checks none of
+        // them: the `udsPath` KDoc on AttachOptions, the UdsPathTooLongException KDoc,
+        // docs/guide/agent.md, and docs/guide/troubleshooting.md. Codex review on PR #445 caught
+        // exactly that drift after the reservation went from one byte to two.
         assertEquals(102, UdsPathLimits.maxPathBytesFor("Mac OS X"))
         assertEquals(102, UdsPathLimits.maxPathBytesFor("Darwin"))
         assertEquals(106, UdsPathLimits.maxPathBytesFor("Linux"))

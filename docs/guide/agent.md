@@ -266,7 +266,7 @@ AttachOptions(
 
 The default `<base>` is `/tmp` on Linux and macOS. On Windows it is `%TEMP%`, falling back to
 `%LOCALAPPDATA%\Temp` when `%TEMP%` is deep enough to push the socket path past the platform's
-`sockaddr_un.sun_path` limit (103 usable bytes on macOS, 107 on Linux and Windows). A path you
+`sockaddr_un.sun_path` limit (102 usable bytes on macOS, 106 on Linux and Windows). A path you
 pass yourself must also fit that limit; `attach` rejects longer ones with
 `UdsPathTooLongException` before it loads the agent, so the failure names the path and the limit
 instead of surfacing as a bootstrap error inside the target.
