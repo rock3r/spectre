@@ -35,7 +35,7 @@ class LaunchUdsPathFailureTest {
         val ex =
             assertFailsWith<LaunchAgentBootstrapException> {
                 LaunchReadiness.awaitAgentBootstrap(
-                    process = ProcessBuilder("sleep", "5").start(),
+                    process = anyProcess(),
                     attachedPid = 1L,
                     gradleish = true,
                     attachOptions = AttachOptions(),
@@ -64,7 +64,7 @@ class LaunchUdsPathFailureTest {
         val ex =
             assertFailsWith<LaunchAgentBootstrapException> {
                 LaunchReadiness.awaitAgentBootstrap(
-                    process = ProcessBuilder("sleep", "5").start(),
+                    process = anyProcess(),
                     attachedPid = 1L,
                     // `gradleish` skips the liveness precondition, which is not what this covers.
                     gradleish = true,
@@ -80,4 +80,17 @@ class LaunchUdsPathFailureTest {
         assertEquals(stderrPath, ex.stderrPath)
         assertEquals(LaunchStage.AGENT_BOOTSTRAP, ex.stage)
     }
+
+    /**
+     * Any [Process] object will do here: `gradleish = true` makes [LaunchReadiness] skip its
+     * liveness precondition, and the failure under test happens before the retry loop ever looks at
+     * the process again. `sleep` does not exist on Windows, so this branches the same way
+     * `LaunchAndAttachIntegrationTest` does.
+     */
+    private fun anyProcess(): Process =
+        if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)) {
+            ProcessBuilder("cmd.exe", "/c", "exit /b 0").start()
+        } else {
+            ProcessBuilder("/bin/sh", "-c", "exit 0").start()
+        }
 }
