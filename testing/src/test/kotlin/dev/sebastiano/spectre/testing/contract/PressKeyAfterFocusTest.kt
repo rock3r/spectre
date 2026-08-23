@@ -13,7 +13,7 @@ class PressKeyAfterFocusTest {
         val driver = RecordingDriver(failFocusTimes = 3)
         val sleeps = mutableListOf<Long>()
         val detail =
-            PressKeyAfterFocus.run(
+            PressKeyAfterFocus.runGated(
                 driver = driver,
                 fieldKey = "field-1",
                 keyCode = 9,
@@ -32,7 +32,7 @@ class PressKeyAfterFocusTest {
     fun `succeeds on first pressKey without extra retries`() {
         val driver = RecordingDriver(failFocusTimes = 0)
         val detail =
-            PressKeyAfterFocus.run(
+            PressKeyAfterFocus.runGated(
                 driver = driver,
                 fieldKey = "field-1",
                 maxAttempts = 3,
@@ -51,7 +51,7 @@ class PressKeyAfterFocusTest {
         // runs hard-fail so Supported Linux evidence stays fail-closed.
         val driver = RecordingDriver(failFocusTimes = 100)
         val result = runCatching {
-            PressKeyAfterFocus.run(
+            PressKeyAfterFocus.runGated(
                 driver = driver,
                 fieldKey = "field-1",
                 maxAttempts = 3,
@@ -85,7 +85,7 @@ class PressKeyAfterFocusTest {
             }
         val ex =
             assertFailsWith<IllegalStateException> {
-                PressKeyAfterFocus.run(
+                PressKeyAfterFocus.runGated(
                     driver = driver,
                     fieldKey = "field-1",
                     maxAttempts = 5,
@@ -105,7 +105,7 @@ class PressKeyAfterFocusTest {
         // do nothing at all — not "try and tolerate the failure".
         val driver = RecordingDriver(failFocusTimes = 0)
         val detail =
-            PressKeyAfterFocus.run(
+            PressKeyAfterFocus.runGated(
                 driver = driver,
                 fieldKey = "field-1",
                 sleeper = {},
@@ -121,7 +121,7 @@ class PressKeyAfterFocusTest {
     @Test
     fun `tells the developer how to run the keyboard path when it skips`() {
         val warnings = mutableListOf<String>()
-        PressKeyAfterFocus.run(
+        PressKeyAfterFocus.runGated(
             driver = RecordingDriver(failFocusTimes = 0),
             fieldKey = "field-1",
             sleeper = {},

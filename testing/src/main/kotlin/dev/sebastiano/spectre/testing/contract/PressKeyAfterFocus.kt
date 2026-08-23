@@ -28,6 +28,11 @@ public object PressKeyAfterFocus {
     private const val DEFAULT_MAX_ATTEMPTS: Int = 8
     private const val BASE_SLEEP_MS: Long = 50L
 
+    /**
+     * Public entry point. Keeps the pre-gate JVM descriptor intact so a consumer compiled against
+     * an older `spectre-testing` jar still links after upgrading only the runtime jar — the gate
+     * and the warning sink are resolved here rather than added as defaulted parameters.
+     */
     public fun run(
         driver: AutomatorContractDriver,
         fieldKey: String,
@@ -36,7 +41,32 @@ public object PressKeyAfterFocus {
         maxAttempts: Int = DEFAULT_MAX_ATTEMPTS,
         sleepMs: (attemptIndex: Int) -> Long = { attempt -> BASE_SLEEP_MS * (attempt + 1) },
         sleeper: (Long) -> Unit = { ms -> Thread.sleep(ms) },
-        gateEnabled: Boolean = RealKeyboardGate.isEnabled(),
+    ): String =
+        runGated(
+            driver = driver,
+            fieldKey = fieldKey,
+            keyCode = keyCode,
+            modifiers = modifiers,
+            maxAttempts = maxAttempts,
+            sleepMs = sleepMs,
+            sleeper = sleeper,
+            gateEnabled = RealKeyboardGate.isEnabled(),
+            warn = { message -> System.err.println(message) },
+        )
+
+    /**
+     * Seam for tests: the gate decision and the warning sink are injected rather than resolved from
+     * the environment. Internal, so it stays out of the published ABI.
+     */
+    internal fun runGated(
+        driver: AutomatorContractDriver,
+        fieldKey: String,
+        keyCode: Int = DEFAULT_KEY_CODE_TAB,
+        modifiers: Int = 0,
+        maxAttempts: Int = DEFAULT_MAX_ATTEMPTS,
+        sleepMs: (attemptIndex: Int) -> Long = { attempt -> BASE_SLEEP_MS * (attempt + 1) },
+        sleeper: (Long) -> Unit = { ms -> Thread.sleep(ms) },
+        gateEnabled: Boolean,
         warn: (String) -> Unit = { message -> System.err.println(message) },
     ): String {
         require(maxAttempts > 0) { "maxAttempts must be positive" }
