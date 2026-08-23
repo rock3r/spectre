@@ -95,7 +95,7 @@ class LeaseStateMachineTest {
         assertEquals(LeaseErrorCode.FENCED, machine.validate(first).rejectedCode())
         assertEquals(LeaseStatus.REVOKING, machine.status(resource).holder?.status)
         val disconnect = machine.disconnect(ownerA.clientId)
-        assertEquals(ownerB, disconnect.single().owner)
+        assertEquals(ownerB, disconnect.grants.single().owner)
     }
 
     @Test
@@ -225,7 +225,9 @@ class LeaseStateMachineTest {
         val token = machine.acquire(request("a", ownerA)).grantedToken()
         machine.acquire(request("b", ownerB))
 
-        assertTrue(machine.disconnect(ownerB.clientId).isEmpty())
+        val disconnect = machine.disconnect(ownerB.clientId)
+        assertTrue(disconnect.grants.isEmpty())
+        assertEquals(listOf("b"), disconnect.cancelledRequestIds)
         assertEquals(token, machine.status(resource).holder?.token)
         assertTrue(machine.status(resource).waiters.isEmpty())
     }

@@ -19,13 +19,14 @@ import java.util.Properties
 import java.util.concurrent.TimeUnit
 
 internal class RecoveryLedger(private val path: Path, private val heartbeatTimeout: Duration) {
-    private var current: LedgerRecord? = null
+    private val current = mutableMapOf<String, LedgerRecord>()
 
     @Synchronized
     fun load(): RecoveryRecord? {
         if (!Files.exists(path)) return null
         val record = runCatching(::read).getOrElse { corruptRecord() }
-        current = record
+        current.clear()
+        current[record.leaseId] = record
         val remainingMillis =
             (record.heartbeatExpiryEpochMillis - System.currentTimeMillis()).coerceAtLeast(0)
         return RecoveryRecord(
@@ -34,7 +35,7 @@ internal class RecoveryLedger(private val path: Path, private val heartbeatTimeo
             leaseId = record.leaseId,
             owner = LeaseOwner(record.clientId, record.processId, record.ownerLabel),
             heartbeatExpiryMillis = monotonicMillis() + remainingMillis,
-            blocksAllResources = record.corrupt,
+            blocksAllResources = record.blocksAllResources,
         )
     }
 
@@ -50,47 +51,51 @@ internal class RecoveryLedger(private val path: Path, private val heartbeatTimeo
                 ownerLabel = grant.owner.label,
                 heartbeatExpiryEpochMillis =
                     System.currentTimeMillis() + heartbeatTimeout.toMillis(),
-                corrupt = false,
+                blocksAllResources = false,
             )
-        write(record)
-        current = record
+        current[record.leaseId] = record
+        persist()
     }
 
     @Synchronized
     fun heartbeat(token: LeaseToken) {
-        val record = current?.takeIf { it.leaseId == token.leaseId } ?: return
+        val record = current[token.leaseId] ?: return
         val refreshed =
             record.copy(
                 heartbeatExpiryEpochMillis =
                     System.currentTimeMillis() + heartbeatTimeout.toMillis()
             )
-        write(refreshed)
-        current = refreshed
+        current[token.leaseId] = refreshed
+        persist()
     }
 
     @Synchronized
     fun clear(leaseId: String) {
-        if (current?.leaseId != leaseId) return
-        Files.deleteIfExists(path)
-        current = null
+        if (current.remove(leaseId) == null) return
+        persist()
     }
 
     @Synchronized
     fun clearClient(clientId: String) {
-        current?.takeIf { it.clientId == clientId }?.let { clear(it.leaseId) }
+        val removed = current.values.removeAll { it.clientId == clientId }
+        if (removed) persist()
     }
 
     @Synchronized
     fun clearExpiredRecovery(recoveryGrace: Duration) {
-        val record = current ?: return
         val graceMillis = recoveryGrace.toMillis()
-        val eligibleAt =
-            if (Long.MAX_VALUE - record.heartbeatExpiryEpochMillis < graceMillis) {
-                Long.MAX_VALUE
-            } else {
-                record.heartbeatExpiryEpochMillis + graceMillis
+        val now = System.currentTimeMillis()
+        val removed =
+            current.values.removeAll { record ->
+                val eligibleAt =
+                    if (Long.MAX_VALUE - record.heartbeatExpiryEpochMillis < graceMillis) {
+                        Long.MAX_VALUE
+                    } else {
+                        record.heartbeatExpiryEpochMillis + graceMillis
+                    }
+                now >= eligibleAt
             }
-        if (System.currentTimeMillis() >= eligibleAt) clear(record.leaseId)
+        if (removed) persist()
     }
 
     private fun read(): LedgerRecord {
@@ -104,8 +109,16 @@ internal class RecoveryLedger(private val path: Path, private val heartbeatTimeo
             processId = properties.required(PROCESS_ID).toLong(),
             ownerLabel = properties.getProperty(OWNER_LABEL),
             heartbeatExpiryEpochMillis = properties.required(HEARTBEAT_EXPIRY).toLong(),
-            corrupt = false,
+            blocksAllResources = properties.getProperty(BLOCKS_ALL)?.toBooleanStrict() ?: false,
         )
+    }
+
+    private fun persist() {
+        when (current.size) {
+            0 -> Files.deleteIfExists(path)
+            1 -> write(current.values.single())
+            else -> write(conservativeRecord(current.values))
+        }
     }
 
     private fun write(record: LedgerRecord) {
@@ -118,6 +131,7 @@ internal class RecoveryLedger(private val path: Path, private val heartbeatTimeo
                 setProperty(PROCESS_ID, record.processId.toString())
                 record.ownerLabel?.let { setProperty(OWNER_LABEL, it) }
                 setProperty(HEARTBEAT_EXPIRY, record.heartbeatExpiryEpochMillis.toString())
+                setProperty(BLOCKS_ALL, record.blocksAllResources.toString())
             }
         val temporary = path.resolveSibling("${path.fileName}.tmp")
         Files.newOutputStream(temporary).use { output -> properties.store(output, null) }
@@ -142,7 +156,23 @@ internal class RecoveryLedger(private val path: Path, private val heartbeatTimeo
             processId = 0,
             ownerLabel = "corrupt recovery ledger",
             heartbeatExpiryEpochMillis = Long.MAX_VALUE,
-            corrupt = true,
+            blocksAllResources = true,
+        )
+    }
+
+    private fun conservativeRecord(records: Collection<LedgerRecord>): LedgerRecord {
+        val leaseIds = records.map(LedgerRecord::leaseId).sorted().joinToString("|")
+        val digest = MessageDigest.getInstance("SHA-256").digest(leaseIds.encodeToByteArray())
+        val observedId = "multiple-${HexFormat.of().formatHex(digest, 0, CORRUPT_HASH_BYTES)}"
+        return LedgerRecord(
+            epoch = "multiple",
+            leaseId = observedId,
+            resourceKey = MULTIPLE_RESOURCE_KEY,
+            clientId = "multiple-recovery-owners",
+            processId = 0,
+            ownerLabel = "multiple active desktop resources",
+            heartbeatExpiryEpochMillis = records.maxOf(LedgerRecord::heartbeatExpiryEpochMillis),
+            blocksAllResources = true,
         )
     }
 
@@ -158,7 +188,7 @@ internal class RecoveryLedger(private val path: Path, private val heartbeatTimeo
         val processId: Long,
         val ownerLabel: String?,
         val heartbeatExpiryEpochMillis: Long,
-        val corrupt: Boolean,
+        val blocksAllResources: Boolean,
     )
 
     private companion object {
@@ -169,7 +199,9 @@ internal class RecoveryLedger(private val path: Path, private val heartbeatTimeo
         const val PROCESS_ID: String = "processId"
         const val OWNER_LABEL: String = "ownerLabel"
         const val HEARTBEAT_EXPIRY: String = "heartbeatExpiryEpochMillis"
+        const val BLOCKS_ALL: String = "blocksAllResources"
         const val CORRUPT_RESOURCE_KEY: String = "user:unknown/recovery-corrupt"
+        const val MULTIPLE_RESOURCE_KEY: String = "user:unknown/recovery-multiple"
         const val CORRUPT_HASH_BYTES: Int = 8
 
         fun monotonicMillis(): Long = TimeUnit.NANOSECONDS.toMillis(System.nanoTime())

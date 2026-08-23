@@ -75,6 +75,6 @@ public class DesktopIdentityResolver(
     }
 
     private companion object {
-        val LOCAL_X11_DISPLAY: Regex = Regex("^(?:unix/)?:(\\d+)(?:\\.0)?$")
+        val LOCAL_X11_DISPLAY: Regex = Regex("^(?:unix/)?:(\\d+)(?:\\.\\d+)?$")
     }
 }

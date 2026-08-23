@@ -366,6 +366,8 @@ jobs:
           test -n "$ORG_GRADLE_PROJECT_signingInMemoryKeyPassword"
           ./gradlew \
             :core:publishToMavenCentral \
+            :input-coordinator:publishToMavenCentral \
+            :input-coordinator-server:publishToMavenCentral \
             :server:publishToMavenCentral \
             :recording:publishToMavenCentral \
             :recording-macos:publishToMavenCentral \

@@ -126,7 +126,13 @@ internal class CoordinatorLeaseService(
     @Synchronized
     fun disconnect(clientId: String) {
         recoveryLedger?.clearClient(clientId)
-        machine.disconnect(clientId).forEach(::completeGrant)
+        val result = machine.disconnect(clientId)
+        result.cancelledRequestIds.forEach { requestId ->
+            pendingAcquires
+                .remove(requestId)
+                ?.complete(error("CLIENT_DISCONNECTED", "Client session disconnected"))
+        }
+        result.grants.forEach(::completeGrant)
     }
 
     @Synchronized
