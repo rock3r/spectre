@@ -181,7 +181,11 @@ public object AutomatorContractCorpus {
      * detail `skipped:no-fixture`) when [AutomatorContractDriver.expectsFixtureSemantics] is false
      * — matching matrix rows that only claim headless transport liveness.
      */
-    public fun run(driver: AutomatorContractDriver): RunResult {
+    public fun run(driver: AutomatorContractDriver): RunResult =
+        run(driver = driver, realKeyboardEnabled = RealKeyboardGate.isEnabled())
+
+    /** Seam for tests: the real-keyboard gate is injected rather than read from the environment. */
+    internal fun run(driver: AutomatorContractDriver, realKeyboardEnabled: Boolean): RunResult {
         val results = mutableListOf<ScenarioResult>()
 
         results +=
@@ -250,7 +254,7 @@ public object AutomatorContractCorpus {
                     "bytes=${probe.byteCount} format=${probe.formatHint}"
                 }
             if (driver.supportsFixtureParity) {
-                results += fixtureParityScenarios(driver)
+                results += fixtureParityScenarios(driver, realKeyboardEnabled)
             }
         } else {
             results +=
@@ -340,7 +344,10 @@ public object AutomatorContractCorpus {
     }
 
     /** Fixture-backed match + input scenarios (agent Xvfb/macOS). */
-    private fun fixtureParityScenarios(driver: AutomatorContractDriver): List<ScenarioResult> {
+    private fun fixtureParityScenarios(
+        driver: AutomatorContractDriver,
+        realKeyboardEnabled: Boolean,
+    ): List<ScenarioResult> {
         val out = mutableListOf<ScenarioResult>()
         out +=
             scenario("find-by-text-fixture-label", driver.transport) {
@@ -414,23 +421,34 @@ public object AutomatorContractCorpus {
                 driver.scrollWheel(label.key, wheelClicks = 1)
                 "scrolled=${label.key}"
             }
+        // Real-keyboard paths are opt-in off CI (RealKeyboardGate, #449). The gate is checked
+        // *before* the node lookup: a driver error resolving the text field would otherwise fail
+        // the scenario on a host that was never going to run it, which is the opposite of keeping
+        // `./gradlew check` runnable on a desktop in use.
         out +=
-            scenario(PressKeyAfterFocus.SCENARIO_ID, driver.transport) {
-                // Focus the text field first so OS keyboard focus is on the target JVM.
-                // Retry click+pressKey: macOS JBR often needs a settle window after click
-                // (see PressKeyAfterFocus / matrix residuals on jbr-21/jbr-25 macos).
-                // Real-keyboard paths are opt-in off CI (RealKeyboardGate, #449); when the gate
-                // is off PressKeyAfterFocus records RealKeyboardGate.SKIPPED_DETAIL and never
-                // touches the driver, so `./gradlew check` survives a desktop in use.
-                val field =
-                    driver.findByTestTag(ContractFixtureTags.TEXT_FIELD).firstOrNull()
-                        ?: error("fixture text field missing")
-                PressKeyAfterFocus.run(
-                    driver = driver,
-                    fieldKey = field.key,
-                    keyCode = PressKeyAfterFocus.DEFAULT_KEY_CODE_TAB,
-                    modifiers = 0,
+            if (!realKeyboardEnabled) {
+                PressKeyAfterFocus.warnSkipped()
+                ScenarioResult(
+                    id = PressKeyAfterFocus.SCENARIO_ID,
+                    transport = driver.transport,
+                    passed = true,
+                    detail = RealKeyboardGate.SKIPPED_DETAIL,
                 )
+            } else {
+                scenario(PressKeyAfterFocus.SCENARIO_ID, driver.transport) {
+                    // Focus the text field first so OS keyboard focus is on the target JVM.
+                    // Retry click+pressKey: macOS JBR often needs a settle window after click
+                    // (see PressKeyAfterFocus / matrix residuals on jbr-21/jbr-25 macos).
+                    val field =
+                        driver.findByTestTag(ContractFixtureTags.TEXT_FIELD).firstOrNull()
+                            ?: error("fixture text field missing")
+                    PressKeyAfterFocus.run(
+                        driver = driver,
+                        fieldKey = field.key,
+                        keyCode = PressKeyAfterFocus.DEFAULT_KEY_CODE_TAB,
+                        modifiers = 0,
+                    )
+                }
             }
         return out
     }

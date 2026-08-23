@@ -74,12 +74,7 @@ public object PressKeyAfterFocus {
             // Do not touch the driver at all. focusWindow and click are themselves focus-stealing,
             // so "try it and tolerate the failure" would still disrupt whoever is using the
             // machine — the exact thing the gate exists to prevent.
-            warn(
-                "Skipped contract corpus scenario `$SCENARIO_ID`: it raises the fixture window, " +
-                    "clicks the text field, and sends real Robot key code $keyCode, so it needs " +
-                    "the fixture window to own OS keyboard focus for the whole run (#449). " +
-                    RealKeyboardGate.ENABLE_HINT
-            )
+            warn(skipNotice(keyCode))
             return RealKeyboardGate.SKIPPED_DETAIL
         }
         var lastError: Throwable? = null
@@ -112,6 +107,16 @@ public object PressKeyAfterFocus {
         }
         error("pressKey after focus failed after $maxAttempts attempts: $detail")
     }
+
+    /** Why the keyboard path was skipped, and how to run it. Shared by every skip site. */
+    internal fun skipNotice(keyCode: Int = DEFAULT_KEY_CODE_TAB): String =
+        "Skipped contract corpus scenario `$SCENARIO_ID`: it raises the fixture window, clicks " +
+            "the text field, and sends real Robot key code $keyCode, so it needs the fixture " +
+            "window to own OS keyboard focus for the whole run (#449). " +
+            RealKeyboardGate.ENABLE_HINT
+
+    /** Emit [skipNotice] to stderr, for skip sites that never reach [run]. */
+    internal fun warnSkipped(): Unit = System.err.println(skipNotice())
 
     public fun isCi(): Boolean =
         !System.getenv("CI").isNullOrBlank() || !System.getenv("GITHUB_ACTIONS").isNullOrBlank()
