@@ -136,8 +136,9 @@ explicitly.
 
 `AgentAttach.attach(pid)` performs this sequence:
 
-1. Resolve the loadable `spectre-agent-runtime-<version>.jar`.
-2. Create a fresh Unix Domain Socket path such as `/tmp/sp-a-<pid>-<8char-uuid>/agent.sock`.
+1. Pick a fresh Unix Domain Socket path such as `/tmp/sp-a-<pid>-<8char-uuid>/agent.sock`, and
+   check that it fits the platform's `sun_path` limit.
+2. Resolve the loadable `spectre-agent-runtime-<version>.jar`.
 3. Run attach preflights, including the same-OS-user check.
 4. Call `VirtualMachine.attach(pid).loadAgent(runtimeJarPath, udsPath)`.
 5. The target JVM loads the runtime jar and invokes `SpectreAgent.agentmain(...)`.
@@ -258,10 +259,17 @@ cleanup.
 ```kotlin
 AttachOptions(
     agentJarPath = null,        // null = auto-locate (see "Artifact roles" above)
-    udsPath = null,             // null = <tmp>/sp-a-<pid>-<8char-uuid>/agent.sock (/tmp on POSIX, %TEMP% on Windows)
+    udsPath = null,             // null = <base>/sp-a-<pid>-<8char-uuid>/agent.sock (see below)
     attachTimeoutMs = 5_000,    // how long to wait for the agent's IPC server to come up
 )
 ```
+
+The default `<base>` is `/tmp` on Linux and macOS. On Windows it is `%TEMP%`, falling back to
+`%LOCALAPPDATA%\Temp` when `%TEMP%` is deep enough to push the socket path past the platform's
+`sockaddr_un.sun_path` limit (102 usable bytes on macOS, 106 on Linux and Windows). A path you
+pass yourself must also fit that limit; `attach` rejects longer ones with
+`UdsPathTooLongException` before it loads the agent, so the failure names the path and the limit
+instead of surfacing as a bootstrap error inside the target.
 
 If you override `udsPath` with a path under an existing directory, you own that parent
 directory's permissions. Spectre creates the default per-attach directory and socket owner-only —

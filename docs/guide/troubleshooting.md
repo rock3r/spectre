@@ -45,6 +45,21 @@ no longer a hard requirement. Direct launches that Spectre starts get
 `-XX:+EnableDynamicAgentLoading`; Gradle launches must set that flag in the build.
 See [Agent attach](agent.md#injection-without-preinstalled-core).
 
+### "Unix domain path too long" / `UdsPathTooLongException`
+
+The socket path the agent binds must fit the operating system's `sockaddr_un.sun_path`
+field: 102 usable bytes on macOS, 106 on Linux and Windows. Longer paths are refused by
+the kernel.
+
+Spectre picks a default path that fits. It uses `/tmp` on Linux and macOS. On Windows it
+uses `%TEMP%` when the result fits, and falls back to `%LOCALAPPDATA%\Temp` when it does
+not — build harnesses such as Bazel point `java.io.tmpdir` at a deep scratch directory,
+which used to push the path past the limit.
+
+You can still hit the limit if you set `AttachOptions.udsPath` yourself. Attach now
+rejects that up front with `UdsPathTooLongException`, which names the path, its size in
+bytes, and the limit. Pick a shorter directory, closer to the filesystem root.
+
 ### "Attached but no window (FIRST_WINDOW)"
 
 Attach succeeded but `windows()` stayed empty until timeout. The app may still be

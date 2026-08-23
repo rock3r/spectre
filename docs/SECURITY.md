@@ -32,7 +32,8 @@ out of scope.
    reach the bound port. Bind to `127.0.0.1`. Anything network-reachable broadens the threat
    model beyond what this release covers.
 4. **The agent transport assumes a same-user peer.** `:agent`'s Unix Domain Socket is created
-   under a short private directory (in `/tmp/` on Linux/macOS, under `%TEMP%` on Windows). On
+   under a short private directory (in `/tmp/` on Linux/macOS; under `%TEMP%` on Windows, or
+   `%LOCALAPPDATA%\Temp` when `%TEMP%` is too deep to leave room for the socket path). On
    Linux/macOS the directory is mode 0700 and the socket is mode 0600. On Windows/NTFS, where
    POSIX modes are meaningless, `IpcServer` instead applies an **owner-only ACL** — a single
    ALLOW full-control ACE for the owning user, with inherited ACEs dropped — to both the private

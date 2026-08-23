@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.agent
 import dev.sebastiano.spectre.agent.runtime.AgentBootstrapArgs
 import dev.sebastiano.spectre.agent.transport.FrameLimits
 import dev.sebastiano.spectre.agent.transport.IpcClient
+import dev.sebastiano.spectre.agent.transport.UdsPathLimits
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -46,8 +47,13 @@ public object AgentAttach {
     public fun attach(pid: Long, options: AttachOptions = AttachOptions()): AttachedAutomator {
         AttachRuntimePreflight.requireSupported()
         AgentPlatformPreflight.requireSupported()
+        // Resolve and length-check the UDS path before anything expensive: the agent binds it
+        // inside the *target* JVM, so an overlong path surfaces there as an opaque
+        // "agent failed to initialize" with the real cause in the target's stderr (#442).
+        // `defaultUdsPath` already picks a base that fits; this catches a caller-supplied one.
+        val udsPath = effectiveUdsPath(options.udsPath, pid)
+        if (UdsPathLimits.exceedsLimit(udsPath)) throw UdsPathTooLongException(listOf(udsPath))
         val agentJar = resolveAgentJar(options)
-        val udsPath = options.udsPath ?: AttachOptions.defaultUdsPath(pid)
         // Pre-flight: ensure the path doesn't already exist (collisions would confuse the bind).
         Files.deleteIfExists(udsPath)
 
@@ -195,6 +201,20 @@ public object AgentAttach {
 @OptIn(ExperimentalSpectreAgentApi::class)
 private class SpectreAttachExceptionImpl(message: String, cause: Throwable?) :
     SpectreAttachException(message, cause)
+
+/**
+ * The UDS path [AgentAttach.attach] will actually use: [explicit] when the caller supplied one,
+ * otherwise [AttachOptions.defaultUdsPath], resolved to an absolute path either way.
+ *
+ * Resolving matters because the two ends of the attach do not share a working directory. The
+ * attacher polls `Files.exists(udsPath)` in its own; the target JVM binds in its own, which differs
+ * for every launch mode. A relative path would name two different files and the attach could only
+ * time out. Resolving here also makes the `sun_path` length check measure the path the target
+ * really binds.
+ */
+@OptIn(ExperimentalSpectreAgentApi::class)
+internal fun effectiveUdsPath(explicit: Path?, targetPid: Long): Path =
+    (explicit ?: AttachOptions.defaultUdsPath(targetPid)).toAbsolutePath()
 
 internal fun dynamicAgentLoadingGuidance(message: String?): String? =
     if (

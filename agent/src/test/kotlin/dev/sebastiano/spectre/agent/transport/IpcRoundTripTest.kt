@@ -2,6 +2,7 @@
 
 package dev.sebastiano.spectre.agent.transport
 
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermission
@@ -245,12 +246,30 @@ class IpcRoundTripTest {
     }
 
     @Test
+    fun `IpcServer names the path and the sun_path limit when the path is too long`() {
+        // #442: the raw JDK failure is `SocketException: Unix domain path too long`, which names
+        // neither the path nor the cap. The agent runs inside the target JVM, so this message is
+        // all a user has to go on in the target's stderr.
+        val tooLong = udsBase().resolve("sp-" + "x".repeat(SUN_PATH_OVERFLOW_LEN) + ".sock")
+
+        val ex = assertFailsWith<IOException> { IpcServer(tooLong, stubHandler()).use {} }
+
+        val message = ex.message.orEmpty()
+        assertTrue(tooLong.toString() in message, "should name the path, got: $message")
+        assertTrue(
+            "${UdsPathLimits.maxPathBytes}" in message,
+            "should name the sun_path limit, got: $message",
+        )
+    }
+
+    @Test
     @EnabledOnOs(OS.LINUX, OS.MAC) // relies on UnixOperatingSystemMXBean.openFileDescriptorCount
     fun `IpcServer constructor releases the ServerSocketChannel when bind fails`() {
         // Regression for Bugbot LOW finding on commit 82be70e: in the `IpcServer` constructor,
         // `ServerSocketChannel.open()` opens a channel, but if `bind()` (or the `deleteIfExists`
-        // before it, or the POSIX permission tightening after it) throws, the channel was
-        // never closed. `ServerSocketChannel` has no finalizer/cleaner, so the native FD would
+        // before it, the `sun_path` length check, or the POSIX permission tightening after it)
+        // throws, the channel was never closed. `ServerSocketChannel` has no finalizer/cleaner, so
+        // the native FD would
         // persist until JVM exit.
         //
         // Direct-evidence approach: observe `UnixOperatingSystemMXBean.openFileDescriptorCount`
@@ -260,10 +279,13 @@ class IpcRoundTripTest {
         val osBean =
             java.lang.management.ManagementFactory.getOperatingSystemMXBean()
                 as com.sun.management.UnixOperatingSystemMXBean
-        // Path is way past the `sun_path` cap (~104 bytes macOS, ~108 Linux) so bind must fail.
+        // Path is way past the `sun_path` cap (~104 bytes macOS, ~108 Linux) so the constructor
+        // must fail. Since #442 it fails at the explicit length check rather than in `bind`; the
+        // check sits *after* `ServerSocketChannel.open` on purpose, so this probe still measures
+        // the constructor's `finally` cleanup.
         val tooLongUdsPath = Path.of("/tmp", "sp-" + "x".repeat(SUN_PATH_OVERFLOW_LEN) + ".sock")
 
-        // Sanity-check the test scaffolding: bind must actually throw for this path.
+        // Sanity-check the test scaffolding: construction must actually throw for this path.
         assertFailsWith<java.io.IOException> { IpcServer(tooLongUdsPath, stubHandler()).use {} }
 
         // Warm-up — the first few attempts can churn extra FDs from JVM/JNI lazy init

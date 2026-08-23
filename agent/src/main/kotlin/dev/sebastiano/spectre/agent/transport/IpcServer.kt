@@ -55,6 +55,14 @@ constructor(
             // the contract by observing `openFileDescriptorCount`.
             var success = false
             try {
+                // Check the sun_path budget before bind: the JDK's own
+                // `SocketException: Unix domain path too long` names neither the path nor the
+                // cap, and this code runs inside the target JVM where that message is all the
+                // user gets (#442). Deliberately inside the try so the outer `finally` still
+                // releases the channel opened just above.
+                if (UdsPathLimits.exceedsLimit(udsPath)) {
+                    throw IOException(UdsPathLimits.tooLongMessage(udsPath))
+                }
                 createdParentDir = protection.createMissingParentDirectory(udsPath)
                 // Clean up any orphaned socket file from a previous crash; the OS refuses to
                 // bind if the path already exists, even when stale.

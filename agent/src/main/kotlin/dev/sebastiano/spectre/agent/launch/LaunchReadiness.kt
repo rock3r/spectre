@@ -7,6 +7,7 @@ import dev.sebastiano.spectre.agent.AttachedAutomator
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.SpectreAgentException
 import dev.sebastiano.spectre.agent.SpectreAttachException
+import dev.sebastiano.spectre.agent.effectiveUdsPath
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -133,12 +134,28 @@ internal object LaunchReadiness {
         bootstrapTimeoutMs: Long,
         stdoutPath: Path,
         stderrPath: Path,
+        /** Seam for tests; production always resolves through [effectiveUdsPath]. */
+        resolveUdsPath: (Path?, Long) -> Path = ::effectiveUdsPath,
     ): AttachedAutomator {
         if (!process.isAlive && !gradleish) {
             throw processExited(process, stdoutPath, stderrPath)
         }
-        // Pin UDS path for the whole stage (including pre-load retries).
-        val udsPath = attachOptions.udsPath ?: AttachOptions.defaultUdsPath(attachedPid)
+        // Pin UDS path for the whole stage (including pre-load retries). Resolving it can fail
+        // when no default candidate fits sun_path (#442), and that failure has to arrive as an
+        // AGENT_BOOTSTRAP LaunchAgentBootstrapException carrying the capture paths, like every
+        // other bootstrap failure — not as a bare SpectreAttachException that skips the stage
+        // taxonomy. The retry loop's own catch blocks are below and do not cover this statement.
+        val udsPath =
+            try {
+                resolveUdsPath(attachOptions.udsPath, attachedPid)
+            } catch (ex: SpectreAttachException) {
+                throw LaunchAgentBootstrapException(
+                    attachedPid = attachedPid,
+                    stdoutPath = stdoutPath,
+                    stderrPath = stderrPath,
+                    cause = ex,
+                )
+            }
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(bootstrapTimeoutMs)
         var lastAttachFailure: SpectreAttachException? = null
         while (true) {
