@@ -14,6 +14,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.asSink
@@ -95,8 +96,11 @@ class SpectreMcpStdioIntegrationTest {
             )
         try {
             val client = Client(clientInfo = Implementation(name = "spectre-test", version = "1"))
-            withTimeout(CONNECTION_TIMEOUT_MILLIS) {
-                client.connect(transport)
+            // Two budgets, each sized for what it actually covers (#455). Folding a cold JVM
+            // start into the protocol budget made this the only one of the three tests in this
+            // class that could fail on a slow host, and it did so repeatedly on windows-latest.
+            phase("connect", CONNECT_TIMEOUT_MILLIS) { client.connect(transport) }
+            phase("protocol exchange", PROTOCOL_TIMEOUT_MILLIS) {
                 assertEquals(
                     expectedMcpVersion(),
                     client.serverVersion?.version,
@@ -142,6 +146,25 @@ class SpectreMcpStdioIntegrationTest {
         }
     }
 
+    /**
+     * Run [block] under [millis], reporting *which* phase timed out.
+     *
+     * A bare `TimeoutCancellationException` says nothing about whether the server failed to start
+     * or failed to answer, which is what made #455 hard to read from CI logs alone.
+     */
+    private suspend fun <T> phase(name: String, millis: Long, block: suspend () -> T): T =
+        try {
+            withTimeout(millis) { block() }
+        } catch (ex: TimeoutCancellationException) {
+            throw AssertionError(
+                "MCP stdio $name did not complete within ${millis}ms. If this is the connect " +
+                    "phase on a loaded runner, suspect cold JVM startup rather than the " +
+                    "protocol; the other tests in this class prove the server answers " +
+                    "initialize (#455).",
+                ex,
+            )
+        }
+
     private fun mcpCommand(): List<String> =
         System.getProperty("spectre.cli.distributionExecutable")?.let { executable ->
             listOf(executable, "mcp")
@@ -168,7 +191,26 @@ class SpectreMcpStdioIntegrationTest {
     }
 
     private companion object {
-        private const val CONNECTION_TIMEOUT_MILLIS: Long = 10_000
+        /**
+         * Hang guard for `connect`, not a performance assertion.
+         *
+         * This phase spawns `java -cp <full CLI classpath>` and completes the MCP handshake, so the
+         * budget has to clear a cold JVM start on the slowest supported runner — on
+         * `windows-latest` that happens while Gradle compiles other modules on the same two cores.
+         * Locally the whole test takes well under a second; on hosted Windows the old shared 10s
+         * budget was exceeded repeatedly (#455). The sibling [PROCESS_EXIT_TIMEOUT_SECONDS] was
+         * already raised to 15s for the same startup reason, and this phase does strictly more than
+         * that one, so it gets more headroom. A genuine hang still fails the build; the value only
+         * decides how long that takes to notice.
+         */
+        private const val CONNECT_TIMEOUT_MILLIS: Long = 60_000
+
+        /**
+         * Budget for the protocol exchange once the server is already up and has answered
+         * `initialize`. No process startup in here, so this stays tight enough to catch a real
+         * protocol stall.
+         */
+        private const val PROTOCOL_TIMEOUT_MILLIS: Long = 15_000
         // Windows hosted runners can take longer than the usual process startup window to
         // initialize the JVM before observing closed stdin.
         private const val PROCESS_EXIT_TIMEOUT_SECONDS: Long = 15
