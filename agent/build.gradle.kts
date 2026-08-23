@@ -106,6 +106,17 @@ tasks.withType<Test>().configureEach {
             .orElse("")
     inputs.property("spectre.agent.attachE2e.allowWindows", allowWindowsAttachE2e)
 
+    // Real-keyboard (Robot typeText) subpath opt-in (#444). CI enables it from the `CI` env var;
+    // developer machines keep `./gradlew check` runnable while another window holds OS keyboard
+    // focus, and opt in with -Pspectre.agent.realKeyboard=true on an idle desktop. Same
+    // forwarding and task-input reasoning as the Windows gate above.
+    val realKeyboardE2e =
+        providers
+            .gradleProperty("spectre.agent.realKeyboard")
+            .orElse(providers.systemProperty("dev.sebastiano.spectre.agent.realKeyboard"))
+            .orElse("")
+    inputs.property("spectre.agent.realKeyboard", realKeyboardE2e)
+
     jvmArgumentProviders.add(
         CommandLineArgumentProvider {
             buildList {
@@ -120,6 +131,10 @@ tasks.withType<Test>().configureEach {
                 val allowWin = allowWindowsAttachE2e.get().takeIf { it.isNotBlank() }
                 if (allowWin != null) {
                     add("-Ddev.sebastiano.spectre.agent.attachE2e.allowWindows=$allowWin")
+                }
+                val realKeyboard = realKeyboardE2e.get().takeIf { it.isNotBlank() }
+                if (realKeyboard != null) {
+                    add("-Ddev.sebastiano.spectre.agent.realKeyboard=$realKeyboard")
                 }
             }
         }

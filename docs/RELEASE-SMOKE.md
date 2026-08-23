@@ -70,6 +70,7 @@ These are structural, not one-release accidents:
 | CLI package-channel (Homebrew/Scoop) contracts | Structural on every Unix `check` (`python3`); install-semantics when Ruby present or under `CI` (issue #400) | Optional: install Ruby on a clean Linux box and run `./gradlew verifyHomebrewFormulaInstallSemantics` if claiming formula behaviour beyond CI |
 | Agent attach + contract corpus (live UI) | Linux Xvfb + macOS desktop; Windows **transport/ACL** unit tests | **Windows headed desktop** (not SSH-only for capture) |
 | Agent Windows UI e2e | Opt-in only: `-Pspectre.agent.attachE2e.allowWindows=true` | Run that property on Mattone-class boxes |
+| Agent real-keyboard `typeText` | Runs on CI (`CI=true`); **skipped** on developer machines | Add `-Pspectre.agent.realKeyboard=true` on an idle desktop |
 | Agent **inject** attach | Linux + macOS e2e | **Windows** inject fixture (no preinstalled core) |
 | Launch-and-attach e2e | Linux + macOS | **Windows** direct `java` (and Gradle if claimed) |
 | CLI daemon + live fixture | Linux + macOS | **Windows** release-shaped CLI binary |
@@ -466,7 +467,8 @@ What it does (no second terminal), using the **same stable scenario IDs** as
 1. `preflight` + optional `check`
 2. `pointer-move` — live `moveTo`/`moveBy` hover (`*PointerMoveLive*`)
 3. Agent UI e2e: `agent-attach-core`, `agent-inject`, `agent-launch-and-attach`
-   (`-Pspectre.agent.attachE2e.allowWindows=true`, properly quoted for PowerShell)
+   (`-Pspectre.agent.attachE2e.allowWindows=true`, properly quoted for PowerShell;
+   `agent-attach-core` also passes `-Pspectre.agent.realKeyboard=true`)
 4. `host-native-recording` — WGC region smoke only when `displayMode` is interactive
    (SSH → hard `n/a` with reason, never fake PASS)
 5. `cli-packaged` / `cli-native-helper-layout` / packaged `spectre launch --once` as `cli-user-flow`
@@ -508,15 +510,20 @@ Optional **full UI e2e** on a physical Windows desktop (not hosted CI default):
 # bash / zsh / cmd
 ./gradlew :agent:test \
   -Pspectre.agent.attachE2e.allowWindows=true \
+  -Pspectre.agent.realKeyboard=true \
   --tests '*AgentAttachIntegration*'
 ```
 
 ```powershell
-# PowerShell: quote the -P argument (otherwise PS splits on dots after -Pspectre)
+# PowerShell: quote the -P arguments (otherwise PS splits on dots after -Pspectre)
 ./gradlew :agent:test `
   "-Pspectre.agent.attachE2e.allowWindows=true" `
+  "-Pspectre.agent.realKeyboard=true" `
   --tests '*AgentAttachIntegration*'
 ```
+
+`-Pspectre.agent.realKeyboard=true` keeps the Robot `typeText` subpath, which is opt-in off CI so
+`./gradlew check` stays runnable on a machine in use. Leave the smoke desktop idle while it runs.
 
 See [Agent attach](guide/agent.md). Do not enable this property on headless
 `windows-latest` as a fail-closed gate without a headed runner story.

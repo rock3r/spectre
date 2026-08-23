@@ -7,6 +7,7 @@ import dev.sebastiano.spectre.agent.fixture.SPECTRE_FIXTURE_WINDOW_TITLE
 import dev.sebastiano.spectre.agent.fixture.TAG_BUTTON
 import dev.sebastiano.spectre.agent.fixture.TAG_LABEL
 import dev.sebastiano.spectre.agent.fixture.TAG_TEXT_FIELD
+import dev.sebastiano.spectre.agent.launch.LaunchReadiness
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import java.awt.GraphicsEnvironment
@@ -49,7 +50,8 @@ import org.junit.jupiter.api.condition.OS
  * - `findByTestTag(TAG_LABEL / TAG_BUTTON / TAG_TEXT_FIELD)` each return at least one match.
  * - `click(buttonKey)` bare-throws on any wire-level error. Focused-field `typeText("x")` also
  *   bare-throws except for CI-only macOS focus handoff loss, where the already-covered
- *   real-keyboard subpath is skipped after the attach/click/focus contract has been proven.
+ *   real-keyboard subpath is skipped after the attach/click/focus contract has been proven. The
+ *   real-keyboard subpath itself only runs when [RealKeyboardE2eGate] allows it (#444).
  *
  * The pure-mapping correctness (getter names, `Rectangle → RectDto`, screenshot's `Rectangle?`
  * lookup, refresh-before-read contract) is *also* covered at the unit level in
@@ -59,8 +61,8 @@ import org.junit.jupiter.api.condition.OS
  * **Do not loosen these assertions.** Earlier drafts wrapped `click`/`typeText` in `runCatching`
  * and let empty `windows()` pass — that hid a real `windows()`-cache-staleness bug (the handler
  * needed `refreshWindows()`) and a `BufferedReader` deadlock in `FixtureProcess.close()`. The only
- * exception is CI macOS OS-focus loss after Compose focus has been proven; local runs still fail so
- * developers can diagnose real keyboard regressions.
+ * exception is CI macOS OS-focus loss after Compose focus has been proven; a local opt-in run still
+ * fails so developers can diagnose real keyboard regressions.
  *
  * Gating:
  * - **Runs on Linux, macOS, and Windows** via `@EnabledOnOs`. Hosted GitHub `windows-latest` lacks
@@ -73,8 +75,15 @@ import org.junit.jupiter.api.condition.OS
  *   to create a `JFrame + ComposePanel` without a display.
  * - Skipped when `dev.sebastiano.spectre.agent.runtimeJar` isn't set. Gradle's `:agent:test` task
  *   sets it from the `:agent-runtime:jar` output.
- * - Real-keyboard `typeText` tolerates a CI-only loss of OS keyboard focus on any platform (see
- *   `typeTextOrSkipCiFocusLoss`); the attach/click/focus contract is still asserted.
+ * - The real-keyboard subpath (click-to-focus + `typeText`) is **opt-in off CI** via
+ *   [RealKeyboardE2eGate]: it needs the fixture window to own OS keyboard focus for the whole run,
+ *   which a developer machine in use cannot guarantee, and `./gradlew check` is the documented
+ *   pre-push gate (#444). Everything else — attach, `windows()`, `findByTestTag`, `click()`, window
+ *   identity, screenshot — runs on every host. When the subpath does run, real-keyboard `typeText`
+ *   still tolerates a CI-only loss of OS keyboard focus on any platform (see
+ *   `typeTextOrSkipCiFocusLoss`).
+ * - Attach itself retries the pre-`loadAgent` HotSpot handshake race via
+ *   `attachRetryingHandshakeRace` (#443); no other attach failure is retried.
  */
 @EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)
 class AgentAttachIntegrationTest {
@@ -116,10 +125,12 @@ class AgentAttachIntegrationTest {
 
             val exception =
                 assertFailsWith<SpectreAttachException> {
-                    AgentAttach.attach(
-                        fixture.pid,
-                        AttachOptions(agentJarPath = agentJar, udsPath = udsPath),
-                    )
+                    // `.use` so an unexpected success closes the automator instead of leaking it.
+                    attachRetryingHandshakeRace(
+                            fixture.pid,
+                            AttachOptions(agentJarPath = agentJar, udsPath = udsPath),
+                        )
+                        .use {}
                 }
 
             assertEquals(
@@ -140,7 +151,7 @@ class AgentAttachIntegrationTest {
                 attachTimeoutMs = ATTACH_TIMEOUT_MS,
             )
 
-        AgentAttach.attach(fixture.pid, options).use { automator ->
+        attachRetryingHandshakeRace(fixture.pid, options).use { automator ->
             assertEquals(fixture.pid, automator.pid)
 
             // Strict contract: the fixture put up exactly one tagged Compose UI before
@@ -206,21 +217,18 @@ class AgentAttachIntegrationTest {
                 textFieldKey.isNotBlank(),
                 "iteration $iteration: text field node key should be non-blank; got '$textFieldKey'",
             )
-            val focusedTextField =
-                automator.waitForFocusedTextField(textFieldKey, iteration = iteration)
-            if (focusedTextField != null) {
-                val editableTextBefore = focusedTextField.editableText.orEmpty()
-                // This is a real keyboard event path. Do not call typeText until a refreshed
-                // semantics snapshot proves the fixture text field owns Compose focus; the
-                // in-target handler also checks that this JVM owns OS keyboard focus before
-                // dispatching Robot key events.
-                if (automator.typeTextOrSkipCiFocusLoss(iteration = iteration)) {
-                    automator.waitForTextFieldToReceiveTypedCharacterOrSkipCi(
-                        textFieldKey = textFieldKey,
-                        previousEditableText = editableTextBefore,
-                        iteration = iteration,
-                    )
-                }
+            if (RealKeyboardE2eGate.isEnabled()) {
+                automator.exerciseRealKeyboard(textFieldKey, iteration = iteration)
+            } else {
+                System.err.println(
+                    "iteration $iteration: skipped the real-keyboard subpath — click-to-focus on " +
+                        "$textFieldKey, typeText('$TYPED_CHARACTER'), and the typed-character " +
+                        "assertion. It needs the fixture window to own OS keyboard focus for the " +
+                        "whole run, which a machine in use cannot guarantee (#444). CI runs it by " +
+                        "default; on an idle desktop pass " +
+                        "\"-Pspectre.agent.realKeyboard=true\" (or " +
+                        "-D${RealKeyboardE2eGate.ENABLE_PROP}=true on the test JVM)."
+                )
             }
         }
 
@@ -422,6 +430,60 @@ class AgentAttachIntegrationTest {
         )
     }
 
+    /**
+     * Attaches to [pid], retrying **only** the pre-`loadAgent` HotSpot handshake race (#443).
+     *
+     * HotSpot opens the attach handshake a few hundred milliseconds after the JVM becomes visible,
+     * so an attach that arrives too early fails with `AttachNotSupportedException: state is not
+     * ready to participate in attach handshake`. [LaunchReadiness.awaitAgentBootstrap] already
+     * retries exactly this failure for the launch path; this suite calls [AgentAttach.attach]
+     * directly, so it retries against the same [LaunchReadiness.isPreLoadAttachRetryable]
+     * definition rather than a second copy of the rule.
+     *
+     * Every other failure — including the dynamic-agent-loading refusal that `attach explains when
+     * the target JVM disables dynamic agent loading` asserts on — propagates from the first
+     * attempt, unchanged. The UDS path stays pinned across retries, which is safe because the
+     * retried failures all happen before `loadAgent` binds a socket.
+     */
+    private fun attachRetryingHandshakeRace(pid: Long, options: AttachOptions): AttachedAutomator {
+        val deadline =
+            System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ATTACH_HANDSHAKE_RETRY_BUDGET_MS)
+        while (true) {
+            try {
+                return AgentAttach.attach(pid, options)
+            } catch (ex: SpectreAttachException) {
+                val retryable =
+                    LaunchReadiness.isPreLoadAttachRetryable(ex.message, ex.cause?.message)
+                if (!retryable || System.nanoTime() >= deadline) throw ex
+                System.err.println(
+                    "pid $pid was not ready for the attach handshake yet; retrying. ${ex.message}"
+                )
+                sleepQuietly(ATTACH_HANDSHAKE_RETRY_INTERVAL_MS)
+            }
+        }
+    }
+
+    /**
+     * The Robot-backed keyboard subpath: click the field until Compose reports it focused, type one
+     * character, then assert the field received it. Gated by [RealKeyboardE2eGate] because it needs
+     * the fixture window to own OS keyboard focus throughout (#444).
+     */
+    private fun AttachedAutomator.exerciseRealKeyboard(textFieldKey: String, iteration: Int) {
+        val focusedTextField =
+            waitForFocusedTextField(textFieldKey, iteration = iteration) ?: return
+        val editableTextBefore = focusedTextField.editableText.orEmpty()
+        // This is a real keyboard event path. Do not call typeText until a refreshed semantics
+        // snapshot proves the fixture text field owns Compose focus; the in-target handler also
+        // checks that this JVM owns OS keyboard focus before dispatching Robot key events.
+        if (typeTextOrSkipCiFocusLoss(iteration = iteration)) {
+            waitForTextFieldToReceiveTypedCharacterOrSkipCi(
+                textFieldKey = textFieldKey,
+                previousEditableText = editableTextBefore,
+                iteration = iteration,
+            )
+        }
+    }
+
     private fun spawnComposeFixture(dynamicAgentLoadingEnabled: Boolean = true): FixtureProcess {
         // ProcessBuilder does not append `.exe` for an absolute path on Windows, so pick the
         // launcher name explicitly via FixtureJavaHome (also honours mixed-runtime overrides).
@@ -611,9 +673,11 @@ class AgentAttachIntegrationTest {
         error(message)
     }
 
-    private fun sleepBetweenFocusPolls() {
+    private fun sleepBetweenFocusPolls() = sleepQuietly(FOCUS_POLL_INTERVAL_MS)
+
+    private fun sleepQuietly(millis: Long) {
         try {
-            Thread.sleep(FOCUS_POLL_INTERVAL_MS)
+            Thread.sleep(millis)
         } catch (ex: InterruptedException) {
             Thread.currentThread().interrupt()
             throw ex
@@ -662,6 +726,11 @@ class AgentAttachIntegrationTest {
     private companion object {
         const val REPEAT_CYCLES: Int = 3
         const val ATTACH_TIMEOUT_MS: Long = 15_000
+        // #443: budget for the pre-loadAgent HotSpot handshake race only. The fixture is already
+        // settled for FIXTURE_ATTACH_SETTLE_MS after READY, so this rarely spends more than one
+        // retry.
+        const val ATTACH_HANDSHAKE_RETRY_BUDGET_MS: Long = 10_000
+        const val ATTACH_HANDSHAKE_RETRY_INTERVAL_MS: Long = 250
         const val FIXTURE_READY_TIMEOUT_MS: Long = 30_000
         const val FIXTURE_ATTACH_SETTLE_MS: Long = 750
         const val FOCUS_TIMEOUT_MS: Long = 2_000

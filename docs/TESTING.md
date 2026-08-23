@@ -85,6 +85,35 @@ Examples for Spectre:
 These tests should use the real payload or coordinate format rather than a hand-crafted idealized
 version. Unit tests for internal math are necessary, but boundary tests catch drift between layers.
 
+## Running `./gradlew check` Locally
+
+`./gradlew check` is the pre-push gate, so it must stay runnable on a machine you are also using.
+
+One suite needs the whole desktop to itself: `AgentAttachIntegrationTest` types into a spawned
+Compose window with a real `java.awt.Robot`, which only works while that window owns OS keyboard
+focus. A terminal, an editor, or a notification taking focus mid-run used to fail the suite.
+
+That real-keyboard subpath is therefore **opt-in off CI**. By default it runs on CI (`CI=true` in
+the environment) and is skipped on developer machines, where the test prints to stderr exactly
+which assertions it skipped. Everything else in the suite — attach, `windows()`, `findByTestTag`,
+`click()`, window identity, screenshot — runs on every host.
+
+Run the keyboard path yourself on an idle desktop:
+
+```shell
+# bash / zsh / cmd
+./gradlew :agent:test --tests '*AgentAttachIntegrationTest*' -Pspectre.agent.realKeyboard=true
+```
+
+```powershell
+# PowerShell: quote -P… so the shell does not split on the property name
+./gradlew :agent:test --tests '*AgentAttachIntegrationTest*' "-Pspectre.agent.realKeyboard=true"
+```
+
+Pass `-Pspectre.agent.realKeyboard=false` to turn it off on CI. When the subpath does run its
+assertions are unchanged: a local run fails loudly on focus loss so a real keyboard regression is
+visible.
+
 ## Manual Spike Validation
 
 Some concerns still need live manual verification even with good automated tests:
