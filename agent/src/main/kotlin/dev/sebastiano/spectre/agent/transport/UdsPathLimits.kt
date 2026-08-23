@@ -20,7 +20,22 @@ internal object UdsPathLimits {
     /** `sun_path` size on Linux and Windows. */
     private const val DEFAULT_SUN_PATH_SIZE: Int = 108
 
-    /** Usable path bytes on this host — `sun_path` minus one byte for the NUL terminator. */
+    /**
+     * Bytes of `sun_path` the JDK will not let a path occupy. It is **two**, not the one byte a NUL
+     * terminator would suggest, and getting this wrong defeats the whole guard: a path one byte
+     * over would pass here and then be refused by `bind` with the opaque error this object exists
+     * to replace.
+     *
+     * Measured, not derived. `ServerSocketChannel.bind` on an `AF_UNIX` channel:
+     * - macOS 15, JDK 21.0.12 — 102 bytes binds, 103 throws `SocketException`. `sun_path` is 104.
+     * - Windows 11, JBR 21.0.10 — 106 bytes binds, 107 throws. `sun_path` is 108.
+     *
+     * `UdsPathLimitsTest` re-measures the boundary with a real bind on whatever host it runs on, so
+     * a platform that disagrees fails there rather than in the field.
+     */
+    private const val SUN_PATH_RESERVED_BYTES: Int = 2
+
+    /** Usable path bytes on this host. */
     val maxPathBytes: Int = maxPathBytesFor(System.getProperty("os.name").orEmpty())
 
     /**
@@ -32,9 +47,9 @@ internal object UdsPathLimits {
             osName.startsWith("Mac", ignoreCase = true) ||
                 osName.startsWith("Darwin", ignoreCase = true)
         ) {
-            MAC_SUN_PATH_SIZE - 1
+            MAC_SUN_PATH_SIZE - SUN_PATH_RESERVED_BYTES
         } else {
-            DEFAULT_SUN_PATH_SIZE - 1
+            DEFAULT_SUN_PATH_SIZE - SUN_PATH_RESERVED_BYTES
         }
 
     /**

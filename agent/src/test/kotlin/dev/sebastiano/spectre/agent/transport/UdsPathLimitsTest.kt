@@ -1,21 +1,52 @@
 package dev.sebastiano.spectre.agent.transport
 
+import java.io.IOException
+import java.net.StandardProtocolFamily
+import java.net.UnixDomainSocketAddress
+import java.nio.channels.ServerSocketChannel
 import java.nio.charset.Charset
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeTrue
 
 class UdsPathLimitsTest {
 
     @Test
-    fun `macOS reserves 104 bytes of sun_path, everything else 108`() {
-        // The usable budget is one byte less than sun_path: the kernel needs the NUL terminator.
-        assertEquals(103, UdsPathLimits.maxPathBytesFor("Mac OS X"))
-        assertEquals(103, UdsPathLimits.maxPathBytesFor("Darwin"))
-        assertEquals(107, UdsPathLimits.maxPathBytesFor("Linux"))
-        assertEquals(107, UdsPathLimits.maxPathBytesFor("Windows 11"))
+    fun `the usable budget is sun_path minus two bytes`() {
+        // Two, not one. Measured with a real bind: macOS (sun_path 104) takes 102 and refuses
+        // 103; Windows (sun_path 108) takes 106 and refuses 107. The boundary test below
+        // re-measures this on whatever host runs it.
+        assertEquals(102, UdsPathLimits.maxPathBytesFor("Mac OS X"))
+        assertEquals(102, UdsPathLimits.maxPathBytesFor("Darwin"))
+        assertEquals(106, UdsPathLimits.maxPathBytesFor("Linux"))
+        assertEquals(106, UdsPathLimits.maxPathBytesFor("Windows 11"))
+    }
+
+    @Test
+    fun `maxPathBytes is the largest path this host actually binds`() {
+        // The arithmetic helper alone cannot catch an off-by-one — the first version of this
+        // constant reserved one byte instead of two and would have waved through a path that
+        // `bind` rejects, which is precisely the failure #442 is about. Codex review on PR #445
+        // asked for the boundary to be proven against a real socket; this is that proof, and it
+        // runs on every platform CI covers.
+        val base = shortestUsableBaseDir()
+        assumeTrue(
+            fitsUnder(base, UdsPathLimits.maxPathBytes + 1),
+            "base directory $base is too long to build a boundary-length path under",
+        )
+
+        assertTrue(
+            bindSucceeds(pathOfLength(base, UdsPathLimits.maxPathBytes)),
+            "a path of exactly ${UdsPathLimits.maxPathBytes} bytes must bind on this host",
+        )
+        assertFalse(
+            bindSucceeds(pathOfLength(base, UdsPathLimits.maxPathBytes + 1)),
+            "a path of ${UdsPathLimits.maxPathBytes + 1} bytes must be refused on this host",
+        )
     }
 
     @Test
@@ -88,4 +119,37 @@ class UdsPathLimitsTest {
             "message should name the limit, got: $message",
         )
     }
+
+    // ---- helpers for the real-bind boundary probe ----
+
+    /** `/tmp` on POSIX; `%TEMP%` on Windows, where `/tmp` is drive-relative nonsense. */
+    private fun shortestUsableBaseDir(): Path =
+        if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)) {
+            Path.of(System.getProperty("java.io.tmpdir"))
+        } else {
+            Path.of("/tmp")
+        }
+
+    private fun fitsUnder(base: Path, totalBytes: Int): Boolean =
+        UdsPathLimits.byteLength(base.resolve("x")) < totalBytes
+
+    /** A socket path directly under [base] whose total length is exactly [totalBytes]. */
+    private fun pathOfLength(base: Path, totalBytes: Int): Path {
+        val oneChar = base.resolve("x")
+        val padding = totalBytes - UdsPathLimits.byteLength(oneChar) + 1
+        return base.resolve("x".repeat(padding))
+    }
+
+    private fun bindSucceeds(path: Path): Boolean =
+        try {
+            Files.deleteIfExists(path)
+            ServerSocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
+                channel.bind(UnixDomainSocketAddress.of(path))
+                true
+            }
+        } catch (_: IOException) {
+            false
+        } finally {
+            runCatching { Files.deleteIfExists(path) }
+        }
 }
