@@ -71,13 +71,21 @@ class DesktopIdentityResolverTest {
     }
 
     @Test
-    fun `Windows uses logon session when present and otherwise serializes per user`() {
+    fun `Windows uses only verified numeric session ids and otherwise serializes per user`() {
         val withSession =
             resolver.resolve(
                 DesktopIdentityEnvironment(
                     platform = DesktopPlatform.WINDOWS,
                     effectiveUserId = "seb",
-                    windowsLogonSessionId = "session-7",
+                    windowsLogonSessionId = "7",
+                )
+            )
+        val transportName =
+            resolver.resolve(
+                DesktopIdentityEnvironment(
+                    platform = DesktopPlatform.WINDOWS,
+                    effectiveUserId = "seb",
+                    windowsLogonSessionId = "RDP-Tcp#5",
                 )
             )
         val fallback =
@@ -88,7 +96,8 @@ class DesktopIdentityResolverTest {
                 )
             )
 
-        assertEquals("user:seb/windows-session:session-7", withSession.value)
+        assertEquals("user:seb/windows-session:7", withSession.value)
+        assertEquals("user:seb/windows-user", transportName.value)
         assertEquals("user:seb/windows-user", fallback.value)
     }
 

@@ -117,7 +117,7 @@ internal sealed interface RecoveryResult {
 internal sealed interface RevokeResult {
     data class Requested(val unsafeTakeover: Boolean = false) : RevokeResult
 
-    data class Acknowledged(val nextGrant: LeaseGrant?) : RevokeResult
+    data class Acknowledged(val nextGrant: LeaseGrant?, val remainingDepth: Int = 0) : RevokeResult
 
     data class Forced(val unsafeTakeover: Boolean = true, val nextGrant: LeaseGrant?) : RevokeResult
 
@@ -400,6 +400,10 @@ internal class LeaseStateMachine(
         }
         val revocation =
             holder.revocation ?: return RevokeResult.Rejected(LeaseErrorCode.STALE_LEASE)
+        holder.depth -= 1
+        if (holder.depth > 0) {
+            return RevokeResult.Acknowledged(nextGrant = null, remainingDepth = holder.depth)
+        }
         recordRevocation(holder, revocation, acknowledged = true, unsafeTakeover = false)
         state.holder = null
         return RevokeResult.Acknowledged(transitions.grantNext(state))

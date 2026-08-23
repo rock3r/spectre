@@ -18,6 +18,9 @@ public data class DesktopIdentityEnvironment(
     public val platform: DesktopPlatform,
     public val effectiveUserId: String,
     public val environment: Map<String, String> = emptyMap(),
+    /**
+     * Verified numeric Windows process-session ID; transport names such as SESSIONNAME are invalid.
+     */
     public val windowsLogonSessionId: String? = null,
 )
 
@@ -47,8 +50,10 @@ public class DesktopIdentityResolver(
         return DesktopResourceKey(prefix + desktopIdentity)
     }
 
-    private fun windowsIdentity(logonSessionId: String?): String =
-        logonSessionId?.takeIf(String::isNotBlank)?.let { "windows-session:$it" } ?: "windows-user"
+    private fun windowsIdentity(logonSessionId: String?): String {
+        val verified = logonSessionId?.trim()?.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }
+        return verified?.let { "windows-session:$it" } ?: "windows-user"
+    }
 
     private fun linuxIdentity(environment: Map<String, String>): String {
         val waylandDisplay = environment["WAYLAND_DISPLAY"]?.takeIf(String::isNotBlank)

@@ -166,6 +166,23 @@ class LeaseStateMachineTest {
     }
 
     @Test
+    fun `revocation acknowledgement waits for every reentrant hold`() {
+        val machine = machine()
+        val token = machine.acquire(request("a-1", ownerA)).grantedToken()
+        machine.acquire(request("a-2", ownerA))
+        machine.acquire(request("b", ownerB))
+        machine.revoke(token.leaseId, requesterLabel = "operator", reason = "stuck", force = false)
+
+        val first = assertIs<RevokeResult.Acknowledged>(machine.acknowledgeRevocation(token))
+        assertEquals(null, first.nextGrant)
+        assertEquals(ownerA, machine.status(token.resourceKey).holder?.owner)
+
+        val final = assertIs<RevokeResult.Acknowledged>(machine.acknowledgeRevocation(token))
+        assertEquals(ownerB, final.nextGrant?.owner)
+        assertEquals(1, machine.auditLog().size)
+    }
+
+    @Test
     fun `explicit force takeover requires grace and records unsafe outcome`() {
         val machine = machine(revokeGraceMillis = 20)
         val token = machine.acquire(request("a", ownerA)).grantedToken()

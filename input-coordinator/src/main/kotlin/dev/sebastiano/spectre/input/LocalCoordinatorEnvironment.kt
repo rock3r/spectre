@@ -33,9 +33,9 @@ public object LocalCoordinatorEnvironment {
                     platform = platform,
                     effectiveUserId = effectiveUserId(platform),
                     environment = System.getenv(),
-                    windowsLogonSessionId =
-                        if (platform == DesktopPlatform.WINDOWS) System.getenv("SESSIONNAME")
-                        else null,
+                    // SESSIONNAME is a mutable transport label, not the numeric process session
+                    // ID. Until a verified native ID is available, serialize Windows per user.
+                    windowsLogonSessionId = null,
                 )
             )
     }

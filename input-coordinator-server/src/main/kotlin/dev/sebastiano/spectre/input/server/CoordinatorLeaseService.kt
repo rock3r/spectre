@@ -91,8 +91,10 @@ internal class CoordinatorLeaseService(
                 if (result.code.name == "FENCED") {
                     when (val acknowledged = machine.acknowledgeRevocation(token)) {
                         is RevokeResult.Acknowledged -> {
-                            recoveryLedger?.clear(token.leaseId)
-                            acknowledged.nextGrant?.let(::completeGrant)
+                            if (acknowledged.remainingDepth == 0) {
+                                recoveryLedger?.clear(token.leaseId)
+                                acknowledged.nextGrant?.let(::completeGrant)
+                            }
                             success()
                         }
                         is RevokeResult.Rejected ->
@@ -176,8 +178,10 @@ internal class CoordinatorLeaseService(
                 success(unsafeTakeover = result.unsafeTakeover)
             }
             is RevokeResult.Acknowledged -> {
-                recoveryLedger?.clear(leaseId)
-                result.nextGrant?.let(::completeGrant)
+                if (result.remainingDepth == 0) {
+                    recoveryLedger?.clear(leaseId)
+                    result.nextGrant?.let(::completeGrant)
+                }
                 success()
             }
             is RevokeResult.Rejected ->
