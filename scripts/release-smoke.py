@@ -605,6 +605,14 @@ def main(argv: list[str] | None = None) -> int:
                     *robot_prefix,
                     gradle,
                     ":agent:test",
+                    # AgentAttachIntegrationTest's Robot typeText subpath is opt-in off CI so
+                    # `./gradlew check` stays runnable on a machine in use (#444). The smoke
+                    # desktop is dedicated, so keep the coverage.
+                    *(
+                        ["-Pspectre.agent.realKeyboard=true"]
+                        if scenario_id == "agent-attach-core"
+                        else []
+                    ),
                     "--tests",
                     test_filter,
                     *force,

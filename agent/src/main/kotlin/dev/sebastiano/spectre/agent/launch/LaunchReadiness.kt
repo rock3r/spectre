@@ -197,7 +197,10 @@ internal object LaunchReadiness {
             } catch (ex: SpectreAttachException) {
                 rethrowIfProcessDied(process, gradleish, stdoutPath, stderrPath)
                 lastAttachFailure = ex
-                if (!isPreLoadAttachRetryable(ex) || System.nanoTime() >= deadline) {
+                if (
+                    !isPreLoadAttachRetryable(ex.message, ex.cause?.message) ||
+                        System.nanoTime() >= deadline
+                ) {
                     throw LaunchAgentBootstrapException(
                         attachedPid = attachedPid,
                         stdoutPath = stdoutPath,
@@ -231,16 +234,19 @@ internal object LaunchReadiness {
     }
 
     /**
-     * True when [ex] is a **short** pre-`loadAgent` HotSpot race (safe to retry with the same UDS
-     * path).
+     * True when an attach failure with [message] (and optional [causeMessage]) is a **short**
+     * pre-`loadAgent` HotSpot race, and so safe to retry with the same UDS path.
      *
      * Deliberately does **not** treat every `AttachNotSupportedException` as retryable: HotSpot
      * also uses that type for its independent attach-socket wait timeout (~10s). Retrying after
      * that terminal timeout would start another full JDK handshake and blow the stage budget. Only
      * the documented "state is not ready…" race (and "no such process" pid churn) retries.
+     *
+     * Internal rather than private so tests that drive [AgentAttach.attach] directly — instead of
+     * going through [awaitAgentBootstrap] — retry the same race against the same definition (#443).
      */
-    private fun isPreLoadAttachRetryable(ex: SpectreAttachException): Boolean {
-        val msg = (ex.message.orEmpty() + " " + (ex.cause?.message.orEmpty())).lowercase()
+    internal fun isPreLoadAttachRetryable(message: String?, causeMessage: String?): Boolean {
+        val msg = (message.orEmpty() + " " + causeMessage.orEmpty()).lowercase()
         return "not ready to participate in attach handshake" in msg || "no such process" in msg
     }
 
