@@ -3,7 +3,10 @@
 package dev.sebastiano.spectre.agent.launch
 
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.JvmProcessInfo
+import java.time.Instant
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -25,6 +28,150 @@ class LaunchDescendantDiscoveryTest {
             )
         )
         assertFalse(LaunchDescendantDiscovery.isGradleDaemonDisplayName("SampleDesktopKt"))
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // #446: a JVM that was already running when the launch started cannot belong to that launch.
+    //
+    // `./gradlew check` runs other agent e2es that spawn the same Compose fixture main class
+    // directly, and those are ProcessHandle descendants of the same Gradle daemon. When one of
+    // them is still alive — or a crashed earlier run left one behind — it matches the name filter
+    // just as well as the JVM this launch is waiting for, and discovery picked it. Attaching there
+    // loaded the agent into a JVM that never binds the launch's UDS path, so AGENT_BOOTSTRAP timed
+    // out 30s later against a process that was never the target.
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    fun `a candidate that started before the launch cannot belong to it`() {
+        val launchedAt = Instant.parse("2026-08-23T10:00:00Z")
+        assertTrue(
+            LaunchDescendantDiscovery.predatesLaunch(
+                candidateStart = launchedAt.minusSeconds(600),
+                clientStart = launchedAt,
+            )
+        )
+    }
+
+    @Test
+    fun `a candidate that started after the launch can belong to it`() {
+        val launchedAt = Instant.parse("2026-08-23T10:00:00Z")
+        assertFalse(
+            LaunchDescendantDiscovery.predatesLaunch(
+                candidateStart = launchedAt.plusSeconds(5),
+                clientStart = launchedAt,
+            )
+        )
+        // Equal instants are not proof of anything; clocks are coarse.
+        assertFalse(
+            LaunchDescendantDiscovery.predatesLaunch(
+                candidateStart = launchedAt,
+                clientStart = launchedAt,
+            )
+        )
+    }
+
+    @Test
+    fun `an unknown start time keeps the candidate`() {
+        // Not every platform and permission setup exposes process start times. Failing closed
+        // there would break discovery entirely, which is far worse than the race it guards.
+        val launchedAt = Instant.parse("2026-08-23T10:00:00Z")
+        assertFalse(
+            LaunchDescendantDiscovery.predatesLaunch(
+                candidateStart = null,
+                clientStart = launchedAt,
+            )
+        )
+        assertFalse(
+            LaunchDescendantDiscovery.predatesLaunch(
+                candidateStart = launchedAt.minusSeconds(600),
+                clientStart = null,
+            )
+        )
+    }
+
+    @Test
+    fun `selectAppJvm skips a leftover fixture and picks the one this launch started`() {
+        // The leftover deliberately holds the *higher* pid, so "highest pid wins" cannot be what
+        // saves this: only the start-time gate can tell the two fixtures apart.
+        val scenario = GradleLaunchScenario()
+        assertEquals(
+            scenario.freshFixturePid,
+            scenario.select(nameFilter = "ComposeFixtureMain"),
+            "must pick the fixture started by this launch, not the leftover one",
+        )
+    }
+
+    @Test
+    fun `selectAppJvm returns null while only a leftover fixture is running`() {
+        // The real fixture has not registered yet. Returning null keeps awaitJvmAttachable polling
+        // instead of committing the attach to the wrong JVM.
+        val scenario = GradleLaunchScenario(includeFreshFixture = false)
+        assertNull(scenario.select(nameFilter = "ComposeFixtureMain"))
+    }
+
+    @Test
+    fun `selectAppJvm falls back to the highest matching pid when start times are unknown`() {
+        // Fail-open: with no start times to compare, selection is exactly what it was before the
+        // gate — highest matching pid, leftover included. Worse than the gate, better than no
+        // discovery at all on a platform that hides process start times.
+        val scenario = GradleLaunchScenario(startTimesKnown = false)
+        assertEquals(
+            scenario.leftoverFixturePid,
+            scenario.select(nameFilter = "ComposeFixtureMain"),
+        )
+    }
+
+    /**
+     * The #446 process layout: a gradlew client, a long-lived Gradle daemon, a leftover fixture
+     * from an earlier run hanging off that daemon, and the fixture this launch actually started.
+     */
+    private class GradleLaunchScenario(
+        includeFreshFixture: Boolean = true,
+        private val startTimesKnown: Boolean = true,
+    ) {
+        val clientPid: Long = 12_300
+        val daemonPid: Long = 12_310
+        val leftoverFixturePid: Long = 12_900
+        val freshFixturePid: Long = 12_672
+
+        private val launchedAt: Instant = Instant.parse("2026-08-23T10:00:00Z")
+
+        private val listed: List<JvmProcessInfo> = buildList {
+            add(JvmProcessInfo(daemonPid, "org.gradle.launcher.daemon.bootstrap.GradleDaemon 8.14"))
+            add(
+                JvmProcessInfo(
+                    leftoverFixturePid,
+                    "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt",
+                )
+            )
+            if (includeFreshFixture) {
+                add(
+                    JvmProcessInfo(
+                        freshFixturePid,
+                        "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt",
+                    )
+                )
+            }
+        }
+
+        private val startInstants: Map<Long, Instant> =
+            mapOf(
+                clientPid to launchedAt,
+                daemonPid to launchedAt.minusSeconds(3_600),
+                leftoverFixturePid to launchedAt.minusSeconds(600),
+                freshFixturePid to launchedAt.plusSeconds(5),
+            )
+
+        fun select(nameFilter: String?): Long? =
+            LaunchDescendantDiscovery.selectAppJvm(
+                clientPid = clientPid,
+                nameFilter = nameFilter,
+                listed = listed,
+                descendantsOf = { emptySet() },
+                parentOf = { pid -> daemonPid.takeIf { pid != daemonPid && pid != clientPid } },
+                startInstantOf = { pid -> startInstants[pid].takeIf { startTimesKnown } },
+                nativeFallback = { _, _, _ -> null },
+            )
     }
 
     @Test
