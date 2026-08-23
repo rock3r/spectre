@@ -156,7 +156,7 @@ end
 
 formula_paths.each do |path|
   assert!(File.file?(path), "missing formula file #{path}")
-  formula_text = File.read(path)
+  formula_text = File.read(path, encoding: "UTF-8")
   label = File.basename(path) == "spectre.rb" ? path : path
 
   record_failure(failures, "formula text contract (#{label})") do
@@ -234,7 +234,7 @@ formula_paths.each do |path|
         !File.symlink?(result[:wrapper]),
         "bin/spectre must not be a symlink of the Roast binary"
       )
-      wrapper_body = File.read(result[:wrapper])
+      wrapper_body = File.read(result[:wrapper], encoding: "UTF-8")
       assert!(wrapper_body.include?("#!/bin/sh"), "wrapper must be a shell script")
       assert!(
         wrapper_body.include?(%(exec "#{result[:real]}")),
@@ -269,6 +269,19 @@ formula_paths.each do |path|
 end
 
 # Symlink entry point breaks argv[0]-sensitive launcher (documents #284 invariant).
+record_failure(failures, "suite reads files with an explicit encoding") do
+  # Ruby derives File.read's encoding from the locale. With LANG/LC_ALL unset it defaults to
+  # US-ASCII, and Formula/spectre.rb contains non-ASCII bytes (an em dash in a comment), so every
+  # bare read raises "invalid byte sequence in US-ASCII" and the whole suite fails. That made
+  # `./gradlew check` unrunnable in a shell with no locale set. Keep the reads explicit.
+  source = File.read(__FILE__, encoding: "UTF-8")
+  bare = source.scan(/File\.read\([^)]*\)/).reject { |call| call.include?("encoding:") }
+  assert!(
+    bare.empty?,
+    "File.read without an explicit encoding breaks when LANG/LC_ALL are unset: #{bare.join(", ")}"
+  )
+end
+
 record_failure(failures, "raw bin symlink fails argv0-sensitive binary") do
   Dir.mktmpdir do |tmp|
     stage = File.join(tmp, "stage")
