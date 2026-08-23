@@ -127,6 +127,22 @@ class LaunchDescendantDiscoveryTest {
     }
 
     @Test
+    fun `selectAppJvm still walks the native tree when every listed JVM predates the launch`() {
+        // VirtualMachine.list() lags behind spawn, and -XX:-UsePerfData hides a JVM from it
+        // entirely — the native process-tree walk is the fallback for exactly that. Filtering the
+        // listed set down to nothing must not short-circuit past it, or a launch whose target is
+        // only discoverable natively polls until timeout.
+        val scenario = GradleLaunchScenario(includeFreshFixture = false)
+        assertEquals(
+            NATIVE_FALLBACK_PID,
+            scenario.select(
+                nameFilter = "ComposeFixtureMain",
+                nativeFallback = { _, _, _ -> NATIVE_FALLBACK_PID },
+            ),
+        )
+    }
+
+    @Test
     fun `selectAppJvm falls back to the highest matching pid when start times are unknown`() {
         // Fail-open: with no start times to compare, selection is exactly what it was before the
         // gate — highest matching pid, leftover included. Worse than the gate, better than no
@@ -181,7 +197,10 @@ class LaunchDescendantDiscoveryTest {
                 freshFixturePid to launchedAt.plusSeconds(5),
             )
 
-        fun select(nameFilter: String?): Long? =
+        fun select(
+            nameFilter: String?,
+            nativeFallback: (Long, Set<Long>, String?) -> Long? = { _, _, _ -> null },
+        ): Long? =
             LaunchDescendantDiscovery.selectAppJvm(
                 clientPid = clientPid,
                 nameFilter = nameFilter,
@@ -195,8 +214,12 @@ class LaunchDescendantDiscoveryTest {
                         startTimesKnown && !(clientReaped && pid == clientPid)
                     }
                 },
-                nativeFallback = { _, _, _ -> null },
+                nativeFallback = nativeFallback,
             )
+    }
+
+    private companion object {
+        const val NATIVE_FALLBACK_PID = 99_999L
     }
 
     @Test

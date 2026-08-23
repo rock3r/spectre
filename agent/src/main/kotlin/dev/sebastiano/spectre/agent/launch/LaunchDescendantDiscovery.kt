@@ -74,7 +74,14 @@ public object LaunchDescendantDiscovery {
                 // else — a leftover fixture, or a sibling e2e sharing the daemon (#446).
                 !predatesLaunch(startInstantOf(info.pid), clientStart)
         }
-        if (nonDaemon.isEmpty()) return null
+        if (nonDaemon.isEmpty()) {
+            // Every Attach-visible JVM is either a daemon or predates the launch. That does not
+            // mean the target is absent: VirtualMachine.list() lags behind spawn, and
+            // -XX:-UsePerfData hides a JVM from it entirely. The native walk is the fallback for
+            // exactly that case, so do not short-circuit past it (#446).
+            val walkRoots = if (nameFilter.isNullOrBlank()) emptySet() else daemonPids
+            return nativeFallback(clientPid, walkRoots, nameFilter)
+        }
 
         val clientDescendants = descendantsOf(clientPid)
         val childOfDaemon = nonDaemon.filter { info ->
