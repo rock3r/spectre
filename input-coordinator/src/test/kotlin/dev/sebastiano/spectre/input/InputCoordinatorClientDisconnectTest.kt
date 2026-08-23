@@ -87,6 +87,64 @@ class InputCoordinatorClientDisconnectTest {
         }
     }
 
+    @Test
+    fun `ambiguous acquisition IO failure closes the sentinel session`() {
+        val directory = Files.createTempDirectory(Path.of("/tmp"), "spc-ca-")
+        val endpoint = CoordinatorEndpoint(directory, directory.resolve("coordinator.sock"))
+        val codec = CoordinatorWireCodec()
+        val listener = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
+        listener.bind(UnixDomainSocketAddress.of(endpoint.socketPath))
+        val sentinelClosed = CountDownLatch(1)
+        val serverThread =
+            Thread.ofVirtual().name("coordinator-ambiguous-acquire-test").start {
+                val session = listener.accept()
+                val sessionOpen = codec.read(session)
+                assertEquals(CoordinatorWireKind.SESSION_OPEN, sessionOpen.kind)
+                codec.write(
+                    session,
+                    CoordinatorWireMessage(
+                        kind = CoordinatorWireKind.RESPONSE,
+                        coordinatorEpoch = EPOCH,
+                    ),
+                )
+                Thread.ofVirtual().start {
+                    codec.readOrNull(session)
+                    sentinelClosed.countDown()
+                }
+
+                listener.accept().use { acquireChannel ->
+                    assertEquals(CoordinatorWireKind.ACQUIRE, codec.read(acquireChannel).kind)
+                    // The server-side state granted the request, but the response was lost.
+                }
+                listener.accept().use { cancelChannel ->
+                    assertEquals(CoordinatorWireKind.CANCEL, codec.read(cancelChannel).kind)
+                    codec.write(cancelChannel, CoordinatorWireMessage(CoordinatorWireKind.RESPONSE))
+                }
+            }
+        val client =
+            LocalInputCoordinatorClient.connect(
+                endpoint,
+                DesktopResourceKey("test/ambiguous-acquire"),
+                "ambiguous-acquire-test",
+                codec,
+            )
+        try {
+            assertFailsWith<IOException> {
+                client.acquire(Duration.ofSeconds(2), "ambiguous acquire")
+            }
+            assertTrue(
+                sentinelClosed.await(2, TimeUnit.SECONDS),
+                "ambiguous acquisition should close the session so an unknown grant is released",
+            )
+        } finally {
+            client.close()
+            listener.close()
+            serverThread.join(2_000)
+            Files.deleteIfExists(endpoint.socketPath)
+            Files.deleteIfExists(directory)
+        }
+    }
+
     private companion object {
         const val EPOCH: String = "test-epoch"
         const val LEASE_ID: String = "test-lease"

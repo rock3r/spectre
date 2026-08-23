@@ -91,6 +91,7 @@ internal class CoordinatorLeaseService(
                 if (result.code.name == "FENCED") {
                     when (val acknowledged = machine.acknowledgeRevocation(token)) {
                         is RevokeResult.Acknowledged -> {
+                            recoveryLedger?.clear(token.leaseId)
                             acknowledged.nextGrant?.let(::completeGrant)
                             success()
                         }

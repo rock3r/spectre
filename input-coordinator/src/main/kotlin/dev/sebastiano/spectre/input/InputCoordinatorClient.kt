@@ -158,7 +158,9 @@ private constructor(
                     )
                 )
             } catch (failure: IOException) {
+                val interrupted = Thread.currentThread().isInterrupted
                 cancelAcquire(requestId)
+                if (!interrupted) close()
                 throw failure
             }
         response.requireSuccess()
