@@ -189,7 +189,7 @@ class DaemonFixtureIntegrationTest {
                 )
 
                 val attached = runCliBinary(daemonUser, "attach", fixture.pid.toString(), "--json")
-                assertEquals(0, attached.exitCode)
+                assertEquals(0, attached.exitCode, attached.output + attached.errorOutput)
                 val sessionId =
                     Json.parseToJsonElement(attached.output)
                         .jsonObject

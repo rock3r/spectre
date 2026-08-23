@@ -1,5 +1,25 @@
 # CLI
 
+## Inspecting and recovering the desktop input lease
+
+!!! warning "Experimental control surface"
+    Desktop input coordination and these control commands are experimental. The protocol, output,
+    and recovery workflow may change in any release. See
+    [Experimental desktop input coordination](input-coordination.md).
+
+The control commands observe an existing coordinator and never launch one:
+
+```text
+spectre input-lock status
+spectre input-lock status --json
+spectre input-lock revoke --lease <observed-id> --reason <text>
+spectre input-lock revoke --lease <observed-id> --reason <text> --force
+```
+
+Revoke is compare-and-revoke: always copy the current ID from `status`; a stale ID cannot affect a
+new holder. `--force` is an unsafe recovery escape hatch after grace, is audited, and reports
+`unsafeTakeover=true`. It does not prove an in-flight native call stopped.
+
 The `spectre` command is for inspecting and driving a running Compose Desktop application
 without first writing a JUnit test. It is useful for debugging a live UI, exploring its
 semantics tree, capturing evidence while developing, and giving an MCP client access to the

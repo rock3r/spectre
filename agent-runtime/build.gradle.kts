@@ -102,6 +102,7 @@ val verifyAgentRuntimeJarContents by tasks.registering {
                     "org/jetbrains/compose/",
                     "org/jetbrains/skiko/",
                     "dev/sebastiano/spectre/core/",
+                    "dev/sebastiano/spectre/input/",
                     "kotlin/Pair.class",
                     "kotlinx/coroutines/",
                 )
@@ -131,6 +132,8 @@ private fun includeInAgentRuntimeJar(file: File): Boolean {
         // Never explode the inject payload into the agent-runtime root.
         name.startsWith("spectre-agent-inject-runtime") -> false
         name.startsWith("agent-inject-runtime") -> false
+        name.startsWith("input-coordinator") -> false
+        name.startsWith("spectre-input-coordinator") -> false
         else -> true
     }
 }

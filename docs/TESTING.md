@@ -81,6 +81,14 @@ Examples for Spectre:
 - compound node identity formatting and parsing
 - coordinate conversion behaviour across Compose/AWT/Robot units
 - native helper invocation contracts for recording
+- coordinator frames plus real forked-JVM endpoint/process behavior
+- JUnit extension/rule lease ownership across factory, artifacts, video, and teardown
+
+Desktop coordination tests use a fake clock/state machine for FIFO, fencing, expiry, cancellation,
+and recovery. At least one forked boundary test must use the real local socket and process. Live
+desktop validation records lease ordering and an observable UI result; a skipped assumption is not
+a pass. Platform release smoke covers macOS, Windows, and Linux Xorg/Xvfb independently, while
+Wayland remains synthetic-input-only.
 
 These tests should use the real payload or coordinate format rather than a hand-crafted idealized
 version. Unit tests for internal math are necessary, but boundary tests catch drift between layers.

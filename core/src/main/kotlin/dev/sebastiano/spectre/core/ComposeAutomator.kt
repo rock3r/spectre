@@ -1,4 +1,7 @@
-@file:OptIn(InternalSpectreApi::class)
+@file:OptIn(
+    InternalSpectreApi::class,
+    dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi::class,
+)
 
 package dev.sebastiano.spectre.core
 
@@ -10,6 +13,7 @@ import dev.sebastiano.spectre.core.capture.AtomicCaptureBuilder
 import dev.sebastiano.spectre.core.capture.CaptureNodeSnapshot
 import dev.sebastiano.spectre.core.perf.ExperimentalSpectreApi
 import dev.sebastiano.spectre.core.perf.RecompositionMonitor
+import dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi
 import java.awt.Rectangle
 import java.awt.event.KeyEvent
 import java.awt.image.BufferedImage
@@ -43,6 +47,25 @@ private constructor(
 
     private val screenCaptureBackend: ScreenCaptureBackend =
         PlatformScreenCaptureBackend(robotDriver)
+
+    /** Shared-OS-resource capabilities of this automator's input driver. */
+    @ExperimentalSpectreInputCoordinationApi
+    public val inputCapabilities: InputCapabilities
+        get() = robotDriver.inputCapabilities
+
+    /** Holds one reentrant desktop lease across the complete [block]. */
+    @ExperimentalSpectreInputCoordinationApi
+    public suspend fun <T> withExclusiveInput(
+        options: InputLeaseOptions = InputLeaseOptions(),
+        block: suspend ExclusiveInputScope.() -> T,
+    ): T =
+        robotDriver.withExclusiveInput(options) {
+            ExclusiveInputScope(this@ComposeAutomator).block()
+        }
+
+    internal fun bindInputLease(
+        lease: dev.sebastiano.spectre.input.CoordinatedInputLease
+    ): AutoCloseable = robotDriver.bindInputLease(lease)
 
     /**
      * Snapshot of the currently tracked windows. Returns the live `TrackedWindow` collaborator
@@ -205,8 +228,10 @@ private constructor(
     }
 
     public suspend fun clearAndTypeText(node: AutomatorNode, text: String) {
-        click(node)
-        robotDriver.clearAndTypeText(text)
+        robotDriver.withExclusiveInput(InputLeaseOptions()) {
+            click(node)
+            robotDriver.clearAndTypeText(text)
+        }
     }
 
     public suspend fun pressKey(keyCode: Int, modifiers: Int = 0) {
@@ -220,9 +245,14 @@ private constructor(
     /**
      * Raises and requests focus on the AWT window that hosts [node]. Useful before a sequence of
      * Robot-driven inputs on a non-focused window. The actual focus change is dispatched on the
-     * EDT.
+     * EDT. A coordinated EDT caller must already hold the lease or acquire it immediately;
+     * contention fails without blocking.
      */
     public fun focusWindow(node: AutomatorNode) {
+        robotDriver.withBlockingInput("focusWindow") { focusWindowUncoordinated(node) }
+    }
+
+    internal fun focusWindowUncoordinated(node: AutomatorNode) {
         val window = node.trackedWindow.window
         if (SwingUtilities.isEventDispatchThread()) {
             window.toFront()
@@ -233,6 +263,10 @@ private constructor(
                 window.requestFocus()
             }
         }
+    }
+
+    internal fun checkpointInputLease() {
+        robotDriver.withBlockingInput("exclusiveFocusCheckpoint") {}
     }
 
     /**

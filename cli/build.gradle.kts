@@ -442,6 +442,7 @@ kotlin {
 
 dependencies {
     implementation(projects.agent)
+    implementation(projects.inputCoordinatorServer)
     implementation(projects.recording)
     runtimeOnly(projects.agentRuntime)
     runtimeOnly(projects.recordingLinux)

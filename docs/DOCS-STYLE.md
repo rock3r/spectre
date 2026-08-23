@@ -135,6 +135,11 @@ corresponding doc page is touched:
   `Window.focusOwner`, so `typeText` works in `apple.awt.UIElement=true` helper JVMs.
   Keep documenting `pasteText` and OS recording as separate macOS-service paths that
   UIElement mode can still break.
+- **Desktop input coordination is experimental and opt-in.** Consumer examples use
+  `ExperimentalSpectreInputCoordinationApi`; no-argument `RobotDriver()` remains uncoordinated.
+  `--force` is documented only as unsafe recovery with possible native-input overlap and
+  `unsafeTakeover=true`. The coordinator serialises participating Spectre clients, not people or
+  other automation tools.
 - **Linux Wayland routes through the portal.** Xorg/Xvfb capture uses the Linux
   helper's GStreamer `ximagesrc` path; native Wayland capture uses the portal helper.
   Do not document a silent X11 fallback on Wayland.
@@ -203,6 +208,7 @@ affected docs:
 | ----------------------------------------------------------------------- | ------------------------------------------- |
 | `ComposeAutomator`, query/interaction methods, wait helpers              | `automator.md`, `selectors.md`, `interactions.md`, `synchronization.md` |
 | `RobotDriver` factories, public constructors                            | `interactions.md`, `automator.md`           |
+| Input coordination policy, scope, runtime, or JUnit isolation           | `input-coordination.md`, `interactions.md`, `junit.md`, `ci.md`, `STABILITY.md`, `SECURITY.md` |
 | `WindowTracker`, `SemanticsReader`, `AutomatorNode`, `AutomatorTree`     | `automator.md`, `selectors.md`              |
 | `AutomatorIdlingResource`                                               | `synchronization.md`                        |
 | `ComposeAutomatorExtension`, `ComposeAutomatorRule`, `AutomatorFactory`  | `junit.md`, `getting-started.md`            |

@@ -21,7 +21,8 @@ familiar — Spectre brings the same "find a node, do a thing, assert" loop to C
 
 !!! warning "Pre-1.0"
     Spectre is pre-1.0. Stable APIs are covered by the project's compatibility policy;
-    experimental APIs, especially the HTTP transport, may change between releases. See
+    experimental APIs, including HTTP, agent attach, and desktop input coordination, may change
+    between releases. See
     [Stability policy](STABILITY.md) and [Security notes](SECURITY.md) before depending on
     cross-JVM control or recording in environments that handle untrusted input.
 
@@ -36,6 +37,9 @@ familiar — Spectre brings the same "find a node, do a thing, assert" loop to C
   defaults to OS-level `java.awt.Robot` events. Swap in `RobotDriver.synthetic(...)` and
   AWT events go directly into the window hierarchy — useful when tests run in parallel
   and can't fight over OS focus.
+- **Experimental cooperative input leases.** Participating real-input test JVMs can serialise
+  focus, pointer, keyboard, and clipboard work without disabling parallel query/synthetic tests.
+  See [desktop input coordination](guide/input-coordination.md).
 - **Recording and screenshots built in.** Region capture, plus window-targeted recording
   and still screenshots where the platform exposes them (ScreenCaptureKit on macOS,
   Windows Graphics Capture on Windows, helper-driven Xorg/Xvfb and portal/PipeWire
@@ -62,6 +66,8 @@ familiar — Spectre brings the same "find a node, do a thing, assert" loop to C
   — `waitForIdle`, `waitForVisualIdle`, `waitForNode`, and the EDT rule.
 - :material-monitor-dashboard: **[Running on CI](guide/ci.md)** — `xvfb`, required test-JVM
   flags, macOS helper mode, and recording test tags.
+- :material-lock-clock: **[Experimental input coordination](guide/input-coordination.md)** —
+  FIFO leases, JUnit isolation, diagnostics, and explicit forced recovery.
 - :material-video: **[Recording and screenshots](guide/recording.md)** — Region,
   window-targeted video, and native still-window screenshots across macOS, Windows,
   and Linux.

@@ -117,6 +117,26 @@ In order of likelihood:
 Real `RobotDriver` dispatches OS-level input. Two parallel test JVMs racing for the
 same screen will collide.
 
+For participating Spectre processes, enable cooperative coordination with
+`RobotDriver(InputLeasePolicy.Required)`, wrap a sequence in `withExclusiveInput`, or configure
+the in-process JUnit wrapper with `InputIsolationConfig.perTest()`. Inspect a suspected wedge with
+`spectre input-lock status --json`. Revoke only the exact observed lease ID:
+
+```text
+spectre input-lock revoke --lease <id> --reason "test JVM is unresponsive"
+```
+
+Normal revoke fences new work and waits for owner cleanup. If the owner cannot reach a checkpoint,
+`--force` advances after a bounded grace period and reports `unsafeTakeover=true`. That is an
+audited escape hatch, not proof that an already-running native call stopped. A stale lease ID can
+never revoke a newer holder.
+
+If the coordinator process does not become ready, check that
+`spectre-input-coordinator-server` and its dependencies are present in `java.class.path`. This is
+especially relevant for thin `java -jar` launchers and module-path-only applications. Run the
+command returned by `CoordinatorProcessLauncher.command()` directly when you need to retain the
+child JVM's standard error; automatic launches intentionally discard child output.
+
 Use synthetic input:
 
 ```kotlin
@@ -448,6 +468,11 @@ returns a human-readable diagnostic without throwing.
 target only needs to allow dynamic agent loading. **IntelliJ-hosted Compose** always
 implies the IDE’s bundled JBR — do not ship a second skiko into the plugin classloader
 (see [IntelliJ guide](intellij.md)).
+
+If an attached session can inspect semantics but real input reports that the coordinator provider
+is missing, add `spectre-input-coordinator-server` to the attacher's runtime classpath and retry.
+Read-only attach deliberately remains available when the experimental coordinator cannot start;
+current-core real input uses `Required` and fails closed instead of running uncoordinated.
 
 The sample IntelliJ plugin module configures its sandbox JDK via the IntelliJ Platform
 Gradle plugin; you do not pick Temurin for that path.

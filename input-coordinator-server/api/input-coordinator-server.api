@@ -1,0 +1,40 @@
+public final class dev/sebastiano/spectre/input/server/CoordinatorProcessLauncher {
+	public static final field COORDINATOR_MAIN_CLASS Ljava/lang/String;
+	public static final field DEFAULT_IDLE_TIMEOUT_SECONDS J
+	public fun <init> (Ldev/sebastiano/spectre/input/CoordinatorEndpoint;Ljava/lang/String;Ljava/lang/String;Ljava/time/Duration;)V
+	public synthetic fun <init> (Ldev/sebastiano/spectre/input/CoordinatorEndpoint;Ljava/lang/String;Ljava/lang/String;Ljava/time/Duration;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun command ()Ljava/util/List;
+	public final fun start ()Ljava/lang/Process;
+}
+
+public final class dev/sebastiano/spectre/input/server/CoordinatorProcessMain {
+	public static final field INSTANCE Ldev/sebastiano/spectre/input/server/CoordinatorProcessMain;
+	public final fun run (Ljava/util/List;)V
+}
+
+public final class dev/sebastiano/spectre/input/server/CoordinatorProcessMainKt {
+	public static final fun main ([Ljava/lang/String;)V
+}
+
+public final class dev/sebastiano/spectre/input/server/LaunchingInputCoordinatorClientProvider : dev/sebastiano/spectre/input/InputCoordinatorClientProvider {
+	public fun <init> ()V
+	public fun connect (Ldev/sebastiano/spectre/input/CoordinatorEndpoint;Ldev/sebastiano/spectre/input/DesktopResourceKey;Ljava/lang/String;)Ldev/sebastiano/spectre/input/LocalInputCoordinatorClient;
+}
+
+public final class dev/sebastiano/spectre/input/server/LocalCoordinatorServer : java/lang/AutoCloseable {
+	public static final field ACQUIRE_RESPONSE_GRACE_MILLIS J
+	public static final field CLOSE_WAIT_SECONDS J
+	public static final field DEFAULT_HEARTBEAT_TIMEOUT_SECONDS J
+	public static final field DEFAULT_IDLE_TIMEOUT_SECONDS J
+	public static final field DEFAULT_RECOVERY_GRACE_SECONDS J
+	public static final field DEFAULT_REVOKE_GRACE_SECONDS J
+	public static final field IDLE_CHECK_DIVISOR J
+	public static final field MAX_IDLE_CHECK_MILLIS J
+	public static final field MIN_IDLE_CHECK_MILLIS J
+	public fun <init> (Ldev/sebastiano/spectre/input/CoordinatorEndpoint;Ljava/time/Duration;Ljava/time/Duration;Ljava/time/Duration;Ljava/time/Duration;Ldev/sebastiano/spectre/input/CoordinatorWireCodec;)V
+	public synthetic fun <init> (Ldev/sebastiano/spectre/input/CoordinatorEndpoint;Ljava/time/Duration;Ljava/time/Duration;Ljava/time/Duration;Ljava/time/Duration;Ldev/sebastiano/spectre/input/CoordinatorWireCodec;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun awaitTermination ()V
+	public fun close ()V
+	public final fun start ()V
+}
+

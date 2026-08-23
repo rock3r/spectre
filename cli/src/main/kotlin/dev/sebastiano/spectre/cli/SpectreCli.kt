@@ -166,6 +166,7 @@ private class RootCommand(
             PermissionsCommand(output),
             PsCommand(request, output),
             DaemonCommand(request, shutdownRequest, output),
+            InputLockCommand.default(output),
             McpCommand(request),
         )
     }

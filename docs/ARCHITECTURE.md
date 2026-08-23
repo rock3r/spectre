@@ -5,6 +5,8 @@
 ```text
 spectre
 ├── core/                    — shared automation model and desktop automation primitives
+├── input-coordinator/       — published local protocol, identity, client, and fencing tokens
+├── input-coordinator-server/— published external FIFO coordinator process and recovery state
 ├── server/                  — optional transport layer for cross-JVM access
 ├── cli/                     — agent-facing CLI / daemon / MCP entrypoint
 ├── recording/               — screenshot / recording API and common JVM implementation
@@ -32,6 +34,9 @@ recording-windows  ─┘
 Guidelines:
 
 - `core` owns the reusable automation concepts.
+- `core` implementation-depends only on `input-coordinator`; CLI, testing, and the attaching-side
+  agent bring `input-coordinator-server`. The injected agent relocates only client/protocol classes
+  and must never contain a server main or launcher.
 - `server` should be transport-only glue over `core`, not a second implementation.
 - `sample-desktop` is a harness, not the source of truth for automation logic.
 - `testing` should exercise public seams and reusable fixtures, not reach through private internals
@@ -81,6 +86,16 @@ Expected long-term responsibilities:
 - remote client
 
 Keep server concerns out of the core data model unless they are genuinely transport-independent.
+
+### Desktop input coordinator
+
+One owner-only local process serializes the logical `desktop-interaction` resource per normalized
+OS user/desktop key. Its deterministic state machine owns FIFO acquisition, bounded queues,
+heartbeats, epochs, fencing, restart quarantine, compare-and-revoke, and audited unsafe takeover.
+Core input guards resolve ownership as driver-bound JUnit lease, coroutine-scoped lease, then a
+fresh operation lease. Query, wait, screenshot, and recording paths stay outside the automatic
+critical section; the agent routes input through a dedicated bounded worker so lease waiters cannot
+exhaust its general query pool.
 
 
 ### `cli`

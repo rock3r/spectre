@@ -1,6 +1,9 @@
+@file:OptIn(dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi::class)
+
 package dev.sebastiano.spectre.testing
 
 import dev.sebastiano.spectre.core.ComposeAutomator
+import dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi
 import java.lang.reflect.Method
 import org.junit.jupiter.api.extension.AfterEachCallback
 import org.junit.jupiter.api.extension.AfterTestExecutionCallback
@@ -66,6 +69,9 @@ internal constructor(
     private val failureArtifacts: FailureArtifactsConfig = FailureArtifactsConfig(),
     private val failureVideo: FailureVideoConfig = FailureVideoConfig(),
     private val videoStarter: FailureVideoStarter = AutoFailureVideoStarter,
+    private val inputIsolation: InputIsolationConfig = InputIsolationConfig.perInteraction(),
+    private val leaseFactory: InputTestLeaseFactory = ProductionInputTestLeaseFactory,
+    private val acquireBeforeAutoFactory: Boolean = false,
     private val factory: AutomatorFactory,
 ) :
     BeforeEachCallback,
@@ -82,6 +88,29 @@ internal constructor(
         failureArtifacts = failureArtifacts,
         failureVideo = failureVideo,
         videoStarter = AutoFailureVideoStarter,
+        factory = factory,
+    )
+
+    @ExperimentalSpectreInputCoordinationApi
+    public constructor(
+        inputIsolation: InputIsolationConfig
+    ) : this(
+        inputIsolation = inputIsolation,
+        acquireBeforeAutoFactory = true,
+        factory = { ComposeAutomator.inProcess() },
+    )
+
+    @ExperimentalSpectreInputCoordinationApi
+    public constructor(
+        failureArtifacts: FailureArtifactsConfig = FailureArtifactsConfig(),
+        failureVideo: FailureVideoConfig = FailureVideoConfig(),
+        inputIsolation: InputIsolationConfig,
+        factory: AutomatorFactory,
+    ) : this(
+        failureArtifacts = failureArtifacts,
+        failureVideo = failureVideo,
+        videoStarter = AutoFailureVideoStarter,
+        inputIsolation = inputIsolation,
         factory = factory,
     )
 
@@ -133,11 +162,31 @@ internal constructor(
             }
 
     override fun beforeEach(context: ExtensionContext) {
-        val automator = factory()
         val store = context.getStore(NAMESPACE)
-        store.put(STORE_KEY, automator)
-        lastInstance = automator
-        startFailureVideo(context, automator)
+        val isolation =
+            InputIsolationSession(
+                config = inputIsolation,
+                acquireBeforeAutoFactory = acquireBeforeAutoFactory,
+                ownerLabel = ownerLabel(context),
+                leaseFactory = leaseFactory,
+            )
+        val isolationKey = isolationStoreKey(context)
+        store.put(isolationKey, isolation)
+        runCatching {
+                isolation.acquireBeforeFactory()
+                val automator = factory()
+                isolation.bindAfterFactory(automator)
+                store.put(STORE_KEY, automator)
+                lastInstance = automator
+                startFailureVideo(context, automator)
+            }
+            .onFailure {
+                store.remove(STORE_KEY)
+                store.remove(isolationKey)
+                lastInstance = null
+                isolation.close()
+            }
+            .getOrThrow()
     }
 
     override fun afterTestExecution(context: ExtensionContext) {
@@ -201,9 +250,14 @@ internal constructor(
         // Finalize video before clearing the automator so window-targeted backends still see
         // live windows during stop if needed; then drop the automator.
         val failure = context.executionException.orElse(null)
-        finalizeFailureVideo(context, failure)
-        context.getStore(NAMESPACE).remove(STORE_KEY)
-        lastInstance = null
+        try {
+            finalizeFailureVideo(context, failure)
+        } finally {
+            val store = context.getStore(NAMESPACE)
+            store.remove(STORE_KEY)
+            lastInstance = null
+            store.remove(isolationStoreKey(context), InputIsolationSession::class.java)?.close()
+        }
     }
 
     private fun startFailureVideo(context: ExtensionContext, automator: ComposeAutomator) {
@@ -266,6 +320,15 @@ internal constructor(
         // test invocations from clobbering each other.
         val NAMESPACE: ExtensionContext.Namespace =
             ExtensionContext.Namespace.create(ComposeAutomatorExtension::class.java)
+
+        fun isolationStoreKey(context: ExtensionContext): String =
+            "inputIsolation:${context.uniqueId}"
+
+        fun ownerLabel(context: ExtensionContext): String {
+            val className = context.testClass.map { it.simpleName }.orElse("UnknownClass")
+            val methodName = context.testMethod.map { it.name }.orElse("unknown")
+            return "$className#$methodName"
+        }
     }
 }
 

@@ -42,6 +42,10 @@ tasks.named<ShadowJar>("shadowJar") {
     relocate("kotlinx.coroutines", "dev.sebastiano.spectre.inject.relocated.kotlinx.coroutines")
     // atomicfu is pulled transitively; relocate to keep inject payload self-contained.
     relocate("kotlinx.atomicfu", "dev.sebastiano.spectre.inject.relocated.kotlinx.atomicfu")
+    relocate(
+        "dev.sebastiano.spectre.input",
+        "dev.sebastiano.spectre.inject.relocated.dev.sebastiano.spectre.input",
+    )
 
     dependencies {
         // Compose / Skiko must come from the target — never shade.
@@ -91,6 +95,9 @@ val verifyInjectRuntimeJarContents by tasks.registering {
                 "Inject jar missing relocated kotlinx.coroutines " +
                     "(got entries sample: ${names.filter { "coroutines" in it }.take(10)})"
             }
+            require(has("dev/sebastiano/spectre/inject/relocated/dev/sebastiano/spectre/input/")) {
+                "Inject jar missing relocated input-coordinator client classes"
+            }
             val forbidden =
                 listOf(
                     "androidx/compose/",
@@ -98,6 +105,8 @@ val verifyInjectRuntimeJarContents by tasks.registering {
                     "org/jetbrains/skiko/",
                     "kotlinx/coroutines/", // must be relocated, not original package
                     "dev/sebastiano/spectre/recording/",
+                    "dev/sebastiano/spectre/input/", // must be relocated
+                    "dev/sebastiano/spectre/inject/relocated/dev/sebastiano/spectre/input/server/",
                 )
             val leaks = names.filter { entry -> forbidden.any { entry.startsWith(it) } }
             require(leaks.isEmpty()) {

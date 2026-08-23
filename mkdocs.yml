@@ -96,6 +96,7 @@ nav:
       - The automator: guide/automator.md
       - Finding nodes: guide/selectors.md
       - Driving input: guide/interactions.md
+      - Experimental input coordination: guide/input-coordination.md
       - Synchronization: guide/synchronization.md
       - JUnit integration: guide/junit.md
       - Running on CI: guide/ci.md

@@ -1,5 +1,24 @@
 # Running on CI
 
+## Parallel real-input jobs
+
+Desktop input coordination is an experimental, opt-in preview. Consumer source must opt in with
+`ExperimentalSpectreInputCoordinationApi`; see
+[Experimental desktop input coordination](input-coordination.md). Experimental does not make an
+unproven platform claim release-safe: headed cross-platform smoke remains required.
+
+Separate Gradle forks and separate CI jobs cannot coordinate through JUnit's in-memory resource
+locks. Use `InputIsolationConfig.perTest()` for in-process real-input JUnit tests and install the
+`spectre-input-coordinator-server` runtime (the `spectre-testing`, CLI, and attaching-side agent
+artifacts wire it automatically). Synthetic/headless tests remain parallel unless they use the
+system clipboard.
+
+The coordinator serializes per normalized OS user/desktop identity and uses a short owner-only
+local socket. X11 spellings such as `:0`, `:0.0`, and `unix/:0` converge; Wayland socket paths are
+canonicalized where possible. Over-serialization is intentional when a platform cannot safely
+distinguish sessions. Do not treat Xvfb evidence as Wayland real-input evidence: Robot input is not
+claimed on Wayland.
+
 Spectre can run live Compose Desktop tests on CI as long as the test JVM is a real desktop JVM.
 GitHub Actions Linux runners are validated on Ubuntu 24.04 under `xvfb` for both scripted-RPC
 tests and real-backend Compose Desktop tests.

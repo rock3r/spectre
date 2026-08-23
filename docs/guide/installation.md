@@ -13,6 +13,8 @@ Spectre publishes these library modules to Maven Central:
 | `server` | `dev.sebastiano.spectre:spectre-server:<version>` |
 | `agent` | `dev.sebastiano.spectre:spectre-agent:<version>` |
 | `agent-runtime` | `dev.sebastiano.spectre:spectre-agent-runtime:<version>` |
+| `input-coordinator` | `dev.sebastiano.spectre:spectre-input-coordinator:<version>` |
+| `input-coordinator-server` | `dev.sebastiano.spectre:spectre-input-coordinator-server:<version>` |
 
 !!! note "Using unreleased changes"
     The `main` branch declares `0.1.0-SNAPSHOT`. Use a published release version from Maven
@@ -76,6 +78,9 @@ dependencies {
     testImplementation("dev.sebastiano.spectre:spectre-server:<version>")
     testImplementation("dev.sebastiano.spectre:spectre-agent:<version>")
     testRuntimeOnly("dev.sebastiano.spectre:spectre-agent-runtime:<version>") // Java-agent runtime
+
+    // Experimental: core-only callers selecting InputLeasePolicy.Auto/Required need this runtime.
+    testRuntimeOnly("dev.sebastiano.spectre:spectre-input-coordinator-server:<version>")
 }
 ```
 
@@ -159,6 +164,10 @@ includeBuild("../spectre") {
             .using(project(":agent"))
         substitute(module("dev.sebastiano.spectre:spectre-agent-runtime"))
             .using(project(":agent-runtime"))
+        substitute(module("dev.sebastiano.spectre:spectre-input-coordinator"))
+            .using(project(":input-coordinator"))
+        substitute(module("dev.sebastiano.spectre:spectre-input-coordinator-server"))
+            .using(project(":input-coordinator-server"))
     }
 }
 ```
@@ -179,6 +188,7 @@ dependencies {
     testImplementation("dev.sebastiano.spectre:spectre-server")
     testImplementation("dev.sebastiano.spectre:spectre-agent")
     testRuntimeOnly("dev.sebastiano.spectre:spectre-agent-runtime")
+    testRuntimeOnly("dev.sebastiano.spectre:spectre-input-coordinator-server")
 }
 ```
 
@@ -206,10 +216,14 @@ Maven Local:
 | `server`    | Embedded HTTP transport (Ktor) and `HttpComposeAutomator` for cross-JVM access. **Experimental**; see [Security notes](../SECURITY.md). |
 | `agent`     | Local attach transport API. **Experimental**; see [Agent attach](agent.md). |
 | `agent-runtime` | Loadable Java-agent runtime for `agent`; add as runtime-only beside the API jar. |
+| `input-coordinator` | Experimental low-level lease/client/protocol API; most users consume it through `core` or `testing`. |
+| `input-coordinator-server` | Experimental process-launching runtime for core-only `Auto`/`Required` callers. |
 
 Most projects only need `core` + `testing`. Add `recording` and the matching platform helper
 artifact(s) when you need video output or native window-scoped screenshots; add `server` or
-`agent` if your test process needs to reach a UI in a different JVM.
+`agent` if your test process needs to reach a UI in a different JVM. See
+[Experimental desktop input coordination](input-coordination.md) before enabling shared-desktop
+leases.
 
 ## Next
 

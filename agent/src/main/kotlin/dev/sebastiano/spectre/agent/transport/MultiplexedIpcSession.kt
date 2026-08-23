@@ -41,6 +41,16 @@ internal class MultiplexedIpcSession(
                 { r -> Thread(r, "spectre-agent-op-worker").apply { isDaemon = true } },
                 ThreadPoolExecutor.AbortPolicy(),
             )
+        val inputWorker: ExecutorService =
+            ThreadPoolExecutor(
+                /* corePoolSize= */ 1,
+                /* maximumPoolSize= */ 1,
+                /* keepAliveTime= */ 0L,
+                TimeUnit.MILLISECONDS,
+                LinkedBlockingQueue(MAX_INPUT_QUEUE),
+                { r -> Thread(r, "spectre-agent-input-worker").apply { isDaemon = true } },
+                ThreadPoolExecutor.AbortPolicy(),
+            )
         val deadlineScheduler: ScheduledExecutorService =
             Executors.newSingleThreadScheduledExecutor { r ->
                 Thread(r, "spectre-agent-deadline").apply { isDaemon = true }
@@ -48,13 +58,15 @@ internal class MultiplexedIpcSession(
         val inFlight = ConcurrentHashMap<Long, OpSlot>()
         val writeLock = Any()
         try {
-            serveOps(input, output, workers, deadlineScheduler, inFlight, writeLock)
+            serveOps(input, output, workers, inputWorker, deadlineScheduler, inFlight, writeLock)
         } finally {
             inFlight.values.forEach { it.abortRunningWork() }
             inFlight.clear()
             deadlineScheduler.shutdownNow()
             workers.shutdownNow()
+            inputWorker.shutdownNow()
             runCatching { workers.awaitTermination(WORKER_SHUTDOWN_SEC, TimeUnit.SECONDS) }
+            runCatching { inputWorker.awaitTermination(WORKER_SHUTDOWN_SEC, TimeUnit.SECONDS) }
         }
     }
 
@@ -62,6 +74,7 @@ internal class MultiplexedIpcSession(
         input: InputStream,
         output: OutputStream,
         workers: ExecutorService,
+        inputWorker: ExecutorService,
         deadlineScheduler: ScheduledExecutorService,
         inFlight: ConcurrentHashMap<Long, OpSlot>,
         writeLock: Any,
@@ -93,7 +106,15 @@ internal class MultiplexedIpcSession(
                     return
                 }
                 else ->
-                    dispatchOp(op, body, workers, deadlineScheduler, inFlight, output, writeLock)
+                    dispatchOp(
+                        op,
+                        body,
+                        if (body.requiresInputLane) inputWorker else workers,
+                        deadlineScheduler,
+                        inFlight,
+                        output,
+                        writeLock,
+                    )
             }
         }
     }
@@ -173,7 +194,7 @@ internal class MultiplexedIpcSession(
     private fun dispatchOp(
         op: OpRequest,
         body: AgentRequest,
-        workers: ExecutorService,
+        executor: ExecutorService,
         deadlineScheduler: ScheduledExecutorService,
         inFlight: ConcurrentHashMap<Long, OpSlot>,
         output: OutputStream,
@@ -183,7 +204,7 @@ internal class MultiplexedIpcSession(
         inFlight[op.opId] = slot
         val future =
             try {
-                workers.submit {
+                executor.submit {
                     if (slot.isAborted || Thread.currentThread().isInterrupted) {
                         inFlight.remove(op.opId, slot)
                         return@submit
@@ -419,5 +440,7 @@ internal class MultiplexedIpcSession(
         const val MAX_OP_WORKERS: Int = 8
         /** Max queued ops beyond the worker pool (reject when full). */
         const val MAX_OP_QUEUE: Int = 32
+        /** Input requests wait here without consuming any general operation workers. */
+        const val MAX_INPUT_QUEUE: Int = 32
     }
 }

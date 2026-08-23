@@ -5,8 +5,8 @@ test environments**. It drives real OS input, captures screenshots, and records 
 by design. This page documents the trust boundaries Spectre relies on, the security-sensitive
 capabilities it exposes, and the risks that are explicitly accepted for the pre-1.0 release.
 
-Spectre is **pre-1.0**. The HTTP transport in the `server` module is **experimental** and is
-expected to change.
+Spectre is **pre-1.0**. The HTTP transport and cooperative desktop input coordinator are
+**experimental** and expected to change.
 
 ## Reporting a vulnerability
 
@@ -47,14 +47,29 @@ out of scope.
    authentication, no encryption, and no origin check. The agent transport is intentionally
    a testing affordance for the same machine and the same user, not a remote-control
    protocol. See [Agent attach](guide/agent.md).
-5. **Bundled native helpers are trusted artifacts.** Spectre extracts and executes Swift
+
+5. **The input coordinator is a same-user cooperative boundary.** Its canonical endpoint lives in
+   a short owner-checked directory and rejects symlink/path substitution. On POSIX filesystems it
+   enforces directory mode 0700 and socket mode 0600. On Windows it uses the current user's
+   `LOCALAPPDATA` and inherits the existing directory ACL; unlike the agent transport, the
+   coordinator layer does not replace that ACL with an owner-only one. Java Unix-domain sockets do
+   not expose portable peer credentials, so requester labels are self-reported attribution, not
+   authentication. The coordinator never records typed text, clipboard contents, selectors,
+   credentials, or prompts.
+
+   Revocation requires the exact observed lease ID. Normal revoke fences the owner and waits for
+   cleanup acknowledgement or confirmed exit. `--force` may advance after grace and is recorded as
+   `unsafeTakeover=true`; it cannot retract an uninterruptible native call and never kills a
+   process. Coordinator restart enters recovery quarantine rather than assuming the desktop is
+   free.
+6. **Bundled native helpers are trusted artifacts.** Spectre extracts and executes Swift
    (`spectre-screencapture`), Rust/Linux (`spectre-wayland-helper`), and Windows
    (`spectre-window-capture.exe`) helpers from the published jar
    resources. The extraction path is process-private; the helpers are launched with `argv`
    lists (never shell strings). Developer-only override env vars exist for local iteration
    and are explicitly documented as such — see the
    [`SPECTRE_WAYLAND_HELPER` note](#developer-only-override-env-vars) below.
-6. **External binaries (ffmpeg, GStreamer, xprop, osascript) come from the host PATH.** Spectre does not
+7. **External binaries (ffmpeg, GStreamer, xprop, osascript) come from the host PATH.** Spectre does not
    pin versions and treats them as prerequisites of the host environment.
 
 ## Capabilities and their exposure

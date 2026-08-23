@@ -447,6 +447,8 @@ subprojects {
 val publishedLibraryProjects =
     listOf(
         ":core",
+        ":input-coordinator",
+        ":input-coordinator-server",
         ":server",
         ":recording",
         ":recording-macos",
@@ -738,6 +740,7 @@ val verifyMavenLocalPublication by tasks.registering {
                                 "org/jetbrains/compose/",
                                 "org/jetbrains/skiko/",
                                 "dev/sebastiano/spectre/core/",
+                                "dev/sebastiano/spectre/input/",
                                 "kotlin/Pair.class",
                                 "kotlinx/coroutines/",
                             )

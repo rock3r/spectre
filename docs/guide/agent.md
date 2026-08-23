@@ -150,6 +150,12 @@ After that, calls such as `windows()`, `findByTestTag(...)`, `click(...)`, and `
 small CBOR requests over the socket. They execute inside the target JVM against the in-process
 automator, then return DTOs or bytes to the attacher.
 
+The attacher also makes a best-effort attempt to start the experimental desktop input coordinator.
+Failure to start it does not block read-only attach operations. A target using the current core
+selects `InputLeasePolicy.Required`, so real input then fails closed if coordination remains
+unavailable. When a target has an older preinstalled core without `InputLeasePolicy`, bootstrap
+falls back to its legacy no-argument `RobotDriver`; that compatibility path is uncoordinated.
+
 ### Injection without preinstalled core
 
 Bootstrap order inside the target:

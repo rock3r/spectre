@@ -196,7 +196,8 @@ public object SpectreAgent {
         val companion = automatorClass.getField("Companion").get(null)
 
         val robotDriverClass = classLoader.loadClass(ROBOT_DRIVER_FQN)
-        val robotDriver = robotDriverClass.getDeclaredConstructor().newInstance()
+        val robotDriver =
+            createCoordinatedRobotDriverOrLegacyFallback(classLoader, robotDriverClass)
 
         val inProcessMethod =
             companion.javaClass.methods.firstOrNull {
@@ -208,6 +209,22 @@ public object SpectreAgent {
                 )
         return inProcessMethod.invoke(companion, robotDriver, true)
     }
+
+    internal fun createCoordinatedRobotDriverOrLegacyFallback(
+        classLoader: ClassLoader,
+        robotDriverClass: Class<*>,
+    ): Any =
+        try {
+            val policyClass = classLoader.loadClass(INPUT_LEASE_POLICY_FQN)
+            val requiredPolicy =
+                policyClass.enumConstants.firstOrNull { (it as Enum<*>).name == "Required" }
+                    ?: error("Could not resolve InputLeasePolicy.Required from $policyClass")
+            robotDriverClass.getDeclaredConstructor(policyClass).newInstance(requiredPolicy)
+        } catch (_: ClassNotFoundException) {
+            robotDriverClass.getDeclaredConstructor().newInstance()
+        } catch (_: NoSuchMethodException) {
+            robotDriverClass.getDeclaredConstructor().newInstance()
+        }
 
     private fun invokeWindowsCountReflectively(automator: Any): Int {
         // `ComposeAutomator.windows` is a stale `@Volatile` cache populated by
@@ -223,6 +240,7 @@ public object SpectreAgent {
     }
 
     private const val ROBOT_DRIVER_FQN = "dev.sebastiano.spectre.core.RobotDriver"
+    private const val INPUT_LEASE_POLICY_FQN = "dev.sebastiano.spectre.core.InputLeasePolicy"
     private const val SHUTDOWN_HOOK_NAME = "spectre-agent-shutdown"
 
     /** Single live agent state, swapped under [agentState] atomically. */

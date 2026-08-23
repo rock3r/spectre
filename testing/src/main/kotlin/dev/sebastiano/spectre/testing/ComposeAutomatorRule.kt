@@ -1,6 +1,9 @@
+@file:OptIn(dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi::class)
+
 package dev.sebastiano.spectre.testing
 
 import dev.sebastiano.spectre.core.ComposeAutomator
+import dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi
 import org.junit.rules.ExternalResource
 import org.junit.runner.Description
 import org.junit.runners.model.Statement
@@ -64,6 +67,9 @@ internal constructor(
     private val failureArtifacts: FailureArtifactsConfig = FailureArtifactsConfig(),
     private val failureVideo: FailureVideoConfig = FailureVideoConfig(),
     private val videoStarter: FailureVideoStarter = AutoFailureVideoStarter,
+    private val inputIsolation: InputIsolationConfig = InputIsolationConfig.perInteraction(),
+    private val leaseFactory: InputTestLeaseFactory = ProductionInputTestLeaseFactory,
+    private val acquireBeforeAutoFactory: Boolean = false,
     private val factory: AutomatorFactory,
 ) : ExternalResource() {
 
@@ -75,6 +81,29 @@ internal constructor(
         failureArtifacts = failureArtifacts,
         failureVideo = failureVideo,
         videoStarter = AutoFailureVideoStarter,
+        factory = factory,
+    )
+
+    @ExperimentalSpectreInputCoordinationApi
+    public constructor(
+        inputIsolation: InputIsolationConfig
+    ) : this(
+        inputIsolation = inputIsolation,
+        acquireBeforeAutoFactory = true,
+        factory = { ComposeAutomator.inProcess() },
+    )
+
+    @ExperimentalSpectreInputCoordinationApi
+    public constructor(
+        failureArtifacts: FailureArtifactsConfig = FailureArtifactsConfig(),
+        failureVideo: FailureVideoConfig = FailureVideoConfig(),
+        inputIsolation: InputIsolationConfig,
+        factory: AutomatorFactory,
+    ) : this(
+        failureArtifacts = failureArtifacts,
+        failureVideo = failureVideo,
+        videoStarter = AutoFailureVideoStarter,
+        inputIsolation = inputIsolation,
         factory = factory,
     )
 
@@ -146,8 +175,18 @@ internal constructor(
                     failureVideo.invocationId?.takeIf { it.isNotBlank() }
                         ?: failureArtifacts.invocationId?.takeIf { it.isNotBlank() }
                         ?: "${testClass}#${testMethod}#${System.nanoTime()}"
-                before()
+                val isolation =
+                    InputIsolationSession(
+                        config = inputIsolation,
+                        acquireBeforeAutoFactory = acquireBeforeAutoFactory,
+                        ownerLabel = ownerLabel(description),
+                        leaseFactory = leaseFactory,
+                    )
                 try {
+                    isolation.acquireBeforeFactory()
+                    instance = factory()
+                    isolation.bindAfterFactory(automator)
+                    startFailureVideo(lastDescription)
                     // runCatching so both Exception and AssertionError (JUnit 4 failures) are
                     // captured without a broad catch-Throwable detekt hit at this boundary.
                     val outcome = runCatching { base.evaluate() }
@@ -171,7 +210,11 @@ internal constructor(
                     // Safety net: never leave an active recorder if evaluate exits oddly.
                     videoSession?.abandon()
                     videoSession = null
-                    after()
+                    try {
+                        after()
+                    } finally {
+                        isolation.close()
+                    }
                     lastDescription = null
                     evaluateInvocationId = null
                 }
@@ -232,5 +275,11 @@ internal constructor(
                 // Paths still land on disk under build/reports/spectre for CI globs.
             },
         )
+    }
+
+    private fun ownerLabel(description: Description): String {
+        val className = description.testClass?.simpleName ?: "UnknownClass"
+        val methodName = description.methodName?.substringBefore('[') ?: "unknown"
+        return "$className#$methodName"
     }
 }
