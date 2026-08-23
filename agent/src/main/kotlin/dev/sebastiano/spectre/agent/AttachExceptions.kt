@@ -1,5 +1,8 @@
 package dev.sebastiano.spectre.agent
 
+import dev.sebastiano.spectre.agent.transport.UdsPathLimits
+import java.nio.file.Path
+
 /** Base for all attach-side failures surfaced by [AgentAttach.attach]. */
 @ExperimentalSpectreAgentApi
 public sealed class SpectreAttachException(message: String, cause: Throwable? = null) :
@@ -152,4 +155,27 @@ public class AttachInterruptedException(udsPath: java.nio.file.Path, cause: Inte
         "Attach was interrupted while waiting for the agent's UDS at $udsPath. The thread's " +
             "interrupt status has been preserved.",
         cause,
+    )
+
+/**
+ * Thrown when a Unix Domain Socket path is longer than the platform's `sockaddr_un.sun_path` can
+ * hold (103 usable bytes on macOS, 107 on Linux and Windows).
+ *
+ * The kernel rejects such a path at `bind` time, and because the agent binds inside the *target*
+ * JVM the caller would otherwise see only "agent failed to initialize", with `SocketException: Unix
+ * domain path too long` buried in the target's stderr (#442). Raising this on the attaching side,
+ * before the agent JAR is loaded, names the offending path and the limit.
+ *
+ * @property candidates the path(s) that were too long — one when the caller passed
+ *   [AttachOptions.udsPath] explicitly, one per base directory Spectre tried when it was picking
+ *   the default.
+ */
+@ExperimentalSpectreAgentApi
+public class UdsPathTooLongException(public val candidates: List<Path>) :
+    SpectreAttachException(
+        "No usable Unix domain socket path: this platform's sockaddr_un.sun_path holds at most " +
+            "${UdsPathLimits.maxPathBytes} bytes. Tried:\n" +
+            candidates.joinToString("\n") { "  - $it (${UdsPathLimits.byteLength(it)} bytes)" } +
+            "\n\nPass AttachOptions(udsPath = ...) pointing at a shorter path — a directory close " +
+            "to the filesystem root keeps the most room for the socket name."
     )

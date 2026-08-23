@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.agent
 
 import dev.sebastiano.spectre.agent.transport.MAX_FRAME_BYTES_CEILING
 import dev.sebastiano.spectre.agent.transport.MIN_MAX_FRAME_BYTES
+import dev.sebastiano.spectre.agent.transport.UdsPathLimits
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.UUID
@@ -29,10 +30,12 @@ import java.util.UUID
  *
  * @property agentJarPath loadable agent runtime JAR to pass to `VirtualMachine.loadAgent`.
  * @property udsPath Unix Domain Socket path the agent should bind on (must NOT exist already;
- *   defaults to `/tmp/sp-a-<pid>-<8char-uuid>/agent.sock` with a fresh UUID per `attach()` call so
- *   concurrent attaches don't collide). If you override this with a path under an existing
- *   directory, you own that parent directory's permissions; Spectre only tightens directories it
- *   creates itself.
+ *   defaults to `<base>/sp-a-<pid>-<8char-uuid>/agent.sock` with a fresh UUID per `attach()` call
+ *   so concurrent attaches don't collide — see [defaultUdsPath] for how `<base>` is picked). If you
+ *   override this with a path under an existing directory, you own that parent directory's
+ *   permissions; Spectre only tightens directories it creates itself. The path must fit the
+ *   platform's `sockaddr_un.sun_path` budget (103 bytes on macOS, 107 elsewhere); `attach` rejects
+ *   longer paths up front with [UdsPathTooLongException].
  * @property attachTimeoutMs how long to wait for the agent's bootstrap + IPC server to come up.
  * @property maxFrameBytes IPC frame write budget the injected agent should adopt. `null` (default)
  *   forwards this process's own budget, so a daemon started with `SPECTRE_MAX_FRAME_BYTES` or
@@ -69,32 +72,78 @@ public data class AttachOptions(
         /**
          * Default UDS path: `<base>/sp-a-<pid>-<8char-uuid>/agent.sock`.
          *
-         * The base directory is platform-aware and deliberately short to stay inside the `sun_path`
-         * limit (~104 chars on macOS, ~108 on Linux and Windows):
-         * - **Linux/macOS**: hard-coded `/tmp` (symlinked to `/private/tmp` on macOS).
-         *   `java.io.tmpdir` resolves to a much longer `/var/folders/...` on macOS and can blow
-         *   past the limit.
-         * - **Windows**: `java.io.tmpdir` (i.e. `%TEMP%`, per-user ACL'd). `/tmp` is meaningless on
-         *   Windows — `Paths.get("/tmp", …)` yields the drive-relative `\tmp\…`, outside the
-         *   protected per-user temp area.
+         * `<base>` is the first entry of [udsBaseDirCandidates] whose resulting path fits the
+         * platform's `sockaddr_un.sun_path` budget (~104 bytes on macOS, ~108 on Linux and
+         * Windows). Overflowing that budget makes the agent's `bind` fail inside the target JVM,
+         * which the attacher only sees as "agent failed to initialize" (#442) — so the choice is
+         * made here, where a bad outcome can still be reported clearly.
+         *
+         * @throws UdsPathTooLongException when no candidate base directory yields a short enough
+         *   path. Pass [AttachOptions.udsPath] explicitly to recover.
          */
         public fun defaultUdsPath(targetPid: Long): Path {
             val shortUuid = UUID.randomUUID().toString().take(SHORT_UUID_LENGTH)
-            val base = udsBaseDir(System.getProperty("os.name").orEmpty(), TMP_DIR)
-            return Paths.get(base, "sp-a-${targetPid}-${shortUuid}", "agent.sock")
+            val candidates =
+                udsBaseDirCandidates(
+                    osName = System.getProperty("os.name").orEmpty(),
+                    tmpDir = System.getProperty("java.io.tmpdir").orEmpty(),
+                    localAppData = System.getenv(LOCAL_APP_DATA_ENV),
+                    userHome = System.getProperty("user.home").orEmpty(),
+                )
+            return selectUdsPath(candidates, "sp-a-${targetPid}-${shortUuid}")
         }
 
         /**
-         * Base directory for the default UDS path: `java.io.tmpdir` (`%TEMP%`) on Windows, `/tmp`
-         * elsewhere. Extracted for testing — `java.nio.file.Path` construction is
-         * filesystem-specific so the selection logic is validated as strings here.
+         * Ordered base-directory candidates for the default UDS path, most preferred first.
+         * Extracted for testing — `java.nio.file.Path` construction is filesystem-specific, so the
+         * selection logic is validated as strings here.
+         * - **Linux/macOS**: hard-coded `/tmp` (symlinked to `/private/tmp` on macOS), and nothing
+         *   else. `java.io.tmpdir` resolves to a much longer `/var/folders/...` on macOS and can
+         *   blow past the `sun_path` limit.
+         * - **Windows**: [tmpDir] (`%TEMP%`, per-user ACL'd) first, so a harness that points the
+         *   JVM at its own scratch directory keeps it. `/tmp` is meaningless on Windows —
+         *   `Paths.get("/tmp", …)` yields the drive-relative `\tmp\…`, outside the protected
+         *   per-user temp area. Nothing constrains how deep `%TEMP%` is, though: Bazel points it at
+         *   a per-test execroot directory deep enough that appending the per-attach directory and
+         *   socket name overflows `sun_path` (#442). The fallbacks reach the per-user temp
+         *   directory without going through `java.io.tmpdir`, which is what harnesses rewrite.
+         *
+         * The Windows fallbacks join with a literal `\` rather than the host's separator: the
+         * branch only ever runs on Windows, and hard-coding it keeps this function testable
+         * everywhere.
          */
-        internal fun udsBaseDir(osName: String, tmpDir: String): String =
-            if (osName.startsWith("Windows", ignoreCase = true)) tmpDir else "/tmp"
+        internal fun udsBaseDirCandidates(
+            osName: String,
+            tmpDir: String,
+            localAppData: String?,
+            userHome: String,
+        ): List<String> {
+            if (!osName.startsWith("Windows", ignoreCase = true)) {
+                return listOf(POSIX_UDS_BASE_DIR)
+            }
+            return listOfNotNull(
+                    tmpDir.takeIf { it.isNotBlank() },
+                    localAppData?.takeIf { it.isNotBlank() }?.let { "$it\\Temp" },
+                    userHome.takeIf { it.isNotBlank() }?.let { "$it\\AppData\\Local\\Temp" },
+                )
+                .distinct()
+        }
 
-        private val TMP_DIR: String
-            get() = System.getProperty("java.io.tmpdir").orEmpty()
+        /**
+         * Builds `<base>/[perAttachDir]/agent.sock` for each of [baseCandidates] in order and
+         * returns the first one that fits the platform's `sun_path` budget.
+         *
+         * @throws UdsPathTooLongException when every candidate overflows the budget.
+         */
+        internal fun selectUdsPath(baseCandidates: List<String>, perAttachDir: String): Path {
+            val paths = baseCandidates.map { Paths.get(it, perAttachDir, SOCKET_FILE_NAME) }
+            return paths.firstOrNull { !UdsPathLimits.exceedsLimit(it) }
+                ?: throw UdsPathTooLongException(paths)
+        }
 
+        private const val POSIX_UDS_BASE_DIR: String = "/tmp"
+        private const val LOCAL_APP_DATA_ENV: String = "LOCALAPPDATA"
+        private const val SOCKET_FILE_NAME: String = "agent.sock"
         private const val SHORT_UUID_LENGTH = 8
     }
 }

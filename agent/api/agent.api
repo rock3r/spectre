@@ -193,6 +193,11 @@ public final class dev/sebastiano/spectre/agent/SpectreProcesses {
 	public final fun listJvmProcesses ()Ljava/util/List;
 }
 
+public final class dev/sebastiano/spectre/agent/UdsPathTooLongException : dev/sebastiano/spectre/agent/SpectreAttachException {
+	public fun <init> (Ljava/util/List;)V
+	public final fun getCandidates ()Ljava/util/List;
+}
+
 public final class dev/sebastiano/spectre/agent/launch/FirstWindowTimeoutException : dev/sebastiano/spectre/agent/launch/LaunchException {
 	public fun <init> (JJLjava/nio/file/Path;Ljava/nio/file/Path;Ljava/lang/Throwable;)V
 	public synthetic fun <init> (JJLjava/nio/file/Path;Ljava/nio/file/Path;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V

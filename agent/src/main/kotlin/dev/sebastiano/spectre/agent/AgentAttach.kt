@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.agent
 import dev.sebastiano.spectre.agent.runtime.AgentBootstrapArgs
 import dev.sebastiano.spectre.agent.transport.FrameLimits
 import dev.sebastiano.spectre.agent.transport.IpcClient
+import dev.sebastiano.spectre.agent.transport.UdsPathLimits
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -46,8 +47,13 @@ public object AgentAttach {
     public fun attach(pid: Long, options: AttachOptions = AttachOptions()): AttachedAutomator {
         AttachRuntimePreflight.requireSupported()
         AgentPlatformPreflight.requireSupported()
-        val agentJar = resolveAgentJar(options)
+        // Resolve and length-check the UDS path before anything expensive: the agent binds it
+        // inside the *target* JVM, so an overlong path surfaces there as an opaque
+        // "agent failed to initialize" with the real cause in the target's stderr (#442).
+        // `defaultUdsPath` already picks a base that fits; this catches a caller-supplied one.
         val udsPath = options.udsPath ?: AttachOptions.defaultUdsPath(pid)
+        if (UdsPathLimits.exceedsLimit(udsPath)) throw UdsPathTooLongException(listOf(udsPath))
+        val agentJar = resolveAgentJar(options)
         // Pre-flight: ensure the path doesn't already exist (collisions would confuse the bind).
         Files.deleteIfExists(udsPath)
 
