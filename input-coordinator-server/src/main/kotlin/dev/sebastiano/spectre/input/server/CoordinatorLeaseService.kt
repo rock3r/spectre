@@ -111,10 +111,20 @@ internal class CoordinatorLeaseService(
             is ReleaseResult.StillHeld -> success()
             is ReleaseResult.Rejected -> {
                 if (result.code.name == "FENCED") {
-                    when (val acknowledged = machine.acknowledgeRevocation(token)) {
+                    val acknowledged =
+                        try {
+                            machine.acknowledgeRevocation(token) {
+                                recoveryLedger?.clear(token.leaseId)
+                            }
+                        } catch (_: IOException) {
+                            return error(
+                                "RECOVERY_PERSISTENCE_FAILED",
+                                "Could not persist lease release",
+                            )
+                        }
+                    when (acknowledged) {
                         is RevokeResult.Acknowledged -> {
                             if (acknowledged.remainingDepth == 0) {
-                                recoveryLedger?.clear(token.leaseId)
                                 requestTracker.forgetLease(token.leaseId)
                                 acknowledged.nextGrant?.let(::completeGrant)
                             }

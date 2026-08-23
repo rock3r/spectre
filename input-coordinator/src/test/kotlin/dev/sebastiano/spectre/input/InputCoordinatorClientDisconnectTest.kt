@@ -145,6 +145,80 @@ class InputCoordinatorClientDisconnectTest {
         }
     }
 
+    @Test
+    fun `release error closes the sentinel session`() {
+        val directory = Files.createTempDirectory(Path.of("/tmp"), "spc-cr-")
+        val endpoint = CoordinatorEndpoint(directory, directory.resolve("coordinator.sock"))
+        val codec = CoordinatorWireCodec()
+        val listener = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
+        listener.bind(UnixDomainSocketAddress.of(endpoint.socketPath))
+        val sentinelClosed = CountDownLatch(1)
+        val serverThread =
+            Thread.ofVirtual().name("coordinator-release-error-test").start {
+                val session = listener.accept()
+                assertEquals(CoordinatorWireKind.SESSION_OPEN, codec.read(session).kind)
+                codec.write(
+                    session,
+                    CoordinatorWireMessage(
+                        kind = CoordinatorWireKind.RESPONSE,
+                        coordinatorEpoch = EPOCH,
+                    ),
+                )
+                Thread.ofVirtual().start {
+                    codec.readOrNull(session)
+                    sentinelClosed.countDown()
+                }
+
+                listener.accept().use { acquireChannel ->
+                    val acquire = codec.read(acquireChannel)
+                    codec.write(
+                        acquireChannel,
+                        CoordinatorWireMessage(
+                            kind = CoordinatorWireKind.RESPONSE,
+                            requestId = acquire.requestId,
+                            coordinatorEpoch = EPOCH,
+                            leaseId = LEASE_ID,
+                            resourceKey = acquire.resourceKey,
+                            fence = 1,
+                        ),
+                    )
+                }
+                listener.accept().use { releaseChannel ->
+                    assertEquals(CoordinatorWireKind.RELEASE, codec.read(releaseChannel).kind)
+                    codec.write(
+                        releaseChannel,
+                        CoordinatorWireMessage(
+                            kind = CoordinatorWireKind.RESPONSE,
+                            ok = false,
+                            errorCode = "RECOVERY_PERSISTENCE_FAILED",
+                            message = "Could not persist lease release",
+                        ),
+                    )
+                }
+            }
+        val client =
+            LocalInputCoordinatorClient.connect(
+                endpoint,
+                DesktopResourceKey("test/release-error"),
+                "release-error-test",
+                codec,
+            )
+        try {
+            client.acquire(Duration.ofSeconds(2), "test").close()
+
+            assertTrue(
+                sentinelClosed.await(2, TimeUnit.SECONDS),
+                "release failure should close the session so the retained grant is released",
+            )
+        } finally {
+            client.close()
+            listener.close()
+            serverThread.join(2_000)
+            Files.deleteIfExists(endpoint.socketPath)
+            Files.deleteIfExists(directory)
+        }
+    }
+
     private companion object {
         const val EPOCH: String = "test-epoch"
         const val LEASE_ID: String = "test-lease"

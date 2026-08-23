@@ -308,10 +308,10 @@ private constructor(
                 if (existing !== registration || existing.release() > 0) existing else null
             }
             if (connected.get()) {
-                runCatching { send(tokenMessage(CoordinatorWireKind.RELEASE, token)) }
-                    .onFailure { failure ->
-                        if (failure is IOException) this@LocalInputCoordinatorClient.close()
+                runCatching {
+                        send(tokenMessage(CoordinatorWireKind.RELEASE, token)).requireSuccess()
                     }
+                    .onFailure { this@LocalInputCoordinatorClient.close() }
             }
         }
     }

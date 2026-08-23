@@ -242,6 +242,72 @@ class CoordinatorLeaseServiceTest {
     }
 
     @Test
+    fun `failed recovery clear retains the fenced holder and queued handoff`() {
+        val directory = Files.createTempDirectory("spc-service-ledger-revoke-clear-")
+        val path = directory.resolve("recovery.properties")
+        val service =
+            CoordinatorLeaseService(
+                epoch = "epoch",
+                heartbeatTimeout = Duration.ofSeconds(5),
+                revokeGrace = Duration.ofSeconds(1),
+                recoveryGrace = Duration.ofSeconds(1),
+                recoveryLedger = RecoveryLedger(path, Duration.ofSeconds(5)),
+            )
+        try {
+            service.openSession("first-client")
+            service.openSession("second-client")
+            val first = service.acquire(acquire("first", "first-client")).get()
+            val queued = service.acquire(acquire("second", "second-client"))
+            assertTrue(
+                service
+                    .revoke(
+                        CoordinatorWireMessage(
+                            kind = CoordinatorWireKind.REVOKE,
+                            resourceKey = "test/desktop",
+                            leaseId = first.leaseId,
+                            requesterLabel = "operator",
+                            reason = "owner should stop",
+                        )
+                    )
+                    .ok
+            )
+            Files.delete(path)
+            Files.createDirectory(path)
+            Files.writeString(path.resolve("blocker"), "prevent ledger deletion")
+
+            val failedRelease = service.release(tokenMessage(first, "first-client"))
+
+            assertFalse(failedRelease.ok)
+            assertEquals("RECOVERY_PERSISTENCE_FAILED", failedRelease.errorCode)
+            val status =
+                assertNotNull(
+                    service
+                        .status(
+                            CoordinatorWireMessage(
+                                kind = CoordinatorWireKind.STATUS,
+                                resourceKey = "test/desktop",
+                            )
+                        )
+                        .status
+                )
+            assertEquals("first-client", assertNotNull(status.holder).clientId)
+            assertEquals(1, status.waiters.size)
+
+            Files.delete(path.resolve("blocker"))
+            Files.delete(path)
+            assertTrue(service.release(tokenMessage(first, "first-client")).ok)
+            val second = queued.get(1, TimeUnit.SECONDS)
+            assertTrue(service.release(tokenMessage(second, "second-client")).ok)
+        } finally {
+            service.close()
+            Files.deleteIfExists(path.resolveSibling("${path.fileName}.tmp"))
+            if (Files.isDirectory(path)) Files.deleteIfExists(path.resolve("blocker"))
+            Files.deleteIfExists(path)
+            Files.deleteIfExists(directory)
+        }
+    }
+
+    @Test
     fun `failed FIFO grant persistence rolls back the hidden holder`() {
         val directory = Files.createTempDirectory("spc-service-ledger-failure-")
         val path = directory.resolve("recovery.properties")

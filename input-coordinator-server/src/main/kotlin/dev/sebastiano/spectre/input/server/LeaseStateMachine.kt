@@ -395,7 +395,10 @@ internal class LeaseStateMachine(
         return forceRevocation(state, holder)
     }
 
-    fun acknowledgeRevocation(token: LeaseToken): RevokeResult {
+    fun acknowledgeRevocation(
+        token: LeaseToken,
+        beforeFinalAcknowledgement: () -> Unit = {},
+    ): RevokeResult {
         if (token.coordinatorEpoch != epoch) {
             return RevokeResult.Rejected(LeaseErrorCode.STALE_EPOCH)
         }
@@ -407,10 +410,11 @@ internal class LeaseStateMachine(
         }
         val revocation =
             holder.revocation ?: return RevokeResult.Rejected(LeaseErrorCode.STALE_LEASE)
-        holder.depth -= 1
-        if (holder.depth > 0) {
+        if (holder.depth > 1) {
+            holder.depth -= 1
             return RevokeResult.Acknowledged(nextGrant = null, remainingDepth = holder.depth)
         }
+        beforeFinalAcknowledgement()
         recordRevocation(holder, revocation, acknowledged = true, unsafeTakeover = false)
         state.holder = null
         return RevokeResult.Acknowledged(transitions.grantNext(state))
