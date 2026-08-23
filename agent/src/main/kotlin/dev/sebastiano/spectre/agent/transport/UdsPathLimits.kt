@@ -38,22 +38,48 @@ internal object UdsPathLimits {
         }
 
     /**
-     * Length of [path] in bytes, using the same encoding the JDK uses to hand paths to the OS
-     * (`sun.jnu.encoding`). Counting characters would under-report for non-ASCII paths — a home
-     * directory with accented characters costs more bytes than it looks.
+     * Charset the JDK encodes a UDS path with before handing it to the OS. It is **not** the same
+     * on every platform, and the difference is load-bearing:
+     * - **Windows**: `sun.nio.fs.WindowsFileSystemProvider.getSunPathForSocketFile` ends in
+     *   `s.getBytes(StandardCharsets.UTF_8)` — always UTF-8, whatever the JVM's other encodings
+     *   say.
+     * - **Linux/macOS**: `sun.nio.fs.UnixPath.encode` goes through `Util.jnuEncoding()`, which is
+     *   the `sun.jnu.encoding` property.
+     *
+     * A Windows JVM commonly reports `sun.jnu.encoding=Cp1252`, where an accented letter costs one
+     * byte and UTF-8 costs two. Measuring a `C:\Users\<accented name>\…` path with the code page
+     * would under-count it, keep a candidate that does not actually fit, and reproduce #442 by
+     * another route.
      */
-    fun byteLength(path: Path): Int = path.toString().toByteArray(NATIVE_CHARSET).size
+    fun nativeCharsetFor(osName: String): Charset =
+        if (osName.startsWith("Windows", ignoreCase = true)) Charsets.UTF_8 else jnuCharset()
+
+    /**
+     * Length of [path] in bytes as the OS will receive it. Counting characters would under-report
+     * for non-ASCII paths — a home directory with accented characters costs more bytes than it
+     * looks.
+     */
+    fun byteLength(path: Path): Int = byteLength(path, NATIVE_CHARSET)
+
+    /** [byteLength] against an explicit [charset]; the per-platform choice is testable that way. */
+    fun byteLength(path: Path, charset: Charset): Int = path.toString().toByteArray(charset).size
 
     /** True when binding a UDS at [path] would fail because the path does not fit `sun_path`. */
     fun exceedsLimit(path: Path): Boolean = byteLength(path) > maxPathBytes
+
+    /** [exceedsLimit] against an explicit [charset] and [limit], for the per-platform tests. */
+    fun exceedsLimit(path: Path, charset: Charset, limit: Int): Boolean =
+        byteLength(path, charset) > limit
 
     /** Diagnostic for a [path] that [exceedsLimit]: names the path, its size, and the cap. */
     fun tooLongMessage(path: Path): String =
         "Unix domain socket path is ${byteLength(path)} bytes, but this platform's " +
             "sockaddr_un.sun_path holds at most $maxPathBytes. Path: $path"
 
-    private val NATIVE_CHARSET: Charset =
+    private fun jnuCharset(): Charset =
         System.getProperty("sun.jnu.encoding")?.let { name ->
             runCatching { Charset.forName(name) }.getOrNull()
         } ?: Charset.defaultCharset()
+
+    private val NATIVE_CHARSET: Charset = nativeCharsetFor(System.getProperty("os.name").orEmpty())
 }
