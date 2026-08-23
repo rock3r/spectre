@@ -29,6 +29,14 @@ import org.junit.jupiter.api.condition.OS
  * Gating matches [dev.sebastiano.spectre.agent.AgentAttachIntegrationTest]: Linux/macOS/Windows,
  * non-headless, agent runtime jar property set by `:agent:test`. Windows UI path is opt-in via
  * [WindowsAttachE2eGate].
+ *
+ * There is deliberately **no** e2e for "process exits after the process-alive settle window"
+ * (#447). Such a test has to make the launched command outlive the settle window and then exit
+ * inside the bootstrap exit grace, and on a loaded runner that timing drifts — an earlier attempt
+ * failed on `windows-latest` for exactly the load-sensitivity the fix exists to remove. The
+ * reclassification is covered deterministically on every host by
+ * [LaunchReadinessProcessExitGraceTest]; the two PROCESS_ALIVE cases below are the real-world
+ * proof.
  */
 @EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)
 class LaunchAndAttachIntegrationTest {
