@@ -44,6 +44,7 @@ public class LocalCoordinatorServer(
 ) : AutoCloseable {
     private val running = AtomicBoolean(false)
     private val closed = AtomicBoolean(false)
+    private val ownsSocketPath = AtomicBoolean(false)
     private val terminated = CountDownLatch(1)
     private val activeConnections = AtomicInteger()
     private val lastActivityNanos = AtomicLong(System.nanoTime())
@@ -84,6 +85,7 @@ public class LocalCoordinatorServer(
             val channel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
             openedChannel = channel
             channel.bind(UnixDomainSocketAddress.of(endpoint.socketPath))
+            ownsSocketPath.set(true)
             protection.protectSocket(endpoint.socketPath)
             listener = channel
             running.set(true)
@@ -115,7 +117,9 @@ public class LocalCoordinatorServer(
         handlers.shutdownNow()
         handlers.awaitTermination(CLOSE_WAIT_SECONDS, TimeUnit.SECONDS)
         service.close()
-        runCatching { Files.deleteIfExists(endpoint.socketPath) }
+        if (ownsSocketPath.compareAndSet(true, false)) {
+            runCatching { Files.deleteIfExists(endpoint.socketPath) }
+        }
         releaseElection()
         terminated.countDown()
     }

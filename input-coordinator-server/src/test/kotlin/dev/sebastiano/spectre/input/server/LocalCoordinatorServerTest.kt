@@ -54,6 +54,8 @@ class LocalCoordinatorServerTest {
 
         assertFailsWith<java.nio.channels.OverlappingFileLockException> { contender.start() }
         contender.close()
+        assertTrue(Files.exists(endpoint.socketPath))
+        resources += client("winner-remains-reachable").acquire(Duration.ofSeconds(2), "click")
         first.close()
 
         val failure = assertFailsWith<IllegalStateException> { contender.start() }
