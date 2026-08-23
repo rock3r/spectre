@@ -83,6 +83,16 @@ class InputLeaseGuardTest {
     }
 
     @Test
+    fun `closing a driver releases its coordinator session`() {
+        val coordinator = RecordingInputLeaseCoordinator()
+        val driver = realDriver(coordinator)
+
+        driver.close()
+
+        assertEquals(1, coordinator.closeCount)
+    }
+
+    @Test
     fun `auto degrades only when the coordinator provider is unavailable`() = runTest {
         val coordinator =
             RecordingInputLeaseCoordinator(
@@ -454,6 +464,7 @@ private class RecordingInputLeaseCoordinator(
     val operations = mutableListOf<String>()
     val immediateRequests = mutableListOf<Boolean>()
     var closedLeases: Int = 0
+    var closeCount: Int = 0
 
     override suspend fun acquire(
         options: InputLeaseOptions,
@@ -490,5 +501,9 @@ private class RecordingInputLeaseCoordinator(
                 closedLeases += 1
             }
         }
+    }
+
+    override fun close() {
+        closeCount += 1
     }
 }

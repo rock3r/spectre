@@ -34,7 +34,7 @@ internal constructor(
     inputLeasePolicy: InputLeasePolicy = InputLeasePolicy.Off,
     inputLeaseCoordinator: InputLeaseCoordinator = ProductionInputLeaseCoordinator(),
     inputCapabilities: InputCapabilities? = null,
-) {
+) : AutoCloseable by inputLeaseCoordinator {
 
     /** Shared-OS-resource capabilities used by isolation integrations. */
     @ExperimentalSpectreInputCoordinationApi

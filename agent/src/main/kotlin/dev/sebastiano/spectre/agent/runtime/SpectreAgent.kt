@@ -34,8 +34,9 @@ import java.util.concurrent.atomic.AtomicReference
  * so this matters in practice.
  *
  * **Detach contract** (plan D-7): [onClientDetach] performs the full Path A cleanup — closes the
- * [IpcServer] (releases ServerSocketChannel + unlinks UDS), removes the shutdown hook, and clears
- * the global state slot. A registered shutdown hook (Path B) is the backstop for crashes.
+ * [IpcServer] (releases ServerSocketChannel + unlinks UDS), closes target-side input coordination,
+ * removes the shutdown hook, and clears the global state slot. A registered shutdown hook (Path B)
+ * is the backstop for crashes.
  */
 @ExperimentalSpectreAgentApi
 public object SpectreAgent {
@@ -86,9 +87,10 @@ public object SpectreAgent {
         // JVM agent layer which surfaces them at the attaching `VirtualMachine.loadAgent` call
         // site.
         val bootstrap = AgentBootstrap.findSpectre(instrumentation)
-        // When AgentState is published successfully, detach/shutdown owns inject cleanup.
-        // Until then (or on any failure path), we release in the finally below.
-        var injectOwnedByAgentState = false
+        // When AgentState is published successfully, detach/shutdown owns target-input and inject
+        // cleanup. Until then (or on any failure path), we release both in the finally below.
+        var resourcesOwnedByAgentState = false
+        var targetInputResource: AutoCloseable? = null
         try {
             val loader = bootstrap.classLoader
             System.err.println("[spectre-agent] found Spectre via $loader")
@@ -98,7 +100,9 @@ public object SpectreAgent {
             // failures are logged and identity falls back to null handles.
             AwtPeerModuleOpener.openFor(loader, instrumentation)
 
-            val automator = createAutomatorReflectively(loader)
+            val agentAutomator = createAutomatorReflectively(loader)
+            val automator = agentAutomator.instance
+            targetInputResource = agentAutomator.targetInputResource
             System.err.println("[spectre-agent] ComposeAutomator ready: $automator")
 
             val parsedArgs = AgentBootstrapArgs.parse(agentArgs)
@@ -138,6 +142,7 @@ public object SpectreAgent {
                     {
                         // Path B — crash safety. close() handles its own idempotency.
                         runCatching { server.close() }
+                        runCatching { targetInputResource?.close() }
                         bootstrap.releaseInjectResources()
                     },
                     SHUTDOWN_HOOK_NAME,
@@ -150,6 +155,7 @@ public object SpectreAgent {
                     udsPath = udsPath,
                     shutdownHook = shutdownHook,
                     bootstrap = bootstrap,
+                    targetInputResource = targetInputResource,
                 )
             if (!agentState.compareAndSet(null, newState)) {
                 // Idempotency race: someone bootstrapped between our earlier `get()` check and now.
@@ -163,12 +169,13 @@ public object SpectreAgent {
                 return
             }
 
-            injectOwnedByAgentState = true
+            resourcesOwnedByAgentState = true
             System.err.println(
                 "[spectre-agent] IPC server listening on $udsPath — ready for client connections"
             )
         } finally {
-            if (!injectOwnedByAgentState) {
+            if (!resourcesOwnedByAgentState) {
+                runCatching { targetInputResource?.close() }
                 bootstrap.releaseInjectResources()
             }
         }
@@ -176,8 +183,9 @@ public object SpectreAgent {
 
     /**
      * Called by [IpcServer] when it processes an `AgentRequest.Detach`. Performs the full D-7 Path
-     * A cleanup: clears the global slot, closes the server (idempotent), removes the shutdown hook,
-     * and releases inject payload resources when the attach used injection (#209).
+     * A cleanup: clears the global slot, closes the server and target-side input coordination (both
+     * idempotent), removes the shutdown hook, and releases inject payload resources when the attach
+     * used injection (#209).
      *
      * The server has *already* set its `running` flag to false before invoking this; the `close()`
      * here ensures the ServerSocketChannel native fd is released and the UDS path unlinked. Without
@@ -186,12 +194,13 @@ public object SpectreAgent {
     private fun onClientDetach() {
         val state = agentState.getAndSet(null) ?: return
         runCatching { state.server.close() }
+        runCatching { state.targetInputResource?.close() }
         runCatching { Runtime.getRuntime().removeShutdownHook(state.shutdownHook) }
         state.bootstrap.releaseInjectResources()
         System.err.println("[spectre-agent] detached cleanly; resources released")
     }
 
-    private fun createAutomatorReflectively(classLoader: ClassLoader): Any {
+    private fun createAutomatorReflectively(classLoader: ClassLoader): AgentAutomator {
         val automatorClass = classLoader.loadClass(COMPOSE_AUTOMATOR_FQN)
         val companion = automatorClass.getField("Companion").get(null)
 
@@ -207,7 +216,10 @@ public object SpectreAgent {
                     "Could not find ComposeAutomator.Companion.inProcess(robotDriver, " +
                         "discoverWindows) on ${companion.javaClass}"
                 )
-        return inProcessMethod.invoke(companion, robotDriver, true)
+        return AgentAutomator(
+            instance = inProcessMethod.invoke(companion, robotDriver, true),
+            targetInputResource = robotDriver as? AutoCloseable,
+        )
     }
 
     internal fun createCoordinatedRobotDriverOrLegacyFallback(
@@ -243,11 +255,14 @@ public object SpectreAgent {
     private const val INPUT_LEASE_POLICY_FQN = "dev.sebastiano.spectre.core.InputLeasePolicy"
     private const val SHUTDOWN_HOOK_NAME = "spectre-agent-shutdown"
 
+    private data class AgentAutomator(val instance: Any, val targetInputResource: AutoCloseable?)
+
     /** Single live agent state, swapped under [agentState] atomically. */
     private data class AgentState(
         val server: IpcServer,
         val udsPath: Path,
         val shutdownHook: Thread,
         val bootstrap: SpectreBootstrapResult,
+        val targetInputResource: AutoCloseable?,
     )
 }

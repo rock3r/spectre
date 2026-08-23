@@ -256,9 +256,9 @@ AgentAttach.attach(target.pid).use { automator ->
 ```
 
 `AttachedAutomator` is `AutoCloseable`. Closing it sends an `AgentRequest.Detach` over the
-wire; the agent stops accepting new requests, releases its `ComposeAutomator`, unlinks
-the UDS path, and removes its shutdown hook. A target-side shutdown hook covers crash
-cleanup.
+wire; the agent stops accepting new requests, closes the target-side input coordinator session,
+releases its `ComposeAutomator`, unlinks the UDS path, and removes its shutdown hook. A target-side
+shutdown hook covers crash cleanup.
 
 ### `AttachOptions`
 

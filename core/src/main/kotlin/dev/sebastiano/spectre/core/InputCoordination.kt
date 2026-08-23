@@ -111,12 +111,14 @@ private class ProductionAutomatorInputLease(
     }
 }
 
-internal fun interface InputLeaseCoordinator {
+internal fun interface InputLeaseCoordinator : AutoCloseable {
     suspend fun acquire(
         options: InputLeaseOptions,
         currentOperation: String,
         immediate: Boolean,
     ): CoordinatedInputLease
+
+    override fun close(): Unit = Unit
 }
 
 internal enum class CoordinatedResource {

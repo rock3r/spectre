@@ -260,7 +260,7 @@ public final class dev/sebastiano/spectre/core/PerfettoTracer : dev/sebastiano/s
 public final class dev/sebastiano/spectre/core/PerfettoTracer$Companion {
 }
 
-public final class dev/sebastiano/spectre/core/RobotDriver {
+public final class dev/sebastiano/spectre/core/RobotDriver : java/lang/AutoCloseable {
 	public static final field Companion Ldev/sebastiano/spectre/core/RobotDriver$Companion;
 	public fun <init> ()V
 	public fun <init> (Ldev/sebastiano/spectre/core/InputLeasePolicy;)V
@@ -268,6 +268,7 @@ public final class dev/sebastiano/spectre/core/RobotDriver {
 	public fun <init> (Ljava/awt/Robot;Ldev/sebastiano/spectre/core/InputLeasePolicy;)V
 	public final fun clearAndTypeText (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun click (IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun close ()V
 	public final fun doubleClick (IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun getInputCapabilities ()Ldev/sebastiano/spectre/core/InputCapabilities;
 	public final fun longClick-exY8QGI (IIJLkotlin/coroutines/Continuation;)Ljava/lang/Object;

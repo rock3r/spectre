@@ -47,8 +47,19 @@ import dev.sebastiano.spectre.core.InputLeasePolicy
 import dev.sebastiano.spectre.core.RobotDriver
 import dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi
 
-val automator = ComposeAutomator.inProcess(RobotDriver(InputLeasePolicy.Required))
+val driver = RobotDriver(InputLeasePolicy.Required)
+try {
+    val automator = ComposeAutomator.inProcess(driver)
+    // Use automator.
+} finally {
+    driver.close()
+}
 ```
+
+`RobotDriver` is `AutoCloseable`. `Auto` and `Required` open their coordinator session lazily;
+close the driver (prefer `use { ... }` when its lifetime is block-scoped) to stop heartbeats and let
+an idle coordinator exit. JUnit isolation and attached-agent teardown close their owned sessions
+automatically.
 
 ## Choose the narrowest useful mode
 
