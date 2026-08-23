@@ -10,6 +10,10 @@ package dev.sebastiano.spectre.testing.contract
  * window with an `inputRejected` / "OS keyboard focus" error. Raising the window via focusWindow,
  * re-click, and short backoff makes the matrix cell durable without soft-skipping the keyboard
  * path.
+ *
+ * This helper always presses. The contract corpus decides whether the scenario runs at all — see
+ * [RealKeyboardGate] and [warnSkipped] (#449) — so a direct caller gets the behaviour it asked for
+ * rather than a silent no-op.
  */
 public object PressKeyAfterFocus {
     /** Substring present in agent focus-rejection messages (typeText and pressKey). */
@@ -18,6 +22,9 @@ public object PressKeyAfterFocus {
 
     /** Default AWT `KeyEvent.VK_TAB`. */
     public const val DEFAULT_KEY_CODE_TAB: Int = 9
+
+    /** [AutomatorContractCorpus] scenario id this helper backs. */
+    public const val SCENARIO_ID: String = "press-key-tab-after-focus"
 
     private const val DEFAULT_MAX_ATTEMPTS: Int = 8
     private const val BASE_SLEEP_MS: Long = 50L
@@ -62,6 +69,16 @@ public object PressKeyAfterFocus {
         }
         error("pressKey after focus failed after $maxAttempts attempts: $detail")
     }
+
+    /** Why the keyboard path was skipped, and how to run it. Shared by every skip site. */
+    internal fun skipNotice(keyCode: Int = DEFAULT_KEY_CODE_TAB): String =
+        "Skipped contract corpus scenario `$SCENARIO_ID`: it raises the fixture window, clicks " +
+            "the text field, and sends real Robot key code $keyCode, so it needs the fixture " +
+            "window to own OS keyboard focus for the whole run (#449). " +
+            RealKeyboardGate.ENABLE_HINT
+
+    /** Emit [skipNotice] to stderr, for skip sites that never reach [run]. */
+    internal fun warnSkipped(): Unit = System.err.println(skipNotice())
 
     public fun isCi(): Boolean =
         !System.getenv("CI").isNullOrBlank() || !System.getenv("GITHUB_ACTIONS").isNullOrBlank()

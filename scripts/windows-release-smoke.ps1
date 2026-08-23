@@ -608,8 +608,10 @@ try {
                 Invoke-Gradle -RepoRoot $repoRoot -TimeoutSeconds $AgentE2eTimeoutSeconds -LogName "agent-attach" -GradleArgs @(
                     ":agent:test",
                     "-Pspectre.agent.attachE2e.allowWindows=true",
-                    # Interactive smoke desktop: keep the Robot typeText subpath, which is
-                    # opt-in off CI so `./gradlew check` stays runnable on a machine in use (#444).
+                    # Interactive smoke desktop: keep the Robot keyboard paths, which are
+                    # opt-in off CI so `./gradlew check` stays runnable on a machine in use
+                    # (#444, #449). Only typeText is reachable here -- the contract corpus is
+                    # n/a on Windows (see agent-contract-corpus below).
                     "-Pspectre.agent.realKeyboard=true",
                     "--tests", "*AgentAttachIntegration*",
                     "--rerun-tasks",

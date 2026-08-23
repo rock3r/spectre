@@ -355,11 +355,22 @@ public final class dev/sebastiano/spectre/testing/contract/PressKeyAfterFocus {
 	public static final field DEFAULT_KEY_CODE_TAB I
 	public static final field INSTANCE Ldev/sebastiano/spectre/testing/contract/PressKeyAfterFocus;
 	public static final field OS_KEYBOARD_FOCUS_MARKER Ljava/lang/String;
+	public static final field SCENARIO_ID Ljava/lang/String;
 	public final fun isCi ()Z
 	public final fun isMacOs ()Z
 	public final fun isOsKeyboardFocusRejection (Ljava/lang/Throwable;)Z
 	public final fun run (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;IIILkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;)Ljava/lang/String;
 	public static synthetic fun run$default (Ldev/sebastiano/spectre/testing/contract/PressKeyAfterFocus;Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;Ljava/lang/String;IIILkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/testing/contract/RealKeyboardGate {
+	public static final field ENABLE_HINT Ljava/lang/String;
+	public static final field ENABLE_PROP Ljava/lang/String;
+	public static final field GRADLE_PROPERTY Ljava/lang/String;
+	public static final field INSTANCE Ldev/sebastiano/spectre/testing/contract/RealKeyboardGate;
+	public static final field SKIPPED_DETAIL Ljava/lang/String;
+	public final fun isEnabled (Ljava/lang/String;Ljava/lang/String;)Z
+	public static synthetic fun isEnabled$default (Ldev/sebastiano/spectre/testing/contract/RealKeyboardGate;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Z
 }
 
 public final class dev/sebastiano/spectre/testing/contract/ScreenshotProbe {

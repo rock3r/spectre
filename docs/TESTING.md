@@ -89,30 +89,46 @@ version. Unit tests for internal math are necessary, but boundary tests catch dr
 
 `./gradlew check` is the pre-push gate, so it must stay runnable on a machine you are also using.
 
-One suite needs the whole desktop to itself: `AgentAttachIntegrationTest` types into a spawned
-Compose window with a real `java.awt.Robot`, which only works while that window owns OS keyboard
-focus. A terminal, an editor, or a notification taking focus mid-run used to fail the suite.
+Two test paths need the whole desktop to themselves. Both send real `java.awt.Robot` key events at
+a spawned Compose window, which only works while that window owns OS keyboard focus. A terminal, an
+editor, or a notification taking focus mid-run used to fail them.
 
-That real-keyboard subpath is therefore **opt-in off CI**. By default it runs on CI (`CI=true` in
-the environment) and is skipped on developer machines, where the test prints to stderr exactly
-which assertions it skipped. Everything else in the suite — attach, `windows()`, `findByTestTag`,
-`click()`, window identity, screenshot — runs on every host.
+| Path | Where |
+|---|---|
+| `typeText` into the fixture text field | `AgentAttachIntegrationTest` (`:agent`) |
+| `press-key-tab-after-focus` corpus scenario | `AutomatorContractCorpus`, run by `AgentContractCorpusTest` (`:agent`) |
 
-Run the keyboard path yourself on an idle desktop:
+One gate governs both: `RealKeyboardGate` in `:testing`. By default the paths run on CI (`CI=true`
+in the environment) and are **skipped on developer machines**, where each path prints to stderr
+exactly what it skipped. Everything else runs on every host — attach, `windows()`,
+`findByTestTag`, `click()`, `doubleClick()`, `swipe()`, `scrollWheel()`, window identity, and
+screenshots.
+
+When the gate is off, the corpus records `press-key-tab-after-focus` as passed with the detail
+`skipped:real-keyboard-gate-off` and never touches the driver. Raising and clicking the fixture
+window are themselves focus-stealing, so a gated-off run has to do nothing at all rather than try
+and tolerate the failure.
+
+Run the keyboard paths yourself on an idle desktop:
 
 ```shell
 # bash / zsh / cmd
-./gradlew :agent:test --tests '*AgentAttachIntegrationTest*' -Pspectre.agent.realKeyboard=true
+./gradlew check -Pspectre.agent.realKeyboard=true
 ```
 
 ```powershell
 # PowerShell: quote -P… so the shell does not split on the property name
-./gradlew :agent:test --tests '*AgentAttachIntegrationTest*' "-Pspectre.agent.realKeyboard=true"
+./gradlew check "-Pspectre.agent.realKeyboard=true"
 ```
 
-Pass `-Pspectre.agent.realKeyboard=false` to turn it off on CI. When the subpath does run its
-assertions are unchanged: a local run fails loudly on focus loss so a real keyboard regression is
-visible.
+Pass `-Pspectre.agent.realKeyboard=false` to turn them off on CI. The `:agent`, `:server`, and
+`:testing` test tasks all forward the property to their workers, and both the property and the `CI`
+environment variable are task inputs, so switching modes never reuses a cached result from the
+other mode.
+
+When the paths do run their assertions are unchanged: hosted macOS CI still tolerates a lost OS
+focus handoff, Linux Xvfb stays fail-closed, and a local opt-in run fails loudly so a real keyboard
+regression is visible.
 
 ## Manual Spike Validation
 

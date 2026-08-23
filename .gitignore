@@ -60,3 +60,8 @@ recording/native/linux/Cargo.lock
 /spectre-ui-automation-workspace/
 
 /.cal-industries/
+
+# `build/` above also matches the buildSrc `dev.sebastiano.spectre.build` package directory,
+# which silently drops new build-logic sources. Re-include the source tree explicitly.
+!buildSrc/src/main/kotlin/dev/sebastiano/spectre/build/
+!buildSrc/src/test/kotlin/dev/sebastiano/spectre/build/
