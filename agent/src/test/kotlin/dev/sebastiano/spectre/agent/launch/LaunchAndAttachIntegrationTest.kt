@@ -142,6 +142,63 @@ class LaunchAndAttachIntegrationTest {
     }
 
     @Test
+    fun `command that exits after the process-alive settle window still fails stage PROCESS_ALIVE`() {
+        // #447: awaitProcessAlive only samples for a short settle window, so a command still
+        // running when the sample lands satisfies stage 1 and the launch walks on to
+        // AGENT_BOOTSTRAP. On a loaded hosted runner even `cmd.exe … exit /b 17` is still alive
+        // then, and the stage taxonomy lies about why the launch failed.
+        //
+        // This wires the whole harness through that shape by delaying the exit past the settle
+        // window. It bites hardest on Windows, where attaching to a non-JVM pid fails within
+        // milliseconds; on macOS and Linux the JDK attach blocks waiting for an attach socket
+        // that never appears, so the process is usually already reaped by the time it returns.
+        // LaunchReadinessProcessExitGraceTest covers the reclassification itself on every host.
+        val captureDir = Files.createTempDirectory("spectre-launch-e2e-slow-fail-")
+        val command =
+            if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)) {
+                // `ping -n 2` is the portable ~1s sleep on Windows shells.
+                listOf(
+                    "cmd.exe",
+                    "/c",
+                    "ping -n 2 127.0.0.1 > nul & echo spectre-launch-slow-exit-stderr 1>&2 & " +
+                        "exit /b 17",
+                )
+            } else {
+                listOf(
+                    "/bin/sh",
+                    "-c",
+                    "sleep 0.6; echo 'spectre-launch-slow-exit-stderr' 1>&2; exit 17",
+                )
+            }
+
+        val ex =
+            assertFailsWith<ProcessExitedBeforeAttachException> {
+                LaunchAndAttach.launch(
+                    LaunchSpec(
+                        command = command,
+                        captureDirectory = captureDir,
+                        stageTimeouts =
+                            LaunchStageTimeouts(
+                                processAliveMs = 5_000,
+                                jvmAttachableMs = 5_000,
+                                agentBootstrapMs = 5_000,
+                                firstWindowMs = 5_000,
+                            ),
+                    )
+                )
+            }
+
+        assertEquals(LaunchStage.PROCESS_ALIVE, ex.stage)
+        assertEquals(17, ex.exitCode)
+        val stderr = Files.readString(ex.stderrPath)
+        assertTrue(
+            stderr.contains("spectre-launch-slow-exit-stderr") ||
+                ex.stderrExcerpt.contains("spectre-launch-slow-exit-stderr"),
+            "expected captured stderr content; path=${ex.stderrPath} excerpt='${ex.stderrExcerpt}'",
+        )
+    }
+
+    @Test
     fun `java -version exits as stage PROCESS_ALIVE with stderr capture files`() {
         // Complements the rewriter unit tests that assert -XX:+EnableDynamicAgentLoading injection
         // on the command line. This path proves capture files + stage taxonomy for a fast-exit

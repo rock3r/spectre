@@ -161,7 +161,9 @@ internal object LaunchReadiness {
         while (true) {
             val remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())
             if (remainingMs <= 0L) {
-                throw LaunchAgentBootstrapException(
+                bootstrapFailureOrProcessExit(
+                    process = process,
+                    gradleish = gradleish,
                     attachedPid = attachedPid,
                     stdoutPath = stdoutPath,
                     stderrPath = stderrPath,
@@ -187,21 +189,28 @@ internal object LaunchReadiness {
                     cause = ex,
                 )
             } catch (ex: SpectreAgentException) {
-                rethrowIfProcessDied(process, gradleish, stdoutPath, stderrPath)
-                throw LaunchAgentBootstrapException(
+                bootstrapFailureOrProcessExit(
+                    process = process,
+                    gradleish = gradleish,
                     attachedPid = attachedPid,
                     stdoutPath = stdoutPath,
                     stderrPath = stderrPath,
                     cause = ex,
                 )
             } catch (ex: SpectreAttachException) {
+                // Cheap instantaneous check, kept ahead of the retry decision: an already-dead
+                // process has nothing left to retry against. The grace-aware reclassification in
+                // bootstrapFailureOrProcessExit covers the slower "still exiting" case, and is
+                // deliberately not on this path so retries stay fast.
                 rethrowIfProcessDied(process, gradleish, stdoutPath, stderrPath)
                 lastAttachFailure = ex
                 if (
                     !isPreLoadAttachRetryable(ex.message, ex.cause?.message) ||
                         System.nanoTime() >= deadline
                 ) {
-                    throw LaunchAgentBootstrapException(
+                    bootstrapFailureOrProcessExit(
+                        process = process,
+                        gradleish = gradleish,
                         attachedPid = attachedPid,
                         stdoutPath = stdoutPath,
                         stderrPath = stderrPath,
@@ -222,8 +231,9 @@ internal object LaunchReadiness {
                     )
                 }
             } catch (ex: IOException) {
-                rethrowIfProcessDied(process, gradleish, stdoutPath, stderrPath)
-                throw LaunchAgentBootstrapException(
+                bootstrapFailureOrProcessExit(
+                    process = process,
+                    gradleish = gradleish,
                     attachedPid = attachedPid,
                     stdoutPath = stdoutPath,
                     stderrPath = stderrPath,
@@ -261,6 +271,57 @@ internal object LaunchReadiness {
             throw processExited(process, stdoutPath, stderrPath)
         }
     }
+
+    /**
+     * Terminal AGENT_BOOTSTRAP failure — unless the launched process was simply on its way out.
+     *
+     * [awaitProcessAlive] only samples the process for [SETTLE_MS], so a command that is still
+     * starting up when the sample lands satisfies stage [LaunchStage.PROCESS_ALIVE] and the launch
+     * walks on. When the attach then fails, a loaded host can leave the process a few hundred
+     * milliseconds short of exiting, and an instantaneous liveness check calls it a bootstrap
+     * failure. That hides the real cause: nothing could attach because the process was exiting.
+     *
+     * So wait up to [PROCESS_EXIT_GRACE_MS] for it to finish. If it does, report the honest stage
+     * with its exit code and captured stderr; if it is still running, the bootstrap failure is
+     * genuine and keeps its own taxonomy. The wait only ever happens on a failure path (#447).
+     *
+     * Gradle-ish launches are exempt: their client exiting is normal, and
+     * [GRADLE_CLIENT_DEAD_BEFORE_APP_JVM] already covers the case where that matters.
+     */
+    internal fun bootstrapFailureOrProcessExit(
+        process: Process,
+        gradleish: Boolean,
+        attachedPid: Long,
+        stdoutPath: Path,
+        stderrPath: Path,
+        cause: Throwable,
+        /** Seam for tests; production always waits [PROCESS_EXIT_GRACE_MS]. */
+        graceMs: Long = PROCESS_EXIT_GRACE_MS,
+    ): Nothing {
+        if (!gradleish && exitedWithinGrace(process, graceMs)) {
+            throw processExited(process, stdoutPath, stderrPath)
+        }
+        throw LaunchAgentBootstrapException(
+            attachedPid = attachedPid,
+            stdoutPath = stdoutPath,
+            stderrPath = stderrPath,
+            cause = cause,
+        )
+    }
+
+    /**
+     * True when [process] has already exited, or exits within [graceMs].
+     *
+     * Returns immediately for an already-dead process. An interrupt during the wait restores the
+     * interrupt flag and answers from the current liveness rather than swallowing the signal.
+     */
+    internal fun exitedWithinGrace(process: Process, graceMs: Long): Boolean =
+        try {
+            process.waitFor(graceMs, TimeUnit.MILLISECONDS)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            !process.isAlive
+        }
 
     fun awaitFirstWindow(
         automator: AttachedAutomator,
@@ -345,6 +406,13 @@ internal object LaunchReadiness {
 
     private const val POLL_MS: Long = 50
     private const val SETTLE_MS: Long = 250
+
+    /**
+     * How long a failed agent bootstrap waits for the launched process to finish exiting before
+     * blaming itself (#447). Only spent on a failure path, and small next to the stage budgets it
+     * disambiguates.
+     */
+    private const val PROCESS_EXIT_GRACE_MS: Long = 2_000
     private const val STDERR_EXCERPT_CHARS: Int = 4_096
 
     /**
