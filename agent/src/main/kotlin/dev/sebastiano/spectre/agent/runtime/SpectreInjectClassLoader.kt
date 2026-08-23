@@ -6,9 +6,10 @@ import java.net.URLClassLoader
 /**
  * Child-first classloader for the #209 inject payload.
  *
- * Loads Spectre core, inject marker, relocated kotlinx, and other bundled non-Compose deps from the
- * inject jar first so they never collide with IDE-shipped kotlinx. Everything else (Compose, Kotlin
- * stdlib, JDK) delegates to [parent] — the target's Compose-capable loader.
+ * Loads Spectre core, inject marker, relocated coroutines/serialization, and other bundled
+ * non-Compose deps from the inject jar first so they never collide with IDE-shipped kotlinx.
+ * Everything else (Compose, Kotlin stdlib, JDK) delegates to [parent] — the target's
+ * Compose-capable loader.
  */
 internal class SpectreInjectClassLoader(urls: Array<URL>, parent: ClassLoader) :
     URLClassLoader(urls, parent) {

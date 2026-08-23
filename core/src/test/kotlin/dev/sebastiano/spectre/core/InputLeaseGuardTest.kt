@@ -58,6 +58,18 @@ class InputLeaseGuardTest {
     }
 
     @Test
+    fun `ambient whole-test lease prevents factory driver self-contention`() {
+        val coordinator = RecordingInputLeaseCoordinator()
+        val driver = realDriver(coordinator)
+        val wholeTestLease = recordingLease()
+
+        AmbientInputLease.withLease(wholeTestLease) { runBlocking { driver.click(10, 20) } }
+
+        assertEquals(2, wholeTestLease.checkpoints)
+        assertTrue(coordinator.operations.isEmpty())
+    }
+
+    @Test
     fun `automator exclusive scope exposes coordinated input verbs and capabilities`() = runTest {
         val coordinator = RecordingInputLeaseCoordinator()
         val driver = realDriver(coordinator)

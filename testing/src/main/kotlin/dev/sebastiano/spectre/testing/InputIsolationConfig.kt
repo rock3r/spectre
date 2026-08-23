@@ -88,6 +88,9 @@ internal class InputIsolationSession(
         lease?.let { acquired -> binding = acquired.bind(automator) }
     }
 
+    fun createAutomator(factory: () -> ComposeAutomator): ComposeAutomator =
+        lease?.withLease(factory) ?: factory()
+
     override fun close() {
         try {
             binding?.close()

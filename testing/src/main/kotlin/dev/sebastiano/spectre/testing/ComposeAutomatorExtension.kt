@@ -174,7 +174,7 @@ internal constructor(
         store.put(isolationKey, isolation)
         runCatching {
                 isolation.acquireBeforeFactory()
-                val automator = factory()
+                val automator = isolation.createAutomator(factory)
                 isolation.bindAfterFactory(automator)
                 store.put(STORE_KEY, automator)
                 lastInstance = automator

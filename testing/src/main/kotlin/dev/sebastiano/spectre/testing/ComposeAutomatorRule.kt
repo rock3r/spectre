@@ -184,7 +184,7 @@ internal constructor(
                     )
                 try {
                     isolation.acquireBeforeFactory()
-                    instance = factory()
+                    instance = isolation.createAutomator(factory)
                     isolation.bindAfterFactory(automator)
                     startFailureVideo(lastDescription)
                     // runCatching so both Exception and AssertionError (JUnit 4 failures) are

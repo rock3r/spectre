@@ -113,7 +113,7 @@ private constructor(
             } catch (_: IOException) {
                 // Connection loss is represented by the shared connected fence below.
             } finally {
-                connected.set(false)
+                close()
             }
         }
         heartbeatExecutor.scheduleWithFixedDelay(
@@ -208,7 +208,7 @@ private constructor(
                         it !is InputCoordinatorException ||
                             it.errorCode == LeaseErrorCode.STALE_EPOCH.name
                     ) {
-                        connected.set(false)
+                        close()
                     }
                 }
         }
@@ -285,7 +285,7 @@ private constructor(
                         send(tokenMessage(CoordinatorWireKind.HEARTBEAT, token))
                     } catch (failure: IOException) {
                         registration.invalidate()
-                        connected.set(false)
+                        this@LocalInputCoordinatorClient.close()
                         throw failure
                     }
                 if (response.ok) return
@@ -305,8 +305,12 @@ private constructor(
             leaseRegistrations.computeIfPresent(token.leaseId) { _, existing ->
                 if (existing !== registration || existing.release() > 0) existing else null
             }
-            if (connected.get())
+            if (connected.get()) {
                 runCatching { send(tokenMessage(CoordinatorWireKind.RELEASE, token)) }
+                    .onFailure { failure ->
+                        if (failure is IOException) this@LocalInputCoordinatorClient.close()
+                    }
+            }
         }
     }
 

@@ -39,7 +39,9 @@ class InputIsolationLifecycleTest {
         assertEquals(
             listOf(
                 "acquire:InputIsolationLifecycleTest#extensionTestFixture",
+                "enter-factory-lease",
                 "factory",
+                "exit-factory-lease",
                 "bind",
                 "body",
                 "unbind",
@@ -67,7 +69,9 @@ class InputIsolationLifecycleTest {
         assertEquals(
             listOf(
                 "acquire:InputIsolationLifecycleTest#extensionTestFixture",
+                "enter-factory-lease",
                 "factory",
+                "exit-factory-lease",
                 "release",
             ),
             events,
@@ -98,7 +102,9 @@ class InputIsolationLifecycleTest {
         assertEquals(
             listOf(
                 "acquire:InputIsolationLifecycleTest#rule test",
+                "enter-factory-lease",
                 "factory",
+                "exit-factory-lease",
                 "bind",
                 "body",
                 "unbind",
@@ -143,6 +149,15 @@ private fun recordingLeaseFactory(events: MutableList<String>): InputTestLeaseFa
     InputTestLeaseFactory { _: InputLeaseOptions, ownerLabel: String ->
         events += "acquire:$ownerLabel"
         object : AutomatorInputLease {
+            override fun <T> withLease(block: () -> T): T {
+                events += "enter-factory-lease"
+                return try {
+                    block()
+                } finally {
+                    events += "exit-factory-lease"
+                }
+            }
+
             override fun bind(automator: ComposeAutomator): AutoCloseable {
                 events += "bind"
                 return AutoCloseable { events += "unbind" }

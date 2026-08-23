@@ -73,6 +73,9 @@ public class ContendedEdtInputLeaseException(message: String, cause: Throwable? 
 public interface AutomatorInputLease : AutoCloseable {
     /** Binds this lease to [automator] until the returned handle is closed. */
     public fun bind(automator: ComposeAutomator): AutoCloseable
+
+    /** Makes this lease ambient while synchronous factory/setup code creates its automator. */
+    public fun <T> withLease(block: () -> T): T = block()
 }
 
 /** Internal integration entry point for acquiring whole-test desktop input leases. */
@@ -101,6 +104,8 @@ private class ProductionAutomatorInputLease(
 
     override fun bind(automator: ComposeAutomator): AutoCloseable = automator.bindInputLease(lease)
 
+    override fun <T> withLease(block: () -> T): T = AmbientInputLease.withLease(lease, block)
+
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         try {
@@ -128,6 +133,23 @@ internal enum class CoordinatedResource {
     FOCUS,
 }
 
+internal object AmbientInputLease {
+    private val current = ThreadLocal<CoordinatedInputLease?>()
+
+    fun current(): CoordinatedInputLease? = current.get()
+
+    fun <T> withLease(lease: CoordinatedInputLease, block: () -> T): T {
+        val previous = current.get()
+        current.set(lease)
+        return try {
+            lease.checkpoint()
+            block()
+        } finally {
+            if (previous == null) current.remove() else current.set(previous)
+        }
+    }
+}
+
 internal class InputLeaseGuard(
     private val policy: InputLeasePolicy,
     private val capabilities: InputCapabilities,
@@ -142,6 +164,10 @@ internal class InputLeaseGuard(
         block: suspend () -> T,
     ): T {
         boundLease.get()?.let { lease ->
+            lease.checkpoint()
+            return block()
+        }
+        AmbientInputLease.current()?.let { lease ->
             lease.checkpoint()
             return block()
         }

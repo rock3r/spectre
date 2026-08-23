@@ -9,6 +9,11 @@ public final class dev/sebastiano/spectre/core/AutomatorIdlingResource$DefaultIm
 
 public abstract interface class dev/sebastiano/spectre/core/AutomatorInputLease : java/lang/AutoCloseable {
 	public abstract fun bind (Ldev/sebastiano/spectre/core/ComposeAutomator;)Ljava/lang/AutoCloseable;
+	public fun withLease (Lkotlin/jvm/functions/Function0;)Ljava/lang/Object;
+}
+
+public final class dev/sebastiano/spectre/core/AutomatorInputLease$DefaultImpls {
+	public static fun withLease (Ldev/sebastiano/spectre/core/AutomatorInputLease;Lkotlin/jvm/functions/Function0;)Ljava/lang/Object;
 }
 
 public final class dev/sebastiano/spectre/core/AutomatorNode {

@@ -36,6 +36,11 @@ The same `inputIsolation` constructor is available on `ComposeAutomatorRule` for
 - `PerInteraction` keeps the compatibility default and relies on core operation/scoped leases.
 - `Off` declares that coordination is external or intentionally disabled.
 
+During a synchronous custom factory, `PerTest` makes its acquired lease ambient on the invoking
+thread. A factory that uses `RobotDriver(InputLeasePolicy.Required)` for setup therefore reuses the
+whole-test lease instead of queueing behind itself. Do not launch factory work that outlives the
+factory call; after the factory returns, the lease is bound to the returned automator normally.
+
 JUnit 5 stores the lease per invocation, so parameter-injected automators remain parallel-safe.
 JUnit 4 wraps the complete `Statement.evaluate()` lifecycle. Owner diagnostics contain class and
 method identity, never parameter values. `LaunchAndAttachExtension` and `LaunchAndAttachRule` do
