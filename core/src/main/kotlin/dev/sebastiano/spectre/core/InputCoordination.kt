@@ -297,7 +297,15 @@ internal class ProductionInputLeaseCoordinator(
         if (immediate) {
             return requireNotNull(client.get()).tryAcquire(currentOperation)
         }
-        return runInterruptible(ioDispatcher) { acquireBlocking(options, currentOperation) }
+        val acquired = AtomicReference<CoordinatedInputLease?>()
+        return try {
+            runInterruptible(ioDispatcher) {
+                    acquireBlocking(options, currentOperation).also(acquired::set)
+                }
+                .also { acquired.set(null) }
+        } finally {
+            acquired.getAndSet(null)?.close()
+        }
     }
 
     override fun close() {

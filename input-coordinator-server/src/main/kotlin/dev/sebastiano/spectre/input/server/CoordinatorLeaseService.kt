@@ -11,6 +11,7 @@ import dev.sebastiano.spectre.input.CoordinatorWireWaiter
 import dev.sebastiano.spectre.input.DesktopResourceKey
 import dev.sebastiano.spectre.input.LeaseOwner
 import dev.sebastiano.spectre.input.LeaseToken
+import java.io.IOException
 import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
@@ -65,9 +66,9 @@ internal class CoordinatorLeaseService(
         }
         return when (val result = machine.acquire(request)) {
             is AcquireResult.Granted -> {
-                recoveryLedger?.record(result.grant)
-                requestTracker.rememberGrant(result.grant)
-                CompletableFuture.completedFuture(wireMapper.grant(result.grant))
+                CompletableFuture.completedFuture(
+                    recordGrantOrRollback(result.grant) ?: wireMapper.grant(result.grant)
+                )
             }
             is AcquireResult.Queued ->
                 if (message.waitForLease) {
@@ -269,9 +270,25 @@ internal class CoordinatorLeaseService(
     }
 
     private fun completeGrant(grant: LeaseGrant) {
-        recoveryLedger?.record(grant)
+        val response = recordGrantOrRollback(grant) ?: wireMapper.grant(grant)
+        pendingAcquires.remove(grant.requestId)?.complete(response)
+    }
+
+    private fun recordGrantOrRollback(grant: LeaseGrant): CoordinatorWireMessage? {
+        try {
+            recoveryLedger?.record(grant)
+        } catch (_: IOException) {
+            val rollback = machine.release(grant.token, advanceQueue = false)
+            check(rollback !is ReleaseResult.Rejected) {
+                "Could not roll back an unpersisted input lease grant"
+            }
+            return error(
+                "RECOVERY_PERSISTENCE_FAILED",
+                "Could not persist the input lease recovery record",
+            )
+        }
         requestTracker.rememberGrant(grant)
-        pendingAcquires.remove(grant.requestId)?.complete(wireMapper.grant(grant))
+        return null
     }
 
     private fun success(

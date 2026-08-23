@@ -24,6 +24,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -273,6 +274,48 @@ class InputLeaseGuardTest {
         }
 
     @Test
+    fun `cancellation after production acquisition closes the discarded lease`() = runTest {
+        val directory = Files.createTempDirectory("spc-h-")
+        val endpoint = CoordinatorEndpoint(directory, directory.resolve("coordinator.sock"))
+        val resource = DesktopResourceKey("test/cancelled-handoff")
+        val server =
+            LocalCoordinatorServer(endpoint, idleTimeout = JavaDuration.ofMinutes(1)).also {
+                it.start()
+            }
+        val acquisitionDispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        val coordinator =
+            ProductionInputLeaseCoordinator(
+                ioDispatcher = acquisitionDispatcher,
+                connectClient = { label ->
+                    LocalInputCoordinatorClient.connect(endpoint, resource, label)
+                },
+            )
+        try {
+            val discarded =
+                async(start = CoroutineStart.UNDISPATCHED) {
+                    coordinator.acquire(InputLeaseOptions(), "discarded", immediate = false)
+                }
+            awaitHolder(endpoint, resource)
+
+            discarded.cancel()
+            discarded.join()
+
+            LocalInputCoordinatorClient.connect(endpoint, resource, "successor").use { successor ->
+                successor.acquire(JavaDuration.ofSeconds(2), "successor").close()
+            }
+        } finally {
+            coordinator.close()
+            acquisitionDispatcher.close()
+            server.close()
+            Files.deleteIfExists(endpoint.socketPath)
+            Files.deleteIfExists(directory.resolve("coordinator.lock"))
+            Files.deleteIfExists(directory.resolve("recovery.properties.tmp"))
+            Files.deleteIfExists(directory.resolve("recovery.properties"))
+            Files.deleteIfExists(directory)
+        }
+    }
+
+    @Test
     fun `driver-bound lease takes precedence even when operation acquisition is off`() = runTest {
         val coordinator = RecordingInputLeaseCoordinator()
         val driver = realDriver(coordinator, policy = InputLeasePolicy.Off)
@@ -411,6 +454,17 @@ class InputLeaseGuardTest {
             Thread.onSpinWait()
         }
         assertTrue(false, "Timed out waiting for $expected queued lease request")
+    }
+
+    private fun awaitHolder(endpoint: CoordinatorEndpoint, resource: DesktopResourceKey) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+        while (System.nanoTime() < deadline) {
+            val status = LocalInputCoordinatorControl(endpoint).status(resource)
+            val active = status as? CoordinatorControlResult.Active
+            if (active?.status?.holder != null) return
+            Thread.onSpinWait()
+        }
+        assertTrue(false, "Timed out waiting for a granted lease")
     }
 }
 

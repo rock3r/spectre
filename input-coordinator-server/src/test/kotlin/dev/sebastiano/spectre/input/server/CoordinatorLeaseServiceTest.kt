@@ -10,6 +10,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -232,6 +233,46 @@ class CoordinatorLeaseServiceTest {
             assertTrue(service.release(tokenMessage(second, "second-client")).ok)
 
             assertNull(RecoveryLedger(path, Duration.ofSeconds(5)).load())
+        } finally {
+            service.close()
+            Files.deleteIfExists(path.resolveSibling("${path.fileName}.tmp"))
+            Files.deleteIfExists(path)
+            Files.deleteIfExists(directory)
+        }
+    }
+
+    @Test
+    fun `failed FIFO grant persistence rolls back the hidden holder`() {
+        val directory = Files.createTempDirectory("spc-service-ledger-failure-")
+        val path = directory.resolve("recovery.properties")
+        val service =
+            CoordinatorLeaseService(
+                epoch = "epoch",
+                heartbeatTimeout = Duration.ofSeconds(5),
+                revokeGrace = Duration.ofSeconds(1),
+                recoveryGrace = Duration.ofSeconds(1),
+                recoveryLedger = RecoveryLedger(path, Duration.ofSeconds(5)),
+            )
+        try {
+            service.openSession("holder-client")
+            service.openSession("waiting-client")
+            service.openSession("successor-client")
+            val holder = service.acquire(acquire("holder", "holder-client")).get()
+            val waiting = service.acquire(acquire("waiting", "waiting-client"))
+            Files.delete(path)
+            Files.delete(directory)
+
+            assertTrue(service.release(tokenMessage(holder, "holder-client")).ok)
+            val failedHandoff = waiting.get(1, TimeUnit.SECONDS)
+
+            assertFalse(failedHandoff.ok)
+            assertEquals("RECOVERY_PERSISTENCE_FAILED", failedHandoff.errorCode)
+
+            Files.createDirectory(directory)
+            assertTrue(service.acquire(acquire("successor", "successor-client")).get().ok)
+            val recovered = assertNotNull(RecoveryLedger(path, Duration.ofSeconds(5)).load())
+            assertFalse(recovered.blocksAllResources)
+            assertEquals("successor-client", recovered.owner.clientId)
         } finally {
             service.close()
             Files.deleteIfExists(path.resolveSibling("${path.fileName}.tmp"))

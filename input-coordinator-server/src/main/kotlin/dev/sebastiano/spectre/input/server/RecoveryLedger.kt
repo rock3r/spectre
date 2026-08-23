@@ -56,9 +56,17 @@ internal class RecoveryLedger(private val path: Path, private val heartbeatTimeo
                     System.currentTimeMillis() + heartbeatTimeout.toMillis(),
                 blocksAllResources = false,
             )
-        current[record.leaseId] = record
+        val previous = current.put(record.leaseId, record)
+        val wasRecoveryLease = record.leaseId in recoveryLeaseIds
         recoveryLeaseIds -= record.leaseId
-        persist()
+        try {
+            persist()
+        } catch (failure: IOException) {
+            if (previous == null) current.remove(record.leaseId)
+            else current[record.leaseId] = previous
+            if (wasRecoveryLease) recoveryLeaseIds += record.leaseId
+            throw failure
+        }
     }
 
     @Synchronized
