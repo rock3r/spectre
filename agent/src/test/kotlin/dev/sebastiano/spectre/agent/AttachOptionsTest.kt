@@ -110,7 +110,9 @@ class AttachOptionsTest {
 
         val selected = AttachOptions.selectUdsPath(listOf(deepBase, "/tmp"), perAttachDir)
 
-        assertEquals(Path.of("/tmp", perAttachDir, "agent.sock"), selected)
+        // `.toAbsolutePath()` on the expected value too: `/tmp` is drive-relative on Windows, so
+        // selection resolves it to `C:\tmp\…` there and leaves it untouched on POSIX.
+        assertEquals(Path.of("/tmp", perAttachDir, "agent.sock").toAbsolutePath(), selected)
     }
 
     @Test
@@ -119,7 +121,7 @@ class AttachOptionsTest {
 
         val selected = AttachOptions.selectUdsPath(listOf("/tmp", "/other"), perAttachDir)
 
-        assertEquals(Path.of("/tmp", perAttachDir, "agent.sock"), selected)
+        assertEquals(Path.of("/tmp", perAttachDir, "agent.sock").toAbsolutePath(), selected)
     }
 
     @Test
