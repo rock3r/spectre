@@ -93,8 +93,14 @@ If you depend on `agent`, keep the artifact roles separate:
   `AgentAttach`, `AttachedAutomator`, and `AttachOptions`.
 - Add `spectre-agent-runtime` to the attacher's runtime/test-runtime classpath. `AgentAttach`
   locates that physical jar and passes it to `VirtualMachine.loadAgent(...)`.
-- Add `spectre-core` to the target app. The target does not need `spectre-agent` or
-  `spectre-agent-runtime` declared as dependencies.
+- Prefer adding `spectre-core` to the **target** app (instrumented attach). The target does
+  not need `spectre-agent` or `spectre-agent-runtime` declared as dependencies.
+- If the target cannot take that dependency (stock IDE, third-party binary) but already
+  loads Compose, attach still works: `spectre-agent-runtime` carries a nested
+  `META-INF/spectre/inject-runtime.jar` and bootstrap loads Spectre core from that payload.
+  Same `AgentAttach.attach(pid)` call — no separate inject flag. This is an experimental
+  inspect path; prefer preinstalled core when you control the target build. See
+  [Agent attach](agent.md).
 
 Custom launchers that do not expose the runtime jar on `java.class.path` can pass an explicit
 `AttachOptions.agentJarPath` or set `-Ddev.sebastiano.spectre.agent.runtimeJar=<path>`. See

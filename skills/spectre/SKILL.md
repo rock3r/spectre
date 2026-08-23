@@ -312,8 +312,9 @@ touches that area*; they are not needed for the common case.
   the repo-local `jewel-swing-interop` skill applies as well.
 - **Java-agent attach** → `references/agent.md` — `AgentAttach`,
   `AttachedAutomator`, `AttachOptions`, the `spectre-agent` /
-  `spectre-agent-runtime` split, runtime jar auto-discovery, and custom
-  attach paths.
+  `spectre-agent-runtime` split, runtime jar auto-discovery, custom
+  attach paths, and **inject** when the target has Compose but no
+  preinstalled `spectre-core`.
 
 ## Common pitfalls (memorise these)
 

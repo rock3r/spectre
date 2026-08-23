@@ -65,9 +65,21 @@ Two facts worth knowing up front:
 - An embedded `ComposePanel` has no top-level title. Window-targeted
   recording can't follow it; use region capture or pass the host IDE frame.
 
+## External attach without `spectre-core`
+
+When you need to inspect Jewel-hosted Compose from a **sister process** and
+the IDE (or plugin) does **not** ship `spectre-core`, use agent attach. The
+same `AgentAttach.attach(pid)` call injects nested
+`META-INF/spectre/inject-runtime.jar` when core is absent. Add
+`-XX:+EnableDynamicAgentLoading` to the IDE VM options and restart. Prefer
+in-process `ComposeAutomator` (sections above) when your code already runs
+inside the IDE. Details: `references/agent.md` and the user guide
+[IntelliJ-hosted Compose](https://spectre.sebastiano.dev/guide/intellij/).
+
 ## What about HTTP / cross-JVM?
 
 The `:server` module that lets another JVM drive the IDE's Compose UI is
 **experimental** and has security caveats (see `docs/SECURITY.md` in the
 repo). Don't recommend it for general use without flagging that — prefer
-running tests in-process via `executeOnPooledThread`.
+running tests in-process via `executeOnPooledThread`, or agent attach
+(inject when the IDE build does not ship Spectre).

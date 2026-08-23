@@ -290,7 +290,7 @@ A few things to know about IDE-hosted Compose surfaces:
     1. **Region-capture the tool window's screen bounds.** Compute the tool window
        component's `boundsOnScreen` and pass it to `AutoRecorder.startRegion(...)`.
        `AutoRecorder` routes that through platform region capture (Windows Graphics
-       Capture on Windows, `ffmpeg` on macOS, the Linux helper on Xorg/Xvfb, or the Wayland portal on
+       Capture on Windows, the ScreenCaptureKit helper on macOS, the Linux helper on Xorg/Xvfb, or the Wayland portal on
        Linux Wayland). Works everywhere; the trade-off is
        that anything overlapping the captured rectangle — the IDE's chrome,
        notifications, popups that escape the tool window's bounds — appears in the
@@ -317,9 +317,9 @@ A few things to know about IDE-hosted Compose surfaces:
 - **Popups inside the IDE** are still tracked. Compose creates separate roots for them,
   and Spectre's window tracking enumerates each one — your selectors find nodes regardless
   of whether they live in the main tool window or a dropdown.
-- **The IDE owns its own EDT**. Spectre's `waitForIdle` and `waitForVisualIdle` still
-  refuse to run on it, so any code path triggered from a UI handler needs to bounce
-  off to a pooled background thread before calling them.
+- **The IDE owns its own EDT**. Spectre's `waitForNode`, `waitForIdle`, and
+  `waitForVisualIdle` still refuse to run on it, so any code path triggered from a
+  UI handler needs to bounce off to a pooled background thread before calling them.
 
 ## Where to look
 

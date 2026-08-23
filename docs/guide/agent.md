@@ -563,8 +563,9 @@ Not additive-safe without a version bump:
   # PowerShell: quote -P… so the shell does not split on the property name
   ./gradlew :agent:test "-Pspectre.agent.attachE2e.allowWindows=true" --tests '*AgentAttachIntegration*'
   ```
-- **Wait ops.** `waitForNode` / `waitForVisualIdle` are supported over agent IPC (#201) with
-  shared deadline budgets and cancel. Idling-resource `waitForIdle` stays in-process only.
+- **Wait ops.** `waitForNode`, `waitForVisualIdle`, and fingerprint `waitForIdle` are
+  supported over agent IPC with shared deadline budgets and cancel. Idling-resource
+  registration stays in-process only.
 - **IntelliJ-hosted Compose**: the classloader-disambiguation rule (D-14 in the plan) was
   designed to handle `PluginClassLoader` chains but isn't automatically tested yet. If
   you hit issues attaching to an IntelliJ-hosted target, file a Spectre issue with the

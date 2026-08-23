@@ -15,27 +15,44 @@ Prefer the user guide for detailed setup. Keep answers aligned with it.
 
 ## Mental model
 
-Agent attach involves two JVMs:
+Agent attach involves two JVMs and **two target shapes, one API**:
 
-- **Target JVM**: the Compose app being inspected or driven. It must already have
-  `spectre-core` on its classpath.
-- **Attacher JVM**: the test, inspector, or tool process that calls `AgentAttach.attach(pid)`.
-  It compiles against `spectre-agent` and normally has `spectre-agent-runtime` on its runtime
-  classpath.
+- **Target JVM**: the Compose app being inspected or driven.
+  1. **Preferred — preinstalled `spectre-core`** (instrumented attach). Bootstrap
+     finds `ComposeAutomator` on the app classpath. Use this whenever you control
+     the target build.
+  2. **Inject — no preinstalled core** (experimental inspect). The loadable
+     `spectre-agent-runtime` jar carries a nested `META-INF/spectre/inject-runtime.jar`.
+     Bootstrap loads Spectre core from that payload when the target only has
+     Compose/Skiko. Same `AgentAttach.attach(pid)` call — no separate inject flag.
+     Fine for attach → dump → detach (e.g. stock IntelliJ); prefer preinstalled
+     core for sustained or high-frequency use.
+- **Attacher JVM**: the test, inspector, or tool process that calls
+  `AgentAttach.attach(pid)`. It compiles against `spectre-agent` and normally has
+  `spectre-agent-runtime` on its runtime classpath.
 
-Do not tell users to add `spectre-agent` or `spectre-agent-runtime` to the target app unless they
-are also writing the attacher in that same process. The runtime jar is supplied by the attacher and
-loaded into the target through the JDK Attach API.
+Do not tell users to add `spectre-agent` or `spectre-agent-runtime` to the target app
+unless they are also writing the attacher in that same process. The runtime jar is
+supplied by the attacher and loaded into the target through the JDK Attach API.
+
+Do **not** tell users the target JVM requires a preinstalled `spectre-core`
+dependency. That was true of the original thin-agent design; current bootstrap
+falls back to inject when core is absent.
 
 ## Dependencies
 
-For the target app:
+For the target app, **when you control the build** (preferred):
 
 ```kotlin
 dependencies {
     implementation("dev.sebastiano.spectre:spectre-core:<version>")
 }
 ```
+
+If the target cannot take that dependency (stock IDE, third-party binary), attach
+still works when Compose is present and the attacher's `spectre-agent-runtime` jar
+carries the nested inject payload. No extra target-side Spectre coordinate is
+required.
 
 For the attacher/test process:
 
@@ -46,10 +63,11 @@ dependencies {
 }
 ```
 
-Use `testImplementation` / `testRuntimeOnly` instead when the attacher is a test source set.
+Use `testImplementation` / `testRuntimeOnly` instead when the attacher is a test
+source set.
 
-Do not recommend an `-all` classifier. `spectre-agent-runtime` is a separate artifactId because it
-is the loadable Java-agent runtime, not the normal API jar.
+Do not recommend an `-all` classifier. `spectre-agent-runtime` is a separate
+artifactId because it is the loadable Java-agent runtime, not the normal API jar.
 
 ## What happens during attach
 
@@ -63,21 +81,28 @@ is the loadable Java-agent runtime, not the normal API jar.
    Windows 10 1803+ / Server 2019+) and same-OS-user checks.
 4. Calls `VirtualMachine.attach(pid).loadAgent(runtimeJarPath, udsPath)`.
 5. Lets the target JVM invoke `SpectreAgent.agentmain(...)`.
-6. In the target JVM, finds `ComposeAutomator` from the target's existing `spectre-core`
-   dependency, creates an in-process automator, and starts a UDS IPC server.
+6. In the target JVM, bootstrap **prefers** a preinstalled `ComposeAutomator` on
+   the app classpath. If that class is absent, it extracts
+   `META-INF/spectre/inject-runtime.jar`, opens a child classloader parented at a
+   Compose host loader, and loads Spectre core from that payload. Then it creates
+   an in-process automator and starts a UDS IPC server.
 7. Connects the attach-side `IpcClient` and returns `AttachedAutomator`.
 
 After that, `AttachedAutomator` methods send small IPC requests to the target JVM.
 
+Inject is an **experimental inspect** path: class unload after detach is
+GC-dependent, so do not treat it as a leak-free production mode.
+
 ## Runtime jar discovery and custom attach
 
-Classpath auto-discovery means `AgentAttach` scans the attacher's `java.class.path` for a physical
-`spectre-agent-runtime-*.jar`, then passes that jar path to `VirtualMachine.loadAgent(...)`.
-It does not mean the target app declared `spectre-agent-runtime`, and it does not mean user code
-should call runtime classes directly.
+Classpath auto-discovery means `AgentAttach` scans the attacher's `java.class.path`
+for a physical `spectre-agent-runtime-*.jar`, then passes that jar path to
+`VirtualMachine.loadAgent(...)`. It does not mean the target app declared
+`spectre-agent-runtime`, and it does not mean user code should call runtime classes
+directly.
 
-If a custom launcher, shaded distribution, module-path launch, or script hides the physical runtime
-jar from `java.class.path`, use one of these explicit forms:
+If a custom launcher, shaded distribution, module-path launch, or script hides the
+physical runtime jar from `java.class.path`, use one of these explicit forms:
 
 ```kotlin
 AgentAttach.attach(
@@ -101,5 +126,12 @@ Or set this on the attacher JVM:
   1803 / Server 2019 or newer). No named-pipe transport.
 - The attacher and target must run as the same OS user.
 - The target should start with `-XX:+EnableDynamicAgentLoading`.
-- Communication is local UDS IPC, unauthenticated, and intended for trusted dev/test machines.
-  Trust is filesystem ownership (POSIX 0700/0600 or Windows owner-only ACL).
+- Communication is local UDS IPC, unauthenticated, and intended for trusted
+  dev/test machines. Trust is filesystem ownership (POSIX 0700/0600 or Windows
+  owner-only ACL).
+- Window/surface attach screenshots fail closed; fullscreen is the only
+  screen-pixel capture mode on this path.
+- `waitForIdle` over attach is a fingerprint-only wait. Idling-resource
+  registration stays in-process.
+- JUnit launch-and-attach (`LaunchAndAttachExtension` / `LaunchAndAttachRule`) uses
+  this same attach path; see `references/junit.md` and the user-guide JUnit page.
