@@ -316,6 +316,24 @@ class InputLeaseGuardTest {
     }
 
     @Test
+    fun `synthetic focus participates when coordination is required`() {
+        val coordinator = RecordingInputLeaseCoordinator()
+        val driver =
+            RobotDriver(
+                robot = LeaseTestRobotAdapter(),
+                clipboard = LeaseTestClipboardAdapter(),
+                inputLeasePolicy = InputLeasePolicy.Required,
+                inputLeaseCoordinator = coordinator,
+                inputCapabilities =
+                    InputCapabilities(realOsInput = false, sharedSystemClipboard = false),
+            )
+
+        driver.withBlockingInput("focusWindow") {}
+
+        assertEquals(listOf("focusWindow"), coordinator.operations)
+    }
+
+    @Test
     fun `headless failure happens without coordinator acquisition`() = runTest {
         val coordinator = RecordingInputLeaseCoordinator()
         val driver =

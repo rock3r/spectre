@@ -13,6 +13,7 @@ import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
 import java.nio.channels.FileChannel
 import java.nio.channels.FileLock
+import java.nio.channels.OverlappingFileLockException
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import java.nio.file.Files
@@ -42,6 +43,7 @@ public class LocalCoordinatorServer(
     private val codec: CoordinatorWireCodec = CoordinatorWireCodec(),
 ) : AutoCloseable {
     private val running = AtomicBoolean(false)
+    private val closed = AtomicBoolean(false)
     private val terminated = CountDownLatch(1)
     private val activeConnections = AtomicInteger()
     private val lastActivityNanos = AtomicLong(System.nanoTime())
@@ -70,6 +72,7 @@ public class LocalCoordinatorServer(
     /** Binds the endpoint and starts accepting local client sessions. */
     @Synchronized
     public fun start() {
+        check(!closed.get()) { "Coordinator server is closed" }
         check(!running.get()) { "Coordinator server is already started" }
         val protection = OwnerOnlyEndpointProtection.forPath(endpoint.socketPath)
         protection.prepareDirectory(endpoint.socketPath)
@@ -103,8 +106,10 @@ public class LocalCoordinatorServer(
         terminated.await()
     }
 
+    @Synchronized
     override fun close() {
-        if (!running.getAndSet(false)) return
+        if (!closed.compareAndSet(false, true)) return
+        running.set(false)
         runCatching { listener?.close() }
         idleMonitor?.shutdownNow()
         handlers.shutdownNow()
@@ -222,7 +227,16 @@ public class LocalCoordinatorServer(
     private fun acquireElection() {
         val lockPath = endpoint.directory.resolve("coordinator.lock")
         val channel = FileChannel.open(lockPath, CREATE, WRITE)
-        val lock = channel.tryLock()
+        val lock =
+            try {
+                channel.tryLock()
+            } catch (failure: IOException) {
+                runCatching { channel.close() }
+                throw failure
+            } catch (failure: OverlappingFileLockException) {
+                runCatching { channel.close() }
+                throw failure
+            }
         if (lock == null) {
             channel.close()
             throw IOException("A coordinator already owns ${endpoint.socketPath}")

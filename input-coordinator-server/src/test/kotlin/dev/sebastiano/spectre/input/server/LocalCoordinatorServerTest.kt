@@ -45,6 +45,22 @@ class LocalCoordinatorServerTest {
     }
 
     @Test
+    fun `closing a server after failed election permanently closes its resources`() {
+        val first = LocalCoordinatorServer(endpoint, idleTimeout = Duration.ofMinutes(1))
+        val contender = LocalCoordinatorServer(endpoint, idleTimeout = Duration.ofMinutes(1))
+        resources += first
+        resources += contender
+        first.start()
+
+        assertFailsWith<java.nio.channels.OverlappingFileLockException> { contender.start() }
+        contender.close()
+        first.close()
+
+        val failure = assertFailsWith<IllegalStateException> { contender.start() }
+        assertTrue(requireNotNull(failure.message).contains("closed"))
+    }
+
+    @Test
     fun `two independent clients receive one desktop lease in FIFO order`() {
         startServer()
         val firstClient = client("first")

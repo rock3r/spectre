@@ -221,8 +221,8 @@ internal class InputLeaseGuard(
         if (policy == InputLeasePolicy.Off) return false
         return when (resource) {
             CoordinatedResource.DESKTOP_ANY -> capabilities.requiresDesktopCoordination
-            CoordinatedResource.REAL_INPUT,
-            CoordinatedResource.FOCUS -> capabilities.realOsInput
+            CoordinatedResource.REAL_INPUT -> capabilities.realOsInput
+            CoordinatedResource.FOCUS -> true
             CoordinatedResource.SYSTEM_CLIPBOARD -> capabilities.sharedSystemClipboard
         }
     }
