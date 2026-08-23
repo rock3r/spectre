@@ -157,11 +157,16 @@ internal object LaunchReadiness {
                 )
             }
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(bootstrapTimeoutMs)
+        // Read fresh at each throw site: the attach attempt itself consumes budget, so the value
+        // sampled at the top of the loop is already stale by the time a failure lands.
+        fun graceWithinBudget(): Long =
+            exitGraceMs(TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()))
         var lastAttachFailure: SpectreAttachException? = null
         while (true) {
             val remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())
             if (remainingMs <= 0L) {
                 bootstrapFailureOrProcessExit(
+                    graceMs = graceWithinBudget(),
                     process = process,
                     gradleish = gradleish,
                     attachedPid = attachedPid,
@@ -190,6 +195,7 @@ internal object LaunchReadiness {
                 )
             } catch (ex: SpectreAgentException) {
                 bootstrapFailureOrProcessExit(
+                    graceMs = graceWithinBudget(),
                     process = process,
                     gradleish = gradleish,
                     attachedPid = attachedPid,
@@ -209,6 +215,7 @@ internal object LaunchReadiness {
                         System.nanoTime() >= deadline
                 ) {
                     bootstrapFailureOrProcessExit(
+                        graceMs = graceWithinBudget(),
                         process = process,
                         gradleish = gradleish,
                         attachedPid = attachedPid,
@@ -232,6 +239,7 @@ internal object LaunchReadiness {
                 }
             } catch (ex: IOException) {
                 bootstrapFailureOrProcessExit(
+                    graceMs = graceWithinBudget(),
                     process = process,
                     gradleish = gradleish,
                     attachedPid = attachedPid,
@@ -281,9 +289,10 @@ internal object LaunchReadiness {
      * milliseconds short of exiting, and an instantaneous liveness check calls it a bootstrap
      * failure. That hides the real cause: nothing could attach because the process was exiting.
      *
-     * So wait up to [PROCESS_EXIT_GRACE_MS] for it to finish. If it does, report the honest stage
-     * with its exit code and captured stderr; if it is still running, the bootstrap failure is
-     * genuine and keeps its own taxonomy. The wait only ever happens on a failure path (#447).
+     * So wait [graceMs] for it to finish — capped by the stage budget. If it does, report the
+     * honest stage with its exit code and captured stderr; if it is still running, the bootstrap
+     * failure is genuine and keeps its own taxonomy. The wait only happens on a failure path
+     * (#447).
      *
      * Gradle-ish launches are exempt: their client exiting is normal, and
      * [GRADLE_CLIENT_DEAD_BEFORE_APP_JVM] already covers the case where that matters.
@@ -295,8 +304,8 @@ internal object LaunchReadiness {
         stdoutPath: Path,
         stderrPath: Path,
         cause: Throwable,
-        /** Seam for tests; production always waits [PROCESS_EXIT_GRACE_MS]. */
-        graceMs: Long = PROCESS_EXIT_GRACE_MS,
+        /** Grace to spend waiting for the process to exit; see [exitGraceMs]. */
+        graceMs: Long,
     ): Nothing {
         if (!gradleish && exitedWithinGrace(process, graceMs)) {
             throw processExited(process, stdoutPath, stderrPath)
@@ -308,6 +317,20 @@ internal object LaunchReadiness {
             cause = cause,
         )
     }
+
+    /**
+     * The exit grace to actually spend, given [budgetRemainingMs] left in the AGENT_BOOTSTRAP
+     * stage.
+     *
+     * The grace lives *inside* the caller's stage budget rather than on top of it, so
+     * `agentBootstrapMs` keeps bounding the stage exactly as documented. A caller with a short
+     * failure-detection budget gets its exception on time; an exhausted budget spends nothing.
+     *
+     * A zero grace still reclassifies a process that has already exited — [exitedWithinGrace]
+     * answers immediately in that case — so capping costs only the "still exiting" window.
+     */
+    internal fun exitGraceMs(budgetRemainingMs: Long): Long =
+        budgetRemainingMs.coerceIn(0L, PROCESS_EXIT_GRACE_MS)
 
     /**
      * True when [process] has already exited, or exits within [graceMs].
@@ -408,11 +431,11 @@ internal object LaunchReadiness {
     private const val SETTLE_MS: Long = 250
 
     /**
-     * How long a failed agent bootstrap waits for the launched process to finish exiting before
-     * blaming itself (#447). Only spent on a failure path, and small next to the stage budgets it
-     * disambiguates.
+     * Upper bound on how long a failed agent bootstrap waits for the launched process to finish
+     * exiting before blaming itself (#447). Only ever spent on a failure path, and always capped by
+     * what is left of the caller's stage budget — see [exitGraceMs].
      */
-    private const val PROCESS_EXIT_GRACE_MS: Long = 2_000
+    internal const val PROCESS_EXIT_GRACE_MS: Long = 2_000
     private const val STDERR_EXCERPT_CHARS: Int = 4_096
 
     /**

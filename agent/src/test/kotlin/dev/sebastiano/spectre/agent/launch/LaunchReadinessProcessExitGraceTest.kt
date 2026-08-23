@@ -112,6 +112,43 @@ class LaunchReadinessProcessExitGraceTest {
     private fun captureFile(suffix: String): Path =
         Files.createTempFile("spectre-exit-grace-", "-$suffix.log")
 
+    @Test
+    fun `the grace never outlives the caller's bootstrap-stage budget`() {
+        // Codex P2: a fixed grace on top of an exhausted stage means the documented per-stage
+        // timeout no longer bounds AGENT_BOOTSTRAP, and a caller with a short failure-detection
+        // budget waits up to two extra seconds for its exception.
+        assertEquals(0L, LaunchReadiness.exitGraceMs(budgetRemainingMs = 0))
+        assertEquals(0L, LaunchReadiness.exitGraceMs(budgetRemainingMs = -500))
+        assertEquals(120L, LaunchReadiness.exitGraceMs(budgetRemainingMs = 120))
+    }
+
+    @Test
+    fun `a generous budget still gets the full grace`() {
+        assertEquals(
+            LaunchReadiness.PROCESS_EXIT_GRACE_MS,
+            LaunchReadiness.exitGraceMs(budgetRemainingMs = 60_000),
+        )
+    }
+
+    @Test
+    fun `an exhausted budget still reclassifies a process that has already exited`() {
+        // Capping the grace must not cost the instantaneous case: a process that is already gone
+        // is still a PROCESS_ALIVE failure, budget or no budget.
+        val ex =
+            assertFailsWith<ProcessExitedBeforeAttachException> {
+                LaunchReadiness.bootstrapFailureOrProcessExit(
+                    process = FakeProcess(exitsAfterMs = 0),
+                    gradleish = false,
+                    attachedPid = 4321,
+                    stdoutPath = captureFile("stdout"),
+                    stderrPath = captureFile("stderr"),
+                    cause = IllegalStateException("attach failed"),
+                    graceMs = 0,
+                )
+            }
+        assertEquals(LaunchStage.PROCESS_ALIVE, ex.stage)
+    }
+
     /** Minimal [Process] whose liveness flips after a fixed wall-clock delay. */
     private class FakeProcess(private val exitsAfterMs: Long) : Process() {
         private val startedAt = System.nanoTime()
