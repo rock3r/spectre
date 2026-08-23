@@ -11,8 +11,9 @@ package dev.sebastiano.spectre.testing.contract
  * re-click, and short backoff makes the matrix cell durable without soft-skipping the keyboard
  * path.
  *
- * The whole path is opt-in off CI behind [RealKeyboardGate] (#449): it steals OS keyboard focus, so
- * it cannot run on a machine someone is using.
+ * This helper always presses. The contract corpus decides whether the scenario runs at all — see
+ * [RealKeyboardGate] and [warnSkipped] (#449) — so a direct caller gets the behaviour it asked for
+ * rather than a silent no-op.
  */
 public object PressKeyAfterFocus {
     /** Substring present in agent focus-rejection messages (typeText and pressKey). */
@@ -28,11 +29,6 @@ public object PressKeyAfterFocus {
     private const val DEFAULT_MAX_ATTEMPTS: Int = 8
     private const val BASE_SLEEP_MS: Long = 50L
 
-    /**
-     * Public entry point. Keeps the pre-gate JVM descriptor intact so a consumer compiled against
-     * an older `spectre-testing` jar still links after upgrading only the runtime jar — the gate
-     * and the warning sink are resolved here rather than added as defaulted parameters.
-     */
     public fun run(
         driver: AutomatorContractDriver,
         fieldKey: String,
@@ -41,42 +37,8 @@ public object PressKeyAfterFocus {
         maxAttempts: Int = DEFAULT_MAX_ATTEMPTS,
         sleepMs: (attemptIndex: Int) -> Long = { attempt -> BASE_SLEEP_MS * (attempt + 1) },
         sleeper: (Long) -> Unit = { ms -> Thread.sleep(ms) },
-    ): String =
-        runGated(
-            driver = driver,
-            fieldKey = fieldKey,
-            keyCode = keyCode,
-            modifiers = modifiers,
-            maxAttempts = maxAttempts,
-            sleepMs = sleepMs,
-            sleeper = sleeper,
-            gateEnabled = RealKeyboardGate.isEnabled(),
-            warn = { message -> System.err.println(message) },
-        )
-
-    /**
-     * Seam for tests: the gate decision and the warning sink are injected rather than resolved from
-     * the environment. Internal, so it stays out of the published ABI.
-     */
-    internal fun runGated(
-        driver: AutomatorContractDriver,
-        fieldKey: String,
-        keyCode: Int = DEFAULT_KEY_CODE_TAB,
-        modifiers: Int = 0,
-        maxAttempts: Int = DEFAULT_MAX_ATTEMPTS,
-        sleepMs: (attemptIndex: Int) -> Long = { attempt -> BASE_SLEEP_MS * (attempt + 1) },
-        sleeper: (Long) -> Unit = { ms -> Thread.sleep(ms) },
-        gateEnabled: Boolean,
-        warn: (String) -> Unit = { message -> System.err.println(message) },
     ): String {
         require(maxAttempts > 0) { "maxAttempts must be positive" }
-        if (!gateEnabled) {
-            // Do not touch the driver at all. focusWindow and click are themselves focus-stealing,
-            // so "try it and tolerate the failure" would still disrupt whoever is using the
-            // machine — the exact thing the gate exists to prevent.
-            warn(skipNotice(keyCode))
-            return RealKeyboardGate.SKIPPED_DETAIL
-        }
         var lastError: Throwable? = null
         repeat(maxAttempts) { attempt ->
             // #364: expressible remediation for the pressKey focus-rejection error text.

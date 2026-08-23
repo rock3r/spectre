@@ -13,13 +13,12 @@ class PressKeyAfterFocusTest {
         val driver = RecordingDriver(failFocusTimes = 3)
         val sleeps = mutableListOf<Long>()
         val detail =
-            PressKeyAfterFocus.runGated(
+            PressKeyAfterFocus.run(
                 driver = driver,
                 fieldKey = "field-1",
                 keyCode = 9,
                 maxAttempts = 8,
                 sleeper = { sleeps.add(it) },
-                gateEnabled = true,
             )
         assertTrue(detail.contains("attempts=4"), detail)
         assertEquals(4, driver.focusWindowCount)
@@ -32,12 +31,11 @@ class PressKeyAfterFocusTest {
     fun `succeeds on first pressKey without extra retries`() {
         val driver = RecordingDriver(failFocusTimes = 0)
         val detail =
-            PressKeyAfterFocus.runGated(
+            PressKeyAfterFocus.run(
                 driver = driver,
                 fieldKey = "field-1",
                 maxAttempts = 3,
                 sleeper = {},
-                gateEnabled = true,
             )
         assertTrue(detail.contains("attempts=1"), detail)
         assertEquals(1, driver.focusWindowCount)
@@ -51,12 +49,11 @@ class PressKeyAfterFocusTest {
         // runs hard-fail so Supported Linux evidence stays fail-closed.
         val driver = RecordingDriver(failFocusTimes = 100)
         val result = runCatching {
-            PressKeyAfterFocus.runGated(
+            PressKeyAfterFocus.run(
                 driver = driver,
                 fieldKey = "field-1",
                 maxAttempts = 3,
                 sleeper = {},
-                gateEnabled = true,
             )
         }
         if (PressKeyAfterFocus.isCi() && PressKeyAfterFocus.isMacOs()) {
@@ -85,52 +82,16 @@ class PressKeyAfterFocusTest {
             }
         val ex =
             assertFailsWith<IllegalStateException> {
-                PressKeyAfterFocus.runGated(
+                PressKeyAfterFocus.run(
                     driver = driver,
                     fieldKey = "field-1",
                     maxAttempts = 5,
                     sleeper = {},
-                    gateEnabled = true,
                 )
             }
         assertEquals("boom-not-focus", ex.message)
         assertEquals(1, driver.focusWindowCount)
         assertEquals(1, driver.clickCount)
-    }
-
-    @Test
-    fun `skips without touching the driver when the real-keyboard gate is off`() {
-        // #449: `./gradlew check` must stay runnable while someone uses the machine. Raising the
-        // fixture window and clicking it are themselves focus-stealing, so a gated-off run has to
-        // do nothing at all — not "try and tolerate the failure".
-        val driver = RecordingDriver(failFocusTimes = 0)
-        val detail =
-            PressKeyAfterFocus.runGated(
-                driver = driver,
-                fieldKey = "field-1",
-                sleeper = {},
-                gateEnabled = false,
-                warn = {},
-            )
-        assertEquals(RealKeyboardGate.SKIPPED_DETAIL, detail)
-        assertEquals(0, driver.focusWindowCount)
-        assertEquals(0, driver.clickCount)
-        assertEquals(0, driver.pressKeyCount)
-    }
-
-    @Test
-    fun `tells the developer how to run the keyboard path when it skips`() {
-        val warnings = mutableListOf<String>()
-        PressKeyAfterFocus.runGated(
-            driver = RecordingDriver(failFocusTimes = 0),
-            fieldKey = "field-1",
-            sleeper = {},
-            gateEnabled = false,
-            warn = { warnings.add(it) },
-        )
-        assertEquals(1, warnings.size, warnings.toString())
-        assertTrue(warnings.single().contains("press-key-tab-after-focus"), warnings.single())
-        assertTrue(warnings.single().contains(RealKeyboardGate.ENABLE_HINT), warnings.single())
     }
 
     @Test
