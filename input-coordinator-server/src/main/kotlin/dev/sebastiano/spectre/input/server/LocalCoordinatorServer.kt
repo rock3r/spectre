@@ -162,14 +162,15 @@ public class LocalCoordinatorServer(
 
     private fun handleSession(channel: SocketChannel, request: CoordinatorWireMessage) {
         val clientId = requireNotNull(request.clientId)
-        codec.write(
-            channel,
-            CoordinatorWireMessage(
-                kind = CoordinatorWireKind.RESPONSE,
-                coordinatorEpoch = service.epoch,
-            ),
-        )
+        service.openSession(clientId)
         try {
+            codec.write(
+                channel,
+                CoordinatorWireMessage(
+                    kind = CoordinatorWireKind.RESPONSE,
+                    coordinatorEpoch = service.epoch,
+                ),
+            )
             while (codec.readOrNull(channel) != null) {
                 // The session connection is a liveness sentinel; operations use bounded
                 // connections.

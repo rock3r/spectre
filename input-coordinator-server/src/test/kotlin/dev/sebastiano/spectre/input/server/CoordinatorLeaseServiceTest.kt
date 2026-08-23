@@ -90,6 +90,27 @@ class CoordinatorLeaseServiceTest {
     }
 
     @Test
+    fun `acquire arriving after session disconnect is rejected`() {
+        val service =
+            CoordinatorLeaseService(
+                epoch = "epoch",
+                heartbeatTimeout = Duration.ofSeconds(5),
+                revokeGrace = Duration.ofSeconds(1),
+                recoveryGrace = Duration.ofSeconds(1),
+            )
+        try {
+            service.disconnect("closed-client")
+
+            val response = service.acquire(acquire("late", "closed-client")).get()
+
+            assertFalse(response.ok)
+            assertEquals("CLIENT_DISCONNECTED", response.errorCode)
+        } finally {
+            service.close()
+        }
+    }
+
+    @Test
     fun `cancel arriving before acquire rejects the delayed request`() {
         val service =
             CoordinatorLeaseService(
