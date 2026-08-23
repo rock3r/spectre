@@ -11,6 +11,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class RecoveryLedgerTest {
@@ -50,6 +51,47 @@ class RecoveryLedgerTest {
             assertFalse(recovered.blocksAllResources)
             assertEquals("lease-a", recovered.leaseId)
             assertEquals(DesktopResourceKey("desktop-a"), recovered.resourceKey)
+        } finally {
+            Files.deleteIfExists(path.resolveSibling("${path.fileName}.tmp"))
+            Files.deleteIfExists(path)
+            Files.deleteIfExists(directory)
+        }
+    }
+
+    @Test
+    fun `expiry pruning never removes a live runtime record`() {
+        val directory = Files.createTempDirectory("spc-ledger-")
+        val path = directory.resolve("recovery.properties")
+        try {
+            val ledger = RecoveryLedger(path, Duration.ofMillis(-1))
+            val activeGrant = grant("lease-live", "desktop-live", "client-live")
+            ledger.record(activeGrant)
+
+            ledger.clearExpiredRecovery(Duration.ZERO)
+            ledger.heartbeat(activeGrant.token)
+
+            val recovered = RecoveryLedger(path, Duration.ofMinutes(1)).load()
+            assertEquals("lease-live", assertNotNull(recovered).leaseId)
+        } finally {
+            Files.deleteIfExists(path.resolveSibling("${path.fileName}.tmp"))
+            Files.deleteIfExists(path)
+            Files.deleteIfExists(directory)
+        }
+    }
+
+    @Test
+    fun `expiry pruning removes an eligible record loaded into restart quarantine`() {
+        val directory = Files.createTempDirectory("spc-ledger-")
+        val path = directory.resolve("recovery.properties")
+        try {
+            RecoveryLedger(path, Duration.ofMillis(-1))
+                .record(grant("lease-recovery", "desktop-recovery", "client-recovery"))
+            val restarted = RecoveryLedger(path, Duration.ofMinutes(1))
+            assertNotNull(restarted.load())
+
+            restarted.clearExpiredRecovery(Duration.ZERO)
+
+            assertNull(RecoveryLedger(path, Duration.ofMinutes(1)).load())
         } finally {
             Files.deleteIfExists(path.resolveSibling("${path.fileName}.tmp"))
             Files.deleteIfExists(path)
