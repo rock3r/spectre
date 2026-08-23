@@ -75,11 +75,14 @@ public class DesktopIdentityResolver(
         return if (localMatch != null) {
             "x11-local:${localMatch.groupValues[1]}"
         } else {
-            "x11-remote:$display"
+            val remoteServer =
+                REMOTE_X11_SCREEN_SUFFIX.matchEntire(display)?.groupValues?.get(1) ?: display
+            "x11-remote:$remoteServer"
         }
     }
 
     private companion object {
         val LOCAL_X11_DISPLAY: Regex = Regex("^(?:unix/)?:(\\d+)(?:\\.\\d+)?$")
+        val REMOTE_X11_SCREEN_SUFFIX: Regex = Regex("^(.*:\\d+)\\.\\d+$")
     }
 }

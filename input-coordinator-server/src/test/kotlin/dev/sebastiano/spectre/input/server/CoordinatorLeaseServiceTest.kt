@@ -90,6 +90,62 @@ class CoordinatorLeaseServiceTest {
     }
 
     @Test
+    fun `cancel arriving before acquire rejects the delayed request`() {
+        val service =
+            CoordinatorLeaseService(
+                epoch = "epoch",
+                heartbeatTimeout = Duration.ofSeconds(5),
+                revokeGrace = Duration.ofSeconds(1),
+                recoveryGrace = Duration.ofSeconds(1),
+            )
+        try {
+            service.cancel(
+                CoordinatorWireMessage(
+                    kind = CoordinatorWireKind.CANCEL,
+                    requestId = "delayed",
+                    clientId = "client",
+                    resourceKey = "test/desktop",
+                )
+            )
+
+            val response = service.acquire(acquire("delayed", "client")).get()
+
+            assertFalse(response.ok)
+            assertEquals("ACQUIRE_CANCELLED", response.errorCode)
+        } finally {
+            service.close()
+        }
+    }
+
+    @Test
+    fun `cancel arriving after an unobserved grant releases that exact request`() {
+        val service =
+            CoordinatorLeaseService(
+                epoch = "epoch",
+                heartbeatTimeout = Duration.ofSeconds(5),
+                revokeGrace = Duration.ofSeconds(1),
+                recoveryGrace = Duration.ofSeconds(1),
+            )
+        try {
+            service.acquire(acquire("unobserved", "interrupted-client")).get()
+
+            service.cancel(
+                CoordinatorWireMessage(
+                    kind = CoordinatorWireKind.CANCEL,
+                    requestId = "unobserved",
+                    clientId = "interrupted-client",
+                    resourceKey = "test/desktop",
+                )
+            )
+
+            val successor = service.acquire(acquire("successor", "next-client")).get()
+            assertTrue(successor.ok)
+        } finally {
+            service.close()
+        }
+    }
+
+    @Test
     fun `acknowledged revocation clears its recovery record before advancing FIFO`() {
         val directory = Files.createTempDirectory("spc-service-ledger-")
         val path = directory.resolve("recovery.properties")

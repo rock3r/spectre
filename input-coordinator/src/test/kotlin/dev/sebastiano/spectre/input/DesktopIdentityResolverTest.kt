@@ -35,8 +35,14 @@ class DesktopIdentityResolverTest {
         val first = linux(display = "host-a:10.0")
         val second = linux(display = "host-b:10.0")
 
-        assertEquals("user:1000/x11-remote:host-a:10.0", first.value)
-        assertEquals("user:1000/x11-remote:host-b:10.0", second.value)
+        assertEquals("user:1000/x11-remote:host-a:10", first.value)
+        assertEquals("user:1000/x11-remote:host-b:10", second.value)
+    }
+
+    @Test
+    fun `remote X11 screens share one server identity`() {
+        assertEquals(linux("host.example:10"), linux("host.example:10.0"))
+        assertEquals(linux("host.example:10"), linux("host.example:10.1"))
     }
 
     @Test

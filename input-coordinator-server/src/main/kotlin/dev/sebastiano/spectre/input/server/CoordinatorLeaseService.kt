@@ -37,6 +37,7 @@ internal class CoordinatorLeaseService(
             leaseIdGenerator = LeaseIdGenerator { UUID.randomUUID().toString() },
         )
     private val pendingAcquires = mutableMapOf<String, CompletableFuture<CoordinatorWireMessage>>()
+    private val requestTracker = AcquisitionRequestTracker()
     private val wireMapper = CoordinatorWireMapper()
     private val expiryExecutor = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "spectre-input-expiry").apply { isDaemon = true }
@@ -54,9 +55,13 @@ internal class CoordinatorLeaseService(
     @Synchronized
     fun acquire(message: CoordinatorWireMessage): CompletableFuture<CoordinatorWireMessage> {
         val request = wireMapper.toAcquireRequest(message)
+        if (requestTracker.consumeCancellation(request.owner.clientId, request.requestId)) {
+            return CompletableFuture.completedFuture(error("ACQUIRE_CANCELLED", "Cancelled"))
+        }
         return when (val result = machine.acquire(request)) {
             is AcquireResult.Granted -> {
                 recoveryLedger?.record(result.grant)
+                requestTracker.rememberGrant(result.grant)
                 CompletableFuture.completedFuture(wireMapper.grant(result.grant))
             }
             is AcquireResult.Queued ->
@@ -80,6 +85,12 @@ internal class CoordinatorLeaseService(
     @Synchronized
     fun release(message: CoordinatorWireMessage): CoordinatorWireMessage {
         val token = wireMapper.toToken(message)
+        val response = releaseToken(token)
+        if (response.ok) requestTracker.forgetOneGrant(token, requireNotNull(message.clientId))
+        return response
+    }
+
+    private fun releaseToken(token: LeaseToken): CoordinatorWireMessage {
         return when (val result = machine.release(token)) {
             is ReleaseResult.Released -> {
                 recoveryLedger?.clear(token.leaseId)
@@ -93,6 +104,7 @@ internal class CoordinatorLeaseService(
                         is RevokeResult.Acknowledged -> {
                             if (acknowledged.remainingDepth == 0) {
                                 recoveryLedger?.clear(token.leaseId)
+                                requestTracker.forgetLease(token.leaseId)
                                 acknowledged.nextGrant?.let(::completeGrant)
                             }
                             success()
@@ -111,8 +123,23 @@ internal class CoordinatorLeaseService(
     @Synchronized
     fun cancel(message: CoordinatorWireMessage): CoordinatorWireMessage {
         val requestId = requireNotNull(message.requestId)
-        machine.cancelWaiter(requestId)
-        pendingAcquires.remove(requestId)?.complete(error("ACQUIRE_CANCELLED", "Cancelled"))
+        val clientId = requireNotNull(message.clientId)
+        val cancellation = CancelledAcquire(clientId, requestId)
+        val waiterRemoved = machine.cancelWaiter(requestId)
+        val pending = pendingAcquires.remove(requestId)
+        pending?.complete(error("ACQUIRE_CANCELLED", "Cancelled"))
+        if (!waiterRemoved && pending == null) {
+            val ambiguousGrant = requestTracker.takeGrant(clientId, requestId)
+            if (ambiguousGrant == null) {
+                // The operation connections are independent, so CANCEL can beat ACQUIRE. Retain a
+                // bounded tombstone so the delayed request cannot recreate the cancelled grant.
+                requestTracker.rememberCancellation(cancellation)
+            } else {
+                // ACQUIRE won but its response was lost. Release only that exact hold; unrelated
+                // requests sharing the client session remain live.
+                releaseToken(ambiguousGrant)
+            }
+        }
         return success()
     }
 
@@ -129,6 +156,7 @@ internal class CoordinatorLeaseService(
     @Synchronized
     fun disconnect(clientId: String) {
         recoveryLedger?.clearClient(clientId)
+        requestTracker.forgetClient(clientId)
         val result = machine.disconnect(clientId)
         result.cancelledRequestIds.forEach { requestId ->
             pendingAcquires
@@ -164,6 +192,7 @@ internal class CoordinatorLeaseService(
             return when (val result = machine.forceRecover(leaseId, requesterLabel, reason)) {
                 is RecoveryResult.Recovered -> {
                     recoveryLedger?.clear(leaseId)
+                    requestTracker.forgetLease(leaseId)
                     result.nextGrants.forEach(::completeGrant)
                     success(unsafeTakeover = result.unsafeTakeover)
                 }
@@ -174,12 +203,14 @@ internal class CoordinatorLeaseService(
             is RevokeResult.Requested -> success(unsafeTakeover = result.unsafeTakeover)
             is RevokeResult.Forced -> {
                 recoveryLedger?.clear(leaseId)
+                requestTracker.forgetLease(leaseId)
                 result.nextGrant?.let(::completeGrant)
                 success(unsafeTakeover = result.unsafeTakeover)
             }
             is RevokeResult.Acknowledged -> {
                 if (result.remainingDepth == 0) {
                     recoveryLedger?.clear(leaseId)
+                    requestTracker.forgetLease(leaseId)
                     result.nextGrant?.let(::completeGrant)
                 }
                 success()
@@ -228,6 +259,7 @@ internal class CoordinatorLeaseService(
 
     private fun completeGrant(grant: LeaseGrant) {
         recoveryLedger?.record(grant)
+        requestTracker.rememberGrant(grant)
         pendingAcquires.remove(grant.requestId)?.complete(wireMapper.grant(grant))
     }
 
@@ -261,6 +293,56 @@ internal class CoordinatorLeaseService(
         const val EXPIRY_INTERVAL_MILLIS: Long = 10
     }
 }
+
+private class AcquisitionRequestTracker {
+    private val cancelledBeforeAcquire = LinkedHashSet<CancelledAcquire>()
+    private val grantsByRequest = mutableMapOf<CancelledAcquire, LeaseToken>()
+
+    fun consumeCancellation(clientId: String, requestId: String): Boolean =
+        cancelledBeforeAcquire.remove(CancelledAcquire(clientId, requestId))
+
+    fun rememberCancellation(cancellation: CancelledAcquire) {
+        if (cancelledBeforeAcquire.size >= MAX_CANCELLATION_TOMBSTONES) {
+            val oldest = cancelledBeforeAcquire.iterator()
+            if (oldest.hasNext()) {
+                oldest.next()
+                oldest.remove()
+            }
+        }
+        cancelledBeforeAcquire += cancellation
+    }
+
+    fun rememberGrant(grant: LeaseGrant) {
+        grantsByRequest[CancelledAcquire(grant.owner.clientId, grant.requestId)] = grant.token
+    }
+
+    fun takeGrant(clientId: String, requestId: String): LeaseToken? =
+        grantsByRequest.remove(CancelledAcquire(clientId, requestId))
+
+    fun forgetOneGrant(token: LeaseToken, clientId: String) {
+        val key =
+            grantsByRequest.entries
+                .firstOrNull { (request, grantedToken) ->
+                    request.clientId == clientId && grantedToken == token
+                }
+                ?.key
+        if (key != null) grantsByRequest.remove(key)
+    }
+
+    fun forgetClient(clientId: String) {
+        grantsByRequest.keys.removeAll { it.clientId == clientId }
+    }
+
+    fun forgetLease(leaseId: String) {
+        grantsByRequest.entries.removeAll { it.value.leaseId == leaseId }
+    }
+
+    private companion object {
+        const val MAX_CANCELLATION_TOMBSTONES: Int = 1_024
+    }
+}
+
+private data class CancelledAcquire(val clientId: String, val requestId: String)
 
 private fun AcquisitionTimeout.diagnosticContext(): String =
     holder?.let { snapshot ->
