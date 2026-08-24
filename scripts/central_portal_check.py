@@ -64,6 +64,15 @@ MIN_MAIN_JAR_SIZES = {
     "spectre-testing": 1_000,
 }
 
+REQUIRED_MAIN_JAR_ENTRIES = {
+    "spectre-input-coordinator": (
+        "dev/sebastiano/spectre/input/LocalInputCoordinatorClient.class",
+    ),
+    "spectre-input-coordinator-server": (
+        "dev/sebastiano/spectre/input/server/LocalCoordinatorServer.class",
+    ),
+}
+
 # Aligns with :verifyMavenLocalPublication / WindowsGraphicsCaptureHelperPackagingContract
 # fixed basenames (deps.json asset closure remains Gradle-owned).
 WINDOWS_HELPER_ARCHES = ("x64", "arm64")
@@ -339,6 +348,12 @@ def validate_jar(component: str, jar_path: Path) -> list[str]:
     errors: list[str] = []
     with zipfile.ZipFile(jar_path) as jar:
         entries = {entry.filename: entry.file_size for entry in jar.infolist()}
+
+        for required_entry in REQUIRED_MAIN_JAR_ENTRIES.get(component, ()):
+            if required_entry not in entries:
+                errors.append(f"{component} is missing required entry {required_entry}")
+            elif entries[required_entry] <= 0:
+                errors.append(f"{component} required entry {required_entry} is empty")
 
         if component == "spectre-recording":
             native_entries = sorted(name for name in entries if name.startswith("native/"))

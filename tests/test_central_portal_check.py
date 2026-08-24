@@ -236,6 +236,31 @@ class CentralPortalCheckTest(unittest.TestCase):
 
         self.assertIn("AttachSpike", "\n".join(errors))
 
+    def test_input_coordinator_artifacts_require_representative_classes(self):
+        required_entries = {
+            "spectre-input-coordinator": (
+                "dev/sebastiano/spectre/input/LocalInputCoordinatorClient.class"
+            ),
+            "spectre-input-coordinator-server": (
+                "dev/sebastiano/spectre/input/server/LocalCoordinatorServer.class"
+            ),
+        }
+
+        for component, required_entry in required_entries.items():
+            with self.subTest(component=component, payload="missing"):
+                jar = self._jar({"META-INF/MANIFEST.MF": "Manifest-Version: 1.0\n\n"})
+
+                errors = central.validate_jar(component, jar)
+
+                self.assertIn(required_entry, "\n".join(errors))
+
+            with self.subTest(component=component, payload="present"):
+                jar = self._jar({required_entry: b"class"})
+
+                errors = central.validate_jar(component, jar)
+
+                self.assertEqual(errors, [])
+
     def test_print_files_lists_actual_central_file_listing(self):
         expected_path = (
             "dev/sebastiano/spectre/spectre-core/0.2.0/"

@@ -1,7 +1,8 @@
 # Publishing
 
-Spectre's library modules (`:core`, `:server`, `:recording`, `:recording-macos`,
-`:recording-linux`, `:recording-windows`, `:agent`, `:agent-runtime`, `:testing`) publish to Sonatype Central via the
+Spectre's library modules (`:core`, `:server`, `:input-coordinator`,
+`:input-coordinator-server`, `:recording`, `:recording-macos`, `:recording-linux`,
+`:recording-windows`, `:agent`, `:agent-runtime`, `:testing`) publish to Sonatype Central via the
 [`com.vanniktech.maven.publish`][vanniktech] plugin.
 The sample modules (`:sample-desktop`, `:sample-intellij-plugin`) never apply
 the plugin — they're deliverables, not libraries.
@@ -150,7 +151,7 @@ Manual promotion checklist (after the tag workflow is green):
 
 - Confirm the tag points at the intended, already-reviewed `main` SHA that completed
   [release smoke](RELEASE-SMOKE.md) (results table on file).
-- Inspect the Central Portal staging deployment for all nine modules, including
+- Inspect the Central Portal staging deployment for all eleven modules, including
   POM metadata, sources jars, javadoc jars, and Gradle module metadata.
 - Confirm `spectre-recording-<version>.jar` contains no `native/...` entries.
 - Confirm `spectre-recording-macos-<version>.jar` contains
@@ -280,6 +281,8 @@ contract (fixed required set + deps.json closure) for both arches.
 |---|---|
 | `:core` | `dev.sebastiano.spectre:spectre-core:<version>` |
 | `:server` | `dev.sebastiano.spectre:spectre-server:<version>` |
+| `:input-coordinator` | `dev.sebastiano.spectre:spectre-input-coordinator:<version>` |
+| `:input-coordinator-server` | `dev.sebastiano.spectre:spectre-input-coordinator-server:<version>` |
 | `:recording` | `dev.sebastiano.spectre:spectre-recording:<version>` |
 | `:recording-macos` | `dev.sebastiano.spectre:spectre-recording-macos:<version>` |
 | `:recording-linux` | `dev.sebastiano.spectre:spectre-recording-linux:<version>` |
