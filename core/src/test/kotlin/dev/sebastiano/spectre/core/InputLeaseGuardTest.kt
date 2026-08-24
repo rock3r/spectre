@@ -23,13 +23,16 @@ import javax.swing.SwingUtilities
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 
 class InputLeaseGuardTest {
 
@@ -56,6 +59,40 @@ class InputLeaseGuardTest {
 
         assertEquals(listOf("exclusiveInput"), coordinator.operations)
         assertEquals(1, coordinator.closedLeases)
+    }
+
+    @Test
+    fun `concurrent top-level operations on one driver are serialized`() = runTest {
+        val coordinator = RecordingInputLeaseCoordinator()
+        val guard =
+            InputLeaseGuard(
+                policy = InputLeasePolicy.Required,
+                capabilities = InputCapabilities(realOsInput = true, sharedSystemClipboard = true),
+                coordinator = coordinator,
+            )
+        val firstEntered = CompletableDeferred<Unit>()
+        val releaseFirst = CompletableDeferred<Unit>()
+        val secondEntered = CompletableDeferred<Unit>()
+
+        val first = async {
+            guard.withOperation("first", CoordinatedResource.REAL_INPUT) {
+                firstEntered.complete(Unit)
+                releaseFirst.await()
+            }
+        }
+        firstEntered.await()
+        val second = async {
+            guard.withOperation("second", CoordinatedResource.REAL_INPUT) {
+                secondEntered.complete(Unit)
+            }
+        }
+        yield()
+
+        assertFalse(secondEntered.isCompleted)
+        releaseFirst.complete(Unit)
+        first.await()
+        second.await()
+        assertEquals(listOf("first", "second"), coordinator.operations)
     }
 
     @Test
@@ -153,6 +190,32 @@ class InputLeaseGuardTest {
     }
 
     @Test
+    fun `auto provider fallback remains reentrant for nested composite operations`() = runTest {
+        val coordinator =
+            RecordingInputLeaseCoordinator(
+                acquireFailure =
+                    InputCoordinatorException(
+                        "COORDINATOR_PROVIDER_MISSING",
+                        "runtime artifact unavailable",
+                    )
+            )
+        val guard =
+            InputLeaseGuard(
+                policy = InputLeasePolicy.Auto,
+                capabilities = InputCapabilities(realOsInput = true, sharedSystemClipboard = true),
+                coordinator = coordinator,
+            )
+
+        withTimeout(1_000) {
+            guard.withOperation("outer", CoordinatedResource.REAL_INPUT) {
+                guard.withOperation("inner", CoordinatedResource.REAL_INPUT) {}
+            }
+        }
+
+        assertEquals(listOf("outer"), coordinator.operations)
+    }
+
+    @Test
     fun `auto keeps non-provider coordinator failures loud`() = runTest {
         val coordinator =
             RecordingInputLeaseCoordinator(
@@ -232,6 +295,46 @@ class InputLeaseGuardTest {
                 }
 
             coordinator.acquire(InputLeaseOptions(), "after restart", immediate = false).close()
+        } finally {
+            coordinator.close()
+            server.close()
+            Files.deleteIfExists(endpoint.socketPath)
+            Files.deleteIfExists(directory.resolve("coordinator.lock"))
+            Files.deleteIfExists(directory.resolve("recovery.properties.tmp"))
+            Files.deleteIfExists(directory.resolve("recovery.properties"))
+            Files.deleteIfExists(directory)
+        }
+    }
+
+    @Test
+    fun `production coordinator reopens an idle session when owner label changes`() = runBlocking {
+        val directory = Files.createTempDirectory("spc-label-")
+        val endpoint = CoordinatorEndpoint(directory, directory.resolve("coordinator.sock"))
+        val resource = DesktopResourceKey("test/owner-label")
+        val server =
+            LocalCoordinatorServer(endpoint, idleTimeout = JavaDuration.ofMinutes(1)).also {
+                it.start()
+            }
+        val coordinator =
+            ProductionInputLeaseCoordinator(
+                connectClient = { label ->
+                    LocalInputCoordinatorClient.connect(endpoint, resource, label)
+                }
+            )
+        try {
+            coordinator.acquire(InputLeaseOptions(), "unlabeled", immediate = false).close()
+            val labeled =
+                coordinator.acquire(
+                    InputLeaseOptions(ownerLabel = "submits checkout"),
+                    "labeled",
+                    immediate = false,
+                )
+
+            val status = LocalInputCoordinatorControl(endpoint).status(resource)
+            assertTrue(status is CoordinatorControlResult.Active)
+            assertEquals("submits checkout", status.status.holder?.owner?.label)
+
+            labeled.close()
         } finally {
             coordinator.close()
             server.close()

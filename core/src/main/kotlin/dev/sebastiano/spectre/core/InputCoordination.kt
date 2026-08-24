@@ -25,6 +25,8 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** Controls whether this driver participates in cooperative desktop input coordination. */
@@ -156,6 +158,7 @@ internal class InputLeaseGuard(
     private val coordinator: InputLeaseCoordinator,
 ) {
     private val boundLease = AtomicReference<CoordinatedInputLease?>()
+    private val operationMutex = Mutex()
 
     suspend fun <T> withOperation(
         currentOperation: String,
@@ -163,45 +166,47 @@ internal class InputLeaseGuard(
         options: InputLeaseOptions = InputLeaseOptions(),
         block: suspend () -> T,
     ): T {
-        boundLease.get()?.let { lease ->
-            lease.checkpoint()
+        val operationContext = coroutineContext[LeaseContext]
+        if (operationContext?.guard === this) {
+            operationContext.lease?.checkpoint()
             return block()
         }
-        AmbientInputLease.current()?.let { lease ->
-            lease.checkpoint()
-            return block()
-        }
-        if (!coordinates(resource)) return block()
-        val ambient = coroutineContext[LeaseContext]
-        if (ambient?.guard === this) {
-            ambient.lease.checkpoint()
-            return block()
-        }
-        val immediate = SwingUtilities.isEventDispatchThread()
-        val lease =
-            try {
-                coordinator.acquire(options, currentOperation, immediate)
-            } catch (failure: InputCoordinatorException) {
-                if (
-                    policy == InputLeasePolicy.Auto && failure.errorCode in AUTO_DEGRADE_ERROR_CODES
-                ) {
-                    return block()
-                }
-                if (immediate) {
-                    throw ContendedEdtInputLeaseException(
-                        "Desktop input is contended on the EDT (${failure.message}). " +
-                            "Acquire with withExclusiveInput from a non-EDT test thread or use " +
-                            "JUnit per-test input isolation.",
-                        failure,
-                    )
-                }
-                throw failure
+        val bound = boundLease.get()
+        val ambient = AmbientInputLease.current()
+        if (bound == null && ambient == null && !coordinates(resource)) return block()
+        return operationMutex.withLock {
+            val existingLease = bound ?: ambient
+            if (existingLease != null) {
+                existingLease.checkpoint()
+                return@withLock withContext(LeaseContext(this, existingLease)) { block() }
             }
-        return try {
-            lease.checkpoint()
-            withContext(LeaseContext(this, lease)) { block() }
-        } finally {
-            lease.close()
+            val immediate = SwingUtilities.isEventDispatchThread()
+            val lease =
+                try {
+                    coordinator.acquire(options, currentOperation, immediate)
+                } catch (failure: InputCoordinatorException) {
+                    if (
+                        policy == InputLeasePolicy.Auto &&
+                            failure.errorCode in AUTO_DEGRADE_ERROR_CODES
+                    ) {
+                        return@withLock withContext(LeaseContext(this, null)) { block() }
+                    }
+                    if (immediate) {
+                        throw ContendedEdtInputLeaseException(
+                            "Desktop input is contended on the EDT (${failure.message}). " +
+                                "Acquire with withExclusiveInput from a non-EDT test thread or " +
+                                "use JUnit per-test input isolation.",
+                            failure,
+                        )
+                    }
+                    throw failure
+                }
+            try {
+                lease.checkpoint()
+                withContext(LeaseContext(this, lease)) { block() }
+            } finally {
+                lease.close()
+            }
         }
     }
 
@@ -228,7 +233,7 @@ internal class InputLeaseGuard(
         }
     }
 
-    private class LeaseContext(val guard: InputLeaseGuard, val lease: CoordinatedInputLease) :
+    private class LeaseContext(val guard: InputLeaseGuard, val lease: CoordinatedInputLease?) :
         AbstractCoroutineContextElement(LeaseContext) {
         companion object Key : CoroutineContext.Key<LeaseContext>
     }
@@ -280,23 +285,26 @@ internal class ProductionInputLeaseCoordinator(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val connectClient: ((String?) -> LocalInputCoordinatorClient)? = null,
 ) : InputLeaseCoordinator, AutoCloseable {
-    private val client = AtomicReference<LocalInputCoordinatorClient?>()
+    private val client = AtomicReference<ClientSession?>()
 
     override suspend fun acquire(
         options: InputLeaseOptions,
         currentOperation: String,
         immediate: Boolean,
     ): CoordinatedInputLease {
-        if (immediate && client.get() == null) {
+        val currentSession = client.get()
+        if (
+            immediate && (currentSession == null || currentSession.ownerLabel != options.ownerLabel)
+        ) {
             throw InputCoordinatorException(
                 errorCode = "COORDINATOR_SESSION_UNAVAILABLE",
                 message =
-                    "The coordinator session is not connected; establish an exclusive lease " +
-                        "off the EDT",
+                    "A coordinator session with the requested owner label is not connected; " +
+                        "establish an exclusive lease off the EDT",
             )
         }
         if (immediate) {
-            return requireNotNull(client.get()).tryAcquire(currentOperation)
+            return requireNotNull(currentSession).client.tryAcquire(currentOperation)
         }
         val acquired = AtomicReference<CoordinatedInputLease?>()
         return try {
@@ -310,7 +318,7 @@ internal class ProductionInputLeaseCoordinator(
     }
 
     override fun close() {
-        client.getAndSet(null)?.close()
+        client.getAndSet(null)?.client?.close()
     }
 
     private fun acquireBlocking(
@@ -348,14 +356,28 @@ internal class ProductionInputLeaseCoordinator(
         error("Input coordinator acquisition retry loop exhausted")
     }
 
-    private fun currentClient(ownerLabel: String?): LocalInputCoordinatorClient =
-        client.get()
-            ?: openClient(ownerLabel)
-                .also { opened -> if (!client.compareAndSet(null, opened)) opened.close() }
-                .let { client.get() ?: it }
+    private fun currentClient(ownerLabel: String?): LocalInputCoordinatorClient {
+        while (true) {
+            val current = client.get()
+            if (current != null && current.ownerLabel == ownerLabel) return current.client
+            val opened = ClientSession(ownerLabel, openClient(ownerLabel))
+            if (client.compareAndSet(current, opened)) {
+                current?.client?.close()
+                return opened.client
+            }
+            opened.client.close()
+        }
+    }
 
     private fun discard(staleClient: LocalInputCoordinatorClient) {
-        if (client.compareAndSet(staleClient, null)) staleClient.close()
+        while (true) {
+            val current = client.get() ?: return
+            if (current.client !== staleClient) return
+            if (client.compareAndSet(current, null)) {
+                staleClient.close()
+                return
+            }
+        }
     }
 
     private fun openClient(ownerLabel: String?): LocalInputCoordinatorClient =
@@ -377,6 +399,11 @@ internal class ProductionInputLeaseCoordinator(
                 throw failure
             }
         }
+
+    private data class ClientSession(
+        val ownerLabel: String?,
+        val client: LocalInputCoordinatorClient,
+    )
 
     private companion object {
         const val MAX_CONNECT_ATTEMPTS: Int = 2
