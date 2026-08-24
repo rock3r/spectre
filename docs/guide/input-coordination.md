@@ -66,6 +66,12 @@ The coordinator fences that holder and keeps later work queued until the origina
 acknowledges release. If the process died or cleanup cannot acknowledge, inspect the `revoking`
 holder and use exact-ID forced recovery only after accepting the overlap risk described below.
 
+If recovery-state persistence temporarily prevents a lease from being released, `close()` throws
+`InputCoordinatorException` with `RECOVERY_PERSISTENCE_FAILED`. The client keeps the coordinator
+session live and retries that exact release request in the background; closing the client waits for
+that acknowledgement instead of discarding the only safe cleanup path. Repair the persistence
+problem rather than forcing recovery while the owner can still acknowledge cleanup safely.
+
 ## Choose the narrowest useful mode
 
 | Need | Recommended mode |

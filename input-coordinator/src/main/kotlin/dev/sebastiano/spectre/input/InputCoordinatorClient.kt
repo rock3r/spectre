@@ -19,6 +19,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /** Public, redacted holder diagnostics returned by coordinator inspection. */
 @ExperimentalSpectreInputCoordinationApi
@@ -86,6 +87,12 @@ public interface CoordinatedInputLease : AutoCloseable {
     /** Fails closed when the lease can no longer start coordinated work. */
     public fun checkpoint()
 
+    /**
+     * Releases this hold.
+     *
+     * @throws InputCoordinatorException when release persistence fails. The client retains the
+     *   exact release request and retries it in the background while its session is connected.
+     */
     override fun close()
 }
 
@@ -103,6 +110,7 @@ private constructor(
     private val heartbeatExecutor: ScheduledExecutorService,
 ) : AutoCloseable {
     private val connected = AtomicBoolean(true)
+    private val closeRequested = AtomicBoolean()
     private val closed = AtomicBoolean()
     private val leaseRegistrations = ConcurrentHashMap<String, LeaseRegistration>()
 
@@ -113,7 +121,7 @@ private constructor(
             } catch (_: IOException) {
                 // Connection loss is represented by the shared connected fence below.
             } finally {
-                close()
+                disconnect()
             }
         }
         heartbeatExecutor.scheduleWithFixedDelay(
@@ -188,7 +196,15 @@ private constructor(
         return LocalLease(registration, requestId)
     }
 
+    @Synchronized
     override fun close() {
+        closeRequested.set(true)
+        if (leaseRegistrations.values.any(LeaseRegistration::hasPendingRelease)) return
+        disconnect()
+    }
+
+    @Synchronized
+    private fun disconnect() {
         if (!closed.compareAndSet(false, true)) return
         connected.set(false)
         heartbeatExecutor.shutdownNow()
@@ -200,6 +216,33 @@ private constructor(
     private fun heartbeatAll() {
         if (!connected.get()) return
         leaseRegistrations.values.filter(LeaseRegistration::isValid).forEach { registration ->
+            if (!connected.get()) return
+            val pendingRequestId = registration.pendingReleaseRequestId()
+            if (pendingRequestId != null) {
+                val releaseFailure =
+                    runCatching {
+                            send(
+                                    tokenMessage(
+                                        CoordinatorWireKind.RELEASE,
+                                        registration.token,
+                                        pendingRequestId,
+                                    )
+                                )
+                                .requireSuccess()
+                        }
+                        .exceptionOrNull()
+                if (releaseFailure == null) {
+                    completePendingRelease(registration, pendingRequestId)
+                    return@forEach
+                }
+                if (
+                    releaseFailure !is IOException && !releaseFailure.isReleasePersistenceFailure()
+                ) {
+                    registration.invalidate()
+                    disconnect()
+                    return
+                }
+            }
             runCatching {
                     send(tokenMessage(CoordinatorWireKind.HEARTBEAT, registration.token))
                         .requireSuccess()
@@ -210,9 +253,36 @@ private constructor(
                         it !is InputCoordinatorException ||
                             it.errorCode == LeaseErrorCode.STALE_EPOCH.name
                     ) {
-                        close()
+                        disconnect()
                     }
                 }
+        }
+    }
+
+    @Synchronized
+    private fun releaseRegistration(registration: LeaseRegistration) {
+        leaseRegistrations.computeIfPresent(registration.token.leaseId) { _, existing ->
+            if (
+                existing !== registration || existing.release() > 0 || existing.hasPendingRelease()
+            ) {
+                existing
+            } else {
+                null
+            }
+        }
+    }
+
+    @Synchronized
+    private fun completePendingRelease(registration: LeaseRegistration, requestId: String) {
+        registration.completePendingRelease(requestId)
+        leaseRegistrations.computeIfPresent(registration.token.leaseId) { _, existing ->
+            if (existing !== registration || !existing.canRemove()) existing else null
+        }
+        if (
+            closeRequested.get() &&
+                leaseRegistrations.values.none(LeaseRegistration::hasPendingRelease)
+        ) {
+            disconnect()
         }
     }
 
@@ -299,7 +369,7 @@ private constructor(
                         send(tokenMessage(CoordinatorWireKind.HEARTBEAT, token))
                     } catch (failure: IOException) {
                         registration.invalidate()
-                        this@LocalInputCoordinatorClient.close()
+                        this@LocalInputCoordinatorClient.disconnect()
                         throw failure
                     }
                 if (response.ok) return
@@ -314,26 +384,41 @@ private constructor(
             }
         }
 
+        @Synchronized
         override fun close() {
-            if (!closed.compareAndSet(false, true)) return
-            leaseRegistrations.computeIfPresent(token.leaseId) { _, existing ->
-                if (existing !== registration || existing.release() > 0) existing else null
-            }
+            if (closed.get()) return
             val release = tokenMessage(CoordinatorWireKind.RELEASE, token, requestId)
             val firstAttempt = runCatching { send(release).requireSuccess() }
             val result =
-                if (firstAttempt.exceptionOrNull() is IOException && connected.get()) {
+                if (firstAttempt.exceptionOrNull().isRetryableReleaseFailure() && connected.get()) {
                     runCatching { send(release).requireSuccess() }
                 } else {
                     firstAttempt
                 }
-            result.onFailure { this@LocalInputCoordinatorClient.close() }
+            val failure = result.exceptionOrNull()
+            if (failure.isReleasePersistenceFailure() && connected.get()) {
+                registration.markReleasePending(requestId)
+                closed.set(true)
+                releaseRegistration(registration)
+                throw requireNotNull(failure)
+            }
+
+            closed.set(true)
+            releaseRegistration(registration)
+            if (failure != null) this@LocalInputCoordinatorClient.disconnect()
         }
+
+        private fun Throwable?.isRetryableReleaseFailure(): Boolean =
+            this is IOException || isReleasePersistenceFailure()
+
+        private fun Throwable?.isReleasePersistenceFailure(): Boolean =
+            this is InputCoordinatorException && errorCode == RELEASE_PERSISTENCE_ERROR
     }
 
     private class LeaseRegistration(val token: LeaseToken) {
         private val valid = AtomicBoolean(true)
         private val references = AtomicInteger(1)
+        private val pendingReleaseRequestId = AtomicReference<String?>()
 
         fun isValid(): Boolean = valid.get()
 
@@ -343,10 +428,31 @@ private constructor(
 
         fun release(): Int = references.decrementAndGet()
 
+        fun markReleasePending(requestId: String) {
+            check(pendingReleaseRequestId.compareAndSet(null, requestId)) {
+                "Lease ${token.leaseId} already has a pending release"
+            }
+        }
+
+        fun pendingReleaseRequestId(): String? = pendingReleaseRequestId.get()
+
+        fun hasPendingRelease(): Boolean = pendingReleaseRequestId.get() != null
+
+        fun completePendingRelease(requestId: String) {
+            check(pendingReleaseRequestId.compareAndSet(requestId, null)) {
+                "Lease ${token.leaseId} pending release changed before acknowledgement"
+            }
+        }
+
+        fun canRemove(): Boolean = references.get() == 0 && !hasPendingRelease()
+
         fun invalidate() {
             valid.set(false)
         }
     }
+
+    private fun Throwable?.isReleasePersistenceFailure(): Boolean =
+        this is InputCoordinatorException && errorCode == RELEASE_PERSISTENCE_ERROR
 
     public companion object {
         /** Connects to an already-running compatible coordinator and opens an owner session. */
@@ -402,6 +508,7 @@ private constructor(
 
         private const val HEARTBEAT_INTERVAL_MILLIS: Long = 1_000
         private const val ACQUIRE_RESPONSE_GRACE_MILLIS: Long = 1_000
+        private const val RELEASE_PERSISTENCE_ERROR: String = "RECOVERY_PERSISTENCE_FAILED"
         private val MINIMUM_ACQUIRE_TIMEOUT: Duration = Duration.ofMillis(1)
         private val IMMEDIATE_RESPONSE_TIMEOUT: Duration = Duration.ofSeconds(1)
         private val REQUEST_RESPONSE_TIMEOUT: Duration = Duration.ofSeconds(5)

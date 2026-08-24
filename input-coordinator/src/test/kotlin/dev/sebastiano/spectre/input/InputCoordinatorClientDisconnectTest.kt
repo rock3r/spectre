@@ -282,13 +282,14 @@ class InputCoordinatorClientDisconnectTest {
     }
 
     @Test
-    fun `release error closes the sentinel session`() {
+    fun `release persistence failure remains retryable on the same live session`() {
         val directory = Files.createTempDirectory("spc-cr-")
         val endpoint = CoordinatorEndpoint(directory, directory.resolve("coordinator.sock"))
         val codec = CoordinatorWireCodec()
         val listener = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
         listener.bind(UnixDomainSocketAddress.of(endpoint.socketPath))
         val sentinelClosed = CountDownLatch(1)
+        val backgroundReleaseCompleted = CountDownLatch(1)
         var acquireRequestId: String? = null
         val serverThread =
             Thread.ofVirtual().name("coordinator-release-error-test").start {
@@ -321,19 +322,31 @@ class InputCoordinatorClientDisconnectTest {
                         ),
                     )
                 }
+                repeat(2) {
+                    listener.accept().use { releaseChannel ->
+                        val release = codec.read(releaseChannel)
+                        assertEquals(CoordinatorWireKind.RELEASE, release.kind)
+                        assertEquals(acquireRequestId, release.requestId)
+                        codec.write(
+                            releaseChannel,
+                            CoordinatorWireMessage(
+                                kind = CoordinatorWireKind.RESPONSE,
+                                ok = false,
+                                errorCode = "RECOVERY_PERSISTENCE_FAILED",
+                                message = "Could not persist lease release",
+                            ),
+                        )
+                    }
+                }
                 listener.accept().use { releaseChannel ->
                     val release = codec.read(releaseChannel)
                     assertEquals(CoordinatorWireKind.RELEASE, release.kind)
                     assertEquals(acquireRequestId, release.requestId)
                     codec.write(
                         releaseChannel,
-                        CoordinatorWireMessage(
-                            kind = CoordinatorWireKind.RESPONSE,
-                            ok = false,
-                            errorCode = "RECOVERY_PERSISTENCE_FAILED",
-                            message = "Could not persist lease release",
-                        ),
+                        CoordinatorWireMessage(CoordinatorWireKind.RESPONSE),
                     )
+                    backgroundReleaseCompleted.countDown()
                 }
             }
         val client =
@@ -344,11 +357,25 @@ class InputCoordinatorClientDisconnectTest {
                 codec,
             )
         try {
-            client.acquire(Duration.ofSeconds(2), "test").close()
+            val lease = client.acquire(Duration.ofSeconds(2), "test")
 
+            val failure = assertFailsWith<InputCoordinatorException> { lease.close() }
+            assertEquals("RECOVERY_PERSISTENCE_FAILED", failure.errorCode)
+            assertFalse(
+                sentinelClosed.await(200, TimeUnit.MILLISECONDS),
+                "retryable persistence failure closed the sentinel session",
+            )
+
+            client.close()
+
+            assertFalse(lease.isValid())
             assertTrue(
-                sentinelClosed.await(2, TimeUnit.SECONDS),
-                "release failure should close the session so the retained grant is released",
+                backgroundReleaseCompleted.await(3, TimeUnit.SECONDS),
+                "client did not retry the persisted release in the background",
+            )
+            assertTrue(
+                sentinelClosed.await(3, TimeUnit.SECONDS),
+                "requested session close did not wait for release acknowledgement",
             )
         } finally {
             client.close()
