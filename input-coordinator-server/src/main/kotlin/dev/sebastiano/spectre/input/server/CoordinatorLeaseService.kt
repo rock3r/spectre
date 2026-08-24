@@ -94,11 +94,12 @@ internal class CoordinatorLeaseService(
         val token = wireMapper.toToken(message)
         val clientId = requireNotNull(message.clientId)
         val requestId = requireNotNull(message.requestId)
+        if (requestTracker.matchesCompletedRelease(clientId, requestId, token)) return success()
         if (!requestTracker.matchesGrant(clientId, requestId, token)) {
             return error("STALE_LEASE", "Lease release request does not match an active grant")
         }
         val response = releaseToken(token)
-        if (response.ok) requestTracker.forgetGrant(clientId, requestId, token)
+        if (response.ok) requestTracker.completeRelease(clientId, requestId, token)
         return response
     }
 
@@ -373,6 +374,7 @@ private class AcquisitionRequestTracker {
     private val cancelledBeforeAcquire = LinkedHashSet<CancelledAcquire>()
     private val connectedClients = mutableSetOf<String>()
     private val grantsByRequest = mutableMapOf<CancelledAcquire, LeaseToken>()
+    private val completedReleasesByRequest = LinkedHashMap<CancelledAcquire, LeaseToken>()
 
     fun isConnected(clientId: String): Boolean = clientId in connectedClients
 
@@ -399,7 +401,9 @@ private class AcquisitionRequestTracker {
     }
 
     fun rememberGrant(grant: LeaseGrant) {
-        grantsByRequest[CancelledAcquire(grant.owner.clientId, grant.requestId)] = grant.token
+        val request = CancelledAcquire(grant.owner.clientId, grant.requestId)
+        completedReleasesByRequest.remove(request)
+        grantsByRequest[request] = grant.token
     }
 
     fun takeGrant(clientId: String, requestId: String): LeaseToken? =
@@ -408,26 +412,42 @@ private class AcquisitionRequestTracker {
     fun matchesGrant(clientId: String, requestId: String, token: LeaseToken): Boolean =
         grantsByRequest[CancelledAcquire(clientId, requestId)] == token
 
-    fun forgetGrant(clientId: String, requestId: String, token: LeaseToken) {
-        grantsByRequest.remove(CancelledAcquire(clientId, requestId), token)
+    fun matchesCompletedRelease(clientId: String, requestId: String, token: LeaseToken): Boolean =
+        completedReleasesByRequest[CancelledAcquire(clientId, requestId)] == token
+
+    fun completeRelease(clientId: String, requestId: String, token: LeaseToken) {
+        val request = CancelledAcquire(clientId, requestId)
+        grantsByRequest.remove(request, token)
+        if (completedReleasesByRequest.size >= MAX_COMPLETED_RELEASE_TOMBSTONES) {
+            val oldest = completedReleasesByRequest.iterator()
+            if (oldest.hasNext()) {
+                oldest.next()
+                oldest.remove()
+            }
+        }
+        completedReleasesByRequest[request] = token
     }
 
     fun forgetClient(clientId: String) {
         grantsByRequest.keys.removeAll { it.clientId == clientId }
+        completedReleasesByRequest.keys.removeAll { it.clientId == clientId }
     }
 
     fun forgetClientExcept(clientId: String, retainedLeaseIds: Set<String>) {
         grantsByRequest.entries.removeAll { (request, token) ->
             request.clientId == clientId && token.leaseId !in retainedLeaseIds
         }
+        completedReleasesByRequest.keys.removeAll { it.clientId == clientId }
     }
 
     fun forgetLease(leaseId: String) {
         grantsByRequest.entries.removeAll { it.value.leaseId == leaseId }
+        completedReleasesByRequest.entries.removeAll { it.value.leaseId == leaseId }
     }
 
     private companion object {
         const val MAX_CANCELLATION_TOMBSTONES: Int = 1_024
+        const val MAX_COMPLETED_RELEASE_TOMBSTONES: Int = 1_024
     }
 }
 
