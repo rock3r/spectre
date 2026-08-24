@@ -71,10 +71,30 @@ internal class BlockingSuspendInvoker(private val timeoutMs: Long = DEFAULT_TIME
         }
 
         fun await(timeoutMs: Long): Any? {
-            if (!latch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
+            if (!awaitCompletion(timeoutMs)) {
                 throw TimeoutException("Suspend call did not complete within ${timeoutMs} ms")
             }
             return outcome?.getOrThrow()
+        }
+
+        private fun awaitCompletion(timeoutMs: Long): Boolean {
+            val timeoutNanos = TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+            val startedAt = System.nanoTime()
+            var remainingNanos = timeoutNanos
+            var interrupted = false
+            try {
+                while (remainingNanos > 0L) {
+                    try {
+                        return latch.await(remainingNanos, TimeUnit.NANOSECONDS)
+                    } catch (_: InterruptedException) {
+                        interrupted = true
+                        remainingNanos = timeoutNanos - (System.nanoTime() - startedAt)
+                    }
+                }
+                return latch.count == 0L
+            } finally {
+                if (interrupted) Thread.currentThread().interrupt()
+            }
         }
     }
 

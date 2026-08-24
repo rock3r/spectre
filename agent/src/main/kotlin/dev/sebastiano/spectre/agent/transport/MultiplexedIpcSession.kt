@@ -28,6 +28,7 @@ internal class MultiplexedIpcSession(
     private val onDetach: () -> Unit,
     private val channel: java.nio.channels.Channel,
     private val frameIoTimeoutMs: Long = FrameIoDeadline.DEFAULT_TIMEOUT_MS,
+    private val inputWorkers: CrossSessionInputWorkers,
 ) {
     fun run(input: InputStream, output: OutputStream) {
         // Bound threads *and* queue so a buggy client cannot OOM the agent with enqueued ops.
@@ -58,6 +59,7 @@ internal class MultiplexedIpcSession(
         val inFlight = ConcurrentHashMap<Long, OpSlot>()
         val writeLock = Any()
         val detachRequested = AtomicBoolean(false)
+        inputWorkers.register(inputWorker)
         try {
             serveOps(
                 input,
@@ -78,8 +80,9 @@ internal class MultiplexedIpcSession(
             runCatching { workers.awaitTermination(WORKER_SHUTDOWN_SEC, TimeUnit.SECONDS) }
             val inputWaitInterrupted =
                 if (detachRequested.get()) {
-                    awaitInputWorkerTermination(inputWorker)
+                    inputWorkers.awaitAllTerminated()
                 } else {
+                    inputWorkers.releaseAfterTermination(inputWorker)
                     false
                 }
             try {
@@ -211,18 +214,6 @@ internal class MultiplexedIpcSession(
             running.set(false)
             detachRequested.set(true)
         }
-    }
-
-    private fun awaitInputWorkerTermination(inputWorker: ExecutorService): Boolean {
-        var interrupted = false
-        while (!inputWorker.isTerminated) {
-            try {
-                inputWorker.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS)
-            } catch (_: InterruptedException) {
-                interrupted = true
-            }
-        }
-        return interrupted
     }
 
     private fun dispatchOp(
@@ -476,5 +467,44 @@ internal class MultiplexedIpcSession(
         const val MAX_OP_QUEUE: Int = 32
         /** Input requests wait here without consuming any general operation workers. */
         const val MAX_INPUT_QUEUE: Int = 32
+    }
+}
+
+internal class CrossSessionInputWorkers {
+    private val workers = ConcurrentHashMap.newKeySet<ExecutorService>()
+
+    fun register(worker: ExecutorService) {
+        check(workers.add(worker)) { "Input worker is already registered" }
+    }
+
+    fun releaseAfterTermination(worker: ExecutorService) {
+        Thread.ofVirtual().name("spectre-agent-input-reaper").start {
+            awaitTermination(worker)
+            workers.remove(worker)
+        }
+    }
+
+    fun awaitAllTerminated(): Boolean {
+        var interrupted = false
+        while (true) {
+            val activeWorkers = workers.toList()
+            if (activeWorkers.isEmpty()) return interrupted
+            activeWorkers.forEach { worker ->
+                if (awaitTermination(worker)) interrupted = true
+                workers.remove(worker)
+            }
+        }
+    }
+
+    private fun awaitTermination(worker: ExecutorService): Boolean {
+        var interrupted = false
+        while (!worker.isTerminated) {
+            try {
+                worker.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS)
+            } catch (_: InterruptedException) {
+                interrupted = true
+            }
+        }
+        return interrupted
     }
 }

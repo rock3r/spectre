@@ -36,6 +36,7 @@ class LongOpInfrastructureTest {
         val inputStarted = CountDownLatch(1)
         val allowInputToFinish = CountDownLatch(1)
         val inputFinished = CountDownLatch(1)
+        val detached = CountDownLatch(1)
         val server =
             IpcServer(
                 udsPath,
@@ -62,6 +63,7 @@ class LongOpInfrastructureTest {
                         else -> AgentResponse.Ok
                     }
                 },
+                onDetach = { detached.countDown() },
             )
         val replacementExecutor = Executors.newSingleThreadExecutor()
         server.use {
@@ -83,13 +85,20 @@ class LongOpInfrastructureTest {
                 firstClient.close()
                 val replacement =
                     replacementExecutor.submit<AgentResponse> {
-                        IpcClient(udsPath).use { it.send(AgentRequest.Ping) }
+                        IpcClient(udsPath).use {
+                            assertEquals(AgentResponse.Pong, it.send(AgentRequest.Ping))
+                            it.send(AgentRequest.Detach)
+                        }
                     }
 
-                assertEquals(AgentResponse.Pong, replacement.get(3, TimeUnit.SECONDS))
+                assertEquals(AgentResponse.Detached, replacement.get(3, TimeUnit.SECONDS))
                 assertFalse(
                     inputFinished.await(200, TimeUnit.MILLISECONDS),
                     "ordinary EOF should not abandon the still-running input operation",
+                )
+                assertFalse(
+                    detached.await(200, TimeUnit.MILLISECONDS),
+                    "a later detach must wait for input orphaned by ordinary EOF",
                 )
                 inputThread.join(3_000)
             } finally {
@@ -97,6 +106,10 @@ class LongOpInfrastructureTest {
                 assertTrue(
                     inputFinished.await(3, TimeUnit.SECONDS),
                     "input operation did not finish during cleanup",
+                )
+                assertTrue(
+                    detached.await(3, TimeUnit.SECONDS),
+                    "detach did not finish after the orphaned input operation",
                 )
                 firstClient.close()
                 replacementExecutor.shutdownNow()

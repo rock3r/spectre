@@ -83,6 +83,7 @@ constructor(
         }
 
     private val running = AtomicBoolean(true)
+    private val inputWorkers = CrossSessionInputWorkers()
 
     private val acceptThread =
         Thread(::acceptLoop, "spectre-agent-accept").apply {
@@ -154,6 +155,7 @@ constructor(
                     onDetach = onDetach,
                     channel = socket,
                     frameIoTimeoutMs = frameIoTimeoutMs,
+                    inputWorkers = inputWorkers,
                 )
                 .run(input, output)
         }
