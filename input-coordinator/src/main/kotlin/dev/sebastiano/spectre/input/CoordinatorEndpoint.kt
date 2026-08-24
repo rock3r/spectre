@@ -85,7 +85,10 @@ private object PosixOwnerOnlyEndpointProtection : OwnerOnlyEndpointProtection {
             }
         } else {
             rejectSymbolicParent(directory.parent)
-            Files.createDirectory(
+            // createDirectories, not createDirectory: the configured base can legitimately not
+            // exist yet, and failing there leaves coordination unavailable (#462). Any parent this
+            // creates gets the same owner-only mode as the endpoint directory itself.
+            Files.createDirectories(
                 directory,
                 java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
                     OWNER_ONLY_DIRECTORY_PERMISSIONS
@@ -118,7 +121,11 @@ private object BasicOwnerOnlyEndpointProtection : OwnerOnlyEndpointProtection {
             rejectSubstitutedDirectory(directory)
         } else {
             rejectSymbolicParent(directory.parent)
-            Files.createDirectory(directory)
+            // createDirectories, not createDirectory: on Windows the base is %LOCALAPPDATA%\Temp,
+            // which is absent on profiles whose temp directory has been redirected, and failing
+            // there leaves coordination unavailable (#462). The directory stays inside the user
+            // profile, so it inherits the owner-only ACL either way.
+            Files.createDirectories(directory)
         }
     }
 

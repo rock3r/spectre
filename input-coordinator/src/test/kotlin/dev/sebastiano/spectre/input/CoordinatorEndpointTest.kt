@@ -95,6 +95,21 @@ class CoordinatorEndpointTest {
     }
 
     @Test
+    fun `a missing fixed parent is created before the endpoint directory`() {
+        // #462: the Windows base is %LOCALAPPDATA%\Temp, which is absent on profiles where the
+        // user's temp directory has been redirected. prepareDirectory used createDirectory, which
+        // throws NoSuchFileException when the parent is missing, so coordination was simply
+        // unavailable on those otherwise valid configurations.
+        val absentBase = temporaryDirectory.resolve("Temp")
+        val socket = absentBase.resolve("spectre-input-abcd1234").resolve("input-v1-abcd1234.sock")
+
+        OwnerOnlyEndpointProtection.forPath(socket).prepareDirectory(socket)
+
+        assertTrue(Files.isDirectory(absentBase), "the fixed Temp parent should have been created")
+        assertTrue(Files.isDirectory(socket.parent), "the endpoint directory should exist")
+    }
+
+    @Test
     fun `symbolic-link endpoint directory is rejected without following it`() {
         val target = temporaryDirectory.resolve("target")
         Files.createDirectory(target)
