@@ -312,6 +312,64 @@ class CoordinatorLeaseServiceTest {
     }
 
     @Test
+    fun `failed compensating release abandons a known unobserved grant`() {
+        val directory = Files.createTempDirectory("spc-service-unobserved-release-")
+        val path = directory.resolve("recovery.properties")
+        val service =
+            CoordinatorLeaseService(
+                epoch = "epoch",
+                heartbeatTimeout = Duration.ofSeconds(5),
+                revokeGrace = Duration.ofSeconds(1),
+                recoveryGrace = Duration.ofSeconds(1),
+                recoveryLedger = RecoveryLedger(path, Duration.ofSeconds(5)),
+            )
+        try {
+            service.openSession("interrupted-client")
+            service.openSession("successor-client")
+            service.acquire(acquire("unobserved", "interrupted-client")).get()
+            Files.delete(path)
+            Files.createDirectory(path)
+            Files.writeString(path.resolve("blocker"), "prevent ledger deletion")
+
+            val cancelled =
+                service.cancel(
+                    CoordinatorWireMessage(
+                        kind = CoordinatorWireKind.CANCEL,
+                        requestId = "unobserved",
+                        clientId = "interrupted-client",
+                        resourceKey = "test/desktop",
+                    )
+                )
+
+            assertTrue(cancelled.ok)
+            val status =
+                assertNotNull(
+                    service
+                        .status(
+                            CoordinatorWireMessage(
+                                kind = CoordinatorWireKind.STATUS,
+                                resourceKey = "test/desktop",
+                            )
+                        )
+                        .status
+                )
+            assertNull(status.holder)
+
+            Files.delete(path.resolve("blocker"))
+            Files.delete(path)
+            val successor = service.acquire(acquire("successor", "successor-client")).get()
+            assertTrue(successor.ok)
+            assertTrue(service.release(tokenMessage(successor, "successor-client")).ok)
+        } finally {
+            service.close()
+            Files.deleteIfExists(path.resolveSibling("${path.fileName}.tmp"))
+            if (Files.isDirectory(path)) Files.deleteIfExists(path.resolve("blocker"))
+            Files.deleteIfExists(path)
+            Files.deleteIfExists(directory)
+        }
+    }
+
+    @Test
     fun `observed reentrant release preserves an unobserved request for cancellation`() {
         val service =
             CoordinatorLeaseService(

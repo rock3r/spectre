@@ -19,7 +19,7 @@ import kotlin.test.assertTrue
 class CoordinatorForcedRecoveryPersistenceTest {
 
     @Test
-    fun `failed cancellation release fences the session until exact-id force`() {
+    fun `failed cancellation release abandons a known unobserved grant`() {
         val directory = Files.createTempDirectory("spc-service-cancel-clear-")
         val path = directory.resolve("recovery.properties")
         val service =
@@ -32,7 +32,7 @@ class CoordinatorForcedRecoveryPersistenceTest {
             )
         try {
             service.openSession("interrupted-client")
-            val unobserved = service.acquire(acquire("unobserved", "interrupted-client")).get()
+            service.acquire(acquire("unobserved", "interrupted-client")).get()
             Files.delete(path)
             Files.createDirectory(path)
             Files.writeString(path.resolve("blocker"), "prevent ledger deletion")
@@ -46,20 +46,17 @@ class CoordinatorForcedRecoveryPersistenceTest {
                 )
             )
 
-            assertEquals("revoking", assertNotNull(status(service).holder).state)
-            val rejected =
+            assertEquals(null, status(service).holder)
+            val persistenceFailure =
                 service.acquire(acquire("late", "interrupted-client")).get(1, TimeUnit.SECONDS)
-            assertFalse(rejected.ok)
-            assertEquals("CLIENT_DISCONNECTED", rejected.errorCode)
+            assertFalse(persistenceFailure.ok)
+            assertEquals("RECOVERY_PERSISTENCE_FAILED", persistenceFailure.errorCode)
 
             Files.delete(path.resolve("blocker"))
             Files.delete(path)
             service.openSession("successor-client")
-            val successorFuture = service.acquire(acquire("successor", "successor-client"))
-            assertTrue(
-                service.revoke(revokeMessage(requireNotNull(unobserved.leaseId), force = true)).ok
-            )
-            val successor = successorFuture.get(1, TimeUnit.SECONDS)
+            val successor =
+                service.acquire(acquire("successor", "successor-client")).get(1, TimeUnit.SECONDS)
             assertTrue(service.release(tokenMessage(successor, "successor-client")).ok)
         } finally {
             cleanUp(service, path, directory)

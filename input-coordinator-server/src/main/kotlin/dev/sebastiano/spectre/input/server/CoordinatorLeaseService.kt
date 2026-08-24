@@ -9,6 +9,7 @@ import dev.sebastiano.spectre.input.CoordinatorWireQuarantine
 import dev.sebastiano.spectre.input.CoordinatorWireStatus
 import dev.sebastiano.spectre.input.CoordinatorWireWaiter
 import dev.sebastiano.spectre.input.DesktopResourceKey
+import dev.sebastiano.spectre.input.LeaseErrorCode
 import dev.sebastiano.spectre.input.LeaseOwner
 import dev.sebastiano.spectre.input.LeaseToken
 import java.io.IOException
@@ -164,7 +165,9 @@ internal class CoordinatorLeaseService(
                 // ACQUIRE won but its response was lost. Release only that exact hold; unrelated
                 // requests sharing the client session remain live.
                 val release = releaseToken(ambiguousGrant)
-                if (!release.ok) disconnect(clientId)
+                if (!release.ok) {
+                    abandonUnobservedGrant(machine, requestTracker, ambiguousGrant, ::completeGrant)
+                }
             }
         }
         return success()
@@ -422,6 +425,34 @@ private class AcquisitionRequestTracker {
 }
 
 private data class CancelledAcquire(val clientId: String, val requestId: String)
+
+private fun abandonUnobservedGrant(
+    machine: LeaseStateMachine,
+    requestTracker: AcquisitionRequestTracker,
+    token: LeaseToken,
+    completeGrant: (LeaseGrant) -> Unit,
+) {
+    when (val released = machine.release(token)) {
+        is ReleaseResult.Released -> released.nextGrant?.let(completeGrant)
+        is ReleaseResult.StillHeld -> Unit
+        is ReleaseResult.Rejected -> {
+            check(released.code == LeaseErrorCode.FENCED) {
+                "Could not abandon known-unobserved grant: ${released.code}"
+            }
+            when (val acknowledged = machine.acknowledgeRevocation(token)) {
+                is RevokeResult.Acknowledged -> {
+                    if (acknowledged.remainingDepth == 0) {
+                        requestTracker.forgetLease(token.leaseId)
+                        acknowledged.nextGrant?.let(completeGrant)
+                    }
+                }
+                is RevokeResult.Rejected ->
+                    error("Could not abandon fenced unobserved grant: ${acknowledged.code}")
+                else -> error("Unexpected unobserved-grant abandonment result")
+            }
+        }
+    }
+}
 
 private fun AcquisitionTimeout.diagnosticContext(): String =
     holder?.let { snapshot ->
