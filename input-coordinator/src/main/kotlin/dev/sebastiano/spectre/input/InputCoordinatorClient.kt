@@ -20,6 +20,7 @@ import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.serialization.SerializationException
 
 /** Public, redacted holder diagnostics returned by coordinator inspection. */
 @ExperimentalSpectreInputCoordinationApi
@@ -166,34 +167,41 @@ private constructor(
                     )
                 )
             } catch (failure: IOException) {
-                val interrupted = Thread.currentThread().isInterrupted
-                val cancellationAcknowledged = cancelAcquire(requestId)
-                if (!interrupted || !cancellationAcknowledged) close()
-                throw failure
+                failAmbiguousAcquire(requestId, failure, ::cancelAcquire, ::close)
+            } catch (failure: CoordinatorProtocolException) {
+                failAmbiguousAcquire(requestId, failure, ::cancelAcquire, ::close)
+            } catch (failure: SerializationException) {
+                failAmbiguousAcquire(requestId, failure, ::cancelAcquire, ::close)
             }
         response.requireSuccess()
-        val token =
-            LeaseToken(
-                coordinatorEpoch = requireNotNull(response.coordinatorEpoch),
-                leaseId = requireNotNull(response.leaseId),
-                resourceKey = resourceKey,
-                fence = requireNotNull(response.fence),
-            )
-        val registration =
-            requireNotNull(
-                leaseRegistrations.compute(token.leaseId) { _, existing ->
-                    if (existing == null) {
-                        LeaseRegistration(token)
-                    } else {
-                        check(existing.token == token) {
-                            "Coordinator reused lease ID ${token.leaseId} for a different token"
+        return try {
+            val token =
+                LeaseToken(
+                    coordinatorEpoch = requireNotNull(response.coordinatorEpoch),
+                    leaseId = requireNotNull(response.leaseId),
+                    resourceKey = resourceKey,
+                    fence = requireNotNull(response.fence),
+                )
+            val registration =
+                requireNotNull(
+                    leaseRegistrations.compute(token.leaseId) { _, existing ->
+                        if (existing == null) {
+                            LeaseRegistration(token)
+                        } else {
+                            check(existing.token == token) {
+                                "Coordinator reused lease ID ${token.leaseId} for a different token"
+                            }
+                            existing.retain()
+                            existing
                         }
-                        existing.retain()
-                        existing
                     }
-                }
-            )
-        return LocalLease(registration, requestId)
+                )
+            LocalLease(registration, requestId)
+        } catch (failure: IllegalArgumentException) {
+            failAmbiguousAcquire(requestId, failure, ::cancelAcquire, ::close)
+        } catch (failure: IllegalStateException) {
+            failAmbiguousAcquire(requestId, failure, ::cancelAcquire, ::close)
+        }
     }
 
     @Synchronized
@@ -590,6 +598,18 @@ internal fun sendCoordinatorMessage(
             codec.read(channel)
         }
     }
+
+private fun failAmbiguousAcquire(
+    requestId: String,
+    failure: Exception,
+    cancelAcquire: (String) -> Boolean,
+    closeSession: () -> Unit,
+): Nothing {
+    val interrupted = Thread.currentThread().isInterrupted
+    val cancellationAcknowledged = cancelAcquire(requestId)
+    if (!interrupted || !cancellationAcknowledged) closeSession()
+    throw failure
+}
 
 private fun <T> runCoordinatorIo(timeout: Duration, block: () -> T): T {
     require(!timeout.isNegative && !timeout.isZero) { "Coordinator I/O timeout must be positive" }
