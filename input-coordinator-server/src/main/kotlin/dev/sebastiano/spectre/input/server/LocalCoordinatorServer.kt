@@ -49,6 +49,9 @@ public class LocalCoordinatorServer(
     private val activeConnections = AtomicInteger()
     private val lastActivityNanos = AtomicLong(System.nanoTime())
     private val handlers: ExecutorService = Executors.newVirtualThreadPerTaskExecutor()
+    private val initialFrameDeadlines = Executors.newSingleThreadScheduledExecutor { task ->
+        Thread(task, "spectre-input-frame-deadline").apply { isDaemon = true }
+    }
     private val recoveryLedger =
         RecoveryLedger(endpoint.directory.resolve("recovery.properties"), heartbeatTimeout)
     private val service =
@@ -116,6 +119,7 @@ public class LocalCoordinatorServer(
         idleMonitor?.shutdownNow()
         handlers.shutdownNow()
         handlers.awaitTermination(CLOSE_WAIT_SECONDS, TimeUnit.SECONDS)
+        initialFrameDeadlines.shutdownNow()
         service.close()
         if (ownsSocketPath.compareAndSet(true, false)) {
             runCatching { Files.deleteIfExists(endpoint.socketPath) }
@@ -130,6 +134,11 @@ public class LocalCoordinatorServer(
                 val client = channel.accept()
                 activeConnections.incrementAndGet()
                 lastActivityNanos.set(System.nanoTime())
+                if (activeConnections.get() > MAX_ACTIVE_CONNECTIONS) {
+                    activeConnections.decrementAndGet()
+                    runCatching { client.close() }
+                    continue
+                }
                 try {
                     handlers.submit {
                         try {
@@ -159,7 +168,18 @@ public class LocalCoordinatorServer(
 
     private fun handle(channel: SocketChannel) {
         channel.use {
-            val request = codec.readOrNull(channel) ?: return
+            val deadline =
+                initialFrameDeadlines.schedule(
+                    { runCatching { channel.close() } },
+                    initialFrameTimeoutMillis(),
+                    TimeUnit.MILLISECONDS,
+                )
+            val request =
+                try {
+                    codec.readOrNull(channel) ?: return
+                } finally {
+                    deadline.cancel(false)
+                }
             if (request.kind == CoordinatorWireKind.SESSION_OPEN) {
                 handleSession(channel, request)
             } else {
@@ -231,6 +251,9 @@ public class LocalCoordinatorServer(
     private fun acquireResponseTimeoutMillis(timeoutMillis: Long): Long =
         timeoutMillis.coerceAtMost(Long.MAX_VALUE - ACQUIRE_RESPONSE_GRACE_MILLIS) +
             ACQUIRE_RESPONSE_GRACE_MILLIS
+
+    private fun initialFrameTimeoutMillis(): Long =
+        idleTimeout.toMillis().coerceAtMost(DEFAULT_INITIAL_FRAME_TIMEOUT_MILLIS).coerceAtLeast(1)
 
     private fun acquireElection() {
         val lockPath = endpoint.directory.resolve("coordinator.lock")
@@ -315,6 +338,8 @@ public class LocalCoordinatorServer(
         const val DEFAULT_REVOKE_GRACE_SECONDS: Long = 1
         const val ACQUIRE_RESPONSE_GRACE_MILLIS: Long = 1_000
         const val CLOSE_WAIT_SECONDS: Long = 2
+        private const val MAX_ACTIVE_CONNECTIONS: Int = 64
+        private const val DEFAULT_INITIAL_FRAME_TIMEOUT_MILLIS: Long = 5_000
         const val IDLE_CHECK_DIVISOR: Long = 4
         const val MIN_IDLE_CHECK_MILLIS: Long = 10
         const val MAX_IDLE_CHECK_MILLIS: Long = 1_000

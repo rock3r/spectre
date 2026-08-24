@@ -9,6 +9,9 @@ import dev.sebastiano.spectre.input.DesktopResourceKey
 import dev.sebastiano.spectre.input.InputCoordinatorException
 import dev.sebastiano.spectre.input.LocalInputCoordinatorClient
 import dev.sebastiano.spectre.input.LocalInputCoordinatorControl
+import java.net.StandardProtocolFamily
+import java.net.UnixDomainSocketAddress
+import java.nio.channels.SocketChannel
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
@@ -305,6 +308,27 @@ class LocalCoordinatorServerTest {
             )
         server.start()
         resources += server
+        val executor = Executors.newSingleThreadExecutor()
+        resources += AutoCloseable { executor.shutdownNow() }
+
+        executor.submit { server.awaitTermination() }.get(2, TimeUnit.SECONDS)
+
+        assertFalse(Files.exists(endpoint.socketPath))
+    }
+
+    @Test
+    fun `client that never sends its first frame cannot suppress idle shutdown`() {
+        val server =
+            LocalCoordinatorServer(
+                endpoint = endpoint,
+                heartbeatTimeout = Duration.ofSeconds(5),
+                idleTimeout = Duration.ofMillis(100),
+            )
+        server.start()
+        resources += server
+        val stalled = SocketChannel.open(StandardProtocolFamily.UNIX)
+        stalled.connect(UnixDomainSocketAddress.of(endpoint.socketPath))
+        resources += stalled
         val executor = Executors.newSingleThreadExecutor()
         resources += AutoCloseable { executor.shutdownNow() }
 
