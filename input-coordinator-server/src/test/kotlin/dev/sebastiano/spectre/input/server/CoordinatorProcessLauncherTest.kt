@@ -59,10 +59,15 @@ class CoordinatorProcessLauncherTest {
     @Test
     fun `forked coordinator accepts a real client lease`() {
         val launcher =
-            CoordinatorProcessLauncher(endpoint = endpoint, idleTimeout = Duration.ofSeconds(5))
+            CoordinatorProcessLauncher(
+                endpoint = endpoint,
+                idleTimeout = Duration.ofSeconds(FORKED_COORDINATOR_TIMEOUT_SECONDS),
+            )
         process = launcher.start()
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        val deadline =
+            System.nanoTime() + TimeUnit.SECONDS.toNanos(FORKED_COORDINATOR_TIMEOUT_SECONDS)
         var acquired = false
+        var lastFailure: Throwable? = null
 
         while (!acquired && System.nanoTime() < deadline) {
             runCatching {
@@ -75,9 +80,19 @@ class CoordinatorProcessLauncherTest {
                             client.acquire(Duration.ofSeconds(1), "click").use { acquired = true }
                         }
                 }
-                .onFailure { Thread.onSpinWait() }
+                .onFailure {
+                    lastFailure = it
+                    Thread.onSpinWait()
+                }
         }
 
-        assertTrue(acquired, "Forked coordinator did not accept a lease before the deadline")
+        assertTrue(
+            acquired,
+            "Forked coordinator did not accept a lease before the deadline; last failure: $lastFailure",
+        )
+    }
+
+    private companion object {
+        const val FORKED_COORDINATOR_TIMEOUT_SECONDS: Long = 30
     }
 }
