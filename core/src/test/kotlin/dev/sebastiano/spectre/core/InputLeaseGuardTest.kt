@@ -71,6 +71,33 @@ class InputLeaseGuardTest {
     }
 
     @Test
+    fun `ambient whole-test lease fences type burst at operation checkpoint`() {
+        val coordinator = RecordingInputLeaseCoordinator()
+        val robot = LeaseTestRobotAdapter()
+        val driver =
+            RobotDriver(
+                robot = robot,
+                clipboard = LeaseTestClipboardAdapter(),
+                inputLeasePolicy = InputLeasePolicy.Required,
+                inputLeaseCoordinator = coordinator,
+                inputCapabilities =
+                    InputCapabilities(realOsInput = true, sharedSystemClipboard = true),
+            )
+        val wholeTestLease = recordingLease(failCheckpointAt = 4)
+
+        val failure =
+            assertFailsWith<InputCoordinatorException> {
+                AmbientInputLease.withLease(wholeTestLease) {
+                    runBlocking { driver.typeText("abc") }
+                }
+            }
+
+        assertEquals("FENCED", failure.errorCode)
+        assertEquals(listOf("press:65", "release:65"), robot.events)
+        assertTrue(coordinator.operations.isEmpty())
+    }
+
+    @Test
     fun `automator exclusive scope exposes coordinated input verbs and capabilities`() = runTest {
         val coordinator = RecordingInputLeaseCoordinator()
         val driver = realDriver(coordinator)
@@ -468,9 +495,11 @@ class InputLeaseGuardTest {
     }
 }
 
-private fun recordingLease(): RecordingCoordinatedInputLease = RecordingCoordinatedInputLease()
+private fun recordingLease(failCheckpointAt: Int? = null): RecordingCoordinatedInputLease =
+    RecordingCoordinatedInputLease(failCheckpointAt)
 
-private class RecordingCoordinatedInputLease : CoordinatedInputLease {
+private class RecordingCoordinatedInputLease(private val failCheckpointAt: Int?) :
+    CoordinatedInputLease {
     var checkpoints: Int = 0
 
     override val token =
@@ -485,6 +514,9 @@ private class RecordingCoordinatedInputLease : CoordinatedInputLease {
 
     override fun checkpoint() {
         checkpoints += 1
+        if (checkpoints == failCheckpointAt) {
+            throw InputCoordinatorException("FENCED", "revoked")
+        }
     }
 
     override fun close(): Unit = Unit

@@ -207,6 +207,7 @@ internal class InputLeaseGuard(
 
     suspend fun checkpoint() {
         boundLease.get()?.checkpoint()
+            ?: AmbientInputLease.current()?.checkpoint()
             ?: coroutineContext[LeaseContext]?.takeIf { it.guard === this }?.lease?.checkpoint()
     }
 
