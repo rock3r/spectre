@@ -322,7 +322,7 @@ class InputCoordinatorClientDisconnectTest {
                         ),
                     )
                 }
-                repeat(2) {
+                repeat(3) {
                     listener.accept().use { releaseChannel ->
                         val release = codec.read(releaseChannel)
                         assertEquals(CoordinatorWireKind.RELEASE, release.kind)

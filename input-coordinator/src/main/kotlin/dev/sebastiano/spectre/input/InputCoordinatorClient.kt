@@ -242,6 +242,7 @@ private constructor(
                     disconnect()
                     return
                 }
+                return@forEach
             }
             runCatching {
                     send(tokenMessage(CoordinatorWireKind.HEARTBEAT, registration.token))
