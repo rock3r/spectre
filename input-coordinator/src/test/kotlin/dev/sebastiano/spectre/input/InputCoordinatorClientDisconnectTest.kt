@@ -3,11 +3,13 @@
 package dev.sebastiano.spectre.input
 
 import java.io.IOException
+import java.io.InterruptedIOException
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
 import java.nio.channels.ServerSocketChannel
 import java.nio.file.Files
 import java.time.Duration
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
@@ -134,6 +136,75 @@ class InputCoordinatorClientDisconnectTest {
             assertTrue(
                 sentinelClosed.await(2, TimeUnit.SECONDS),
                 "ambiguous acquisition should close the session so an unknown grant is released",
+            )
+        } finally {
+            client.close()
+            listener.close()
+            serverThread.join(2_000)
+            Files.deleteIfExists(endpoint.socketPath)
+            Files.deleteIfExists(directory)
+        }
+    }
+
+    @Test
+    fun `unacknowledged cancellation after interrupted acquisition closes the sentinel session`() {
+        val directory = Files.createTempDirectory("spc-ci-")
+        val endpoint = CoordinatorEndpoint(directory, directory.resolve("coordinator.sock"))
+        val codec = CoordinatorWireCodec()
+        val listener = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
+        listener.bind(UnixDomainSocketAddress.of(endpoint.socketPath))
+        val acquireReceived = CountDownLatch(1)
+        val sentinelClosed = CountDownLatch(1)
+        val serverThread =
+            Thread.ofVirtual().name("coordinator-interrupted-cancel-test").start {
+                val session = listener.accept()
+                assertEquals(CoordinatorWireKind.SESSION_OPEN, codec.read(session).kind)
+                codec.write(
+                    session,
+                    CoordinatorWireMessage(
+                        kind = CoordinatorWireKind.RESPONSE,
+                        coordinatorEpoch = EPOCH,
+                    ),
+                )
+                Thread.ofVirtual().start {
+                    codec.readOrNull(session)
+                    sentinelClosed.countDown()
+                }
+
+                listener.accept().use { acquireChannel ->
+                    assertEquals(CoordinatorWireKind.ACQUIRE, codec.read(acquireChannel).kind)
+                    acquireReceived.countDown()
+                    codec.readOrNull(acquireChannel)
+                }
+                listener.accept().use { cancelChannel ->
+                    assertEquals(CoordinatorWireKind.CANCEL, codec.read(cancelChannel).kind)
+                    // Closing without a response leaves cancellation unacknowledged.
+                }
+            }
+        val client =
+            LocalInputCoordinatorClient.connect(
+                endpoint,
+                DesktopResourceKey("test/interrupted-cancel"),
+                "interrupted-cancel-test",
+                codec,
+            )
+        try {
+            val failure = CompletableFuture<Throwable>()
+            val acquireThread =
+                Thread.ofVirtual().start {
+                    failure.complete(
+                        runCatching { client.acquire(Duration.ofSeconds(2), "interrupted acquire") }
+                            .exceptionOrNull()
+                            ?: AssertionError("Interrupted acquisition unexpectedly succeeded")
+                    )
+                }
+            assertTrue(acquireReceived.await(2, TimeUnit.SECONDS))
+            acquireThread.interrupt()
+
+            assertTrue(failure.get(2, TimeUnit.SECONDS) is InterruptedIOException)
+            assertTrue(
+                sentinelClosed.await(2, TimeUnit.SECONDS),
+                "unacknowledged cancellation must fence the session and release an unknown grant",
             )
         } finally {
             client.close()

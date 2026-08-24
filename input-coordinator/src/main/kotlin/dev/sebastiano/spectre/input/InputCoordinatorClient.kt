@@ -159,8 +159,8 @@ private constructor(
                 )
             } catch (failure: IOException) {
                 val interrupted = Thread.currentThread().isInterrupted
-                cancelAcquire(requestId)
-                if (!interrupted) close()
+                val cancellationAcknowledged = cancelAcquire(requestId)
+                if (!interrupted || !cancellationAcknowledged) close()
                 throw failure
             }
         response.requireSuccess()
@@ -216,19 +216,21 @@ private constructor(
         }
     }
 
-    private fun cancelAcquire(requestId: String) {
+    private fun cancelAcquire(requestId: String): Boolean {
         val wasInterrupted = Thread.interrupted()
-        try {
+        return try {
             runCatching {
-                send(
-                    CoordinatorWireMessage(
-                        kind = CoordinatorWireKind.CANCEL,
-                        requestId = requestId,
-                        clientId = clientId,
-                        resourceKey = resourceKey.value,
-                    )
-                )
-            }
+                    send(
+                            CoordinatorWireMessage(
+                                kind = CoordinatorWireKind.CANCEL,
+                                requestId = requestId,
+                                clientId = clientId,
+                                resourceKey = resourceKey.value,
+                            )
+                        )
+                        .requireSuccess()
+                }
+                .isSuccess
         } finally {
             if (wasInterrupted) Thread.currentThread().interrupt()
         }
