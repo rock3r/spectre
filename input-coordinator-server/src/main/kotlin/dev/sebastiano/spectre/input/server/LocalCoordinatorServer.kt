@@ -3,6 +3,7 @@
 package dev.sebastiano.spectre.input.server
 
 import dev.sebastiano.spectre.input.CoordinatorEndpoint
+import dev.sebastiano.spectre.input.CoordinatorSocketCandidates
 import dev.sebastiano.spectre.input.CoordinatorWireCodec
 import dev.sebastiano.spectre.input.CoordinatorWireKind
 import dev.sebastiano.spectre.input.CoordinatorWireMessage
@@ -18,6 +19,7 @@ import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.Path
 import java.nio.file.StandardOpenOption.CREATE
 import java.nio.file.StandardOpenOption.WRITE
 import java.time.Duration
@@ -64,6 +66,10 @@ public class LocalCoordinatorServer(
             recoveryLedger = recoveryLedger,
         )
     private var listener: ServerSocketChannel? = null
+    /** The candidate this server bound; equals the canonical path on a healthy host. */
+    internal var boundSocketPath: Path = endpoint.socketPath
+        private set
+
     private var acceptThread: Thread? = null
     private var electionChannel: FileChannel? = null
     private var electionLock: FileLock? = null
@@ -84,12 +90,16 @@ public class LocalCoordinatorServer(
         var started = false
         var openedChannel: ServerSocketChannel? = null
         try {
-            prepareSocketPath()
-            val channel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
+            val selection =
+                CoordinatorSocketSelector.select(
+                    CoordinatorSocketCandidates.candidates(endpoint.socketPath),
+                    ::attemptBind,
+                )
+            val channel = selection.value
             openedChannel = channel
-            channel.bind(UnixDomainSocketAddress.of(endpoint.socketPath))
+            boundSocketPath = selection.path
             ownsSocketPath.set(true)
-            protection.protectSocket(endpoint.socketPath)
+            protection.protectSocket(selection.path)
             listener = channel
             running.set(true)
             lastActivityNanos.set(System.nanoTime())
@@ -122,7 +132,7 @@ public class LocalCoordinatorServer(
         initialFrameDeadlines.shutdownNow()
         service.close()
         if (ownsSocketPath.compareAndSet(true, false)) {
-            runCatching { Files.deleteIfExists(endpoint.socketPath) }
+            runCatching { Files.deleteIfExists(boundSocketPath) }
         }
         releaseElection()
         terminated.countDown()
@@ -308,23 +318,40 @@ public class LocalCoordinatorServer(
         electionChannel = null
     }
 
-    private fun prepareSocketPath() {
-        if (!Files.exists(endpoint.socketPath, NOFOLLOW_LINKS)) return
-        if (Files.isSymbolicLink(endpoint.socketPath)) {
-            throw IOException(
-                "Coordinator socket ${endpoint.socketPath} must not be a symbolic link"
-            )
+    /**
+     * Tries to take ownership of one candidate path.
+     *
+     * A symbolic link is rethrown rather than skipped: that is a substitution attempt, and quietly
+     * moving to the next generation would hide it.
+     */
+    private fun attemptBind(path: Path): SocketBindAttempt<ServerSocketChannel> {
+        if (Files.isSymbolicLink(path)) {
+            throw IOException("Coordinator socket $path must not be a symbolic link")
         }
-        if (isLiveCoordinator()) {
-            throw IOException("A coordinator is already listening at ${endpoint.socketPath}")
+        // Checked before `Files.exists`, which cannot be trusted here: an abandoned Windows socket
+        // file reports `false` from `exists` while still occupying the path (#462).
+        if (isLiveCoordinator(path)) return SocketBindAttempt.LiveCoordinator
+        if (Files.exists(path, NOFOLLOW_LINKS)) {
+            runCatching { Files.delete(path) }
+                .exceptionOrNull()
+                ?.let { failure ->
+                    return SocketBindAttempt.Unusable(failure.message ?: failure.toString())
+                }
         }
-        Files.delete(endpoint.socketPath)
+        val channel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
+        return try {
+            channel.bind(UnixDomainSocketAddress.of(path))
+            SocketBindAttempt.Bound(path, channel)
+        } catch (failure: IOException) {
+            runCatching { channel.close() }
+            SocketBindAttempt.Unusable(failure.message ?: failure.toString())
+        }
     }
 
-    private fun isLiveCoordinator(): Boolean =
+    private fun isLiveCoordinator(path: Path): Boolean =
         runCatching {
                 SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
-                    channel.connect(UnixDomainSocketAddress.of(endpoint.socketPath))
+                    channel.connect(UnixDomainSocketAddress.of(path))
                     codec.write(channel, CoordinatorWireMessage(kind = CoordinatorWireKind.HEALTH))
                     codec.read(channel).ok
                 }

@@ -29,10 +29,10 @@ public object CoordinatorEndpointResolver {
         val directory = canonicalBase.resolve("spectre-input-$userHash")
         val socketPath = directory.resolve("input-v1-${userHash.take(SOCKET_HASH_LENGTH)}.sock")
         val encodedLength = socketPath.toString().toByteArray(StandardCharsets.UTF_8).size
-        if (encodedLength > MAX_UNIX_SOCKET_PATH_BYTES) {
+        if (encodedLength > CoordinatorSocketCandidates.MAX_SOCKET_PATH_BYTES) {
             throw IOException(
                 "Unix-domain socket path is $encodedLength bytes; the safe maximum is " +
-                    "$MAX_UNIX_SOCKET_PATH_BYTES: $socketPath"
+                    "${CoordinatorSocketCandidates.MAX_SOCKET_PATH_BYTES}: $socketPath"
             )
         }
         return CoordinatorEndpoint(directory = directory, socketPath = socketPath)
@@ -49,7 +49,6 @@ public object CoordinatorEndpointResolver {
 
     private const val HASH_BYTES: Int = 8
     private const val SOCKET_HASH_LENGTH: Int = 8
-    private const val MAX_UNIX_SOCKET_PATH_BYTES: Int = 100
 }
 
 /** Enforces the same-user trust boundary for a coordinator endpoint and its socket file. */

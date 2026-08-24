@@ -483,12 +483,32 @@ private constructor(
         ): LocalInputCoordinatorClient {
             val clientId = UUID.randomUUID().toString()
             val processId = ProcessHandle.current().pid()
-            val session = SocketChannel.open(StandardProtocolFamily.UNIX)
+            // The coordinator may have had to bind a fallback path (#462), so locate it before
+            // opening the session. Only the connect step is retried across candidates: once a
+            // coordinator answers, its protocol failures are real and must surface unchanged.
+            val located =
+                CoordinatorSocketDiscovery.firstReachable(
+                    CoordinatorSocketCandidates.candidates(endpoint.socketPath)
+                ) { path ->
+                    val channel = SocketChannel.open(StandardProtocolFamily.UNIX)
+                    try {
+                        runCoordinatorIo(SESSION_OPEN_TIMEOUT) {
+                            channel.connect(UnixDomainSocketAddress.of(path))
+                        }
+                        ConnectedSocket(path, channel)
+                    } catch (failure: IOException) {
+                        runCatching { channel.close() }
+                        throw failure
+                    }
+                }
+                    ?: throw IOException(
+                        "No coordinator is listening at ${endpoint.socketPath} or its fallbacks"
+                    )
+            val session = located.channel
             var sessionTransferred = false
             try {
                 val response =
                     runCoordinatorIo(SESSION_OPEN_TIMEOUT) {
-                        session.connect(UnixDomainSocketAddress.of(endpoint.socketPath))
                         codec.write(
                             session,
                             CoordinatorWireMessage(
@@ -503,7 +523,7 @@ private constructor(
                 response.requireSuccess()
                 val client =
                     LocalInputCoordinatorClient(
-                        endpoint = endpoint,
+                        endpoint = endpoint.copy(socketPath = located.path),
                         resourceKey = resourceKey,
                         clientId = clientId,
                         owner = LeaseOwner(clientId, processId, ownerLabel),
@@ -542,9 +562,6 @@ public class LocalInputCoordinatorControl(
 ) {
     /** Returns cleanly when no coordinator is accepting connections. */
     public fun status(resourceKey: DesktopResourceKey): CoordinatorControlResult {
-        if (!java.nio.file.Files.exists(endpoint.socketPath)) {
-            return CoordinatorControlResult.NoActiveCoordinator
-        }
         val response =
             try {
                 send(
@@ -586,8 +603,39 @@ public class LocalInputCoordinatorControl(
         return CoordinatorRevokeResult(unsafeTakeover = response.unsafeTakeover)
     }
 
-    private fun send(message: CoordinatorWireMessage): CoordinatorWireMessage =
-        sendCoordinatorMessage(endpoint, codec, message, CONTROL_RESPONSE_TIMEOUT)
+    /**
+     * Sends to whichever candidate path the coordinator actually bound (#462).
+     *
+     * A file-existence pre-check is deliberately absent: on the hosts this works around,
+     * `Files.exists` reports `false` for an abandoned socket that still occupies the path, and
+     * would equally report `false` for the canonical path when the coordinator fell forward to a
+     * fallback. Attempting the connection is the only trustworthy probe.
+     */
+    private fun send(message: CoordinatorWireMessage): CoordinatorWireMessage {
+        val candidates = CoordinatorSocketCandidates.candidates(endpoint.socketPath)
+        var firstFailure: Throwable? = null
+        val response =
+            CoordinatorSocketDiscovery.firstReachable(candidates) { path ->
+                try {
+                    sendCoordinatorMessage(
+                        endpoint.copy(socketPath = path),
+                        codec,
+                        message,
+                        CONTROL_RESPONSE_TIMEOUT,
+                    )
+                } catch (failure: IOException) {
+                    // Keep the canonical path's failure: it is the one a reader expects to see, and
+                    // the later candidates usually fail with an uninteresting "no such file".
+                    if (firstFailure == null) firstFailure = failure
+                    throw failure
+                }
+            }
+        return response
+            ?: throw IOException(
+                "No coordinator is listening at ${endpoint.socketPath} or its fallbacks",
+                firstFailure,
+            )
+    }
 
     private companion object {
         val CONTROL_RESPONSE_TIMEOUT: Duration = Duration.ofSeconds(5)
@@ -619,6 +667,9 @@ private fun failAmbiguousAcquire(
     if (!interrupted || !cancellationAcknowledged) closeSession()
     throw failure
 }
+
+/** A candidate socket path that accepted a connection, with the channel already opened on it. */
+private data class ConnectedSocket(val path: java.nio.file.Path, val channel: SocketChannel)
 
 private fun <T> runCoordinatorIo(timeout: Duration, block: () -> T): T {
     require(!timeout.isNegative && !timeout.isZero) { "Coordinator I/O timeout must be positive" }
