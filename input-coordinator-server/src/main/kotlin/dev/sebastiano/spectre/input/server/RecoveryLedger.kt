@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit
 
 internal class RecoveryLedger(private val path: Path, private val heartbeatTimeout: Duration) {
     private val current = mutableMapOf<String, LedgerRecord>()
+    private val pendingDiscardedLeaseIds = mutableSetOf<String>()
 
     @Synchronized
     fun load(): RecoveryRecord? {
@@ -90,6 +91,12 @@ internal class RecoveryLedger(private val path: Path, private val heartbeatTimeo
     @Synchronized
     fun discardUnobserved(leaseId: String) {
         current.remove(leaseId)
+        pendingDiscardedLeaseIds += leaseId
+    }
+
+    @Synchronized
+    fun retryDiscarded() {
+        if (pendingDiscardedLeaseIds.isNotEmpty()) persist()
     }
 
     @Synchronized
@@ -127,6 +134,7 @@ internal class RecoveryLedger(private val path: Path, private val heartbeatTimeo
             1 -> write(current.values.single())
             else -> write(conservativeRecord(current.values))
         }
+        pendingDiscardedLeaseIds.clear()
     }
 
     private fun write(record: LedgerRecord) {

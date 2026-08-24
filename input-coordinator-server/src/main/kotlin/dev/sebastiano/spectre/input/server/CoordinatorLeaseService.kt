@@ -293,6 +293,7 @@ internal class CoordinatorLeaseService(
                 future.complete(error("COORDINATOR_CLOSED", "Input coordinator stopped"))
             }
             pendingAcquires.clear()
+            runCatching { recoveryLedger?.retryDiscarded() }
         }
     }
 

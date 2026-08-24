@@ -2,6 +2,10 @@
 
 package dev.sebastiano.spectre.agent.transport
 
+import java.net.StandardProtocolFamily
+import java.net.UnixDomainSocketAddress
+import java.nio.channels.Channels
+import java.nio.channels.SocketChannel
 import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
@@ -113,6 +117,70 @@ class LongOpInfrastructureTest {
                 )
                 firstClient.close()
                 replacementExecutor.shutdownNow()
+            }
+        }
+    }
+
+    @Test
+    fun `pre-handshake rejection waits for input orphaned by ordinary EOF`() {
+        val inputStarted = CountDownLatch(1)
+        val allowInputToFinish = CountDownLatch(1)
+        val detached = CountDownLatch(1)
+        val server =
+            IpcServer(
+                udsPath,
+                AgentRequestHandler { request ->
+                    if (request is AgentRequest.Click) {
+                        inputStarted.countDown()
+                        while (true) {
+                            try {
+                                allowInputToFinish.await()
+                                break
+                            } catch (_: InterruptedException) {
+                                // Model native input that outlives interruption.
+                            }
+                        }
+                    }
+                    AgentResponse.Ok
+                },
+                onDetach = { detached.countDown() },
+            )
+        server.use {
+            awaitSocket(udsPath)
+            val firstClient = IpcClient(udsPath)
+            val inputThread =
+                Thread {
+                        runCatching {
+                            firstClient.send(AgentRequest.Click(nodeKey = "target-node"))
+                        }
+                    }
+                    .apply {
+                        isDaemon = true
+                        start()
+                    }
+            try {
+                assertTrue(inputStarted.await(3, TimeUnit.SECONDS), "input op never started")
+                firstClient.close()
+
+                SocketChannel.open(StandardProtocolFamily.UNIX).use { replacement ->
+                    replacement.connect(UnixDomainSocketAddress.of(udsPath))
+                    val input = Channels.newInputStream(replacement)
+                    val output = Channels.newOutputStream(replacement)
+                    Framing.writeFrame(output, WireCodec.encode(AgentRequest.Ping))
+                    assertIs<AgentResponse.Error>(
+                        WireCodec.decodeResponse(Framing.readFrame(input) ?: error("no response"))
+                    )
+                }
+
+                assertFalse(
+                    detached.await(200, TimeUnit.MILLISECONDS),
+                    "handshake rejection released resources while orphaned input was active",
+                )
+            } finally {
+                allowInputToFinish.countDown()
+                assertTrue(detached.await(3, TimeUnit.SECONDS))
+                inputThread.join(3_000)
+                firstClient.close()
             }
         }
     }

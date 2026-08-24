@@ -175,8 +175,7 @@ constructor(
                         Framing.readFrame(input)
                     } ?: return false
                 } catch (ex: IllegalStateException) {
-                    running.set(false)
-                    onDetach()
+                    detachAfterInputTermination()
                     throw ex
                 }
             val request =
@@ -228,8 +227,7 @@ constructor(
             }
         } finally {
             if (tearDown) {
-                running.set(false)
-                onDetach()
+                detachAfterInputTermination()
             }
         }
         return !tearDown
@@ -271,8 +269,7 @@ constructor(
                 )
             }
         } finally {
-            running.set(false)
-            onDetach()
+            detachAfterInputTermination()
         }
         return false
     }
@@ -297,10 +294,19 @@ constructor(
                 )
             }
         } finally {
-            running.set(false)
-            onDetach()
+            detachAfterInputTermination()
         }
         return false
+    }
+
+    private fun detachAfterInputTermination() {
+        running.set(false)
+        val interrupted = inputWorkers.awaitAllTerminated()
+        try {
+            onDetach()
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt()
+        }
     }
 
     /**
