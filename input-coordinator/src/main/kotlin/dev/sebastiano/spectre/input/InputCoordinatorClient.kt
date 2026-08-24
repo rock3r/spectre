@@ -405,11 +405,20 @@ private constructor(
                     firstAttempt
                 }
             val failure = result.exceptionOrNull()
-            if (failure.isReleasePersistenceFailure() && connected.get()) {
+            val persistenceFailure =
+                if (result.isSuccess) {
+                    null
+                } else {
+                    failure.takeIf { it.isReleasePersistenceFailure() }
+                        ?: firstAttempt.exceptionOrNull().takeIf {
+                            it.isReleasePersistenceFailure()
+                        }
+                }
+            if (persistenceFailure != null && connected.get()) {
                 registration.markReleasePending(requestId)
                 closed.set(true)
                 releaseRegistration(registration)
-                throw requireNotNull(failure)
+                throw persistenceFailure
             }
 
             closed.set(true)
