@@ -23,6 +23,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.runInterruptible
@@ -171,7 +172,12 @@ internal class InputLeaseGuard(
         val operationContext = coroutineContext[LeaseContext]
         if (operationContext?.guard === this) {
             operationContext.lease?.checkpoint()
-            return block()
+            // Child coroutines inherit LeaseContext but have distinct Jobs. Serialize those
+            // siblings while keeping same-coroutine composite operations reentrant.
+            if (operationContext.ownerJob === coroutineContext[Job]) return block()
+            return operationContext.childOperationMutex.withLock {
+                withLeaseContext(operationContext.lease, block)
+            }
         }
         val bound = boundLease.get()
         val ambient = AmbientInputLease.current()
@@ -252,12 +258,17 @@ internal class InputLeaseGuard(
         lease: CoordinatedInputLease?,
         block: suspend () -> T,
     ): T {
-        val context = LeaseContext(this, lease)
+        val context = LeaseContext(this, lease, coroutineContext[Job])
         return withContext(context + blockingContext.asContextElement(context)) { block() }
     }
 
-    private class LeaseContext(val guard: InputLeaseGuard, val lease: CoordinatedInputLease?) :
-        AbstractCoroutineContextElement(LeaseContext) {
+    private class LeaseContext(
+        val guard: InputLeaseGuard,
+        val lease: CoordinatedInputLease?,
+        val ownerJob: Job?,
+    ) : AbstractCoroutineContextElement(LeaseContext) {
+        val childOperationMutex: Mutex = Mutex()
+
         companion object Key : CoroutineContext.Key<LeaseContext>
     }
 

@@ -29,6 +29,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
@@ -118,6 +119,47 @@ class InputLeaseGuardTest {
         first.await()
         second.await()
         assertEquals(listOf("first", "second"), coordinator.operations)
+    }
+
+    @Test
+    fun `sibling operations inside an exclusive scope are serialized`() = runTest {
+        val coordinator = RecordingInputLeaseCoordinator()
+        val guard =
+            InputLeaseGuard(
+                policy = InputLeasePolicy.Required,
+                capabilities = InputCapabilities(realOsInput = true, sharedSystemClipboard = true),
+                coordinator = coordinator,
+            )
+        val firstEntered = CompletableDeferred<Unit>()
+        val releaseFirst = CompletableDeferred<Unit>()
+        val secondEntered = CompletableDeferred<Unit>()
+
+        guard.withOperation("exclusiveInput", CoordinatedResource.DESKTOP_ANY) {
+            coroutineScope {
+                val first = async {
+                    guard.withOperation("first", CoordinatedResource.REAL_INPUT) {
+                        guard.withOperation("firstNested", CoordinatedResource.REAL_INPUT) {
+                            firstEntered.complete(Unit)
+                            releaseFirst.await()
+                        }
+                    }
+                }
+                firstEntered.await()
+                val second = async {
+                    guard.withOperation("second", CoordinatedResource.REAL_INPUT) {
+                        secondEntered.complete(Unit)
+                    }
+                }
+                yield()
+
+                assertFalse(secondEntered.isCompleted)
+                releaseFirst.complete(Unit)
+                first.await()
+                second.await()
+            }
+        }
+
+        assertEquals(listOf("exclusiveInput"), coordinator.operations)
     }
 
     @Test
