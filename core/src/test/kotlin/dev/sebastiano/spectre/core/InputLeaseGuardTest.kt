@@ -62,6 +62,31 @@ class InputLeaseGuardTest {
     }
 
     @Test
+    fun `blocking focus within an exclusive scope remains reentrant`() {
+        val coordinator = RecordingInputLeaseCoordinator()
+        val driver = realDriver(coordinator)
+        val executor = Executors.newSingleThreadExecutor()
+
+        try {
+            val completed =
+                executor.submit<Boolean> {
+                    runBlocking {
+                        driver.withExclusiveInput(InputLeaseOptions(ownerLabel = "transaction")) {
+                            driver.withBlockingInput("focusWindow") {}
+                        }
+                    }
+                    true
+                }
+
+            assertTrue(completed.get(5, TimeUnit.SECONDS))
+            assertEquals(listOf("exclusiveInput"), coordinator.operations)
+            assertEquals(1, coordinator.closedLeases)
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
     fun `concurrent top-level operations on one driver are serialized`() = runTest {
         val coordinator = RecordingInputLeaseCoordinator()
         val guard =

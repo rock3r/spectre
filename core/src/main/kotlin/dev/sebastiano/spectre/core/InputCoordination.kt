@@ -23,6 +23,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
@@ -158,6 +159,7 @@ internal class InputLeaseGuard(
     private val coordinator: InputLeaseCoordinator,
 ) {
     private val boundLease = AtomicReference<CoordinatedInputLease?>()
+    private val blockingContext = ThreadLocal<LeaseContext?>()
     private val operationMutex = Mutex()
 
     suspend fun <T> withOperation(
@@ -178,7 +180,7 @@ internal class InputLeaseGuard(
             val existingLease = bound ?: ambient
             if (existingLease != null) {
                 existingLease.checkpoint()
-                return@withLock withContext(LeaseContext(this, existingLease)) { block() }
+                return@withLock withLeaseContext(existingLease, block)
             }
             val immediate = SwingUtilities.isEventDispatchThread()
             val lease =
@@ -189,7 +191,7 @@ internal class InputLeaseGuard(
                         policy == InputLeasePolicy.Auto &&
                             failure.errorCode in AUTO_DEGRADE_ERROR_CODES
                     ) {
-                        return@withLock withContext(LeaseContext(this, null)) { block() }
+                        return@withLock withLeaseContext(null, block)
                     }
                     if (immediate) {
                         throw ContendedEdtInputLeaseException(
@@ -203,11 +205,24 @@ internal class InputLeaseGuard(
                 }
             try {
                 lease.checkpoint()
-                withContext(LeaseContext(this, lease)) { block() }
+                withLeaseContext(lease, block)
             } finally {
                 lease.close()
             }
         }
+    }
+
+    fun <T> withBlockingOperation(
+        currentOperation: String,
+        resource: CoordinatedResource,
+        block: () -> T,
+    ): T {
+        val activeContext = blockingContext.get()
+        if (activeContext?.guard === this) {
+            activeContext.lease?.checkpoint()
+            return block()
+        }
+        return runBlocking { withOperation(currentOperation, resource) { block() } }
     }
 
     suspend fun checkpoint() {
@@ -231,6 +246,14 @@ internal class InputLeaseGuard(
             CoordinatedResource.FOCUS -> true
             CoordinatedResource.SYSTEM_CLIPBOARD -> capabilities.sharedSystemClipboard
         }
+    }
+
+    private suspend fun <T> withLeaseContext(
+        lease: CoordinatedInputLease?,
+        block: suspend () -> T,
+    ): T {
+        val context = LeaseContext(this, lease)
+        return withContext(context + blockingContext.asContextElement(context)) { block() }
     }
 
     private class LeaseContext(val guard: InputLeaseGuard, val lease: CoordinatedInputLease?) :
@@ -265,9 +288,8 @@ internal class DriverInputCoordination(private val guard: InputLeaseGuard) {
 
     fun bind(lease: CoordinatedInputLease): AutoCloseable = guard.bind(lease)
 
-    fun <T> withBlockingInput(operation: String, block: () -> T): T = runBlocking {
-        guard.withOperation(operation, CoordinatedResource.FOCUS) { block() }
-    }
+    fun <T> withBlockingInput(operation: String, block: () -> T): T =
+        guard.withBlockingOperation(operation, CoordinatedResource.FOCUS, block)
 }
 
 internal suspend fun <T> RobotDriver.withExclusiveInput(
