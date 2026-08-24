@@ -70,6 +70,7 @@ internal constructor(
     private val inputIsolation: InputIsolationConfig = InputIsolationConfig.perInteraction(),
     private val leaseFactory: InputTestLeaseFactory = ProductionInputTestLeaseFactory,
     private val acquireBeforeAutoFactory: Boolean = false,
+    private val managedFactory: ManagedAutomatorFactory? = null,
     private val factory: AutomatorFactory,
 ) : ExternalResource() {
 
@@ -90,7 +91,8 @@ internal constructor(
     ) : this(
         inputIsolation = inputIsolation,
         acquireBeforeAutoFactory = true,
-        factory = defaultAutomatorFactory(inputIsolation),
+        managedFactory = defaultManagedAutomatorFactory(inputIsolation),
+        factory = { ComposeAutomator.inProcess() },
     )
 
     @ExperimentalSpectreInputCoordinationApi
@@ -184,7 +186,7 @@ internal constructor(
                     )
                 try {
                     isolation.acquireBeforeFactory()
-                    instance = isolation.createAutomator(factory)
+                    instance = isolation.createAutomator(factory, managedFactory)
                     isolation.bindAfterFactory(automator)
                     startFailureVideo(lastDescription)
                     // runCatching so both Exception and AssertionError (JUnit 4 failures) are

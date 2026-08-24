@@ -72,6 +72,7 @@ internal constructor(
     private val inputIsolation: InputIsolationConfig = InputIsolationConfig.perInteraction(),
     private val leaseFactory: InputTestLeaseFactory = ProductionInputTestLeaseFactory,
     private val acquireBeforeAutoFactory: Boolean = false,
+    private val managedFactory: ManagedAutomatorFactory? = null,
     private val factory: AutomatorFactory,
 ) :
     BeforeEachCallback,
@@ -97,7 +98,8 @@ internal constructor(
     ) : this(
         inputIsolation = inputIsolation,
         acquireBeforeAutoFactory = true,
-        factory = defaultAutomatorFactory(inputIsolation),
+        managedFactory = defaultManagedAutomatorFactory(inputIsolation),
+        factory = { ComposeAutomator.inProcess() },
     )
 
     @ExperimentalSpectreInputCoordinationApi
@@ -174,7 +176,7 @@ internal constructor(
         store.put(isolationKey, isolation)
         runCatching {
                 isolation.acquireBeforeFactory()
-                val automator = isolation.createAutomator(factory)
+                val automator = isolation.createAutomator(factory, managedFactory)
                 isolation.bindAfterFactory(automator)
                 store.put(STORE_KEY, automator)
                 lastInstance = automator

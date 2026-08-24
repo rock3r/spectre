@@ -61,18 +61,26 @@ internal object ProductionInputTestLeaseFactory : InputTestLeaseFactory {
         DesktopInputIsolation.acquire(options.copy(ownerLabel = ownerLabel))
 }
 
-internal fun defaultAutomatorFactory(
+internal class ManagedAutomator(
+    internal val automator: ComposeAutomator,
+    internal val resource: AutoCloseable,
+)
+
+internal fun interface ManagedAutomatorFactory {
+    fun create(): ManagedAutomator
+}
+
+internal fun defaultManagedAutomatorFactory(
     inputIsolation: InputIsolationConfig,
-    legacyFactory: AutomatorFactory = { ComposeAutomator.inProcess() },
-    coordinatedFactory: AutomatorFactory = {
-        ComposeAutomator.inProcess(RobotDriver(InputLeasePolicy.Required))
+    coordinatedFactory: ManagedAutomatorFactory = ManagedAutomatorFactory {
+        val driver = RobotDriver(InputLeasePolicy.Required)
+        runCatching { ManagedAutomator(ComposeAutomator.inProcess(driver), driver) }
+            .onFailure { driver.close() }
+            .getOrThrow()
     },
-): AutomatorFactory =
-    if (inputIsolation.mode == InputIsolationMode.PerInteraction) {
-        coordinatedFactory
-    } else {
-        legacyFactory
-    }
+): ManagedAutomatorFactory? = coordinatedFactory.takeIf {
+    inputIsolation.mode == InputIsolationMode.PerInteraction
+}
 
 internal class InputIsolationSession(
     private val config: InputIsolationConfig,
@@ -82,6 +90,7 @@ internal class InputIsolationSession(
 ) : ExtensionContext.Store.CloseableResource {
     private var lease: AutomatorInputLease? = null
     private var binding: AutoCloseable? = null
+    private var managedResource: AutoCloseable? = null
 
     fun acquireBeforeFactory() {
         if (
@@ -103,16 +112,37 @@ internal class InputIsolationSession(
         lease?.let { acquired -> binding = acquired.bind(automator) }
     }
 
-    fun createAutomator(factory: () -> ComposeAutomator): ComposeAutomator =
-        lease?.withLease(factory) ?: factory()
+    fun createAutomator(
+        factory: () -> ComposeAutomator,
+        managedFactory: ManagedAutomatorFactory? = null,
+    ): ComposeAutomator {
+        val create = {
+            if (managedFactory == null) {
+                factory()
+            } else {
+                check(managedResource == null) { "Managed automator resource is already active" }
+                managedFactory
+                    .create()
+                    .also { managed -> managedResource = managed.resource }
+                    .automator
+            }
+        }
+        return lease?.withLease(create) ?: create()
+    }
 
     override fun close() {
         try {
             binding?.close()
         } finally {
             binding = null
-            lease?.close()
-            lease = null
+            try {
+                lease?.close()
+            } finally {
+                lease = null
+                val resource = managedResource
+                managedResource = null
+                resource?.close()
+            }
         }
     }
 

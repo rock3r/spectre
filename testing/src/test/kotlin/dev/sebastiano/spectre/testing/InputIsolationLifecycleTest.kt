@@ -12,6 +12,8 @@ import java.lang.reflect.Method
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import org.junit.runner.Description
 import org.junit.runners.model.Statement
 
@@ -133,33 +135,71 @@ class InputIsolationLifecycleTest {
     }
 
     @Test
-    fun `explicit default factory enables per-interaction operation leases`() {
-        val selectedFactories = mutableListOf<String>()
-        val legacyFactory = {
-            selectedFactories += "legacy"
-            newHeadlessAutomator()
-        }
-        val coordinatedFactory = {
-            selectedFactories += "coordinated"
-            newHeadlessAutomator()
-        }
-
-        listOf(
-                InputIsolationConfig.perInteraction() to "coordinated",
-                InputIsolationConfig.perTest() to "legacy",
-                InputIsolationConfig.auto() to "legacy",
-                InputIsolationConfig.off() to "legacy",
+    fun `explicit default factory owns per-interaction driver only`() {
+        val managedFactory =
+            defaultManagedAutomatorFactory(
+                inputIsolation = InputIsolationConfig.perInteraction(),
+                coordinatedFactory = { ManagedAutomator(newHeadlessAutomator(), AutoCloseable {}) },
             )
-            .forEach { (config, expectedFactory) ->
-                defaultAutomatorFactory(
-                        inputIsolation = config,
-                        legacyFactory = legacyFactory,
-                        coordinatedFactory = coordinatedFactory,
-                    )
-                    .invoke()
 
-                assertEquals(expectedFactory, selectedFactories.removeLast())
+        assertNotNull(managedFactory)
+        assertNull(defaultManagedAutomatorFactory(InputIsolationConfig.perTest()))
+        assertNull(defaultManagedAutomatorFactory(InputIsolationConfig.auto()))
+        assertNull(defaultManagedAutomatorFactory(InputIsolationConfig.off()))
+    }
+
+    @Test
+    fun `managed per-interaction driver closes with isolation session`() {
+        val events = mutableListOf<String>()
+        val session =
+            InputIsolationSession(
+                config = InputIsolationConfig.perInteraction(),
+                acquireBeforeAutoFactory = true,
+                ownerLabel = "managed",
+                leaseFactory = recordingLeaseFactory(events),
+            )
+
+        session.createAutomator(
+            factory = { error("legacy factory must not run") },
+            managedFactory =
+                ManagedAutomatorFactory {
+                    ManagedAutomator(
+                        automator = newHeadlessAutomator(),
+                        resource = AutoCloseable { events += "close-driver" },
+                    )
+                },
+        )
+        session.close()
+
+        assertEquals(listOf("close-driver"), events)
+    }
+
+    @Test
+    fun `JUnit wrappers close their managed per-interaction drivers`() {
+        val events = mutableListOf<String>()
+        val extension =
+            ComposeAutomatorExtension(
+                inputIsolation = InputIsolationConfig.perInteraction(),
+                managedFactory = managedFactory("extension", events),
+                factory = { error("legacy extension factory must not run") },
+            )
+        val context = recordingContext("managed extension")
+        extension.beforeEach(context)
+        extension.afterEach(context)
+
+        val rule =
+            ComposeAutomatorRule(
+                inputIsolation = InputIsolationConfig.perInteraction(),
+                managedFactory = managedFactory("rule", events),
+                factory = { error("legacy rule factory must not run") },
+            )
+        val body =
+            object : Statement() {
+                override fun evaluate(): Unit = Unit
             }
+        rule.apply(body, Description.createTestDescription(javaClass, "managed rule")).evaluate()
+
+        assertEquals(listOf("close-extension", "close-rule"), events)
     }
 
     private fun recordingContext(displayName: String): RecordingExtensionContext =
@@ -174,6 +214,14 @@ class InputIsolationLifecycleTest {
 
     @Suppress("unused") private fun extensionTestFixture(): Unit = Unit
 }
+
+private fun managedFactory(name: String, events: MutableList<String>): ManagedAutomatorFactory =
+    ManagedAutomatorFactory {
+        ManagedAutomator(
+            automator = newHeadlessAutomator(),
+            resource = AutoCloseable { events += "close-$name" },
+        )
+    }
 
 private fun recordingLeaseFactory(events: MutableList<String>): InputTestLeaseFactory =
     InputTestLeaseFactory { _: InputLeaseOptions, ownerLabel: String ->
