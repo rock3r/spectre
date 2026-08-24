@@ -369,18 +369,19 @@ internal class LeaseStateMachine(
     }
 
     fun revoke(
+        resourceKey: DesktopResourceKey,
         observedLeaseId: String,
         requesterLabel: String,
         reason: String,
         force: Boolean,
         beforeForcedRevocation: () -> Unit = {},
     ): RevokeResult {
-        val (state, holder) =
-            resources.values.firstNotNullOfOrNull { state ->
-                state.holder
-                    ?.takeIf { holder -> holder.token.leaseId == observedLeaseId }
-                    ?.let { holder -> state to holder }
-            } ?: return RevokeResult.Rejected(LeaseErrorCode.STALE_LEASE)
+        val state =
+            resources[resourceKey] ?: return RevokeResult.Rejected(LeaseErrorCode.STALE_LEASE)
+        val holder = state.holder ?: return RevokeResult.Rejected(LeaseErrorCode.STALE_LEASE)
+        if (holder.token.leaseId != observedLeaseId) {
+            return RevokeResult.Rejected(LeaseErrorCode.STALE_LEASE)
+        }
         if (holder.status == LeaseStatus.HELD) {
             transitions.beginRevocation(state, holder, requesterLabel, reason)
             if (force && revokeGraceMillis == 0L) {

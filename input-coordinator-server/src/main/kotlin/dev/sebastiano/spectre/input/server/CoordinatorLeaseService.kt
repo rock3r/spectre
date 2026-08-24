@@ -229,11 +229,11 @@ internal class CoordinatorLeaseService(
 
     @Synchronized
     fun revoke(message: CoordinatorWireMessage): CoordinatorWireMessage {
+        val resourceKey = DesktopResourceKey(requireNotNull(message.resourceKey))
         val leaseId = requireNotNull(message.leaseId)
         val requesterLabel = requireNotNull(message.requesterLabel)
         val reason = requireNotNull(message.reason)
-        val quarantine =
-            machine.status(DesktopResourceKey(requireNotNull(message.resourceKey))).quarantine
+        val quarantine = machine.status(resourceKey).quarantine
         if (quarantine?.predecessorLeaseId == leaseId && message.force) {
             val result =
                 try {
@@ -254,7 +254,7 @@ internal class CoordinatorLeaseService(
         }
         val result =
             try {
-                machine.revoke(leaseId, requesterLabel, reason, message.force) {
+                machine.revoke(resourceKey, leaseId, requesterLabel, reason, message.force) {
                     recoveryLedger?.clear(leaseId)
                 }
             } catch (_: IOException) {

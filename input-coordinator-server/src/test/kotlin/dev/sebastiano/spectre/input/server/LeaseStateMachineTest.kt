@@ -147,11 +147,18 @@ class LeaseStateMachineTest {
         machine.acquire(request("b", ownerB))
 
         val stale =
-            machine.revoke("old", requesterLabel = "operator", reason = "stuck", force = false)
+            machine.revoke(
+                resource,
+                "old",
+                requesterLabel = "operator",
+                reason = "stuck",
+                force = false,
+            )
         assertEquals(LeaseErrorCode.STALE_LEASE, stale.rejectedCode())
         val requested =
             assertIs<RevokeResult.Requested>(
                 machine.revoke(
+                    resource,
                     token.leaseId,
                     requesterLabel = "operator",
                     reason = "stuck",
@@ -173,7 +180,13 @@ class LeaseStateMachineTest {
         val token = machine.acquire(request("a-1", ownerA)).grantedToken()
         machine.acquire(request("a-2", ownerA))
         machine.acquire(request("b", ownerB))
-        machine.revoke(token.leaseId, requesterLabel = "operator", reason = "stuck", force = false)
+        machine.revoke(
+            resource,
+            token.leaseId,
+            requesterLabel = "operator",
+            reason = "stuck",
+            force = false,
+        )
 
         val first = assertIs<RevokeResult.Acknowledged>(machine.acknowledgeRevocation(token))
         assertEquals(null, first.nextGrant)
@@ -189,10 +202,17 @@ class LeaseStateMachineTest {
         val machine = machine(revokeGraceMillis = 20)
         val token = machine.acquire(request("a", ownerA)).grantedToken()
         machine.acquire(request("b", ownerB))
-        machine.revoke(token.leaseId, requesterLabel = "operator", reason = "wedged", force = false)
+        machine.revoke(
+            resource,
+            token.leaseId,
+            requesterLabel = "operator",
+            reason = "wedged",
+            force = false,
+        )
 
         val tooEarly =
             machine.revoke(
+                resource,
                 token.leaseId,
                 requesterLabel = "operator",
                 reason = "wedged",
@@ -203,6 +223,7 @@ class LeaseStateMachineTest {
         val forced =
             assertIs<RevokeResult.Forced>(
                 machine.revoke(
+                    resource,
                     token.leaseId,
                     requesterLabel = "operator",
                     reason = "wedged",
@@ -220,7 +241,13 @@ class LeaseStateMachineTest {
     fun `fence generation prevents an older token from starting work`() {
         val machine = machine()
         val token = machine.acquire(request("a", ownerA)).grantedToken()
-        machine.revoke(token.leaseId, requesterLabel = "operator", reason = "stop", force = false)
+        machine.revoke(
+            resource,
+            token.leaseId,
+            requesterLabel = "operator",
+            reason = "stop",
+            force = false,
+        )
 
         assertEquals(LeaseErrorCode.FENCED, machine.validate(token).rejectedCode())
         assertTrue(machine.status(resource).holder!!.fence > token.fence)

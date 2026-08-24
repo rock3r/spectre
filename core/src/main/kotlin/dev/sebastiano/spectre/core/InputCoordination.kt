@@ -24,7 +24,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.asContextElement
+import kotlinx.coroutines.ThreadContextElement
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
@@ -160,7 +160,7 @@ internal class InputLeaseGuard(
     private val coordinator: InputLeaseCoordinator,
 ) {
     private val boundLease = AtomicReference<CoordinatedInputLease?>()
-    private val blockingContext = ThreadLocal<LeaseContext?>()
+    private val blockingContext = ThreadLocal<BlockingLeaseContext?>()
     private val operationMutex = Mutex()
 
     suspend fun <T> withOperation(
@@ -224,9 +224,20 @@ internal class InputLeaseGuard(
         block: () -> T,
     ): T {
         val activeContext = blockingContext.get()
-        if (activeContext?.guard === this) {
-            activeContext.lease?.checkpoint()
-            return block()
+        val leaseContext = activeContext?.leaseContext
+        if (leaseContext?.guard === this) {
+            leaseContext.lease?.checkpoint()
+            if (
+                leaseContext.ownerJob === activeContext.currentJob ||
+                    activeContext.ownsChildOperationMutex
+            ) {
+                return block()
+            }
+            return runBlocking {
+                leaseContext.childOperationMutex.withLock {
+                    withBlockingContext(activeContext.copy(ownsChildOperationMutex = true), block)
+                }
+            }
         }
         return runBlocking { withOperation(currentOperation, resource) { block() } }
     }
@@ -259,7 +270,47 @@ internal class InputLeaseGuard(
         block: suspend () -> T,
     ): T {
         val context = LeaseContext(this, lease, coroutineContext[Job])
-        return withContext(context + blockingContext.asContextElement(context)) { block() }
+        return withContext(context + BlockingLeaseContextElement(context, blockingContext)) {
+            block()
+        }
+    }
+
+    private fun <T> withBlockingContext(context: BlockingLeaseContext, block: () -> T): T {
+        val previous = blockingContext.get()
+        blockingContext.set(context)
+        return try {
+            block()
+        } finally {
+            if (previous == null) blockingContext.remove() else blockingContext.set(previous)
+        }
+    }
+
+    private data class BlockingLeaseContext(
+        val leaseContext: LeaseContext,
+        val currentJob: Job?,
+        val ownsChildOperationMutex: Boolean = false,
+    )
+
+    private class BlockingLeaseContextElement(
+        private val leaseContext: LeaseContext,
+        private val threadLocal: ThreadLocal<BlockingLeaseContext?>,
+    ) :
+        ThreadContextElement<BlockingLeaseContext?>,
+        AbstractCoroutineContextElement(BlockingLeaseContextElement) {
+        override fun updateThreadContext(context: CoroutineContext): BlockingLeaseContext? {
+            val previous = threadLocal.get()
+            threadLocal.set(BlockingLeaseContext(leaseContext, context[Job]))
+            return previous
+        }
+
+        override fun restoreThreadContext(
+            context: CoroutineContext,
+            oldState: BlockingLeaseContext?,
+        ) {
+            if (oldState == null) threadLocal.remove() else threadLocal.set(oldState)
+        }
+
+        companion object Key : CoroutineContext.Key<BlockingLeaseContextElement>
     }
 
     private class LeaseContext(
