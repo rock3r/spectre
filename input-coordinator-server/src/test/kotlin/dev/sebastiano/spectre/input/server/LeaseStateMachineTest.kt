@@ -84,7 +84,7 @@ class LeaseStateMachineTest {
     }
 
     @Test
-    fun `heartbeat expiry fences holder but disconnect confirms release and grants next`() {
+    fun `heartbeat expiry and disconnect stay fenced until cleanup acknowledgement`() {
         val machine = machine(heartbeatTimeoutMillis = 100)
         val first = machine.acquire(request("a", ownerA)).grantedToken()
         machine.acquire(request("b", ownerB))
@@ -94,8 +94,11 @@ class LeaseStateMachineTest {
 
         assertEquals(LeaseErrorCode.FENCED, machine.validate(first).rejectedCode())
         assertEquals(LeaseStatus.REVOKING, machine.status(resource).holder?.status)
-        val disconnect = machine.disconnect(ownerA.clientId)
-        assertEquals(ownerB, disconnect.grants.single().owner)
+        machine.disconnect(ownerA.clientId)
+        assertEquals(LeaseStatus.REVOKING, machine.status(resource).holder?.status)
+
+        val acknowledged = assertIs<RevokeResult.Acknowledged>(machine.acknowledgeRevocation(first))
+        assertEquals(ownerB, acknowledged.nextGrant?.owner)
     }
 
     @Test
@@ -242,7 +245,6 @@ class LeaseStateMachineTest {
         machine.acquire(request("b", ownerB))
 
         val disconnect = machine.disconnect(ownerB.clientId)
-        assertTrue(disconnect.grants.isEmpty())
         assertEquals(listOf("b"), disconnect.cancelledRequestIds)
         assertEquals(token, machine.status(resource).holder?.token)
         assertTrue(machine.status(resource).waiters.isEmpty())

@@ -316,13 +316,11 @@ private constructor(
             leaseRegistrations.computeIfPresent(token.leaseId) { _, existing ->
                 if (existing !== registration || existing.release() > 0) existing else null
             }
-            if (connected.get()) {
-                runCatching {
-                        send(tokenMessage(CoordinatorWireKind.RELEASE, token, requestId))
-                            .requireSuccess()
-                    }
-                    .onFailure { this@LocalInputCoordinatorClient.close() }
-            }
+            runCatching {
+                    send(tokenMessage(CoordinatorWireKind.RELEASE, token, requestId))
+                        .requireSuccess()
+                }
+                .onFailure { this@LocalInputCoordinatorClient.close() }
         }
     }
 

@@ -188,15 +188,18 @@ internal class CoordinatorLeaseService(
     @Synchronized
     fun disconnect(clientId: String) {
         requestTracker.markDisconnected(clientId)
-        recoveryLedger?.clearClient(clientId)
-        requestTracker.forgetClient(clientId)
         val result = machine.disconnect(clientId)
+        if (result.retainedLeaseIds.isEmpty()) {
+            recoveryLedger?.clearClient(clientId)
+            requestTracker.forgetClient(clientId)
+        } else {
+            requestTracker.forgetClientExcept(clientId, result.retainedLeaseIds)
+        }
         result.cancelledRequestIds.forEach { requestId ->
             pendingAcquires
                 .remove(requestId)
                 ?.complete(error("CLIENT_DISCONNECTED", "Client session disconnected"))
         }
-        result.grants.forEach(::completeGrant)
     }
 
     @Synchronized
@@ -401,6 +404,12 @@ private class AcquisitionRequestTracker {
 
     fun forgetClient(clientId: String) {
         grantsByRequest.keys.removeAll { it.clientId == clientId }
+    }
+
+    fun forgetClientExcept(clientId: String, retainedLeaseIds: Set<String>) {
+        grantsByRequest.entries.removeAll { (request, token) ->
+            request.clientId == clientId && token.leaseId !in retainedLeaseIds
+        }
     }
 
     fun forgetLease(leaseId: String) {

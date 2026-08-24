@@ -93,7 +93,8 @@ following as **delta hard cells** on a headed macOS, Windows, and Linux Xorg/Xvf
 
 - two independent JVMs acquire real-input work in FIFO order without interleaving;
 - a queued waiter is cancelled without stranding the next waiter;
-- holder termination releases or recovers through quarantine without granting stale ownership;
+- holder session loss stays fenced until cleanup acknowledgement or exact-ID forced recovery,
+  without granting stale ownership;
 - exact-ID normal revoke cannot affect a newer lease;
 - explicit forced recovery reports `unsafeTakeover=true` and allows the queue to progress; and
 - parallel JUnit invocations using `InputIsolationConfig.perTest()` serialise factory, body,

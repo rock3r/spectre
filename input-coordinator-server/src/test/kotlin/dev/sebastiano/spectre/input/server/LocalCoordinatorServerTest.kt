@@ -86,11 +86,11 @@ class LocalCoordinatorServerTest {
     }
 
     @Test
-    fun `closing owner session releases its lease and advances FIFO`() {
+    fun `closing owner session fences its lease until operation cleanup acknowledges release`() {
         startServer()
         val firstClient = client("first")
         val secondClient = client("second")
-        firstClient.acquire(Duration.ofSeconds(2), "first click")
+        val firstLease = firstClient.acquire(Duration.ofSeconds(2), "first click")
         val executor = Executors.newSingleThreadExecutor()
         resources += AutoCloseable { executor.shutdownNow() }
         val secondFuture =
@@ -100,6 +100,9 @@ class LocalCoordinatorServerTest {
         awaitWaiterCount(1)
 
         firstClient.close()
+        awaitHolderState("revoking")
+        assertFalse(secondFuture.isDone)
+        firstLease.close()
 
         resources.add(secondFuture.get(2, TimeUnit.SECONDS))
     }
@@ -420,6 +423,17 @@ class LocalCoordinatorServerTest {
             Thread.onSpinWait()
         }
         assertTrue(false, "Timed out waiting for $expected queued lease request")
+    }
+
+    private fun awaitHolderState(expected: String) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+        while (System.nanoTime() < deadline) {
+            val status = LocalInputCoordinatorControl(endpoint).status(resource)
+            val active = status as? CoordinatorControlResult.Active
+            if (active?.status?.holder?.state == expected) return
+            Thread.onSpinWait()
+        }
+        assertTrue(false, "Timed out waiting for holder state $expected")
     }
 
     private fun awaitLeaseInvalid(lease: CoordinatedInputLease) {

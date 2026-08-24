@@ -119,7 +119,7 @@ class CoordinatorLeaseServiceTest {
     }
 
     @Test
-    fun `disconnect cleanup continues when recovery persistence fails`() {
+    fun `disconnect fences holder until cleanup release can clear recovery state`() {
         val directory = Files.createTempDirectory("spc-service-disconnect-ledger-")
         val path = directory.resolve("recovery.properties")
         val service =
@@ -132,7 +132,7 @@ class CoordinatorLeaseServiceTest {
             )
         try {
             service.openSession("holder-client")
-            service.acquire(acquire("holder", "holder-client")).get()
+            val holder = service.acquire(acquire("holder", "holder-client")).get()
             Files.delete(path)
             Files.createDirectory(path)
             Files.writeString(path.resolve("blocker"), "prevent ledger deletion")
@@ -150,10 +150,11 @@ class CoordinatorLeaseServiceTest {
                         )
                         .status
                 )
-            assertNull(status.holder)
+            assertEquals("revoking", assertNotNull(status.holder).state)
 
             Files.delete(path.resolve("blocker"))
             Files.delete(path)
+            assertTrue(service.release(tokenMessage(holder, "holder-client")).ok)
             service.openSession("successor-client")
             val successor = service.acquire(acquire("successor", "successor-client")).get()
             assertTrue(successor.ok)

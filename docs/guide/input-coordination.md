@@ -61,6 +61,11 @@ close the driver (prefer `use { ... }` when its lifetime is block-scoped) to sto
 an idle coordinator exit. JUnit isolation and attached-agent teardown close their owned sessions
 automatically.
 
+Losing the coordinator session while a lease is held does not prove that native input has stopped.
+The coordinator fences that holder and keeps later work queued until the original lease cleanup
+acknowledges release. If the process died or cleanup cannot acknowledge, inspect the `revoking`
+holder and use exact-ID forced recovery only after accepting the overlap risk described below.
+
 ## Choose the narrowest useful mode
 
 | Need | Recommended mode |

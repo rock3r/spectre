@@ -94,8 +94,8 @@ internal data class ExpiryEvent(
 }
 
 internal data class DisconnectResult(
-    val grants: List<LeaseGrant>,
     val cancelledRequestIds: List<String>,
+    val retainedLeaseIds: Set<String>,
 )
 
 internal data class RecoveryRecord(
@@ -257,18 +257,26 @@ internal class LeaseStateMachine(
     }
 
     fun disconnect(clientId: String): DisconnectResult {
-        val grants = mutableListOf<LeaseGrant>()
         val cancelledRequestIds = mutableListOf<String>()
+        val retainedLeaseIds = mutableSetOf<String>()
         resources.values.forEach { state ->
             val disconnectedWaiters = state.waiters.filter { it.request.owner.clientId == clientId }
             cancelledRequestIds += disconnectedWaiters.map { it.request.requestId }
             state.waiters.removeAll(disconnectedWaiters.toSet())
-            if (state.holder?.owner?.clientId == clientId) {
-                state.holder = null
-                transitions.grantNext(state)?.let(grants::add)
+            val holder = state.holder
+            if (holder?.owner?.clientId == clientId) {
+                if (holder.status == LeaseStatus.HELD) {
+                    transitions.beginRevocation(
+                        state,
+                        holder,
+                        requesterLabel = "coordinator",
+                        reason = "owner session disconnected",
+                    )
+                }
+                retainedLeaseIds += holder.token.leaseId
             }
         }
-        return DisconnectResult(grants, cancelledRequestIds)
+        return DisconnectResult(cancelledRequestIds, retainedLeaseIds)
     }
 
     fun expire(): List<ExpiryEvent> {
