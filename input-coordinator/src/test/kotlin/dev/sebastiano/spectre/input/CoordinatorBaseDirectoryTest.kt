@@ -22,12 +22,22 @@ import kotlin.test.assertTrue
  */
 class CoordinatorBaseDirectoryTest {
 
+    private val localAppData = "C:\\Users\\someone\\AppData\\Local"
+
+    /**
+     * Composed the way the production code composes it. A literal `"C:\\…\\Local\\Temp"` would only
+     * be equal on Windows: elsewhere `Path.of` does not treat a backslash as a separator, so the
+     * literal is a single element while the composed path is two, and these tests would fail on the
+     * Linux and macOS CI legs.
+     */
+    private val expectedBase = Path.of(localAppData, "Temp")
+
     /** A host whose TEMP points somewhere shared and outside the user profile. */
     private val windowsEnvironment =
         mapOf(
             "TEMP" to "C:\\Windows\\Temp",
             "TMP" to "C:\\Windows\\Temp",
-            "LOCALAPPDATA" to "C:\\Users\\someone\\AppData\\Local",
+            "LOCALAPPDATA" to localAppData,
         )
 
     private fun windowsBase(
@@ -42,7 +52,7 @@ class CoordinatorBaseDirectoryTest {
 
     @Test
     fun `Windows puts the coordinator under the LOCALAPPDATA temp directory`() {
-        assertEquals(Path.of("C:\\Users\\someone\\AppData\\Local\\Temp"), windowsBase())
+        assertEquals(expectedBase, windowsBase())
     }
 
     @Test
@@ -65,7 +75,7 @@ class CoordinatorBaseDirectoryTest {
         // harnesses, service hosts), so they cannot decide coordinator identity; LOCALAPPDATA is a
         // Known Folder fixed at logon.
         assertEquals(
-            Path.of("C:\\Users\\someone\\AppData\\Local\\Temp"),
+            expectedBase,
             windowsBase(javaTemporaryDirectory = "C:\\some\\gradle\\worker\\tmp"),
         )
     }
@@ -88,7 +98,7 @@ class CoordinatorBaseDirectoryTest {
         val base = windowsBase()
 
         assertTrue(
-            base.startsWith(Path.of("C:\\Users\\someone\\AppData\\Local")),
+            base.startsWith(Path.of(localAppData)),
             "coordinator base must stay under the user's LOCALAPPDATA, was $base",
         )
     }

@@ -31,7 +31,9 @@ class CoordinatorUnusableSocketPathTest {
 
     private val resources = mutableListOf<AutoCloseable>()
     private val temporaryDirectory: Path = Files.createTempDirectory("spc-462-")
-    private val socketPath: Path = temporaryDirectory.resolve("input-v1-test.sock")
+    // Deliberately short: macOS temp roots are long (/var/folders/../T/..) and the candidate list
+    // drops generations that would breach the socket path byte cap.
+    private val socketPath: Path = temporaryDirectory.resolve("s.sock")
     private val endpoint =
         CoordinatorEndpoint(directory = temporaryDirectory, socketPath = socketPath)
     private val resource = DesktopResourceKey("user:501/windows-console")
@@ -52,6 +54,10 @@ class CoordinatorUnusableSocketPathTest {
 
     @Test
     fun `a coordinator still starts when the canonical socket path cannot be reclaimed`() {
+        assertTrue(
+            CoordinatorSocketCandidates.candidates(socketPath).size >= 2,
+            "this test needs at least one fallback candidate; the temp path may be too long",
+        )
         blockPath(socketPath)
         val server = LocalCoordinatorServer(endpoint, idleTimeout = Duration.ofMinutes(1))
         resources += server
