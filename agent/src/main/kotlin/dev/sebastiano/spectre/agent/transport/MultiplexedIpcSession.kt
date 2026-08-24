@@ -76,7 +76,12 @@ internal class MultiplexedIpcSession(
             workers.shutdownNow()
             inputWorker.shutdownNow()
             runCatching { workers.awaitTermination(WORKER_SHUTDOWN_SEC, TimeUnit.SECONDS) }
-            val inputWaitInterrupted = awaitInputWorkerTermination(inputWorker)
+            val inputWaitInterrupted =
+                if (detachRequested.get()) {
+                    awaitInputWorkerTermination(inputWorker)
+                } else {
+                    false
+                }
             try {
                 if (detachRequested.get()) onDetach()
             } finally {

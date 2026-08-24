@@ -5,6 +5,7 @@ package dev.sebastiano.spectre.agent.transport
 import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.deleteIfExists
 import kotlin.test.AfterTest
@@ -28,6 +29,79 @@ class LongOpInfrastructureTest {
     @AfterTest
     fun cleanUp() {
         runCatching { udsPath.deleteIfExists() }
+    }
+
+    @Test
+    fun `ordinary EOF accepts a replacement client while input finishes`() {
+        val inputStarted = CountDownLatch(1)
+        val allowInputToFinish = CountDownLatch(1)
+        val inputFinished = CountDownLatch(1)
+        val server =
+            IpcServer(
+                udsPath,
+                AgentRequestHandler { request ->
+                    when (request) {
+                        is AgentRequest.Click -> {
+                            inputStarted.countDown()
+                            try {
+                                var finished = false
+                                while (!finished) {
+                                    try {
+                                        allowInputToFinish.await()
+                                        finished = true
+                                    } catch (_: InterruptedException) {
+                                        // Model an input call that cannot stop at interruption.
+                                    }
+                                }
+                                AgentResponse.Ok
+                            } finally {
+                                inputFinished.countDown()
+                            }
+                        }
+                        AgentRequest.Ping -> AgentResponse.Pong
+                        else -> AgentResponse.Ok
+                    }
+                },
+            )
+        val replacementExecutor = Executors.newSingleThreadExecutor()
+        server.use {
+            awaitSocket(udsPath)
+            val firstClient = IpcClient(udsPath)
+            try {
+                val inputThread =
+                    Thread {
+                            runCatching {
+                                firstClient.send(AgentRequest.Click(nodeKey = "target-node"))
+                            }
+                        }
+                        .apply {
+                            isDaemon = true
+                            start()
+                        }
+                assertTrue(inputStarted.await(3, TimeUnit.SECONDS), "input op never started")
+
+                firstClient.close()
+                val replacement =
+                    replacementExecutor.submit<AgentResponse> {
+                        IpcClient(udsPath).use { it.send(AgentRequest.Ping) }
+                    }
+
+                assertEquals(AgentResponse.Pong, replacement.get(3, TimeUnit.SECONDS))
+                assertFalse(
+                    inputFinished.await(200, TimeUnit.MILLISECONDS),
+                    "ordinary EOF should not abandon the still-running input operation",
+                )
+                inputThread.join(3_000)
+            } finally {
+                allowInputToFinish.countDown()
+                assertTrue(
+                    inputFinished.await(3, TimeUnit.SECONDS),
+                    "input operation did not finish during cleanup",
+                )
+                firstClient.close()
+                replacementExecutor.shutdownNow()
+            }
+        }
     }
 
     @Test
