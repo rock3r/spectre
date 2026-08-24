@@ -319,11 +319,15 @@ private constructor(
             leaseRegistrations.computeIfPresent(token.leaseId) { _, existing ->
                 if (existing !== registration || existing.release() > 0) existing else null
             }
-            runCatching {
-                    send(tokenMessage(CoordinatorWireKind.RELEASE, token, requestId))
-                        .requireSuccess()
+            val release = tokenMessage(CoordinatorWireKind.RELEASE, token, requestId)
+            val firstAttempt = runCatching { send(release).requireSuccess() }
+            val result =
+                if (firstAttempt.exceptionOrNull() is IOException && connected.get()) {
+                    runCatching { send(release).requireSuccess() }
+                } else {
+                    firstAttempt
                 }
-                .onFailure { this@LocalInputCoordinatorClient.close() }
+            result.onFailure { this@LocalInputCoordinatorClient.close() }
         }
     }
 

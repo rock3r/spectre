@@ -15,6 +15,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class InputCoordinatorClientDisconnectTest {
@@ -348,6 +349,86 @@ class InputCoordinatorClientDisconnectTest {
             assertTrue(
                 sentinelClosed.await(2, TimeUnit.SECONDS),
                 "release failure should close the session so the retained grant is released",
+            )
+        } finally {
+            client.close()
+            listener.close()
+            serverThread.join(2_000)
+            Files.deleteIfExists(endpoint.socketPath)
+            Files.deleteIfExists(directory)
+        }
+    }
+
+    @Test
+    fun `release IO failure retries before closing the sentinel session`() {
+        val directory = Files.createTempDirectory("spc-rr-")
+        val endpoint = CoordinatorEndpoint(directory, directory.resolve("coordinator.sock"))
+        val codec = CoordinatorWireCodec()
+        val listener = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
+        listener.bind(UnixDomainSocketAddress.of(endpoint.socketPath))
+        val sentinelClosed = CountDownLatch(1)
+        val retryReceived = CountDownLatch(1)
+        val serverThread =
+            Thread.ofVirtual().name("coordinator-release-retry-test").start {
+                val session = listener.accept()
+                assertEquals(CoordinatorWireKind.SESSION_OPEN, codec.read(session).kind)
+                codec.write(
+                    session,
+                    CoordinatorWireMessage(
+                        kind = CoordinatorWireKind.RESPONSE,
+                        coordinatorEpoch = EPOCH,
+                    ),
+                )
+                Thread.ofVirtual().start {
+                    codec.readOrNull(session)
+                    sentinelClosed.countDown()
+                }
+
+                var acquireRequestId: String? = null
+                listener.accept().use { acquireChannel ->
+                    val acquire = codec.read(acquireChannel)
+                    acquireRequestId = acquire.requestId
+                    codec.write(
+                        acquireChannel,
+                        CoordinatorWireMessage(
+                            kind = CoordinatorWireKind.RESPONSE,
+                            requestId = acquire.requestId,
+                            coordinatorEpoch = EPOCH,
+                            leaseId = LEASE_ID,
+                            resourceKey = acquire.resourceKey,
+                            fence = 1,
+                        ),
+                    )
+                }
+                listener.accept().use { firstReleaseChannel ->
+                    val release = codec.read(firstReleaseChannel)
+                    assertEquals(CoordinatorWireKind.RELEASE, release.kind)
+                    assertEquals(acquireRequestId, release.requestId)
+                    // Drop the operation connection without a response. The sentinel is healthy,
+                    // so the client can safely retry this exact request-correlated release.
+                }
+                listener.accept().use { retryChannel ->
+                    val retry = codec.read(retryChannel)
+                    assertEquals(CoordinatorWireKind.RELEASE, retry.kind)
+                    assertEquals(acquireRequestId, retry.requestId)
+                    codec.write(retryChannel, CoordinatorWireMessage(CoordinatorWireKind.RESPONSE))
+                    retryReceived.countDown()
+                }
+            }
+        val client =
+            LocalInputCoordinatorClient.connect(
+                endpoint,
+                DesktopResourceKey("test/release-retry"),
+                "release-retry-test",
+                codec,
+            )
+        try {
+            client.acquire(Duration.ofSeconds(2), "test").close()
+
+            assertTrue(retryReceived.await(2, TimeUnit.SECONDS), "release was not retried")
+            assertFalse(
+                sentinelClosed.await(200, TimeUnit.MILLISECONDS),
+                "a successful release retry should keep the sentinel session open",
             )
         } finally {
             client.close()

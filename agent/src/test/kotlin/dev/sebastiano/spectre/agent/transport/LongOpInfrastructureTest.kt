@@ -11,10 +11,12 @@ import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlin.io.path.deleteIfExists
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
@@ -95,15 +97,14 @@ class LongOpInfrastructureTest {
                         }
                     }
 
-                assertEquals(AgentResponse.Detached, replacement.get(3, TimeUnit.SECONDS))
                 assertFalse(
                     inputFinished.await(200, TimeUnit.MILLISECONDS),
                     "ordinary EOF should not abandon the still-running input operation",
                 )
-                assertFalse(
-                    detached.await(200, TimeUnit.MILLISECONDS),
-                    "a later detach must wait for input orphaned by ordinary EOF",
-                )
+                assertFailsWith<TimeoutException> { replacement.get(200, TimeUnit.MILLISECONDS) }
+                allowInputToFinish.countDown()
+                assertEquals(AgentResponse.Detached, replacement.get(3, TimeUnit.SECONDS))
+                assertTrue(detached.await(3, TimeUnit.SECONDS))
                 inputThread.join(3_000)
             } finally {
                 allowInputToFinish.countDown()
@@ -214,35 +215,41 @@ class LongOpInfrastructureTest {
                 },
                 onDetach = { detached.countDown() },
             )
-        server.use {
-            awaitSocket(udsPath)
-            IpcClient(udsPath).use { client ->
-                val inputThread =
-                    Thread {
-                            runCatching { client.send(AgentRequest.Click(nodeKey = "target-node")) }
-                        }
-                        .apply {
-                            isDaemon = true
-                            start()
-                        }
+        val detachExecutor = Executors.newSingleThreadExecutor()
+        try {
+            server.use {
+                awaitSocket(udsPath)
+                IpcClient(udsPath).use { client ->
+                    val inputThread =
+                        Thread {
+                                runCatching {
+                                    client.send(AgentRequest.Click(nodeKey = "target-node"))
+                                }
+                            }
+                            .apply {
+                                isDaemon = true
+                                start()
+                            }
 
-                assertTrue(inputStarted.await(3, TimeUnit.SECONDS), "input op never started")
-                assertEquals(AgentResponse.Detached, client.send(AgentRequest.Detach))
-                try {
-                    assertFalse(
-                        detached.await(200, TimeUnit.MILLISECONDS),
-                        "detach released target resources while input was still active",
+                    assertTrue(inputStarted.await(3, TimeUnit.SECONDS), "input op never started")
+                    val detach =
+                        detachExecutor.submit<AgentResponse> { client.send(AgentRequest.Detach) }
+                    try {
+                        assertFailsWith<TimeoutException> { detach.get(200, TimeUnit.MILLISECONDS) }
+                    } finally {
+                        allowInputToFinish.countDown()
+                    }
+
+                    assertEquals(AgentResponse.Detached, detach.get(3, TimeUnit.SECONDS))
+                    assertTrue(
+                        detached.await(3, TimeUnit.SECONDS),
+                        "detach did not release target resources after input finished",
                     )
-                } finally {
-                    allowInputToFinish.countDown()
+                    inputThread.join(3_000)
                 }
-
-                assertTrue(
-                    detached.await(3, TimeUnit.SECONDS),
-                    "detach did not release target resources after input finished",
-                )
-                inputThread.join(3_000)
             }
+        } finally {
+            detachExecutor.shutdownNow()
         }
     }
 
