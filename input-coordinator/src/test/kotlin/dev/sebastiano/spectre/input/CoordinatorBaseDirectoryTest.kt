@@ -7,101 +7,104 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * #462: on Windows the coordinator socket used to live directly under `%LOCALAPPDATA%`. On hosts
  * with a filesystem filter over the AppData tree, an AF_UNIX socket file created there survives
- * both a clean close and process exit, and afterwards can neither be deleted nor re-bound — one
- * coordinator run permanently bricked the machine's attach input path. The per-user temporary
- * directory does not have that problem, and it is what every other platform already uses.
+ * both a clean close and process exit, and afterwards can neither be connected to, deleted, nor
+ * re-bound — one coordinator run permanently bricked the machine's attach input path.
+ *
+ * The endpoint therefore moves one level down into `%LOCALAPPDATA%\Temp`, which does not have that
+ * problem. It deliberately does *not* move to `%TEMP%`: this directory decides coordinator
+ * identity, so it has to be stable across every process on the desktop and has to stay inside the
+ * user's own ACL boundary.
  */
 class CoordinatorBaseDirectoryTest {
 
+    /** A host whose TEMP points somewhere shared and outside the user profile. */
     private val windowsEnvironment =
         mapOf(
-            "TEMP" to "C:\\Users\\someone\\AppData\\Local\\Temp",
-            "TMP" to "C:\\Users\\someone\\AppData\\Local\\Temp",
+            "TEMP" to "C:\\Windows\\Temp",
+            "TMP" to "C:\\Windows\\Temp",
             "LOCALAPPDATA" to "C:\\Users\\someone\\AppData\\Local",
         )
 
-    @Test
-    fun `Windows puts the coordinator under the temporary directory`() {
-        val base =
-            LocalCoordinatorEnvironment.baseDirectory(
-                platform = DesktopPlatform.WINDOWS,
-                environment = windowsEnvironment,
-                javaTemporaryDirectory = "C:\\ignored",
-            )
+    private fun windowsBase(
+        environment: Map<String, String> = windowsEnvironment,
+        javaTemporaryDirectory: String = "C:\\ignored",
+    ): Path =
+        LocalCoordinatorEnvironment.baseDirectory(
+            platform = DesktopPlatform.WINDOWS,
+            environment = environment,
+            javaTemporaryDirectory = javaTemporaryDirectory,
+        )
 
-        assertEquals(Path.of("C:\\Users\\someone\\AppData\\Local\\Temp"), base)
+    @Test
+    fun `Windows puts the coordinator under the LOCALAPPDATA temp directory`() {
+        assertEquals(Path.of("C:\\Users\\someone\\AppData\\Local\\Temp"), windowsBase())
     }
 
     @Test
     fun `Windows never places the coordinator directly in the AppData tree`() {
-        // Regression guard for #462: reintroducing an AppData-root base would re-brick the affected
-        // hosts, and the failure only shows up after the first coordinator shutdown.
-        val base =
-            LocalCoordinatorEnvironment.baseDirectory(
-                platform = DesktopPlatform.WINDOWS,
-                environment = windowsEnvironment,
-                javaTemporaryDirectory = "C:\\ignored",
-            )
+        // Regression guard for #462: an AppData-root base re-bricks the affected hosts, and the
+        // failure only shows up after the first coordinator shutdown.
+        val normalized = windowsBase().toString().replace('\\', '/').trimEnd('/')
 
-        val normalized = base.toString().replace('\\', '/').trimEnd('/')
         assertFalse(
             normalized.endsWith("/AppData/Local") || normalized.endsWith("/AppData/Roaming"),
-            "Windows coordinator base must not be an AppData root, was $base",
+            "Windows coordinator base must not be an AppData root, was $normalized",
         )
     }
 
     @Test
-    fun `the environment wins over a per-JVM java io tmpdir override`() {
-        // Every process on one desktop must derive the same directory, or two of them would
-        // coordinate against different coordinators and both believe they own the desktop.
-        // `java.io.tmpdir` is settable with -D per JVM (Gradle does this for test workers), so it
-        // cannot be the primary source.
-        val base =
-            LocalCoordinatorEnvironment.baseDirectory(
-                platform = DesktopPlatform.WINDOWS,
-                environment = windowsEnvironment,
-                javaTemporaryDirectory = "C:\\some\\gradle\\worker\\tmp",
-            )
-
-        assertEquals(Path.of("C:\\Users\\someone\\AppData\\Local\\Temp"), base)
+    fun `TEMP and TMP are ignored so one desktop cannot grow two coordinators`() {
+        // The election lock lives in this directory. If two processes on one desktop derived
+        // different directories they would each elect themselves and hand out simultaneous leases
+        // for the same desktop. TEMP/TMP are routinely overridden per process (build wrappers, CI
+        // harnesses, service hosts), so they cannot decide coordinator identity; LOCALAPPDATA is a
+        // Known Folder fixed at logon.
+        assertEquals(
+            Path.of("C:\\Users\\someone\\AppData\\Local\\Temp"),
+            windowsBase(javaTemporaryDirectory = "C:\\some\\gradle\\worker\\tmp"),
+        )
     }
 
     @Test
-    fun `Windows falls back to the LOCALAPPDATA temp directory when TEMP is unset`() {
-        val base =
-            LocalCoordinatorEnvironment.baseDirectory(
-                platform = DesktopPlatform.WINDOWS,
-                environment = mapOf("LOCALAPPDATA" to "C:\\Users\\someone\\AppData\\Local"),
-                javaTemporaryDirectory = "C:\\ignored",
-            )
+    fun `a process-overridden TEMP does not move the coordinator`() {
+        val fromDesktop = windowsBase()
+        val fromWrapperWithItsOwnTemp =
+            windowsBase(environment = windowsEnvironment + mapOf("TEMP" to "D:\\build\\scratch"))
 
-        assertEquals(Path.of("C:\\Users\\someone\\AppData\\Local\\Temp"), base)
+        assertEquals(fromDesktop, fromWrapperWithItsOwnTemp)
     }
 
     @Test
-    fun `Windows falls back to java io tmpdir only when the environment says nothing`() {
-        val base =
-            LocalCoordinatorEnvironment.baseDirectory(
-                platform = DesktopPlatform.WINDOWS,
-                environment = emptyMap(),
-                javaTemporaryDirectory = "C:\\fallback\\tmp",
-            )
+    fun `the coordinator stays inside the per-user profile for its ACLs`() {
+        // Windows uses BasicOwnerOnlyEndpointProtection, which never tightens a directory ACL, so
+        // the endpoint must inherit one from a location that is already owner-only. A shared TEMP
+        // such as C:\Windows\Temp would expose the socket, election lock, and recovery ledger to
+        // other OS users on the machine.
+        val base = windowsBase()
 
-        assertEquals(Path.of("C:\\fallback\\tmp"), base)
+        assertTrue(
+            base.startsWith(Path.of("C:\\Users\\someone\\AppData\\Local")),
+            "coordinator base must stay under the user's LOCALAPPDATA, was $base",
+        )
+    }
+
+    @Test
+    fun `Windows falls back to java io tmpdir only when LOCALAPPDATA is unset`() {
+        assertEquals(
+            Path.of("C:\\fallback\\tmp"),
+            windowsBase(environment = emptyMap(), javaTemporaryDirectory = "C:\\fallback\\tmp"),
+        )
     }
 
     @Test
     fun `an unresolvable Windows temporary directory is rejected loudly`() {
         assertFailsWith<IllegalArgumentException> {
-            LocalCoordinatorEnvironment.baseDirectory(
-                platform = DesktopPlatform.WINDOWS,
-                environment = emptyMap(),
-                javaTemporaryDirectory = "",
-            )
+            windowsBase(environment = emptyMap(), javaTemporaryDirectory = "")
         }
     }
 
