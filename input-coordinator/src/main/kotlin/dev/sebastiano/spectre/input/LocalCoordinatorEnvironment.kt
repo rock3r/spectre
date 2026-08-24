@@ -49,5 +49,7 @@ public object LocalCoordinatorEnvironment {
         }
     }
 
-    private fun effectiveUserId(): String = System.getProperty("user.name")
+    private fun effectiveUserId(): String =
+        ProcessHandle.current().info().user().orElse(null)?.takeIf(String::isNotBlank)
+            ?: error("Could not determine the current process owner identity")
 }

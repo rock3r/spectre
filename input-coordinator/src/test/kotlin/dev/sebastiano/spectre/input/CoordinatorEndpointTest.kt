@@ -19,15 +19,30 @@ class CoordinatorEndpointTest {
     @TempDir lateinit var temporaryDirectory: Path
 
     @Test
-    fun `default POSIX endpoint uses the runtime-independent username identity`() {
+    fun `default POSIX endpoint uses the process owner identity`() {
         if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) return
         val expected =
             CoordinatorEndpointResolver.resolve(
                 baseDirectory = Path.of("/tmp"),
-                effectiveUserId = System.getProperty("user.name"),
+                effectiveUserId = requireNotNull(ProcessHandle.current().info().user().orElse(null)),
             )
 
         assertEquals(expected, LocalCoordinatorEnvironment.defaultEndpoint())
+    }
+
+    @Test
+    fun `default endpoint and desktop key ignore the mutable JVM username`() {
+        val originalUserName = System.getProperty("user.name")
+        val expectedEndpoint = LocalCoordinatorEnvironment.defaultEndpoint()
+        val expectedResource = LocalCoordinatorEnvironment.defaultDesktopResourceKey()
+        try {
+            System.setProperty("user.name", "isolated-jvm-user")
+
+            assertEquals(expectedEndpoint, LocalCoordinatorEnvironment.defaultEndpoint())
+            assertEquals(expectedResource, LocalCoordinatorEnvironment.defaultDesktopResourceKey())
+        } finally {
+            System.setProperty("user.name", originalUserName)
+        }
     }
 
     @Test
