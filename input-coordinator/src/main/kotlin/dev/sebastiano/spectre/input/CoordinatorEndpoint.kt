@@ -29,10 +29,10 @@ public object CoordinatorEndpointResolver {
         val directory = canonicalBase.resolve("spectre-input-$userHash")
         val socketPath = directory.resolve("input-v1-${userHash.take(SOCKET_HASH_LENGTH)}.sock")
         val encodedLength = socketPath.toString().toByteArray(StandardCharsets.UTF_8).size
-        if (encodedLength > MAX_UNIX_SOCKET_PATH_BYTES) {
+        if (encodedLength > CoordinatorSocketCandidates.MAX_SOCKET_PATH_BYTES) {
             throw IOException(
                 "Unix-domain socket path is $encodedLength bytes; the safe maximum is " +
-                    "$MAX_UNIX_SOCKET_PATH_BYTES: $socketPath"
+                    "${CoordinatorSocketCandidates.MAX_SOCKET_PATH_BYTES}: $socketPath"
             )
         }
         return CoordinatorEndpoint(directory = directory, socketPath = socketPath)
@@ -49,7 +49,6 @@ public object CoordinatorEndpointResolver {
 
     private const val HASH_BYTES: Int = 8
     private const val SOCKET_HASH_LENGTH: Int = 8
-    private const val MAX_UNIX_SOCKET_PATH_BYTES: Int = 100
 }
 
 /** Enforces the same-user trust boundary for a coordinator endpoint and its socket file. */
@@ -86,12 +85,17 @@ private object PosixOwnerOnlyEndpointProtection : OwnerOnlyEndpointProtection {
             }
         } else {
             rejectSymbolicParent(directory.parent)
-            Files.createDirectory(
-                directory,
+            val ownerOnly =
                 java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
                     OWNER_ONLY_DIRECTORY_PERMISSIONS
-                ),
-            )
+                )
+            // Parents may legitimately be missing (#462), but only they are created loosely. The
+            // endpoint directory itself still goes through the atomic createDirectory: on a
+            // world-writable /tmp another user could plant a symlink between the exists() check
+            // above and this call, and createDirectories would happily adopt a symlink whose
+            // target is a directory, putting the lock, ledger, and socket under their control.
+            directory.parent?.let { Files.createDirectories(it, ownerOnly) }
+            Files.createDirectory(directory, ownerOnly)
         }
     }
 
@@ -119,6 +123,11 @@ private object BasicOwnerOnlyEndpointProtection : OwnerOnlyEndpointProtection {
             rejectSubstitutedDirectory(directory)
         } else {
             rejectSymbolicParent(directory.parent)
+            // Only the parents are created loosely: on Windows the base is %LOCALAPPDATA%\Temp,
+            // which is absent on profiles whose temp directory has been redirected (#462). The
+            // endpoint directory itself keeps the atomic createDirectory, which refuses to adopt
+            // anything already sitting at that path, symlinks included.
+            directory.parent?.let { Files.createDirectories(it) }
             Files.createDirectory(directory)
         }
     }

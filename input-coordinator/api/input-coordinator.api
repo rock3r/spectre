@@ -141,6 +141,19 @@ public final class dev/sebastiano/spectre/input/CoordinatorRevokeResult {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class dev/sebastiano/spectre/input/CoordinatorSocketCandidates {
+	public static final field INSTANCE Ldev/sebastiano/spectre/input/CoordinatorSocketCandidates;
+	public static final field MAX_GENERATIONS I
+	public static final field MAX_SOCKET_PATH_BYTES I
+	public final fun candidates (Ljava/nio/file/Path;I)Ljava/util/List;
+	public static synthetic fun candidates$default (Ldev/sebastiano/spectre/input/CoordinatorSocketCandidates;Ljava/nio/file/Path;IILjava/lang/Object;)Ljava/util/List;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorSocketDiscovery {
+	public static final field INSTANCE Ldev/sebastiano/spectre/input/CoordinatorSocketDiscovery;
+	public final fun firstReachable (Ljava/util/List;Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
+}
+
 public final class dev/sebastiano/spectre/input/CoordinatorStatus {
 	public fun <init> (Ldev/sebastiano/spectre/input/DesktopResourceKey;Ldev/sebastiano/spectre/input/CoordinatorHolderStatus;Ljava/util/List;Ldev/sebastiano/spectre/input/CoordinatorQuarantineStatus;)V
 	public final fun component1 ()Ldev/sebastiano/spectre/input/DesktopResourceKey;
