@@ -359,7 +359,11 @@ class CoordinatorLeaseServiceTest {
             Files.delete(path)
             val successor = service.acquire(acquire("successor", "successor-client")).get()
             assertTrue(successor.ok)
+            val recovered = assertNotNull(RecoveryLedger(path, Duration.ofSeconds(5)).load())
+            assertFalse(recovered.blocksAllResources)
+            assertEquals(successor.leaseId, recovered.leaseId)
             assertTrue(service.release(tokenMessage(successor, "successor-client")).ok)
+            assertNull(RecoveryLedger(path, Duration.ofSeconds(5)).load())
         } finally {
             service.close()
             Files.deleteIfExists(path.resolveSibling("${path.fileName}.tmp"))

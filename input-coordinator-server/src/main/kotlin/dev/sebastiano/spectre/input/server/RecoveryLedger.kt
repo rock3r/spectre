@@ -86,6 +86,12 @@ internal class RecoveryLedger(private val path: Path, private val heartbeatTimeo
         }
     }
 
+    /** Forgets a proven-unobserved grant after persistence already failed to clear it. */
+    @Synchronized
+    fun discardUnobserved(leaseId: String) {
+        current.remove(leaseId)
+    }
+
     @Synchronized
     fun clearClient(clientId: String): Boolean {
         val removedLeaseIds =

@@ -72,9 +72,25 @@ internal class BlockingSuspendInvoker(private val timeoutMs: Long = DEFAULT_TIME
 
         fun await(timeoutMs: Long): Any? {
             if (!awaitCompletion(timeoutMs)) {
+                awaitCompletion()
                 throw TimeoutException("Suspend call did not complete within ${timeoutMs} ms")
             }
             return outcome?.getOrThrow()
+        }
+
+        private fun awaitCompletion() {
+            var interrupted = false
+            try {
+                while (latch.count > 0L) {
+                    try {
+                        latch.await()
+                    } catch (_: InterruptedException) {
+                        interrupted = true
+                    }
+                }
+            } finally {
+                if (interrupted) Thread.currentThread().interrupt()
+            }
         }
 
         private fun awaitCompletion(timeoutMs: Long): Boolean {

@@ -166,7 +166,13 @@ internal class CoordinatorLeaseService(
                 // requests sharing the client session remain live.
                 val release = releaseToken(ambiguousGrant)
                 if (!release.ok) {
-                    abandonUnobservedGrant(machine, requestTracker, ambiguousGrant, ::completeGrant)
+                    abandonUnobservedGrant(
+                        machine,
+                        requestTracker,
+                        ambiguousGrant,
+                        { leaseId -> recoveryLedger?.discardUnobserved(leaseId) },
+                        ::completeGrant,
+                    )
                 }
             }
         }
@@ -430,10 +436,14 @@ private fun abandonUnobservedGrant(
     machine: LeaseStateMachine,
     requestTracker: AcquisitionRequestTracker,
     token: LeaseToken,
+    discardRecovery: (String) -> Unit,
     completeGrant: (LeaseGrant) -> Unit,
 ) {
     when (val released = machine.release(token)) {
-        is ReleaseResult.Released -> released.nextGrant?.let(completeGrant)
+        is ReleaseResult.Released -> {
+            discardRecovery(token.leaseId)
+            released.nextGrant?.let(completeGrant)
+        }
         is ReleaseResult.StillHeld -> Unit
         is ReleaseResult.Rejected -> {
             check(released.code == LeaseErrorCode.FENCED) {
@@ -443,6 +453,7 @@ private fun abandonUnobservedGrant(
                 is RevokeResult.Acknowledged -> {
                     if (acknowledged.remainingDepth == 0) {
                         requestTracker.forgetLease(token.leaseId)
+                        discardRecovery(token.leaseId)
                         acknowledged.nextGrant?.let(completeGrant)
                     }
                 }

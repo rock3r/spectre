@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.agent.runtime
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
@@ -43,6 +44,38 @@ class BlockingSuspendInvokerTest {
         assertTrue(invocationFinished.await(3, TimeUnit.SECONDS))
         assertEquals("finished", result.get())
         assertTrue(thread.isInterrupted)
+    }
+
+    @Test
+    fun `timed out caller remains attached until the continuation completes`() {
+        val target = InterruptibleSuspendTarget()
+        val method =
+            InterruptibleSuspendTarget::class
+                .java
+                .getMethod("suspendUntilReleased", Continuation::class.java)
+        val failure = AtomicReference<Throwable?>()
+        val invocationFinished = CountDownLatch(1)
+        val thread =
+            Thread {
+                    try {
+                        BlockingSuspendInvoker(timeoutMs = 20).invoke(method, target)
+                    } catch (caught: Throwable) {
+                        failure.set(caught)
+                    } finally {
+                        invocationFinished.countDown()
+                    }
+                }
+                .apply { start() }
+        val continuation = target.continuation.get(3, TimeUnit.SECONDS)
+
+        assertFalse(
+            invocationFinished.await(200, TimeUnit.MILLISECONDS),
+            "timeout must not orphan the still-running suspend continuation",
+        )
+        assertTrue(thread.isAlive)
+        continuation.resumeWith(Result.success("finished"))
+        assertTrue(invocationFinished.await(3, TimeUnit.SECONDS))
+        assertTrue(failure.get() is TimeoutException)
     }
 }
 
