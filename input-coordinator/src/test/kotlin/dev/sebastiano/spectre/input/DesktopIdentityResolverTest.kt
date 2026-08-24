@@ -57,6 +57,11 @@ class DesktopIdentityResolverTest {
     }
 
     @Test
+    fun `remote X11 host names ignore DNS casing`() {
+        assertEquals(linux("host.example:10.0"), linux("Host.Example:10.1"))
+    }
+
+    @Test
     fun `Wayland socket spellings use canonical path`() {
         val key =
             resolver.resolve(

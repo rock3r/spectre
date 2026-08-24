@@ -76,7 +76,8 @@ public class DesktopIdentityResolver(
             "x11-local:${localMatch.groupValues[1]}"
         } else {
             val remoteServer =
-                REMOTE_X11_SCREEN_SUFFIX.matchEntire(display)?.groupValues?.get(1) ?: display
+                (REMOTE_X11_SCREEN_SUFFIX.matchEntire(display)?.groupValues?.get(1) ?: display)
+                    .lowercase()
             "x11-remote:$remoteServer"
         }
     }
