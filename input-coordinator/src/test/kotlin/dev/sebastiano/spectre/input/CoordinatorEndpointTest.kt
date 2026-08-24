@@ -19,6 +19,18 @@ class CoordinatorEndpointTest {
     @TempDir lateinit var temporaryDirectory: Path
 
     @Test
+    fun `default POSIX endpoint uses the runtime-independent username identity`() {
+        if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) return
+        val expected =
+            CoordinatorEndpointResolver.resolve(
+                baseDirectory = Path.of("/tmp"),
+                effectiveUserId = System.getProperty("user.name"),
+            )
+
+        assertEquals(expected, LocalCoordinatorEnvironment.defaultEndpoint())
+    }
+
+    @Test
     fun `endpoint name depends on effective user identity but not launcher environment`() {
         val first =
             CoordinatorEndpointResolver.resolve(

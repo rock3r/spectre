@@ -21,7 +21,7 @@ public object LocalCoordinatorEnvironment {
             } else {
                 Path.of("/tmp")
             }
-        return CoordinatorEndpointResolver.resolve(baseDirectory, effectiveUserId(platform))
+        return CoordinatorEndpointResolver.resolve(baseDirectory, effectiveUserId())
     }
 
     /** Derives the desktop key from the environment inside the process that will dispatch input. */
@@ -31,7 +31,7 @@ public object LocalCoordinatorEnvironment {
             .resolve(
                 DesktopIdentityEnvironment(
                     platform = platform,
-                    effectiveUserId = effectiveUserId(platform),
+                    effectiveUserId = effectiveUserId(),
                     environment = System.getenv(),
                     // SESSIONNAME is a mutable transport label, not the numeric process session
                     // ID. Until a verified native ID is available, serialize Windows per user.
@@ -49,20 +49,5 @@ public object LocalCoordinatorEnvironment {
         }
     }
 
-    private fun effectiveUserId(platform: DesktopPlatform): String {
-        if (platform == DesktopPlatform.WINDOWS) return System.getProperty("user.name")
-        return try {
-            val unixSystem =
-                Class.forName("com.sun.security.auth.module.UnixSystem")
-                    .getDeclaredConstructor()
-                    .newInstance()
-            (unixSystem.javaClass.getMethod("getUid").invoke(unixSystem) as Number)
-                .toLong()
-                .toString()
-        } catch (_: ReflectiveOperationException) {
-            System.getProperty("user.name")
-        } catch (_: SecurityException) {
-            System.getProperty("user.name")
-        }
-    }
+    private fun effectiveUserId(): String = System.getProperty("user.name")
 }
