@@ -93,16 +93,16 @@ change that touches a public signature.
 These have bitten reviews already; they're worth re-verifying every time the
 corresponding doc page is touched:
 
-- **No auto-wait.** Queries (`findByTestTag`, `findByText`, etc.) do a single read.
-  They never retry. Document them as such.
+- **No auto-wait.** Queries (`findByTestTag`, `findByText`, `hasTag`, `hasText`, etc.)
+  do a single read. They never retry. Document them as such.
 - **EDT rule applies to all three waits.** `waitForNode`, `waitForIdle`, and
   `waitForVisualIdle` all reject EDT callers via `rejectEdtCaller` (see
   `WaitForNodeTest.waitForNode rejects EDT callers with valid arguments`). Earlier
   drafts of the docs carved out `waitForNode` as exempt — that exemption is gone in
   current code. Do say "all wait helpers reject the EDT".
-- **`refreshWindows` is only auto-called by `tree()`.** `findBy*` and `allNodes`
-  read against the last refresh. If a popup may have appeared since the last call,
-  the user has to refresh.
+- **`refreshWindows` is only auto-called by `tree()`.** `findBy*`, `hasTag`/`hasText`,
+  and `allNodes` read against the last refresh. If a popup may have appeared since the
+  last call, the user has to refresh.
 - **`findOneBy*` exists only for `testTag` and `text`.** Not for content
   description, not for role.
 - **`waitForNode(tag, text)` is AND, not OR.** Both criteria must match the same

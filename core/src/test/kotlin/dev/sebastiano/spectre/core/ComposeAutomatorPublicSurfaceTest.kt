@@ -360,6 +360,8 @@ class ComposeAutomatorPublicSurfaceTest {
                 "findOneByTestTag",
                 "findByText",
                 "findOneByText",
+                "hasTag",
+                "hasText",
                 "findByContentDescription",
                 "findByRole",
                 "click",
