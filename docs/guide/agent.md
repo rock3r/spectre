@@ -150,6 +150,12 @@ After that, calls such as `windows()`, `findByTestTag(...)`, `click(...)`, and `
 small CBOR requests over the socket. They execute inside the target JVM against the in-process
 automator, then return DTOs or bytes to the attacher.
 
+The attacher also makes a best-effort attempt to start the experimental desktop input coordinator.
+Failure to start it does not block read-only attach operations. A target using the current core
+selects `InputLeasePolicy.Required`, so real input then fails closed if coordination remains
+unavailable. When a target has an older preinstalled core without `InputLeasePolicy`, bootstrap
+falls back to its legacy no-argument `RobotDriver`; that compatibility path is uncoordinated.
+
 ### Injection without preinstalled core
 
 Bootstrap order inside the target:
@@ -250,9 +256,9 @@ AgentAttach.attach(target.pid).use { automator ->
 ```
 
 `AttachedAutomator` is `AutoCloseable`. Closing it sends an `AgentRequest.Detach` over the
-wire; the agent stops accepting new requests, releases its `ComposeAutomator`, unlinks
-the UDS path, and removes its shutdown hook. A target-side shutdown hook covers crash
-cleanup.
+wire; the agent stops accepting new requests, closes the target-side input coordinator session,
+releases its `ComposeAutomator`, unlinks the UDS path, and removes its shutdown hook. A target-side
+shutdown hook covers crash cleanup.
 
 ### `AttachOptions`
 

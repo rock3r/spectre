@@ -40,8 +40,16 @@ tasks.named<ShadowJar>("shadowJar") {
 
     // Relocate kotlinx so IDE-shipped coroutines cannot collide with injected core.
     relocate("kotlinx.coroutines", "dev.sebastiano.spectre.inject.relocated.kotlinx.coroutines")
+    relocate(
+        "kotlinx.serialization",
+        "dev.sebastiano.spectre.inject.relocated.kotlinx.serialization",
+    )
     // atomicfu is pulled transitively; relocate to keep inject payload self-contained.
     relocate("kotlinx.atomicfu", "dev.sebastiano.spectre.inject.relocated.kotlinx.atomicfu")
+    relocate(
+        "dev.sebastiano.spectre.input",
+        "dev.sebastiano.spectre.inject.relocated.dev.sebastiano.spectre.input",
+    )
 
     dependencies {
         // Compose / Skiko must come from the target — never shade.
@@ -91,13 +99,23 @@ val verifyInjectRuntimeJarContents by tasks.registering {
                 "Inject jar missing relocated kotlinx.coroutines " +
                     "(got entries sample: ${names.filter { "coroutines" in it }.take(10)})"
             }
+            require(has("dev/sebastiano/spectre/inject/relocated/kotlinx/serialization/")) {
+                "Inject jar missing relocated kotlinx.serialization " +
+                    "(got entries sample: ${names.filter { "serialization" in it }.take(10)})"
+            }
+            require(has("dev/sebastiano/spectre/inject/relocated/dev/sebastiano/spectre/input/")) {
+                "Inject jar missing relocated input-coordinator client classes"
+            }
             val forbidden =
                 listOf(
                     "androidx/compose/",
                     "org/jetbrains/compose/",
                     "org/jetbrains/skiko/",
                     "kotlinx/coroutines/", // must be relocated, not original package
+                    "kotlinx/serialization/", // must be relocated, not original package
                     "dev/sebastiano/spectre/recording/",
+                    "dev/sebastiano/spectre/input/", // must be relocated
+                    "dev/sebastiano/spectre/inject/relocated/dev/sebastiano/spectre/input/server/",
                 )
             val leaks = names.filter { entry -> forbidden.any { entry.startsWith(it) } }
             require(leaks.isEmpty()) {

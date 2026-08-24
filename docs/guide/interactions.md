@@ -19,6 +19,55 @@ frame; use them from a coroutine-friendly test context when that latency matters
 The snippets below are written as if they sit inside a suspend block (e.g. a JUnit
 test wrapped in `runSpectreTest { … }`).
 
+## Cooperative desktop input leases
+
+!!! warning "Experimental and opt-in"
+    This surface requires `@OptIn(ExperimentalSpectreInputCoordinationApi::class)` and may change
+    in any release. See [Experimental desktop input coordination](input-coordination.md) for
+    dependencies, JUnit setup, recovery controls, platform boundaries, and graduation criteria.
+
+Real mouse, keyboard, focus, and system-clipboard work can be coordinated across participating
+Spectre processes. Opt in on the driver with `InputLeasePolicy.Required`, or hold one reentrant
+lease across a larger sequence:
+
+```kotlin
+@file:OptIn(ExperimentalSpectreInputCoordinationApi::class)
+
+import dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi
+import dev.sebastiano.spectre.core.InputLeaseOptions
+import dev.sebastiano.spectre.core.InputLeasePolicy
+import dev.sebastiano.spectre.core.RobotDriver
+
+val automator = ComposeAutomator.inProcess(RobotDriver(InputLeasePolicy.Required))
+
+automator.withExclusiveInput(InputLeaseOptions(ownerLabel = "fills login form")) {
+    focusWindow(username)
+    click(username)
+    typeText("alice")
+    click(submit)
+    automator.waitForIdle()
+}
+```
+
+`Auto` coordinates capabilities that touch shared OS state when the coordinator runtime is
+available; `Required` fails closed if it is unavailable; `Off` is the explicit escape hatch for
+externally coordinated or hermetic callers. The no-argument driver keeps the pre-coordinator
+default while the feature is experimental; select `Auto` or `Required` deliberately.
+
+The lease covers real pointer/keyboard/focus operations and `pasteText`'s system clipboard use.
+Synthetic pointer and keyboard work stays parallel. Synthetic `pasteText` coordinates only when
+the synthetic driver was created with an explicit `Auto` or `Required` policy; the ordinary
+`RobotDriver.synthetic(rootWindow)` factory remains `Off`.
+Screenshots, semantics reads, waits, and recording do not acquire automatically; put a
+visibility-sensitive capture inside `withExclusiveInput` when it must not race input.
+
+Coordination is cooperative: it prevents participating Spectre clients from interleaving. It
+cannot block a human, an older Spectre version, or another automation framework. A contended EDT
+call fails immediately with `ContendedEdtInputLeaseException`; acquire the scope from a non-EDT
+test thread or use JUnit per-test isolation instead of blocking the AUT's event thread.
+`Auto` also avoids opening a new coordinator session from the EDT: without an already-connected
+session it proceeds uncoordinated. Choose `Required` when that fallback is unacceptable.
+
 ## Mouse: clicks and drags
 
 ```kotlin

@@ -1,9 +1,12 @@
+@file:OptIn(dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi::class)
+
 package dev.sebastiano.spectre.agent
 
 import dev.sebastiano.spectre.agent.runtime.AgentBootstrapArgs
 import dev.sebastiano.spectre.agent.transport.FrameLimits
 import dev.sebastiano.spectre.agent.transport.IpcClient
 import dev.sebastiano.spectre.agent.transport.UdsPathLimits
+import dev.sebastiano.spectre.input.InputCoordinatorClientFactory
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -61,35 +64,53 @@ public object AgentAttach {
         // generic ("Operation not permitted") and hard to diagnose; this gives a clear message
         // before we even open the VM connection.
         checkSameUser(pid)
-
-        val (vmClass, vm) = openVirtualMachine(pid)
+        val coordinatorClient = runCatching(::ensureInputCoordinator).getOrNull()
+        var coordinatorOwnedByResult = false
         try {
-            loadAgentReflectively(vmClass, vm, agentJar.toString(), agentArgsFor(options, udsPath))
-        } finally {
-            detachVirtualMachine(vmClass, vm)
-        }
 
-        waitForUdsPath(udsPath, options.attachTimeoutMs)
-
-        val client =
+            val (vmClass, vm) = openVirtualMachine(pid)
             try {
-                IpcClient(udsPath)
-            } catch (ex: SpectreAgentException) {
-                // Preserve taxonomy from handshake (e.g. protocolMismatch) — do not wrap.
-                throw ex
-            } catch (ex: IOException) {
-                throw SpectreAttachExceptionImpl(
-                    "Failed to connect to agent's UDS at $udsPath: ${ex.message}",
-                    ex,
+                loadAgentReflectively(
+                    vmClass,
+                    vm,
+                    agentJar.toString(),
+                    agentArgsFor(options, udsPath),
                 )
+            } finally {
+                detachVirtualMachine(vmClass, vm)
             }
 
-        return AttachedAutomator(pid = pid, client = client) {
-            // Detacher: best-effort UDS cleanup after the AttachedAutomator closes. The agent's
-            // own shutdown hook handles crash cleanup.
-            runCatching { Files.deleteIfExists(udsPath) }
+            waitForUdsPath(udsPath, options.attachTimeoutMs)
+
+            val client =
+                try {
+                    IpcClient(udsPath)
+                } catch (ex: SpectreAgentException) {
+                    // Preserve taxonomy from handshake (e.g. protocolMismatch) — do not wrap.
+                    throw ex
+                } catch (ex: IOException) {
+                    throw SpectreAttachExceptionImpl(
+                        "Failed to connect to agent's UDS at $udsPath: ${ex.message}",
+                        ex,
+                    )
+                }
+
+            val attached =
+                AttachedAutomator(pid = pid, client = client) {
+                    coordinatorClient?.close()
+                    // Detacher: best-effort UDS cleanup after the AttachedAutomator closes. The
+                    // agent's own shutdown hook handles crash cleanup.
+                    runCatching { Files.deleteIfExists(udsPath) }
+                }
+            coordinatorOwnedByResult = true
+            return attached
+        } finally {
+            if (!coordinatorOwnedByResult) coordinatorClient?.close()
         }
     }
+
+    private fun ensureInputCoordinator() =
+        InputCoordinatorClientFactory.connectOrStart(ownerLabel = "spectre-agent-attacher")
 
     /**
      * Resolve the agent runtime JAR by trying in order:

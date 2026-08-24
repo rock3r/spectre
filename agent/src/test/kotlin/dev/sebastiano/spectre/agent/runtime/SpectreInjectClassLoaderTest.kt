@@ -23,6 +23,11 @@ class SpectreInjectClassLoaderTest {
                 "dev.sebastiano.spectre.inject.relocated.kotlinx.coroutines.Dispatchers"
             )
         )
+        assertTrue(
+            SpectreInjectClassLoader.loadFromInjectJar(
+                "dev.sebastiano.spectre.inject.relocated.kotlinx.serialization.json.Json"
+            )
+        )
         assertTrue(SpectreInjectClassLoader.loadFromInjectJar("androidx.tracing.Trace"))
         assertEquals(
             false,

@@ -28,6 +28,7 @@ internal class MultiplexedIpcSession(
     private val onDetach: () -> Unit,
     private val channel: java.nio.channels.Channel,
     private val frameIoTimeoutMs: Long = FrameIoDeadline.DEFAULT_TIMEOUT_MS,
+    private val inputWorkers: CrossSessionInputWorkers,
 ) {
     fun run(input: InputStream, output: OutputStream) {
         // Bound threads *and* queue so a buggy client cannot OOM the agent with enqueued ops.
@@ -41,20 +42,64 @@ internal class MultiplexedIpcSession(
                 { r -> Thread(r, "spectre-agent-op-worker").apply { isDaemon = true } },
                 ThreadPoolExecutor.AbortPolicy(),
             )
+        val inputWorker: ExecutorService =
+            ThreadPoolExecutor(
+                /* corePoolSize= */ 1,
+                /* maximumPoolSize= */ 1,
+                /* keepAliveTime= */ 0L,
+                TimeUnit.MILLISECONDS,
+                LinkedBlockingQueue(MAX_INPUT_QUEUE),
+                { r -> Thread(r, "spectre-agent-input-worker").apply { isDaemon = true } },
+                ThreadPoolExecutor.AbortPolicy(),
+            )
         val deadlineScheduler: ScheduledExecutorService =
             Executors.newSingleThreadScheduledExecutor { r ->
                 Thread(r, "spectre-agent-deadline").apply { isDaemon = true }
             }
         val inFlight = ConcurrentHashMap<Long, OpSlot>()
         val writeLock = Any()
+        val detachRequested = AtomicBoolean(false)
+        val detachOpId = AtomicReference<Long?>()
+        inputWorkers.register(inputWorker)
         try {
-            serveOps(input, output, workers, deadlineScheduler, inFlight, writeLock)
+            serveOps(
+                input,
+                output,
+                workers,
+                inputWorker,
+                deadlineScheduler,
+                inFlight,
+                writeLock,
+                detachRequested,
+                detachOpId,
+            )
         } finally {
             inFlight.values.forEach { it.abortRunningWork() }
             inFlight.clear()
             deadlineScheduler.shutdownNow()
             workers.shutdownNow()
+            inputWorker.shutdownNow()
             runCatching { workers.awaitTermination(WORKER_SHUTDOWN_SEC, TimeUnit.SECONDS) }
+            val inputWaitInterrupted =
+                if (detachRequested.get()) {
+                    inputWorkers.awaitAllTerminated()
+                } else {
+                    inputWorkers.releaseAfterTermination(inputWorker)
+                    false
+                }
+            try {
+                if (detachRequested.get()) {
+                    onDetach()
+                    writeOpResponse(
+                        output,
+                        writeLock,
+                        requireNotNull(detachOpId.get()),
+                        AgentResponse.Detached,
+                    )
+                }
+            } finally {
+                if (inputWaitInterrupted) Thread.currentThread().interrupt()
+            }
         }
     }
 
@@ -62,9 +107,12 @@ internal class MultiplexedIpcSession(
         input: InputStream,
         output: OutputStream,
         workers: ExecutorService,
+        inputWorker: ExecutorService,
         deadlineScheduler: ScheduledExecutorService,
         inFlight: ConcurrentHashMap<Long, OpSlot>,
         writeLock: Any,
+        detachRequested: AtomicBoolean,
+        detachOpId: AtomicReference<Long?>,
     ) {
         while (running.get()) {
             // Channel-close deadlines may surface as SocketTimeoutException or as a
@@ -89,11 +137,19 @@ internal class MultiplexedIpcSession(
             when (val body = op.body) {
                 is AgentRequest.Cancel -> handleCancel(body, op.opId, output, writeLock, inFlight)
                 AgentRequest.Detach -> {
-                    handleDetach(op.opId, output, writeLock, inFlight)
+                    handleDetach(op.opId, inFlight, detachRequested, detachOpId)
                     return
                 }
                 else ->
-                    dispatchOp(op, body, workers, deadlineScheduler, inFlight, output, writeLock)
+                    dispatchOp(
+                        op,
+                        body,
+                        if (body.requiresInputLane) inputWorker else workers,
+                        deadlineScheduler,
+                        inFlight,
+                        output,
+                        writeLock,
+                    )
             }
         }
     }
@@ -156,24 +212,21 @@ internal class MultiplexedIpcSession(
 
     private fun handleDetach(
         opId: Long,
-        output: OutputStream,
-        writeLock: Any,
         inFlight: ConcurrentHashMap<Long, OpSlot>,
+        detachRequested: AtomicBoolean,
+        detachOpId: AtomicReference<Long?>,
     ) {
         inFlight.values.forEach { it.abortRunningWork() }
         inFlight.clear()
-        try {
-            writeOpResponse(output, writeLock, opId, AgentResponse.Detached)
-        } finally {
-            running.set(false)
-            onDetach()
-        }
+        detachOpId.set(opId)
+        running.set(false)
+        detachRequested.set(true)
     }
 
     private fun dispatchOp(
         op: OpRequest,
         body: AgentRequest,
-        workers: ExecutorService,
+        executor: ExecutorService,
         deadlineScheduler: ScheduledExecutorService,
         inFlight: ConcurrentHashMap<Long, OpSlot>,
         output: OutputStream,
@@ -183,7 +236,7 @@ internal class MultiplexedIpcSession(
         inFlight[op.opId] = slot
         val future =
             try {
-                workers.submit {
+                executor.submit {
                     if (slot.isAborted || Thread.currentThread().isInterrupted) {
                         inFlight.remove(op.opId, slot)
                         return@submit
@@ -419,5 +472,46 @@ internal class MultiplexedIpcSession(
         const val MAX_OP_WORKERS: Int = 8
         /** Max queued ops beyond the worker pool (reject when full). */
         const val MAX_OP_QUEUE: Int = 32
+        /** Input requests wait here without consuming any general operation workers. */
+        const val MAX_INPUT_QUEUE: Int = 32
+    }
+}
+
+internal class CrossSessionInputWorkers {
+    private val workers = ConcurrentHashMap.newKeySet<ExecutorService>()
+
+    fun register(worker: ExecutorService) {
+        check(workers.add(worker)) { "Input worker is already registered" }
+    }
+
+    fun releaseAfterTermination(worker: ExecutorService) {
+        Thread.ofVirtual().name("spectre-agent-input-reaper").start {
+            awaitTermination(worker)
+            workers.remove(worker)
+        }
+    }
+
+    fun awaitAllTerminated(): Boolean {
+        var interrupted = false
+        while (true) {
+            val activeWorkers = workers.toList()
+            if (activeWorkers.isEmpty()) return interrupted
+            activeWorkers.forEach { worker ->
+                if (awaitTermination(worker)) interrupted = true
+                workers.remove(worker)
+            }
+        }
+    }
+
+    private fun awaitTermination(worker: ExecutorService): Boolean {
+        var interrupted = false
+        while (!worker.isTerminated) {
+            try {
+                worker.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS)
+            } catch (_: InterruptedException) {
+                interrupted = true
+            }
+        }
+        return interrupted
     }
 }

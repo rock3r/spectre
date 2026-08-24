@@ -2,6 +2,55 @@
 
 The `testing` module provides drop-in wrappers that own a per-test `ComposeAutomator`.
 
+## Whole-test input isolation
+
+!!! warning "Experimental and opt-in"
+    JUnit input isolation requires
+    `@OptIn(ExperimentalSpectreInputCoordinationApi::class)`. The constructors and configuration
+    may change in any release. See [Experimental desktop input coordination](input-coordination.md)
+    for runtime dependencies, recovery, and platform status.
+
+In-process JUnit wrappers can hold one lease across factory setup, the test body, failure capture,
+failure-video finalization, and teardown:
+
+```kotlin
+@file:OptIn(ExperimentalSpectreInputCoordinationApi::class)
+
+import dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi
+import dev.sebastiano.spectre.testing.InputIsolationConfig
+
+@JvmField
+@RegisterExtension
+val automatorExt =
+    ComposeAutomatorExtension(
+        inputIsolation = InputIsolationConfig.perTest(),
+    )
+```
+
+The same `inputIsolation` constructor is available on `ComposeAutomatorRule` for JUnit 4. Modes:
+
+- `PerTest` acquires before the default/custom factory and releases unconditionally after teardown.
+- `Auto` acquires for real input or shared clipboard capabilities. With a custom factory it must
+  create the automator before it can inspect capabilities, so factory-time focus is not covered;
+  use `PerTest` when setup itself needs isolation.
+- `PerInteraction` relies on core operation/scoped leases. The input-isolation-only constructor
+  creates a default driver with `InputLeasePolicy.Required`; custom factories must select
+  `InputLeasePolicy.Auto` or `Required` themselves. Legacy no-argument wrappers remain
+  uncoordinated. The wrappers close their default coordination-enabled driver after test evidence
+  and teardown complete.
+- `Off` declares that coordination is external or intentionally disabled.
+
+During a synchronous custom factory, `PerTest` makes its acquired lease ambient on the invoking
+thread. A factory that uses `RobotDriver(InputLeasePolicy.Required)` for setup therefore reuses the
+whole-test lease instead of queueing behind itself. Do not launch factory work that outlives the
+factory call; after the factory returns, the lease is bound to the returned automator normally.
+
+JUnit 5 stores the lease per invocation, so parameter-injected automators remain parallel-safe.
+JUnit 4 wraps the complete `Statement.evaluate()` lifecycle. Owner diagnostics contain class and
+method identity, never parameter values. `LaunchAndAttachExtension` and `LaunchAndAttachRule` do
+not expose `PerTest`: input runs in the target JVM and currently uses target-side operation leases;
+holding a separate test-JVM lease would self-deadlock.
+
 ## JUnit 5: `ComposeAutomatorExtension`
 
 The safest pattern is `@RegisterExtension` on a `@JvmField` — one extension instance per

@@ -64,6 +64,21 @@
         "Does NOT recommend Thread.sleep before the screenshot",
         "Does NOT suggest using AutoRecorder / recording APIs"
       ]
+    },
+    {
+      "id": 5,
+      "name": "parallel-real-input-junit-isolation",
+      "prompt": "Our JUnit 5 Spectre suite uses four Gradle forks and must keep real java.awt.Robot behavior. The forks steal focus from each other. Show the supported coordination setup, including dependencies and any experimental opt-in. Also tell me how to recover if a lease is stuck.",
+      "assertions": [
+        "States that desktop input coordination is experimental and includes @OptIn(ExperimentalSpectreInputCoordinationApi::class)",
+        "Adds spectre-input-coordinator-server as a runtime dependency, or correctly explains that spectre-testing already wires it",
+        "Uses InputIsolationConfig.perTest() on ComposeAutomatorExtension",
+        "Uses InputLeasePolicy.Required or explains why Required fails closed for real input",
+        "Recommends spectre input-lock status before revocation",
+        "Requires the exact observed lease ID and a reason for revoke",
+        "Describes --force as unsafe and mentions unsafeTakeover=true or possible overlap with an in-flight native call",
+        "Does NOT claim the coordinator blocks humans or other automation tools"
+      ]
     }
   ]
 }

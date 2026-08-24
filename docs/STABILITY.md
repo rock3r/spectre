@@ -43,7 +43,7 @@ Public declarations annotated with `@ExperimentalSpectreHttpApi` (or any future 
 the API baselines**, but they are explicitly **not covered** by compatibility guarantees and
 may change or be removed in any release, including patch releases.
 
-Three experimental markers exist today:
+Four experimental markers exist today:
 
 - **`@ExperimentalSpectreApi`** covers selected `core` APIs that are useful now but still
   settling, such as the recomposition-monitor surface exposed through
@@ -62,6 +62,11 @@ Three experimental markers exist today:
   inject-runtime packaging (attach when the target has no preinstalled `spectre-core`) is
   **experimental inspect only** for 1.0 — keep the marker; do not treat inject as a stable
   production attach mode.
+- **`@ExperimentalSpectreInputCoordinationApi`** covers the cooperative desktop coordinator,
+  its low-level client/server modules, the explicit core policy/scope entry points, and JUnit
+  whole-test isolation. It remains opt-in while desktop identity, recovery, and lifecycle
+  behaviour receive cross-platform headed smoke and real-world feedback. See
+  [Experimental desktop input coordination](guide/input-coordination.md).
 
 Consumers opt in either at file level or call site:
 
@@ -144,6 +149,13 @@ Spectre is JVM-first and targets desktop OSes.
 | **Linux Xorg** | Full | AWT Robot input + helper/GStreamer Xorg/Xvfb recording and screenshots. Validated against Xvfb in CI. |
 | **Linux Wayland** | Best-effort | Portal-mediated capture via `WaylandPortalRecorder`, `WaylandPortalWindowRecorder`, and `LinuxNativeScreenshotter`. **Validated on GNOME/Mutter only**; KDE / sway / wlroots compositors may behave differently and are not exercised in CI. Real Robot input is unavailable on Wayland — use the synthetic adapter for tests. |
 | **BSD** | Unsupported | Not built or tested. |
+
+Cooperative desktop coordination is an **Experimental** preview for participating Spectre clients
+on macOS, Windows AF_UNIX-capable releases, and Linux Xorg/Xvfb. It deliberately over-serialises
+when a safe session discriminator is unavailable. It is not an OS input grab and makes no claim
+against human or non-Spectre interference. Automatic coordination is opt-in through
+`InputLeasePolicy.Auto`/`Required` and JUnit `PerTest`; changing the no-argument driver default
+requires the full cross-platform input smoke and a separate stability decision.
 
 ## JVM runtime support tiers
 

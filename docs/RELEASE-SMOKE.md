@@ -69,6 +69,7 @@ These are structural, not one-release accidents:
 | --- | --- | --- |
 | CLI package-channel (Homebrew/Scoop) contracts | Structural on every Unix `check` (`python3`); install-semantics when Ruby present or under `CI` (issue #400) | Optional: install Ruby on a clean Linux box and run `./gradlew verifyHomebrewFormulaInstallSemantics` if claiming formula behaviour beyond CI |
 | Agent attach + contract corpus (live UI) | Linux Xvfb + macOS desktop; Windows **transport/ACL** unit tests | **Windows headed desktop** (not SSH-only for capture) |
+| Input coordinator contention/recovery | Deterministic + forked process on every OS | Two real-input JVMs, holder crash, exact revoke, and explicit forced recovery on a headed desktop |
 | Agent Windows UI e2e | Opt-in only: `-Pspectre.agent.attachE2e.allowWindows=true` | Run that property on Mattone-class boxes |
 | Agent real-keyboard `typeText` and `pressKey` | Runs on CI (`CI=true`); **skipped** on developer machines | Add `-Pspectre.agent.realKeyboard=true` on an idle desktop |
 | Agent **inject** attach | Linux + macOS e2e | **Windows** inject fixture (no preinstalled core) |
@@ -84,6 +85,25 @@ These are structural, not one-release accidents:
 Capture / WGC under **SSH** (e.g. `0x80070424`, black Skiko pixels). Treat attach (semantics)
 as SSH-safe when proven; treat **pixel capture / WGC** as requiring a local interactive
 desktop session (RDP console or physical).
+
+### Experimental input coordination release gate
+
+Shipping the experimental coordinator is a release claim even though its API may change. Treat the
+following as **delta hard cells** on a headed macOS, Windows, and Linux Xorg/Xvfb desktop:
+
+- two independent JVMs acquire real-input work in FIFO order without interleaving;
+- a queued waiter is cancelled without stranding the next waiter;
+- holder session loss stays fenced until cleanup acknowledgement or exact-ID forced recovery,
+  without granting stale ownership;
+- exact-ID normal revoke cannot affect a newer lease;
+- explicit forced recovery reports `unsafeTakeover=true` and allows the queue to progress; and
+- parallel JUnit invocations using `InputIsolationConfig.perTest()` serialise factory, body,
+  evidence, and teardown.
+
+The Experimental label does not turn these into soft cells. If an OS cannot be exercised, narrow
+the release notes/platform claim rather than calling the coordinator cross-platform. Making
+`Auto` the no-argument driver default is a separate stability decision and requires the full matrix
+again.
 
 ## Environments
 

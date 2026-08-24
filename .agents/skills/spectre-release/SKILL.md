@@ -35,6 +35,27 @@ Windows agent inject). Do not skip smoke because `main` CI is green. To add a re
 scenario ID, follow **Adding a scenario ID** in [docs/RELEASE-SMOKE.md](../../../docs/RELEASE-SMOKE.md)
 (`REQUIRED_SCENARIO_IDS` + both entrypoints + contract tests) — do not leave commands only in chat.
 
+### Experimental desktop input coordination
+
+When a release contains `ExperimentalSpectreInputCoordinationApi` or changes its runtime:
+
+- Confirm the low-level coordinator/client/server, core policy/scope, and JUnit isolation entry
+  points still carry the warning-level marker. ABI baselines alone do not prove annotations.
+- Keep no-argument `RobotDriver()` uncoordinated unless the release explicitly graduates the
+  feature after a separate stability decision.
+- Treat headed two-JVM contention, cancellation, holder crash/quarantine, exact revoke, forced
+  recovery (`unsafeTakeover=true`), and parallel JUnit `PerTest` as **delta hard cells** on macOS,
+  Windows, and Linux Xorg/Xvfb. Experimental API status does not make these soft.
+- If an OS cannot be exercised, narrow the release notes/platform claim instead of claiming
+  cross-platform coordination.
+- Verify the consumer skill (`skills/spectre/SKILL.md` plus
+  `references/input-coordination.md`) and published guide
+  (`docs/guide/input-coordination.md`) still describe the same opt-in, runtime dependency,
+  cooperative boundary, and unsafe-force semantics.
+
+Do not tag while the release-scoped independent review or any input-coordination hard cell is
+missing. See the dedicated gate in [docs/RELEASE-SMOKE.md](../../../docs/RELEASE-SMOKE.md).
+
 ## Central Portal Check
 
 Use the release checker before publishing a validated Central Portal deployment:

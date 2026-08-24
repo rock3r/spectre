@@ -30,6 +30,14 @@ is the human-readable view of that source of truth.
 Platform rows are **prerequisites**, not just OS names: headless JVMs, Linux Xvfb,
 Wayland sessions, and interactive desktops behave differently for Robot and Compose.
 
+Shared desktop input has an additional cooperative boundary. In-process `Required`, in-process
+JUnit `PerTest`, CLI, and injected-agent input participate in the per-user desktop coordinator.
+Synthetic pointer/keyboard and headless query work do not; synthetic clipboard use does. Current
+HTTP callers participate when their supplied automator uses `Auto`/`Required`. Cross-request remote
+lease tokens and launch-and-attach whole-test leases remain a follow-up, so the matrix must not
+claim a multi-request remote transaction today. The entire coordination surface is
+**Experimental** and opt-in; see [Experimental desktop input coordination](input-coordination.md).
+
 ## Contract form decision (#198)
 
 | Option | Outcome |

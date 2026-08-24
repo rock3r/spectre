@@ -19,6 +19,7 @@ kotlin {
 
 dependencies {
     api(projects.core)
+    implementation(projects.inputCoordinatorServer)
     // Launch-and-attach JUnit surface (#208) composes over the experimental agent launch API.
     // Kept as `api` so consumers see `LaunchSpec` / `LaunchedSession` types from the extension.
     api(projects.agent)

@@ -81,7 +81,17 @@ class CentralPortalCheckTest(unittest.TestCase):
             "spectre-core-0.2.0.jar.asc.sha512",
             files,
         )
-        self.assertEqual(len(files), 450)
+        self.assertIn(
+            "dev/sebastiano/spectre/spectre-input-coordinator/0.2.0/"
+            "spectre-input-coordinator-0.2.0.jar",
+            files,
+        )
+        self.assertIn(
+            "dev/sebastiano/spectre/spectre-input-coordinator-server/0.2.0/"
+            "spectre-input-coordinator-server-0.2.0.pom.asc.sha512",
+            files,
+        )
+        self.assertEqual(len(files), 550)
 
     def test_agent_runtime_manifest_validation(self):
         jar = self._jar(
@@ -225,6 +235,31 @@ class CentralPortalCheckTest(unittest.TestCase):
         errors = central.validate_jar("spectre-agent", jar)
 
         self.assertIn("AttachSpike", "\n".join(errors))
+
+    def test_input_coordinator_artifacts_require_representative_classes(self):
+        required_entries = {
+            "spectre-input-coordinator": (
+                "dev/sebastiano/spectre/input/LocalInputCoordinatorClient.class"
+            ),
+            "spectre-input-coordinator-server": (
+                "dev/sebastiano/spectre/input/server/LocalCoordinatorServer.class"
+            ),
+        }
+
+        for component, required_entry in required_entries.items():
+            with self.subTest(component=component, payload="missing"):
+                jar = self._jar({"META-INF/MANIFEST.MF": "Manifest-Version: 1.0\n\n"})
+
+                errors = central.validate_jar(component, jar)
+
+                self.assertIn(required_entry, "\n".join(errors))
+
+            with self.subTest(component=component, payload="present"):
+                jar = self._jar({required_entry: b"class"})
+
+                errors = central.validate_jar(component, jar)
+
+                self.assertEqual(errors, [])
 
     def test_print_files_lists_actual_central_file_listing(self):
         expected_path = (

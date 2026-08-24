@@ -5,6 +5,10 @@ the `ComposeAutomator` lifecycle — building it before each test, tearing
 down after. You don't construct `ComposeAutomator.inProcess()` yourself when
 using them.
 
+For real-input suites running across multiple processes, read
+[input-coordination.md](input-coordination.md). `InputIsolationConfig` is experimental and
+requires `@OptIn(ExperimentalSpectreInputCoordinationApi::class)`.
+
 ## JUnit 5 — `ComposeAutomatorExtension`
 
 Use `@RegisterExtension` on a `@JvmField` (required for JUnit 5 to see the
@@ -95,6 +99,28 @@ val automatorExt = ComposeAutomatorExtension {
 ```
 
 The JUnit 4 rule is identical: `ComposeAutomatorRule { ComposeAutomator.inProcess(...) }`.
+
+## Experimental whole-test input isolation
+
+Use `InputIsolationConfig.perTest()` when multiple JVMs require real OS input and setup, failure
+evidence, or teardown can touch focus:
+
+```kotlin
+@file:OptIn(ExperimentalSpectreInputCoordinationApi::class)
+
+@JvmField
+@RegisterExtension
+val automatorExt =
+    ComposeAutomatorExtension(
+        inputIsolation = InputIsolationConfig.perTest(),
+    )
+```
+
+Add `spectre-input-coordinator-server` at runtime for a core-only setup; `spectre-testing`
+already wires it. JUnit 5 owns the lease per invocation, while JUnit 4 wraps the complete
+`Statement.evaluate()` lifecycle. Do not add a test-JVM whole-test lease around
+`LaunchAndAttachExtension`/Rule: input is coordinated in the target JVM and a second lease would
+self-deadlock.
 
 ## Failure video (#206)
 

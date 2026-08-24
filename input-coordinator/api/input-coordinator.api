@@ -1,0 +1,578 @@
+public abstract interface class dev/sebastiano/spectre/input/CanonicalPathResolver {
+	public abstract fun canonicalize (Ljava/nio/file/Path;)Ljava/nio/file/Path;
+}
+
+public abstract interface class dev/sebastiano/spectre/input/CoordinatedInputLease : java/lang/AutoCloseable {
+	public abstract fun checkpoint ()V
+	public abstract fun close ()V
+	public abstract fun getToken ()Ldev/sebastiano/spectre/input/LeaseToken;
+	public abstract fun isValid ()Z
+}
+
+public abstract interface class dev/sebastiano/spectre/input/CoordinatorControlResult {
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorControlResult$Active : dev/sebastiano/spectre/input/CoordinatorControlResult {
+	public fun <init> (Ldev/sebastiano/spectre/input/CoordinatorStatus;)V
+	public final fun component1 ()Ldev/sebastiano/spectre/input/CoordinatorStatus;
+	public final fun copy (Ldev/sebastiano/spectre/input/CoordinatorStatus;)Ldev/sebastiano/spectre/input/CoordinatorControlResult$Active;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/input/CoordinatorControlResult$Active;Ldev/sebastiano/spectre/input/CoordinatorStatus;ILjava/lang/Object;)Ldev/sebastiano/spectre/input/CoordinatorControlResult$Active;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getStatus ()Ldev/sebastiano/spectre/input/CoordinatorStatus;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorControlResult$NoActiveCoordinator : dev/sebastiano/spectre/input/CoordinatorControlResult {
+	public static final field INSTANCE Ldev/sebastiano/spectre/input/CoordinatorControlResult$NoActiveCoordinator;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorEndpoint {
+	public fun <init> (Ljava/nio/file/Path;Ljava/nio/file/Path;)V
+	public final fun component1 ()Ljava/nio/file/Path;
+	public final fun component2 ()Ljava/nio/file/Path;
+	public final fun copy (Ljava/nio/file/Path;Ljava/nio/file/Path;)Ldev/sebastiano/spectre/input/CoordinatorEndpoint;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/input/CoordinatorEndpoint;Ljava/nio/file/Path;Ljava/nio/file/Path;ILjava/lang/Object;)Ldev/sebastiano/spectre/input/CoordinatorEndpoint;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDirectory ()Ljava/nio/file/Path;
+	public final fun getSocketPath ()Ljava/nio/file/Path;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorEndpointResolver {
+	public static final field INSTANCE Ldev/sebastiano/spectre/input/CoordinatorEndpointResolver;
+	public final fun resolve (Ljava/nio/file/Path;Ljava/lang/String;)Ldev/sebastiano/spectre/input/CoordinatorEndpoint;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorFrame {
+	public fun <init> (I[B)V
+	public final fun component1 ()I
+	public final fun component2 ()[B
+	public final fun copy (I[B)Ldev/sebastiano/spectre/input/CoordinatorFrame;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/input/CoordinatorFrame;I[BILjava/lang/Object;)Ldev/sebastiano/spectre/input/CoordinatorFrame;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getPayload ()[B
+	public final fun getProtocolVersion ()I
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorFrameCodec {
+	public static final field HEADER_BYTES I
+	public static final field UNSIGNED_SHORT_MASK I
+	public fun <init> (I)V
+	public final fun decode ([B)Ldev/sebastiano/spectre/input/CoordinatorFrame;
+	public final fun encode ([B)[B
+	public final fun getMaxPayloadBytes ()I
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorFrameCodecKt {
+	public static final field INPUT_COORDINATOR_PROTOCOL_VERSION I
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorHolderStatus {
+	public fun <init> (Ljava/lang/String;Ldev/sebastiano/spectre/input/LeaseOwner;Ljava/lang/String;JJJLjava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ldev/sebastiano/spectre/input/LeaseOwner;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()J
+	public final fun component5 ()J
+	public final fun component6 ()J
+	public final fun component7 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ldev/sebastiano/spectre/input/LeaseOwner;Ljava/lang/String;JJJLjava/lang/String;)Ldev/sebastiano/spectre/input/CoordinatorHolderStatus;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/input/CoordinatorHolderStatus;Ljava/lang/String;Ldev/sebastiano/spectre/input/LeaseOwner;Ljava/lang/String;JJJLjava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/input/CoordinatorHolderStatus;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAcquisitionAgeMillis ()J
+	public final fun getCurrentOperation ()Ljava/lang/String;
+	public final fun getFence ()J
+	public final fun getHeartbeatAgeMillis ()J
+	public final fun getLeaseId ()Ljava/lang/String;
+	public final fun getOwner ()Ldev/sebastiano/spectre/input/LeaseOwner;
+	public final fun getState ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorProtocolError : java/lang/Enum {
+	public static final field FRAME_TOO_LARGE Ldev/sebastiano/spectre/input/CoordinatorProtocolError;
+	public static final field INCOMPATIBLE_VERSION Ldev/sebastiano/spectre/input/CoordinatorProtocolError;
+	public static final field MALFORMED_FRAME Ldev/sebastiano/spectre/input/CoordinatorProtocolError;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/sebastiano/spectre/input/CoordinatorProtocolError;
+	public static fun values ()[Ldev/sebastiano/spectre/input/CoordinatorProtocolError;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorProtocolException : java/lang/IllegalArgumentException {
+	public fun <init> (Ldev/sebastiano/spectre/input/CoordinatorProtocolError;Ljava/lang/Integer;Ljava/lang/String;)V
+	public synthetic fun <init> (Ldev/sebastiano/spectre/input/CoordinatorProtocolError;Ljava/lang/Integer;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getError ()Ldev/sebastiano/spectre/input/CoordinatorProtocolError;
+	public final fun getPeerVersion ()Ljava/lang/Integer;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorQuarantineStatus {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ldev/sebastiano/spectre/input/LeaseOwner;J)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ldev/sebastiano/spectre/input/LeaseOwner;
+	public final fun component4 ()J
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ldev/sebastiano/spectre/input/LeaseOwner;J)Ldev/sebastiano/spectre/input/CoordinatorQuarantineStatus;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/input/CoordinatorQuarantineStatus;Ljava/lang/String;Ljava/lang/String;Ldev/sebastiano/spectre/input/LeaseOwner;JILjava/lang/Object;)Ldev/sebastiano/spectre/input/CoordinatorQuarantineStatus;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getOwner ()Ldev/sebastiano/spectre/input/LeaseOwner;
+	public final fun getPredecessorEpoch ()Ljava/lang/String;
+	public final fun getPredecessorLeaseId ()Ljava/lang/String;
+	public final fun getReleaseEligibleAtMillis ()J
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorRevokeResult {
+	public fun <init> (Z)V
+	public final fun component1 ()Z
+	public final fun copy (Z)Ldev/sebastiano/spectre/input/CoordinatorRevokeResult;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/input/CoordinatorRevokeResult;ZILjava/lang/Object;)Ldev/sebastiano/spectre/input/CoordinatorRevokeResult;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getUnsafeTakeover ()Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorStatus {
+	public fun <init> (Ldev/sebastiano/spectre/input/DesktopResourceKey;Ldev/sebastiano/spectre/input/CoordinatorHolderStatus;Ljava/util/List;Ldev/sebastiano/spectre/input/CoordinatorQuarantineStatus;)V
+	public final fun component1 ()Ldev/sebastiano/spectre/input/DesktopResourceKey;
+	public final fun component2 ()Ldev/sebastiano/spectre/input/CoordinatorHolderStatus;
+	public final fun component3 ()Ljava/util/List;
+	public final fun component4 ()Ldev/sebastiano/spectre/input/CoordinatorQuarantineStatus;
+	public final fun copy (Ldev/sebastiano/spectre/input/DesktopResourceKey;Ldev/sebastiano/spectre/input/CoordinatorHolderStatus;Ljava/util/List;Ldev/sebastiano/spectre/input/CoordinatorQuarantineStatus;)Ldev/sebastiano/spectre/input/CoordinatorStatus;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/input/CoordinatorStatus;Ldev/sebastiano/spectre/input/DesktopResourceKey;Ldev/sebastiano/spectre/input/CoordinatorHolderStatus;Ljava/util/List;Ldev/sebastiano/spectre/input/CoordinatorQuarantineStatus;ILjava/lang/Object;)Ldev/sebastiano/spectre/input/CoordinatorStatus;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getHolder ()Ldev/sebastiano/spectre/input/CoordinatorHolderStatus;
+	public final fun getQuarantine ()Ldev/sebastiano/spectre/input/CoordinatorQuarantineStatus;
+	public final fun getResourceKey ()Ldev/sebastiano/spectre/input/DesktopResourceKey;
+	public final fun getWaiters ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorWaiterStatus {
+	public fun <init> (Ljava/lang/String;Ldev/sebastiano/spectre/input/LeaseOwner;I)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ldev/sebastiano/spectre/input/LeaseOwner;
+	public final fun component3 ()I
+	public final fun copy (Ljava/lang/String;Ldev/sebastiano/spectre/input/LeaseOwner;I)Ldev/sebastiano/spectre/input/CoordinatorWaiterStatus;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/input/CoordinatorWaiterStatus;Ljava/lang/String;Ldev/sebastiano/spectre/input/LeaseOwner;IILjava/lang/Object;)Ldev/sebastiano/spectre/input/CoordinatorWaiterStatus;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getOwner ()Ldev/sebastiano/spectre/input/LeaseOwner;
+	public final fun getPosition ()I
+	public final fun getRequestId ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorWireCodec {
+	public static final field Companion Ldev/sebastiano/spectre/input/CoordinatorWireCodec$Companion;
+	public static final field DEFAULT_MAX_PAYLOAD_BYTES I
+	public fun <init> ()V
+	public fun <init> (ILkotlinx/serialization/json/Json;)V
+	public synthetic fun <init> (ILkotlinx/serialization/json/Json;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun decode ([B)Ldev/sebastiano/spectre/input/CoordinatorWireMessage;
+	public final fun encode (Ldev/sebastiano/spectre/input/CoordinatorWireMessage;)[B
+	public final fun read (Ljava/nio/channels/SocketChannel;)Ldev/sebastiano/spectre/input/CoordinatorWireMessage;
+	public final fun readOrNull (Ljava/nio/channels/SocketChannel;)Ldev/sebastiano/spectre/input/CoordinatorWireMessage;
+	public final fun write (Ljava/nio/channels/SocketChannel;Ldev/sebastiano/spectre/input/CoordinatorWireMessage;)V
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorWireCodec$Companion {
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorWireHolder {
+	public static final field Companion Ldev/sebastiano/spectre/input/CoordinatorWireHolder$Companion;
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;JLjava/lang/String;Ljava/lang/String;JJJLjava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;JLjava/lang/String;Ljava/lang/String;JJJLjava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()J
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5 ()Ljava/lang/String;
+	public final fun component6 ()J
+	public final fun component7 ()J
+	public final fun component8 ()J
+	public final fun component9 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;JLjava/lang/String;Ljava/lang/String;JJJLjava/lang/String;)Ldev/sebastiano/spectre/input/CoordinatorWireHolder;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/input/CoordinatorWireHolder;Ljava/lang/String;Ljava/lang/String;JLjava/lang/String;Ljava/lang/String;JJJLjava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/input/CoordinatorWireHolder;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAcquisitionAgeMillis ()J
+	public final fun getClientId ()Ljava/lang/String;
+	public final fun getCurrentOperation ()Ljava/lang/String;
+	public final fun getFence ()J
+	public final fun getHeartbeatAgeMillis ()J
+	public final fun getLeaseId ()Ljava/lang/String;
+	public final fun getOwnerLabel ()Ljava/lang/String;
+	public final fun getProcessId ()J
+	public final fun getState ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final synthetic class dev/sebastiano/spectre/input/CoordinatorWireHolder$$serializer : kotlinx/serialization/internal/GeneratedSerializer {
+	public static final field INSTANCE Ldev/sebastiano/spectre/input/CoordinatorWireHolder$$serializer;
+	public final fun childSerializers ()[Lkotlinx/serialization/KSerializer;
+	public final fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ldev/sebastiano/spectre/input/CoordinatorWireHolder;
+	public synthetic fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ljava/lang/Object;
+	public final fun getDescriptor ()Lkotlinx/serialization/descriptors/SerialDescriptor;
+	public final fun serialize (Lkotlinx/serialization/encoding/Encoder;Ldev/sebastiano/spectre/input/CoordinatorWireHolder;)V
+	public synthetic fun serialize (Lkotlinx/serialization/encoding/Encoder;Ljava/lang/Object;)V
+	public fun typeParametersSerializers ()[Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorWireHolder$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorWireKind : java/lang/Enum {
+	public static final field ACQUIRE Ldev/sebastiano/spectre/input/CoordinatorWireKind;
+	public static final field CANCEL Ldev/sebastiano/spectre/input/CoordinatorWireKind;
+	public static final field Companion Ldev/sebastiano/spectre/input/CoordinatorWireKind$Companion;
+	public static final field HEALTH Ldev/sebastiano/spectre/input/CoordinatorWireKind;
+	public static final field HEARTBEAT Ldev/sebastiano/spectre/input/CoordinatorWireKind;
+	public static final field RELEASE Ldev/sebastiano/spectre/input/CoordinatorWireKind;
+	public static final field RESPONSE Ldev/sebastiano/spectre/input/CoordinatorWireKind;
+	public static final field REVOKE Ldev/sebastiano/spectre/input/CoordinatorWireKind;
+	public static final field SESSION_OPEN Ldev/sebastiano/spectre/input/CoordinatorWireKind;
+	public static final field STATUS Ldev/sebastiano/spectre/input/CoordinatorWireKind;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/sebastiano/spectre/input/CoordinatorWireKind;
+	public static fun values ()[Ldev/sebastiano/spectre/input/CoordinatorWireKind;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorWireKind$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorWireMessage {
+	public static final field Companion Ldev/sebastiano/spectre/input/CoordinatorWireMessage$Companion;
+	public fun <init> (Ldev/sebastiano/spectre/input/CoordinatorWireKind;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/Long;ZLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;ZZLjava/lang/String;Ljava/lang/String;Ljava/lang/Integer;ZLdev/sebastiano/spectre/input/CoordinatorWireStatus;)V
+	public synthetic fun <init> (Ldev/sebastiano/spectre/input/CoordinatorWireKind;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/Long;ZLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;ZZLjava/lang/String;Ljava/lang/String;Ljava/lang/Integer;ZLdev/sebastiano/spectre/input/CoordinatorWireStatus;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ldev/sebastiano/spectre/input/CoordinatorWireKind;
+	public final fun component10 ()Ljava/lang/String;
+	public final fun component11 ()Ljava/lang/String;
+	public final fun component12 ()Ljava/lang/Long;
+	public final fun component13 ()Ljava/lang/String;
+	public final fun component14 ()Ljava/lang/String;
+	public final fun component15 ()Z
+	public final fun component16 ()Z
+	public final fun component17 ()Ljava/lang/String;
+	public final fun component18 ()Ljava/lang/String;
+	public final fun component19 ()Ljava/lang/Integer;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component20 ()Z
+	public final fun component21 ()Ldev/sebastiano/spectre/input/CoordinatorWireStatus;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5 ()Ljava/lang/Long;
+	public final fun component6 ()Ljava/lang/String;
+	public final fun component7 ()Ljava/lang/Long;
+	public final fun component8 ()Z
+	public final fun component9 ()Ljava/lang/String;
+	public final fun copy (Ldev/sebastiano/spectre/input/CoordinatorWireKind;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/Long;ZLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;ZZLjava/lang/String;Ljava/lang/String;Ljava/lang/Integer;ZLdev/sebastiano/spectre/input/CoordinatorWireStatus;)Ldev/sebastiano/spectre/input/CoordinatorWireMessage;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/input/CoordinatorWireMessage;Ldev/sebastiano/spectre/input/CoordinatorWireKind;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/Long;ZLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;ZZLjava/lang/String;Ljava/lang/String;Ljava/lang/Integer;ZLdev/sebastiano/spectre/input/CoordinatorWireStatus;ILjava/lang/Object;)Ldev/sebastiano/spectre/input/CoordinatorWireMessage;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getClientId ()Ljava/lang/String;
+	public final fun getCoordinatorEpoch ()Ljava/lang/String;
+	public final fun getCurrentOperation ()Ljava/lang/String;
+	public final fun getErrorCode ()Ljava/lang/String;
+	public final fun getFence ()Ljava/lang/Long;
+	public final fun getForce ()Z
+	public final fun getKind ()Ldev/sebastiano/spectre/input/CoordinatorWireKind;
+	public final fun getLeaseId ()Ljava/lang/String;
+	public final fun getMessage ()Ljava/lang/String;
+	public final fun getOk ()Z
+	public final fun getOwnerLabel ()Ljava/lang/String;
+	public final fun getProcessId ()Ljava/lang/Long;
+	public final fun getQueuePosition ()Ljava/lang/Integer;
+	public final fun getReason ()Ljava/lang/String;
+	public final fun getRequestId ()Ljava/lang/String;
+	public final fun getRequesterLabel ()Ljava/lang/String;
+	public final fun getResourceKey ()Ljava/lang/String;
+	public final fun getStatus ()Ldev/sebastiano/spectre/input/CoordinatorWireStatus;
+	public final fun getTimeoutMillis ()Ljava/lang/Long;
+	public final fun getUnsafeTakeover ()Z
+	public final fun getWaitForLease ()Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final synthetic class dev/sebastiano/spectre/input/CoordinatorWireMessage$$serializer : kotlinx/serialization/internal/GeneratedSerializer {
+	public static final field INSTANCE Ldev/sebastiano/spectre/input/CoordinatorWireMessage$$serializer;
+	public final fun childSerializers ()[Lkotlinx/serialization/KSerializer;
+	public final fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ldev/sebastiano/spectre/input/CoordinatorWireMessage;
+	public synthetic fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ljava/lang/Object;
+	public final fun getDescriptor ()Lkotlinx/serialization/descriptors/SerialDescriptor;
+	public final fun serialize (Lkotlinx/serialization/encoding/Encoder;Ldev/sebastiano/spectre/input/CoordinatorWireMessage;)V
+	public synthetic fun serialize (Lkotlinx/serialization/encoding/Encoder;Ljava/lang/Object;)V
+	public fun typeParametersSerializers ()[Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorWireMessage$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorWireQuarantine {
+	public static final field Companion Ldev/sebastiano/spectre/input/CoordinatorWireQuarantine$Companion;
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JLjava/lang/String;J)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JLjava/lang/String;JILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()J
+	public final fun component5 ()Ljava/lang/String;
+	public final fun component6 ()J
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JLjava/lang/String;J)Ldev/sebastiano/spectre/input/CoordinatorWireQuarantine;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/input/CoordinatorWireQuarantine;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JLjava/lang/String;JILjava/lang/Object;)Ldev/sebastiano/spectre/input/CoordinatorWireQuarantine;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getClientId ()Ljava/lang/String;
+	public final fun getOwnerLabel ()Ljava/lang/String;
+	public final fun getPredecessorEpoch ()Ljava/lang/String;
+	public final fun getPredecessorLeaseId ()Ljava/lang/String;
+	public final fun getProcessId ()J
+	public final fun getReleaseEligibleAtMillis ()J
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final synthetic class dev/sebastiano/spectre/input/CoordinatorWireQuarantine$$serializer : kotlinx/serialization/internal/GeneratedSerializer {
+	public static final field INSTANCE Ldev/sebastiano/spectre/input/CoordinatorWireQuarantine$$serializer;
+	public final fun childSerializers ()[Lkotlinx/serialization/KSerializer;
+	public final fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ldev/sebastiano/spectre/input/CoordinatorWireQuarantine;
+	public synthetic fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ljava/lang/Object;
+	public final fun getDescriptor ()Lkotlinx/serialization/descriptors/SerialDescriptor;
+	public final fun serialize (Lkotlinx/serialization/encoding/Encoder;Ldev/sebastiano/spectre/input/CoordinatorWireQuarantine;)V
+	public synthetic fun serialize (Lkotlinx/serialization/encoding/Encoder;Ljava/lang/Object;)V
+	public fun typeParametersSerializers ()[Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorWireQuarantine$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorWireStatus {
+	public static final field Companion Ldev/sebastiano/spectre/input/CoordinatorWireStatus$Companion;
+	public fun <init> (Ljava/lang/String;Ldev/sebastiano/spectre/input/CoordinatorWireHolder;Ljava/util/List;Ldev/sebastiano/spectre/input/CoordinatorWireQuarantine;)V
+	public synthetic fun <init> (Ljava/lang/String;Ldev/sebastiano/spectre/input/CoordinatorWireHolder;Ljava/util/List;Ldev/sebastiano/spectre/input/CoordinatorWireQuarantine;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ldev/sebastiano/spectre/input/CoordinatorWireHolder;
+	public final fun component3 ()Ljava/util/List;
+	public final fun component4 ()Ldev/sebastiano/spectre/input/CoordinatorWireQuarantine;
+	public final fun copy (Ljava/lang/String;Ldev/sebastiano/spectre/input/CoordinatorWireHolder;Ljava/util/List;Ldev/sebastiano/spectre/input/CoordinatorWireQuarantine;)Ldev/sebastiano/spectre/input/CoordinatorWireStatus;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/input/CoordinatorWireStatus;Ljava/lang/String;Ldev/sebastiano/spectre/input/CoordinatorWireHolder;Ljava/util/List;Ldev/sebastiano/spectre/input/CoordinatorWireQuarantine;ILjava/lang/Object;)Ldev/sebastiano/spectre/input/CoordinatorWireStatus;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getHolder ()Ldev/sebastiano/spectre/input/CoordinatorWireHolder;
+	public final fun getQuarantine ()Ldev/sebastiano/spectre/input/CoordinatorWireQuarantine;
+	public final fun getResourceKey ()Ljava/lang/String;
+	public final fun getWaiters ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final synthetic class dev/sebastiano/spectre/input/CoordinatorWireStatus$$serializer : kotlinx/serialization/internal/GeneratedSerializer {
+	public static final field INSTANCE Ldev/sebastiano/spectre/input/CoordinatorWireStatus$$serializer;
+	public final fun childSerializers ()[Lkotlinx/serialization/KSerializer;
+	public final fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ldev/sebastiano/spectre/input/CoordinatorWireStatus;
+	public synthetic fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ljava/lang/Object;
+	public final fun getDescriptor ()Lkotlinx/serialization/descriptors/SerialDescriptor;
+	public final fun serialize (Lkotlinx/serialization/encoding/Encoder;Ldev/sebastiano/spectre/input/CoordinatorWireStatus;)V
+	public synthetic fun serialize (Lkotlinx/serialization/encoding/Encoder;Ljava/lang/Object;)V
+	public fun typeParametersSerializers ()[Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorWireStatus$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorWireWaiter {
+	public static final field Companion Ldev/sebastiano/spectre/input/CoordinatorWireWaiter$Companion;
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;JLjava/lang/String;I)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;JLjava/lang/String;IILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()J
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5 ()I
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;JLjava/lang/String;I)Ldev/sebastiano/spectre/input/CoordinatorWireWaiter;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/input/CoordinatorWireWaiter;Ljava/lang/String;Ljava/lang/String;JLjava/lang/String;IILjava/lang/Object;)Ldev/sebastiano/spectre/input/CoordinatorWireWaiter;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getClientId ()Ljava/lang/String;
+	public final fun getOwnerLabel ()Ljava/lang/String;
+	public final fun getPosition ()I
+	public final fun getProcessId ()J
+	public final fun getRequestId ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final synthetic class dev/sebastiano/spectre/input/CoordinatorWireWaiter$$serializer : kotlinx/serialization/internal/GeneratedSerializer {
+	public static final field INSTANCE Ldev/sebastiano/spectre/input/CoordinatorWireWaiter$$serializer;
+	public final fun childSerializers ()[Lkotlinx/serialization/KSerializer;
+	public final fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ldev/sebastiano/spectre/input/CoordinatorWireWaiter;
+	public synthetic fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ljava/lang/Object;
+	public final fun getDescriptor ()Lkotlinx/serialization/descriptors/SerialDescriptor;
+	public final fun serialize (Lkotlinx/serialization/encoding/Encoder;Ldev/sebastiano/spectre/input/CoordinatorWireWaiter;)V
+	public synthetic fun serialize (Lkotlinx/serialization/encoding/Encoder;Ljava/lang/Object;)V
+	public fun typeParametersSerializers ()[Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/input/CoordinatorWireWaiter$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/input/DesktopIdentityEnvironment {
+	public fun <init> (Ldev/sebastiano/spectre/input/DesktopPlatform;Ljava/lang/String;Ljava/util/Map;Ljava/lang/String;)V
+	public synthetic fun <init> (Ldev/sebastiano/spectre/input/DesktopPlatform;Ljava/lang/String;Ljava/util/Map;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ldev/sebastiano/spectre/input/DesktopPlatform;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/util/Map;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun copy (Ldev/sebastiano/spectre/input/DesktopPlatform;Ljava/lang/String;Ljava/util/Map;Ljava/lang/String;)Ldev/sebastiano/spectre/input/DesktopIdentityEnvironment;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/input/DesktopIdentityEnvironment;Ldev/sebastiano/spectre/input/DesktopPlatform;Ljava/lang/String;Ljava/util/Map;Ljava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/input/DesktopIdentityEnvironment;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getEffectiveUserId ()Ljava/lang/String;
+	public final fun getEnvironment ()Ljava/util/Map;
+	public final fun getPlatform ()Ldev/sebastiano/spectre/input/DesktopPlatform;
+	public final fun getWindowsLogonSessionId ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/input/DesktopIdentityResolver {
+	public fun <init> ()V
+	public fun <init> (Ldev/sebastiano/spectre/input/CanonicalPathResolver;)V
+	public synthetic fun <init> (Ldev/sebastiano/spectre/input/CanonicalPathResolver;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun resolve (Ldev/sebastiano/spectre/input/DesktopIdentityEnvironment;)Ldev/sebastiano/spectre/input/DesktopResourceKey;
+}
+
+public final class dev/sebastiano/spectre/input/DesktopPlatform : java/lang/Enum {
+	public static final field LINUX Ldev/sebastiano/spectre/input/DesktopPlatform;
+	public static final field MACOS Ldev/sebastiano/spectre/input/DesktopPlatform;
+	public static final field WINDOWS Ldev/sebastiano/spectre/input/DesktopPlatform;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/sebastiano/spectre/input/DesktopPlatform;
+	public static fun values ()[Ldev/sebastiano/spectre/input/DesktopPlatform;
+}
+
+public final class dev/sebastiano/spectre/input/DesktopResourceKey {
+	public fun <init> (Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;)Ldev/sebastiano/spectre/input/DesktopResourceKey;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/input/DesktopResourceKey;Ljava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/input/DesktopResourceKey;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getValue ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface annotation class dev/sebastiano/spectre/input/ExperimentalSpectreInputCoordinationApi : java/lang/annotation/Annotation {
+}
+
+public final class dev/sebastiano/spectre/input/InputCoordinatorClientFactory {
+	public static final field INSTANCE Ldev/sebastiano/spectre/input/InputCoordinatorClientFactory;
+	public final fun connectOrStart (Ldev/sebastiano/spectre/input/CoordinatorEndpoint;Ldev/sebastiano/spectre/input/DesktopResourceKey;Ljava/lang/String;)Ldev/sebastiano/spectre/input/LocalInputCoordinatorClient;
+	public static synthetic fun connectOrStart$default (Ldev/sebastiano/spectre/input/InputCoordinatorClientFactory;Ldev/sebastiano/spectre/input/CoordinatorEndpoint;Ldev/sebastiano/spectre/input/DesktopResourceKey;Ljava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/input/LocalInputCoordinatorClient;
+}
+
+public abstract interface class dev/sebastiano/spectre/input/InputCoordinatorClientProvider {
+	public abstract fun connect (Ldev/sebastiano/spectre/input/CoordinatorEndpoint;Ldev/sebastiano/spectre/input/DesktopResourceKey;Ljava/lang/String;)Ldev/sebastiano/spectre/input/LocalInputCoordinatorClient;
+}
+
+public final class dev/sebastiano/spectre/input/InputCoordinatorException : java/lang/IllegalStateException {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public final fun getErrorCode ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/input/LeaseErrorCode : java/lang/Enum {
+	public static final field FENCED Ldev/sebastiano/spectre/input/LeaseErrorCode;
+	public static final field QUEUE_FULL Ldev/sebastiano/spectre/input/LeaseErrorCode;
+	public static final field REVOKE_GRACE_ACTIVE Ldev/sebastiano/spectre/input/LeaseErrorCode;
+	public static final field STALE_EPOCH Ldev/sebastiano/spectre/input/LeaseErrorCode;
+	public static final field STALE_LEASE Ldev/sebastiano/spectre/input/LeaseErrorCode;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/sebastiano/spectre/input/LeaseErrorCode;
+	public static fun values ()[Ldev/sebastiano/spectre/input/LeaseErrorCode;
+}
+
+public final class dev/sebastiano/spectre/input/LeaseOwner {
+	public fun <init> (Ljava/lang/String;JLjava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;JLjava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()J
+	public final fun component3 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;JLjava/lang/String;)Ldev/sebastiano/spectre/input/LeaseOwner;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/input/LeaseOwner;Ljava/lang/String;JLjava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/input/LeaseOwner;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getClientId ()Ljava/lang/String;
+	public final fun getLabel ()Ljava/lang/String;
+	public final fun getProcessId ()J
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/input/LeaseToken {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ldev/sebastiano/spectre/input/DesktopResourceKey;J)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ldev/sebastiano/spectre/input/DesktopResourceKey;
+	public final fun component4 ()J
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ldev/sebastiano/spectre/input/DesktopResourceKey;J)Ldev/sebastiano/spectre/input/LeaseToken;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/input/LeaseToken;Ljava/lang/String;Ljava/lang/String;Ldev/sebastiano/spectre/input/DesktopResourceKey;JILjava/lang/Object;)Ldev/sebastiano/spectre/input/LeaseToken;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCoordinatorEpoch ()Ljava/lang/String;
+	public final fun getFence ()J
+	public final fun getLeaseId ()Ljava/lang/String;
+	public final fun getResourceKey ()Ldev/sebastiano/spectre/input/DesktopResourceKey;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/input/LocalCoordinatorEnvironment {
+	public static final field INSTANCE Ldev/sebastiano/spectre/input/LocalCoordinatorEnvironment;
+	public final fun defaultDesktopResourceKey ()Ldev/sebastiano/spectre/input/DesktopResourceKey;
+	public final fun defaultEndpoint ()Ldev/sebastiano/spectre/input/CoordinatorEndpoint;
+}
+
+public final class dev/sebastiano/spectre/input/LocalInputCoordinatorClient : java/lang/AutoCloseable {
+	public static final field Companion Ldev/sebastiano/spectre/input/LocalInputCoordinatorClient$Companion;
+	public synthetic fun <init> (Ldev/sebastiano/spectre/input/CoordinatorEndpoint;Ldev/sebastiano/spectre/input/DesktopResourceKey;Ljava/lang/String;Ldev/sebastiano/spectre/input/LeaseOwner;Ljava/nio/channels/SocketChannel;Ljava/lang/String;Ldev/sebastiano/spectre/input/CoordinatorWireCodec;Ljava/util/concurrent/ScheduledExecutorService;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun acquire (Ljava/time/Duration;Ljava/lang/String;)Ldev/sebastiano/spectre/input/CoordinatedInputLease;
+	public static synthetic fun acquire$default (Ldev/sebastiano/spectre/input/LocalInputCoordinatorClient;Ljava/time/Duration;Ljava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/input/CoordinatedInputLease;
+	public fun close ()V
+	public final fun getCoordinatorEpoch ()Ljava/lang/String;
+	public final fun tryAcquire (Ljava/lang/String;)Ldev/sebastiano/spectre/input/CoordinatedInputLease;
+	public static synthetic fun tryAcquire$default (Ldev/sebastiano/spectre/input/LocalInputCoordinatorClient;Ljava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/input/CoordinatedInputLease;
+}
+
+public final class dev/sebastiano/spectre/input/LocalInputCoordinatorClient$Companion {
+	public final fun connect (Ldev/sebastiano/spectre/input/CoordinatorEndpoint;Ldev/sebastiano/spectre/input/DesktopResourceKey;Ljava/lang/String;Ldev/sebastiano/spectre/input/CoordinatorWireCodec;)Ldev/sebastiano/spectre/input/LocalInputCoordinatorClient;
+	public static synthetic fun connect$default (Ldev/sebastiano/spectre/input/LocalInputCoordinatorClient$Companion;Ldev/sebastiano/spectre/input/CoordinatorEndpoint;Ldev/sebastiano/spectre/input/DesktopResourceKey;Ljava/lang/String;Ldev/sebastiano/spectre/input/CoordinatorWireCodec;ILjava/lang/Object;)Ldev/sebastiano/spectre/input/LocalInputCoordinatorClient;
+}
+
+public final class dev/sebastiano/spectre/input/LocalInputCoordinatorControl {
+	public fun <init> (Ldev/sebastiano/spectre/input/CoordinatorEndpoint;Ldev/sebastiano/spectre/input/CoordinatorWireCodec;)V
+	public synthetic fun <init> (Ldev/sebastiano/spectre/input/CoordinatorEndpoint;Ldev/sebastiano/spectre/input/CoordinatorWireCodec;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun revoke (Ldev/sebastiano/spectre/input/DesktopResourceKey;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Z)Ldev/sebastiano/spectre/input/CoordinatorRevokeResult;
+	public static synthetic fun revoke$default (Ldev/sebastiano/spectre/input/LocalInputCoordinatorControl;Ldev/sebastiano/spectre/input/DesktopResourceKey;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZILjava/lang/Object;)Ldev/sebastiano/spectre/input/CoordinatorRevokeResult;
+	public final fun status (Ldev/sebastiano/spectre/input/DesktopResourceKey;)Ldev/sebastiano/spectre/input/CoordinatorControlResult;
+}
+
+public abstract interface class dev/sebastiano/spectre/input/OwnerOnlyEndpointProtection {
+	public static final field Companion Ldev/sebastiano/spectre/input/OwnerOnlyEndpointProtection$Companion;
+	public abstract fun prepareDirectory (Ljava/nio/file/Path;)V
+	public abstract fun protectSocket (Ljava/nio/file/Path;)V
+}
+
+public final class dev/sebastiano/spectre/input/OwnerOnlyEndpointProtection$Companion {
+	public final fun forPath (Ljava/nio/file/Path;)Ldev/sebastiano/spectre/input/OwnerOnlyEndpointProtection;
+}
+

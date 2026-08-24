@@ -1,5 +1,8 @@
+@file:OptIn(dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi::class)
+
 package dev.sebastiano.spectre.core
 
+import dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi
 import java.awt.GraphicsEnvironment
 import java.awt.Point
 import java.awt.Rectangle
@@ -28,7 +31,24 @@ internal constructor(
     private val clipboard: ClipboardAdapter = SystemClipboardAdapter(),
     private val tccGuard: MacOsTccGuard = defaultTccGuardFor(robot, robot),
     private val screenCapture: ScreenCaptureAdapter = robot,
-) {
+    inputLeasePolicy: InputLeasePolicy = InputLeasePolicy.Off,
+    inputLeaseCoordinator: InputLeaseCoordinator = ProductionInputLeaseCoordinator(),
+    inputCapabilities: InputCapabilities? = null,
+) : AutoCloseable by inputLeaseCoordinator {
+
+    /** Shared-OS-resource capabilities used by isolation integrations. */
+    @ExperimentalSpectreInputCoordinationApi
+    public val inputCapabilities: InputCapabilities =
+        inputCapabilities
+            ?: InputCapabilities(
+                realOsInput = robot is AwtRobotAdapter,
+                sharedSystemClipboard = clipboard !== HeadlessThrowingClipboardAdapter,
+            )
+
+    internal val inputCoordination =
+        DriverInputCoordination(
+            InputLeaseGuard(inputLeasePolicy, this.inputCapabilities, inputLeaseCoordinator)
+        )
 
     /** Whether callers may use a platform capture backend instead of this driver's adapter. */
     internal val allowsPlatformCapture: Boolean
@@ -39,20 +59,38 @@ internal constructor(
     // adapter-injecting constructor is reserved for tests within this module.
     public constructor() : this(AwtRobotAdapter(), SystemClipboardAdapter())
 
+    /** Creates a real Robot driver with explicit cooperative input coordination [policy]. */
+    @ExperimentalSpectreInputCoordinationApi
+    public constructor(
+        policy: InputLeasePolicy
+    ) : this(
+        robot = AwtRobotAdapter(),
+        clipboard = SystemClipboardAdapter(),
+        inputLeasePolicy = policy,
+    )
+
     public constructor(robot: Robot) : this(AwtRobotAdapter(robot))
+
+    /** Wraps [robot] with explicit cooperative input coordination [policy]. */
+    @ExperimentalSpectreInputCoordinationApi
+    public constructor(
+        robot: Robot,
+        policy: InputLeasePolicy,
+    ) : this(robot = AwtRobotAdapter(robot), inputLeasePolicy = policy)
 
     private val pointer = PointerPositionTracker()
 
     /**
      * Dispatches a single left-button click at the given screen coordinates: move, press, release.
      *
-     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it
-     * (real `java.awt.Robot`), and dispatches inline otherwise (synthetic adapter). Throws
+     * EDT callers require coordination to be off, already held, or immediately available;
+     * contention fails without blocking. [RobotDriver] moves work off the EDT when the backend
+     * requires it (real `java.awt.Robot`), and dispatches inline otherwise. Throws
      * [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
     public suspend fun click(screenX: Int, screenY: Int) {
         tccGuard.requireAccessibility()
-        runOffEdt {
+        runOffEdt("click") {
             pointer.moveTo(robot, screenX, screenY)
             robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
             robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
@@ -64,12 +102,13 @@ internal constructor(
      * press, release. The second press inherits the OS double-click window from the first release,
      * so Compose's `combinedClickable` and Swing's `MouseEvent.clickCount == 2` fire as expected.
      *
-     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * EDT callers require coordination to be off, already held, or immediately available;
+     * contention fails without blocking. [RobotDriver] moves backend work off the EDT as needed.
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
     public suspend fun doubleClick(screenX: Int, screenY: Int) {
         tccGuard.requireAccessibility()
-        runOffEdt {
+        runOffEdt("doubleClick") {
             pointer.moveTo(robot, screenX, screenY)
             repeat(DOUBLE_CLICK_COUNT) {
                 robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
@@ -86,7 +125,8 @@ internal constructor(
      * The release is wrapped in a `finally` so a cancellation during the hold still lifts the mouse
      * button — otherwise subsequent clicks would be interpreted as drags.
      *
-     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * EDT callers require coordination to be off, already held, or immediately available;
+     * contention fails without blocking. [RobotDriver] moves backend work off the EDT as needed.
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
     public suspend fun longClick(
@@ -95,11 +135,12 @@ internal constructor(
         holdFor: Duration = DEFAULT_LONG_CLICK_DURATION,
     ) {
         tccGuard.requireAccessibility()
-        runOffEdt {
+        runOffEdt("longClick") {
             pointer.moveTo(robot, screenX, screenY)
             robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
             try {
                 delay(holdFor)
+                inputCoordination.checkpoint()
             } finally {
                 robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
             }
@@ -117,7 +158,8 @@ internal constructor(
      * press/move/release across distinct points as a drag, which is the contract Compose's
      * `Modifier.draggable` and lazy-list scroll expect.
      *
-     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * EDT callers require coordination to be off, already held, or immediately available;
+     * contention fails without blocking. [RobotDriver] moves backend work off the EDT as needed.
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
     public suspend fun swipe(
@@ -129,7 +171,7 @@ internal constructor(
         duration: Duration = DEFAULT_SWIPE_DURATION,
     ) {
         tccGuard.requireAccessibility()
-        runOffEdt {
+        runOffEdt("swipe") {
             val points = interpolateSwipePoints(startX, startY, endX, endY, steps)
             val pausePerStepMs = swipePauseMillis(duration, steps, autoDelayMs = robot.autoDelayMs)
             val firstPoint = points.first()
@@ -137,6 +179,7 @@ internal constructor(
             robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
             try {
                 for (point in points.drop(1)) {
+                    inputCoordination.checkpoint()
                     pointer.moveTo(robot, point.x, point.y)
                     if (pausePerStepMs > 0) {
                         delay(pausePerStepMs.milliseconds)
@@ -162,21 +205,28 @@ internal constructor(
      * false "cleared" read-back still left host key events inverted in physical Windows
      * validation). Non-letter characters are unaffected by Caps Lock on standard keyboards.
      *
-     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * EDT callers require coordination to be off, already held, or immediately available;
+     * contention fails without blocking. [RobotDriver] moves backend work off the EDT as needed.
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
     public suspend fun typeText(text: String) {
         tccGuard.requireAccessibility()
-        runOffEdt {
+        runOffEdt("typeText") {
             // Read once per call: ambient Caps Lock is stable for a short typeText burst, and we
             // intentionally do not write locking-key state (see KDoc).
             val capsLockOn = robot.getLockingKeyState(KeyEvent.VK_CAPS_LOCK) == true
             for (char in text) {
+                inputCoordination.checkpoint()
                 val stroke = keyStrokeForChar(char, capsLockOn = capsLockOn)
                 for (modifier in stroke.modifiers) robot.keyPress(modifier)
-                robot.keyPress(stroke.keyCode)
-                robot.keyRelease(stroke.keyCode)
-                for (modifier in stroke.modifiers.asReversed()) robot.keyRelease(modifier)
+                try {
+                    robot.keyPress(stroke.keyCode)
+                    robot.keyRelease(stroke.keyCode)
+                } finally {
+                    for (modifier in stroke.modifiers.asReversed()) {
+                        runCatching { robot.keyRelease(modifier) }
+                    }
+                }
             }
         }
     }
@@ -193,12 +243,13 @@ internal constructor(
      * the restore happens. Adapters that don't support clipboard read-back (synthetic test fakes)
      * skip both settle waits.
      *
-     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * EDT callers require coordination to be off, already held, or immediately available;
+     * contention fails without blocking. [RobotDriver] moves backend work off the EDT as needed.
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
     public suspend fun pasteText(text: String) {
         tccGuard.requireAccessibility()
-        runOffEdt {
+        runOffEdt("pasteText", CoordinatedResource.SYSTEM_CLIPBOARD) {
             val previousContents = runCatching { clipboard.getContents() }.getOrNull()
             try {
                 clipboard.setContents(StringSelection(text))
@@ -220,9 +271,12 @@ internal constructor(
                 }
                 val modifier = shortcutModifierKeyCode(detectMacOs())
                 robot.keyPress(modifier)
-                robot.keyPress(KeyEvent.VK_V)
-                robot.keyRelease(KeyEvent.VK_V)
-                robot.keyRelease(modifier)
+                try {
+                    robot.keyPress(KeyEvent.VK_V)
+                    robot.keyRelease(KeyEvent.VK_V)
+                } finally {
+                    robot.keyRelease(modifier)
+                }
                 if (clipboard.supportsRead && robot.shouldDrainAfterClipboardPaste) {
                     // Drain queued AWT events (KEY_PRESSED/RELEASED + Compose's input
                     // pipeline) so the paste handler has a chance to read the clipboard before
@@ -261,6 +315,7 @@ internal constructor(
             if (current == expected) return
             if (System.nanoTime() >= deadline) return
             delay(pollMs.milliseconds)
+            inputCoordination.checkpoint()
         }
     }
 
@@ -271,21 +326,27 @@ internal constructor(
      * Useful for overwriting a `TextField`'s current value without the caller having to compute
      * cursor / selection state. Same caveats as [typeText] for supported characters apply.
      *
-     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * EDT callers require coordination to be off, already held, or immediately available;
+     * contention fails without blocking. [RobotDriver] moves backend work off the EDT as needed.
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
     public suspend fun clearAndTypeText(text: String) {
-        tccGuard.requireAccessibility()
-        val selectAllModifier = shortcutModifierKeyCode(detectMacOs())
-        runOffEdt {
-            robot.keyPress(selectAllModifier)
-            robot.keyPress(KeyEvent.VK_A)
-            robot.keyRelease(KeyEvent.VK_A)
-            robot.keyRelease(selectAllModifier)
-            robot.keyPress(KeyEvent.VK_BACK_SPACE)
-            robot.keyRelease(KeyEvent.VK_BACK_SPACE)
+        inputCoordination.withOperation("clearAndTypeText", CoordinatedResource.REAL_INPUT) {
+            tccGuard.requireAccessibility()
+            val selectAllModifier = shortcutModifierKeyCode(detectMacOs())
+            runOffEdt("clearText") {
+                robot.keyPress(selectAllModifier)
+                try {
+                    robot.keyPress(KeyEvent.VK_A)
+                    robot.keyRelease(KeyEvent.VK_A)
+                } finally {
+                    robot.keyRelease(selectAllModifier)
+                }
+                robot.keyPress(KeyEvent.VK_BACK_SPACE)
+                robot.keyRelease(KeyEvent.VK_BACK_SPACE)
+            }
+            typeText(text)
         }
-        typeText(text)
     }
 
     /**
@@ -296,7 +357,7 @@ internal constructor(
      */
     public suspend fun scrollWheel(screenX: Int, screenY: Int, wheelClicks: Int) {
         tccGuard.requireAccessibility()
-        runOffEdt {
+        runOffEdt("scrollWheel") {
             pointer.moveTo(robot, screenX, screenY)
             robot.mouseWheel(wheelClicks)
         }
@@ -307,12 +368,13 @@ internal constructor(
      * this for hover, tooltip, and "park the pointer" cases that `click` / `swipe` cannot express
      * because they always press.
      *
-     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * EDT callers require coordination to be off, already held, or immediately available;
+     * contention fails without blocking. [RobotDriver] moves backend work off the EDT as needed.
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
     public suspend fun moveTo(screenX: Int, screenY: Int) {
         tccGuard.requireAccessibility()
-        runOffEdt { pointer.moveTo(robot, screenX, screenY) }
+        runOffEdt("moveTo") { pointer.moveTo(robot, screenX, screenY) }
     }
 
     /**
@@ -322,12 +384,13 @@ internal constructor(
      * real cursor, and `java.awt.MouseInfo` is a different coordinate story.
      *
      * Throws [IllegalStateException] if no Spectre pointer move has happened yet on this driver.
-     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * EDT callers require coordination to be off, already held, or immediately available;
+     * contention fails without blocking. [RobotDriver] moves backend work off the EDT as needed.
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
     public suspend fun moveBy(deltaX: Int, deltaY: Int) {
         tccGuard.requireAccessibility()
-        runOffEdt { pointer.moveBy(robot, deltaX, deltaY) }
+        runOffEdt("moveBy") { pointer.moveBy(robot, deltaX, deltaY) }
     }
 
     /**
@@ -336,17 +399,21 @@ internal constructor(
      * pressed before the key, released after — the modifier mask appears on the `keyCode`
      * KEY_PRESSED event and does not leak into subsequent calls.
      *
-     * Safe to call from the EDT; [RobotDriver] moves work off the EDT when the backend requires it.
+     * EDT callers require coordination to be off, already held, or immediately available;
+     * contention fails without blocking. [RobotDriver] moves backend work off the EDT as needed.
      * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
      */
     public suspend fun pressKey(keyCode: Int, modifiers: Int = 0) {
         tccGuard.requireAccessibility()
-        runOffEdt {
+        runOffEdt("pressKey") {
             val modifierKeys = modifierMaskToKeyCodes(modifiers)
             for (mod in modifierKeys) robot.keyPress(mod)
-            robot.keyPress(keyCode)
-            robot.keyRelease(keyCode)
-            for (mod in modifierKeys.reversed()) robot.keyRelease(mod)
+            try {
+                robot.keyPress(keyCode)
+                robot.keyRelease(keyCode)
+            } finally {
+                for (mod in modifierKeys.reversed()) robot.keyRelease(mod)
+            }
         }
     }
 
@@ -446,7 +513,13 @@ internal constructor(
         return screenCapture.createDeviceScaleScreenCapture(captureRegion)
     }
 
-    private suspend fun runOffEdt(block: suspend () -> Unit) = runOffEdt(robot, block)
+    private suspend fun runOffEdt(
+        operation: String,
+        resource: CoordinatedResource = CoordinatedResource.REAL_INPUT,
+        block: suspend () -> Unit,
+    ) {
+        inputCoordination.withOperation(operation, resource) { runOffEdt(robot, block) }
+    }
 
     public companion object {
 
@@ -464,6 +537,20 @@ internal constructor(
                     clipboard = SystemClipboardAdapter(),
                     tccGuard = defaultTccGuardFor(syntheticInput, realCapture),
                     screenCapture = realCapture,
+                )
+            }
+
+        /** Returns a synthetic-input driver with explicit shared-resource coordination [policy]. */
+        @ExperimentalSpectreInputCoordinationApi
+        public fun synthetic(rootWindow: Window, policy: InputLeasePolicy): RobotDriver =
+            SyntheticRobotAdapter(rootWindow).let { syntheticInput ->
+                val realCapture = AwtRobotAdapter()
+                RobotDriver(
+                    robot = syntheticInput,
+                    clipboard = SystemClipboardAdapter(),
+                    tccGuard = defaultTccGuardFor(syntheticInput, realCapture),
+                    screenCapture = realCapture,
+                    inputLeasePolicy = policy,
                 )
             }
 

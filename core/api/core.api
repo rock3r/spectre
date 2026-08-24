@@ -7,6 +7,15 @@ public final class dev/sebastiano/spectre/core/AutomatorIdlingResource$DefaultIm
 	public static fun diagnosticMessage (Ldev/sebastiano/spectre/core/AutomatorIdlingResource;)Ljava/lang/String;
 }
 
+public abstract interface class dev/sebastiano/spectre/core/AutomatorInputLease : java/lang/AutoCloseable {
+	public abstract fun bind (Ldev/sebastiano/spectre/core/ComposeAutomator;)Ljava/lang/AutoCloseable;
+	public fun withLease (Lkotlin/jvm/functions/Function0;)Ljava/lang/Object;
+}
+
+public final class dev/sebastiano/spectre/core/AutomatorInputLease$DefaultImpls {
+	public static fun withLease (Ldev/sebastiano/spectre/core/AutomatorInputLease;Lkotlin/jvm/functions/Function0;)Ljava/lang/Object;
+}
+
 public final class dev/sebastiano/spectre/core/AutomatorNode {
 	public final fun bothBounds ()Ldev/sebastiano/spectre/core/BothBounds;
 	public final fun getBoundsInWindow ()Landroidx/compose/ui/geometry/Rect;
@@ -89,6 +98,7 @@ public final class dev/sebastiano/spectre/core/ComposeAutomator {
 	public final fun findOneByText (Ljava/lang/String;Z)Ldev/sebastiano/spectre/core/AutomatorNode;
 	public static synthetic fun findOneByText$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/lang/String;ZILjava/lang/Object;)Ldev/sebastiano/spectre/core/AutomatorNode;
 	public final fun focusWindow (Ldev/sebastiano/spectre/core/AutomatorNode;)V
+	public final fun getInputCapabilities ()Ldev/sebastiano/spectre/core/InputCapabilities;
 	public final fun getWindows ()Ljava/util/List;
 	public final fun longClick-8Mi8wO0 (Ldev/sebastiano/spectre/core/AutomatorNode;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun longClick-8Mi8wO0$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ldev/sebastiano/spectre/core/AutomatorNode;JLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
@@ -129,6 +139,8 @@ public final class dev/sebastiano/spectre/core/ComposeAutomator {
 	public static synthetic fun waitForVisualIdle-t_idYME$default (Ldev/sebastiano/spectre/core/ComposeAutomator;JIJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun windowIdentities ()Ljava/util/List;
 	public final fun windowIdentity (I)Ldev/sebastiano/spectre/core/WindowIdentitySnapshot;
+	public final fun withExclusiveInput (Ldev/sebastiano/spectre/core/InputLeaseOptions;Lkotlin/jvm/functions/Function2;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun withExclusiveInput$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ldev/sebastiano/spectre/core/InputLeaseOptions;Lkotlin/jvm/functions/Function2;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun withTracing (Ljava/nio/file/Path;Ldev/sebastiano/spectre/core/Tracer;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun withTracing$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/nio/file/Path;Ldev/sebastiano/spectre/core/Tracer;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
@@ -138,6 +150,39 @@ public final class dev/sebastiano/spectre/core/ComposeAutomator$Companion {
 	public static synthetic fun inProcess$default (Ldev/sebastiano/spectre/core/ComposeAutomator$Companion;Ldev/sebastiano/spectre/core/RobotDriver;ZILjava/lang/Object;)Ldev/sebastiano/spectre/core/ComposeAutomator;
 }
 
+public final class dev/sebastiano/spectre/core/ContendedEdtInputLeaseException : java/lang/IllegalStateException {
+	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public final class dev/sebastiano/spectre/core/DesktopInputIsolation {
+	public static final field INSTANCE Ldev/sebastiano/spectre/core/DesktopInputIsolation;
+	public final fun acquire (Ldev/sebastiano/spectre/core/InputLeaseOptions;)Ldev/sebastiano/spectre/core/AutomatorInputLease;
+	public static synthetic fun acquire$default (Ldev/sebastiano/spectre/core/DesktopInputIsolation;Ldev/sebastiano/spectre/core/InputLeaseOptions;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/AutomatorInputLease;
+}
+
+public final class dev/sebastiano/spectre/core/ExclusiveInputScope {
+	public final fun clearAndTypeText (Ldev/sebastiano/spectre/core/AutomatorNode;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun click (Ldev/sebastiano/spectre/core/AutomatorNode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun doubleClick (Ldev/sebastiano/spectre/core/AutomatorNode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun focusWindow (Ldev/sebastiano/spectre/core/AutomatorNode;)V
+	public final fun longClick-8Mi8wO0 (Ldev/sebastiano/spectre/core/AutomatorNode;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun longClick-8Mi8wO0$default (Ldev/sebastiano/spectre/core/ExclusiveInputScope;Ldev/sebastiano/spectre/core/AutomatorNode;JLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun moveBy (IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun moveTo (IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun moveTo (Ldev/sebastiano/spectre/core/AutomatorNode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun pasteText (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun pressEnter (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun pressKey (IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun pressKey$default (Ldev/sebastiano/spectre/core/ExclusiveInputScope;IILkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun scrollWheel (Ldev/sebastiano/spectre/core/AutomatorNode;ILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun swipe-x2RqbK4 (IIIIIJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun swipe-x2RqbK4$default (Ldev/sebastiano/spectre/core/ExclusiveInputScope;IIIIIJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun swipe-zkXUZaI (Ldev/sebastiano/spectre/core/AutomatorNode;Ldev/sebastiano/spectre/core/AutomatorNode;IJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun swipe-zkXUZaI$default (Ldev/sebastiano/spectre/core/ExclusiveInputScope;Ldev/sebastiano/spectre/core/AutomatorNode;Ldev/sebastiano/spectre/core/AutomatorNode;IJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun typeText (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
 public final class dev/sebastiano/spectre/core/HiDpiMapperKt {
 	public static final fun composeBoundsToAwtCenter (FFFFFFII)Ljava/awt/Point;
 	public static final fun composeBoundsToAwtRectangle (FFFFFFII)Ljava/awt/Rectangle;
@@ -145,6 +190,43 @@ public final class dev/sebastiano/spectre/core/HiDpiMapperKt {
 
 public final class dev/sebastiano/spectre/core/IdleTimeoutException : java/lang/RuntimeException {
 	public fun <init> (Ljava/lang/String;)V
+}
+
+public final class dev/sebastiano/spectre/core/InputCapabilities {
+	public fun <init> (ZZ)V
+	public final fun component1 ()Z
+	public final fun component2 ()Z
+	public final fun copy (ZZ)Ldev/sebastiano/spectre/core/InputCapabilities;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/InputCapabilities;ZZILjava/lang/Object;)Ldev/sebastiano/spectre/core/InputCapabilities;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getRealOsInput ()Z
+	public final fun getRequiresDesktopCoordination ()Z
+	public final fun getSharedSystemClipboard ()Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/core/InputLeaseOptions {
+	public synthetic fun <init> (JLjava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (JLjava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1-UwyO8pc ()J
+	public final fun component2 ()Ljava/lang/String;
+	public final fun copy-VtjQ1oo (JLjava/lang/String;)Ldev/sebastiano/spectre/core/InputLeaseOptions;
+	public static synthetic fun copy-VtjQ1oo$default (Ldev/sebastiano/spectre/core/InputLeaseOptions;JLjava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/InputLeaseOptions;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAcquireTimeout-UwyO8pc ()J
+	public final fun getOwnerLabel ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/core/InputLeasePolicy : java/lang/Enum {
+	public static final field Auto Ldev/sebastiano/spectre/core/InputLeasePolicy;
+	public static final field Off Ldev/sebastiano/spectre/core/InputLeasePolicy;
+	public static final field Required Ldev/sebastiano/spectre/core/InputLeasePolicy;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/sebastiano/spectre/core/InputLeasePolicy;
+	public static fun values ()[Ldev/sebastiano/spectre/core/InputLeasePolicy;
 }
 
 public abstract interface annotation class dev/sebastiano/spectre/core/InternalSpectreApi : java/lang/annotation/Annotation {
@@ -183,13 +265,17 @@ public final class dev/sebastiano/spectre/core/PerfettoTracer : dev/sebastiano/s
 public final class dev/sebastiano/spectre/core/PerfettoTracer$Companion {
 }
 
-public final class dev/sebastiano/spectre/core/RobotDriver {
+public final class dev/sebastiano/spectre/core/RobotDriver : java/lang/AutoCloseable {
 	public static final field Companion Ldev/sebastiano/spectre/core/RobotDriver$Companion;
 	public fun <init> ()V
+	public fun <init> (Ldev/sebastiano/spectre/core/InputLeasePolicy;)V
 	public fun <init> (Ljava/awt/Robot;)V
+	public fun <init> (Ljava/awt/Robot;Ldev/sebastiano/spectre/core/InputLeasePolicy;)V
 	public final fun clearAndTypeText (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun click (IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun close ()V
 	public final fun doubleClick (IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun getInputCapabilities ()Ldev/sebastiano/spectre/core/InputCapabilities;
 	public final fun longClick-exY8QGI (IIJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun longClick-exY8QGI$default (Ldev/sebastiano/spectre/core/RobotDriver;IIJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun moveBy (IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -210,6 +296,7 @@ public final class dev/sebastiano/spectre/core/RobotDriver {
 public final class dev/sebastiano/spectre/core/RobotDriver$Companion {
 	public final fun headless ()Ldev/sebastiano/spectre/core/RobotDriver;
 	public final fun synthetic (Ljava/awt/Window;)Ldev/sebastiano/spectre/core/RobotDriver;
+	public final fun synthetic (Ljava/awt/Window;Ldev/sebastiano/spectre/core/InputLeasePolicy;)Ldev/sebastiano/spectre/core/RobotDriver;
 }
 
 public final class dev/sebastiano/spectre/core/SurfaceIdAssigner {

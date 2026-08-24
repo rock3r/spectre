@@ -1,6 +1,6 @@
 ---
 name: spectre
-description: Use when writing, debugging, or reviewing tests that drive a real, on-screen Compose Desktop window with Spectre — the JVM/Kotlin library for automating live Compose Desktop UIs (and IntelliJ/Jewel-hosted Compose) via the semantics tree plus java.awt.Robot, synthetic AWT input, HTTP, or Java-agent attach. Trigger on mentions of `ComposeAutomator`, `RobotDriver`, `AutomatorNode`, `AgentAttach`, `AttachedAutomator`, `AttachOptions`, `findByTestTag`, `waitForNode`, `waitForIdle`, "automate a Compose window", "live/real-window Compose Desktop UI test", cross-JVM Compose automation, attaching to a running Compose JVM, screenshotting or recording a Compose Desktop window, or any task involving `dev.sebastiano.spectre.*` imports. Also use when the user is writing JUnit 4/5 tests against Compose Desktop **and** the test opens a real top-level window — but NOT when the user wants the off-screen `runComposeUiTest` / `createComposeRule` / `onNodeWithTag` framework, which is a different tool.
+description: Use when writing, debugging, or reviewing tests that drive a real on-screen Compose Desktop window with Spectre through semantics plus real/synthetic input, cooperative desktop leases, HTTP, or agent attach. Trigger on `ComposeAutomator`, `RobotDriver`, `AutomatorNode`, `InputLeasePolicy`, `InputIsolationConfig`, `spectre input-lock`, `AgentAttach`, `AttachedAutomator`, `findByTestTag`, `waitForNode`, `waitForIdle`, parallel JVM focus contention, cross-JVM Compose automation, screenshots/recording, IntelliJ/Jewel-hosted Compose, or `dev.sebastiano.spectre.*` imports. Also use for JUnit 4/5 tests that open a real top-level Compose window. Do not use for the off-screen `runComposeUiTest` / `createComposeRule` / `onNodeWithTag` framework.
 ---
 
 # Spectre
@@ -19,6 +19,7 @@ IntelliJ/Jewel-hosted Compose, or to record a real video of the UI.
 Use the published docs as the source of truth when answering setup questions:
 
 - Installation and coordinates: <https://spectre.sebastiano.dev/guide/installation/>
+- Experimental desktop input coordination: <https://spectre.sebastiano.dev/guide/input-coordination/>
 - Agent attach: <https://spectre.sebastiano.dev/guide/agent/>
 - Cross-JVM HTTP transport: <https://spectre.sebastiano.dev/guide/cross-jvm/>
 - Compose Hot Reload awareness (CLI/MCP only): <https://spectre.sebastiano.dev/guide/hot-reload/>
@@ -97,7 +98,9 @@ on the host OS. Three variants:
 
 - **`RobotDriver()`** — real `java.awt.Robot` input on the host. Highest
   fidelity, but contends for global focus. Use for the default
-  single-process test run.
+  single-process test run. The no-argument form remains uncoordinated while the feature is
+  experimental; when several processes genuinely require real input, use
+  `RobotDriver(InputLeasePolicy.Required)` and read `references/input-coordination.md`.
 - **`RobotDriver.synthetic(rootWindow = someTopLevelWindow)`** — dispatches
   AWT events directly into the given `java.awt.Window` hierarchy. No global
   focus contention, so safe for **parallel test JVMs** and for IDE-hosted
@@ -305,6 +308,9 @@ touches that area*; they are not needed for the common case.
 - **JUnit 4 vs JUnit 5 integration** → `references/junit.md` —
   `ComposeAutomatorExtension`, `ComposeAutomatorRule`, parameter resolution,
   lifecycle.
+- **Experimental desktop input coordination** → `references/input-coordination.md` — real-input
+  contention across JVMs, `InputLeasePolicy`, JUnit `InputIsolationConfig`, runtime dependency,
+  exact revoke, and unsafe forced recovery.
 - **IntelliJ/Jewel-hosted Compose** → `references/intellij.md` — running
   the automator from an `AnAction` against the IDE frame, the
   pooled-thread requirement, and the `synthetic` driver. If the work also
@@ -324,6 +330,7 @@ touches that area*; they are not needed for the common case.
 | Test deadlocks or throws inside any `waitFor…` | Called from the AWT EDT | Wrap in `withContext(Dispatchers.Default) { … }` — applies to all three waits, including `waitForNode` |
 | `longClick`/`swipe`/`typeText` complete instantly and miss | Test body uses `runTest` | Switch to `runSpectreTest` |
 | Two parallel test JVMs steal focus from each other | Both use real `RobotDriver()` | Use `RobotDriver.synthetic(rootWindow)` |
+| Parallel JVMs must preserve real OS input behavior | Real focus/pointer/clipboard state is shared across processes | Opt in to experimental coordination, add `spectre-input-coordinator-server` at runtime, use `Required` and JUnit `InputIsolationConfig.perTest()` |
 | Cmd+Tab or OS shortcuts don't work under synthetic driver | Synthetic events bypass HID | Use real `RobotDriver()` for those tests |
 | Screenshot is blurry / mid-animation | Captured before frame stabilised | `waitForVisualIdle()` first |
 | Windows WGC helper missing or fails to start | `spectre-recording-windows` is not on the runtime classpath, the helper was not built/staged locally, or .NET / Windows App Runtime is missing | Add `testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-windows")`; install .NET 8 Desktop Runtime + Windows App Runtime 1.8 for runtime; for source builds install .NET 8 SDK and run `:recording-windows:verifyRecordingWindowsHelper` |
@@ -343,6 +350,9 @@ touches that area*; they are not needed for the common case.
 - It does **not** capture audio. Recording is video-only.
 - The cross-JVM **HTTP server is experimental** and security-caveated — do
   not recommend it for general use without flagging that.
+- Desktop input coordination is experimental, cooperative, and opt-in. Do not call it an OS input
+  grab, imply `RobotDriver()` coordinates by default, or suggest `--force` without its
+  `unsafeTakeover=true` overlap warning.
 - It does **not** auto-wait on queries. Don't write tests that assume it
   does.
 

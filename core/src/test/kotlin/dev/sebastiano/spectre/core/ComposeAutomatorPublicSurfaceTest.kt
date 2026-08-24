@@ -1,3 +1,5 @@
+@file:OptIn(dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi::class)
+
 package dev.sebastiano.spectre.core
 
 import java.lang.reflect.Modifier
@@ -248,12 +250,19 @@ class ComposeAutomatorPublicSurfaceTest {
         val DECLARED_TYPES: List<String> =
             listOf(
                 "dev.sebastiano.spectre.core.AutomatorIdlingResource",
+                "dev.sebastiano.spectre.core.AutomatorInputLease",
                 "dev.sebastiano.spectre.core.AutomatorNode",
                 "dev.sebastiano.spectre.core.AutomatorTree",
                 "dev.sebastiano.spectre.core.AutomatorWindow",
                 "dev.sebastiano.spectre.core.BothBounds",
                 "dev.sebastiano.spectre.core.ComposeAutomator",
+                "dev.sebastiano.spectre.core.ContendedEdtInputLeaseException",
+                "dev.sebastiano.spectre.core.DesktopInputIsolation",
+                "dev.sebastiano.spectre.core.ExclusiveInputScope",
                 "dev.sebastiano.spectre.core.IdleTimeoutException",
+                "dev.sebastiano.spectre.core.InputCapabilities",
+                "dev.sebastiano.spectre.core.InputLeaseOptions",
+                "dev.sebastiano.spectre.core.InputLeasePolicy",
                 "dev.sebastiano.spectre.core.InternalSpectreApi",
                 "dev.sebastiano.spectre.core.NodeKey",
                 "dev.sebastiano.spectre.core.PerfettoTracer",
@@ -295,7 +304,12 @@ class ComposeAutomatorPublicSurfaceTest {
                 "dev.sebastiano.spectre.core.AutomatorWindow",
                 "dev.sebastiano.spectre.core.BothBounds",
                 "dev.sebastiano.spectre.core.ComposeAutomator",
+                "dev.sebastiano.spectre.core.ContendedEdtInputLeaseException",
+                "dev.sebastiano.spectre.core.ExclusiveInputScope",
                 "dev.sebastiano.spectre.core.IdleTimeoutException",
+                "dev.sebastiano.spectre.core.InputCapabilities",
+                "dev.sebastiano.spectre.core.InputLeaseOptions",
+                "dev.sebastiano.spectre.core.InputLeasePolicy",
                 "dev.sebastiano.spectre.core.InternalSpectreApi",
                 "dev.sebastiano.spectre.core.NodeKey",
                 "dev.sebastiano.spectre.core.PerfettoTracer",
@@ -323,6 +337,8 @@ class ComposeAutomatorPublicSurfaceTest {
         // Reachable from Kotlin/JVM, but not part of the stability policy.
         val ESCAPE_HATCH_TYPES: Set<String> =
             setOf(
+                "dev.sebastiano.spectre.core.AutomatorInputLease",
+                "dev.sebastiano.spectre.core.DesktopInputIsolation",
                 "dev.sebastiano.spectre.core.SurfaceIdAssigner",
                 "dev.sebastiano.spectre.core.TrackedWindow",
                 "dev.sebastiano.spectre.core.WindowIdentityResolver",
@@ -335,6 +351,8 @@ class ComposeAutomatorPublicSurfaceTest {
         val COMPOSE_AUTOMATOR_PUBLISHED_METHODS: Set<String> =
             setOf(
                 "surfaceIds",
+                "getInputCapabilities",
+                "withExclusiveInput",
                 "refreshWindows",
                 "tree",
                 "allNodes",

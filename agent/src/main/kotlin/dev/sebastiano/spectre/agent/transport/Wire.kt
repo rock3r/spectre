@@ -288,6 +288,37 @@ internal val AgentRequest.logLabel: String
             AgentRequest.PrintTree -> "printTree"
         }
 
+/** True when this request can mutate shared desktop input, focus, or clipboard state. */
+internal val AgentRequest.requiresInputLane: Boolean
+    get() =
+        when (this) {
+            is AgentRequest.Click,
+            is AgentRequest.DoubleClick,
+            is AgentRequest.LongClick,
+            is AgentRequest.Swipe,
+            is AgentRequest.ScrollWheel,
+            is AgentRequest.PressKey,
+            is AgentRequest.FocusWindow,
+            is AgentRequest.TypeText -> true
+            AgentRequest.Ping,
+            AgentRequest.Windows,
+            AgentRequest.AllNodes,
+            is AgentRequest.FindByTestTag,
+            is AgentRequest.FindByText,
+            is AgentRequest.FindByContentDescription,
+            is AgentRequest.FindByRole,
+            is AgentRequest.Screenshot,
+            is AgentRequest.Capture,
+            is AgentRequest.WindowIdentity,
+            AgentRequest.Detach,
+            is AgentRequest.Hello,
+            is AgentRequest.Cancel,
+            is AgentRequest.WaitForNode,
+            is AgentRequest.WaitForVisualIdle,
+            is AgentRequest.WaitForIdle,
+            AgentRequest.PrintTree -> false
+        }
+
 /** Server-to-client response envelope. */
 @Serializable
 internal sealed interface AgentResponse {

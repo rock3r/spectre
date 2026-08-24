@@ -80,6 +80,10 @@ plugins {
 
 include(":core")
 
+include(":input-coordinator")
+
+include(":input-coordinator-server")
+
 include(":server")
 
 include(":recording")

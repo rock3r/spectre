@@ -2,14 +2,22 @@
 
 package dev.sebastiano.spectre.agent.transport
 
+import java.net.StandardProtocolFamily
+import java.net.UnixDomainSocketAddress
+import java.nio.channels.Channels
+import java.nio.channels.SocketChannel
 import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlin.io.path.deleteIfExists
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.condition.EnabledOnOs
@@ -27,6 +35,222 @@ class LongOpInfrastructureTest {
     @AfterTest
     fun cleanUp() {
         runCatching { udsPath.deleteIfExists() }
+    }
+
+    @Test
+    fun `ordinary EOF accepts a replacement client while input finishes`() {
+        val inputStarted = CountDownLatch(1)
+        val allowInputToFinish = CountDownLatch(1)
+        val inputFinished = CountDownLatch(1)
+        val detached = CountDownLatch(1)
+        val server =
+            IpcServer(
+                udsPath,
+                AgentRequestHandler { request ->
+                    when (request) {
+                        is AgentRequest.Click -> {
+                            inputStarted.countDown()
+                            try {
+                                var finished = false
+                                while (!finished) {
+                                    try {
+                                        allowInputToFinish.await()
+                                        finished = true
+                                    } catch (_: InterruptedException) {
+                                        // Model an input call that cannot stop at interruption.
+                                    }
+                                }
+                                AgentResponse.Ok
+                            } finally {
+                                inputFinished.countDown()
+                            }
+                        }
+                        AgentRequest.Ping -> AgentResponse.Pong
+                        else -> AgentResponse.Ok
+                    }
+                },
+                onDetach = { detached.countDown() },
+            )
+        val replacementExecutor = Executors.newSingleThreadExecutor()
+        server.use {
+            awaitSocket(udsPath)
+            val firstClient = IpcClient(udsPath)
+            try {
+                val inputThread =
+                    Thread {
+                            runCatching {
+                                firstClient.send(AgentRequest.Click(nodeKey = "target-node"))
+                            }
+                        }
+                        .apply {
+                            isDaemon = true
+                            start()
+                        }
+                assertTrue(inputStarted.await(3, TimeUnit.SECONDS), "input op never started")
+
+                firstClient.close()
+                val replacement =
+                    replacementExecutor.submit<AgentResponse> {
+                        IpcClient(udsPath).use {
+                            assertEquals(AgentResponse.Pong, it.send(AgentRequest.Ping))
+                            it.send(AgentRequest.Detach)
+                        }
+                    }
+
+                assertFalse(
+                    inputFinished.await(200, TimeUnit.MILLISECONDS),
+                    "ordinary EOF should not abandon the still-running input operation",
+                )
+                assertFailsWith<TimeoutException> { replacement.get(200, TimeUnit.MILLISECONDS) }
+                allowInputToFinish.countDown()
+                assertEquals(AgentResponse.Detached, replacement.get(3, TimeUnit.SECONDS))
+                assertTrue(detached.await(3, TimeUnit.SECONDS))
+                inputThread.join(3_000)
+            } finally {
+                allowInputToFinish.countDown()
+                assertTrue(
+                    inputFinished.await(3, TimeUnit.SECONDS),
+                    "input operation did not finish during cleanup",
+                )
+                assertTrue(
+                    detached.await(3, TimeUnit.SECONDS),
+                    "detach did not finish after the orphaned input operation",
+                )
+                firstClient.close()
+                replacementExecutor.shutdownNow()
+            }
+        }
+    }
+
+    @Test
+    fun `pre-handshake rejection waits for input orphaned by ordinary EOF`() {
+        val inputStarted = CountDownLatch(1)
+        val allowInputToFinish = CountDownLatch(1)
+        val detached = CountDownLatch(1)
+        val server =
+            IpcServer(
+                udsPath,
+                AgentRequestHandler { request ->
+                    if (request is AgentRequest.Click) {
+                        inputStarted.countDown()
+                        while (true) {
+                            try {
+                                allowInputToFinish.await()
+                                break
+                            } catch (_: InterruptedException) {
+                                // Model native input that outlives interruption.
+                            }
+                        }
+                    }
+                    AgentResponse.Ok
+                },
+                onDetach = { detached.countDown() },
+            )
+        server.use {
+            awaitSocket(udsPath)
+            val firstClient = IpcClient(udsPath)
+            val inputThread =
+                Thread {
+                        runCatching {
+                            firstClient.send(AgentRequest.Click(nodeKey = "target-node"))
+                        }
+                    }
+                    .apply {
+                        isDaemon = true
+                        start()
+                    }
+            try {
+                assertTrue(inputStarted.await(3, TimeUnit.SECONDS), "input op never started")
+                firstClient.close()
+
+                SocketChannel.open(StandardProtocolFamily.UNIX).use { replacement ->
+                    replacement.connect(UnixDomainSocketAddress.of(udsPath))
+                    val input = Channels.newInputStream(replacement)
+                    val output = Channels.newOutputStream(replacement)
+                    Framing.writeFrame(output, WireCodec.encode(AgentRequest.Ping))
+                    assertIs<AgentResponse.Error>(
+                        WireCodec.decodeResponse(Framing.readFrame(input) ?: error("no response"))
+                    )
+                }
+
+                assertFalse(
+                    detached.await(200, TimeUnit.MILLISECONDS),
+                    "handshake rejection released resources while orphaned input was active",
+                )
+            } finally {
+                allowInputToFinish.countDown()
+                assertTrue(detached.await(3, TimeUnit.SECONDS))
+                inputThread.join(3_000)
+                firstClient.close()
+            }
+        }
+    }
+
+    @Test
+    fun `detach retains target input resources until active input finishes`() {
+        val inputStarted = CountDownLatch(1)
+        val allowInputToFinish = CountDownLatch(1)
+        val detached = CountDownLatch(1)
+        val server =
+            IpcServer(
+                udsPath,
+                AgentRequestHandler { request ->
+                    when (request) {
+                        is AgentRequest.Click -> {
+                            inputStarted.countDown()
+                            var finished = false
+                            while (!finished) {
+                                try {
+                                    allowInputToFinish.await()
+                                    finished = true
+                                } catch (_: InterruptedException) {
+                                    // A native input call can outlive interruption. Model that
+                                    // contract so detach must retain coordination until return.
+                                }
+                            }
+                            AgentResponse.Ok
+                        }
+                        else -> AgentResponse.Ok
+                    }
+                },
+                onDetach = { detached.countDown() },
+            )
+        val detachExecutor = Executors.newSingleThreadExecutor()
+        try {
+            server.use {
+                awaitSocket(udsPath)
+                IpcClient(udsPath).use { client ->
+                    val inputThread =
+                        Thread {
+                                runCatching {
+                                    client.send(AgentRequest.Click(nodeKey = "target-node"))
+                                }
+                            }
+                            .apply {
+                                isDaemon = true
+                                start()
+                            }
+
+                    assertTrue(inputStarted.await(3, TimeUnit.SECONDS), "input op never started")
+                    val detach =
+                        detachExecutor.submit<AgentResponse> { client.send(AgentRequest.Detach) }
+                    try {
+                        assertFailsWith<TimeoutException> { detach.get(200, TimeUnit.MILLISECONDS) }
+                    } finally {
+                        allowInputToFinish.countDown()
+                    }
+
+                    assertEquals(AgentResponse.Detached, detach.get(3, TimeUnit.SECONDS))
+                    assertTrue(
+                        detached.await(3, TimeUnit.SECONDS),
+                        "detach did not release target resources after input finished",
+                    )
+                    inputThread.join(3_000)
+                }
+            }
+        } finally {
+            detachExecutor.shutdownNow()
+        }
     }
 
     @Test
