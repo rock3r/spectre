@@ -149,9 +149,11 @@ Use, in order of preference:
 
 1. **`findByTestTag(tag)` / `findOneByTestTag(tag)`** — relies on
    `Modifier.testTag("…")` on the composable. The default. Most reliable.
+   `hasTag(tag)` is the boolean form of the same snapshot read.
 2. **`findByText(text, exact = true)` / `findOneByText(...)`** — match
    semantics `Text`. Brittle to i18n; OK for affordances written in test
-   harness code.
+   harness code. `hasText(text)` is the boolean form of the same snapshot
+   read.
 3. **`findByContentDescription(...)`** — accessibility descriptions.
 4. **`findByRole(Role.Button)`** — semantics roles.
 5. **`allNodes()`** / **`tree()`** / **`printTree()`** — for debugging.
@@ -198,9 +200,9 @@ This is the #1 source of flakes. Internalize three rules:
 
 ### Rule 1: queries don't wait
 
-`findByTestTag("Submit")` returns whatever is in the semantics tree *right
-now*. If the screen hasn't rendered yet, it returns null. Always wait before
-querying state that depends on a prior action.
+`findByTestTag("Submit")` / `hasTag("Submit")` read whatever is in the semantics
+tree *right now*. If the screen hasn't rendered yet, they return empty / `false`.
+Always wait before querying state that depends on a prior action.
 
 ### Rule 2: pick the right wait
 

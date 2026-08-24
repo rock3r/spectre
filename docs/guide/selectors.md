@@ -4,8 +4,8 @@ Selectors are how you locate a Compose node in the semantics tree. The `ComposeA
 exposes four families of selectors plus a handful of convenience overloads.
 
 !!! note "All selectors are non-waiting"
-    Every `findBy…`/`findOneBy…` call is a single read against the current semantics
-    state. If you need to wait for a node to appear, use
+    Every `findBy…`/`findOneBy…`/`hasTag`/`hasText` call is a single read against the
+    current semantics state. If you need to wait for a node to appear, use
     [`waitForNode(...)`](synchronization.md#waitfornode) instead.
 
 ## By test tag
@@ -73,6 +73,24 @@ val checkboxes = automator.findByRole(Role.Checkbox)
 Roles come from `Modifier.semantics { role = Role.Button }` (or, more often, are set
 implicitly by the standard Material/Compose components). Use this for "all buttons in
 this dialog" style assertions, not as a primary selector.
+
+## Presence checks
+
+When you only need a boolean — state-snapshot tests, `"popupOpen=" + hasTag(POPUP_TAG)` —
+use the presence helpers instead of `findByTestTag(tag).isNotEmpty()`:
+
+```kotlin
+import dev.sebastiano.spectre.core.TextQuery
+
+val popupOpen: Boolean = automator.hasTag("popup.body")
+val showsSubmit: Boolean = automator.hasText("Submit")
+val showsPartial: Boolean = automator.hasText("Sub", exact = false)
+val caseInsensitive: Boolean = automator.hasText(TextQuery.exact("submit", ignoreCase = true))
+```
+
+These are the same single snapshot read as the finders: they do **not** call
+`refreshWindows()`. If a popup window may have just appeared or vanished, call
+`refreshWindows()` (or `tree()`) first.
 
 ## Working with the result
 

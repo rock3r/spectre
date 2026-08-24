@@ -100,6 +100,10 @@ public final class dev/sebastiano/spectre/core/ComposeAutomator {
 	public final fun focusWindow (Ldev/sebastiano/spectre/core/AutomatorNode;)V
 	public final fun getInputCapabilities ()Ldev/sebastiano/spectre/core/InputCapabilities;
 	public final fun getWindows ()Ljava/util/List;
+	public final fun hasTag (Ljava/lang/String;)Z
+	public final fun hasText (Ldev/sebastiano/spectre/core/TextQuery;)Z
+	public final fun hasText (Ljava/lang/String;Z)Z
+	public static synthetic fun hasText$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/lang/String;ZILjava/lang/Object;)Z
 	public final fun longClick-8Mi8wO0 (Ldev/sebastiano/spectre/core/AutomatorNode;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun longClick-8Mi8wO0$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ldev/sebastiano/spectre/core/AutomatorNode;JLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun monitorRecompositions-LRDsOJo (J)Ldev/sebastiano/spectre/core/perf/RecompositionMonitor;

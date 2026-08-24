@@ -144,6 +144,34 @@ private constructor(
     public fun findOneByText(text: String, exact: Boolean = true): AutomatorNode? =
         findByText(text, exact).firstOrNull()
 
+    /**
+     * Whether any tracked node currently has [tag] as its test tag.
+     *
+     * Reads the current tracked-windows snapshot without calling [refreshWindows], matching
+     * [findByTestTag]. Call [refreshWindows] first when a popup or window may have appeared or
+     * vanished since the last refresh.
+     */
+    public fun hasTag(tag: String): Boolean = findByTestTag(tag).isNotEmpty()
+
+    /**
+     * Whether any tracked node currently matches [text].
+     *
+     * Reads the current tracked-windows snapshot without calling [refreshWindows], matching
+     * [findByText]. Call [refreshWindows] first when a popup or window may have appeared or
+     * vanished since the last refresh.
+     */
+    public fun hasText(text: String, exact: Boolean = true): Boolean =
+        findByText(text, exact).isNotEmpty()
+
+    /**
+     * Whether any tracked node currently matches [query].
+     *
+     * Reads the current tracked-windows snapshot without calling [refreshWindows], matching
+     * [findByText]. Call [refreshWindows] first when a popup or window may have appeared or
+     * vanished since the last refresh.
+     */
+    public fun hasText(query: TextQuery): Boolean = findByText(query).isNotEmpty()
+
     public fun findByContentDescription(description: String): List<AutomatorNode> =
         semanticsReader.findByContentDescription(description, windows)
 
@@ -522,10 +550,11 @@ private constructor(
      * [refreshWindows] call (and `tree()`, which refreshes internally) emits the new surface set,
      * and the monitor reconciles its CompositionObserver attachments automatically.
      *
-     * Note: query helpers like [findByTestTag] / [findByText] read the *current* tracked-windows
-     * snapshot without driving a refresh, so they do not by themselves discover newly opened
-     * windows. Call [refreshWindows] (or [tree], or [waitForIdle], all of which refresh) after
-     * opening a new window if you need the monitor to attach to it before continuing.
+     * Note: query helpers like [findByTestTag] / [findByText] / [hasTag] / [hasText] read the
+     * *current* tracked-windows snapshot without driving a refresh, so they do not by themselves
+     * discover newly opened windows. Call [refreshWindows] (or [tree], or [waitForIdle], all of
+     * which refresh) after opening a new window if you need the monitor to attach to it before
+     * continuing.
      *
      * The caller owns the returned monitor's lifecycle: [RecompositionMonitor.close] cancels its
      * internal scope and disposes every CompositionObserver handle. Failing to close it leaks the

@@ -61,7 +61,8 @@ familiar — Spectre brings the same "find a node, do a thing, assert" loop to C
 - :material-book-open-page-variant: **[The automator](guide/automator.md)** — Concepts:
   semantics surfaces, queries vs. interactions, why there is no auto-wait.
 - :material-target: **[Finding nodes](guide/selectors.md)** — `findByTestTag`, `findByText`,
-  `findByContentDescription`, `findByRole`, and the `printTree()` debugger.
+  `hasTag`/`hasText`, `findByContentDescription`, `findByRole`, and the `printTree()`
+  debugger.
 - :material-clock-fast: **[Synchronization](guide/synchronization.md)**
   — `waitForIdle`, `waitForVisualIdle`, `waitForNode`, and the EDT rule.
 - :material-monitor-dashboard: **[Running on CI](guide/ci.md)** — `xvfb`, required test-JVM

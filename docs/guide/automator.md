@@ -42,9 +42,10 @@ one in the main window.
 
 Calling `automator.refreshWindows()` rescans the live surface list. Only `tree()`
 refreshes for you; the per-query helpers (`findByTestTag`, `findByText`,
-`findByContentDescription`, `findByRole`, `allNodes`) read against the windows that
-were tracked at the last refresh. If a window or popup may have appeared or closed
-since the last query, call `refreshWindows()` (or `tree()`) before reading.
+`findByContentDescription`, `findByRole`, `allNodes`, `hasTag`, `hasText`) read
+against the windows that were tracked at the last refresh. If a window or popup may
+have appeared or closed since the last query, call `refreshWindows()` (or `tree()`)
+before reading.
 
 `automator.tree()` returns an `AutomatorTree` snapshot — a list of `AutomatorWindow`s,
 each with its own root nodes:
@@ -66,10 +67,10 @@ The API is split into two layers:
 
 - **Queries** — `tree()`, `allNodes()`, `findByTestTag(...)`, `findByText(...)`,
   `findByContentDescription(...)`, `findByRole(...)`, plus `findOneByTestTag(...)` and
-  `findOneByText(...)` for the single-result cases. (Content-description and role
-  selectors don't have `findOneBy…` variants — call `.firstOrNull()` on the list result
-  yourself if you want one.) These do a single read against the current semantics state
-  and return what they see.
+  `findOneByText(...)` for the single-result cases, and `hasTag(...)` / `hasText(...)`
+  for boolean presence. (Content-description and role selectors don't have `findOneBy…`
+  variants — call `.firstOrNull()` on the list result yourself if you want one.) These
+  do a single read against the current semantics state and return what they see.
 - **Interactions** — `click`, `doubleClick`, `longClick`, `moveTo`, `moveBy`, `swipe`, `scrollWheel`,
   `typeText`, `pasteText`, `clearAndTypeText`, `pressKey`, `pressEnter`, `screenshot`. These dispatch
   input via `RobotDriver` (or capture pixels).
