@@ -5,6 +5,7 @@ package dev.sebastiano.spectre.input
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 
 /**
@@ -46,15 +47,32 @@ class CoordinatorSocketDiscoveryTest {
     }
 
     @Test
-    fun `a candidate that throws is treated as unreachable`() {
-        // A dead socket file answers with an IO error rather than a clean refusal; it must not
-        // abort the walk before a live coordinator further down the list is found.
-        val found =
-            CoordinatorSocketDiscovery.firstReachable(listOf(first, second)) { path ->
-                if (path == first) error("dead socket") else path.toString()
+    fun `a failure from a candidate that answered is not downgraded to unreachable`() {
+        // A coordinator that answers with a malformed or incompatible frame is a real fault. If the
+        // walk swallowed it, `LocalInputCoordinatorControl.status` would report NoActiveCoordinator
+        // and the protocol problem would vanish.
+        val failure =
+            assertFailsWith<IllegalStateException> {
+                CoordinatorSocketDiscovery.firstReachable(listOf(first, second)) { path ->
+                    if (path == first) error("incompatible frame") else path.toString()
+                }
             }
 
-        assertEquals(second.toString(), found)
+        assertEquals("incompatible frame", failure.message)
+    }
+
+    @Test
+    fun `the walk stops at the failing candidate`() {
+        val attempted = mutableListOf<Path>()
+
+        assertFailsWith<IllegalStateException> {
+            CoordinatorSocketDiscovery.firstReachable(listOf(first, second, third)) { path ->
+                attempted.add(path)
+                if (path == second) error("boom") else null
+            }
+        }
+
+        assertEquals(listOf(first, second), attempted, "must not keep probing past a real failure")
     }
 
     @Test

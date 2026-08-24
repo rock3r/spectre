@@ -8,6 +8,7 @@ import java.net.SocketTimeoutException
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
 import java.nio.channels.SocketChannel
+import java.nio.file.Path
 import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -496,9 +497,14 @@ private constructor(
                             channel.connect(UnixDomainSocketAddress.of(path))
                         }
                         ConnectedSocket(path, channel)
-                    } catch (failure: IOException) {
+                    } catch (interrupted: InterruptedIOException) {
+                        // Being interrupted is a real failure, not an empty candidate.
                         runCatching { channel.close() }
-                        throw failure
+                        throw interrupted
+                    } catch (_: IOException) {
+                        // Nothing is listening here; keep walking.
+                        runCatching { channel.close() }
+                        null
                     }
                 }
                     ?: throw IOException(
@@ -613,21 +619,13 @@ public class LocalInputCoordinatorControl(
      */
     private fun send(message: CoordinatorWireMessage): CoordinatorWireMessage {
         val candidates = CoordinatorSocketCandidates.candidates(endpoint.socketPath)
-        var firstFailure: Throwable? = null
+        var firstFailure: IOException? = null
         val response =
             CoordinatorSocketDiscovery.firstReachable(candidates) { path ->
-                try {
-                    sendCoordinatorMessage(
-                        endpoint.copy(socketPath = path),
-                        codec,
-                        message,
-                        CONTROL_RESPONSE_TIMEOUT,
-                    )
-                } catch (failure: IOException) {
+                exchangeIfListening(path, message) { failure ->
                     // Keep the canonical path's failure: it is the one a reader expects to see, and
                     // the later candidates usually fail with an uninteresting "no such file".
                     if (firstFailure == null) firstFailure = failure
-                    throw failure
                 }
             }
         return response
@@ -635,6 +633,40 @@ public class LocalInputCoordinatorControl(
                 "No coordinator is listening at ${endpoint.socketPath} or its fallbacks",
                 firstFailure,
             )
+    }
+
+    /**
+     * Returns null when nothing is listening at [path]; otherwise completes the exchange.
+     *
+     * The connect and the exchange are separate on purpose. Once a coordinator has answered, its
+     * failures are real — a malformed frame, an incompatible version, an interrupted wait — and
+     * must propagate. Letting those advance the walk would turn a protocol fault into a silent
+     * `NoActiveCoordinator`.
+     */
+    private fun exchangeIfListening(
+        path: Path,
+        message: CoordinatorWireMessage,
+        onNotListening: (IOException) -> Unit,
+    ): CoordinatorWireMessage? {
+        val channel = SocketChannel.open(StandardProtocolFamily.UNIX)
+        try {
+            try {
+                runCoordinatorIo(CONTROL_RESPONSE_TIMEOUT) {
+                    channel.connect(UnixDomainSocketAddress.of(path))
+                }
+            } catch (interrupted: InterruptedIOException) {
+                throw interrupted
+            } catch (failure: IOException) {
+                onNotListening(failure)
+                return null
+            }
+            return runCoordinatorIo(CONTROL_RESPONSE_TIMEOUT) {
+                codec.write(channel, message)
+                codec.read(channel)
+            }
+        } finally {
+            runCatching { channel.close() }
+        }
     }
 
     private companion object {
@@ -669,7 +701,7 @@ private fun failAmbiguousAcquire(
 }
 
 /** A candidate socket path that accepted a connection, with the channel already opened on it. */
-private data class ConnectedSocket(val path: java.nio.file.Path, val channel: SocketChannel)
+private data class ConnectedSocket(val path: Path, val channel: SocketChannel)
 
 private fun <T> runCoordinatorIo(timeout: Duration, block: () -> T): T {
     require(!timeout.isNegative && !timeout.isZero) { "Coordinator I/O timeout must be positive" }
