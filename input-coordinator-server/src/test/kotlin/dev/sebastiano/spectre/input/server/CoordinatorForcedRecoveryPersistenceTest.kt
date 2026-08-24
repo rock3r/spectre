@@ -185,6 +185,7 @@ class CoordinatorForcedRecoveryPersistenceTest {
     ): CoordinatorWireMessage =
         CoordinatorWireMessage(
             kind = CoordinatorWireKind.RELEASE,
+            requestId = requireNotNull(grant.requestId),
             clientId = clientId,
             resourceKey = "test/desktop",
             coordinatorEpoch = grant.coordinatorEpoch,

@@ -91,8 +91,13 @@ internal class CoordinatorLeaseService(
     @Synchronized
     fun release(message: CoordinatorWireMessage): CoordinatorWireMessage {
         val token = wireMapper.toToken(message)
+        val clientId = requireNotNull(message.clientId)
+        val requestId = requireNotNull(message.requestId)
+        if (!requestTracker.matchesGrant(clientId, requestId, token)) {
+            return error("STALE_LEASE", "Lease release request does not match an active grant")
+        }
         val response = releaseToken(token)
-        if (response.ok) requestTracker.forgetOneGrant(token, requireNotNull(message.clientId))
+        if (response.ok) requestTracker.forgetGrant(clientId, requestId, token)
         return response
     }
 
@@ -387,14 +392,11 @@ private class AcquisitionRequestTracker {
     fun takeGrant(clientId: String, requestId: String): LeaseToken? =
         grantsByRequest.remove(CancelledAcquire(clientId, requestId))
 
-    fun forgetOneGrant(token: LeaseToken, clientId: String) {
-        val key =
-            grantsByRequest.entries
-                .firstOrNull { (request, grantedToken) ->
-                    request.clientId == clientId && grantedToken == token
-                }
-                ?.key
-        if (key != null) grantsByRequest.remove(key)
+    fun matchesGrant(clientId: String, requestId: String, token: LeaseToken): Boolean =
+        grantsByRequest[CancelledAcquire(clientId, requestId)] == token
+
+    fun forgetGrant(clientId: String, requestId: String, token: LeaseToken) {
+        grantsByRequest.remove(CancelledAcquire(clientId, requestId), token)
     }
 
     fun forgetClient(clientId: String) {
@@ -452,6 +454,7 @@ private class CoordinatorWireMapper {
     fun grant(grant: LeaseGrant): CoordinatorWireMessage =
         CoordinatorWireMessage(
             kind = CoordinatorWireKind.RESPONSE,
+            requestId = grant.requestId,
             coordinatorEpoch = grant.token.coordinatorEpoch,
             leaseId = grant.token.leaseId,
             fence = grant.token.fence,

@@ -185,7 +185,7 @@ private constructor(
                     }
                 }
             )
-        return LocalLease(registration)
+        return LocalLease(registration, requestId)
     }
 
     override fun close() {
@@ -247,9 +247,14 @@ private constructor(
                 )
         }
 
-    private fun tokenMessage(kind: CoordinatorWireKind, token: LeaseToken): CoordinatorWireMessage =
+    private fun tokenMessage(
+        kind: CoordinatorWireKind,
+        token: LeaseToken,
+        requestId: String? = null,
+    ): CoordinatorWireMessage =
         CoordinatorWireMessage(
             kind = kind,
+            requestId = requestId,
             clientId = clientId,
             resourceKey = token.resourceKey.value,
             coordinatorEpoch = token.coordinatorEpoch,
@@ -267,8 +272,10 @@ private constructor(
         }
     }
 
-    private inner class LocalLease(private val registration: LeaseRegistration) :
-        CoordinatedInputLease {
+    private inner class LocalLease(
+        private val registration: LeaseRegistration,
+        private val requestId: String,
+    ) : CoordinatedInputLease {
         private val closed = AtomicBoolean()
 
         override val token: LeaseToken
@@ -309,7 +316,8 @@ private constructor(
             }
             if (connected.get()) {
                 runCatching {
-                        send(tokenMessage(CoordinatorWireKind.RELEASE, token)).requireSuccess()
+                        send(tokenMessage(CoordinatorWireKind.RELEASE, token, requestId))
+                            .requireSuccess()
                     }
                     .onFailure { this@LocalInputCoordinatorClient.close() }
             }

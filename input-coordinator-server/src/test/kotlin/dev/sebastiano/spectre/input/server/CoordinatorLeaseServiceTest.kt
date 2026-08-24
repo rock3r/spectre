@@ -311,6 +311,48 @@ class CoordinatorLeaseServiceTest {
     }
 
     @Test
+    fun `observed reentrant release preserves an unobserved request for cancellation`() {
+        val service =
+            CoordinatorLeaseService(
+                epoch = "epoch",
+                heartbeatTimeout = Duration.ofSeconds(5),
+                revokeGrace = Duration.ofSeconds(1),
+                recoveryGrace = Duration.ofSeconds(1),
+            )
+        try {
+            service.openSession("interrupted-client")
+            service.openSession("successor-client")
+            service.acquire(acquire("unobserved", "interrupted-client")).get()
+            val observed = service.acquire(acquire("observed", "interrupted-client")).get()
+            val successor = service.acquire(acquire("successor", "successor-client"))
+
+            assertTrue(
+                service
+                    .release(
+                        tokenMessage(
+                            observed,
+                            clientId = "interrupted-client",
+                            requestId = "observed",
+                        )
+                    )
+                    .ok
+            )
+            service.cancel(
+                CoordinatorWireMessage(
+                    kind = CoordinatorWireKind.CANCEL,
+                    requestId = "unobserved",
+                    clientId = "interrupted-client",
+                    resourceKey = "test/desktop",
+                )
+            )
+
+            assertTrue(successor.get(1, TimeUnit.SECONDS).ok)
+        } finally {
+            service.close()
+        }
+    }
+
+    @Test
     fun `acknowledged revocation clears its recovery record before advancing FIFO`() {
         val directory = Files.createTempDirectory("spc-service-ledger-")
         val path = directory.resolve("recovery.properties")
@@ -529,9 +571,11 @@ class CoordinatorLeaseServiceTest {
     private fun tokenMessage(
         grant: CoordinatorWireMessage,
         clientId: String,
+        requestId: String? = null,
     ): CoordinatorWireMessage =
         CoordinatorWireMessage(
             kind = CoordinatorWireKind.RELEASE,
+            requestId = requestId ?: requireNotNull(grant.requestId),
             clientId = clientId,
             resourceKey = "test/desktop",
             coordinatorEpoch = grant.coordinatorEpoch,

@@ -153,6 +153,7 @@ class InputCoordinatorClientDisconnectTest {
         val listener = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
         listener.bind(UnixDomainSocketAddress.of(endpoint.socketPath))
         val sentinelClosed = CountDownLatch(1)
+        var acquireRequestId: String? = null
         val serverThread =
             Thread.ofVirtual().name("coordinator-release-error-test").start {
                 val session = listener.accept()
@@ -171,6 +172,7 @@ class InputCoordinatorClientDisconnectTest {
 
                 listener.accept().use { acquireChannel ->
                     val acquire = codec.read(acquireChannel)
+                    acquireRequestId = acquire.requestId
                     codec.write(
                         acquireChannel,
                         CoordinatorWireMessage(
@@ -184,7 +186,9 @@ class InputCoordinatorClientDisconnectTest {
                     )
                 }
                 listener.accept().use { releaseChannel ->
-                    assertEquals(CoordinatorWireKind.RELEASE, codec.read(releaseChannel).kind)
+                    val release = codec.read(releaseChannel)
+                    assertEquals(CoordinatorWireKind.RELEASE, release.kind)
+                    assertEquals(acquireRequestId, release.requestId)
                     codec.write(
                         releaseChannel,
                         CoordinatorWireMessage(
