@@ -85,15 +85,17 @@ private object PosixOwnerOnlyEndpointProtection : OwnerOnlyEndpointProtection {
             }
         } else {
             rejectSymbolicParent(directory.parent)
-            // createDirectories, not createDirectory: the configured base can legitimately not
-            // exist yet, and failing there leaves coordination unavailable (#462). Any parent this
-            // creates gets the same owner-only mode as the endpoint directory itself.
-            Files.createDirectories(
-                directory,
+            val ownerOnly =
                 java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
                     OWNER_ONLY_DIRECTORY_PERMISSIONS
-                ),
-            )
+                )
+            // Parents may legitimately be missing (#462), but only they are created loosely. The
+            // endpoint directory itself still goes through the atomic createDirectory: on a
+            // world-writable /tmp another user could plant a symlink between the exists() check
+            // above and this call, and createDirectories would happily adopt a symlink whose
+            // target is a directory, putting the lock, ledger, and socket under their control.
+            directory.parent?.let { Files.createDirectories(it, ownerOnly) }
+            Files.createDirectory(directory, ownerOnly)
         }
     }
 
@@ -121,11 +123,12 @@ private object BasicOwnerOnlyEndpointProtection : OwnerOnlyEndpointProtection {
             rejectSubstitutedDirectory(directory)
         } else {
             rejectSymbolicParent(directory.parent)
-            // createDirectories, not createDirectory: on Windows the base is %LOCALAPPDATA%\Temp,
-            // which is absent on profiles whose temp directory has been redirected, and failing
-            // there leaves coordination unavailable (#462). The directory stays inside the user
-            // profile, so it inherits the owner-only ACL either way.
-            Files.createDirectories(directory)
+            // Only the parents are created loosely: on Windows the base is %LOCALAPPDATA%\Temp,
+            // which is absent on profiles whose temp directory has been redirected (#462). The
+            // endpoint directory itself keeps the atomic createDirectory, which refuses to adopt
+            // anything already sitting at that path, symlinks included.
+            directory.parent?.let { Files.createDirectories(it) }
+            Files.createDirectory(directory)
         }
     }
 
