@@ -86,6 +86,27 @@ class LocalCoordinatorServerTest {
     }
 
     @Test
+    fun `maximum acquisition timeout remains queued until the holder releases`() {
+        startServer()
+        val firstClient = client("first")
+        val secondClient = client("second")
+        val firstLease = firstClient.acquire(Duration.ofSeconds(2), "first click")
+        resources += firstLease
+        val executor = Executors.newSingleThreadExecutor()
+        resources += AutoCloseable { executor.shutdownNow() }
+
+        val secondFuture =
+            executor.submit<CoordinatedInputLease> {
+                secondClient.acquire(Duration.ofMillis(Long.MAX_VALUE), "long wait")
+            }
+        awaitWaiterCount(1)
+        assertFalse(secondFuture.isDone)
+
+        firstLease.close()
+        resources += secondFuture.get(2, TimeUnit.SECONDS)
+    }
+
+    @Test
     fun `closing owner session fences its lease until operation cleanup acknowledges release`() {
         startServer()
         val firstClient = client("first")

@@ -201,7 +201,7 @@ public class LocalCoordinatorServer(
                     service
                         .acquire(request)
                         .get(
-                            requireNotNull(request.timeoutMillis) + ACQUIRE_RESPONSE_GRACE_MILLIS,
+                            acquireResponseTimeoutMillis(requireNotNull(request.timeoutMillis)),
                             TimeUnit.MILLISECONDS,
                         )
                 } catch (_: TimeoutException) {
@@ -227,6 +227,10 @@ public class LocalCoordinatorServer(
                     message = "Unsupported coordinator operation ${request.kind}",
                 )
         }
+
+    private fun acquireResponseTimeoutMillis(timeoutMillis: Long): Long =
+        timeoutMillis.coerceAtMost(Long.MAX_VALUE - ACQUIRE_RESPONSE_GRACE_MILLIS) +
+            ACQUIRE_RESPONSE_GRACE_MILLIS
 
     private fun acquireElection() {
         val lockPath = endpoint.directory.resolve("coordinator.lock")

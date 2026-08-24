@@ -241,7 +241,7 @@ internal class InputLeaseGuard(
     private fun coordinates(resource: CoordinatedResource): Boolean {
         if (policy == InputLeasePolicy.Off) return false
         return when (resource) {
-            CoordinatedResource.DESKTOP_ANY -> capabilities.requiresDesktopCoordination
+            CoordinatedResource.DESKTOP_ANY -> true
             CoordinatedResource.REAL_INPUT -> capabilities.realOsInput
             CoordinatedResource.FOCUS -> true
             CoordinatedResource.SYSTEM_CLIPBOARD -> capabilities.sharedSystemClipboard

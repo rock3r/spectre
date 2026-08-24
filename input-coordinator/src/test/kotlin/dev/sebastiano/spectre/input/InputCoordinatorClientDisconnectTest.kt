@@ -20,6 +20,71 @@ import kotlin.test.assertTrue
 class InputCoordinatorClientDisconnectTest {
 
     @Test
+    fun `maximum acquisition timeout does not overflow the response deadline`() {
+        val directory = Files.createTempDirectory("spc-cl-")
+        val endpoint = CoordinatorEndpoint(directory, directory.resolve("coordinator.sock"))
+        val codec = CoordinatorWireCodec()
+        val listener = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
+        listener.bind(UnixDomainSocketAddress.of(endpoint.socketPath))
+        val receivedTimeout = CompletableFuture<Long>()
+        val serverThread =
+            Thread.ofVirtual().name("coordinator-long-acquire-test").start {
+                val session = listener.accept()
+                assertEquals(CoordinatorWireKind.SESSION_OPEN, codec.read(session).kind)
+                codec.write(
+                    session,
+                    CoordinatorWireMessage(
+                        kind = CoordinatorWireKind.RESPONSE,
+                        coordinatorEpoch = EPOCH,
+                    ),
+                )
+
+                listener.accept().use { acquireChannel ->
+                    val acquire = codec.read(acquireChannel)
+                    receivedTimeout.complete(requireNotNull(acquire.timeoutMillis))
+                    codec.write(
+                        acquireChannel,
+                        CoordinatorWireMessage(
+                            kind = CoordinatorWireKind.RESPONSE,
+                            requestId = acquire.requestId,
+                            coordinatorEpoch = EPOCH,
+                            leaseId = LEASE_ID,
+                            resourceKey = acquire.resourceKey,
+                            fence = 1,
+                        ),
+                    )
+                }
+                listener.accept().use { releaseChannel ->
+                    val release = codec.read(releaseChannel)
+                    assertEquals(CoordinatorWireKind.RELEASE, release.kind)
+                    codec.write(
+                        releaseChannel,
+                        CoordinatorWireMessage(kind = CoordinatorWireKind.RESPONSE),
+                    )
+                }
+                session.close()
+            }
+        val client =
+            LocalInputCoordinatorClient.connect(
+                endpoint,
+                DesktopResourceKey("test/long-acquire"),
+                "long-acquire-test",
+                codec,
+            )
+        try {
+            client.acquire(Duration.ofMillis(Long.MAX_VALUE), "long acquire").close()
+
+            assertEquals(Long.MAX_VALUE, receivedTimeout.get(2, TimeUnit.SECONDS))
+        } finally {
+            client.close()
+            listener.close()
+            serverThread.join(2_000)
+            Files.deleteIfExists(endpoint.socketPath)
+            Files.deleteIfExists(directory)
+        }
+    }
+
+    @Test
     fun `heartbeat IO failure closes the sentinel session`() {
         val directory = Files.createTempDirectory("spc-cd-")
         val endpoint = CoordinatorEndpoint(directory, directory.resolve("coordinator.sock"))

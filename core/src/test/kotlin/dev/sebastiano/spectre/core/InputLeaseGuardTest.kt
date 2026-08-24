@@ -532,6 +532,27 @@ class InputLeaseGuardTest {
     }
 
     @Test
+    fun `synthetic explicit scope coordinates focus for the whole scope`() = runTest {
+        val coordinator = RecordingInputLeaseCoordinator()
+        val driver =
+            RobotDriver(
+                robot = LeaseTestRobotAdapter(),
+                clipboard = LeaseTestClipboardAdapter(),
+                inputLeasePolicy = InputLeasePolicy.Required,
+                inputLeaseCoordinator = coordinator,
+                inputCapabilities =
+                    InputCapabilities(realOsInput = false, sharedSystemClipboard = false),
+            )
+
+        driver.withExclusiveInput(InputLeaseOptions(ownerLabel = "synthetic scope")) {
+            driver.withBlockingInput("focusWindow") {}
+        }
+
+        assertEquals(listOf("exclusiveInput"), coordinator.operations)
+        assertEquals(1, coordinator.closedLeases)
+    }
+
+    @Test
     fun `headless failure happens without coordinator acquisition`() = runTest {
         val coordinator = RecordingInputLeaseCoordinator()
         val driver =

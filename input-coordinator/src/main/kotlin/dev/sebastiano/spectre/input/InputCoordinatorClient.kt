@@ -243,11 +243,14 @@ private constructor(
         when {
             message.kind != CoordinatorWireKind.ACQUIRE -> REQUEST_RESPONSE_TIMEOUT
             !message.waitForLease -> IMMEDIATE_RESPONSE_TIMEOUT
-            else ->
-                Duration.ofMillis(
-                    requireNotNull(message.timeoutMillis) + ACQUIRE_RESPONSE_GRACE_MILLIS
-                )
+            else -> acquireResponseTimeout(requireNotNull(message.timeoutMillis))
         }
+
+    private fun acquireResponseTimeout(timeoutMillis: Long): Duration =
+        Duration.ofMillis(
+            timeoutMillis.coerceAtMost(Long.MAX_VALUE - ACQUIRE_RESPONSE_GRACE_MILLIS) +
+                ACQUIRE_RESPONSE_GRACE_MILLIS
+        )
 
     private fun tokenMessage(
         kind: CoordinatorWireKind,
