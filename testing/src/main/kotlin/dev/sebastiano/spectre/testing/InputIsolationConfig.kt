@@ -9,6 +9,8 @@ import dev.sebastiano.spectre.core.AutomatorInputLease
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.DesktopInputIsolation
 import dev.sebastiano.spectre.core.InputLeaseOptions
+import dev.sebastiano.spectre.core.InputLeasePolicy
+import dev.sebastiano.spectre.core.RobotDriver
 import dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -58,6 +60,19 @@ internal object ProductionInputTestLeaseFactory : InputTestLeaseFactory {
     override fun acquire(options: InputLeaseOptions, ownerLabel: String): AutomatorInputLease =
         DesktopInputIsolation.acquire(options.copy(ownerLabel = ownerLabel))
 }
+
+internal fun defaultAutomatorFactory(
+    inputIsolation: InputIsolationConfig,
+    legacyFactory: AutomatorFactory = { ComposeAutomator.inProcess() },
+    coordinatedFactory: AutomatorFactory = {
+        ComposeAutomator.inProcess(RobotDriver(InputLeasePolicy.Required))
+    },
+): AutomatorFactory =
+    if (inputIsolation.mode == InputIsolationMode.PerInteraction) {
+        coordinatedFactory
+    } else {
+        legacyFactory
+    }
 
 internal class InputIsolationSession(
     private val config: InputIsolationConfig,

@@ -33,7 +33,10 @@ The same `inputIsolation` constructor is available on `ComposeAutomatorRule` for
 - `Auto` acquires for real input or shared clipboard capabilities. With a custom factory it must
   create the automator before it can inspect capabilities, so factory-time focus is not covered;
   use `PerTest` when setup itself needs isolation.
-- `PerInteraction` keeps the compatibility default and relies on core operation/scoped leases.
+- `PerInteraction` relies on core operation/scoped leases. The input-isolation-only constructor
+  creates a default driver with `InputLeasePolicy.Required`; custom factories must select
+  `InputLeasePolicy.Auto` or `Required` themselves. Legacy no-argument wrappers remain
+  uncoordinated.
 - `Off` declares that coordination is external or intentionally disabled.
 
 During a synchronous custom factory, `PerTest` makes its acquired lease ambient on the invoking

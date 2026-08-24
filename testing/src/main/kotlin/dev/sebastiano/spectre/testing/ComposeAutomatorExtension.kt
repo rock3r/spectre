@@ -97,7 +97,7 @@ internal constructor(
     ) : this(
         inputIsolation = inputIsolation,
         acquireBeforeAutoFactory = true,
-        factory = { ComposeAutomator.inProcess() },
+        factory = defaultAutomatorFactory(inputIsolation),
     )
 
     @ExperimentalSpectreInputCoordinationApi

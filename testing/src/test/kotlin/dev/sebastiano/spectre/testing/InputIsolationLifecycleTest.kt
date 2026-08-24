@@ -132,6 +132,36 @@ class InputIsolationLifecycleTest {
         assertEquals(emptyList(), events)
     }
 
+    @Test
+    fun `explicit default factory enables per-interaction operation leases`() {
+        val selectedFactories = mutableListOf<String>()
+        val legacyFactory = {
+            selectedFactories += "legacy"
+            newHeadlessAutomator()
+        }
+        val coordinatedFactory = {
+            selectedFactories += "coordinated"
+            newHeadlessAutomator()
+        }
+
+        listOf(
+                InputIsolationConfig.perInteraction() to "coordinated",
+                InputIsolationConfig.perTest() to "legacy",
+                InputIsolationConfig.auto() to "legacy",
+                InputIsolationConfig.off() to "legacy",
+            )
+            .forEach { (config, expectedFactory) ->
+                defaultAutomatorFactory(
+                        inputIsolation = config,
+                        legacyFactory = legacyFactory,
+                        coordinatedFactory = coordinatedFactory,
+                    )
+                    .invoke()
+
+                assertEquals(expectedFactory, selectedFactories.removeLast())
+            }
+    }
+
     private fun recordingContext(displayName: String): RecordingExtensionContext =
         RecordingExtensionContext(
             failure = null,
