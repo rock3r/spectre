@@ -269,6 +269,10 @@ val buildSrcUnitTests by
         outputs.upToDateWhen { false }
     }
 
+// Both tasks launch nested Gradle builds that write buildSrc/build. Running them concurrently can
+// corrupt a cache restore or expose a partially compiled buildSrc classpath on clean CI workers.
+verifyMacosCliBundleReleaseContract.configure { mustRunAfter(buildSrcUnitTests) }
+
 tasks.named("check") {
     dependsOn(
         "detekt",
