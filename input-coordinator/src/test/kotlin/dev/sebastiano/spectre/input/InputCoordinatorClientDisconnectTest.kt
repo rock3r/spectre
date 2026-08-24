@@ -7,7 +7,6 @@ import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
 import java.nio.channels.ServerSocketChannel
 import java.nio.file.Files
-import java.nio.file.Path
 import java.time.Duration
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -20,7 +19,7 @@ class InputCoordinatorClientDisconnectTest {
 
     @Test
     fun `heartbeat IO failure closes the sentinel session`() {
-        val directory = Files.createTempDirectory(Path.of("/tmp"), "spc-cd-")
+        val directory = Files.createTempDirectory("spc-cd-")
         val endpoint = CoordinatorEndpoint(directory, directory.resolve("coordinator.sock"))
         val codec = CoordinatorWireCodec()
         val listener = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
@@ -89,7 +88,7 @@ class InputCoordinatorClientDisconnectTest {
 
     @Test
     fun `ambiguous acquisition IO failure closes the sentinel session`() {
-        val directory = Files.createTempDirectory(Path.of("/tmp"), "spc-ca-")
+        val directory = Files.createTempDirectory("spc-ca-")
         val endpoint = CoordinatorEndpoint(directory, directory.resolve("coordinator.sock"))
         val codec = CoordinatorWireCodec()
         val listener = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
@@ -147,7 +146,7 @@ class InputCoordinatorClientDisconnectTest {
 
     @Test
     fun `release error closes the sentinel session`() {
-        val directory = Files.createTempDirectory(Path.of("/tmp"), "spc-cr-")
+        val directory = Files.createTempDirectory("spc-cr-")
         val endpoint = CoordinatorEndpoint(directory, directory.resolve("coordinator.sock"))
         val codec = CoordinatorWireCodec()
         val listener = ServerSocketChannel.open(StandardProtocolFamily.UNIX)

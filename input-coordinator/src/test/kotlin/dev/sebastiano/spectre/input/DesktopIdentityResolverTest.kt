@@ -8,9 +8,7 @@ import kotlin.test.assertEquals
 
 class DesktopIdentityResolverTest {
 
-    private val resolver = DesktopIdentityResolver { path ->
-        Path.of("/canonical", path.fileName.toString())
-    }
+    private val resolver = DesktopIdentityResolver { path -> Path.of("canonical-${path.fileName}") }
 
     @Test
     fun `equivalent local X11 display spellings resolve to one resource`() {
@@ -73,7 +71,7 @@ class DesktopIdentityResolverTest {
                 )
             )
 
-        assertEquals("user:1000/wayland:/canonical/wayland-0", key.value)
+        assertEquals("user:1000/wayland:canonical-wayland-0", key.value)
     }
 
     @Test
