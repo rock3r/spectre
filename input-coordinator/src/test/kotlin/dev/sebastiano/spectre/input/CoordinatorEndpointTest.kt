@@ -111,14 +111,11 @@ class CoordinatorEndpointTest {
 
     @Test
     fun `symbolic-link endpoint directory is rejected without following it`() {
+        assumeCanCreateSymbolicLinks()
         val target = temporaryDirectory.resolve("target")
         Files.createDirectory(target)
         val link = temporaryDirectory.resolve("spectre-input-link")
-        try {
-            link.createSymbolicLinkPointingTo(target)
-        } catch (_: UnsupportedOperationException) {
-            return
-        }
+        link.createSymbolicLinkPointingTo(target)
         val socket = link.resolve("input.sock")
 
         val failure =
