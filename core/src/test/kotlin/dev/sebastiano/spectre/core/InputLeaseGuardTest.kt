@@ -5,6 +5,7 @@ package dev.sebastiano.spectre.core
 import dev.sebastiano.spectre.input.CoordinatedInputLease
 import dev.sebastiano.spectre.input.CoordinatorControlResult
 import dev.sebastiano.spectre.input.CoordinatorEndpoint
+import dev.sebastiano.spectre.input.CoordinatorStatus
 import dev.sebastiano.spectre.input.DesktopResourceKey
 import dev.sebastiano.spectre.input.InputCoordinatorException
 import dev.sebastiano.spectre.input.LeaseToken
@@ -25,6 +26,11 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.test.fail
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -438,20 +444,22 @@ class InputLeaseGuardTest {
             try {
                 val cancelled =
                     async(acquisitionDispatcher) {
-                        assertFailsWith<kotlinx.coroutines.TimeoutCancellationException> {
-                            withTimeout(100) {
-                                coordinator.acquire(
-                                    InputLeaseOptions(
-                                        acquireTimeout = kotlin.time.Duration.parse("10s")
-                                    ),
-                                    "cancelled",
-                                    immediate = false,
-                                )
-                            }
-                        }
+                        coordinator.acquire(
+                            InputLeaseOptions(acquireTimeout = QUEUED_ACQUIRE_TIMEOUT),
+                            "cancelled",
+                            immediate = false,
+                        )
                     }
+
+                // Cancel only once the waiter is observably queued. A wall-clock timeout around
+                // the acquisition would race its own connect and dispatch cost: under load those
+                // can eat the whole budget, so the waiter is retired before any status poll can
+                // see it. That race, not the poll budget, is what made this test flaky (#468).
                 awaitWaiterCount(endpoint, resource, 1)
-                cancelled.await()
+                cancelled.cancel()
+                cancelled.join()
+                assertFailsWith<CancellationException> { cancelled.await() }
+
                 awaitWaiterCount(endpoint, resource, 0)
                 holder.close()
 
@@ -664,25 +672,49 @@ class InputLeaseGuardTest {
         resource: DesktopResourceKey,
         expected: Int,
     ) {
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
-        while (System.nanoTime() < deadline) {
-            val status = LocalInputCoordinatorControl(endpoint).status(resource)
-            val active = status as? CoordinatorControlResult.Active
-            if (active?.status?.waiters?.size == expected) return
-            Thread.onSpinWait()
+        awaitCoordinatorStatus(endpoint, resource, "$expected queued lease request(s)") { status ->
+            status.waiters.size == expected
         }
-        assertTrue(false, "Timed out waiting for $expected queued lease request")
     }
 
     private fun awaitHolder(endpoint: CoordinatorEndpoint, resource: DesktopResourceKey) {
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
-        while (System.nanoTime() < deadline) {
-            val status = LocalInputCoordinatorControl(endpoint).status(resource)
-            val active = status as? CoordinatorControlResult.Active
-            if (active?.status?.holder != null) return
-            Thread.onSpinWait()
+        awaitCoordinatorStatus(endpoint, resource, "a granted lease") { status ->
+            status.holder != null
         }
-        assertTrue(false, "Timed out waiting for a granted lease")
+    }
+
+    /**
+     * Polls coordinator status until [predicate] holds, or fails after [STATUS_POLL_BUDGET].
+     *
+     * Callers must wait on a condition that stays true until the test itself retires it, so the
+     * budget only has to absorb scheduling delay rather than win a race. It is deliberately
+     * generous because a full `check` run puts many Gradle workers on the same CPUs, where the
+     * previous two-second budget was not enough (#468). Sleeping between polls keeps this wait off
+     * the CPU instead of busy-spinning against the very workers it is waiting for.
+     */
+    private fun awaitCoordinatorStatus(
+        endpoint: CoordinatorEndpoint,
+        resource: DesktopResourceKey,
+        expectation: String,
+        predicate: (CoordinatorStatus) -> Boolean,
+    ) {
+        val control = LocalInputCoordinatorControl(endpoint)
+        val deadline = System.nanoTime() + STATUS_POLL_BUDGET.inWholeNanoseconds
+        while (true) {
+            val active = control.status(resource) as? CoordinatorControlResult.Active
+            if (active != null && predicate(active.status)) return
+            if (System.nanoTime() >= deadline) break
+            Thread.sleep(STATUS_POLL_INTERVAL.inWholeMilliseconds)
+        }
+        fail("Timed out after $STATUS_POLL_BUDGET waiting for $expectation")
+    }
+
+    private companion object {
+        /** Long enough that a queued waiter never expires before the test cancels it. */
+        val QUEUED_ACQUIRE_TIMEOUT: Duration = 30.seconds
+
+        val STATUS_POLL_BUDGET: Duration = 15.seconds
+        val STATUS_POLL_INTERVAL: Duration = 10.milliseconds
     }
 }
 
