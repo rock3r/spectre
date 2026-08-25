@@ -454,7 +454,7 @@ class InputLeaseGuardTest {
                 // Cancel only once the waiter is observably queued. A wall-clock timeout around
                 // the acquisition would race its own connect and dispatch cost: under load those
                 // can eat the whole budget, so the waiter is retired before any status poll can
-                // see it. That race, not the poll budget, is what made this test flaky (#468).
+                // see it. That race, not the poll budget, is what made this test flaky.
                 awaitWaiterCount(endpoint, resource, 1)
                 cancelled.cancel()
                 cancelled.join()
@@ -689,8 +689,8 @@ class InputLeaseGuardTest {
      * Callers must wait on a condition that stays true until the test itself retires it, so the
      * budget only has to absorb scheduling delay rather than win a race. It is deliberately
      * generous because a full `check` run puts many Gradle workers on the same CPUs, where the
-     * previous two-second budget was not enough (#468). Sleeping between polls keeps this wait off
-     * the CPU instead of busy-spinning against the very workers it is waiting for.
+     * previous two-second budget was not enough. Sleeping between polls keeps this wait off the CPU
+     * instead of busy-spinning against the very workers it is waiting for.
      */
     private fun awaitCoordinatorStatus(
         endpoint: CoordinatorEndpoint,
