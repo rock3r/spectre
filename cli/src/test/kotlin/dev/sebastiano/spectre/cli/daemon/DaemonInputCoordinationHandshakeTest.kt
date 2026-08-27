@@ -59,9 +59,37 @@ class DaemonInputCoordinationHandshakeTest {
             "should say how to get the default back: $failure",
         )
         assertTrue(
-            failure.contains(AttachInputCoordination.PROPERTY),
-            "should name the property, for a user who did mean to keep it off: $failure",
+            failure.contains("${AttachInputCoordination.PROPERTY}=disabled"),
+            "the keep-it-off switch must carry its value or it cannot be followed: $failure",
         )
+    }
+
+    @Test
+    fun `every switch the message suggests is one that would actually work`() {
+        // A bare `-Dproperty` with no value sets it to the empty string, which is blank, which is
+        // "no request", which resolves to Required -- the same mismatch again. Advice that loops
+        // back to the error it is attached to is worse than no advice.
+        for (daemonMode in listOf("disabled", "required")) {
+            val failure =
+                inputCoordinationMismatchFailure(
+                    requested =
+                        if (daemonMode == "disabled") AttachInputCoordination.Required
+                        else AttachInputCoordination.Disabled,
+                    daemonMode = daemonMode,
+                )
+            val message = assertNotNull(failure)
+            val switches =
+                message.split(' ', '\n').filter {
+                    it.startsWith("-D${AttachInputCoordination.PROPERTY}")
+                }
+            assertTrue(switches.isNotEmpty(), "no switch suggested at all: $message")
+            switches.forEach { suggestion ->
+                assertTrue(
+                    suggestion.trimEnd('.', ',').contains('='),
+                    "suggested a valueless switch that resolves to no request: $suggestion",
+                )
+            }
+        }
     }
 
     @Test
@@ -69,6 +97,19 @@ class DaemonInputCoordinationHandshakeTest {
         // Daemons that predate the setting predate the opt-out too, so they are coordinated by
         // construction. Nothing to warn about, and failing here would break every older daemon.
         assertNull(inputCoordinationMismatchFailure(requested = null, daemonMode = null))
+    }
+
+    @Test
+    fun `a daemon too old to report its mode satisfies an explicit required request`() {
+        // Same construction argument, so rejecting this was inconsistent with the branch's own
+        // reasoning: the daemon predates the opt-out, which is exactly what `required` asks for.
+        // Only an explicit `disabled` needs a restart against one of these.
+        assertNull(
+            inputCoordinationMismatchFailure(
+                requested = AttachInputCoordination.Required,
+                daemonMode = null,
+            )
+        )
     }
 
     @Test

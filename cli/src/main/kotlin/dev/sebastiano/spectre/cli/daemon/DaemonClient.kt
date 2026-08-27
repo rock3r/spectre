@@ -161,8 +161,8 @@ internal fun ignoresInputCoordination(request: DaemonRequest): Boolean =
  * as the daemon is up, so on this path the announcement reaches nobody.
  *
  * A daemon that reports no mode is the exception: it predates the setting, and therefore predates
- * the opt-out, which makes it coordinated by construction. Only an explicit request is worth
- * failing one of those over.
+ * the opt-out, which makes it coordinated by construction. It satisfies a `required` request —
+ * explicit or defaulted — and only an opt-out needs it restarted.
  */
 @OptIn(ExperimentalSpectreAgentApi::class)
 internal fun inputCoordinationMismatchFailure(
@@ -170,30 +170,57 @@ internal fun inputCoordinationMismatchFailure(
     daemonMode: String?,
 ): String? {
     val effective = requested ?: AttachInputCoordination.Required
-    if (daemonMode == effective.wireValue) return null
     if (daemonMode == null) {
-        if (requested == null) return null
+        // Predates the setting, so predates the opt-out, so it is coordinated by construction --
+        // which is exactly what Required asks for. Only an opt-out needs a restart against one.
+        if (effective == AttachInputCoordination.Required) return null
         return coordinationMismatchMessage(
-            asked = "-D${AttachInputCoordination.PROPERTY}=${requested.wireValue}",
+            asked = "-D${AttachInputCoordination.PROPERTY}=${effective.wireValue}",
             running = "a version that predates the setting",
+            keepRunningMode = null,
         )
     }
+    if (daemonMode == effective.wireValue) return null
     val asked =
         if (requested == null) {
             "the default desktop input coordination mode (${effective.wireValue})"
         } else {
             "-D${AttachInputCoordination.PROPERTY}=${requested.wireValue}"
         }
-    return coordinationMismatchMessage(asked = asked, running = daemonMode)
+    return coordinationMismatchMessage(
+        asked = asked,
+        running = daemonMode,
+        keepRunningMode = daemonMode,
+    )
 }
 
-private fun coordinationMismatchMessage(asked: String, running: String): String =
-    "Cannot honour $asked: the running Spectre daemon started with $running, and a daemon keeps " +
-        "the desktop input coordination mode it booted with. It resolves that mode once, and " +
-        "every target it injects inherits it. Run `spectre daemon kill` and retry so the mode " +
-        "applies to the daemon and to the JVMs it injects, or pass " +
-        "-D${AttachInputCoordination.PROPERTY} on this command if you meant to keep the mode the " +
-        "daemon is already running. See https://github.com/rock3r/spectre/issues/472"
+/**
+ * [keepRunningMode] is the daemon's mode spelled as the property value that would ask for it, or
+ * `null` when there is no such spelling to offer.
+ *
+ * It has to carry the value. A bare `-D<property>` sets the property to the empty string, which
+ * [AttachInputCoordination.requestedFromProperty] reads as blank, which is no request at all, which
+ * resolves back to `Required` and produces this same failure — advice that loops straight back to
+ * the error it is attached to.
+ */
+private fun coordinationMismatchMessage(
+    asked: String,
+    running: String,
+    keepRunningMode: String?,
+): String {
+    val keep =
+        keepRunningMode
+            ?.let {
+                ", or pass -D${AttachInputCoordination.PROPERTY}=$it on this command if you " +
+                    "meant to keep the mode the daemon is already running"
+            }
+            .orEmpty()
+    return "Cannot honour $asked: the running Spectre daemon started with $running, and a daemon " +
+        "keeps the desktop input coordination mode it booted with. It resolves that mode once, " +
+        "and every target it injects inherits it. Run `spectre daemon kill` and retry so the " +
+        "mode applies to the daemon and to the JVMs it injects$keep. " +
+        "See https://github.com/rock3r/spectre/issues/472"
+}
 
 /**
  * Explains why a requested frame budget cannot take effect, or `null` when it can.
