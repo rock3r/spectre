@@ -89,8 +89,11 @@ abstract class VerifyCliDistributionZip : DefaultTask() {
         val processBuilder =
             if (isWindows()) {
                 // Run from bin/ via `call` so APP_HOME resolves stably and path quoting is less
-                // fragile than `cmd /c D:\long\path\spectre.bat`.
-                ProcessBuilder("cmd.exe", "/c", "call", launcher.name, "--help")
+                // fragile than `cmd /c D:\long\path\spectre.bat`. The `.\` prefix is required:
+                // a bare name makes cmd.exe resolve through PATH, which the scrubbing below
+                // trims to System32, and NoDefaultCurrentDirectoryInExePath (set on some hosts
+                // and CI images) disables the working-directory fallback.
+                ProcessBuilder("cmd.exe", "/c", "call", ".\\${launcher.name}", "--help")
                     .directory(launcher.parentFile)
             } else {
                 ProcessBuilder(launcher.absolutePath, "--help")
