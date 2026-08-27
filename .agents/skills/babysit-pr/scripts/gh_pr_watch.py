@@ -198,11 +198,28 @@ def gh_text(args, repo=None):
         cmd.extend(["-R", repo])
     cmd.extend(args)
     try:
-        proc = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        proc = subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+            # GitHub CLI/API output is UTF-8. Without an explicit encoding Python
+            # decodes it with the locale default (cp1252 on Windows), which fails
+            # on em-dashes or emoji in review comments.
+            encoding="utf-8",
+            errors="replace",
+        )
     except FileNotFoundError as err:
         raise GhCommandError("`gh` command not found") from err
     except subprocess.CalledProcessError as err:
         raise GhCommandError(_format_gh_error(cmd, err)) from err
+    if proc.stdout is None:
+        # `subprocess` leaves stdout as None when its reader thread dies (for
+        # example on a decode error), which would otherwise surface downstream
+        # as a confusing AttributeError on None.
+        raise GhCommandError(
+            f"No output captured from GitHub CLI command: {' '.join(cmd)}"
+        )
     return proc.stdout
 
 

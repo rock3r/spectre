@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -980,6 +981,72 @@ class NeedsAgentAttentionTests(unittest.TestCase):
 
     def test_none_actions_needs_attention(self):
         self.assertTrue(watch.needs_agent_attention(None))
+
+
+class GhTextTests(unittest.TestCase):
+    def _run_emitting(self, payload):
+        """Run gh_text against a real child process that writes `payload` as UTF-8."""
+        emitter = "import sys; sys.stdout.buffer.write({}.encode('utf-8'))".format(
+            ascii(payload)
+        )
+        real_run = subprocess.run
+
+        def fake_run(cmd, **kwargs):
+            return real_run([sys.executable, "-c", emitter], **kwargs)
+
+        return patch.object(watch.subprocess, "run", side_effect=fake_run)
+
+    def test_gh_text_requests_utf8_decoding(self):
+        """gh output must be decoded as UTF-8, never with the locale default."""
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(stdout="{}", stderr="")
+
+        with patch.object(watch.subprocess, "run", side_effect=fake_run):
+            watch.gh_text(["pr", "view"])
+
+        self.assertEqual(captured.get("encoding"), "utf-8")
+        self.assertEqual(captured.get("errors"), "replace")
+
+    def test_gh_text_decodes_non_ascii_output(self):
+        """An em-dash or emoji in a review body must not blow up on a cp1252 locale."""
+        body = "Codex review \u2014 nit \U0001f41b"
+
+        with self._run_emitting(body):
+            out = watch.gh_text(["pr", "view"])
+
+        self.assertEqual(out, body)
+
+    def test_gh_json_parses_non_ascii_output(self):
+        """The full gh_json path must survive non-ASCII review comment bodies."""
+        body = "Bugbot \u2014 found an issue \U0001f41b"
+        payload = json.dumps({"body": body}, ensure_ascii=False)
+
+        with self._run_emitting(payload):
+            data = watch.gh_json(["pr", "view", "--json", "body"])
+
+        self.assertEqual(data["body"], body)
+
+    def test_gh_text_raises_when_stdout_is_missing(self):
+        """A dead stdout reader thread must not leak out as an AttributeError."""
+        with patch.object(
+            watch.subprocess, "run", return_value=SimpleNamespace(stdout=None, stderr="")
+        ):
+            with self.assertRaises(watch.GhCommandError) as context:
+                watch.gh_text(["pr", "view"])
+
+        self.assertIn("No output captured", str(context.exception))
+
+    def test_gh_json_reports_a_clear_error_when_stdout_is_missing(self):
+        with patch.object(
+            watch.subprocess, "run", return_value=SimpleNamespace(stdout=None, stderr="")
+        ):
+            with self.assertRaises(watch.GhCommandError) as context:
+                watch.gh_json(["pr", "view", "--json", "number"])
+
+        self.assertIn("No output captured", str(context.exception))
 
 
 class RunOnceTests(unittest.TestCase):
