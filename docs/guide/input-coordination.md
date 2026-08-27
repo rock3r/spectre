@@ -162,10 +162,16 @@ as long as it is in force.
     spectre daemon kill
     ```
 
-    You do not have to remember: a `-D` that cannot take effect is refused at the handshake with a
-    message naming that command, in both directions — including a daemon left *disabled* by an
-    earlier recovery session, which would otherwise attach every new target uncoordinated. If you
-    launch the daemon yourself, pass the property through `JAVA_TOOL_OPTIONS`.
+    You do not have to remember: a mode that cannot take effect is refused at the handshake with a
+    message naming that command. If you launch the daemon yourself, pass the property through
+    `JAVA_TOOL_OPTIONS`.
+
+    **Taking the opt-out back off needs the same restart**, and Spectre insists on it. Removing the
+    property does not re-coordinate a daemon that is already running disabled; it would go on
+    attaching every new target uncoordinated, and its own warning goes to a startup log that is
+    deleted once it is up, so nothing would tell you. Commands are refused until you restart it —
+    running without the property means asking for the default, and Spectre will not quietly give
+    you something else.
 
 !!! danger "Opting out removes the mutual exclusion, it does not repair it"
     Coordination is what stops two Spectre processes driving the same mouse and keyboard at the

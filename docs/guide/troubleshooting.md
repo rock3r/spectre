@@ -194,6 +194,11 @@ startup and every target it injects inherits it, so the switch cannot reach the 
 already up when your attach failed. Spectre refuses the mismatch at the handshake and names that
 command, so you will be told rather than left wondering why the switch did nothing.
 
+**And kill it again when you are done.** Dropping the property does not re-coordinate a daemon
+already running disabled — it keeps attaching new targets uncoordinated, and nothing on your
+terminal says so. Commands are refused until you restart it, on purpose: running without the
+property means asking for the default.
+
 `spectre` forwards the property to a daemon it starts; pass it through `JAVA_TOOL_OPTIONS` if you
 launch the daemon yourself. Only the exact word `disabled` opts out, and both the attacher and the
 target announce it on stderr while it is in force. It costs you the guarantee that nothing else is

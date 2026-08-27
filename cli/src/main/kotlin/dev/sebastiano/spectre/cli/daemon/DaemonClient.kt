@@ -147,25 +147,53 @@ internal fun ignoresInputCoordination(request: DaemonRequest): Boolean =
  *
  * Checked in both directions. Asking to disable coordination on a coordinated daemon leaves the
  * user stuck; asking to restore it on a daemon left disabled by an earlier recovery session is
- * worse, because that daemon attaches every new target uncoordinated. Only an explicit request is
- * worth failing over, mirroring [frameBudgetMismatchFailure] — a client that asked for nothing gets
- * whatever the daemon runs, and both the attacher and the target already announce a disabled attach
- * on stderr.
+ * worse, because that daemon attaches every new target uncoordinated.
+ *
+ * **Asking for nothing means asking for [AttachInputCoordination.Required]**, and this is the one
+ * place the [frameBudgetMismatchFailure] analogy breaks. A budget is a capacity setting, so a
+ * client that requested none is genuinely happy with any daemon. Coordination is a safety property:
+ * a user who has taken the opt-out back off is asking for the documented default, and accepting a
+ * still-disabled daemon would leave every later attach uncoordinated until they happened to restart
+ * it.
+ *
+ * That would also be silent. An earlier revision of this function reasoned that a disabled daemon
+ * announces itself on stderr. It does — into a startup log `DaemonProcessLauncher` deletes as soon
+ * as the daemon is up, so on this path the announcement reaches nobody.
+ *
+ * A daemon that reports no mode is the exception: it predates the setting, and therefore predates
+ * the opt-out, which makes it coordinated by construction. Only an explicit request is worth
+ * failing one of those over.
  */
 @OptIn(ExperimentalSpectreAgentApi::class)
 internal fun inputCoordinationMismatchFailure(
     requested: AttachInputCoordination?,
     daemonMode: String?,
 ): String? {
-    if (requested == null) return null
-    if (daemonMode == requested.wireValue) return null
-    val running = if (daemonMode == null) "a version that predates the setting" else "`$daemonMode`"
-    return "Cannot honour -D${AttachInputCoordination.PROPERTY}=${requested.wireValue}: the " +
-        "running Spectre daemon started with $running, and a daemon keeps the desktop input " +
-        "coordination mode it booted with — it resolves that once and every target it injects " +
-        "inherits it. Run `spectre daemon kill` and retry so the mode applies to the daemon and " +
-        "to the JVMs it injects. See https://github.com/rock3r/spectre/issues/472"
+    val effective = requested ?: AttachInputCoordination.Required
+    if (daemonMode == effective.wireValue) return null
+    if (daemonMode == null) {
+        if (requested == null) return null
+        return coordinationMismatchMessage(
+            asked = "-D${AttachInputCoordination.PROPERTY}=${requested.wireValue}",
+            running = "a version that predates the setting",
+        )
+    }
+    val asked =
+        if (requested == null) {
+            "the default desktop input coordination mode (${effective.wireValue})"
+        } else {
+            "-D${AttachInputCoordination.PROPERTY}=${requested.wireValue}"
+        }
+    return coordinationMismatchMessage(asked = asked, running = daemonMode)
 }
+
+private fun coordinationMismatchMessage(asked: String, running: String): String =
+    "Cannot honour $asked: the running Spectre daemon started with $running, and a daemon keeps " +
+        "the desktop input coordination mode it booted with. It resolves that mode once, and " +
+        "every target it injects inherits it. Run `spectre daemon kill` and retry so the mode " +
+        "applies to the daemon and to the JVMs it injects, or pass " +
+        "-D${AttachInputCoordination.PROPERTY} on this command if you meant to keep the mode the " +
+        "daemon is already running. See https://github.com/rock3r/spectre/issues/472"
 
 /**
  * Explains why a requested frame budget cannot take effect, or `null` when it can.
