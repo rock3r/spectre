@@ -33,7 +33,7 @@ Monitor a PR persistently until one of the terminal states is reached:
 2. Run the watcher to snapshot PR/CI/review state.
 3. Inspect the `actions` list in the JSON output.
 4. Diagnose CI failures — classify as branch-related (fix and push) vs. flaky (retry).
-5. Process actionable review comments from trusted humans, Bugbot, Codex, and CodeRabbit.
+5. Process actionable review comments from trusted humans, Codex, and CodeRabbit.
 6. Verify mergeability on each loop.
 7. After any push, relaunch `--watch` in the same turn.
 8. Continue until a terminal stop condition is reached.
@@ -66,9 +66,8 @@ python3 .agents/skills/babysit-pr/scripts/gh_pr_watch.py --pr https://github.com
 | `stop_ready_to_merge` | CI green, no blocking reviews, no conflicts |
 | `stop_exhausted_retries` | Flaky reruns hit the retry limit — user must investigate |
 | `stop_non_retryable_failure` | Terminal failure is not in retry-eligible workflows — diagnose/fix before continuing |
-| `stop_bugbot_not_green` | Cursor Bugbot is not SUCCESS (`neutral`, `skipped`, `failure`, or missing) — do not merge. Exception: a `neutral`/`skipped` check is auto-reconciled to green when Cursor posted a SHA-matched clean review (see Bugbot gate below) |
 | `stop_session_timeout` | `--max-session-minutes` elapsed (default 90 min) — stop and report |
-| `diagnose_hung_check` | A pending check has exceeded its hung threshold (Bugbot: 20 min, CI/E2E: 30 min) — stop and report |
+| `diagnose_hung_check` | A pending check has exceeded its hung threshold (30 min) — stop and report |
 | `diagnose_merge_conflict` | PR is merge-conflicted (`CONFLICTING` / `DIRTY`) — resolve conflicts before waiting on checks |
 | `diagnose_branch_behind` | PR head is `BEHIND` the base branch — update the branch (rebase or merge base) before waiting on checks; `stop_ready_to_merge` is never emitted while behind |
 | `diagnose_skipping_checks` | One or more checks completed with `neutral`/`skipping` — investigate why |
@@ -76,9 +75,8 @@ python3 .agents/skills/babysit-pr/scripts/gh_pr_watch.py --pr https://github.com
 | `wait_coderabbit` | CodeRabbit is still reviewing (its check is pending, or its 👀 reaction is present) — do not push or merge |
 
 Keep polling when CI is running (`idle`), when new review items arrive (`process_review_comment`),
-when Bugbot is still running (`wait_bugbot`), when Codex is still reviewing (`wait_codex`),
-when CodeRabbit is still reviewing (`wait_coderabbit`),
-or when CI is green but the PR is awaiting approval.
+when Codex is still reviewing (`wait_codex`), when CodeRabbit is still reviewing
+(`wait_coderabbit`), or when CI is green but the PR is awaiting approval.
 
 ## Post-merge cleanup (when `stop_pr_closed` and PR is merged)
 
@@ -110,51 +108,43 @@ Skip silently if the branch or worktree doesn't exist locally.
 
 ## Push discipline — batch all fixes before pushing (cost control)
 
-Each push triggers new Bugbot + Codex runs. **Never push until all of the following are true:**
+Each push triggers new Codex runs. **Never push until all of the following are true:**
 
 1. `./gradlew check` passes locally (no CI failures to fix after the push).
-2. No review bot is still reviewing — Bugbot and Codex are not `IN_PROGRESS`, and CodeRabbit (when active on the PR) is not reviewing — so their comments, if any, can be collected and fixed in the same push.
-3. You have incorporated all currently visible actionable Bugbot and Codex comments into the pending local fix batch.
+2. No review bot is still reviewing — Codex is not `IN_PROGRESS`, and CodeRabbit (when active on the PR) is not reviewing — so their comments, if any, can be collected and fixed in the same push.
+3. You have incorporated all currently visible actionable Codex and CodeRabbit comments into the pending local fix batch.
 
 After pushing the fix batch, resolve all bot threads on GitHub (or reply + resolve when no code change is needed). No open bot threads should remain when the PR is merged.
 
 **Workflow when fixes are needed:**
 
-1. Collect all outstanding issues: failed CI logs + any Bugbot/Codex comments already posted.
+1. Collect all outstanding issues: failed CI logs + any Codex/CodeRabbit comments already posted.
 2. Fix everything locally in one pass.
 3. Run `./gradlew check` to confirm green.
 4. Only then push — one push per fix cycle.
 
-If either bot finishes while you are mid-fix and posts new comments, incorporate those fixes into the same commit before pushing.
+If a bot finishes while you are mid-fix and posts new comments, incorporate those fixes into the same commit before pushing.
 
-## Conflict + Bugbot batching strategy (use this when PR shows `CONFLICTING`/`DIRTY`)
+## Conflict + review-bot batching strategy (use this when PR shows `CONFLICTING`/`DIRTY`)
 
-When GitHub reports merge conflicts while Bugbot/Codex/CI is still running:
+When GitHub reports merge conflicts while Codex/CodeRabbit/CI is still running:
 
-1. **Do not push immediately.** Wait until neither Bugbot nor Codex is `IN_PROGRESS`.
+1. **Do not push immediately.** Wait until no review bot is still reviewing.
 2. Snapshot latest status/comments.
 3. If conflict remains, rebase branch onto `origin/main` (or merge main if repo policy prefers).
-4. Resolve conflicts and **in the same fix cycle** apply all actionable Bugbot/Codex comments.
+4. Resolve conflicts and **in the same fix cycle** apply all actionable Codex/CodeRabbit comments.
 5. Run `./gradlew check`.
 6. Push once.
 
-Rationale: this avoids paying for multiple Bugbot/Codex reruns and prevents a ping-pong where a conflict-fix push is immediately followed by a second bot-fix push.
+Rationale: this avoids paying for multiple Codex reruns and prevents a ping-pong where a conflict-fix push is immediately followed by a second bot-fix push.
 
-## Bugbot + Codex + CodeRabbit merge gate (mandatory)
+## Codex + CodeRabbit merge gate (mandatory)
 
-**Never merge until Cursor Bugbot and Codex report clean, and CodeRabbit — when active on the PR — has finished reviewing.**
+**Never merge until Codex reports clean, and CodeRabbit — when active on the PR — has finished reviewing.**
 
-### Bugbot (CI check)
-
-For Bugbot, only `SUCCESS` is a green gate.
-
-- If Bugbot is still `IN_PROGRESS` → keep polling, do not push.
-- If Bugbot conclusion is `NEUTRAL` → it found potential issues. Read the inline PR review comments left by `cursor[bot]`, fix every reported issue locally, run `./gradlew check`, then push once (see push discipline above).
-- If Bugbot conclusion is `SKIPPING` → treat as **not green**. Bugbot may have posted review comments before skipping. Always check `gh api repos/{owner}/{repo}/pulls/{pr}/comments` for `cursor[bot]` comments. If comments exist, fix them before merging. If no comments exist, re-request review or ask the user.
-- If Bugbot conclusion is `SUCCESS` → proceed (Bugbot gate is clear).
-- Do **not** merge on NEUTRAL or SKIPPING, even if all other checks pass — with one narrow, watcher-verified exception below.
-
-**Clean manual review exception**: a manually-triggered Bugbot run sometimes completes its check as `neutral`/`skipped` while posting its authoritative "Bugbot reviewed your changes and found no new issues" review. The watcher accepts that as green **only** when the review comes from `cursor[bot]`, is associated with the current head SHA, was posted after the check started, and there is exactly one Cursor check for the head. The reconciled gate reports `"source": "clean_bugbot_review"` with the original conclusion preserved in `original_conclusion`. Anything looser (an older clean review, a generic comment, overlapping runs) stays not-green.
+> Cursor Bugbot has been retired and no longer gates anything. A leftover `Cursor Bugbot`
+> check on an old PR is now treated like any other check: if it completes `neutral`/`skipping`
+> it shows up under `diagnose_skipping_checks`, not as a dedicated gate.
 
 ### Codex (emoji reaction)
 
@@ -162,13 +152,13 @@ Codex does **not** use a CI check. Instead it uses emoji reactions on the PR:
 
 - **👀 reaction present** from `chatgpt-codex-connector[bot]` → Codex is actively reviewing. The `codex_gate.reviewing` field will be `true` and a `wait_codex` action will be emitted. Do not push or merge.
 - **👀 reaction removed, no new review comments** → Codex is satisfied. Proceed.
-- **👀 reaction removed, review comments posted** → Codex found issues. Fix them the same way as Bugbot comments (see push discipline).
+- **👀 reaction removed, review comments posted** → Codex found issues. Fix them locally and batch them into the next push (see push discipline).
 
 The watcher automatically detects the 👀 reaction via the PR reactions API and surfaces `codex_gate` in the snapshot.
 
 ### CodeRabbit (presence-conditional)
 
-CodeRabbit (`coderabbitai[bot]`) is **not** assumed to be present on a PR. It only gates the merge when it shows signs of life — a CodeRabbit CI check, or a reaction from the CodeRabbit bot. When dormant, the gate is inert and the watcher behaves as a Bugbot+Codex-only gate, so nothing breaks if CodeRabbit is removed from the repo.
+CodeRabbit (`coderabbitai[bot]`) is **not** assumed to be present on a PR. It only gates the merge when it shows signs of life — a CodeRabbit CI check, or a reaction from the CodeRabbit bot. When dormant, the gate is inert and the watcher behaves as a Codex-only gate, so nothing breaks if CodeRabbit is removed from the repo.
 
 - **CodeRabbit check pending, or 👀 reaction present** from `coderabbitai[bot]` → still reviewing. `coderabbit_gate.reviewing` is `true` and a `wait_coderabbit` action is emitted. Do not push or merge.
 - **Check completed / non-eyes reaction only** → CodeRabbit is active but done (`"status": "active"`). Proceed; any review comments it posted are surfaced and block merge via the normal review-item path.
@@ -179,7 +169,7 @@ The snapshot surfaces this as `coderabbit_gate` with `active`, `present_check`, 
 ## Decision rules
 
 See `references/heuristics.md` for the full classification checklist:
-- **Branch-related failure**: edit the code, collect all other pending issues (Bugbot, Codex, human reviews), fix everything, run `./gradlew check`, then push once.
+- **Branch-related failure**: edit the code, collect all other pending issues (Codex, CodeRabbit, human reviews), fix everything, run `./gradlew check`, then push once.
 - **Likely flaky/unrelated**: rerun via `--retry-failed-now`; retry budget defaults to 3 per SHA.
   - The watcher only auto-reruns retry-eligible workflows (currently E2E-style workflows).
   - CI/check workflow failures are treated as diagnose/fix-first by default.
@@ -188,8 +178,8 @@ See `references/heuristics.md` for the full classification checklist:
 ## Review bots
 
 The watcher surfaces feedback from:
-- **cursor[bot]** — Cursor Bugbot (CI check-based code review)
 - **chatgpt-codex-connector[bot]** — OpenAI Codex (emoji reaction-based code review)
+- **cursor[bot]** — retired Cursor Bugbot; its login stays in `REVIEW_BOT_LOGIN_KEYWORDS` so any leftover comment is still surfaced, but it no longer gates anything
 - **coderabbitai[bot]** — CodeRabbit (presence-conditional: gates only when its check or a reaction shows it is active on the PR; see the CodeRabbit gate section)
 - Trusted humans: authors with `OWNER`, `MEMBER`, or `COLLABORATOR` association
 
@@ -251,7 +241,6 @@ Example snapshot payload shape (`--once` / `--snapshot`, or `--watch` under `pay
   "pr": { "number": 42, "head_sha": "abc123", "mergeable": "MERGEABLE", ... },
   "checks": { "pending_count": 0, "failed_count": 1, "passed_count": 8, "skipping_count": 0, "all_terminal": true },
   "failed_runs": [{ "run_id": 123, "workflow_name": "CI", "conclusion": "failure", "retry_eligible": false, ... }],
-  "bugbot_gate": { "status": "completed", "conclusion": "success", "is_success": true, ... },
   "codex_gate": { "reviewing": false, "status": "idle" },
   "coderabbit_gate": { "active": false, "present_check": false, "reviewing": false, "status": "idle" },
   "hung_checks": [{ "name": "CI", "elapsed_seconds": 1920, "threshold_seconds": 1800 }],

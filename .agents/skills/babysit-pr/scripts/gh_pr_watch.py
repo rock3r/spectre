@@ -30,8 +30,9 @@ PENDING_CHECK_STATES = {
 }
 # Login keyword fragments that identify actionable review bots.
 # A bot comment is surfaced when its login contains any of these keywords.
-# Cursor Bugbot posts as cursor[bot]; Codex posts as chatgpt-codex-connector[bot];
-# CodeRabbit posts as coderabbitai[bot].
+# Codex posts as chatgpt-codex-connector[bot]; CodeRabbit posts as
+# coderabbitai[bot]. `cursor` is kept so any leftover cursor[bot] review comment
+# is still surfaced, even though Bugbot no longer gates the merge.
 REVIEW_BOT_LOGIN_KEYWORDS = {
     "cursor",
     "codex",
@@ -40,26 +41,14 @@ REVIEW_BOT_LOGIN_KEYWORDS = {
 # Login / check-name keyword fragments for CodeRabbit. CodeRabbit is treated as
 # a *presence-conditional* gate, not an assumed-present one: it only gates a PR
 # when it shows signs of life (a CodeRabbit CI check, a reaction, or an authored
-# comment). When dormant, the watcher behaves as a bugbot+codex-only gate, so
-# the gate degrades gracefully if CodeRabbit is later removed from the repo.
+# comment). When dormant, the watcher behaves as a codex-only gate, so the
+# gate degrades gracefully if CodeRabbit is later removed from the repo.
 CODERABBIT_LOGIN_KEYWORDS = {
     "coderabbit",
 }
 CODERABBIT_CHECK_KEYWORDS = {
     "coderabbit",
 }
-# Workflow name keyword fragments used to identify Cursor Bugbot CI runs.
-# The merge gate is hard-blocked unless the latest Bugbot run for the current
-# head SHA is `completed` with conclusion `success`. Cursor currently reports
-# a clean manual Bugbot review as a neutral/skipped check, though, so the
-# accompanying SHA-matched clean review is also accepted (see below).
-BUGBOT_WORKFLOW_KEYWORDS = {
-    "cursor",
-    "bugbot",
-}
-# Cursor's authenticated GitHub identity for review records. This must stay
-# separate from the loose check/workflow name matcher above.
-CURSOR_BUGBOT_LOGIN = "cursor[bot]"
 TRUSTED_AUTHOR_ASSOCIATIONS = {
     "OWNER",
     "MEMBER",
@@ -84,9 +73,9 @@ MERGE_CONFLICT_STATES = {
 GREEN_STATE_MAX_POLL_SECONDS = 60
 
 # Minimum seconds to wait after all checks go terminal before declaring the PR
-# ready to merge.  Review bots (e.g. Cursor Bugbot) complete their CI check run
-# first, then post inline review comments to the PR a few seconds later via a
-# separate API call.  Without this grace period the watcher can emit
+# ready to merge.  Review bots complete their CI check run first, then post
+# inline review comments to the PR a few seconds later via a separate API
+# call.  Without this grace period the watcher can emit
 # stop_ready_to_merge in that narrow window, causing the agent to merge before
 # the bot's findings are ever seen.
 CHECKS_TERMINAL_GRACE_PERIOD_SECONDS = 60
@@ -102,8 +91,6 @@ BLOCKING_REVIEW_ITEM_FRESH_SECONDS = 30 * 60
 # this many seconds without completing, surface a diagnose_hung_check action.
 # Matched by substring of the lowercased check name; "default" is the fallback.
 HUNG_CHECK_THRESHOLDS_SECONDS = {
-    "cursor": 20 * 60,   # Cursor Bugbot: avg ~8 min, max observed ~12 min
-    "bugbot": 20 * 60,   # Alternate naming for bugbot checks
     "default": 30 * 60,  # CI / E2E: normal 5-6 min, slow-but-legit up to ~20 min
 }
 
@@ -557,161 +544,6 @@ def failed_runs_from_workflow_runs(runs, head_sha):
     return failed_runs
 
 
-def is_bugbot_name(name):
-    lower = str(name or "").lower()
-    return any(keyword in lower for keyword in BUGBOT_WORKFLOW_KEYWORDS)
-
-
-def is_primary_bugbot_check(check):
-    """Return whether a check is the review gate, not a sibling Cursor task."""
-    name = str(check.get("name") or "").lower()
-    workflow = str(check.get("workflow") or "").lower()
-    return (is_bugbot_name(name) or is_bugbot_name(workflow)) and "autofix" not in name and "autofix" not in workflow
-
-
-def bugbot_check_activity_sort_key(check):
-    started = str(check.get("startedAt") or "")
-    completed = str(check.get("completedAt") or "")
-    activity = max(started, completed)
-    return (
-        activity,
-        started,
-        completed,
-        str(check.get("name") or ""),
-    )
-
-
-def summarize_bugbot_gate_from_checks(checks):
-    bugbot_checks = []
-    for check in checks:
-        if not isinstance(check, dict):
-            continue
-        check_name = str(check.get("name") or "")
-        workflow_name = str(check.get("workflow") or "")
-        if not is_bugbot_name(check_name) and not is_bugbot_name(workflow_name):
-            continue
-        if is_primary_bugbot_check(check):
-            bugbot_checks.append(check)
-
-    if not bugbot_checks:
-        return {
-            "required": True,
-            "present": False,
-            "status": "missing",
-            "conclusion": "",
-            "is_success": False,
-            "run_id": None,
-            "workflow_name": "",
-            "html_url": "",
-            "source": "checks",
-        }
-
-    pending_bugbot_checks = [check for check in bugbot_checks if is_pending_check(check)]
-    if pending_bugbot_checks:
-        pending_bugbot_checks.sort(key=bugbot_check_activity_sort_key)
-        latest = pending_bugbot_checks[-1]
-    else:
-        bugbot_checks.sort(key=bugbot_check_activity_sort_key)
-        latest = bugbot_checks[-1]
-    state = str(latest.get("state") or "").upper()
-    bucket = str(latest.get("bucket") or "").lower()
-
-    if is_pending_check(latest):
-        status = "in_progress"
-        conclusion = ""
-    elif bucket == "pass" or state == "SUCCESS":
-        status = "completed"
-        conclusion = "success"
-    elif bucket == "skipping" or state == "SKIPPING":
-        status = "completed"
-        conclusion = "skipped"
-    elif state == "NEUTRAL":
-        status = "completed"
-        conclusion = "neutral"
-    elif bucket == "fail":
-        status = "completed"
-        conclusion = "failure"
-    elif state:
-        status = "completed"
-        conclusion = state.lower()
-    else:
-        status = "in_progress"
-        conclusion = ""
-
-    is_success = status == "completed" and conclusion == "success"
-    return {
-        "required": True,
-        "present": True,
-        "status": status,
-        "conclusion": conclusion,
-        "is_success": is_success,
-        "run_id": None,
-        "workflow_name": str(latest.get("name") or ""),
-        "html_url": str(latest.get("link") or ""),
-        "started_at": str(latest.get("startedAt") or ""),
-        "matching_check_count": len(bugbot_checks),
-        "source": "checks",
-    }
-
-
-def summarize_bugbot_gate_from_runs(runs, head_sha):
-    bugbot_runs = []
-    for run in runs:
-        if not isinstance(run, dict):
-            continue
-        if str(run.get("head_sha") or "") != head_sha:
-            continue
-        workflow_name = run.get("name") or run.get("display_title") or ""
-        if not is_bugbot_name(workflow_name):
-            continue
-        bugbot_runs.append(run)
-
-    if not bugbot_runs:
-        return {
-            "required": True,
-            "present": False,
-            "status": "missing",
-            "conclusion": "",
-            "is_success": False,
-            "run_id": None,
-            "workflow_name": "",
-            "html_url": "",
-            "source": "actions_runs",
-        }
-
-    bugbot_runs.sort(
-        key=lambda item: (
-            str(item.get("created_at") or ""),
-            str(item.get("updated_at") or ""),
-            int(item.get("id") or 0),
-        )
-    )
-    latest = bugbot_runs[-1]
-    status = str(latest.get("status") or "")
-    conclusion = str(latest.get("conclusion") or "")
-    is_success = status == "completed" and conclusion == "success"
-    return {
-        "required": True,
-        "present": True,
-        "status": status,
-        "conclusion": conclusion,
-        "is_success": is_success,
-        "run_id": latest.get("id"),
-        "workflow_name": latest.get("name") or latest.get("display_title") or "",
-        "html_url": str(latest.get("html_url") or ""),
-        "started_at": str(latest.get("created_at") or ""),
-        "matching_check_count": len(bugbot_runs),
-        "source": "actions_runs",
-    }
-
-
-def summarize_bugbot_gate(checks, runs, head_sha):
-    from_checks = summarize_bugbot_gate_from_checks(checks)
-    if from_checks.get("present"):
-        return from_checks
-    return summarize_bugbot_gate_from_runs(runs, head_sha)
-
-
 def is_codex_bot_login(login):
     lower = str(login or "").lower()
     return any(keyword in lower for keyword in CODEX_BOT_LOGIN_KEYWORDS)
@@ -799,7 +631,7 @@ def summarize_coderabbit_gate(checks, reactions):
     when it shows signs of life: a CodeRabbit CI check, or a reaction from the
     CodeRabbit bot. (Authored review comments are surfaced and block merge
     independently via the normal review-item path.) When CodeRabbit is dormant
-    the gate is inert and the watcher behaves as a bugbot+codex-only gate, so
+    the gate is inert and the watcher behaves as a codex-only gate, so
     the watcher stays correct if CodeRabbit is later removed.
 
     `reviewing` is True only while CodeRabbit appears to still be working: its
@@ -1006,100 +838,6 @@ def normalize_issue_comments(items):
             }
         )
     return out
-
-
-def is_clean_bugbot_review_item(review, head_sha):
-    """Return whether one review is Cursor's clean result for `head_sha`."""
-    if not isinstance(review, dict):
-        return False
-    if str(review.get("kind") or "review") != "review":
-        return False
-    if str(review.get("author") or "").lower() != CURSOR_BUGBOT_LOGIN:
-        return False
-    if str(review.get("commit_id") or "") != str(head_sha or ""):
-        return False
-    if str(review.get("review_state") or "") != "COMMENTED":
-        return False
-    body = str(review.get("body") or "").strip().lower()
-    return "bugbot reviewed your changes and found no new issues" in body
-
-
-def has_clean_bugbot_review(reviews, head_sha, not_before=""):
-    """Return whether Cursor explicitly reported a clean review for `head_sha`.
-
-    Cursor Bugbot sometimes completes its GitHub check with a neutral/skipped
-    conclusion after a manually-triggered run, despite posting its authoritative
-    "found no new issues" review. Accept only that exact result from Cursor and
-    only when GitHub associates it with the current head SHA; a generic bot
-    comment or an older clean review must never make the gate green.
-    """
-    matching = [
-        review for review in reviews
-        if isinstance(review, dict)
-        and str(review.get("kind") or "review") == "review"
-        and str(review.get("author") or "").lower() == CURSOR_BUGBOT_LOGIN
-        and str(review.get("commit_id") or "") == str(head_sha or "")
-        and str(review.get("review_state") or "") == "COMMENTED"
-        and (
-            not not_before
-            or str(review.get("created_at") or "") >= str(not_before)
-        )
-    ]
-    if not matching:
-        return False
-    matching.sort(
-        key=lambda review: (
-            str(review.get("updated_at") or ""),
-            str(review.get("created_at") or ""),
-            int(str(review.get("id") or "0")) if str(review.get("id") or "0").isdigit() else 0,
-        )
-    )
-    return is_clean_bugbot_review_item(matching[-1], head_sha)
-
-
-def reconcile_clean_bugbot_review(bugbot_gate, reviews, head_sha):
-    """Accept Cursor's clean review when its completed check is neutral/skipped."""
-    if not isinstance(bugbot_gate, dict):
-        return bugbot_gate
-    if bugbot_gate.get("is_success"):
-        return bugbot_gate
-    if str(bugbot_gate.get("status") or "") != "completed":
-        return bugbot_gate
-    if str(bugbot_gate.get("conclusion") or "") not in {"neutral", "skipped"}:
-        return bugbot_gate
-    # GitHub's legacy check view does not expose a per-review run identifier.
-    # A clean review is therefore authoritative only when there is one Cursor
-    # check for this head; overlapping runs cannot be correlated safely.
-    if int(bugbot_gate.get("matching_check_count") or 1) != 1:
-        return bugbot_gate
-    if not has_clean_bugbot_review(reviews, head_sha, bugbot_gate.get("started_at")):
-        return bugbot_gate
-
-    reconciled = dict(bugbot_gate)
-    reconciled.update(
-        {
-            "conclusion": "success",
-            "is_success": True,
-            "source": "clean_bugbot_review",
-            "original_source": bugbot_gate.get("source"),
-            "original_conclusion": bugbot_gate.get("conclusion"),
-        }
-    )
-    return reconciled
-
-
-def reconcile_clean_bugbot_checks_summary(checks_summary, bugbot_gate):
-    """Remove only Bugbot's own skipped check after accepting its clean review."""
-    summary = dict(checks_summary)
-    if (
-        bugbot_gate.get("source") == "clean_bugbot_review"
-        and bugbot_gate.get("original_source") == "checks"
-        and str(bugbot_gate.get("original_conclusion") or "") in {"neutral", "skipped"}
-    ):
-        summary["skipping_count"] = max(
-            0, int(summary.get("skipping_count") or 0) - 1
-        )
-    return summary
 
 
 def normalize_review_comments(items):
@@ -1310,10 +1048,6 @@ def fetch_new_review_items(pr, state, fresh_state, authenticated_login=None):
         kind = item["kind"]
         item_updated_at = str(item.get("updated_at") or item.get("created_at") or "")
 
-        if is_clean_bugbot_review_item(item, head_sha):
-            seen_review.add(item_id)
-            seen_review_updated_at[item_id] = item_updated_at
-            continue
         if kind == "review" and str(item.get("review_state") or "") == "APPROVED":
             seen_review.add(item_id)
             seen_review_updated_at[item_id] = item_updated_at
@@ -1398,7 +1132,6 @@ def is_pr_ready_to_merge(
     new_review_items,
     checks_terminal_elapsed=None,
     blocking_review_items=None,
-    bugbot_gate=None,
     codex_gate=None,
     coderabbit_gate=None,
 ):
@@ -1421,8 +1154,6 @@ def is_pr_ready_to_merge(
     if str(pr.get("merge_state_status") or "") in MERGE_CONFLICT_OR_BLOCKING_STATES:
         return False
     if str(pr.get("review_decision") or "") in MERGE_BLOCKING_REVIEW_DECISIONS:
-        return False
-    if bugbot_gate and bool(bugbot_gate.get("required")) and not bool(bugbot_gate.get("is_success")):
         return False
     if codex_gate and bool(codex_gate.get("reviewing")):
         return False
@@ -1557,7 +1288,6 @@ def recommend_actions(
     max_retries,
     checks_terminal_elapsed=None,
     blocking_review_items=None,
-    bugbot_gate=None,
     codex_gate=None,
     coderabbit_gate=None,
 ):
@@ -1579,7 +1309,6 @@ def recommend_actions(
         new_review_items,
         checks_terminal_elapsed=checks_terminal_elapsed,
         blocking_review_items=blocking_review_items,
-        bugbot_gate=bugbot_gate,
         codex_gate=codex_gate,
         coderabbit_gate=coderabbit_gate,
     ):
@@ -1596,25 +1325,6 @@ def recommend_actions(
 
     if coderabbit_gate and bool(coderabbit_gate.get("reviewing")):
         actions.append("wait_coderabbit")
-
-    if bugbot_gate and bool(bugbot_gate.get("required")) and not bool(bugbot_gate.get("is_success")):
-        bugbot_status = str(bugbot_gate.get("status") or "")
-        grace_active = (
-            checks_terminal_elapsed is not None
-            and checks_terminal_elapsed < CHECKS_TERMINAL_GRACE_PERIOD_SECONDS
-        )
-        if bugbot_status == "completed":
-            if grace_active:
-                actions.append("wait_bugbot")
-            else:
-                actions.append("stop_bugbot_not_green")
-        elif bugbot_status == "missing":
-            if checks_summary["all_terminal"] and not grace_active:
-                actions.append("stop_bugbot_not_green")
-            else:
-                actions.append("wait_bugbot")
-        else:
-            actions.append("wait_bugbot")
 
     if hung_checks:
         actions.append("diagnose_hung_check")
@@ -1661,18 +1371,10 @@ def collect_snapshot(args):
     pending_checks_first_seen_at = update_pending_checks_first_seen(state, checks, now)
     hung_checks = hung_checks_from_checks(checks, pending_checks_first_seen_at)
 
-    bugbot_gate = summarize_bugbot_gate_from_checks(checks)
-
-    workflow_runs = []
     failed_runs = []
-    needs_failed_run_lookup = checks_summary["failed_count"] > 0
-    needs_bugbot_run_lookup = not bool(bugbot_gate.get("present"))
-    if needs_failed_run_lookup or needs_bugbot_run_lookup:
+    if checks_summary["failed_count"] > 0:
         workflow_runs = get_workflow_runs_for_sha(pr["repo"], pr["head_sha"])
-        if needs_failed_run_lookup:
-            failed_runs = failed_runs_from_workflow_runs(workflow_runs, pr["head_sha"])
-        if needs_bugbot_run_lookup:
-            bugbot_gate = summarize_bugbot_gate(checks, workflow_runs, pr["head_sha"])
+        failed_runs = failed_runs_from_workflow_runs(workflow_runs, pr["head_sha"])
 
     try:
         authenticated_login = get_authenticated_login()
@@ -1683,20 +1385,6 @@ def collect_snapshot(args):
         state,
         fresh_state=fresh_state,
         authenticated_login=authenticated_login,
-    )
-    # Cursor can post a successful review while exposing its check as neutral.
-    # Reconcile only that narrowly identified result before deriving actions.
-    # Its skipped check is then accounted for as an accepted Bugbot result;
-    # unrelated skipped checks remain merge blockers.
-    review_payload = gh_api_list_paginated(
-        comment_endpoints(pr["repo"], pr["number"])["review"], repo=pr["repo"]
-    )
-    all_reviews = normalize_reviews(review_payload)
-    bugbot_gate = reconcile_clean_bugbot_review(
-        bugbot_gate, all_reviews, pr["head_sha"]
-    )
-    checks_summary = reconcile_clean_bugbot_checks_summary(
-        checks_summary, bugbot_gate
     )
     # Track when checks first went all_terminal for the current head SHA.
     # This timestamp is used to enforce a grace period before emitting
@@ -1738,7 +1426,6 @@ def collect_snapshot(args):
         args.max_flaky_retries,
         checks_terminal_elapsed=checks_terminal_elapsed,
         blocking_review_items=blocking_review_items,
-        bugbot_gate=bugbot_gate,
         codex_gate=codex_gate,
         coderabbit_gate=coderabbit_gate,
     )
@@ -1752,7 +1439,6 @@ def collect_snapshot(args):
         "pr": pr,
         "checks": checks_summary,
         "failed_runs": failed_runs,
-        "bugbot_gate": bugbot_gate,
         "codex_gate": codex_gate,
         "coderabbit_gate": coderabbit_gate,
         "hung_checks": hung_checks,
@@ -1857,11 +1543,8 @@ def is_ci_green(snapshot):
         return False
     checks = snapshot.get("checks") or {}
     pr = snapshot.get("pr") or {}
-    bugbot_gate = snapshot.get("bugbot_gate") or {}
     blocking_review_items = snapshot.get("blocking_review_items") or []
     review_decision = str(pr.get("review_decision") or "")
-    bugbot_required = bool(bugbot_gate.get("required")) if bugbot_gate else False
-    bugbot_green = (not bugbot_required) or bool(bugbot_gate.get("is_success"))
     codex_gate = snapshot.get("codex_gate") or {}
     codex_reviewing = bool(codex_gate.get("reviewing"))
     coderabbit_gate = snapshot.get("coderabbit_gate") or {}
@@ -1872,7 +1555,6 @@ def is_ci_green(snapshot):
         and int(checks.get("pending_count") or 0) == 0
         and not blocking_review_items
         and review_decision not in MERGE_BLOCKING_REVIEW_DECISIONS
-        and bugbot_green
         and not codex_reviewing
         and not coderabbit_reviewing
     )
@@ -1883,7 +1565,6 @@ def snapshot_change_key(snapshot):
     checks = snapshot.get("checks") or {}
     review_items = snapshot.get("new_review_items") or []
     blocking_review_items = snapshot.get("blocking_review_items") or []
-    bugbot_gate = snapshot.get("bugbot_gate") or {}
     codex_gate = snapshot.get("codex_gate") or {}
     coderabbit_gate = snapshot.get("coderabbit_gate") or {}
     return (
@@ -1906,9 +1587,6 @@ def snapshot_change_key(snapshot):
             if isinstance(item, dict)
         ),
         tuple(snapshot.get("actions") or []),
-        str(bugbot_gate.get("status") or ""),
-        str(bugbot_gate.get("conclusion") or ""),
-        bool(bugbot_gate.get("is_success")),
         bool(codex_gate.get("reviewing")),
         bool(coderabbit_gate.get("reviewing")),
         # Include whether the checks-terminal grace period is still active.
@@ -1930,7 +1608,6 @@ def _grace_period_active(snapshot):
 # Everything else requires agent attention and should cause --once to return.
 PASSIVE_WAIT_ACTIONS = {
     "idle",
-    "wait_bugbot",
     "wait_codex",
     "wait_coderabbit",
 }
@@ -1940,9 +1617,9 @@ def needs_agent_attention(actions):
     """Return True when the actions list contains something the agent should act on.
 
     Used by --once to decide when to stop polling and return to the caller.
-    Returns True for any action that is not a passive wait (idle, wait_bugbot,
-    wait_codex, wait_coderabbit).  An empty actions list also returns True as a
-    safety measure.
+    Returns True for any action that is not a passive wait (idle, wait_codex,
+    wait_coderabbit).  An empty actions list also returns True as a safety
+    measure.
     """
     action_set = set(actions or [])
     if not action_set:
@@ -1960,15 +1637,13 @@ def should_stop_watching(actions):
         return True
     if "stop_ready_to_merge" in action_set:
         return True
-    if "stop_bugbot_not_green" in action_set:
-        return True
     if "diagnose_hung_check" in action_set:
         return True
     if "diagnose_skipping_checks" in action_set:
         return True
-    if "diagnose_merge_conflict" in action_set and "wait_bugbot" not in action_set:
+    if "diagnose_merge_conflict" in action_set:
         return True
-    if "diagnose_branch_behind" in action_set and "wait_bugbot" not in action_set:
+    if "diagnose_branch_behind" in action_set:
         return True
     return False
 
