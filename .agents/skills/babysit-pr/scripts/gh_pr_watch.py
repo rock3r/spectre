@@ -217,13 +217,30 @@ def gh_text(args, repo=None, allowed_exit_codes=(0,)):
         cmd.extend(["-R", repo])
     cmd.extend(args)
     try:
-        proc = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        proc = subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+            # GitHub CLI/API output is UTF-8. Without an explicit encoding Python
+            # decodes it with the locale default (cp1252 on Windows), which fails
+            # on em-dashes or emoji in review comments.
+            encoding="utf-8",
+            errors="replace",
+        )
     except FileNotFoundError as err:
         raise GhCommandError("`gh` command not found") from err
     except subprocess.CalledProcessError as err:
         if err.returncode in allowed_exit_codes:
             return err.stdout
         raise GhCommandError(_format_gh_error(cmd, err)) from err
+    if proc.stdout is None:
+        # `subprocess` leaves stdout as None when its reader thread dies (for
+        # example on a decode error), which would otherwise surface downstream
+        # as a confusing AttributeError on None.
+        raise GhCommandError(
+            f"No output captured from GitHub CLI command: {' '.join(cmd)}"
+        )
     return proc.stdout
 
 
@@ -352,7 +369,7 @@ def is_state_stale(state, now_seconds=None):
 def load_state(path):
     if path.exists():
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as err:
             raise RuntimeError(f"State file is not valid JSON: {path}") from err
         if not isinstance(data, dict):
