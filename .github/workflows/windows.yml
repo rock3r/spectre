@@ -8,6 +8,8 @@ name: Windows
 #     when the host OS picks a different FfmpegBackend by default.
 #   - Compose Desktop renderer regressions that only surface under skiko-windows-x64.dll.
 #   - Any future Windows-conditional test that an `os.name` check would skip on Linux.
+#   - Windows-conditional *build* logic in `buildSrc/` (e.g. `VerifyCliDistributionZip`'s
+#     cmd.exe launcher smoke), which the Linux job compiles but never executes.
 # Without this job, those regressions reach an end user before they reach CI.
 #
 # Notes:
@@ -33,6 +35,13 @@ on:
       # (#455). Without this path, a Windows-only fix in `:cli` cannot be verified before
       # merge and `:cli` regressions reach main before CI sees them.
       - "cli/**"
+      # `buildSrc/` carries Windows-conditional *build* logic, not just Windows-conditional
+      # tests: `VerifyCliDistributionZip.verifyLauncher` shells out through cmd.exe to run the
+      # packaged `spectre.bat` under a scrubbed PATH, and only that branch can break. #475 was
+      # exactly that regression — it reached main because the change touched `buildSrc/**`
+      # only, so this job never fired, and Linux `ci.yml` runs the same `:check` task but
+      # always takes the non-Windows branch. Mirrors `macos-check.yml`, which already lists it.
+      - "buildSrc/**"
       - "recording/**"
       - "recording-linux/**"
       - "recording-macos/**"
@@ -56,6 +65,13 @@ on:
       # (#455). Without this path, a Windows-only fix in `:cli` cannot be verified before
       # merge and `:cli` regressions reach main before CI sees them.
       - "cli/**"
+      # `buildSrc/` carries Windows-conditional *build* logic, not just Windows-conditional
+      # tests: `VerifyCliDistributionZip.verifyLauncher` shells out through cmd.exe to run the
+      # packaged `spectre.bat` under a scrubbed PATH, and only that branch can break. #475 was
+      # exactly that regression — it reached main because the change touched `buildSrc/**`
+      # only, so this job never fired, and Linux `ci.yml` runs the same `:check` task but
+      # always takes the non-Windows branch. Mirrors `macos-check.yml`, which already lists it.
+      - "buildSrc/**"
       - "recording/**"
       - "recording-linux/**"
       - "recording-macos/**"
