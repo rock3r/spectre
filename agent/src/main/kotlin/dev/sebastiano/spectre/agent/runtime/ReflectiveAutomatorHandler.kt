@@ -141,6 +141,22 @@ internal class ReflectiveAutomatorHandler(
                 category =
                     dev.sebastiano.spectre.agent.transport.AgentErrorCategory.Timeout.wireName,
             )
+        } catch (ex: IllegalStateException) {
+            // A core guard that throws *after* a suspension point — #460's input-delivery
+            // verification does exactly that — resumes the continuation with failure, so
+            // `BlockingSuspendInvoker` rethrows it raw via `Result.getOrThrow()`. It never passes
+            // through `Method.invoke`, so the ReflectiveOperationException branch above cannot see
+            // it, and an input refusal would be misreported as an InternalError.
+            //
+            // Deliberately narrow: every *other* IllegalStateException keeps propagating out of
+            // `handle`, because the reflective layer uses it to fail loudly on automator API
+            // mismatches and that contract is asserted elsewhere.
+            if (!isInputRejectionMessage(ex.message)) throw ex
+            AgentResponse.Error(
+                message = "${ex.javaClass.simpleName}: ${ex.message ?: "<no message>"}",
+                category =
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InputRejected.wireName,
+            )
         }
 
     @Suppress("CyclomaticComplexMethod") // Exhaustive wire dispatch table.
@@ -993,9 +1009,25 @@ internal class ReflectiveAutomatorHandler(
 private fun reflectiveIsInputRejection(ex: ReflectiveOperationException): Boolean {
     val root = ex.cause ?: ex
     if (root !is IllegalStateException) return false
-    val msg = root.message.orEmpty().lowercase()
+    return isInputRejectionMessage(root.message)
+}
+
+/**
+ * Whether an [IllegalStateException] from `:core` is the OS refusing input rather than a bug.
+ *
+ * Message matching rather than a typed exception because `:agent`'s production runtime has no
+ * compile dependency on `:core` — it drives the automator purely reflectively, so the guard types
+ * are not on its classpath. Shared by the wrapped and raw throw paths.
+ */
+private fun isInputRejectionMessage(message: String?): Boolean {
+    val msg = message.orEmpty().lowercase()
     return "accessibility" in msg ||
         "tcc" in msg ||
         "permission" in msg ||
-        "screen recording" in msg
+        "screen recording" in msg ||
+        // #460: the injected event never reached the target JVM. Matched two ways because the
+        // agent jar and the target's own spectre-core can be different versions: the prose may be
+        // reworded, the issue URL in it will not be.
+        "input desktop" in msg ||
+        "issues/460" in msg
 }

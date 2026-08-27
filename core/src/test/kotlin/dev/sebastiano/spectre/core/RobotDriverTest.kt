@@ -565,6 +565,145 @@ class RobotDriverTest {
         val driver = RobotDriver.headless()
         assertFailsWith<UnsupportedOperationException> { driver.moveBy(deltaX = 1, deltaY = 1) }
     }
+
+    // --- #460: input delivery verification on node-targeted clicks ------------------------
+
+    @Test
+    fun `clickVerified fails when real OS input is never delivered`() = runTest {
+        val witness = FakeInputDeliveryWitness(delivered = false)
+        val driver = realInputDriver(witness)
+
+        val failure =
+            assertFailsWith<IllegalStateException> {
+                driver.clickVerified(screenX = 3, screenY = 4)
+            }
+
+        assertTrue(
+            failure.message.orEmpty().contains("input desktop"),
+            "message must name the platform constraint, was: ${failure.message}",
+        )
+        assertTrue(failure.message.orEmpty().contains("(3, 4)"), "message must name the target")
+        assertEquals(1, witness.closed, "the observation must be detached even when it fails")
+    }
+
+    @Test
+    fun `clickVerified passes when the press is delivered`() = runTest {
+        val witness = FakeInputDeliveryWitness(delivered = true)
+        val driver = realInputDriver(witness)
+
+        driver.clickVerified(screenX = 1, screenY = 2)
+
+        assertEquals(1, witness.observations)
+        assertEquals(1, witness.closed)
+    }
+
+    /**
+     * The decisive gate. A fake or synthetic backend never produces an AWT press, which is
+     * indistinguishable from a discarded real one — so verification must not run there, or every
+     * synthetic test in the suite would start failing.
+     */
+    @Test
+    fun `clickVerified skips verification when the backend is not real OS input`() = runTest {
+        val witness = FakeInputDeliveryWitness(delivered = false)
+        val driver = realInputDriver(witness, realOsInput = false)
+
+        driver.clickVerified(screenX = 1, screenY = 2)
+
+        assertEquals(0, witness.observations, "a non-real backend must not be verified at all")
+    }
+
+    @Test
+    fun `clickVerified proceeds when the witness cannot attach`() = runTest {
+        val witness = FakeInputDeliveryWitness(delivered = false, canObserve = false)
+        val driver = realInputDriver(witness)
+
+        driver.clickVerified(screenX = 1, screenY = 2)
+
+        assertEquals(0, witness.observations, "being unable to check is not evidence of a problem")
+    }
+
+    /** Coordinate clicks may legitimately land outside this JVM, so they stay unverified. */
+    @Test
+    fun `coordinate click is not delivery-verified`() = runTest {
+        val witness = FakeInputDeliveryWitness(delivered = false)
+        val driver = realInputDriver(witness)
+
+        driver.click(screenX = 1, screenY = 2)
+
+        assertEquals(0, witness.observations)
+    }
+
+    /**
+     * #460: an AWT listener only fires during dispatch, so "no event seen" also describes a JVM
+     * whose EDT never ran — `runBlocking { click(node) }` on the EDT parks the very thread that
+     * would dispatch the press. That must not be reported as the OS discarding input.
+     */
+    @Test
+    fun `clickVerified does not accuse the OS when this JVM is not dispatching events`() = runTest {
+        val witness = FakeInputDeliveryWitness(delivered = false, queueDrains = false)
+        val driver = realInputDriver(witness)
+
+        driver.clickVerified(screenX = 1, screenY = 2)
+
+        assertEquals(1, witness.closed, "the observation must still be detached")
+    }
+
+    @Test
+    fun `scrollWheelVerified watches for a wheel event, not a press`() = runTest {
+        val witness = FakeInputDeliveryWitness(delivered = true)
+        val driver = realInputDriver(witness)
+
+        driver.clickVerified(screenX = 1, screenY = 2)
+        driver.scrollWheelVerified(screenX = 1, screenY = 2, wheelClicks = 1)
+
+        // A press oracle would report every scroll as undelivered, since scrolling never presses.
+        assertEquals(listOf(DispatchedInput.Press, DispatchedInput.Wheel), witness.watched)
+    }
+
+    private fun realInputDriver(
+        witness: InputDeliveryWitness,
+        realOsInput: Boolean = true,
+    ): RobotDriver =
+        RobotDriver(
+            robot = RecordingRobotAdapter(),
+            clipboard = RecordingClipboardAdapter(),
+            tccGuard = RecordingTccGuard(),
+            inputCapabilities =
+                InputCapabilities(realOsInput = realOsInput, sharedSystemClipboard = false),
+            deliveryWitness = witness,
+        )
+}
+
+/** Reports a fixed verdict so delivery-verification policy can be tested without a real desktop. */
+private class FakeInputDeliveryWitness(
+    private val delivered: Boolean,
+    private val canObserve: Boolean = true,
+    private val queueDrains: Boolean = true,
+) : InputDeliveryWitness {
+
+    /** Which event each dispatch asked to watch for — presses for clicks, a wheel for scrolls. */
+    val watched: MutableList<DispatchedInput> = mutableListOf()
+
+    var observations: Int = 0
+        private set
+
+    var closed: Int = 0
+        private set
+
+    override fun observe(input: DispatchedInput): InputDeliveryWitness.Observation? {
+        if (!canObserve) return null
+        observations++
+        watched += input
+        return object : InputDeliveryWitness.Observation {
+            override fun awaitDelivery(timeoutMs: Long): Boolean = delivered
+
+            override fun awaitQueueDrain(timeoutMs: Long): Boolean = queueDrains
+
+            override fun close() {
+                closed++
+            }
+        }
+    }
 }
 
 private class RecordingTccGuard(

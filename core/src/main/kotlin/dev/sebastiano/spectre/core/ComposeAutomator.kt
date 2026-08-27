@@ -178,19 +178,29 @@ private constructor(
     public fun findByRole(role: Role): List<AutomatorNode> =
         semanticsReader.findByRole(role, windows)
 
+    /**
+     * Clicks [node]'s centre with real OS input.
+     *
+     * Unlike the coordinate overloads, this verifies the OS actually delivered the press to this
+     * JVM and throws [IllegalStateException] when it did not — the target is aimed at one of this
+     * JVM's own nodes, so a press that never arrives can only be a failure. Silently succeeding
+     * here is what made #460 present as a stale semantics tree.
+     */
     public suspend fun click(node: AutomatorNode) {
         val center = node.centerOnScreen
-        robotDriver.click(center.x, center.y)
+        robotDriver.clickVerified(center.x, center.y)
     }
 
+    /** Double-clicks [node]'s centre, with the delivery guarantee described on [click]. */
     public suspend fun doubleClick(node: AutomatorNode) {
         val center = node.centerOnScreen
-        robotDriver.doubleClick(center.x, center.y)
+        robotDriver.doubleClickVerified(center.x, center.y)
     }
 
+    /** Long-clicks [node]'s centre, with the delivery guarantee described on [click]. */
     public suspend fun longClick(node: AutomatorNode, holdFor: Duration = 500.milliseconds) {
         val center = node.centerOnScreen
-        robotDriver.longClick(center.x, center.y, holdFor)
+        robotDriver.longClickVerified(center.x, center.y, holdFor)
     }
 
     /** Moves the pointer to [node]'s centre without pressing a button. */
@@ -226,6 +236,11 @@ private constructor(
         robotDriver.swipe(startX, startY, endX, endY, steps, duration)
     }
 
+    /**
+     * Swipes from [from]'s centre to [to]'s centre, with the delivery guarantee described on
+     * [click]. Calls the driver directly rather than delegating to the coordinate overload, which
+     * is deliberately unverified.
+     */
     public suspend fun swipe(
         from: AutomatorNode,
         to: AutomatorNode,
@@ -234,7 +249,14 @@ private constructor(
     ) {
         val fromCenter = from.centerOnScreen
         val toCenter = to.centerOnScreen
-        swipe(fromCenter.x, fromCenter.y, toCenter.x, toCenter.y, steps, duration)
+        robotDriver.swipeVerified(
+            fromCenter.x,
+            fromCenter.y,
+            toCenter.x,
+            toCenter.y,
+            steps,
+            duration,
+        )
     }
 
     /**
@@ -244,7 +266,7 @@ private constructor(
      */
     public suspend fun scrollWheel(node: AutomatorNode, wheelClicks: Int) {
         val center = node.centerOnScreen
-        robotDriver.scrollWheel(center.x, center.y, wheelClicks)
+        robotDriver.scrollWheelVerified(center.x, center.y, wheelClicks)
     }
 
     public suspend fun typeText(text: String) {
