@@ -169,6 +169,13 @@ internal suspend fun RobotDriver.swipeVerified(
  * oracle would report every scroll as undelivered.
  */
 internal suspend fun RobotDriver.scrollWheelVerified(screenX: Int, screenY: Int, wheelClicks: Int) {
+    if (wheelClicks == 0) {
+        // A zero-notch scroll is a legitimate no-op that emits no wheel event on any backend -- on
+        // X11 the wheel is button 4/5 presses, so zero notches dispatches nothing at all. Waiting
+        // for an event here would invent a failure out of a request that did exactly what it said.
+        scrollWheel(screenX, screenY, wheelClicks)
+        return
+    }
     verifyingDelivery("scrollWheel", screenX, screenY, DispatchedInput.Wheel) {
         scrollWheel(screenX, screenY, wheelClicks)
     }

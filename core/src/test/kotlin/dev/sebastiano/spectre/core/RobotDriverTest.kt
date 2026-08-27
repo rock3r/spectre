@@ -660,6 +660,20 @@ class RobotDriverTest {
         assertEquals(listOf(DispatchedInput.Press, DispatchedInput.Wheel), witness.watched)
     }
 
+    /**
+     * A zero-notch scroll emits no wheel event anywhere, so verifying it would turn a valid no-op
+     * into an `IllegalStateException` blaming the input desktop.
+     */
+    @Test
+    fun `scrollWheelVerified does not verify a zero-notch scroll`() = runTest {
+        val witness = FakeInputDeliveryWitness(delivered = false)
+        val driver = realInputDriver(witness)
+
+        driver.scrollWheelVerified(screenX = 1, screenY = 2, wheelClicks = 0)
+
+        assertEquals(0, witness.observations, "a no-op scroll must not be verified")
+    }
+
     private fun realInputDriver(
         witness: InputDeliveryWitness,
         realOsInput: Boolean = true,
