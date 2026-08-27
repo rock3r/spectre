@@ -88,16 +88,15 @@ public object AgentAttach {
         checkSameUser(pid)
         val inputCoordination = resolveInputCoordination(options)
         announceInputCoordination(inputCoordination)
-        // Opting out means not standing one up either. Beyond consistency this is what makes the
-        // hatch usable on the host that motivated it: `connectOrStart` spends a 5s startup budget
-        // before giving up, so an attach that has already decided not to coordinate would
-        // otherwise still stall for it on every wedged-coordinator run.
-        val coordinatorClient =
-            if (inputCoordination == AttachInputCoordination.Required) {
-                runCatching(::ensureInputCoordinator).getOrNull()
-            } else {
-                null
-            }
+        // Started unconditionally, including when this attach has opted out. Skipping it would save
+        // `connectOrStart`'s 5s budget on a wedged host, but the runtime jar is selectable
+        // (AttachOptions.agentJarPath, or the runtime-jar property) and one predating #472 ignores
+        // the unknown agentArgs field and builds a Required driver regardless. Not standing a
+        // coordinator up would leave that pairing with nothing to reach — turning a working
+        // coordinated session into a broken one, in the name of an opt-out it never received.
+        // Five seconds on an already-broken host is the cheaper side of that trade. Codex caught
+        // this on the first review of #472.
+        val coordinatorClient = runCatching(::ensureInputCoordinator).getOrNull()
         var coordinatorOwnedByResult = false
         try {
 

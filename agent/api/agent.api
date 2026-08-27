@@ -54,6 +54,7 @@ public final class dev/sebastiano/spectre/agent/AttachInputCoordination : java/l
 	public static final field REQUIRE_VALUE Ljava/lang/String;
 	public static final field Required Ldev/sebastiano/spectre/agent/AttachInputCoordination;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public final fun getWireValue ()Ljava/lang/String;
 	public static fun valueOf (Ljava/lang/String;)Ldev/sebastiano/spectre/agent/AttachInputCoordination;
 	public static fun values ()[Ldev/sebastiano/spectre/agent/AttachInputCoordination;
 }
@@ -61,6 +62,8 @@ public final class dev/sebastiano/spectre/agent/AttachInputCoordination : java/l
 public final class dev/sebastiano/spectre/agent/AttachInputCoordination$Companion {
 	public final fun fromProperty (Ljava/lang/String;)Ldev/sebastiano/spectre/agent/AttachInputCoordination;
 	public static synthetic fun fromProperty$default (Ldev/sebastiano/spectre/agent/AttachInputCoordination$Companion;Ljava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/agent/AttachInputCoordination;
+	public final fun requestedFromProperty (Ljava/lang/String;)Ldev/sebastiano/spectre/agent/AttachInputCoordination;
+	public static synthetic fun requestedFromProperty$default (Ldev/sebastiano/spectre/agent/AttachInputCoordination$Companion;Ljava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/agent/AttachInputCoordination;
 }
 
 public final class dev/sebastiano/spectre/agent/AttachInterruptedException : dev/sebastiano/spectre/agent/SpectreAttachException {

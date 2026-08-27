@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import dev.sebastiano.spectre.agent.AttachInputCoordination
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.FrameLimits
 import java.io.EOFException
@@ -85,6 +86,13 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
                         )
                         ?.let { throw IOException(it) }
                 }
+                if (!ignoresInputCoordination(request)) {
+                    inputCoordinationMismatchFailure(
+                            requested = AttachInputCoordination.requestedFromProperty(),
+                            daemonMode = response.inputCoordination,
+                        )
+                        ?.let { throw IOException(it) }
+                }
             }
             is DaemonResponse.Error ->
                 throw IOException(daemonHandshakeFailure(requiredVersion, response))
@@ -116,6 +124,48 @@ internal class DaemonConnectionClosedException(cause: Throwable? = null) :
  * costs nothing.
  */
 internal fun ignoresFrameBudget(request: DaemonRequest): Boolean = request is DaemonRequest.Shutdown
+
+/**
+ * Requests exempt from the coordination-mode check, for the same reason as [ignoresFrameBudget]:
+ * the mismatch error tells the user to run `spectre daemon kill`, which inherits the same `-D` and
+ * would hit this check, leaving the documented recovery a dead end.
+ */
+internal fun ignoresInputCoordination(request: DaemonRequest): Boolean =
+    request is DaemonRequest.Shutdown
+
+/**
+ * Explains why a requested desktop input coordination mode cannot take effect, or `null` when it
+ * can.
+ *
+ * The daemon resolves the mode once, from its own system properties, and every target it injects
+ * inherits that. A `-D` on a later invocation therefore reaches the CLI process and nothing else.
+ *
+ * That would be a footnote for most settings, but this one is the #472 escape hatch, and the
+ * journey it exists for *guarantees* a daemon is already running: you only reach for it after an
+ * attach has failed. Silently ignoring it there would make the documented recovery appear broken —
+ * the exact failure the hatch was added to remove.
+ *
+ * Checked in both directions. Asking to disable coordination on a coordinated daemon leaves the
+ * user stuck; asking to restore it on a daemon left disabled by an earlier recovery session is
+ * worse, because that daemon attaches every new target uncoordinated. Only an explicit request is
+ * worth failing over, mirroring [frameBudgetMismatchFailure] — a client that asked for nothing gets
+ * whatever the daemon runs, and both the attacher and the target already announce a disabled attach
+ * on stderr.
+ */
+@OptIn(ExperimentalSpectreAgentApi::class)
+internal fun inputCoordinationMismatchFailure(
+    requested: AttachInputCoordination?,
+    daemonMode: String?,
+): String? {
+    if (requested == null) return null
+    if (daemonMode == requested.wireValue) return null
+    val running = if (daemonMode == null) "a version that predates the setting" else "`$daemonMode`"
+    return "Cannot honour -D${AttachInputCoordination.PROPERTY}=${requested.wireValue}: the " +
+        "running Spectre daemon started with $running, and a daemon keeps the desktop input " +
+        "coordination mode it booted with — it resolves that once and every target it injects " +
+        "inherits it. Run `spectre daemon kill` and retry so the mode applies to the daemon and " +
+        "to the JVMs it injects. See https://github.com/rock3r/spectre/issues/472"
+}
 
 /**
  * Explains why a requested frame budget cannot take effect, or `null` when it can.

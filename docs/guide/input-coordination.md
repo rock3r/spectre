@@ -147,11 +147,25 @@ or say it in code:
 AgentAttach.attach(pid, AttachOptions(inputCoordination = AttachInputCoordination.Disabled))
 ```
 
-The property is the channel that reaches the CLI, which attaches without `AttachOptions`. The
-`spectre` command forwards it to the daemon it starts; if you launch the daemon another way, pass
-it through `JAVA_TOOL_OPTIONS` instead. Only the exact word `disabled` opts out — unset, blank,
-`true`, and a misspelling all keep coordination on, so this cannot be tripped by accident. Both the
-attacher and the target print a line to stderr for as long as it is in force.
+The property is the channel that reaches the CLI, which attaches without `AttachOptions`. Only the
+exact word `disabled` opts out — unset, blank, `true`, and a misspelling all keep coordination on,
+so this cannot be tripped by accident. Both the attacher and the target print a line to stderr for
+as long as it is in force.
+
+!!! important "A running daemon keeps the mode it booted with"
+    `spectre` forwards the property to a daemon it *starts*, but a daemon is long-lived and shared,
+    and it resolves the mode once — every target it injects inherits that. Since you only reach for
+    this switch after an attach has already failed, there is almost always a daemon already running
+    without it. Kill it first:
+
+    ```text
+    spectre daemon kill
+    ```
+
+    You do not have to remember: a `-D` that cannot take effect is refused at the handshake with a
+    message naming that command, in both directions — including a daemon left *disabled* by an
+    earlier recovery session, which would otherwise attach every new target uncoordinated. If you
+    launch the daemon yourself, pass the property through `JAVA_TOOL_OPTIONS`.
 
 !!! danger "Opting out removes the mutual exclusion, it does not repair it"
     Coordination is what stops two Spectre processes driving the same mouse and keyboard at the

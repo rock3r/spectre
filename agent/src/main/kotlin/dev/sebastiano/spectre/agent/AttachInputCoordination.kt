@@ -34,7 +34,12 @@ package dev.sebastiano.spectre.agent
 @ExperimentalSpectreAgentApi
 public enum class AttachInputCoordination(
     internal val leasePolicyName: String,
-    internal val wireValue: String,
+    /**
+     * Canonical string spelling, used on both wires that carry this decision: the injected
+     * runtime's `agentArgs`, and the CLI daemon's `Hello`. Public because the daemon protocol lives
+     * in another module and a second spelling of the same two words is a drift risk, not a saving.
+     */
+    public val wireValue: String,
 ) {
     /** Coordinate every shared-desktop capability; an unreachable coordinator is an error. */
     Required(leasePolicyName = "Required", wireValue = "required"),
@@ -75,6 +80,22 @@ public enum class AttachInputCoordination(
                 REQUIRE_VALUE -> Required
                 else -> Required
             }
+
+        /**
+         * The mode [value] explicitly *asks* for, or `null` when it asks for nothing.
+         *
+         * Distinct from [fromProperty], which answers "what mode do we run in" and therefore never
+         * returns null. This answers "did the user say something about coordination", which is what
+         * a long-lived daemon has to compare against the mode it booted with: a client that asked
+         * for nothing is happy with any daemon, exactly as with the frame budget.
+         *
+         * A typo counts as a request. It resolves to [Required] like any unrecognised value, and
+         * reporting that against a [Disabled] daemon is the useful answer — the user meant to say
+         * something about coordination and did not get what they typed.
+         */
+        public fun requestedFromProperty(
+            value: String? = System.getProperty(PROPERTY)
+        ): AttachInputCoordination? = value?.takeIf { it.isNotBlank() }?.let(::fromProperty)
 
         /** Reverses [AttachInputCoordination.wireValue] for the `agentArgs` field. */
         internal fun fromWireValue(value: String?): AttachInputCoordination =

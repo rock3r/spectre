@@ -1,0 +1,137 @@
+package dev.sebastiano.spectre.cli.daemon
+
+import dev.sebastiano.spectre.agent.AttachInputCoordination
+import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import kotlin.test.Test
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+/**
+ * A running daemon keeps the coordination mode it booted with, exactly as it keeps its frame
+ * budget, so `-Ddev.sebastiano.spectre.agent.inputCoordination=disabled` on a later invocation
+ * cannot reach it.
+ *
+ * This matters more than it sounds. The escape hatch is something you reach for *after* an attach
+ * has already failed, which means a daemon is already running — with the mode it was started under.
+ * Forwarding the property only when this invocation happens to launch the daemon would make the
+ * documented recovery silently do nothing on the one journey it exists for. Codex caught that on
+ * the first review of #472.
+ */
+@OptIn(ExperimentalSpectreAgentApi::class)
+class DaemonInputCoordinationHandshakeTest {
+
+    @Test
+    fun `no explicit request accepts whatever the daemon booted with`() {
+        // Mirrors the frame-budget rule: a client that asked for nothing is happy with any daemon.
+        // A daemon running uncoordinated is not silent either way -- both the attacher and the
+        // target announce it on stderr at attach time.
+        assertNull(inputCoordinationMismatchFailure(requested = null, daemonMode = "required"))
+        assertNull(inputCoordinationMismatchFailure(requested = null, daemonMode = "disabled"))
+        assertNull(inputCoordinationMismatchFailure(requested = null, daemonMode = null))
+    }
+
+    @Test
+    fun `an explicit request the daemon already satisfies is accepted`() {
+        assertNull(
+            inputCoordinationMismatchFailure(
+                requested = AttachInputCoordination.Disabled,
+                daemonMode = "disabled",
+            )
+        )
+        assertNull(
+            inputCoordinationMismatchFailure(
+                requested = AttachInputCoordination.Required,
+                daemonMode = "required",
+            )
+        )
+    }
+
+    @Test
+    fun `asking to disable coordination on a coordinated daemon is refused`() {
+        val failure =
+            assertNotNull(
+                inputCoordinationMismatchFailure(
+                    requested = AttachInputCoordination.Disabled,
+                    daemonMode = "required",
+                )
+            )
+
+        assertTrue(
+            failure.contains(AttachInputCoordination.PROPERTY),
+            "should name the switch that cannot take effect: $failure",
+        )
+        assertTrue(failure.contains("disabled"), "should name what was asked for: $failure")
+        assertTrue(failure.contains("required"), "should name what the daemon runs: $failure")
+        assertTrue(
+            failure.contains("spectre daemon kill"),
+            "should say how to make the mode stick: $failure",
+        )
+    }
+
+    @Test
+    fun `asking to restore coordination on a disabled daemon is refused`() {
+        // The dangerous direction. A daemon left over from a recovery session attaches every new
+        // target uncoordinated; a user who has since put the switch back must not be told nothing.
+        val failure =
+            assertNotNull(
+                inputCoordinationMismatchFailure(
+                    requested = AttachInputCoordination.Required,
+                    daemonMode = "disabled",
+                )
+            )
+
+        assertTrue(failure.contains("spectre daemon kill"), failure)
+    }
+
+    @Test
+    fun `a daemon too old to report its mode cannot satisfy an explicit request`() {
+        val failure =
+            assertNotNull(
+                inputCoordinationMismatchFailure(
+                    requested = AttachInputCoordination.Disabled,
+                    daemonMode = null,
+                )
+            )
+
+        assertTrue(
+            failure.contains("predates", ignoreCase = true),
+            "should say the daemon is too old to answer: $failure",
+        )
+        assertTrue(failure.contains("spectre daemon kill"), failure)
+    }
+
+    @Test
+    fun `shutdown is exempt so the documented recovery is not a dead end`() {
+        // `spectre daemon kill` inherits the same -D and would hit this very check, leaving the
+        // user told to run a command that cannot run. Same exemption the frame budget needed.
+        assertTrue(ignoresInputCoordination(DaemonRequest.Shutdown))
+        assertTrue(!ignoresInputCoordination(DaemonRequest.ListSessions))
+    }
+
+    // ---- what counts as an explicit request ----
+
+    @Test
+    fun `an unset or blank property is not a request`() {
+        assertNull(AttachInputCoordination.requestedFromProperty(null))
+        assertNull(AttachInputCoordination.requestedFromProperty("   "))
+    }
+
+    @Test
+    fun `a set property is a request, including a typo`() {
+        // A typo still resolves to Required, and saying so against a Disabled daemon is right:
+        // the user meant to say something about coordination and did not get what they typed.
+        assertTrue(
+            AttachInputCoordination.requestedFromProperty("disabled") ==
+                AttachInputCoordination.Disabled
+        )
+        assertTrue(
+            AttachInputCoordination.requestedFromProperty("required") ==
+                AttachInputCoordination.Required
+        )
+        assertTrue(
+            AttachInputCoordination.requestedFromProperty("disabledd") ==
+                AttachInputCoordination.Required
+        )
+    }
+}

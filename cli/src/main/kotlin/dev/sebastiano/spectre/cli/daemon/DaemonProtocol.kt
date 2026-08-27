@@ -324,11 +324,18 @@ public sealed interface DaemonResponse {
      * @property maxFrameBytes the frame write budget this daemon booted with. `null` from a daemon
      *   that predates budget reporting, which is indistinguishable from "not the budget you asked
      *   for" — see `frameBudgetMismatchFailure`.
+     * @property inputCoordination the desktop input coordination mode this daemon booted with, as
+     *   [dev.sebastiano.spectre.agent.AttachInputCoordination.wireValue]. Reported for the same
+     *   reason as [maxFrameBytes]: the daemon resolves it once from its own system properties and
+     *   every attach it makes inherits that, so a later invocation's `-D` cannot reach it and has
+     *   to be told so rather than silently ignored (#472). `null` from a daemon that predates the
+     *   setting.
      */
     @Serializable
     public data class Hello(
         public val daemonVersion: DaemonProtocolVersion,
         public val maxFrameBytes: Int? = null,
+        public val inputCoordination: String? = null,
     ) : DaemonResponse
 
     @Serializable
