@@ -33,7 +33,7 @@ Monitor a PR persistently until one of the terminal states is reached:
 2. Run the watcher to snapshot PR/CI/review state.
 3. Inspect the `actions` list in the JSON output.
 4. Diagnose CI failures — classify as branch-related (fix and push) vs. flaky (retry).
-5. Process actionable review comments from trusted humans, Codex, and CodeRabbit.
+5. Process actionable review comments from trusted humans and Codex.
 6. Verify mergeability on each loop.
 7. After any push, relaunch `--watch` in the same turn.
 8. Continue until a terminal stop condition is reached.
@@ -72,11 +72,10 @@ python3 .agents/skills/babysit-pr/scripts/gh_pr_watch.py --pr https://github.com
 | `diagnose_branch_behind` | PR head is `BEHIND` the base branch — update the branch (rebase or merge base) before waiting on checks; `stop_ready_to_merge` is never emitted while behind |
 | `diagnose_skipping_checks` | One or more checks completed with `neutral`/`skipping` — investigate why |
 | `wait_codex` | Codex is still reviewing (👀 reaction present on the PR) — do not push or merge |
-| `wait_coderabbit` | CodeRabbit is still reviewing (its check is pending, or its 👀 reaction is present) — do not push or merge |
 
 Keep polling when CI is running (`idle`), when new review items arrive (`process_review_comment`),
-when Codex is still reviewing (`wait_codex`), when CodeRabbit is still reviewing
-(`wait_coderabbit`), or when CI is green but the PR is awaiting approval.
+when Codex is still reviewing (`wait_codex`), or when CI is green but the PR is
+awaiting approval.
 
 ## Post-merge cleanup (when `stop_pr_closed` and PR is merged)
 
@@ -111,14 +110,14 @@ Skip silently if the branch or worktree doesn't exist locally.
 Each push triggers new Codex runs. **Never push until all of the following are true:**
 
 1. `./gradlew check` passes locally (no CI failures to fix after the push).
-2. No review bot is still reviewing — Codex is not `IN_PROGRESS`, and CodeRabbit (when active on the PR) is not reviewing — so their comments, if any, can be collected and fixed in the same push.
-3. You have incorporated all currently visible actionable Codex and CodeRabbit comments into the pending local fix batch.
+2. Codex is not still reviewing — so its comments, if any, can be collected and fixed in the same push.
+3. You have incorporated all currently visible actionable Codex and human review comments into the pending local fix batch.
 
 After pushing the fix batch, resolve all bot threads on GitHub (or reply + resolve when no code change is needed). No open bot threads should remain when the PR is merged.
 
 **Workflow when fixes are needed:**
 
-1. Collect all outstanding issues: failed CI logs + any Codex/CodeRabbit comments already posted.
+1. Collect all outstanding issues: failed CI logs + any Codex or human review comments already posted.
 2. Fix everything locally in one pass.
 3. Run `./gradlew check` to confirm green.
 4. Only then push — one push per fix cycle.
@@ -127,24 +126,26 @@ If a bot finishes while you are mid-fix and posts new comments, incorporate thos
 
 ## Conflict + review-bot batching strategy (use this when PR shows `CONFLICTING`/`DIRTY`)
 
-When GitHub reports merge conflicts while Codex/CodeRabbit/CI is still running:
+When GitHub reports merge conflicts while Codex/CI is still running:
 
-1. **Do not push immediately.** Wait until no review bot is still reviewing.
+1. **Do not push immediately.** Wait until Codex is no longer reviewing.
 2. Snapshot latest status/comments.
 3. If conflict remains, rebase branch onto `origin/main` (or merge main if repo policy prefers).
-4. Resolve conflicts and **in the same fix cycle** apply all actionable Codex/CodeRabbit comments.
+4. Resolve conflicts and **in the same fix cycle** apply all actionable Codex and human review comments.
 5. Run `./gradlew check`.
 6. Push once.
 
 Rationale: this avoids paying for multiple Codex reruns and prevents a ping-pong where a conflict-fix push is immediately followed by a second bot-fix push.
 
-## Codex + CodeRabbit merge gate (mandatory)
+## Codex merge gate (mandatory)
 
-**Never merge until Codex reports clean, and CodeRabbit — when active on the PR — has finished reviewing.**
+**Never merge until Codex reports clean.**
 
-> Cursor Bugbot has been retired and no longer gates anything. A leftover `Cursor Bugbot`
-> check on an old PR is now treated like any other check: if it completes `neutral`/`skipping`
-> it shows up under `diagnose_skipping_checks`, not as a dedicated gate.
+> Cursor Bugbot and CodeRabbit have both been removed and no longer gate anything.
+> A leftover check from either on an old PR is now treated like any other check: if it
+> completes `neutral`/`skipping` it shows up under `diagnose_skipping_checks`, not as a
+> dedicated gate. CodeRabbit comments are no longer surfaced as actionable review items
+> either.
 
 ### Codex (emoji reaction)
 
@@ -156,20 +157,10 @@ Codex does **not** use a CI check. Instead it uses emoji reactions on the PR:
 
 The watcher automatically detects the 👀 reaction via the PR reactions API and surfaces `codex_gate` in the snapshot.
 
-### CodeRabbit (presence-conditional)
-
-CodeRabbit (`coderabbitai[bot]`) is **not** assumed to be present on a PR. It only gates the merge when it shows signs of life — a CodeRabbit CI check, or a reaction from the CodeRabbit bot. When dormant, the gate is inert and the watcher behaves as a Codex-only gate, so nothing breaks if CodeRabbit is removed from the repo.
-
-- **CodeRabbit check pending, or 👀 reaction present** from `coderabbitai[bot]` → still reviewing. `coderabbit_gate.reviewing` is `true` and a `wait_coderabbit` action is emitted. Do not push or merge.
-- **Check completed / non-eyes reaction only** → CodeRabbit is active but done (`"status": "active"`). Proceed; any review comments it posted are surfaced and block merge via the normal review-item path.
-- **No check, no reactions, no comments** → dormant (`"status": "idle"`). The gate does not block.
-
-The snapshot surfaces this as `coderabbit_gate` with `active`, `present_check`, `reviewing`, and `status` fields.
-
 ## Decision rules
 
 See `references/heuristics.md` for the full classification checklist:
-- **Branch-related failure**: edit the code, collect all other pending issues (Codex, CodeRabbit, human reviews), fix everything, run `./gradlew check`, then push once.
+- **Branch-related failure**: edit the code, collect all other pending issues (Codex, human reviews), fix everything, run `./gradlew check`, then push once.
 - **Likely flaky/unrelated**: rerun via `--retry-failed-now`; retry budget defaults to 3 per SHA.
   - The watcher only auto-reruns retry-eligible workflows (currently E2E-style workflows).
   - CI/check workflow failures are treated as diagnose/fix-first by default.
@@ -180,7 +171,6 @@ See `references/heuristics.md` for the full classification checklist:
 The watcher surfaces feedback from:
 - **chatgpt-codex-connector[bot]** — OpenAI Codex (emoji reaction-based code review)
 - **cursor[bot]** — retired Cursor Bugbot; its login stays in `REVIEW_BOT_LOGIN_KEYWORDS` so any leftover comment is still surfaced, but it no longer gates anything
-- **coderabbitai[bot]** — CodeRabbit (presence-conditional: gates only when its check or a reaction shows it is active on the PR; see the CodeRabbit gate section)
 - Trusted humans: authors with `OWNER`, `MEMBER`, or `COLLABORATOR` association
 
 > **Note**: if additional review bots are enabled on the repo (e.g. GitHub Actions summary
@@ -242,7 +232,6 @@ Example snapshot payload shape (`--once` / `--snapshot`, or `--watch` under `pay
   "checks": { "pending_count": 0, "failed_count": 1, "passed_count": 8, "skipping_count": 0, "all_terminal": true },
   "failed_runs": [{ "run_id": 123, "workflow_name": "CI", "conclusion": "failure", "retry_eligible": false, ... }],
   "codex_gate": { "reviewing": false, "status": "idle" },
-  "coderabbit_gate": { "active": false, "present_check": false, "reviewing": false, "status": "idle" },
   "hung_checks": [{ "name": "CI", "elapsed_seconds": 1920, "threshold_seconds": 1800 }],
   "new_review_items": [],
   "blocking_review_items": [],

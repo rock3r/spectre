@@ -28,13 +28,13 @@ If uncertain, inspect the failed logs once before choosing rerun.
    - If branch-related: **start fixing locally right away** — do not wait for other checks or bots to finish. But **do not push yet** — continue to steps 3 and 4 first.
    - If likely flaky/unrelated and all checks for the current SHA are terminal: rerun failed jobs.
    - If checks are still pending: wait for them, but if you already know something is broken you can start fixing it now.
-3. As Codex, CodeRabbit, or human reviewers post new comments while you are mid-fix, **incorporate their fixes into the same local batch**. Do not wait idle — keep fixing as issues come in. The only thing to wait for is pushing: do not push until all bots and checks have finished running so you can be sure you have collected everything.
+3. As Codex or human reviewers post new comments while you are mid-fix, **incorporate their fixes into the same local batch**. Do not wait idle — keep fixing as issues come in. The only thing to wait for is pushing: do not push until all bots and checks have finished running so you can be sure you have collected everything.
 4. **Push once** only when: all fixes are done AND all review bots are done AND `./gradlew check` is green.
 5. After the push (and before merging), **resolve every review bot comment thread on GitHub**: if the issue was fixed, resolve the thread; if it does not apply, post a short reply explaining why and then resolve the thread. The PR must have no open bot threads at merge time.
 6. If flaky reruns for the same SHA reach the configured limit (default 3): stop and report.
 
 > **Cost rule**: every push triggers new Codex runs. Batch all local fixes — CI failures,
-> Codex comments, CodeRabbit comments, human review comments — into a single commit before pushing.
+> Codex comments, human review comments — into a single commit before pushing.
 > Never push speculatively mid-fix-cycle.
 
 ## Review comment agreement criteria
