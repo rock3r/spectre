@@ -80,6 +80,28 @@ automator.longClick(send, holdFor = 600.milliseconds)
 All click helpers resolve the node's `centerOnScreen` and dispatch through `RobotDriver`,
 which compensates for HiDPI/display scaling.
 
+### Undelivered input fails loudly on Windows
+
+On Windows, node-targeted `click`, `doubleClick`, `longClick`, `swipe(from, to)` and
+`scrollWheel(node)` check that the event actually arrived. If Spectre dispatches the input
+and no matching mouse event reaches the target JVM, the call throws
+`IllegalStateException` in process, or reports `inputRejected` over the attach path.
+Earlier versions returned normally without doing anything.
+
+Windows discards injected input when the calling process is not on the session's active
+input desktop. The common causes are a locked workstation, or a process running on a
+desktop that is not the input one — including a non-interactive session such as Windows
+session 0, an SSH shell, or a scheduled task started while logged out. Input that lands
+somewhere else looks the same from inside the target: another window covering it, or a
+scroll delivered to the focused window rather than the one under the pointer.
+
+The check runs on Windows only. macOS swallows the click that activates an application,
+and on X11 the wheel arrives as button presses, so a missing event does not prove
+anything on those platforms. Behaviour there is unchanged.
+
+If you hit this, fix the environment rather than the test: run on an unlocked, interactive
+desktop. See [#460](https://github.com/rock3r/spectre/issues/460) for the investigation.
+
 ## Mouse: hover and pointer moves
 
 ```kotlin
