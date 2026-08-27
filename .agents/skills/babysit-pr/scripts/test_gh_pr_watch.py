@@ -792,6 +792,29 @@ class RetryEligibilityTests(unittest.TestCase):
 
         self.assertEqual(state["pending_checks_first_seen_at"], {})
 
+    def test_load_state_reads_non_ascii_state_files_as_utf8(self):
+        """save_state pins UTF-8, so load_state must not decode with the locale default."""
+        # Emoji reach the state dict through pending_check_key(), which embeds
+        # the GitHub check and workflow names verbatim.
+        key = "build \U0001f680|CI \u2014 main|https://example.test/1"
+
+        state = {
+            # A fresh snapshot timestamp keeps load_state from treating this as
+            # stale and resetting the seen-tracking fields.
+            "last_snapshot_at": watch.time.time(),
+            "pending_checks_first_seen_at": {key: 1},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = watch.Path(tmp_dir) / "state.json"
+            # Written as raw UTF-8 rather than via save_state: json.dumps escapes
+            # non-ASCII by default, so save_state cannot currently produce the
+            # bytes this guards against.
+            path.write_bytes(json.dumps(state, ensure_ascii=False).encode("utf-8"))
+            loaded, _ = watch.load_state(path)
+
+        self.assertEqual(loaded["pending_checks_first_seen_at"], {key: 1})
+
     def test_load_state_resets_seen_tracking_when_stale(self):
         stale_state = {
             "seen_issue_comment_ids": ["1"],

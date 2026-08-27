@@ -348,7 +348,7 @@ def is_state_stale(state, now_seconds=None):
 def load_state(path):
     if path.exists():
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as err:
             raise RuntimeError(f"State file is not valid JSON: {path}") from err
         if not isinstance(data, dict):
