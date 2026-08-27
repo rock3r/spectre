@@ -3,6 +3,7 @@
 package dev.sebastiano.spectre.input
 
 import java.io.IOException
+import java.nio.file.FileSystemException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
@@ -114,9 +115,19 @@ class CoordinatorEndpointTest {
         val target = temporaryDirectory.resolve("target")
         Files.createDirectory(target)
         val link = temporaryDirectory.resolve("spectre-input-link")
+        // Both branches mean "this host cannot make a symlink, so there is nothing to guard
+        // against here". UnsupportedOperationException is a file system that has no symlinks at
+        // all; FileSystemException is a host that has them but refuses this process the right to
+        // create one -- on Windows that is the usual case, since createSymbolicLink needs
+        // Developer Mode or SeCreateSymbolicLinkPrivilege and otherwise fails with "A required
+        // privilege is not held by the client". Failing there would make `./gradlew check`, the
+        // documented pre-push gate, impossible to get green on an ordinary Windows checkout. The
+        // assertion below is unchanged, so hosts that can create symlinks still cover the guard.
         try {
             link.createSymbolicLinkPointingTo(target)
         } catch (_: UnsupportedOperationException) {
+            return
+        } catch (_: FileSystemException) {
             return
         }
         val socket = link.resolve("input.sock")
