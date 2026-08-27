@@ -34,6 +34,7 @@ internal constructor(
     inputLeasePolicy: InputLeasePolicy = InputLeasePolicy.Off,
     inputLeaseCoordinator: InputLeaseCoordinator = ProductionInputLeaseCoordinator(),
     inputCapabilities: InputCapabilities? = null,
+    internal val deliveryWitness: InputDeliveryWitness = AwtInputDeliveryWitness,
 ) : AutoCloseable by inputLeaseCoordinator {
 
     /** Shared-OS-resource capabilities used by isolation integrations. */
