@@ -166,6 +166,10 @@ as long as it is in force.
     message naming that command. If you launch the daemon yourself, pass the property through
     `JAVA_TOOL_OPTIONS`.
 
+    A daemon left running from a Spectre build older than this feature is refused for the same
+    reason: it cannot say whether it coordinates, and Spectre will not assume it does. Restart it
+    once after upgrading.
+
     **Taking the opt-out back off needs the same restart**, and Spectre insists on it. Removing the
     property does not re-coordinate a daemon that is already running disabled; it would go on
     attaching every new target uncoordinated, and its own warning goes to a startup log that is

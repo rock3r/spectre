@@ -93,22 +93,40 @@ class DaemonInputCoordinationHandshakeTest {
     }
 
     @Test
-    fun `a daemon too old to report its mode is accepted when nothing was asked`() {
-        // Daemons that predate the setting predate the opt-out too, so they are coordinated by
-        // construction. Nothing to warn about, and failing here would break every older daemon.
-        assertNull(inputCoordinationMismatchFailure(requested = null, daemonMode = null))
-    }
-
-    @Test
-    fun `a daemon too old to report its mode satisfies an explicit required request`() {
-        // Same construction argument, so rejecting this was inconsistent with the branch's own
-        // reasoning: the daemon predates the opt-out, which is exactly what `required` asks for.
-        // Only an explicit `disabled` needs a restart against one of these.
-        assertNull(
+    fun `a daemon that cannot state its mode is never assumed to be coordinated`() {
+        // "It predates the setting, so it predates the opt-out, so it is coordinated" is wrong, and
+        // the dates say so: DaemonProtocol.CurrentVersion reached 1.12 on 2026-08-19 (9a15371) and
+        // coordination landed on 2026-08-24 (b5edbc5). A daemon built in between is 1.12, passes
+        // every compatibility check, reports no mode -- and injects the legacy no-argument
+        // RobotDriver, which coordinates nothing. It is indistinguishable here from a safe one.
+        //
+        // So this fails closed. "I cannot tell" must never be reported as "yes" for a safety
+        // property; that is the silent default-defeat #472 exists to remove. The cost is one
+        // `spectre daemon kill` after upgrading past this change.
+        assertNotNull(inputCoordinationMismatchFailure(requested = null, daemonMode = null))
+        assertNotNull(
             inputCoordinationMismatchFailure(
                 requested = AttachInputCoordination.Required,
                 daemonMode = null,
             )
+        )
+    }
+
+    @Test
+    fun `the too-old daemon message says why a restart is the only answer`() {
+        val failure =
+            assertNotNull(inputCoordinationMismatchFailure(requested = null, daemonMode = null))
+
+        assertTrue(failure.contains("spectre daemon kill"), failure)
+        assertTrue(
+            failure.contains("predates", ignoreCase = true),
+            "should say the daemon cannot answer, not that it answered wrongly: $failure",
+        )
+        // There is no property value that makes an unknown mode acceptable, so offering one would
+        // be advice that cannot be followed.
+        assertTrue(
+            !failure.contains("if you meant to keep"),
+            "must not offer to keep a mode nobody can name: $failure",
         )
     }
 

@@ -160,9 +160,9 @@ internal fun ignoresInputCoordination(request: DaemonRequest): Boolean =
  * announces itself on stderr. It does — into a startup log `DaemonProcessLauncher` deletes as soon
  * as the daemon is up, so on this path the announcement reaches nobody.
  *
- * A daemon that reports no mode is the exception: it predates the setting, and therefore predates
- * the opt-out, which makes it coordinated by construction. It satisfies a `required` request —
- * explicit or defaulted — and only an opt-out needs it restarted.
+ * A daemon that reports no mode is refused outright, whatever was asked. It cannot say whether it
+ * coordinates, and for a safety property an unanswerable question is not a yes — see the comment on
+ * that branch for why its protocol version cannot stand in for the answer.
  */
 @OptIn(ExperimentalSpectreAgentApi::class)
 internal fun inputCoordinationMismatchFailure(
@@ -171,12 +171,22 @@ internal fun inputCoordinationMismatchFailure(
 ): String? {
     val effective = requested ?: AttachInputCoordination.Required
     if (daemonMode == null) {
-        // Predates the setting, so predates the opt-out, so it is coordinated by construction --
-        // which is exactly what Required asks for. Only an opt-out needs a restart against one.
-        if (effective == AttachInputCoordination.Required) return null
+        // Fails closed, and deliberately so. It is tempting to reason that a daemon predating this
+        // field also predates the opt-out and is therefore coordinated -- but the dates rule that
+        // out: DaemonProtocol.CurrentVersion reached 1.12 on 2026-08-19 (9a15371) and coordination
+        // itself only landed on 2026-08-24 (b5edbc5). A daemon built in between reports 1.12,
+        // satisfies every compatibility floor, answers nothing here, and injects the legacy
+        // no-argument RobotDriver, which coordinates nothing at all. Nothing on this wire tells it
+        // apart from a daemon that would coordinate properly.
+        //
+        // "I cannot tell" must not be reported as "yes" for a safety property; doing so is the
+        // silent default-defeat #472 exists to remove. One `spectre daemon kill` after upgrading
+        // is the whole cost.
         return coordinationMismatchMessage(
             asked = "-D${AttachInputCoordination.PROPERTY}=${effective.wireValue}",
-            running = "a version that predates the setting",
+            running =
+                "a version that predates coordination reporting, so it cannot say whether it " +
+                    "coordinates at all",
             keepRunningMode = null,
         )
     }
