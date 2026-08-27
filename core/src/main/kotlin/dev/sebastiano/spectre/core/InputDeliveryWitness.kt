@@ -78,6 +78,7 @@ internal interface InputDeliveryWitness {
 internal object AwtInputDeliveryWitness : InputDeliveryWitness {
 
     override fun observe(input: DispatchedInput): InputDeliveryWitness.Observation? {
+        if (!inputDeliveryVerifiable()) return null
         val toolkit = runCatching { Toolkit.getDefaultToolkit() }.getOrNull() ?: return null
         val delivered = CountDownLatch(1)
         val listener = AWTEventListener { event ->
@@ -108,6 +109,24 @@ internal object AwtInputDeliveryWitness : InputDeliveryWitness {
         }
     }
 }
+
+/**
+ * Whether "no AWT event arrived" is sound evidence that input was discarded, on this platform.
+ *
+ * Only on Windows. #460 is a Windows problem and Windows is where the behaviour was measured, but
+ * the real constraint is that the oracle is **unsound elsewhere**: on macOS, AppKit consumes the
+ * click that activates an inactive application without delivering it to the window at all, so a
+ * perfectly healthy first click legitimately produces no event. `AgentAttachIntegrationTest`
+ * already compensates for exactly that by retrying, and treating the swallowed activation click as
+ * a failure would break the retry it depends on. X11 has its own divergences (the wheel is button
+ * 4/5 presses, so it emits nothing for a zero-notch scroll).
+ *
+ * Declining to observe reuses the existing "cannot testify" path, so non-Windows behaviour is
+ * exactly what it was before this guard existed.
+ */
+internal fun inputDeliveryVerifiable(
+    osName: String = System.getProperty("os.name").orEmpty()
+): Boolean = osName.startsWith("Windows", ignoreCase = true)
 
 /**
  * [RobotDriver.click], plus verification that the OS actually delivered the press to this JVM.

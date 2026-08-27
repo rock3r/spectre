@@ -11,6 +11,7 @@ import java.awt.image.BufferedImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.ZERO
 import kotlin.time.Duration.Companion.milliseconds
@@ -672,6 +673,18 @@ class RobotDriverTest {
         driver.scrollWheelVerified(screenX = 1, screenY = 2, wheelClicks = 0)
 
         assertEquals(0, witness.observations, "a no-op scroll must not be verified")
+    }
+
+    /**
+     * The oracle is only sound on Windows. On macOS AppKit swallows the click that activates an
+     * inactive app without delivering it, so a healthy first click produces no event —
+     * `AgentAttachIntegrationTest` relies on retrying exactly that.
+     */
+    @Test
+    fun `input delivery is only verifiable on Windows`() {
+        assertTrue(inputDeliveryVerifiable("Windows 11"))
+        assertFalse(inputDeliveryVerifiable("Mac OS X"))
+        assertFalse(inputDeliveryVerifiable("Linux"))
     }
 
     private fun realInputDriver(
