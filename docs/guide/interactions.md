@@ -68,6 +68,12 @@ test thread or use JUnit per-test isolation instead of blocking the AUT's event 
 `Auto` also avoids opening a new coordinator session from the EDT: without an already-connected
 session it proceeds uncoordinated. Choose `Required` when that fallback is unacceptable.
 
+The **attach path always uses `Required`** — an injected agent drives real input into a process you
+do not own, so a coordinator it cannot reach fails the input verb rather than quietly stopping
+policing the desktop. When the coordinator itself is broken and that leaves you with no way
+forward, there is one deliberate opt-out; see
+[When the coordinator cannot be reached](input-coordination.md#coordinator-unreachable).
+
 ## Mouse: clicks and drags
 
 ```kotlin

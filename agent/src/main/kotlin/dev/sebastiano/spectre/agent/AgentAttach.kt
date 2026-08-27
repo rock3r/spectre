@@ -39,11 +39,33 @@ public object AgentAttach {
      * JVM it injected disagreeing about the hop between them — a 16MiB target under a 64MiB daemon
      * would fail captures the daemon could carry.
      */
-    private fun agentArgsFor(options: AttachOptions, udsPath: Path): String =
+    private fun agentArgsFor(
+        options: AttachOptions,
+        udsPath: Path,
+        inputCoordination: AttachInputCoordination,
+    ): String =
         AgentBootstrapArgs.render(
             udsPath = udsPath.toString(),
             maxFrameBytes = options.maxFrameBytes ?: FrameLimits.maxFrameBytes,
+            inputCoordination = inputCoordination,
         )
+
+    /**
+     * Resolves the coordination mode for one attach: the explicit option if there is one, otherwise
+     * [AttachInputCoordination.PROPERTY], otherwise [AttachInputCoordination.Required].
+     *
+     * The property is not redundant with the option. `DaemonSessionRegistry` attaches with
+     * `AgentAttach.attach(pid)` and no options at all, so for anyone driving Spectre through the
+     * CLI the property is the *only* channel that reaches this decision; the option is for
+     * embedders, and for tests that must not depend on a JVM-global.
+     *
+     * [property] is a parameter so the precedence above can be tested without mutating a global.
+     */
+    internal fun resolveInputCoordination(
+        options: AttachOptions,
+        property: String? = System.getProperty(AttachInputCoordination.PROPERTY),
+    ): AttachInputCoordination =
+        options.inputCoordination ?: AttachInputCoordination.fromProperty(property)
 
     /** Attach to the JVM identified by [pid] and return a connected [AttachedAutomator]. */
     @Throws(SpectreAttachException::class)
@@ -64,7 +86,18 @@ public object AgentAttach {
         // generic ("Operation not permitted") and hard to diagnose; this gives a clear message
         // before we even open the VM connection.
         checkSameUser(pid)
-        val coordinatorClient = runCatching(::ensureInputCoordinator).getOrNull()
+        val inputCoordination = resolveInputCoordination(options)
+        announceInputCoordination(inputCoordination)
+        // Opting out means not standing one up either. Beyond consistency this is what makes the
+        // hatch usable on the host that motivated it: `connectOrStart` spends a 5s startup budget
+        // before giving up, so an attach that has already decided not to coordinate would
+        // otherwise still stall for it on every wedged-coordinator run.
+        val coordinatorClient =
+            if (inputCoordination == AttachInputCoordination.Required) {
+                runCatching(::ensureInputCoordinator).getOrNull()
+            } else {
+                null
+            }
         var coordinatorOwnedByResult = false
         try {
 
@@ -74,7 +107,7 @@ public object AgentAttach {
                     vmClass,
                     vm,
                     agentJar.toString(),
-                    agentArgsFor(options, udsPath),
+                    agentArgsFor(options, udsPath, inputCoordination),
                 )
             } finally {
                 detachVirtualMachine(vmClass, vm)
@@ -111,6 +144,25 @@ public object AgentAttach {
 
     private fun ensureInputCoordinator() =
         InputCoordinatorClientFactory.connectOrStart(ownerLabel = "spectre-agent-attacher")
+
+    /**
+     * Says on stderr that the escape hatch is in force, for as long as it is.
+     *
+     * A session running without desktop coordination has to be identifiable as one after the fact.
+     * The interesting failures here are the ones that only make sense once you know two runs were
+     * driving the same mouse, and by then the only evidence left is the log.
+     */
+    private fun announceInputCoordination(mode: AttachInputCoordination) {
+        if (mode == AttachInputCoordination.Required) return
+        val switch =
+            "-D${AttachInputCoordination.PROPERTY}=${AttachInputCoordination.DISABLE_VALUE}"
+        System.err.println(
+            "[spectre-attach] desktop input coordination is DISABLED for this attach " +
+                "($switch, or AttachOptions.inputCoordination). Nothing will stop another " +
+                "Spectre process from driving the same mouse and keyboard concurrently. " +
+                "See https://github.com/rock3r/spectre/issues/472"
+        )
+    }
 
     /**
      * Resolve the agent runtime JAR by trying in order:

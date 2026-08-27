@@ -2,6 +2,7 @@
 
 package dev.sebastiano.spectre.agent.runtime
 
+import dev.sebastiano.spectre.agent.AttachInputCoordination
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -112,5 +113,92 @@ class AgentBootstrapArgsTest {
         val parsed = AgentBootstrapArgs.parse(AgentBootstrapArgs.render(awkward, 4096))
 
         assertEquals(awkward, parsed.udsPath)
+    }
+
+    // ---- input coordination (#472) ----
+    //
+    // The injected runtime cannot read the attacher's system properties any more than it can read
+    // its environment, so the attacher's coordination decision has to ride in `agentArgs` too. The
+    // *absence* of that field must mean Required: an older attacher, a hand-written `-javaagent:`
+    // line, and a corrupted value all have to land on the coordinated behaviour, not off it.
+
+    @Test
+    fun `a missing coordination field means coordination is required`() {
+        val parsed = AgentBootstrapArgs.parse("uds=/tmp/sp-a-1/agent.sock,maxFrameBytes=1024")
+
+        assertEquals(AttachInputCoordination.Required, parsed.inputCoordination)
+    }
+
+    @Test
+    fun `a bare path means coordination is required`() {
+        val parsed = AgentBootstrapArgs.parse("/tmp/sp-a-123-abcd/agent.sock")
+
+        assertEquals(AttachInputCoordination.Required, parsed.inputCoordination)
+    }
+
+    @Test
+    fun `null args mean coordination is required`() {
+        assertEquals(
+            AttachInputCoordination.Required,
+            AgentBootstrapArgs.parse(null).inputCoordination,
+        )
+    }
+
+    @Test
+    fun `the two-argument render keeps the coordinated behaviour it always had`() {
+        val rendered =
+            AgentBootstrapArgs.render(udsPath = "/tmp/sp-a-1/agent.sock", maxFrameBytes = 1024)
+
+        assertEquals("uds=/tmp/sp-a-1/agent.sock,maxFrameBytes=1024", rendered)
+        assertEquals(
+            AttachInputCoordination.Required,
+            AgentBootstrapArgs.parse(rendered).inputCoordination,
+        )
+    }
+
+    @Test
+    fun `a disabled attach carries the opt-out to the target`() {
+        val rendered =
+            AgentBootstrapArgs.render(
+                udsPath = "/tmp/sp-a-1/agent.sock",
+                maxFrameBytes = 1024,
+                inputCoordination = AttachInputCoordination.Disabled,
+            )
+
+        assertEquals(
+            "uds=/tmp/sp-a-1/agent.sock,maxFrameBytes=1024,inputCoordination=disabled",
+            rendered,
+        )
+        assertEquals(
+            AttachInputCoordination.Disabled,
+            AgentBootstrapArgs.parse(rendered).inputCoordination,
+        )
+    }
+
+    @Test
+    fun `a required attach renders the field explicitly and round-trips`() {
+        val rendered =
+            AgentBootstrapArgs.render(
+                udsPath = "/tmp/sp-a-1/agent.sock",
+                maxFrameBytes = 1024,
+                inputCoordination = AttachInputCoordination.Required,
+            )
+
+        assertEquals(
+            AttachInputCoordination.Required,
+            AgentBootstrapArgs.parse(rendered).inputCoordination,
+        )
+    }
+
+    @Test
+    fun `an unrecognised coordination value stays coordinated`() {
+        // Same safe direction as the property parser: a corrupted or truncated field must not be
+        // the thing that quietly stops policing the desktop.
+        val parsed =
+            AgentBootstrapArgs.parse(
+                "uds=/tmp/sp-a-1/agent.sock,inputCoordination=true,maxFrameBytes=1"
+            )
+
+        assertEquals(AttachInputCoordination.Required, parsed.inputCoordination)
     }
 }

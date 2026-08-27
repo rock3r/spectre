@@ -207,7 +207,7 @@ internal class InputLeaseGuard(
                             failure,
                         )
                     }
-                    throw failure
+                    throw withRecoveryAdvice(failure)
                 }
             try {
                 lease.checkpoint()
@@ -253,6 +253,24 @@ internal class InputLeaseGuard(
             "This RobotDriver is already bound to a live per-test input lease"
         }
         return AutoCloseable { boundLease.compareAndSet(lease, null) }
+    }
+
+    /**
+     * Adds the recovery story to a failure that leaves a [InputLeasePolicy.Required] driver with no
+     * way forward, and returns every other failure untouched.
+     *
+     * Scoped tightly on purpose. Only [UNREACHABLE_COORDINATOR_ERROR_CODES] mean *there is no
+     * coordinator to talk to*, which is the one situation where proceeding uncoordinated is a
+     * sensible thing for a human to choose. `ACQUIRE_TIMEOUT` and `FENCED` are the opposite: the
+     * coordinator worked, and somebody else holds the desktop. Answering those with "you can turn
+     * coordination off" would talk a user into the exact interleaved-input corruption the lease had
+     * just prevented, so they keep the plain message.
+     */
+    private fun withRecoveryAdvice(failure: InputCoordinatorException): InputCoordinatorException {
+        if (policy != InputLeasePolicy.Required) return failure
+        if (failure.errorCode !in UNREACHABLE_COORDINATOR_ERROR_CODES) return failure
+        return InputCoordinatorException(failure.errorCode, unreachableCoordinatorMessage(failure))
+            .apply { initCause(failure) }
     }
 
     private fun coordinates(resource: CoordinatedResource): Boolean {
@@ -326,8 +344,50 @@ internal class InputLeaseGuard(
     private companion object {
         val AUTO_DEGRADE_ERROR_CODES: Set<String> =
             setOf("COORDINATOR_PROVIDER_MISSING", "COORDINATOR_SESSION_UNAVAILABLE")
+
+        /**
+         * Failures that mean no coordinator could be reached at all, as opposed to one that
+         * answered and said no.
+         *
+         * `COORDINATOR_IO` is the wedged case from #462: the launching provider spends its startup
+         * budget, gives up with an `IOException`, and `ProductionInputLeaseCoordinator` reports it
+         * under this code. `COORDINATOR_PROVIDER_MISSING` is the coordinator artifact being absent
+         * from the classpath — a different cause, same dead end for the user.
+         */
+        val UNREACHABLE_COORDINATOR_ERROR_CODES: Set<String> =
+            setOf("COORDINATOR_IO", "COORDINATOR_PROVIDER_MISSING")
     }
 }
+
+/**
+ * Tells a user stuck behind an unreachable coordinator what they can do and what it will cost them.
+ *
+ * Modelled on `undeliveredInputMessage` in `InputDeliveryWitness.kt`: keep the measured cause
+ * verbatim, say plainly which part is inference, name the escape hatch precisely enough to paste,
+ * and link the issue.
+ *
+ * Two spellings are given because there are two ways to be here and the reader knows which one they
+ * are. A property name from the attach path is listed even though this code also runs in-process:
+ * the attach path is where the dead end was total (#472), it is where a user has no other lever,
+ * and an unmistakably-labelled line that does not apply costs a reader a second — whereas omitting
+ * it costs the CLI user the only route they have.
+ *
+ * The cost sentence is not decoration. Coordination is mutual exclusion, and a user who disables it
+ * without understanding that has been handed a subtler bug than the one they were trying to escape.
+ */
+private fun unreachableCoordinatorMessage(failure: InputCoordinatorException): String =
+    "${failure.message.orEmpty().trimEnd('.', ' ')}. " +
+        "Spectre could not reach the desktop input coordinator " +
+        "(${failure.errorCode}), and this driver runs with InputLeasePolicy.Required, which fails " +
+        "rather than continuing uncoordinated. Measured: no coordinator answered. Not measured: " +
+        "whether it is wedged, absent, or merely slower than its startup budget. " +
+        "To proceed without coordination, deliberately, when attaching to a target: pass " +
+        "-Ddev.sebastiano.spectre.agent.inputCoordination=disabled on the attaching JVM, or set " +
+        "AttachOptions.inputCoordination = AttachInputCoordination.Disabled; in-process: construct " +
+        "the driver as RobotDriver(InputLeasePolicy.Off). What that costs you: coordination is " +
+        "what stops two Spectre processes driving the same mouse and keyboard at once, so only do " +
+        "it when you know nothing else is automating this desktop. " +
+        "See https://github.com/rock3r/spectre/issues/472"
 
 internal class DriverInputCoordination(private val guard: InputLeaseGuard) {
     suspend fun checkpoint() {
