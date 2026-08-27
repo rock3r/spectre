@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import dev.sebastiano.spectre.agent.AttachInputCoordination
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.FrameLimits
 import java.io.IOException
@@ -12,6 +13,7 @@ public class DaemonProcessLauncher(
     private val socketPath: Path,
     private val javaExecutable: String = defaultJavaExecutable(),
     private val classPath: String = System.getProperty("java.class.path"),
+    private val readProperty: (String) -> String? = System::getProperty,
 ) {
     private var startupErrorLog: Path? = null
     private var daemonProcess: Process? = null
@@ -53,7 +55,7 @@ public class DaemonProcessLauncher(
     /** Returns the isolated daemon command without starting a process. */
     public fun command(): List<String> = buildList {
         add(javaExecutable)
-        addAll(agentRuntimePropertyArgument())
+        addAll(forwardedPropertyArguments())
         add("-cp")
         add(classPath)
         add(DAEMON_MAIN_CLASS)
@@ -69,10 +71,20 @@ public class DaemonProcessLauncher(
         }
     }
 
-    private fun agentRuntimePropertyArgument(): List<String> =
-        System.getProperty("dev.sebastiano.spectre.agent.runtimeJar")
-            ?.let { listOf("-Ddev.sebastiano.spectre.agent.runtimeJar=$it") }
-            .orEmpty()
+    /**
+     * Re-states on the daemon's command line the switches this process was given.
+     *
+     * The daemon is a fresh JVM launched from an explicit argument list, so it inherits this
+     * process's environment but none of its `-D`s. Anything the daemon reads as a system property
+     * has to be listed here or a user who sets it on the CLI watches it be silently ignored — which
+     * for [AttachInputCoordination.PROPERTY] would look exactly like an escape hatch that does not
+     * work, since `DaemonSessionRegistry` attaches with no `AttachOptions` at all and the property
+     * is that user's only channel into the decision.
+     */
+    private fun forwardedPropertyArguments(): List<String> =
+        FORWARDED_PROPERTIES.mapNotNull { name ->
+            readProperty(name)?.let { value -> "-D$name=$value" }
+        }
 
     private fun restoreBundledRuntimeExecutePermissions() {
         if (javaExecutable != defaultJavaExecutable()) return
@@ -88,6 +100,10 @@ public class DaemonProcessLauncher(
     private companion object {
         private const val DAEMON_MAIN_CLASS: String =
             "dev.sebastiano.spectre.cli.daemon.DaemonMainKt"
+
+        /** System properties the daemon reads, and therefore has to be handed. */
+        private val FORWARDED_PROPERTIES: List<String> =
+            listOf("dev.sebastiano.spectre.agent.runtimeJar", AttachInputCoordination.PROPERTY)
 
         private fun defaultJavaExecutable(): String {
             val executable =

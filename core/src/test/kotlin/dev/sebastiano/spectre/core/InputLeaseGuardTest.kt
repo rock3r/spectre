@@ -655,18 +655,6 @@ class InputLeaseGuardTest {
         assertEquals(listOf("press:65", "release:65"), robot.events)
     }
 
-    private fun realDriver(
-        coordinator: InputLeaseCoordinator,
-        policy: InputLeasePolicy = InputLeasePolicy.Required,
-    ): RobotDriver =
-        RobotDriver(
-            robot = LeaseTestRobotAdapter(),
-            clipboard = LeaseTestClipboardAdapter(),
-            inputLeasePolicy = policy,
-            inputLeaseCoordinator = coordinator,
-            inputCapabilities = InputCapabilities(realOsInput = true, sharedSystemClipboard = true),
-        )
-
     private fun awaitWaiterCount(
         endpoint: CoordinatorEndpoint,
         resource: DesktopResourceKey,
@@ -717,6 +705,152 @@ class InputLeaseGuardTest {
         val STATUS_POLL_INTERVAL: Duration = 10.milliseconds
     }
 }
+
+/**
+ * What a `Required` driver is told when no coordinator can be reached (#472).
+ *
+ * Split out of [InputLeaseGuardTest] rather than added to it: these are about the *wording* of one
+ * failure, not about lease mechanics, and the guard suite is already at the project's class-size
+ * ceiling. They share this file's fixtures because the behaviour under test is the guard's.
+ *
+ * `Required` never degrades, which is the point of it — but until #472 the resulting failure said
+ * what broke and nothing about what to do, so a wedged coordinator took down every input verb with
+ * no way forward. The message has to name the escape hatch *and* what it costs, and it must not
+ * offer that advice for failures where taking it would be actively harmful.
+ */
+class UnreachableCoordinatorRecoveryTest {
+
+    @Test
+    fun `an unreachable coordinator failure names the escape hatch and its cost`() = runTest {
+        val coordinator =
+            RecordingInputLeaseCoordinator(
+                acquireFailure =
+                    InputCoordinatorException(
+                        "COORDINATOR_IO",
+                        "Input coordinator connection failed: did not become ready",
+                    )
+            )
+        val driver = realDriver(coordinator, policy = InputLeasePolicy.Required)
+
+        val failure = assertFailsWith<InputCoordinatorException> { driver.click(1, 2) }
+
+        val message = failure.message.orEmpty()
+        assertEquals("COORDINATOR_IO", failure.errorCode, "the taxonomy must survive enrichment")
+        assertTrue(
+            message.contains("did not become ready"),
+            "the measured cause must survive: $message",
+        )
+        assertTrue(
+            message.contains("dev.sebastiano.spectre.agent.inputCoordination=disabled"),
+            "the attach-path escape hatch must be named verbatim: $message",
+        )
+        assertTrue(
+            message.contains("InputLeasePolicy.Off"),
+            "the in-process escape hatch must be named: $message",
+        )
+        assertTrue(
+            message.contains("same mouse and keyboard", ignoreCase = true),
+            "the cost of opting out must be stated: $message",
+        )
+        assertTrue(
+            message.contains("https://github.com/rock3r/spectre/issues/472"),
+            "the message must link the issue: $message",
+        )
+    }
+
+    @Test
+    fun `the recovery advice is plain ASCII`() = runTest {
+        // It is read off a Windows console more often than anywhere else, and a code page that is
+        // not UTF-8 turns a stray em dash into a question mark in the middle of a copy-pasteable
+        // recovery instruction.
+        val coordinator =
+            RecordingInputLeaseCoordinator(
+                acquireFailure = InputCoordinatorException("COORDINATOR_IO", "did not become ready")
+            )
+        val driver = realDriver(coordinator, policy = InputLeasePolicy.Required)
+
+        val failure = assertFailsWith<InputCoordinatorException> { driver.click(1, 2) }
+
+        val offending = failure.message.orEmpty().filterNot { it.code in 0x20..0x7E }
+        assertEquals("", offending, "non-ASCII in the recovery message: ${failure.message}")
+    }
+
+    @Test
+    fun `a provider-missing failure also gets the recovery story`() = runTest {
+        val coordinator =
+            RecordingInputLeaseCoordinator(
+                acquireFailure =
+                    InputCoordinatorException(
+                        "COORDINATOR_PROVIDER_MISSING",
+                        "runtime artifact unavailable",
+                    )
+            )
+        val driver = realDriver(coordinator, policy = InputLeasePolicy.Required)
+
+        val failure = assertFailsWith<InputCoordinatorException> { driver.click(1, 2) }
+
+        assertEquals("COORDINATOR_PROVIDER_MISSING", failure.errorCode)
+        assertTrue(
+            failure.message.orEmpty().contains("dev.sebastiano.spectre.agent.inputCoordination"),
+            "${failure.message}",
+        )
+    }
+
+    @Test
+    fun `a contended lease is not answered with advice to stop coordinating`() = runTest {
+        // ACQUIRE_TIMEOUT means the coordinator worked perfectly and someone else holds the
+        // desktop. Telling that user to disable coordination would hand them the exact
+        // interleaved-input corruption the lease just prevented.
+        val coordinator =
+            RecordingInputLeaseCoordinator(
+                acquireFailure =
+                    InputCoordinatorException("ACQUIRE_TIMEOUT", "another owner holds the desktop")
+            )
+        val driver = realDriver(coordinator, policy = InputLeasePolicy.Required)
+
+        val failure = assertFailsWith<InputCoordinatorException> { driver.click(1, 2) }
+
+        assertEquals("another owner holds the desktop", failure.message)
+    }
+
+    @Test
+    fun `a fenced lease is not answered with advice to stop coordinating`() = runTest {
+        val coordinator =
+            RecordingInputLeaseCoordinator(
+                acquireFailure = InputCoordinatorException("FENCED", "lease was revoked")
+            )
+        val driver = realDriver(coordinator, policy = InputLeasePolicy.Required)
+
+        val failure = assertFailsWith<InputCoordinatorException> { driver.click(1, 2) }
+
+        assertEquals("lease was revoked", failure.message)
+    }
+
+    @Test
+    fun `off never reaches the coordinator so it never needs the recovery story`() = runTest {
+        val coordinator =
+            RecordingInputLeaseCoordinator(
+                acquireFailure = InputCoordinatorException("COORDINATOR_IO", "did not become ready")
+            )
+        val driver = realDriver(coordinator, policy = InputLeasePolicy.Off)
+
+        driver.click(1, 2)
+
+        assertEquals(emptyList(), coordinator.operations)
+    }
+}
+
+private fun realDriver(
+    coordinator: InputLeaseCoordinator,
+    policy: InputLeasePolicy = InputLeasePolicy.Required,
+): RobotDriver =
+    RobotDriver(
+        robot = LeaseTestRobotAdapter(),
+        clipboard = LeaseTestClipboardAdapter(),
+        inputLeasePolicy = policy,
+        inputLeaseCoordinator = coordinator,
+        inputCapabilities = InputCapabilities(realOsInput = true, sharedSystemClipboard = true),
+    )
 
 private fun recordingLease(failCheckpointAt: Int? = null): RecordingCoordinatedInputLease =
     RecordingCoordinatedInputLease(failCheckpointAt)

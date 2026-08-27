@@ -42,6 +42,14 @@ import java.util.UUID
  *   `--max-frame-bytes` propagates it to every JVM it injects. The target cannot read the
  *   attacher's environment, and it is the side that writes screenshot frames, so this is the only
  *   channel that reaches it.
+ * @property inputCoordination whether the attached target coordinates its use of the shared
+ *   desktop. `null` (default) resolves [AttachInputCoordination.PROPERTY] on this JVM, which itself
+ *   defaults to [AttachInputCoordination.Required] — so leaving this alone coordinates, and so does
+ *   every value of that property except the one word that opts out. Setting it explicitly wins over
+ *   the property in **both** directions: an integration that pins `Required` cannot be unpinned by
+ *   a property left lying around in the environment. Read [AttachInputCoordination] before reaching
+ *   for [AttachInputCoordination.Disabled] — it is deliberate, it is announced on stderr, and it
+ *   costs you the guarantee that nothing else is driving this desktop.
  */
 @ExperimentalSpectreAgentApi
 public data class AttachOptions(
@@ -49,6 +57,7 @@ public data class AttachOptions(
     public val udsPath: Path? = null,
     public val attachTimeoutMs: Long = DEFAULT_ATTACH_TIMEOUT_MS,
     public val maxFrameBytes: Int? = null,
+    public val inputCoordination: AttachInputCoordination? = null,
 ) {
     init {
         // The agent logs and ignores a budget it cannot apply, so an unusable value here would let

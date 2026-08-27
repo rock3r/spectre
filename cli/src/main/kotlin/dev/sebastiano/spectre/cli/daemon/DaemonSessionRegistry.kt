@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.cli.daemon
 
 import dev.sebastiano.spectre.agent.AgentAttach
+import dev.sebastiano.spectre.agent.AttachInputCoordination
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.SpectreAttachException
 import dev.sebastiano.spectre.agent.transport.FrameLimits
@@ -72,6 +73,9 @@ internal constructor(
                 DaemonResponse.Hello(
                     daemonVersion = DaemonProtocol.CurrentVersion,
                     maxFrameBytes = FrameLimits.maxFrameBytes,
+                    // Resolved from this JVM's properties, which do not change while it lives, so
+                    // this is the mode every attach this daemon makes will use.
+                    inputCoordination = AttachInputCoordination.fromProperty().wireValue,
                 )
             is DaemonRequest.Attach -> error("attach must use attach() outside the monitor")
             is DaemonRequest.Detach -> error("detach must use handleDetachOutsideLock")

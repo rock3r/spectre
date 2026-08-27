@@ -109,6 +109,85 @@ Automatic leases cover real pointer, keyboard, focus, and system-clipboard work.
 waits, screenshots, and recording do not acquire automatically. Put a visibility-sensitive
 capture inside `withExclusiveInput` when it must not race another client's input.
 
+## When the coordinator cannot be reached {#coordinator-unreachable}
+
+`Required` never degrades — that is what it is for. Every capability that touches shared OS state
+(`focusWindow`, `click`, `typeText`, `pasteText`, …) fails when no coordinator answers, and
+[agent attach](agent.md) always uses `Required`, so on that path a broken coordinator takes down
+the whole input surface at once.
+
+The failure names what it measured and what you can do about it:
+
+```text
+Input coordinator connection failed: Input coordinator did not become ready at …. Spectre could
+not reach the desktop input coordinator (COORDINATOR_IO), and this driver runs with
+InputLeasePolicy.Required, which fails rather than continuing uncoordinated. …
+```
+
+First **fix the coordinator**, because that keeps the guarantee:
+
+- Check `spectre-input-coordinator-server` and its dependencies are on `java.class.path` —
+  a `COORDINATOR_PROVIDER_MISSING` code means the artifact is simply absent.
+- Run `spectre input-lock status --json` to see whether a coordinator is up and who holds the
+  desktop, and recover a stuck lease as described below.
+- Run the command from `CoordinatorProcessLauncher.command()` by hand to keep the child JVM's
+  stderr, which automatic launches discard.
+
+If the coordinator is genuinely unusable and you need to make progress anyway, opt out
+**explicitly**. In-process, construct the driver as `RobotDriver(InputLeasePolicy.Off)`. On the
+attach path, either set the system property on the **attaching** JVM:
+
+```text
+-Ddev.sebastiano.spectre.agent.inputCoordination=disabled
+```
+
+or say it in code:
+
+```kotlin
+AgentAttach.attach(pid, AttachOptions(inputCoordination = AttachInputCoordination.Disabled))
+```
+
+The property is the channel that reaches the CLI, which attaches without `AttachOptions`. Only the
+exact word `disabled` opts out — unset, blank, `true`, and a misspelling all keep coordination on,
+so this cannot be tripped by accident. Both the attacher and the target print a line to stderr for
+as long as it is in force.
+
+!!! important "A running daemon keeps the mode it booted with"
+    `spectre` forwards the property to a daemon it *starts*, but a daemon is long-lived and shared,
+    and it resolves the mode once — every target it injects inherits that. Since you only reach for
+    this switch after an attach has already failed, there is almost always a daemon already running
+    without it. Kill it first:
+
+    ```text
+    spectre daemon kill
+    ```
+
+    You do not have to remember: a mode that cannot take effect is refused at the handshake with a
+    message naming that command. If you launch the daemon yourself, pass the property through
+    `JAVA_TOOL_OPTIONS`.
+
+    A daemon left running from a Spectre build older than this feature is refused for the same
+    reason: it cannot say whether it coordinates, and Spectre will not assume it does. Restart it
+    once after upgrading.
+
+    **Taking the opt-out back off needs the same restart**, and Spectre insists on it. Removing the
+    property does not re-coordinate a daemon that is already running disabled; it would go on
+    attaching every new target uncoordinated, and its own warning goes to a startup log that is
+    deleted once it is up, so nothing would tell you. Commands are refused until you restart it —
+    running without the property means asking for the default, and Spectre will not quietly give
+    you something else.
+
+!!! danger "Opting out removes the mutual exclusion, it does not repair it"
+    Coordination is what stops two Spectre processes driving the same mouse and keyboard at the
+    same time. With it off nothing does, and two runs interleaving real input produce failures that
+    look like anything but their cause. Use this only when you know your coordinator is broken
+    **and** you know nothing else is automating this desktop, and take it back out afterwards.
+
+`Auto` is deliberately not the answer here. It degrades for exactly two error codes —
+`COORDINATOR_PROVIDER_MISSING` and `COORDINATOR_SESSION_UNAVAILABLE` — and a coordinator that
+cannot be reached reports `COORDINATOR_IO`, so `Auto` would fail this case anyway while weakening
+every other one.
+
 ## JUnit 4 and JUnit 5
 
 Whole-test isolation is available on both in-process wrappers:

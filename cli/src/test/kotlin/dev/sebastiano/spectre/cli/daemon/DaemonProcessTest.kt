@@ -56,7 +56,13 @@ class DaemonProcessTest {
                     DaemonRequest.Hello(DaemonProtocol.CurrentVersion),
                 )
                 assertEquals(
-                    DaemonResponse.Hello(DaemonProtocol.CurrentVersion, FrameLimits.maxFrameBytes),
+                    DaemonResponse.Hello(
+                        DaemonProtocol.CurrentVersion,
+                        FrameLimits.maxFrameBytes,
+                        // Literal, not AttachInputCoordination.fromProperty(): this pins that a
+                        // daemon with nothing configured reports itself coordinated (#472).
+                        "required",
+                    ),
                     DaemonWireCodec.readResponse(input),
                 )
             }
@@ -111,7 +117,13 @@ class DaemonProcessTest {
                     DaemonRequest.Hello(DaemonProtocol.CurrentVersion),
                 )
                 assertEquals(
-                    DaemonResponse.Hello(DaemonProtocol.CurrentVersion, FrameLimits.maxFrameBytes),
+                    DaemonResponse.Hello(
+                        DaemonProtocol.CurrentVersion,
+                        FrameLimits.maxFrameBytes,
+                        // Literal, not AttachInputCoordination.fromProperty(): this pins that a
+                        // daemon with nothing configured reports itself coordinated (#472).
+                        "required",
+                    ),
                     DaemonWireCodec.readResponse(input),
                 )
                 DaemonWireCodec.writeRequest(output, DaemonRequest.Shutdown)

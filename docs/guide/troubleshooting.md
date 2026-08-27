@@ -135,7 +135,9 @@ If the coordinator process does not become ready, check that
 `spectre-input-coordinator-server` and its dependencies are present in `java.class.path`. This is
 especially relevant for thin `java -jar` launchers and module-path-only applications. Run the
 command returned by `CoordinatorProcessLauncher.command()` directly when you need to retain the
-child JVM's standard error; automatic launches intentionally discard child output.
+child JVM's standard error; automatic launches intentionally discard child output. See
+["Every input verb fails and the coordinator will not start"](#coordinator-unreachable) when the
+coordinator cannot be repaired and you need a way through.
 
 Use synthetic input:
 
@@ -152,6 +154,57 @@ Synthetic input posts AWT events directly into the target window's event queue �
 global focus, no cursor motion. The trade-off is that some interactions (system-level
 shortcuts, real OS drag-and-drop) won't behave the same way. See
 [Driving input](interactions.md#real-vs-synthetic-input).
+
+## "Every input verb fails and the coordinator will not start" {#coordinator-unreachable}
+
+Symptom: semantics reads, `windows()`, `findByTestTag` and screenshots all keep working, while
+`focusWindow`, `click`, `typeText` and `pasteText` all fail at once with a message about the input
+coordinator. That split is the signature — everything that touches the shared desktop is gated on a
+lease, and nothing else is.
+
+The failure now names its own way out:
+
+```text
+… Spectre could not reach the desktop input coordinator (COORDINATOR_IO), and this driver runs
+with InputLeasePolicy.Required, which fails rather than continuing uncoordinated. Measured: no
+coordinator answered. Not measured: whether it is wedged, absent, or merely slower than its
+startup budget. …
+```
+
+Read the error code first, because two of them mean different repairs:
+
+| Code | What it means | First thing to try |
+| --- | --- | --- |
+| `COORDINATOR_PROVIDER_MISSING` | the coordinator artifact is not on the classpath | add `spectre-input-coordinator-server` to the **attacher's** runtime classpath |
+| `COORDINATOR_IO` | a coordinator was launched but no client could reach it | run `CoordinatorProcessLauncher.command()` by hand and read the child's stderr |
+| `ACQUIRE_TIMEOUT` | the coordinator is fine; another owner holds the desktop | `spectre input-lock status --json`, then revoke the exact lease ID |
+
+Do **not** answer `ACQUIRE_TIMEOUT` by turning coordination off: that failure means the lease is
+doing its job — see "Tests fight over OS focus when run in parallel" above.
+
+If the coordinator is genuinely unusable — for instance a host where the socket path itself is
+broken — there is one deliberate opt-out for the attach path. Set it on the **attaching** JVM:
+
+```text
+-Ddev.sebastiano.spectre.agent.inputCoordination=disabled
+```
+
+**Kill the running daemon first** — `spectre daemon kill`. A daemon resolves this mode once at
+startup and every target it injects inherits it, so the switch cannot reach the daemon that was
+already up when your attach failed. Spectre refuses the mismatch at the handshake and names that
+command, so you will be told rather than left wondering why the switch did nothing.
+
+**And kill it again when you are done.** Dropping the property does not re-coordinate a daemon
+already running disabled — it keeps attaching new targets uncoordinated, and nothing on your
+terminal says so. Commands are refused until you restart it, on purpose: running without the
+property means asking for the default.
+
+`spectre` forwards the property to a daemon it starts; pass it through `JAVA_TOOL_OPTIONS` if you
+launch the daemon yourself. Only the exact word `disabled` opts out, and both the attacher and the
+target announce it on stderr while it is in force. It costs you the guarantee that nothing else is
+driving this desktop — read
+[When the coordinator cannot be reached](input-coordination.md#coordinator-unreachable) before
+using it.
 
 ## "`typeText` or `pasteText` didn't reach my field"
 
@@ -474,7 +527,9 @@ implies the IDE’s bundled JBR — do not ship a second skiko into the plugin c
 If an attached session can inspect semantics but real input reports that the coordinator provider
 is missing, add `spectre-input-coordinator-server` to the attacher's runtime classpath and retry.
 Read-only attach deliberately remains available when the experimental coordinator cannot start;
-current-core real input uses `Required` and fails closed instead of running uncoordinated.
+current-core real input uses `Required` and fails closed instead of running uncoordinated. When the
+coordinator cannot be repaired, see
+["Every input verb fails and the coordinator will not start"](#coordinator-unreachable).
 
 The sample IntelliJ plugin module configures its sandbox JDK via the IntelliJ Platform
 Gradle plugin; you do not pick Temurin for that path.

@@ -126,6 +126,14 @@ listed in `java.class.path`; Spectre scans that classpath, takes the physical ja
 that path to `VirtualMachine.loadAgent(...)`. The attacher does not call classes from the runtime
 jar directly, and the target still does not need `spectre-agent-runtime` declared as a dependency.
 
+One further attacher-side switch exists, and it is not one to set casually:
+`-Ddev.sebastiano.spectre.agent.inputCoordination=disabled` (or
+`AttachOptions.inputCoordination = AttachInputCoordination.Disabled`) drops the attach path from
+`InputLeasePolicy.Required` to `Off` in the target. It exists so a broken input coordinator is
+recoverable rather than terminal, and it costs you the guarantee that no other Spectre process is
+driving the same desktop. Read
+[When the coordinator cannot be reached](input-coordination.md#coordinator-unreachable) first.
+
 Classpath and directory discovery require exactly one runtime-jar candidate. If more than one
 `spectre-agent-runtime-*.jar` / `agent-runtime-*.jar` is present, attach fails with
 `AmbiguousAgentRuntimeJarException` naming every candidate rather than picking by classpath

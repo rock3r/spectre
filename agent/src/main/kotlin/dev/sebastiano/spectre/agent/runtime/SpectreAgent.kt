@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.agent.runtime
 
+import dev.sebastiano.spectre.agent.AttachInputCoordination
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.FrameLimits
 import dev.sebastiano.spectre.agent.transport.IpcServer
@@ -100,12 +101,15 @@ public object SpectreAgent {
             // failures are logged and identity falls back to null handles.
             AwtPeerModuleOpener.openFor(loader, instrumentation)
 
-            val agentAutomator = createAutomatorReflectively(loader)
+            // Parsed before the automator is built, not after: the driver's coordination policy is
+            // fixed at construction, and the attacher's decision about it arrives in agentArgs.
+            val parsedArgs = AgentBootstrapArgs.parse(agentArgs)
+
+            val agentAutomator = createAutomatorReflectively(loader, parsedArgs.inputCoordination)
             val automator = agentAutomator.instance
             targetInputResource = agentAutomator.targetInputResource
             System.err.println("[spectre-agent] ComposeAutomator ready: $automator")
 
-            val parsedArgs = AgentBootstrapArgs.parse(agentArgs)
             // The attacher's frame budget has to be adopted before the IPC server can answer: this
             // JVM writes the bulky screenshot frames and cannot read the daemon's environment.
             parsedArgs.maxFrameBytes?.let { budget ->
@@ -200,13 +204,20 @@ public object SpectreAgent {
         System.err.println("[spectre-agent] detached cleanly; resources released")
     }
 
-    private fun createAutomatorReflectively(classLoader: ClassLoader): AgentAutomator {
+    private fun createAutomatorReflectively(
+        classLoader: ClassLoader,
+        inputCoordination: AttachInputCoordination,
+    ): AgentAutomator {
         val automatorClass = classLoader.loadClass(COMPOSE_AUTOMATOR_FQN)
         val companion = automatorClass.getField("Companion").get(null)
 
         val robotDriverClass = classLoader.loadClass(ROBOT_DRIVER_FQN)
         val robotDriver =
-            createCoordinatedRobotDriverOrLegacyFallback(classLoader, robotDriverClass)
+            createCoordinatedRobotDriverOrLegacyFallback(
+                classLoader,
+                robotDriverClass,
+                inputCoordination,
+            )
 
         val inProcessMethod =
             companion.javaClass.methods.firstOrNull {
@@ -222,16 +233,39 @@ public object SpectreAgent {
         )
     }
 
+    /**
+     * Builds the target's `RobotDriver` on the coordination policy [inputCoordination] names.
+     *
+     * The default is and stays [AttachInputCoordination.Required] (#472): coordination is the
+     * mutual exclusion that stops two Spectre processes interleaving real input on one desktop, so
+     * an unreachable coordinator has to fail loudly rather than quietly stop policing. The
+     * parameter only ever carries a choice the *attacher* made deliberately — nothing on this side
+     * infers it from a failure, a timeout, or a property the target happens to carry.
+     *
+     * Targets predating `InputLeasePolicy` still fall back to the no-argument driver, which was
+     * never coordinated; the opt-out is a no-op there rather than an error, since it asks for what
+     * that target already does.
+     */
     internal fun createCoordinatedRobotDriverOrLegacyFallback(
         classLoader: ClassLoader,
         robotDriverClass: Class<*>,
+        inputCoordination: AttachInputCoordination = AttachInputCoordination.Required,
     ): Any =
         try {
             val policyClass = classLoader.loadClass(INPUT_LEASE_POLICY_FQN)
-            val requiredPolicy =
-                policyClass.enumConstants.firstOrNull { (it as Enum<*>).name == "Required" }
-                    ?: error("Could not resolve InputLeasePolicy.Required from $policyClass")
-            robotDriverClass.getDeclaredConstructor(policyClass).newInstance(requiredPolicy)
+            val policyName = inputCoordination.leasePolicyName
+            val policy =
+                policyClass.enumConstants.firstOrNull { (it as Enum<*>).name == policyName }
+                    ?: error("Could not resolve InputLeasePolicy.$policyName from $policyClass")
+            if (inputCoordination != AttachInputCoordination.Required) {
+                System.err.println(
+                    "[spectre-agent] desktop input coordination is DISABLED in this target " +
+                        "(InputLeasePolicy.$policyName), by explicit request from the attacher. " +
+                        "Concurrent Spectre runs can now interleave real input on this desktop. " +
+                        "See https://github.com/rock3r/spectre/issues/472"
+                )
+            }
+            robotDriverClass.getDeclaredConstructor(policyClass).newInstance(policy)
         } catch (_: ClassNotFoundException) {
             robotDriverClass.getDeclaredConstructor().newInstance()
         } catch (_: NoSuchMethodException) {

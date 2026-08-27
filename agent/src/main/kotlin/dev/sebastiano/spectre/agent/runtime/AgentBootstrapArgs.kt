@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.agent.runtime
 
+import dev.sebastiano.spectre.agent.AttachInputCoordination
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.FrameLimits
 
@@ -31,8 +32,20 @@ import dev.sebastiano.spectre.agent.transport.FrameLimits
 @ExperimentalSpectreAgentApi
 public object AgentBootstrapArgs {
 
-    /** Parsed view of an `agentArgs` string. */
-    public data class Parsed(public val udsPath: String?, public val maxFrameBytes: Int?)
+    /**
+     * Parsed view of an `agentArgs` string.
+     *
+     * [inputCoordination] defaults to [AttachInputCoordination.Required] rather than being nullable
+     * on purpose: "the field is absent" and "the field is corrupt" must both mean *coordinate*, and
+     * a nullable field invites a caller to treat absence as "no opinion" and pick something else.
+     * An older attacher, a hand-written `-javaagent:` line, and a truncated value therefore all
+     * land on the behaviour Spectre has always had.
+     */
+    public data class Parsed(
+        public val udsPath: String?,
+        public val maxFrameBytes: Int?,
+        public val inputCoordination: AttachInputCoordination = AttachInputCoordination.Required,
+    )
 
     /** Parses [agentArgs]; a null/blank string means diagnostic mode (no UDS, no IPC server). */
     public fun parse(agentArgs: String?): Parsed {
@@ -52,13 +65,40 @@ public object AgentBootstrapArgs {
         return Parsed(
             udsPath = fields[UDS_KEY]?.let(::decodeValue)?.takeIf { it.isNotEmpty() },
             maxFrameBytes = FrameLimits.parseMaxFrameBytes(fields[MAX_FRAME_BYTES_KEY]),
+            inputCoordination =
+                AttachInputCoordination.fromWireValue(fields[INPUT_COORDINATION_KEY]),
         )
     }
 
-    /** Renders [udsPath] and [maxFrameBytes] as a structured, escaped argument string. */
+    /**
+     * Renders [udsPath] and [maxFrameBytes] as a structured, escaped argument string, leaving the
+     * target coordinated.
+     *
+     * Kept as its own overload rather than folded into the three-argument form with a default
+     * value: this is published API, and a defaulted parameter would move the signature every
+     * existing caller binds. It renders byte-for-byte what it always rendered, and [parse] reads
+     * the missing field back as [AttachInputCoordination.Required].
+     */
     public fun render(udsPath: String, maxFrameBytes: Int): String =
         "$STRUCTURED_PREFIX${encodeValue(udsPath)}" +
             "$SEPARATOR$MAX_FRAME_BYTES_KEY$KEY_VALUE$maxFrameBytes"
+
+    /**
+     * Renders [udsPath], [maxFrameBytes] and [inputCoordination] as a structured, escaped argument
+     * string.
+     *
+     * The coordination field is emitted for [AttachInputCoordination.Required] too, not only for
+     * the opt-out. It costs a dozen bytes and it puts the attacher's decision on the wire
+     * explicitly, so the target's stderr reports the mode it was asked for rather than one inferred
+     * from an absence.
+     */
+    public fun render(
+        udsPath: String,
+        maxFrameBytes: Int,
+        inputCoordination: AttachInputCoordination,
+    ): String =
+        render(udsPath, maxFrameBytes) +
+            "$SEPARATOR$INPUT_COORDINATION_KEY$KEY_VALUE${inputCoordination.wireValue}"
 
     /**
      * Escapes the delimiters this format reserves. `%` goes first so its escape is not re-escaped.
@@ -74,6 +114,7 @@ public object AgentBootstrapArgs {
 
     private const val UDS_KEY: String = "uds"
     private const val MAX_FRAME_BYTES_KEY: String = "maxFrameBytes"
+    private const val INPUT_COORDINATION_KEY: String = "inputCoordination"
     private const val KEY_VALUE: String = "="
     private const val SEPARATOR: String = ","
     private const val STRUCTURED_PREFIX: String = "$UDS_KEY$KEY_VALUE"

@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import dev.sebastiano.spectre.agent.AttachInputCoordination
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.FrameLimits
 import java.io.EOFException
@@ -85,6 +86,13 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
                         )
                         ?.let { throw IOException(it) }
                 }
+                if (!ignoresInputCoordination(request)) {
+                    inputCoordinationMismatchFailure(
+                            requested = AttachInputCoordination.requestedFromProperty(),
+                            daemonMode = response.inputCoordination,
+                        )
+                        ?.let { throw IOException(it) }
+                }
             }
             is DaemonResponse.Error ->
                 throw IOException(daemonHandshakeFailure(requiredVersion, response))
@@ -116,6 +124,113 @@ internal class DaemonConnectionClosedException(cause: Throwable? = null) :
  * costs nothing.
  */
 internal fun ignoresFrameBudget(request: DaemonRequest): Boolean = request is DaemonRequest.Shutdown
+
+/**
+ * Requests exempt from the coordination-mode check, for the same reason as [ignoresFrameBudget]:
+ * the mismatch error tells the user to run `spectre daemon kill`, which inherits the same `-D` and
+ * would hit this check, leaving the documented recovery a dead end.
+ */
+internal fun ignoresInputCoordination(request: DaemonRequest): Boolean =
+    request is DaemonRequest.Shutdown
+
+/**
+ * Explains why a requested desktop input coordination mode cannot take effect, or `null` when it
+ * can.
+ *
+ * The daemon resolves the mode once, from its own system properties, and every target it injects
+ * inherits that. A `-D` on a later invocation therefore reaches the CLI process and nothing else.
+ *
+ * That would be a footnote for most settings, but this one is the #472 escape hatch, and the
+ * journey it exists for *guarantees* a daemon is already running: you only reach for it after an
+ * attach has failed. Silently ignoring it there would make the documented recovery appear broken —
+ * the exact failure the hatch was added to remove.
+ *
+ * Checked in both directions. Asking to disable coordination on a coordinated daemon leaves the
+ * user stuck; asking to restore it on a daemon left disabled by an earlier recovery session is
+ * worse, because that daemon attaches every new target uncoordinated.
+ *
+ * **Asking for nothing means asking for [AttachInputCoordination.Required]**, and this is the one
+ * place the [frameBudgetMismatchFailure] analogy breaks. A budget is a capacity setting, so a
+ * client that requested none is genuinely happy with any daemon. Coordination is a safety property:
+ * a user who has taken the opt-out back off is asking for the documented default, and accepting a
+ * still-disabled daemon would leave every later attach uncoordinated until they happened to restart
+ * it.
+ *
+ * That would also be silent. An earlier revision of this function reasoned that a disabled daemon
+ * announces itself on stderr. It does — into a startup log `DaemonProcessLauncher` deletes as soon
+ * as the daemon is up, so on this path the announcement reaches nobody.
+ *
+ * A daemon that reports no mode is refused outright, whatever was asked. It cannot say whether it
+ * coordinates, and for a safety property an unanswerable question is not a yes — see the comment on
+ * that branch for why its protocol version cannot stand in for the answer.
+ */
+@OptIn(ExperimentalSpectreAgentApi::class)
+internal fun inputCoordinationMismatchFailure(
+    requested: AttachInputCoordination?,
+    daemonMode: String?,
+): String? {
+    val effective = requested ?: AttachInputCoordination.Required
+    if (daemonMode == null) {
+        // Fails closed, and deliberately so. It is tempting to reason that a daemon predating this
+        // field also predates the opt-out and is therefore coordinated -- but the dates rule that
+        // out: DaemonProtocol.CurrentVersion reached 1.12 on 2026-08-19 (9a15371) and coordination
+        // itself only landed on 2026-08-24 (b5edbc5). A daemon built in between reports 1.12,
+        // satisfies every compatibility floor, answers nothing here, and injects the legacy
+        // no-argument RobotDriver, which coordinates nothing at all. Nothing on this wire tells it
+        // apart from a daemon that would coordinate properly.
+        //
+        // "I cannot tell" must not be reported as "yes" for a safety property; doing so is the
+        // silent default-defeat #472 exists to remove. One `spectre daemon kill` after upgrading
+        // is the whole cost.
+        return coordinationMismatchMessage(
+            asked = "-D${AttachInputCoordination.PROPERTY}=${effective.wireValue}",
+            running =
+                "a version that predates coordination reporting, so it cannot say whether it " +
+                    "coordinates at all",
+            keepRunningMode = null,
+        )
+    }
+    if (daemonMode == effective.wireValue) return null
+    val asked =
+        if (requested == null) {
+            "the default desktop input coordination mode (${effective.wireValue})"
+        } else {
+            "-D${AttachInputCoordination.PROPERTY}=${requested.wireValue}"
+        }
+    return coordinationMismatchMessage(
+        asked = asked,
+        running = daemonMode,
+        keepRunningMode = daemonMode,
+    )
+}
+
+/**
+ * [keepRunningMode] is the daemon's mode spelled as the property value that would ask for it, or
+ * `null` when there is no such spelling to offer.
+ *
+ * It has to carry the value. A bare `-D<property>` sets the property to the empty string, which
+ * [AttachInputCoordination.requestedFromProperty] reads as blank, which is no request at all, which
+ * resolves back to `Required` and produces this same failure — advice that loops straight back to
+ * the error it is attached to.
+ */
+private fun coordinationMismatchMessage(
+    asked: String,
+    running: String,
+    keepRunningMode: String?,
+): String {
+    val keep =
+        keepRunningMode
+            ?.let {
+                ", or pass -D${AttachInputCoordination.PROPERTY}=$it on this command if you " +
+                    "meant to keep the mode the daemon is already running"
+            }
+            .orEmpty()
+    return "Cannot honour $asked: the running Spectre daemon started with $running, and a daemon " +
+        "keeps the desktop input coordination mode it booted with. It resolves that mode once, " +
+        "and every target it injects inherits it. Run `spectre daemon kill` and retry so the " +
+        "mode applies to the daemon and to the JVMs it injects$keep. " +
+        "See https://github.com/rock3r/spectre/issues/472"
+}
 
 /**
  * Explains why a requested frame budget cannot take effect, or `null` when it can.

@@ -9,6 +9,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class AttachOptionsTest {
@@ -215,6 +216,55 @@ class AttachOptionsTest {
         assertTrue(
             candidates.any { p.startsWith(Path.of(it)) },
             "UDS path $p should live under one of $candidates",
+        )
+    }
+
+    // ---- input coordination (#472) ----
+    //
+    // The daemon calls `AgentAttach.attach(pid)` with no options at all, so the property is the
+    // only channel a CLI user has; an embedder gets the field. The field is the deliberate one, so
+    // it wins over the property in both directions — an integration that pins `Required` must not
+    // be quietly unpinned by a property left over in the environment.
+
+    @Test
+    fun `coordination is deferred to the property by default`() {
+        assertNull(
+            AttachOptions().inputCoordination,
+            "null means 'resolve from the property', which defaults to Required",
+        )
+    }
+
+    @Test
+    fun `an unset property leaves the attach path coordinated`() {
+        assertEquals(
+            AttachInputCoordination.Required,
+            AgentAttach.resolveInputCoordination(AttachOptions(), property = null),
+        )
+    }
+
+    @Test
+    fun `the property reaches an attach that passes no options`() {
+        assertEquals(
+            AttachInputCoordination.Disabled,
+            AgentAttach.resolveInputCoordination(AttachOptions(), property = "disabled"),
+        )
+    }
+
+    @Test
+    fun `an explicit option wins over the property`() {
+        assertEquals(
+            AttachInputCoordination.Required,
+            AgentAttach.resolveInputCoordination(
+                AttachOptions(inputCoordination = AttachInputCoordination.Required),
+                property = "disabled",
+            ),
+        )
+        assertEquals(
+            AttachInputCoordination.Disabled,
+            AgentAttach.resolveInputCoordination(
+                AttachOptions(inputCoordination = AttachInputCoordination.Disabled),
+                property = null,
+            ),
         )
     }
 }
