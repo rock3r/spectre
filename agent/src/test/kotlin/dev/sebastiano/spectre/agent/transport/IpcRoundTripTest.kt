@@ -3,6 +3,10 @@
 package dev.sebastiano.spectre.agent.transport
 
 import java.io.IOException
+import java.net.StandardProtocolFamily
+import java.net.UnixDomainSocketAddress
+import java.nio.channels.Channels
+import java.nio.channels.SocketChannel
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermission
@@ -180,13 +184,39 @@ class IpcRoundTripTest {
                 val second = IpcClient(udsPath)
                 try {
                     assertEquals(AgentResponse.Pong, second.send(AgentRequest.Ping))
-                    val thirdConnecting = CountDownLatch(1)
+                    val thirdConnected = CountDownLatch(1)
                     val third =
                         executor.submit<AgentResponse> {
-                            thirdConnecting.countDown()
-                            IpcClient(udsPath).use { it.send(AgentRequest.Ping) }
+                            SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
+                                channel.connect(UnixDomainSocketAddress.of(udsPath))
+                                thirdConnected.countDown()
+                                val input = Channels.newInputStream(channel)
+                                val output = Channels.newOutputStream(channel)
+                                Framing.writeFrame(
+                                    output,
+                                    WireCodec.encode(
+                                        AgentRequest.Hello(
+                                            protocolVersion = ProtocolVersion.CURRENT
+                                        )
+                                    ),
+                                )
+                                WireCodec.decodeResponse(
+                                    Framing.readFrame(input) ?: error("no HelloAck")
+                                )
+                                Framing.writeFrame(
+                                    output,
+                                    WireCodec.encode(OpRequest(opId = 1L, body = AgentRequest.Ping)),
+                                )
+                                WireCodec.decodeOpResponse(
+                                        Framing.readFrame(input) ?: error("no ping response")
+                                    )
+                                    .body
+                            }
                         }
-                    assertTrue(thirdConnecting.await(3, TimeUnit.SECONDS))
+                    assertTrue(
+                        thirdConnected.await(3, TimeUnit.SECONDS),
+                        "third client never connected",
+                    )
                     second.close()
                     assertEquals(AgentResponse.Pong, third.get(3, TimeUnit.SECONDS))
                 } finally {
