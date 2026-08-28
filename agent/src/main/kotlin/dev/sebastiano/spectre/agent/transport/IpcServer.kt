@@ -348,10 +348,9 @@ constructor(
         } catch (_: IOException) {
             // Best-effort.
         }
-        // Do not close [currentClient] here. SpectreAgent.onClientDetach() calls [close] *before*
-        // MultiplexedIpcSession writes AgentResponse.Detached; shutting the live accepted
-        // channel would turn every production detach into EOF. The accept loop still closes
-        // leftover clients after handleConnection returns (and in its finally).
+        // Do not close accepted clients here. SpectreAgent.onClientDetach() calls [close]
+        // *before* MultiplexedIpcSession writes AgentResponse.Detached. The accept loop
+        // closes leftover clients in its finally after handleConnection returns.
         try {
             Files.deleteIfExists(udsPath)
         } catch (_: IOException) {
@@ -362,7 +361,12 @@ constructor(
         } catch (_: IOException) {
             // Best-effort — if the parent is gone or non-empty, leaving it is safer.
         }
-        acceptThread.interrupt()
+        // Closing from onDetach runs on the accept thread; interrupting it would poison the
+        // subsequent interruptible Detached write. Shutdown-hook / other-thread close still
+        // interrupts to unblock accept().
+        if (Thread.currentThread() !== acceptThread) {
+            acceptThread.interrupt()
+        }
     }
 }
 
