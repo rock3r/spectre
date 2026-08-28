@@ -150,6 +150,21 @@ class IpcRoundTripTest {
     }
 
     @Test
+    fun `Detach still returns Detached when onDetach closes the server`() {
+        // SpectreAgent.onClientDetach() closes the IpcServer before MultiplexedIpcSession
+        // writes AgentResponse.Detached. Closing the *current* accepted client there
+        // turns every production detach into EOF (#471 follow-up / Codex).
+        lateinit var server: IpcServer
+        server = IpcServer(udsPath, stubHandler(), onDetach = { server.close() })
+        server.use {
+            awaitSocket(udsPath)
+            IpcClient(udsPath).use { client ->
+                assertEquals(AgentResponse.Detached, client.send(AgentRequest.Detach))
+            }
+        }
+    }
+
+    @Test
     fun `Server returns Error for an unknown request from the stub handler`() {
         val server =
             IpcServer(

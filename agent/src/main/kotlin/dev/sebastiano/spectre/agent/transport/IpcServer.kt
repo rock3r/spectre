@@ -352,7 +352,10 @@ constructor(
         } catch (_: IOException) {
             // Best-effort.
         }
-        runCatching { currentClient.getAndSet(null)?.close() }
+        // Do not close [currentClient] here. SpectreAgent.onClientDetach() calls [close] *before*
+        // MultiplexedIpcSession writes AgentResponse.Detached; shutting the live accepted
+        // channel would turn every production detach into EOF. The accept loop still closes
+        // leftover clients after handleConnection returns (and in its finally).
         try {
             Files.deleteIfExists(udsPath)
         } catch (_: IOException) {
