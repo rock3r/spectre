@@ -11,6 +11,7 @@ import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -84,6 +85,7 @@ constructor(
 
     private val running = AtomicBoolean(true)
     private val inputWorkers = CrossSessionInputWorkers()
+    private val acceptedClients = ConcurrentLinkedQueue<SocketChannel>()
 
     private val acceptThread =
         Thread(::acceptLoop, "spectre-agent-accept").apply {
@@ -96,69 +98,81 @@ constructor(
         get() = udsPath
 
     private fun acceptLoop() {
-        while (running.get()) {
-            val client =
-                try {
-                    serverChannel.accept() ?: break
-                } catch (_: ClosedChannelException) {
-                    // Normal shutdown — close() closes the server channel, which unblocks
-                    // accept(). Exit the loop cleanly.
-                    return
-                } catch (ex: IOException) {
-                    // accept() itself failed (e.g. the server channel is broken at the OS
-                    // level). There's nothing we can recover here — the channel is unusable.
-                    if (running.get()) {
-                        System.err.println("[spectre-agent] accept failed: ${ex.message}")
+        try {
+            while (running.get()) {
+                val incoming =
+                    try {
+                        serverChannel.accept() ?: break
+                    } catch (_: ClosedChannelException) {
+                        // Normal shutdown — close() closes the server channel, which unblocks
+                        // accept(). Exit the loop cleanly.
+                        return
+                    } catch (ex: IOException) {
+                        // accept() itself failed (e.g. the server channel is broken at the OS
+                        // level). There's nothing we can recover here — the channel is unusable.
+                        if (running.get()) {
+                            System.err.println("[spectre-agent] accept failed: ${ex.message}")
+                        }
+                        return
                     }
-                    return
-                }
-            // Per-connection failures (broken pipe from a crashed client mid-`writeFrame`,
-            // half-closed sockets, malformed framing, …) MUST NOT kill the accept loop.
-            // Before this catch was inside the loop, an `IOException` from
-            // `handleConnection` propagated to the outer catch, terminated the accept
-            // thread, and — combined with `SpectreAgent.bootstrap`'s "already bootstrapped"
-            // idempotency guard — left the agent permanently unreachable for the rest of
-            // the target JVM's lifetime. Bugbot caught the original (MEDIUM); the regression
-            // test in `IpcRoundTripTest` ("server survives a client that closes mid-request
-            // …") pins the contract.
-            //
-            // Catch widened from `IOException` to `Exception` for the same reason: a
-            // misbehaving client can send a malformed length prefix and `Framing.readFrame`'s
-            // `check(length in 0..MAX_FRAME_BYTES)` throws `IllegalStateException` (not an
-            // `IOException`). The pinned regression test "server survives malformed frame
-            // length prefix" covers that path. Errors (OOM, StackOverflow) are intentionally
-            // NOT caught. Detekt's TooGenericExceptionCaught is suppressed with rationale.
-            @Suppress("TooGenericExceptionCaught")
-            try {
-                handleConnection(client)
-            } catch (ex: Exception) {
-                if (running.get()) {
-                    System.err.println(
-                        "[spectre-agent] connection terminated " +
-                            "(${ex.javaClass.simpleName}): ${ex.message ?: "<no message>"}"
-                    )
+                acceptedClients.add(incoming)
+                // Per-connection failures (broken pipe from a crashed client mid-`writeFrame`,
+                // half-closed sockets, malformed framing, …) MUST NOT kill the accept loop.
+                // Before this catch was inside the loop, an `IOException` from
+                // `handleConnection` propagated to the outer catch, terminated the accept
+                // thread, and — combined with `SpectreAgent.bootstrap`'s "already bootstrapped"
+                // idempotency guard — left the agent permanently unreachable for the rest of
+                // the target JVM's lifetime. Bugbot caught the original (MEDIUM); the
+                // regression test in `IpcRoundTripTest` ("server survives a client that closes
+                // mid-request …") pins the contract.
+                //
+                // Catch widened from `IOException` to `Exception` for the same reason: a
+                // misbehaving client can send a malformed length prefix and
+                // `Framing.readFrame`'s `check(length in 0..MAX_FRAME_BYTES)` throws
+                // `IllegalStateException` (not an `IOException`). The pinned regression test
+                // "server survives malformed frame length prefix" covers that path. Errors
+                // (OOM, StackOverflow) are intentionally NOT caught. Detekt's
+                // TooGenericExceptionCaught is suppressed with rationale.
+                @Suppress("TooGenericExceptionCaught")
+                try {
+                    handleConnection(incoming)
+                } catch (ex: Exception) {
+                    if (running.get()) {
+                        System.err.println(
+                            "[spectre-agent] connection terminated " +
+                                "(${ex.javaClass.simpleName}): ${ex.message ?: "<no message>"}"
+                        )
+                    }
                 }
             }
+        } finally {
+            // Close accepted sockets only when the accept loop exits. Closing a sibling
+            // while another client is already in the listen backlog can RST that queued
+            // connection on Windows AF_UNIX (HelloAck then reader EOF, #471).
+            acceptedClients.forEach { runCatching { it.close() } }
+            acceptedClients.clear()
         }
     }
 
+    /**
+     * Serves one accepted client. Does **not** close [client]: accepted sockets stay open until the
+     * accept loop exits so a queued successor is never RST'd by a sibling close (#471).
+     */
     private fun handleConnection(client: SocketChannel) {
-        client.use { socket ->
-            val input = Channels.newInputStream(socket)
-            val output = Channels.newOutputStream(socket)
-            // Phase 1: bare Hello (#199).
-            if (!performHandshake(socket, input, output)) return
-            // Phase 2: multiplexed OpRequest frames on a worker pool (#200).
-            MultiplexedIpcSession(
-                    handler = handler,
-                    running = running,
-                    onDetach = onDetach,
-                    channel = socket,
-                    frameIoTimeoutMs = frameIoTimeoutMs,
-                    inputWorkers = inputWorkers,
-                )
-                .run(input, output)
-        }
+        val input = Channels.newInputStream(client)
+        val output = Channels.newOutputStream(client)
+        // Phase 1: bare Hello (#199).
+        if (!performHandshake(client, input, output)) return
+        // Phase 2: multiplexed OpRequest frames on a worker pool (#200).
+        MultiplexedIpcSession(
+                handler = handler,
+                running = running,
+                onDetach = onDetach,
+                channel = client,
+                frameIoTimeoutMs = frameIoTimeoutMs,
+                inputWorkers = inputWorkers,
+            )
+            .run(input, output)
     }
 
     /** Bare Hello handshake. Returns false if the connection should end. */
@@ -334,6 +348,9 @@ constructor(
         } catch (_: IOException) {
             // Best-effort.
         }
+        // Do not close accepted clients here. SpectreAgent.onClientDetach() calls [close]
+        // *before* MultiplexedIpcSession writes AgentResponse.Detached. The accept loop
+        // closes leftover clients in its finally after handleConnection returns.
         try {
             Files.deleteIfExists(udsPath)
         } catch (_: IOException) {
@@ -344,7 +361,12 @@ constructor(
         } catch (_: IOException) {
             // Best-effort — if the parent is gone or non-empty, leaving it is safer.
         }
-        acceptThread.interrupt()
+        // Closing from onDetach runs on the accept thread; interrupting it would poison the
+        // subsequent interruptible Detached write. Shutdown-hook / other-thread close still
+        // interrupts to unblock accept().
+        if (Thread.currentThread() !== acceptThread) {
+            acceptThread.interrupt()
+        }
     }
 }
 

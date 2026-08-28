@@ -101,7 +101,12 @@ class LongOpInfrastructureTest {
                     inputFinished.await(200, TimeUnit.MILLISECONDS),
                     "ordinary EOF should not abandon the still-running input operation",
                 )
-                assertFailsWith<TimeoutException> { replacement.get(200, TimeUnit.MILLISECONDS) }
+                val early =
+                    runCatching { replacement.get(200, TimeUnit.MILLISECONDS) }.exceptionOrNull()
+                assertIs<TimeoutException>(
+                    early,
+                    "replacement handshake/session must wait for orphaned input, not fail: $early",
+                )
                 allowInputToFinish.countDown()
                 assertEquals(AgentResponse.Detached, replacement.get(3, TimeUnit.SECONDS))
                 assertTrue(detached.await(3, TimeUnit.SECONDS))

@@ -3,10 +3,17 @@
 package dev.sebastiano.spectre.agent.transport
 
 import java.io.IOException
+import java.net.StandardProtocolFamily
+import java.net.UnixDomainSocketAddress
+import java.nio.channels.Channels
+import java.nio.channels.SocketChannel
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermission
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.io.path.deleteIfExists
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -147,6 +154,78 @@ class IpcRoundTripTest {
         }
         // UDS file is unlinked by the server after detach.
         assertTrue(!Files.exists(udsPath), "UDS path should not exist after detach")
+    }
+
+    @Test
+    fun `Detach still returns Detached when onDetach closes the server`() {
+        // SpectreAgent.onClientDetach() closes the IpcServer before MultiplexedIpcSession
+        // writes AgentResponse.Detached. Closing the *current* accepted client there
+        // turns every production detach into EOF (#471 follow-up / Codex).
+        lateinit var server: IpcServer
+        server = IpcServer(udsPath, stubHandler(), onDetach = { server.close() })
+        server.use {
+            awaitSocket(udsPath)
+            IpcClient(udsPath).use { client ->
+                assertEquals(AgentResponse.Detached, client.send(AgentRequest.Detach))
+            }
+        }
+    }
+
+    @Test
+    fun `queued client after ordinary EOF is not reset by closing a prior accepted socket`() {
+        val server = IpcServer(udsPath, stubHandler())
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            server.use {
+                awaitSocket(udsPath)
+                IpcClient(udsPath).use { first ->
+                    assertEquals(AgentResponse.Pong, first.send(AgentRequest.Ping))
+                }
+                val second = IpcClient(udsPath)
+                try {
+                    assertEquals(AgentResponse.Pong, second.send(AgentRequest.Ping))
+                    val thirdConnected = CountDownLatch(1)
+                    val third =
+                        executor.submit<AgentResponse> {
+                            SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
+                                channel.connect(UnixDomainSocketAddress.of(udsPath))
+                                thirdConnected.countDown()
+                                val input = Channels.newInputStream(channel)
+                                val output = Channels.newOutputStream(channel)
+                                Framing.writeFrame(
+                                    output,
+                                    WireCodec.encode(
+                                        AgentRequest.Hello(
+                                            protocolVersion = ProtocolVersion.CURRENT
+                                        )
+                                    ),
+                                )
+                                WireCodec.decodeResponse(
+                                    Framing.readFrame(input) ?: error("no HelloAck")
+                                )
+                                Framing.writeFrame(
+                                    output,
+                                    WireCodec.encode(OpRequest(opId = 1L, body = AgentRequest.Ping)),
+                                )
+                                WireCodec.decodeOpResponse(
+                                        Framing.readFrame(input) ?: error("no ping response")
+                                    )
+                                    .body
+                            }
+                        }
+                    assertTrue(
+                        thirdConnected.await(3, TimeUnit.SECONDS),
+                        "third client never connected",
+                    )
+                    second.close()
+                    assertEquals(AgentResponse.Pong, third.get(3, TimeUnit.SECONDS))
+                } finally {
+                    second.close()
+                }
+            }
+        } finally {
+            executor.shutdownNow()
+        }
     }
 
     @Test
