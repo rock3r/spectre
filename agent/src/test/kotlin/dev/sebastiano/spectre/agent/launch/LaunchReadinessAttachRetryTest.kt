@@ -78,7 +78,7 @@ class LaunchReadinessAttachRetryTest {
     }
 
     @Test
-    fun `AttachNotSupportedException and AgentLoadException are no-live-agent failures`() {
+    fun `ordinary AgentLoadException is not a no-live-agent failure`() {
         assertTrue(
             LaunchReadiness.isNoLiveAgentFailure(
                 RuntimeException(
@@ -87,11 +87,19 @@ class LaunchReadinessAttachRetryTest {
                 )
             )
         )
+        assertFalse(
+            LaunchReadiness.isNoLiveAgentFailure(
+                RuntimeException(
+                    "VirtualMachine.loadAgent(agent.jar) failed: AgentLoadException: not found",
+                    AgentLoadException("agent library failed to init"),
+                )
+            )
+        )
         assertTrue(
             LaunchReadiness.isNoLiveAgentFailure(
                 RuntimeException(
                     "VirtualMachine.loadAgent(agent.jar) failed: AgentLoadException",
-                    AgentLoadException("target is dying"),
+                    AgentLoadException("target process not responding"),
                 )
             )
         )

@@ -77,6 +77,20 @@ internal object AppJvmDiscoveryDiagnostics {
         env: String? = System.getenv(ENV),
     ): Boolean = property.equals("true", ignoreCase = true) || env.equals("true", ignoreCase = true)
 
+    /**
+     * When diagnostics are on, memoize [startInstantOf] so selection and the emitted record share
+     * one observation per pid. When off, return [startInstantOf] unchanged so the default path does
+     * not allocate a cache or look up extra processes.
+     */
+    fun startLookup(enabled: Boolean, startInstantOf: (Long) -> Instant?): (Long) -> Instant? {
+        if (!enabled) return startInstantOf
+        val cache = LinkedHashMap<Long, Instant?>()
+        return { pid ->
+            if (!cache.containsKey(pid)) cache[pid] = startInstantOf(pid)
+            cache[pid]
+        }
+    }
+
     fun sinkFromEnvironment(
         property: String? = System.getProperty(PROPERTY),
         env: String? = System.getenv(ENV),

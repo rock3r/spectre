@@ -139,6 +139,42 @@ class LaunchDescendantDiscoveryTest {
     }
 
     @Test
+    fun `NoOp diagnostics do not look up start instants beyond selection`() {
+        val scenario = GradleLaunchScenario()
+        val lookedUp = mutableListOf<Long>()
+        scenario.select(
+            nameFilter = "ComposeFixtureMain",
+            onDiagnostics = AppJvmDiscoveryDiagnosticSink.NoOp,
+            onStartInstantLookup = { lookedUp += it },
+        )
+        // Selection only probes leftover + fresh; the daemon is rejected by display name first.
+        assertEquals(listOf(scenario.leftoverFixturePid, scenario.freshFixturePid), lookedUp)
+    }
+
+    @Test
+    fun `opt-in diagnostics reuse the start instants observed during selection`() {
+        val scenario = GradleLaunchScenario()
+        var leftoverLookups = 0
+        val captured = mutableListOf<AppJvmDiscoveryRecord>()
+        scenario.select(
+            nameFilter = "ComposeFixtureMain",
+            onDiagnostics = { captured += it },
+            onStartInstantLookup = { pid ->
+                if (pid == scenario.leftoverFixturePid) {
+                    leftoverLookups += 1
+                    check(leftoverLookups == 1) {
+                        "leftover start instant must be cached from selection, lookups=$leftoverLookups"
+                    }
+                }
+            },
+        )
+        val leftover = captured.single().candidates.single { it.pid == scenario.leftoverFixturePid }
+        assertEquals(1, leftoverLookups)
+        assertEquals(scenario.launchedAt.minusSeconds(600), leftover.startInstant)
+        assertEquals(PREDATES_LAUNCH_REASON, leftover.rejectionReason)
+    }
+
+    @Test
     fun `discovery diagnostics stay off unless the opt-in flag is set`() {
         assertFalse(AppJvmDiscoveryDiagnostics.enabled(property = null, env = null))
         assertFalse(AppJvmDiscoveryDiagnostics.enabled(property = "false", env = null))
@@ -302,6 +338,7 @@ class LaunchDescendantDiscoveryTest {
             nameFilter: String?,
             nativeFallback: (Long, Set<Long>, String?) -> Long? = { _, _, _ -> null },
             onDiagnostics: AppJvmDiscoveryDiagnosticSink = AppJvmDiscoveryDiagnosticSink.NoOp,
+            onStartInstantLookup: (Long) -> Unit = {},
         ): Long? =
             LaunchDescendantDiscovery.selectAppJvm(
                 clientPid = clientPid,
@@ -312,6 +349,7 @@ class LaunchDescendantDiscoveryTest {
                 descendantsOf = { emptySet() },
                 parentOf = { pid -> daemonPid.takeIf { pid != daemonPid && pid != clientPid } },
                 startInstantOf = { pid ->
+                    onStartInstantLookup(pid)
                     startInstants[pid].takeIf {
                         startTimesKnown && !(clientReaped && pid == clientPid)
                     }

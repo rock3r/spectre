@@ -75,63 +75,108 @@ public object LaunchDescendantDiscovery {
         },
         onDiagnostics: AppJvmDiscoveryDiagnosticSink = AppJvmDiscoveryDiagnosticSink.NoOp,
     ): Long? {
-        fun select(): Long? {
-            if (listed.isEmpty()) return null
+        // Off by default: do not construct a record or extra start-instant lookups (#458).
+        val diagnosticsOn = onDiagnostics !== AppJvmDiscoveryDiagnosticSink.NoOp
+        val startOf = AppJvmDiscoveryDiagnostics.startLookup(diagnosticsOn, startInstantOf)
+        val selected =
+            chooseAppJvm(
+                clientPid = clientPid,
+                nameFilter = nameFilter,
+                clientStart = clientStart,
+                listed = listed,
+                descendantsOf = descendantsOf,
+                parentOf = parentOf,
+                startInstantOf = startOf,
+                nativeFallback = nativeFallback,
+            )
+        if (diagnosticsOn) {
+            emitDiscoveryRecord(
+                onDiagnostics = onDiagnostics,
+                clientPid = clientPid,
+                nameFilter = nameFilter,
+                clientStart = clientStart,
+                listed = listed,
+                startInstantOf = startOf,
+                selectedPid = selected,
+            )
+        }
+        return selected
+    }
 
-            val daemonPids =
-                listed.filter { isGradleDaemonDisplayName(it.displayName) }.map { it.pid }.toSet()
-            val nonDaemon = listed.filter { info ->
-                info.pid != clientPid &&
-                    !isGradleDaemonDisplayName(info.displayName) &&
-                    // A JVM that was already running when this launch started belongs to something
-                    // else — a leftover fixture, or a sibling e2e sharing the daemon (#446).
-                    !predatesLaunch(startInstantOf(info.pid), clientStart)
-            }
-            if (nonDaemon.isEmpty()) {
-                // Every Attach-visible JVM is a daemon or predates the launch. That does not mean
-                // the target is absent: VirtualMachine.list() lags, and -XX:-UsePerfData hides a
-                // JVM entirely. The native walk is the fallback, so do not skip it (#446).
-                val walkRoots = if (nameFilter.isNullOrBlank()) emptySet() else daemonPids
-                return nativeFallback(clientPid, walkRoots, nameFilter)
-            }
+    private fun chooseAppJvm(
+        clientPid: Long,
+        nameFilter: String?,
+        clientStart: Instant?,
+        listed: List<JvmProcessInfo>,
+        descendantsOf: (Long) -> Set<Long>,
+        parentOf: (Long) -> Long?,
+        startInstantOf: (Long) -> Instant?,
+        nativeFallback: (Long, Set<Long>, String?) -> Long?,
+    ): Long? {
+        if (listed.isEmpty()) return null
 
-            val clientDescendants = descendantsOf(clientPid)
-            val childOfDaemon = nonDaemon.filter { info ->
-                val parent = parentOf(info.pid) ?: return@filter false
-                parent in daemonPids
-            }
-
-            if (!nameFilter.isNullOrBlank()) {
-                val nameMatched = nonDaemon.filter {
-                    it.displayName.contains(nameFilter, ignoreCase = true)
-                }
-                // Prefer client descendants over arbitrary daemon children so concurrent Gradle
-                // apps with the same main class are not stolen from another launch.
-                nameMatched
-                    .filter { it.pid in clientDescendants }
-                    .maxByOrNull { it.pid }
-                    ?.pid
-                    ?.let {
-                        return it
-                    }
-                nameMatched
-                    .filter { it.pid in childOfDaemon.map(JvmProcessInfo::pid).toSet() }
-                    .maxByOrNull { it.pid }
-                    ?.pid
-                    ?.let {
-                        return it
-                    }
-                // Native process-tree fallback: hsperfdata/list can lag behind spawn.
-                return nativeFallback(clientPid, daemonPids, nameFilter)
-            }
-
-            // No name filter: only client descendants (never unfiltered daemon children).
-            return nonDaemon.filter { it.pid in clientDescendants }.maxByOrNull { it.pid }?.pid
-                // No unfiltered daemon walk without nameFilter.
-                ?: nativeFallback(clientPid, emptySet(), null)
+        val daemonPids =
+            listed.filter { isGradleDaemonDisplayName(it.displayName) }.map { it.pid }.toSet()
+        val nonDaemon = listed.filter { info ->
+            info.pid != clientPid &&
+                !isGradleDaemonDisplayName(info.displayName) &&
+                // A JVM that was already running when this launch started belongs to something
+                // else — a leftover fixture, or a sibling e2e sharing the daemon (#446).
+                !predatesLaunch(startInstantOf(info.pid), clientStart)
+        }
+        if (nonDaemon.isEmpty()) {
+            // Every Attach-visible JVM is a daemon or predates the launch. That does not mean
+            // the target is absent: VirtualMachine.list() lags, and -XX:-UsePerfData hides a
+            // JVM entirely. The native walk is the fallback, so do not skip it (#446).
+            val walkRoots = if (nameFilter.isNullOrBlank()) emptySet() else daemonPids
+            return nativeFallback(clientPid, walkRoots, nameFilter)
         }
 
-        val selected = select()
+        val clientDescendants = descendantsOf(clientPid)
+        val childOfDaemon = nonDaemon.filter { info ->
+            val parent = parentOf(info.pid) ?: return@filter false
+            parent in daemonPids
+        }
+
+        if (!nameFilter.isNullOrBlank()) {
+            val nameMatched = nonDaemon.filter {
+                it.displayName.contains(nameFilter, ignoreCase = true)
+            }
+            // Prefer client descendants over arbitrary daemon children so concurrent Gradle
+            // apps with the same main class are not stolen from another launch.
+            nameMatched
+                .filter { it.pid in clientDescendants }
+                .maxByOrNull { it.pid }
+                ?.pid
+                ?.let {
+                    return it
+                }
+            nameMatched
+                .filter { it.pid in childOfDaemon.map(JvmProcessInfo::pid).toSet() }
+                .maxByOrNull { it.pid }
+                ?.pid
+                ?.let {
+                    return it
+                }
+            // Native process-tree fallback: hsperfdata/list can lag behind spawn.
+            return nativeFallback(clientPid, daemonPids, nameFilter)
+        }
+
+        // No name filter: only client descendants (never unfiltered daemon children).
+        return nonDaemon.filter { it.pid in clientDescendants }.maxByOrNull { it.pid }?.pid
+            // No unfiltered daemon walk without nameFilter.
+            ?: nativeFallback(clientPid, emptySet(), null)
+    }
+
+    private fun emitDiscoveryRecord(
+        onDiagnostics: AppJvmDiscoveryDiagnosticSink,
+        clientPid: Long,
+        nameFilter: String?,
+        clientStart: Instant?,
+        listed: List<JvmProcessInfo>,
+        startInstantOf: (Long) -> Instant?,
+        selectedPid: Long?,
+    ) {
         onDiagnostics.emit(
             AppJvmDiscoveryRecord(
                 clientPid = clientPid,
@@ -139,24 +184,24 @@ public object LaunchDescendantDiscovery {
                 launchBoundary = clientStart,
                 candidates =
                     listed.map { info ->
+                        val start = startInstantOf(info.pid)
                         AppJvmDiscoveryCandidate(
                             pid = info.pid,
                             displayName = info.displayName,
-                            startInstant = startInstantOf(info.pid),
+                            startInstant = start,
                             rejectionReason =
                                 listedRejectionReason(
                                     pid = info.pid,
                                     displayName = info.displayName,
                                     clientPid = clientPid,
                                     clientStart = clientStart,
-                                    startInstantOf = startInstantOf,
+                                    candidateStart = start,
                                 ),
                         )
                     },
-                selectedPid = selected,
+                selectedPid = selectedPid,
             )
         )
-        return selected
     }
 
     private fun listedRejectionReason(
@@ -164,13 +209,13 @@ public object LaunchDescendantDiscovery {
         displayName: String,
         clientPid: Long,
         clientStart: Instant?,
-        startInstantOf: (Long) -> Instant?,
+        candidateStart: Instant?,
     ): String? =
         when {
             pid == clientPid -> AppJvmDiscoveryDiagnostics.REASON_CLIENT_PID
             isGradleDaemonDisplayName(displayName) ->
                 AppJvmDiscoveryDiagnostics.REASON_GRADLE_DAEMON
-            predatesLaunch(startInstantOf(pid), clientStart) ->
+            predatesLaunch(candidateStart, clientStart) ->
                 AppJvmDiscoveryDiagnostics.REASON_PREDATES_LAUNCH
             else -> null
         }

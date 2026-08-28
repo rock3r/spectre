@@ -172,20 +172,23 @@ class LaunchReadinessProcessExitGraceTest {
     }
 
     @Test
-    fun `AgentLoadException uses the remaining bootstrap budget rather than the 2s cap`() {
+    fun `an ordinary AgentLoadException does not spend remaining bootstrap budget`() {
         val cause =
             RuntimeException(
-                "VirtualMachine.loadAgent(agent.jar) failed: AgentLoadException: target is dying",
-                AgentLoadException("target is dying"),
+                "VirtualMachine.loadAgent(agent.jar) failed: AgentLoadException: not found",
+                AgentLoadException("agent library failed to init"),
             )
-        val remainingBudgetMs = 5_000L
-        val graceMs =
-            LaunchReadiness.exitGraceMs(budgetRemainingMs = remainingBudgetMs, cause = cause)
-        assertTrue(
-            graceMs > LaunchReadiness.PROCESS_EXIT_GRACE_MS,
-            "AgentLoadException is also attach-never-obtained; got $graceMs",
-        )
-        assertEquals(remainingBudgetMs, graceMs)
+        assertEquals(0L, LaunchReadiness.exitGraceMs(budgetRemainingMs = 5_000, cause = cause))
+    }
+
+    @Test
+    fun `AgentLoadException that indicates a dying target spends remaining bootstrap budget`() {
+        val cause =
+            RuntimeException(
+                "VirtualMachine.loadAgent(agent.jar) failed: AgentLoadException",
+                AgentLoadException("target process not responding"),
+            )
+        assertEquals(5_000L, LaunchReadiness.exitGraceMs(budgetRemainingMs = 5_000, cause = cause))
     }
 
     @Test

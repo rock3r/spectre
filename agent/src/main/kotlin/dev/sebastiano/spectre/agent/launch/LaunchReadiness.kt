@@ -300,13 +300,15 @@ internal object LaunchReadiness {
     }
 
     /**
-     * True when [cause] means attach never obtained a live agent, so a still-exiting process should
-     * be given remaining [LaunchStageTimeouts.agentBootstrapMs] to finish before the failure is
-     * blamed on bootstrap (#454).
+     * True when [cause] means attach never obtained a live agent **because the target looks like it
+     * is dying**, so remaining [LaunchStageTimeouts.agentBootstrapMs] should be spent waiting for
+     * exit before blaming bootstrap (#454).
      *
-     * `AttachNotSupportedException` / `AgentLoadException` (by simple name on the cause chain, the
-     * names HotSpot throws) are the "never obtained" set. Definitive refusals such as dynamic-agent
-     * loading disabled win even when the JDK wraps them as `AgentLoadException`.
+     * `AttachNotSupportedException` is that case (the hosted `java -version` flake). Ordinary
+     * `AgentLoadException` (missing/invalid agent JAR) is not: waiting the remaining budget would
+     * delay a definitive load error, and if the app then exits the wait would relabel it
+     * `PROCESS_ALIVE`. Agent-load failures wait only when the message indicates the target process
+     * itself is gone. Dynamic-agent-loading-disabled always stays instant.
      */
     internal fun isNoLiveAgentFailure(cause: Throwable?): Boolean {
         if (cause == null) return false
@@ -319,10 +321,13 @@ internal object LaunchReadiness {
         ) {
             return false
         }
-        return chain.any { ex ->
-            val simple = ex.javaClass.simpleName
-            simple == "AttachNotSupportedException" || simple == "AgentLoadException"
+        if (chain.any { it.javaClass.simpleName == "AttachNotSupportedException" }) return true
+        if (chain.any { it.javaClass.simpleName == "AgentLoadException" }) {
+            return "not responding" in lower ||
+                "no such process" in lower ||
+                "process not available" in lower
         }
+        return false
     }
 
     /** Prefer stage PROCESS_ALIVE when the process died during attach (race with early exit). */
