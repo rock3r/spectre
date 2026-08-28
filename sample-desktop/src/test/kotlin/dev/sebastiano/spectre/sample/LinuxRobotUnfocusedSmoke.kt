@@ -42,6 +42,9 @@ import kotlinx.coroutines.runBlocking
  *    the same scenario step, on both XWayland and Xvfb. (Reflects the X11 click-to-focus
  *    convention; differs from macOS, where the first click on an inactive app traditionally
  *    activates without delivering — to be verified separately when MacOsRobotUnfocusedSmoke runs.)
+ *    An intermittent Xvfb miss that never reaches this JVM is reported at the click, with an AWT
+ *    press verdict (never dispatched vs dispatched with no Compose effect), not at the downstream
+ *    `typeText` assertion.
  * 4. **typeText-after-focus-click works through XWayland.** `typeText` sends key events rather than
  *    touching the clipboard. Both XWayland and Xvfb produce the expected text after the
  *    focus-handoff click.

@@ -1,3 +1,5 @@
+@file:OptIn(InternalSpectreApi::class)
+
 package dev.sebastiano.spectre.core
 
 import java.awt.Point
@@ -676,15 +678,57 @@ class RobotDriverTest {
     }
 
     /**
-     * The oracle is only sound on Windows. On macOS AppKit swallows the click that activates an
-     * inactive app without delivering it, so a healthy first click produces no event —
-     * `AgentAttachIntegrationTest` relies on retrying exactly that.
+     * The oracle is sound on Windows for every mouse verb, and on X11 for click/press (#470). macOS
+     * AppKit swallows the click that activates an inactive app, so a healthy first click produces
+     * no event — `AgentAttachIntegrationTest` relies on retrying exactly that. X11's wheel is
+     * button 4/5 presses, so a wheel oracle is still unsound there.
      */
     @Test
-    fun `input delivery is only verifiable on Windows`() {
-        assertTrue(inputDeliveryVerifiable("Windows 11"))
-        assertFalse(inputDeliveryVerifiable("Mac OS X"))
-        assertFalse(inputDeliveryVerifiable("Linux"))
+    fun `input delivery is verifiable for click presses on Windows and X11`() {
+        assertTrue(inputDeliveryVerifiable("Windows 11", DispatchedInput.Press))
+        assertTrue(inputDeliveryVerifiable("Linux", DispatchedInput.Press))
+        assertFalse(inputDeliveryVerifiable("Mac OS X", DispatchedInput.Press))
+    }
+
+    @Test
+    fun `input delivery is not verifiable for wheel on X11 or any verb on macOS`() {
+        assertTrue(inputDeliveryVerifiable("Windows 11", DispatchedInput.Wheel))
+        assertFalse(inputDeliveryVerifiable("Linux", DispatchedInput.Wheel))
+        assertFalse(inputDeliveryVerifiable("Mac OS X", DispatchedInput.Wheel))
+        assertFalse(inputDeliveryVerifiable("Mac OS X", DispatchedInput.Press))
+    }
+
+    @Test
+    fun `Linux is not a blanket skip for click presses`() {
+        assertTrue(
+            inputDeliveryVerifiable("Linux", DispatchedInput.Press),
+            "Linux remaining a blanket skip would let an Xvfb click miss fail silently (#470)",
+        )
+        assertTrue(clickPressDeliveryVerifiable("Linux"))
+        assertTrue(clickPressDeliveryVerifiable("Windows 11"))
+        assertFalse(clickPressDeliveryVerifiable("Mac OS X"))
+    }
+
+    @Test
+    fun `never-delivered click fails naming the click delivery miss`() = runTest {
+        val witness = FakeInputDeliveryWitness(delivered = false)
+        val driver = realInputDriver(witness)
+
+        val failure =
+            assertFailsWith<IllegalStateException> {
+                driver.clickVerified(screenX = 8, screenY = 9)
+            }
+
+        val message = failure.message.orEmpty()
+        assertTrue(message.contains("click"), "must name the click, was: $message")
+        assertTrue(
+            message.contains("no matching mouse event"),
+            "must name the delivery miss, was: $message",
+        )
+        assertFalse(
+            message.contains("typeText"),
+            "must not report the downstream typeText symptom, was: $message",
+        )
     }
 
     private fun realInputDriver(

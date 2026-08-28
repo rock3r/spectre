@@ -93,8 +93,9 @@ which compensates for HiDPI/display scaling.
 ### Undelivered input fails loudly on Windows
 
 On Windows, node-targeted `click`, `doubleClick`, `longClick`, `swipe(from, to)` and
-`scrollWheel(node)` check that the event actually arrived. If Spectre dispatches the input
-and no matching mouse event reaches the target JVM, the call throws
+`scrollWheel(node)` check that the event actually arrived. On X11, the same check runs for
+clicks (`click`, `doubleClick`, `longClick`, `swipe`) but not for the wheel. If Spectre
+dispatches the input and no matching mouse event reaches the target JVM, the call throws
 `IllegalStateException` in process, or reports `inputRejected` over the attach path.
 Earlier versions returned normally without doing anything.
 
@@ -103,14 +104,15 @@ input desktop. The common causes are a locked workstation, or a process running 
 desktop that is not the input one — including a non-interactive session such as Windows
 session 0, an SSH shell, or a scheduled task started while logged out. Input that lands
 somewhere else looks the same from inside the target: another window covering it, or a
-scroll delivered to the focused window rather than the one under the pointer.
+scroll delivered to the focused window rather than the one under the pointer. On X11 the
+same silent no-op can happen for a click that never reaches this JVM.
 
-The check runs on Windows only. macOS swallows the click that activates an application,
-and on X11 the wheel arrives as button presses, so a missing event does not prove
-anything on those platforms. Behaviour there is unchanged.
+The check does not run on macOS, where AppKit swallows the click that activates an
+application, or for X11 wheel events, which arrive as button presses.
 
 If you hit this, fix the environment rather than the test: run on an unlocked, interactive
-desktop. See [#460](https://github.com/rock3r/spectre/issues/460) for the investigation.
+desktop. See [#460](https://github.com/rock3r/spectre/issues/460) for the Windows
+investigation.
 
 ## Mouse: hover and pointer moves
 

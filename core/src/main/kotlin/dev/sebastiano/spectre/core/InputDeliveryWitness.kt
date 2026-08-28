@@ -78,7 +78,19 @@ internal interface InputDeliveryWitness {
 internal object AwtInputDeliveryWitness : InputDeliveryWitness {
 
     override fun observe(input: DispatchedInput): InputDeliveryWitness.Observation? {
-        if (!inputDeliveryVerifiable()) return null
+        if (!inputDeliveryVerifiable(input = input)) return null
+        return attachListener(input)
+    }
+
+    /**
+     * Attaches the Toolkit listener without consulting [inputDeliveryVerifiable].
+     *
+     * Production dispatch still goes through [observe], which applies the OS/verb gate. Tests that
+     * need the oracle's dispatched-vs-never-dispatched verdict on a host where the gate would
+     * decline (macOS; X11 wheel) call this directly so they exercise the shipped listener rather
+     * than a reimplementation.
+     */
+    internal fun attachListener(input: DispatchedInput): InputDeliveryWitness.Observation? {
         val toolkit = runCatching { Toolkit.getDefaultToolkit() }.getOrNull() ?: return null
         val delivered = CountDownLatch(1)
         val listener = AWTEventListener { event ->
@@ -111,39 +123,58 @@ internal object AwtInputDeliveryWitness : InputDeliveryWitness {
 }
 
 /**
- * Whether "no AWT event arrived" is sound evidence that input was discarded, on this platform.
+ * Whether "no AWT event arrived" is sound evidence that input was discarded, on this platform and
+ * for this verb.
  *
- * Only on Windows. #460 is a Windows problem and Windows is where the behaviour was measured, but
- * the real constraint is that the oracle is **unsound elsewhere**: on macOS, AppKit consumes the
- * click that activates an inactive application without delivering it to the window at all, so a
- * perfectly healthy first click legitimately produces no event. `AgentAttachIntegrationTest`
- * already compensates for exactly that by retrying, and treating the swallowed activation click as
- * a failure would break the retry it depends on. X11 has its own divergences (the wheel is button
- * 4/5 presses, so it emits nothing for a zero-notch scroll).
+ * Windows: every mouse verb. #460 is the measured case (SendInput discarded off the input desktop).
+ * X11: **click/press only** (#470) — a real-OS click aimed at this JVM that produces no matching
+ * press is a delivery miss, not a Compose miss. macOS stays off because AppKit consumes the click
+ * that activates an inactive application without delivering it, so a perfectly healthy first click
+ * legitimately produces no event; `AgentAttachIntegrationTest` retries exactly that, and treating
+ * the swallowed activation click as a failure would break the retry it depends on. X11 wheel stays
+ * off because the wheel is button 4/5 presses, so a wheel oracle is unsound (including a zero-notch
+ * scroll, which emits nothing at all).
  *
- * Declining to observe reuses the existing "cannot testify" path, so non-Windows behaviour is
- * exactly what it was before this guard existed.
+ * Declining to observe reuses the existing "cannot testify" path.
  */
 internal fun inputDeliveryVerifiable(
+    osName: String = System.getProperty("os.name").orEmpty(),
+    input: DispatchedInput = DispatchedInput.Press,
+): Boolean {
+    if (osName.startsWith("Windows", ignoreCase = true)) return true
+    if (osName.contains("mac", ignoreCase = true)) return false
+    val linux = osName.contains("linux", ignoreCase = true)
+    return linux && input == DispatchedInput.Press
+}
+
+/**
+ * Whether a node-targeted click's press can be witnessed on this OS.
+ *
+ * Escape hatch for in-repo smokes that aim a coordinate click at this JVM and need to know if a
+ * miss should be read as **never dispatched** versus **unverifiable here**.
+ */
+@InternalSpectreApi
+public fun clickPressDeliveryVerifiable(
     osName: String = System.getProperty("os.name").orEmpty()
-): Boolean = osName.startsWith("Windows", ignoreCase = true)
+): Boolean = inputDeliveryVerifiable(osName, DispatchedInput.Press)
 
 /**
  * [RobotDriver.click], plus verification that the OS actually delivered the press to this JVM.
  *
- * Reserved for node-targeted callers ([ComposeAutomator.click]), where the input is aimed at one of
- * this JVM's own Compose nodes and an event that never arrives is unambiguously a failure. The
- * public coordinate overloads stay unverified on purpose: a caller may quite legitimately drive
- * input outside this JVM's windows, for instance to dismiss a popup.
+ * Reserved for callers who know the target is one of this JVM's own windows: node-targeted
+ * [ComposeAutomator.click], and in-repo smokes such as the unfocused-counter click. The public
+ * coordinate overloads stay unverified on purpose: a caller may quite legitimately drive input
+ * outside this JVM's windows, for instance to dismiss a popup.
  *
  * These live outside [RobotDriver] as extensions rather than members because the driver is already
  * at the project's per-class function ceiling, and because keeping the whole delivery-verification
  * feature in one file makes it easier to reason about than five methods scattered through the input
  * surface.
  *
- * Throws [IllegalStateException] when the input was discarded — see #460.
+ * Throws [IllegalStateException] when the input was discarded — see #460 and #470.
  */
-internal suspend fun RobotDriver.clickVerified(screenX: Int, screenY: Int) {
+@InternalSpectreApi
+public suspend fun RobotDriver.clickVerified(screenX: Int, screenY: Int) {
     verifyingDelivery("click", screenX, screenY, DispatchedInput.Press) { click(screenX, screenY) }
 }
 
