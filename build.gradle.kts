@@ -178,6 +178,7 @@ val verifyMacosCliBundleReleaseContract by
                 ".github/scripts/test-macos-cli-seal-preservation.sh",
                 ".github/scripts/test-macos-release-artifact-workflows.sh",
                 ".github/scripts/test-macos-roast-dual-package-graph.sh",
+                ".github/scripts/test-macos-bundle-verify-ordering.sh",
                 ".github/scripts/inspect-macos-roast-package-dests.init.gradle.kts",
                 "docs/PUBLISHING.md",
                 "docs/RELEASE-SMOKE.md",
@@ -271,7 +272,13 @@ val buildSrcUnitTests by
 
 // Both tasks launch nested Gradle builds that write buildSrc/build. Running them concurrently can
 // corrupt a cache restore or expose a partially compiled buildSrc classpath on clean CI workers.
-verifyMacosCliBundleReleaseContract.configure { mustRunAfter(buildSrcUnitTests) }
+// #456: the seal-preservation script this task runs reads the packaged macOS zips under
+// cli/build/construo/distributions. An absent zip is fine — it skips the mutation probe — but a
+// half-written one fails `ditto -x -k` outright, which is what happens when Gradle schedules the
+// two together. Ordering only: `check` must not be made to build the macOS bundles.
+verifyMacosCliBundleReleaseContract.configure {
+    mustRunAfter(buildSrcUnitTests, ":cli:packageMacosArm64", ":cli:packageMacosX64")
+}
 
 tasks.named("check") {
     dependsOn(
