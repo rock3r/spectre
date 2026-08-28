@@ -323,7 +323,8 @@ internal object LaunchReadiness {
         }
         if (chain.any { it.javaClass.simpleName == "AttachNotSupportedException" }) return true
         if (chain.any { it.javaClass.simpleName == "AgentLoadException" }) {
-            return "not responding" in lower ||
+            // HotSpot: "Target VM did not respond" and "target process not responding".
+            return "not respond" in lower ||
                 "no such process" in lower ||
                 "process not available" in lower
         }

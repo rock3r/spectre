@@ -103,6 +103,14 @@ class LaunchReadinessAttachRetryTest {
                 )
             )
         )
+        assertTrue(
+            LaunchReadiness.isNoLiveAgentFailure(
+                RuntimeException(
+                    "VirtualMachine.loadAgent(agent.jar) failed: AgentLoadException",
+                    AgentLoadException("Target VM did not respond"),
+                )
+            )
+        )
         assertFalse(
             LaunchReadiness.isNoLiveAgentFailure(IllegalStateException("agent jar rejected"))
         )

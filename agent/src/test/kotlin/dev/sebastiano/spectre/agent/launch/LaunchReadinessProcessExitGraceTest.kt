@@ -186,7 +186,7 @@ class LaunchReadinessProcessExitGraceTest {
         val cause =
             RuntimeException(
                 "VirtualMachine.loadAgent(agent.jar) failed: AgentLoadException",
-                AgentLoadException("target process not responding"),
+                AgentLoadException("Target VM did not respond"),
             )
         assertEquals(5_000L, LaunchReadiness.exitGraceMs(budgetRemainingMs = 5_000, cause = cause))
     }
