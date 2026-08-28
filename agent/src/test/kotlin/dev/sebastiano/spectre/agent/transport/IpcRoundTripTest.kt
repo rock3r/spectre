@@ -7,6 +7,9 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermission
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.io.path.deleteIfExists
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -161,6 +164,37 @@ class IpcRoundTripTest {
             IpcClient(udsPath).use { client ->
                 assertEquals(AgentResponse.Detached, client.send(AgentRequest.Detach))
             }
+        }
+    }
+
+    @Test
+    fun `queued client after ordinary EOF is not reset by closing a prior accepted socket`() {
+        val server = IpcServer(udsPath, stubHandler())
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            server.use {
+                awaitSocket(udsPath)
+                IpcClient(udsPath).use { first ->
+                    assertEquals(AgentResponse.Pong, first.send(AgentRequest.Ping))
+                }
+                val second = IpcClient(udsPath)
+                try {
+                    assertEquals(AgentResponse.Pong, second.send(AgentRequest.Ping))
+                    val thirdConnecting = CountDownLatch(1)
+                    val third =
+                        executor.submit<AgentResponse> {
+                            thirdConnecting.countDown()
+                            IpcClient(udsPath).use { it.send(AgentRequest.Ping) }
+                        }
+                    assertTrue(thirdConnecting.await(3, TimeUnit.SECONDS))
+                    second.close()
+                    assertEquals(AgentResponse.Pong, third.get(3, TimeUnit.SECONDS))
+                } finally {
+                    second.close()
+                }
+            }
+        } finally {
+            executor.shutdownNow()
         }
     }
 

@@ -11,8 +11,8 @@ import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Server-side IPC endpoint: binds a Unix Domain Socket at [udsPath], accepts a single client
@@ -85,7 +85,7 @@ constructor(
 
     private val running = AtomicBoolean(true)
     private val inputWorkers = CrossSessionInputWorkers()
-    private val currentClient = AtomicReference<SocketChannel?>(null)
+    private val acceptedClients = ConcurrentLinkedQueue<SocketChannel>()
 
     private val acceptThread =
         Thread(::acceptLoop, "spectre-agent-accept").apply {
@@ -115,13 +115,7 @@ constructor(
                         }
                         return
                     }
-                // Keep the previous accepted socket open for the whole replacement session.
-                // On Windows AF_UNIX, closing a sibling accepted channel can RST the
-                // replacement, so its handshake/reader sees EOF while orphaned input is
-                // still why the previous session is winding down (#471). Accept-then-close
-                // of the previous socket before handleConnection is not enough: the RST
-                // still lands after HelloAck, which is the IpcClient readerLoop EOF.
-                val previous = currentClient.getAndSet(incoming)
+                acceptedClients.add(incoming)
                 // Per-connection failures (broken pipe from a crashed client mid-`writeFrame`,
                 // half-closed sockets, malformed framing, …) MUST NOT kill the accept loop.
                 // Before this catch was inside the loop, an `IOException` from
@@ -149,18 +143,20 @@ constructor(
                                 "(${ex.javaClass.simpleName}): ${ex.message ?: "<no message>"}"
                         )
                     }
-                } finally {
-                    runCatching { previous?.close() }
                 }
             }
         } finally {
-            runCatching { currentClient.getAndSet(null)?.close() }
+            // Close accepted sockets only when the accept loop exits. Closing a sibling
+            // while another client is already in the listen backlog can RST that queued
+            // connection on Windows AF_UNIX (HelloAck then reader EOF, #471).
+            acceptedClients.forEach { runCatching { it.close() } }
+            acceptedClients.clear()
         }
     }
 
     /**
-     * Serves one accepted client. Does **not** close [client]: the accept loop owns that so the
-     * previous socket stays open until this session ends (#471).
+     * Serves one accepted client. Does **not** close [client]: accepted sockets stay open until the
+     * accept loop exits so a queued successor is never RST'd by a sibling close (#471).
      */
     private fun handleConnection(client: SocketChannel) {
         val input = Channels.newInputStream(client)
