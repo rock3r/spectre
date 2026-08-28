@@ -65,5 +65,67 @@ class LaunchReadinessAttachRetryTest {
             )
         )
         assertFalse(LaunchReadiness.isPreLoadAttachRetryable(message = null, causeMessage = null))
+        // #454: a terminal AttachNotSupportedException on a dying target is not the handshake
+        // race. Extending this predicate would retry attach (including HotSpot's ~10s socket
+        // timeout) instead of waiting for the process to exit.
+        assertFalse(
+            LaunchReadiness.isPreLoadAttachRetryable(
+                message =
+                    "VirtualMachine.attach(4321) failed: AttachNotSupportedException: not attachable",
+                causeMessage = "not attachable",
+            )
+        )
     }
+
+    @Test
+    fun `ordinary AgentLoadException is not a no-live-agent failure`() {
+        assertTrue(
+            LaunchReadiness.isNoLiveAgentFailure(
+                RuntimeException(
+                    "VirtualMachine.attach(1) failed: AttachNotSupportedException",
+                    AttachNotSupportedException("not attachable"),
+                )
+            )
+        )
+        assertFalse(
+            LaunchReadiness.isNoLiveAgentFailure(
+                RuntimeException(
+                    "VirtualMachine.loadAgent(agent.jar) failed: AgentLoadException: not found",
+                    AgentLoadException("agent library failed to init"),
+                )
+            )
+        )
+        assertTrue(
+            LaunchReadiness.isNoLiveAgentFailure(
+                RuntimeException(
+                    "VirtualMachine.loadAgent(agent.jar) failed: AgentLoadException",
+                    AgentLoadException("target process not responding"),
+                )
+            )
+        )
+        assertTrue(
+            LaunchReadiness.isNoLiveAgentFailure(
+                RuntimeException(
+                    "VirtualMachine.loadAgent(agent.jar) failed: AgentLoadException",
+                    AgentLoadException("Target VM did not respond"),
+                )
+            )
+        )
+        assertFalse(
+            LaunchReadiness.isNoLiveAgentFailure(IllegalStateException("agent jar rejected"))
+        )
+        assertFalse(
+            LaunchReadiness.isNoLiveAgentFailure(
+                RuntimeException(
+                    "The target JVM does not allow dynamic agent loading. Restart it with " +
+                        "`-XX:+EnableDynamicAgentLoading` and retry the attach.",
+                    AgentLoadException("Dynamic agent loading is not enabled"),
+                )
+            )
+        )
+    }
+
+    private class AttachNotSupportedException(message: String) : RuntimeException(message)
+
+    private class AgentLoadException(message: String) : RuntimeException(message)
 }

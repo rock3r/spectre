@@ -30,6 +30,12 @@ public object LaunchDescendantDiscovery {
      *
      * @param nameFilter case-insensitive substring of the app's main-class display name. Required
      *   to safely pick among daemon children on machines with concurrent Gradle apps.
+     *
+     * Opt-in diagnostics (#458): set
+     * `-Ddev.sebastiano.spectre.agent.launch.discoveryDiagnostics=true` or
+     * `SPECTRE_LAUNCH_DISCOVERY_DIAGNOSTICS=true` to print each selection's candidate list, start
+     * instants, launch boundary, and rejection reasons to stderr. Off by default; selection is
+     * unchanged.
      */
     public fun discoverAppJvm(
         clientPid: Long,
@@ -44,7 +50,12 @@ public object LaunchDescendantDiscovery {
          */
         clientStart: Instant? = processStartInstant(clientPid),
     ): Long? =
-        selectAppJvm(clientPid = clientPid, nameFilter = nameFilter, clientStart = clientStart)
+        selectAppJvm(
+            clientPid = clientPid,
+            nameFilter = nameFilter,
+            clientStart = clientStart,
+            onDiagnostics = AppJvmDiscoveryDiagnostics.sinkFromEnvironment(),
+        )
 
     /**
      * [discoverAppJvm] with its process facts injectable, so the selection rules can be tested
@@ -62,6 +73,45 @@ public object LaunchDescendantDiscovery {
         nativeFallback: (Long, Set<Long>, String?) -> Long? = { client, daemons, filter ->
             discoverByNativeTree(client, daemons, filter, clientStart, startInstantOf)
         },
+        onDiagnostics: AppJvmDiscoveryDiagnosticSink = AppJvmDiscoveryDiagnosticSink.NoOp,
+    ): Long? {
+        // Off by default: do not construct a record or extra start-instant lookups (#458).
+        val diagnosticsOn = onDiagnostics !== AppJvmDiscoveryDiagnosticSink.NoOp
+        val startOf = AppJvmDiscoveryDiagnostics.startLookup(diagnosticsOn, startInstantOf)
+        val selected =
+            chooseAppJvm(
+                clientPid = clientPid,
+                nameFilter = nameFilter,
+                clientStart = clientStart,
+                listed = listed,
+                descendantsOf = descendantsOf,
+                parentOf = parentOf,
+                startInstantOf = startOf,
+                nativeFallback = nativeFallback,
+            )
+        if (diagnosticsOn) {
+            emitDiscoveryRecord(
+                onDiagnostics = onDiagnostics,
+                clientPid = clientPid,
+                nameFilter = nameFilter,
+                clientStart = clientStart,
+                listed = listed,
+                startInstantOf = startOf,
+                selectedPid = selected,
+            )
+        }
+        return selected
+    }
+
+    private fun chooseAppJvm(
+        clientPid: Long,
+        nameFilter: String?,
+        clientStart: Instant?,
+        listed: List<JvmProcessInfo>,
+        descendantsOf: (Long) -> Set<Long>,
+        parentOf: (Long) -> Long?,
+        startInstantOf: (Long) -> Instant?,
+        nativeFallback: (Long, Set<Long>, String?) -> Long?,
     ): Long? {
         if (listed.isEmpty()) return null
 
@@ -75,10 +125,9 @@ public object LaunchDescendantDiscovery {
                 !predatesLaunch(startInstantOf(info.pid), clientStart)
         }
         if (nonDaemon.isEmpty()) {
-            // Every Attach-visible JVM is either a daemon or predates the launch. That does not
-            // mean the target is absent: VirtualMachine.list() lags behind spawn, and
-            // -XX:-UsePerfData hides a JVM from it entirely. The native walk is the fallback for
-            // exactly that case, so do not short-circuit past it (#446).
+            // Every Attach-visible JVM is a daemon or predates the launch. That does not mean
+            // the target is absent: VirtualMachine.list() lags, and -XX:-UsePerfData hides a
+            // JVM entirely. The native walk is the fallback, so do not skip it (#446).
             val walkRoots = if (nameFilter.isNullOrBlank()) emptySet() else daemonPids
             return nativeFallback(clientPid, walkRoots, nameFilter)
         }
@@ -118,6 +167,58 @@ public object LaunchDescendantDiscovery {
             // No unfiltered daemon walk without nameFilter.
             ?: nativeFallback(clientPid, emptySet(), null)
     }
+
+    private fun emitDiscoveryRecord(
+        onDiagnostics: AppJvmDiscoveryDiagnosticSink,
+        clientPid: Long,
+        nameFilter: String?,
+        clientStart: Instant?,
+        listed: List<JvmProcessInfo>,
+        startInstantOf: (Long) -> Instant?,
+        selectedPid: Long?,
+    ) {
+        onDiagnostics.emit(
+            AppJvmDiscoveryRecord(
+                clientPid = clientPid,
+                nameFilter = nameFilter,
+                launchBoundary = clientStart,
+                candidates =
+                    listed.map { info ->
+                        val start = startInstantOf(info.pid)
+                        AppJvmDiscoveryCandidate(
+                            pid = info.pid,
+                            displayName = info.displayName,
+                            startInstant = start,
+                            rejectionReason =
+                                listedRejectionReason(
+                                    pid = info.pid,
+                                    displayName = info.displayName,
+                                    clientPid = clientPid,
+                                    clientStart = clientStart,
+                                    candidateStart = start,
+                                ),
+                        )
+                    },
+                selectedPid = selectedPid,
+            )
+        )
+    }
+
+    private fun listedRejectionReason(
+        pid: Long,
+        displayName: String,
+        clientPid: Long,
+        clientStart: Instant?,
+        candidateStart: Instant?,
+    ): String? =
+        when {
+            pid == clientPid -> AppJvmDiscoveryDiagnostics.REASON_CLIENT_PID
+            isGradleDaemonDisplayName(displayName) ->
+                AppJvmDiscoveryDiagnostics.REASON_GRADLE_DAEMON
+            predatesLaunch(candidateStart, clientStart) ->
+                AppJvmDiscoveryDiagnostics.REASON_PREDATES_LAUNCH
+            else -> null
+        }
 
     /**
      * True when [candidateStart] proves the candidate JVM was already running before the launch

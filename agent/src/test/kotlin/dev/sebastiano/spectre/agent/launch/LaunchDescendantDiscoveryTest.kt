@@ -90,6 +90,100 @@ class LaunchDescendantDiscoveryTest {
     }
 
     @Test
+    fun `opt-in diagnostics capture the candidate list start instants launch boundary and leftover rejection`() {
+        // #458: the unreproduced 120s miss needs a payload from the failing run, not a guessed
+        // gate change. Opt-in is the injectable sink; production discoverAppJvm wires the same
+        // record to stderr when the flag is on.
+        val scenario = GradleLaunchScenario()
+        val captured = mutableListOf<AppJvmDiscoveryRecord>()
+        val selected =
+            scenario.select(nameFilter = "ComposeFixtureMain", onDiagnostics = { captured += it })
+        assertEquals(scenario.freshFixturePid, selected)
+        assertEquals(1, captured.size, "one selectAppJvm call emits one diagnostic record")
+        val record = captured.single()
+        assertEquals(scenario.launchedAt, record.launchBoundary)
+        assertEquals(scenario.clientPid, record.clientPid)
+        assertEquals("ComposeFixtureMain", record.nameFilter)
+        assertEquals(scenario.freshFixturePid, record.selectedPid)
+
+        val leftover = record.candidates.single { it.pid == scenario.leftoverFixturePid }
+        assertEquals(scenario.launchedAt.minusSeconds(600), leftover.startInstant)
+        assertEquals(PREDATES_LAUNCH_REASON, leftover.rejectionReason)
+
+        val fresh = record.candidates.single { it.pid == scenario.freshFixturePid }
+        assertEquals(scenario.launchedAt.plusSeconds(5), fresh.startInstant)
+        assertEquals(null, fresh.rejectionReason)
+
+        val formatted = record.format()
+        assertTrue(formatted.contains(scenario.leftoverFixturePid.toString()))
+        assertTrue(formatted.contains(scenario.freshFixturePid.toString()))
+        assertTrue(formatted.contains(scenario.launchedAt.toString()))
+        assertTrue(formatted.contains(PREDATES_LAUNCH_REASON))
+    }
+
+    @Test
+    fun `with diagnostics off selection is unchanged and no payload is required`() {
+        val scenario = GradleLaunchScenario()
+        val captured = mutableListOf<AppJvmDiscoveryRecord>()
+        val selected =
+            scenario.select(
+                nameFilter = "ComposeFixtureMain",
+                onDiagnostics = AppJvmDiscoveryDiagnosticSink.NoOp,
+            )
+        assertEquals(
+            scenario.freshFixturePid,
+            selected,
+            "must still pick the fixture this launch started and skip the leftover",
+        )
+        assertTrue(captured.isEmpty(), "NoOp sink must not be required to collect a payload")
+    }
+
+    @Test
+    fun `NoOp diagnostics do not look up start instants beyond selection`() {
+        val scenario = GradleLaunchScenario()
+        val lookedUp = mutableListOf<Long>()
+        scenario.select(
+            nameFilter = "ComposeFixtureMain",
+            onDiagnostics = AppJvmDiscoveryDiagnosticSink.NoOp,
+            onStartInstantLookup = { lookedUp += it },
+        )
+        // Selection only probes leftover + fresh; the daemon is rejected by display name first.
+        assertEquals(listOf(scenario.leftoverFixturePid, scenario.freshFixturePid), lookedUp)
+    }
+
+    @Test
+    fun `opt-in diagnostics reuse the start instants observed during selection`() {
+        val scenario = GradleLaunchScenario()
+        var leftoverLookups = 0
+        val captured = mutableListOf<AppJvmDiscoveryRecord>()
+        scenario.select(
+            nameFilter = "ComposeFixtureMain",
+            onDiagnostics = { captured += it },
+            onStartInstantLookup = { pid ->
+                if (pid == scenario.leftoverFixturePid) {
+                    leftoverLookups += 1
+                    check(leftoverLookups == 1) {
+                        "leftover start instant must be cached from selection, lookups=$leftoverLookups"
+                    }
+                }
+            },
+        )
+        val leftover = captured.single().candidates.single { it.pid == scenario.leftoverFixturePid }
+        assertEquals(1, leftoverLookups)
+        assertEquals(scenario.launchedAt.minusSeconds(600), leftover.startInstant)
+        assertEquals(PREDATES_LAUNCH_REASON, leftover.rejectionReason)
+    }
+
+    @Test
+    fun `discovery diagnostics stay off unless the opt-in flag is set`() {
+        assertFalse(AppJvmDiscoveryDiagnostics.enabled(property = null, env = null))
+        assertFalse(AppJvmDiscoveryDiagnostics.enabled(property = "false", env = null))
+        assertTrue(AppJvmDiscoveryDiagnostics.enabled(property = "true", env = null))
+        assertTrue(AppJvmDiscoveryDiagnostics.enabled(property = null, env = "true"))
+        assertFalse(AppJvmDiscoveryDiagnostics.enabled(property = "yes", env = "1"))
+    }
+
+    @Test
     fun `selectAppJvm skips a leftover fixture and picks the one this launch started`() {
         // The leftover deliberately holds the *higher* pid, so "highest pid wins" cannot be what
         // saves this: only the start-time gate can tell the two fixtures apart.
@@ -243,6 +337,8 @@ class LaunchDescendantDiscoveryTest {
         fun select(
             nameFilter: String?,
             nativeFallback: (Long, Set<Long>, String?) -> Long? = { _, _, _ -> null },
+            onDiagnostics: AppJvmDiscoveryDiagnosticSink = AppJvmDiscoveryDiagnosticSink.NoOp,
+            onStartInstantLookup: (Long) -> Unit = {},
         ): Long? =
             LaunchDescendantDiscovery.selectAppJvm(
                 clientPid = clientPid,
@@ -253,16 +349,19 @@ class LaunchDescendantDiscoveryTest {
                 descendantsOf = { emptySet() },
                 parentOf = { pid -> daemonPid.takeIf { pid != daemonPid && pid != clientPid } },
                 startInstantOf = { pid ->
+                    onStartInstantLookup(pid)
                     startInstants[pid].takeIf {
                         startTimesKnown && !(clientReaped && pid == clientPid)
                     }
                 },
                 nativeFallback = nativeFallback,
+                onDiagnostics = onDiagnostics,
             )
     }
 
     private companion object {
         const val NATIVE_FALLBACK_PID = 99_999L
+        const val PREDATES_LAUNCH_REASON = AppJvmDiscoveryDiagnostics.REASON_PREDATES_LAUNCH
     }
 
     @Test

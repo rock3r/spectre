@@ -21,14 +21,24 @@ class AtomicCaptureWindowRoutingTest {
     @Test
     fun `atomic still prefers window capture and never calls region when native succeeds`() {
         assumeLiveAwtAvailable()
+        // Requested geometry is the contract under test. After addNotify(), Windows can snap
+        // or DPI-adjust Frame.bounds (mattone measured 160 → 149). That would clip the Compose
+        // surface crop and fail a routing assertion unrelated to the window manager.
+        val windowBounds = Rectangle(10, 20, 160, 120)
+        val titleBar = Insets(24, 0, 0, 0)
+        val surface =
+            Rectangle(
+                windowBounds.x + titleBar.left,
+                windowBounds.y + titleBar.top,
+                windowBounds.width - titleBar.left - titleBar.right,
+                windowBounds.height - titleBar.top - titleBar.bottom,
+            )
         val frame =
             Frame("atomic-capture-window").apply {
-                setBounds(10, 20, 160, 120)
+                setBounds(windowBounds)
                 addNotify()
             }
-        val windowBounds = Rectangle(frame.bounds)
-        val surface = Rectangle(10, 44, 160, 96)
-        val nativeImage = solidImage(160, 120, 0xFFAABBCC.toInt())
+        val nativeImage = solidImage(windowBounds.width, windowBounds.height, 0xFFAABBCC.toInt())
         var regionCalls = 0
         var windowCalls = 0
         val backend =
@@ -48,14 +58,14 @@ class AtomicCaptureWindowRoutingTest {
                 backend.captureWindow(
                     TrackedWindow("t", frame, composePanel = null, isPopup = false),
                     windowBounds,
-                    Insets(24, 0, 0, 0),
+                    titleBar,
                 )
             // Same call production makes to crop the native frame to the Compose surface.
             val cropped = windowStillForRegion(capture, surface)
             assertEquals(1, windowCalls)
             assertEquals(0, regionCalls)
-            assertEquals(160, cropped.image.width)
-            assertEquals(96, cropped.image.height)
+            assertEquals(surface.width, cropped.image.width)
+            assertEquals(surface.height, cropped.image.height)
         } finally {
             frame.dispose()
         }
