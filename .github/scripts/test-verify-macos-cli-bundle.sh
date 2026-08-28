@@ -7,11 +7,13 @@ verifier="$repo_root/.github/scripts/verify-macos-cli-bundle.sh"
 seal_probe="$repo_root/.github/scripts/test-macos-cli-seal-preservation.sh"
 workflow_contract="$repo_root/.github/scripts/test-macos-release-artifact-workflows.sh"
 dual_package="$repo_root/.github/scripts/test-macos-roast-dual-package-graph.sh"
+verify_ordering="$repo_root/.github/scripts/test-macos-bundle-verify-ordering.sh"
 
 test -x "$verifier"
 test -x "$seal_probe"
 test -x "$workflow_contract"
 test -x "$dual_package"
+test -x "$verify_ordering"
 grep -Fq 'verify-macos-cli-bundle.sh "$archive" "$RELEASE_VERSION"' "$workflow"
 grep -Fq 'app="$workspace/$expected_root/Spectre.app"' "$verifier"
 grep -Fq 'codesign --verify --deep --strict --verbose=4 "$app"' "$verifier"
@@ -34,5 +36,6 @@ if grep -E 'codesign --verify --strict --verbose=4 "\$app"' "$workflow" | grep -
   exit 1
 fi
 
+bash "$verify_ordering"
 bash "$workflow_contract"
 bash "$seal_probe"
