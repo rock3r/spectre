@@ -64,7 +64,7 @@ class LaunchReadinessProcessExitGraceTest {
                     attachedPid = 4321,
                     stdoutPath = captureFile("stdout"),
                     stderrPath = captureFile("stderr"),
-                    cause = IllegalStateException("attach failed while the process was exiting"),
+                    cause = attachNotSupportedCause(),
                     graceMs = 5_000,
                 )
             }
@@ -117,16 +117,109 @@ class LaunchReadinessProcessExitGraceTest {
         // Codex P2: a fixed grace on top of an exhausted stage means the documented per-stage
         // timeout no longer bounds AGENT_BOOTSTRAP, and a caller with a short failure-detection
         // budget waits up to two extra seconds for its exception.
-        assertEquals(0L, LaunchReadiness.exitGraceMs(budgetRemainingMs = 0))
-        assertEquals(0L, LaunchReadiness.exitGraceMs(budgetRemainingMs = -500))
-        assertEquals(120L, LaunchReadiness.exitGraceMs(budgetRemainingMs = 120))
+        val dying = attachNotSupportedCause()
+        assertEquals(0L, LaunchReadiness.exitGraceMs(budgetRemainingMs = 0, cause = dying))
+        assertEquals(0L, LaunchReadiness.exitGraceMs(budgetRemainingMs = -500, cause = dying))
+        assertEquals(120L, LaunchReadiness.exitGraceMs(budgetRemainingMs = 120, cause = dying))
     }
 
     @Test
-    fun `a generous budget still gets the full grace`() {
+    fun `a no-live-agent failure spends remaining bootstrap budget rather than the 2s cap`() {
         assertEquals(
-            LaunchReadiness.PROCESS_EXIT_GRACE_MS,
-            LaunchReadiness.exitGraceMs(budgetRemainingMs = 60_000),
+            60_000L,
+            LaunchReadiness.exitGraceMs(
+                budgetRemainingMs = 60_000,
+                cause = attachNotSupportedCause(),
+            ),
+        )
+    }
+
+    @Test
+    fun `PROCESS_EXIT_GRACE_MS is not raised`() {
+        // #454 exists so this constant is never the thing we tune. Remaining agentBootstrapMs
+        // and the failure kind decide the wait; this stays the #447 historical 2s cap.
+        assertEquals(2_000L, LaunchReadiness.PROCESS_EXIT_GRACE_MS)
+    }
+
+    @Test
+    fun `a process that exits after 2s but inside remaining bootstrap budget is PROCESS_ALIVE`() {
+        // #454: hosted windows-latest can still be exiting `java -version` after the 2s #447 cap,
+        // while remaining agentBootstrapMs (default 15s) has plenty of budget left. Attach never
+        // obtained a live agent (AttachNotSupportedException), so the honest stage is
+        // PROCESS_ALIVE.
+        val cause = attachNotSupportedCause()
+        val remainingBudgetMs = 5_000L
+        val graceMs =
+            LaunchReadiness.exitGraceMs(budgetRemainingMs = remainingBudgetMs, cause = cause)
+        val ex =
+            assertFailsWith<ProcessExitedBeforeAttachException> {
+                LaunchReadiness.bootstrapFailureOrProcessExit(
+                    process = FakeProcess(exitsAfterMs = AFTER_TWO_SECOND_CAP_MS),
+                    gradleish = false,
+                    attachedPid = 4321,
+                    stdoutPath = captureFile("stdout"),
+                    stderrPath = captureFile("stderr"),
+                    cause = cause,
+                    graceMs = graceMs,
+                )
+            }
+        assertEquals(LaunchStage.PROCESS_ALIVE, ex.stage)
+        assertTrue(
+            graceMs > LaunchReadiness.PROCESS_EXIT_GRACE_MS,
+            "derived bound must exceed the 2s cap so a slow exit can still be PROCESS_ALIVE; got $graceMs",
+        )
+        assertTrue(graceMs <= remainingBudgetMs)
+    }
+
+    @Test
+    fun `AgentLoadException uses the remaining bootstrap budget rather than the 2s cap`() {
+        val cause =
+            RuntimeException(
+                "VirtualMachine.loadAgent(agent.jar) failed: AgentLoadException: target is dying",
+                AgentLoadException("target is dying"),
+            )
+        val remainingBudgetMs = 5_000L
+        val graceMs =
+            LaunchReadiness.exitGraceMs(budgetRemainingMs = remainingBudgetMs, cause = cause)
+        assertTrue(
+            graceMs > LaunchReadiness.PROCESS_EXIT_GRACE_MS,
+            "AgentLoadException is also attach-never-obtained; got $graceMs",
+        )
+        assertEquals(remainingBudgetMs, graceMs)
+    }
+
+    @Test
+    fun `dynamic-agent-loading-disabled against a still-live process stays AGENT_BOOTSTRAP without waiting`() {
+        // Definitive: a healthy JVM that refuses dynamic agents. Waiting remaining agentBootstrapMs
+        // (or even the old 2s cap) only delays an answer we already have.
+        val cause =
+            RuntimeException(
+                "The target JVM does not allow dynamic agent loading. Restart it with " +
+                    "`-XX:+EnableDynamicAgentLoading` and retry the attach.",
+                RuntimeException("Dynamic agent loading is not enabled"),
+            )
+        val remainingBudgetMs = 5_000L
+        val graceMs =
+            LaunchReadiness.exitGraceMs(budgetRemainingMs = remainingBudgetMs, cause = cause)
+        assertEquals(0L, graceMs, "definitive failures must not spend remaining bootstrap budget")
+        val startedAt = System.nanoTime()
+        val ex =
+            assertFailsWith<LaunchAgentBootstrapException> {
+                LaunchReadiness.bootstrapFailureOrProcessExit(
+                    process = FakeProcess(exitsAfterMs = 60_000),
+                    gradleish = false,
+                    attachedPid = 4321,
+                    stdoutPath = captureFile("stdout"),
+                    stderrPath = captureFile("stderr"),
+                    cause = cause,
+                    graceMs = remainingBudgetMs,
+                )
+            }
+        val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+        assertEquals(LaunchStage.AGENT_BOOTSTRAP, ex.stage)
+        assertTrue(
+            elapsedMs < 1_000,
+            "must not burn the derived bound on a definitive failure; elapsed=${elapsedMs}ms",
         )
     }
 
@@ -134,6 +227,8 @@ class LaunchReadinessProcessExitGraceTest {
     fun `an exhausted budget still reclassifies a process that has already exited`() {
         // Capping the grace must not cost the instantaneous case: a process that is already gone
         // is still a PROCESS_ALIVE failure, budget or no budget.
+        val cause = attachNotSupportedCause()
+        assertEquals(0L, LaunchReadiness.exitGraceMs(budgetRemainingMs = 0, cause = cause))
         val ex =
             assertFailsWith<ProcessExitedBeforeAttachException> {
                 LaunchReadiness.bootstrapFailureOrProcessExit(
@@ -142,7 +237,7 @@ class LaunchReadinessProcessExitGraceTest {
                     attachedPid = 4321,
                     stdoutPath = captureFile("stdout"),
                     stderrPath = captureFile("stderr"),
-                    cause = IllegalStateException("attach failed"),
+                    cause = cause,
                     graceMs = 0,
                 )
             }
@@ -178,5 +273,23 @@ class LaunchReadinessProcessExitGraceTest {
             const val POLL_MS: Long = 10
             const val EXIT_CODE: Int = 17
         }
+    }
+
+    /**
+     * Local stand-ins so tests do not compile-depend on `jdk.attach`. Production matches these
+     * types by simple name on the cause chain — the same names HotSpot throws.
+     */
+    private class AttachNotSupportedException(message: String) : RuntimeException(message)
+
+    private class AgentLoadException(message: String) : RuntimeException(message)
+
+    private fun attachNotSupportedCause(): RuntimeException =
+        RuntimeException(
+            "VirtualMachine.attach(4321) failed: AttachNotSupportedException: not attachable",
+            AttachNotSupportedException("not attachable"),
+        )
+
+    private companion object {
+        const val AFTER_TWO_SECOND_CAP_MS: Long = 2_100
     }
 }

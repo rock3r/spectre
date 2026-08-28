@@ -181,25 +181,29 @@ internal object LaunchReadiness {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(bootstrapTimeoutMs)
         // Read fresh at each throw site: the attach attempt itself consumes budget, so the value
         // sampled at the top of the loop is already stale by the time a failure lands.
-        fun graceWithinBudget(): Long =
-            exitGraceMs(TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()))
+        fun graceWithinBudget(cause: Throwable?): Long =
+            exitGraceMs(
+                budgetRemainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()),
+                cause = cause,
+            )
         var lastAttachFailure: SpectreAttachException? = null
         while (true) {
             val remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())
             if (remainingMs <= 0L) {
+                val cause =
+                    lastAttachFailure
+                        ?: IllegalStateException(
+                            "Agent bootstrap budget ${bootstrapTimeoutMs}ms exhausted " +
+                                "before attach for pid=$attachedPid"
+                        )
                 bootstrapFailureOrProcessExit(
-                    graceMs = graceWithinBudget(),
+                    graceMs = graceWithinBudget(cause),
                     process = process,
                     gradleish = gradleish,
                     attachedPid = attachedPid,
                     stdoutPath = stdoutPath,
                     stderrPath = stderrPath,
-                    cause =
-                        lastAttachFailure
-                            ?: IllegalStateException(
-                                "Agent bootstrap budget ${bootstrapTimeoutMs}ms exhausted " +
-                                    "before attach for pid=$attachedPid"
-                            ),
+                    cause = cause,
                 )
             }
             // Bound each attempt by remaining stage budget so pre-load retries cannot
@@ -217,7 +221,7 @@ internal object LaunchReadiness {
                 )
             } catch (ex: SpectreAgentException) {
                 bootstrapFailureOrProcessExit(
-                    graceMs = graceWithinBudget(),
+                    graceMs = graceWithinBudget(ex),
                     process = process,
                     gradleish = gradleish,
                     attachedPid = attachedPid,
@@ -237,7 +241,7 @@ internal object LaunchReadiness {
                         System.nanoTime() >= deadline
                 ) {
                     bootstrapFailureOrProcessExit(
-                        graceMs = graceWithinBudget(),
+                        graceMs = graceWithinBudget(ex),
                         process = process,
                         gradleish = gradleish,
                         attachedPid = attachedPid,
@@ -261,7 +265,7 @@ internal object LaunchReadiness {
                 }
             } catch (ex: IOException) {
                 bootstrapFailureOrProcessExit(
-                    graceMs = graceWithinBudget(),
+                    graceMs = graceWithinBudget(ex),
                     process = process,
                     gradleish = gradleish,
                     attachedPid = attachedPid,
@@ -282,12 +286,43 @@ internal object LaunchReadiness {
      * that terminal timeout would start another full JDK handshake and blow the stage budget. Only
      * the documented "state is not ready…" race (and "no such process" pid churn) retries.
      *
+     * #454's dying-target taxonomy is **not** absorbed here. A terminal
+     * `AttachNotSupportedException` / `AgentLoadException` means no live agent was obtained, which
+     * is consistent with a process that is still exiting — that belongs to [exitGraceMs] /
+     * [bootstrapFailureOrProcessExit], not another attach attempt.
+     *
      * Internal rather than private so tests that drive [AgentAttach.attach] directly — instead of
      * going through [awaitAgentBootstrap] — retry the same race against the same definition (#443).
      */
     internal fun isPreLoadAttachRetryable(message: String?, causeMessage: String?): Boolean {
         val msg = (message.orEmpty() + " " + causeMessage.orEmpty()).lowercase()
         return "not ready to participate in attach handshake" in msg || "no such process" in msg
+    }
+
+    /**
+     * True when [cause] means attach never obtained a live agent, so a still-exiting process should
+     * be given remaining [LaunchStageTimeouts.agentBootstrapMs] to finish before the failure is
+     * blamed on bootstrap (#454).
+     *
+     * `AttachNotSupportedException` / `AgentLoadException` (by simple name on the cause chain, the
+     * names HotSpot throws) are the "never obtained" set. Definitive refusals such as dynamic-agent
+     * loading disabled win even when the JDK wraps them as `AgentLoadException`.
+     */
+    internal fun isNoLiveAgentFailure(cause: Throwable?): Boolean {
+        if (cause == null) return false
+        val chain = generateSequence(cause) { it.cause }.toList()
+        val blob =
+            chain.joinToString("\n") { ex -> ex.javaClass.simpleName + "\n" + ex.message.orEmpty() }
+        val lower = blob.lowercase()
+        if (
+            "enabledynamicagentloading" in lower || "dynamic agent loading is not enabled" in lower
+        ) {
+            return false
+        }
+        return chain.any { ex ->
+            val simple = ex.javaClass.simpleName
+            simple == "AttachNotSupportedException" || simple == "AgentLoadException"
+        }
     }
 
     /** Prefer stage PROCESS_ALIVE when the process died during attach (race with early exit). */
@@ -311,13 +346,15 @@ internal object LaunchReadiness {
      * milliseconds short of exiting, and an instantaneous liveness check calls it a bootstrap
      * failure. That hides the real cause: nothing could attach because the process was exiting.
      *
-     * So wait [graceMs] for it to finish — capped by the stage budget. If it does, report the
-     * honest stage with its exit code and captured stderr; if it is still running, the bootstrap
-     * failure is genuine and keeps its own taxonomy. The wait only happens on a failure path
-     * (#447).
+     * So wait [graceMs] for it to finish — derived from remaining stage budget, and only for
+     * [isNoLiveAgentFailure] causes. If it does, report the honest stage with its exit code and
+     * captured stderr; if it is still running, the bootstrap failure is genuine and keeps its own
+     * taxonomy. The wait only happens on a failure path (#447, #454).
      *
-     * Gradle-ish launches are exempt: their client exiting is normal, and
-     * [GRADLE_CLIENT_DEAD_BEFORE_APP_JVM] already covers the case where that matters.
+     * Definitive failures such as dynamic-agent-loading-disabled skip the wait even when [graceMs]
+     * is large: we already know the JVM is refusing the agent. Gradle-ish launches are exempt:
+     * their client exiting is normal, and [GRADLE_CLIENT_DEAD_BEFORE_APP_JVM] already covers the
+     * case where that matters.
      */
     internal fun bootstrapFailureOrProcessExit(
         process: Process,
@@ -329,7 +366,8 @@ internal object LaunchReadiness {
         /** Grace to spend waiting for the process to exit; see [exitGraceMs]. */
         graceMs: Long,
     ): Nothing {
-        if (!gradleish && exitedWithinGrace(process, graceMs)) {
+        val waitMs = if (isNoLiveAgentFailure(cause)) graceMs.coerceAtLeast(0L) else 0L
+        if (!gradleish && exitedWithinGrace(process, waitMs)) {
             throw processExited(process, stdoutPath, stderrPath)
         }
         throw LaunchAgentBootstrapException(
@@ -341,18 +379,24 @@ internal object LaunchReadiness {
     }
 
     /**
-     * The exit grace to actually spend, given [budgetRemainingMs] left in the AGENT_BOOTSTRAP
-     * stage.
+     * The exit grace to actually spend, given [budgetRemainingMs] left in the AGENT_BOOTSTRAP stage
+     * and the [cause] of the terminal attach failure.
      *
      * The grace lives *inside* the caller's stage budget rather than on top of it, so
      * `agentBootstrapMs` keeps bounding the stage exactly as documented. A caller with a short
      * failure-detection budget gets its exception on time; an exhausted budget spends nothing.
      *
+     * For [isNoLiveAgentFailure] causes the bound **is** the remaining budget — not
+     * [PROCESS_EXIT_GRACE_MS]. Any fixed cap is beatable by a slower host (#454). Definitive
+     * failures spend nothing.
+     *
      * A zero grace still reclassifies a process that has already exited — [exitedWithinGrace]
      * answers immediately in that case — so capping costs only the "still exiting" window.
      */
-    internal fun exitGraceMs(budgetRemainingMs: Long): Long =
-        budgetRemainingMs.coerceIn(0L, PROCESS_EXIT_GRACE_MS)
+    internal fun exitGraceMs(budgetRemainingMs: Long, cause: Throwable? = null): Long {
+        if (!isNoLiveAgentFailure(cause)) return 0L
+        return budgetRemainingMs.coerceAtLeast(0L)
+    }
 
     /**
      * True when [process] has already exited, or exits within [graceMs].
@@ -453,9 +497,9 @@ internal object LaunchReadiness {
     private const val SETTLE_MS: Long = 250
 
     /**
-     * Upper bound on how long a failed agent bootstrap waits for the launched process to finish
-     * exiting before blaming itself (#447). Only ever spent on a failure path, and always capped by
-     * what is left of the caller's stage budget — see [exitGraceMs].
+     * Historical #447 cap (2 seconds). #454 stopped using this as the derivation source: remaining
+     * `agentBootstrapMs` and [isNoLiveAgentFailure] decide the wait. Kept at 2s so it is never
+     * "raised" as a substitute for that derivation.
      */
     internal const val PROCESS_EXIT_GRACE_MS: Long = 2_000
     private const val STDERR_EXCERPT_CHARS: Int = 4_096
