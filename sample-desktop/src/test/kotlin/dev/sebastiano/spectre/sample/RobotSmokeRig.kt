@@ -1,3 +1,5 @@
+@file:OptIn(InternalSpectreApi::class)
+
 package dev.sebastiano.spectre.sample
 
 import androidx.compose.foundation.background
@@ -31,7 +33,10 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import dev.sebastiano.spectre.core.InternalSpectreApi
 import dev.sebastiano.spectre.core.RobotDriver
+import dev.sebastiano.spectre.core.clickPressDeliveryVerifiable
+import dev.sebastiano.spectre.core.clickVerified
 import java.awt.Rectangle
 import java.awt.Window
 import java.util.Locale
@@ -507,16 +512,45 @@ internal suspend fun scenarioClickOnUnfocusedCounter(
     }
     val before = state.clickCount
     val sutFocusedBefore = state.frame?.isFocused == true
-    driver.click(target.x, target.y)
+    val verifiable = clickPressDeliveryVerifiable()
+    val awtVerdict =
+        try {
+            driver.clickVerified(target.x, target.y)
+            if (verifiable) {
+                "AWT mouse press dispatched in this JVM"
+            } else {
+                "AWT mouse press unverifiable on this OS"
+            }
+        } catch (failure: IllegalStateException) {
+            val message = failure.message.orEmpty()
+            if ("no matching mouse event" in message) {
+                return ScenarioResult(
+                    "click on unfocused counter increments + transfers focus",
+                    passed = false,
+                    detail =
+                        "never dispatched in this JVM — clickCount $before → $before; " +
+                            "sut.isFocused $sutFocusedBefore → $sutFocusedBefore " +
+                            "at (${target.x},${target.y}); $message",
+                )
+            }
+            throw failure
+        }
     delay(POST_CLICK_SETTLE_MS.milliseconds)
     val after = state.clickCount
     val sutFocusedAfter = state.frame?.isFocused == true
+    val passed = after == before + 1 && sutFocusedAfter
+    val effect =
+        if (!passed && verifiable) {
+            "dispatched with no Compose effect"
+        } else {
+            awtVerdict
+        }
     return ScenarioResult(
         "click on unfocused counter increments + transfers focus",
-        passed = after == before + 1 && sutFocusedAfter,
+        passed = passed,
         detail =
             "clickCount $before → $after; sut.isFocused $sutFocusedBefore → $sutFocusedAfter " +
-                "at (${target.x},${target.y})",
+                "at (${target.x},${target.y}); $effect",
     )
 }
 
@@ -556,7 +590,11 @@ internal suspend fun runUnfocusedScenarios(
     delay(POST_CLICK_SETTLE_MS.milliseconds)
     results += scenarioPressKeyOnUnfocusedField(driver, state)
     results += scenarioClickOnUnfocusedCounter(driver, state)
-    results += scenarioTypeTextAfterFocusClick(driver, state)
+    // A click miss is the root failure (#470). Do not run typeText on top of it — that
+    // downstream assertion is what made the Xvfb flake look like a paste problem.
+    if (results.last().passed) {
+        results += scenarioTypeTextAfterFocusClick(driver, state)
+    }
     return results
 }
 

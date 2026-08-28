@@ -210,6 +210,12 @@ public final class dev/sebastiano/spectre/core/InputCapabilities {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class dev/sebastiano/spectre/core/InputDeliveryWitnessKt {
+	public static final fun clickPressDeliveryVerifiable (Ljava/lang/String;)Z
+	public static synthetic fun clickPressDeliveryVerifiable$default (Ljava/lang/String;ILjava/lang/Object;)Z
+	public static final fun clickVerified (Ldev/sebastiano/spectre/core/RobotDriver;IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
 public final class dev/sebastiano/spectre/core/InputLeaseOptions {
 	public synthetic fun <init> (JLjava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (JLjava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V

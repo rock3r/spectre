@@ -184,7 +184,8 @@ private constructor(
      * Unlike the coordinate overloads, this verifies the OS actually delivered the press to this
      * JVM and throws [IllegalStateException] when it did not — the target is aimed at one of this
      * JVM's own nodes, so a press that never arrives can only be a failure. Silently succeeding
-     * here is what made #460 present as a stale semantics tree.
+     * here is what made #460 present as a stale semantics tree. Verification runs on Windows for
+     * every mouse verb and on X11 for clicks; macOS and X11 wheel stay unverified.
      */
     public suspend fun click(node: AutomatorNode) {
         val center = node.centerOnScreen

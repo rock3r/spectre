@@ -223,8 +223,9 @@ previous clipboard contents. A few failure modes follow from those contracts:
   focused text field. If your test never clicked into the field — or the click landed
   on something else, e.g., a parent that absorbed it — the input lands in the wrong
   place, or does nothing. Use `clearAndTypeText(node, …)` (which clicks first) or
-  precede the call with an explicit `automator.click(field)`. On Windows, a click that
-  never reaches the target JVM now throws instead of doing nothing quietly — see
+  precede the call with an explicit `automator.click(field)`. On Windows, and for clicks
+  on X11, a node-targeted click that never reaches the target JVM now throws instead of
+  doing nothing quietly — see
   [undelivered input](interactions.md#undelivered-input-fails-loudly-on-windows).
 - **The field doesn't accept paste.** Some Compose components (and any read-only
   text field) ignore the system paste shortcut. Verify the field accepts pasted
