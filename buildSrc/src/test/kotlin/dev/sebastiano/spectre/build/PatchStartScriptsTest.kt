@@ -134,6 +134,13 @@ class PatchStartScriptsTest {
             failure.message.orEmpty().contains("did not finish within 2 seconds"),
             "unexpected failure: ${failure.message}",
         )
+        // Killing only the launcher would leave the wedged `java` behind on every run, on dev
+        // machines and persistent CI workers alike. Raised by Codex review on PR #485.
+        val wedgedPid = Files.readString(jdk.resolve(HANG_PID_FILE)).trim().toLong()
+        assertFalse(
+            ProcessHandle.of(wedgedPid).map { it.isAlive }.orElse(false),
+            "the launcher's descendant ($wedgedPid) outlived the timeout",
+        )
     }
 
     @Test
@@ -208,7 +215,17 @@ class PatchStartScriptsTest {
 
         val process = processBuilder.start()
         val finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
-        if (!finished) process.destroyForcibly().waitFor()
+        if (!finished) {
+            // Snapshot the tree before killing the root: destroyForcibly only signals the direct
+            // child, and once it dies its children are reparented and no longer reachable from
+            // here. A wedged `java` would otherwise outlive every run of this suite.
+            val descendants = process.descendants().toList()
+            process.destroyForcibly().waitFor()
+            descendants.forEach { descendant ->
+                descendant.destroyForcibly()
+                runCatching { descendant.onExit().get(DESCENDANT_EXIT_SECONDS, TimeUnit.SECONDS) }
+            }
+        }
         val output = Files.readString(outputFile)
         check(finished) { "launcher did not finish within $timeoutSeconds seconds:\n$output" }
         return LauncherResult(process.exitValue(), output)
@@ -239,8 +256,15 @@ class PatchStartScriptsTest {
         Files.createDirectories(java.parent)
         val bannerLine =
             if (banner) "echo 'Picked up JAVA_TOOL_OPTIONS: $bannerOptions' >&2" else ":"
-        // A JVM that never returns wedges the launcher, which is what bounds the harness.
-        val hangLine = if (hangs) "sleep 600" else ":"
+        // A JVM that never returns wedges the launcher, which is what bounds the harness. It
+        // records the sleeper's pid so a test can assert the timeout reaped the whole tree, and
+        // the duration stays modest so a regression leaks for minutes rather than hours.
+        val hangLine =
+            if (hangs) {
+                "sleep 120 & echo ${'$'}! > \"${jdkHome.resolve(HANG_PID_FILE)}\"; wait"
+            } else {
+                ":"
+            }
         Files.writeString(
             java,
             """
@@ -277,6 +301,10 @@ class PatchStartScriptsTest {
         private const val COMMAND_TIMEOUT_SECONDS: Long = 30
 
         private const val DEFAULT_BANNER_OPTIONS = "-Dspectre.test=true"
+
+        private const val DESCENDANT_EXIT_SECONDS: Long = 5
+
+        private const val HANG_PID_FILE = "hang.pid"
 
         /**
          * Minimal stand-in for the Gradle-generated launcher: the two anchors [PatchStartScripts]
