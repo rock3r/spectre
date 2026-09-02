@@ -35,7 +35,7 @@ from smoke_lib import (  # noqa: E402
     assert_linux_portal_tokens_captured,
     assert_mcp_fixture_e2e_executed,
     assert_pointer_move_live_executed,
-    input_coordination_smoke_skip_reason,
+    input_coordination_missing_surface,
     headed_robot_cell,
     WAYLAND_PORTAL_WARMUP_TOKEN_KEYS,
     linux_portal_token_path,
@@ -598,7 +598,7 @@ def main(argv: list[str] | None = None) -> int:
     # macOS, Windows, and Linux Xorg/Xvfb (Experimental status does not make them soft — see
     # docs/RELEASE-SMOKE.md "Experimental input coordination release gate"). They are not Robot
     # cells, so they run with the plain scenario env, never the xvfb/robot wrapper.
-    coordination_skip = input_coordination_smoke_skip_reason(ROOT)
+    coordination_missing = input_coordination_missing_surface(ROOT)
     server_results = ROOT / "input-coordinator-server" / "build" / "test-results" / "test"
     testing_results = ROOT / "testing" / "build" / "test-results" / "test"
     coordination_cells = (
@@ -682,13 +682,15 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     for scenario_id, name, task, filters, results_dir, needles in coordination_cells:
-        if coordination_skip is not None:
+        if coordination_missing is not None:
+            # Fail, not a reasoned n/a: hard_failures() ignores the latter, so a deleted or
+            # renamed test file would turn every coordination cell green by omission.
             add(
                 scenario_result(
                     scenario_id,
                     name=name,
-                    result="n/a",
-                    reason=coordination_skip,
+                    result=RESULT_FAIL,
+                    detail=coordination_missing,
                     hard=True,
                 )
             )

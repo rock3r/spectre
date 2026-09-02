@@ -379,7 +379,7 @@ function Assert-PointerMoveLiveExecuted {
     }
 }
 
-function Get-InputCoordinationSkipReason {
+function Get-InputCoordinationMissingSurface {
     param([Parameter(Mandatory = $true)][string] $RepoRoot)
     # Hard N/A only when the experimental coordination test surface is gone (regression signal).
     # These are hard cells on every OS per the spectre-release skill; Experimental does not make
@@ -391,7 +391,7 @@ function Get-InputCoordinationSkipReason {
     foreach ($rel in $sources) {
         if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot $rel))) {
             $name = Split-Path -Leaf $rel
-            return ("experimental input coordination test surface missing ({0}); re-scope the release gate before smoking coordination" -f $name)
+            return ("experimental input coordination proof missing ({0}); this is a failure, not a skip: if the surface was genuinely removed or graduated, re-scope the release by dropping the input-coord-* IDs from RequiredScenarioIds and updating docs/RELEASE-SMOKE.md" -f $name)
         }
     }
     return $null
@@ -447,11 +447,13 @@ function Invoke-CoordinationCell {
         [Parameter(Mandatory = $true)][string[]] $Filters,
         [Parameter(Mandatory = $true)][string] $ResultsSubPath,
         [Parameter(Mandatory = $true)][string[]] $Needles,
-        [string] $SkipReason = "",
+        [string] $MissingSurface = "",
         [ValidateRange(1, 86400)][int] $TimeoutSeconds = 600
     )
-    if (-not [string]::IsNullOrWhiteSpace($SkipReason)) {
-        return (New-StepResult -Id $Id -Name $Name -Result "n/a" -Reason $SkipReason)
+    if (-not [string]::IsNullOrWhiteSpace($MissingSurface)) {
+        # Fail, not a reasoned n/a: the summary's failure count ignores the latter, so a deleted
+        # or renamed test file would turn every coordination cell green by omission.
+        return (New-StepResult -Id $Id -Name $Name -Result "fail" -Detail $MissingSurface)
     }
     Write-Host ""
     Write-Host ("==== {0} ({1}) ====" -f $Id, $Name) -ForegroundColor Cyan
@@ -715,40 +717,40 @@ try {
     # protocol + forked-process + JUnit-isolation proofs; no display is needed, so these stay hard
     # on Windows including SSH (unlike the WGC / attach-screenshot cells). See docs/RELEASE-SMOKE.md
     # "Experimental input coordination release gate".
-    $coordinationSkip = Get-InputCoordinationSkipReason -RepoRoot $repoRoot
+    $coordinationMissing = Get-InputCoordinationMissingSurface -RepoRoot $repoRoot
     $serverResults = "input-coordinator-server\build\test-results\test"
     $testingResults = "testing\build\test-results\test"
-    [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -SkipReason $coordinationSkip -TimeoutSeconds $AgentE2eTimeoutSeconds `
+    [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -MissingSurface $coordinationMissing -TimeoutSeconds $AgentE2eTimeoutSeconds `
                 -Id "input-coord-contention" -Name "Two independent client JVMs take one desktop lease without interleaving" `
                 -Task ":input-coordinator-server:test" `
                 -Filters @("*TwoClientJvmContentionTest", "*LocalCoordinatorServerTest.two independent clients receive one desktop lease in FIFO order", "*CoordinatorProcessLauncherTest.forked coordinator accepts a real client lease") `
                 -ResultsSubPath $serverResults `
                 -Needles @("two independent client JVMs never hold the desktop lease at the same time", "two independent clients receive one desktop lease in FIFO order", "forked coordinator accepts a real client lease")))
-    [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -SkipReason $coordinationSkip -TimeoutSeconds $AgentE2eTimeoutSeconds `
+    [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -MissingSurface $coordinationMissing -TimeoutSeconds $AgentE2eTimeoutSeconds `
                 -Id "input-coord-cancellation" -Name "Cancelled queued waiter does not strand the next waiter" `
                 -Task ":input-coordinator-server:test" `
                 -Filters @("*LocalCoordinatorServerTest.interrupting a queued acquisition removes it without disturbing FIFO") `
                 -ResultsSubPath $serverResults `
                 -Needles @("interrupting a queued acquisition removes it without disturbing FIFO")))
-    [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -SkipReason $coordinationSkip -TimeoutSeconds $AgentE2eTimeoutSeconds `
+    [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -MissingSurface $coordinationMissing -TimeoutSeconds $AgentE2eTimeoutSeconds `
                 -Id "input-coord-quarantine" -Name "Crashed holder stays fenced/quarantined without stale ownership" `
                 -Task ":input-coordinator-server:test" `
                 -Filters @("*LocalCoordinatorServerTest.successor quarantines a crashed holder until exact-id unsafe recovery") `
                 -ResultsSubPath $serverResults `
                 -Needles @("successor quarantines a crashed holder until exact-id unsafe recovery")))
-    [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -SkipReason $coordinationSkip -TimeoutSeconds $AgentE2eTimeoutSeconds `
+    [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -MissingSurface $coordinationMissing -TimeoutSeconds $AgentE2eTimeoutSeconds `
                 -Id "input-coord-revoke" -Name "Exact-ID normal revoke cannot affect a newer lease" `
                 -Task ":input-coordinator-server:test" `
                 -Filters @("*LocalCoordinatorServerTest.exact-id revoke rejects stale observation and fences the actual holder") `
                 -ResultsSubPath $serverResults `
                 -Needles @("exact-id revoke rejects stale observation and fences the actual holder")))
-    [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -SkipReason $coordinationSkip -TimeoutSeconds $AgentE2eTimeoutSeconds `
+    [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -MissingSurface $coordinationMissing -TimeoutSeconds $AgentE2eTimeoutSeconds `
                 -Id "input-coord-forced-recovery" -Name "Explicit forced recovery reports unsafeTakeover and advances the queue" `
                 -Task ":input-coordinator-server:test" `
                 -Filters @("*LocalCoordinatorServerTest.explicit force advances FIFO and reports unsafe takeover") `
                 -ResultsSubPath $serverResults `
                 -Needles @("explicit force advances FIFO and reports unsafe takeover")))
-    [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -SkipReason $coordinationSkip -TimeoutSeconds $AgentE2eTimeoutSeconds `
+    [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -MissingSurface $coordinationMissing -TimeoutSeconds $AgentE2eTimeoutSeconds `
                 -Id "input-coord-junit-pertest" -Name "Parallel JUnit PerTest serialises factory/body/evidence/teardown" `
                 -Task ":testing:test" `
                 -Filters @("*InputIsolationLifecycleTest", "*ParallelPerTestInputIsolationTest") `

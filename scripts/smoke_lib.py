@@ -1042,19 +1042,23 @@ _INPUT_ISOLATION_TEST_SOURCE = Path(
 )
 
 
-def input_coordination_smoke_skip_reason(root: Path) -> str | None:
-    """Hard N/A reason only when the experimental coordination test surface is gone.
+def input_coordination_missing_surface(root: Path) -> str | None:
+    """Detail for a coordination cell whose proof source is gone, else None.
 
-    These are hard cells on macOS, Windows, and Linux Xorg/Xvfb per the spectre-release skill;
-    Experimental status does not make them soft. The only legitimate N/A is the surface having
-    been removed or graduated, in which case the release plan must be re-scoped — treat it as a
-    regression signal, not a routine skip.
+    Absence is a **fail**, never a reasoned `n/a`. [hard_failures] ignores a reasoned `n/a`, so
+    returning one here would let deleting or renaming a single test file turn all six coordination
+    cells green-by-omission and still print "ALL HARD SCENARIOS PASSED" — the whole gate defeated
+    by a rename. Legitimately dropping the feature means affirmatively re-scoping the release:
+    remove the IDs from [REQUIRED_SCENARIO_IDS] and update docs/RELEASE-SMOKE.md, which is a
+    reviewable change rather than a silent one.
     """
     for source in (_INPUT_COORDINATOR_SERVER_TEST_SOURCE, _INPUT_ISOLATION_TEST_SOURCE):
         if not (Path(root) / source).is_file():
             return (
-                f"experimental input coordination test surface missing ({source.name}); "
-                "re-scope the release gate before smoking coordination"
+                f"experimental input coordination proof missing ({source.name}); this is a "
+                "failure, not a skip: if the surface was genuinely removed or graduated, "
+                "re-scope the release by dropping the input-coord-* IDs from "
+                "REQUIRED_SCENARIO_IDS and updating docs/RELEASE-SMOKE.md"
             )
     return None
 

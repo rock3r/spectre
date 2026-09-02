@@ -342,9 +342,12 @@ The `input-coord-*` cells ([#459](https://github.com/rock3r/spectre/pull/459)) a
 [Experimental input coordination release gate](#experimental-input-coordination-release-gate). Each drives the
 coordinator's own deterministic + forked-process + JUnit-isolation tests with `--rerun-tasks --no-build-cache`, and
 fails closed on the JUnit XML (the exact testcase must have executed, not assumption-skipped) so a cache-only or
-empty-filter run cannot fake `pass`. They need no display, so they stay **hard** on all three OSes; a hard `n/a`
-means the experimental coordinator test surface was removed or graduated — re-scope the gate, do not treat it as a
-routine skip. Fully-headed two-`RobotDriver` physical-mouse contention is a separate hard cell, `input-coord-headed-robot`, which only an operator can record (below).
+empty-filter run cannot fake `pass`. They need no display, so they stay **hard** on all three OSes. A missing proof source is a hard
+**fail**, not a skip: deleting or renaming one of these tests must not turn six hard cells green by
+omission. Dropping the feature legitimately means re-scoping affirmatively — remove the
+`input-coord-*` IDs from `REQUIRED_SCENARIO_IDS` and update this page. Fully-headed
+two-`RobotDriver` physical-mouse contention is a separate hard cell, `input-coord-headed-robot`,
+which only an operator can record (below).
 
 The Unix runner registers **every** required ID end-to-end (fail-closed). Environment-impossible
 cells must be explicit hard `n/a` with reason — never a silent omit or fake `pass`.
@@ -502,9 +505,10 @@ release SHA.
   revoke/forced-recovery, `CoordinatorProcessLauncherTest` forked coordinator JVM,
   `TwoClientJvmContentionTest` two forked client JVMs, and `InputIsolationLifecycleTest` +
   `ParallelPerTestInputIsolationTest` for JUnit PerTest) and fails closed on the JUnit XML. They
-  need no display, so they are hard on macOS, Windows (including SSH), and Linux Xorg/Xvfb. A hard
-  `n/a` means the experimental coordinator test surface was removed or graduated — re-scope the
-  gate. The one thing these cells do **not** cover is a fully-headed two-`RobotDriver` physical
+  need no display, so they are hard on macOS, Windows (including SSH), and Linux Xorg/Xvfb. A
+  missing proof source is a hard **fail** rather than a reasoned `n/a` (which `hard_failures()`
+  ignores), so a rename cannot pass six cells by omission; re-scope the release affirmatively if
+  the feature is genuinely dropped. The one thing these cells do **not** cover is a fully-headed two-`RobotDriver` physical
   **real-mouse** run: they all pass headless, so `input-coord-headed-robot` carries that claim as a
   hard operator-recorded cell. Absent evidence it reports **fail** (not a reasoned `n/a`, which
   `hard_failures()` ignores), so the smoke cannot report success without it. Automating it (a Robot-backed two-JVM contention e2e) is a follow-up.

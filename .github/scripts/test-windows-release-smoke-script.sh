@@ -96,7 +96,10 @@ done
 # --- #459 experimental input-coordination delta hard cells ---
 # The coordination cells must drive the coordinator's own deterministic + forked-process + JUnit
 # isolation tests and fail closed on the JUnit XML (never a fake PASS). Hard on Windows including SSH.
-grep -F -q 'Get-InputCoordinationSkipReason' "$script" || fail "Windows runner missing input-coordination skip-reason probe"
+grep -F -q 'Get-InputCoordinationMissingSurface' "$script" || fail "Windows runner missing input-coordination surface probe"
+# A missing proof source must FAIL, not become a reasoned n/a the failure count ignores.
+grep -F -q 'failure, not a skip' "$script" || fail "Windows missing-surface message must say it is a failure"
+grep -F -q 'Result "fail" -Detail $MissingSurface' "$script" || fail "Windows coordination cell must FAIL when its proof source is missing"
 grep -F -q 'Assert-JUnitTestcasesPassed' "$script" || fail "Windows runner missing coordination JUnit XML fail-closed gate"
 grep -F -q 'Invoke-CoordinationCell' "$script" || fail "Windows runner missing coordination cell runner"
 grep -F -q ':input-coordinator-server:test' "$script" || fail "Windows runner missing coordinator server test task"

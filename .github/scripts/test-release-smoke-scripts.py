@@ -345,16 +345,36 @@ class SmokeLibSchemaTest(unittest.TestCase):
         self.assertIn("operator evidence: ran on Mattone", recorded.detail)
         self.assertEqual([], smoke_lib.hard_failures([recorded]))
 
-    def test_input_coordination_smoke_skip_reason_present_on_this_checkout(self):
-        # The experimental coordinator + isolation test surface exists on this tree, so the cells
-        # are hard-runnable (no display needed) and must not be N/A.
-        self.assertIsNone(smoke_lib.input_coordination_smoke_skip_reason(ROOT))
+    def test_input_coordination_surface_present_on_this_checkout(self):
+        # The experimental coordinator + isolation proofs exist on this tree, so the cells are
+        # hard-runnable (no display needed) and must actually execute.
+        self.assertIsNone(smoke_lib.input_coordination_missing_surface(ROOT))
 
-    def test_input_coordination_smoke_skip_reason_when_surface_absent(self):
+    def test_missing_coordination_surface_fails_rather_than_skips(self):
+        """A deleted or renamed proof must not turn six hard cells green by omission."""
         with tempfile.TemporaryDirectory() as tmp:
-            reason = smoke_lib.input_coordination_smoke_skip_reason(Path(tmp))
-            self.assertIsNotNone(reason)
-            self.assertIn("re-scope the release gate", reason)
+            detail = smoke_lib.input_coordination_missing_surface(Path(tmp))
+            self.assertIsNotNone(detail)
+            self.assertIn("failure, not a skip", detail)
+            self.assertIn("re-scope the release", detail)
+            # The gate that matters: a reasoned n/a is ignored by hard_failures(), so the runner
+            # must record a missing proof as a fail row instead.
+            failed = smoke_lib.scenario_result(
+                "input-coord-contention",
+                name="x",
+                result=smoke_lib.RESULT_FAIL,
+                detail=detail,
+            )
+            self.assertEqual(["input-coord-contention"], smoke_lib.hard_failures([failed]))
+            ignored = smoke_lib.scenario_result(
+                "input-coord-contention", name="x", result="n/a", reason=detail
+            )
+            self.assertEqual(
+                [],
+                smoke_lib.hard_failures([ignored]),
+                "a reasoned n/a is ignored by hard_failures — exactly why a missing proof "
+                "must not be recorded as one",
+            )
 
     def test_assert_junit_testcases_passed_rejects_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -607,7 +627,7 @@ class SmokeLibSchemaTest(unittest.TestCase):
         self.assertIn("*PointerMoveLive*", text)
         # #459: experimental input-coordination delta hard cells must drive the coordinator's own
         # deterministic + forked-process + JUnit-isolation tests, fail-closed on the JUnit XML.
-        self.assertIn("input_coordination_smoke_skip_reason", text)
+        self.assertIn("input_coordination_missing_surface", text)
         self.assertIn("assert_junit_testcases_passed", text)
         self.assertIn(":input-coordinator-server:test", text)
         self.assertIn(":testing:test", text)
