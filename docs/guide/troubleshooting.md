@@ -226,7 +226,7 @@ previous clipboard contents. A few failure modes follow from those contracts:
   precede the call with an explicit `automator.click(field)`. On Windows, and for clicks
   on X11, a node-targeted click that never reaches the target JVM now throws instead of
   doing nothing quietly — see
-  [undelivered input](interactions.md#undelivered-input-fails-loudly-on-windows).
+  [undelivered input](interactions.md#undelivered-input-fails-loudly-on-windows-and-x11).
 - **The field doesn't accept paste.** Some Compose components (and any read-only
   text field) ignore the system paste shortcut. Verify the field accepts pasted
   input outside the test before assuming Spectre is at fault.

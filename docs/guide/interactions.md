@@ -90,7 +90,7 @@ automator.longClick(send, holdFor = 600.milliseconds)
 All click helpers resolve the node's `centerOnScreen` and dispatch through `RobotDriver`,
 which compensates for HiDPI/display scaling.
 
-### Undelivered input fails loudly on Windows
+### Undelivered input fails loudly on Windows and X11
 
 On Windows, node-targeted `click`, `doubleClick`, `longClick`, `swipe(from, to)` and
 `scrollWheel(node)` check that the event actually arrived. On X11, the same check runs for
