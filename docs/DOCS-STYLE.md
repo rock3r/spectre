@@ -95,9 +95,9 @@ corresponding doc page is touched:
 
 - **No auto-wait.** Queries (`findByTestTag`, `findByText`, `hasTag`, `hasText`, etc.)
   do a single read. They never retry. Document them as such.
-- **EDT rule applies to all four waits.** `waitForNode`, `waitUntilGone`, `waitForIdle`,
-  and `waitForVisualIdle` all reject EDT callers via `rejectEdtCaller` (see
-  `WaitForNodeTest.waitForNode rejects EDT callers with valid arguments`). Earlier
+- **EDT rule applies to all five waits.** `waitForNode`, `waitUntilGone`, `waitUntil`,
+  `waitForIdle`, and `waitForVisualIdle` all reject EDT callers via `rejectEdtCaller`
+  (see `WaitForNodeTest.waitForNode rejects EDT callers with valid arguments`). Earlier
   drafts of the docs carved out `waitForNode` as exempt — that exemption is gone in
   current code. Do say "all wait helpers reject the EDT".
 - **`refreshWindows` is only auto-called by `tree()`.** `findBy*`, `hasTag`/`hasText`,
@@ -108,6 +108,12 @@ corresponding doc page is touched:
 - **`waitForNode(tag, text)` is AND, not OR.** Both criteria must match the same
   node. `waitUntilGone(tag, text)` mirrors it: it returns once no single node carries
   both, and it refreshes windows before every poll (unlike the finders).
+- **`waitUntil` takes a required non-blank `description` and an `AutomatorTree`
+  receiver.** The predicate is `AutomatorTree.() -> Boolean`, not `() -> Boolean`: the
+  tree snapshot is the only thing it is handed. Don't document it as a general-purpose
+  "wait for anything" helper — waiting on non-Spectre state is the user's own job. Do
+  say the receiver is a boundary the API declines to invite, not one it enforces
+  (closures can still capture).
 - **`AutomatorIdlingResource.isIdleNow` and `diagnosticMessage()`.** Not `isIdle()`,
   not `name`. Identity-based register/unregister.
 - **`AutoRecorder` has explicit capture modes.** `startWindow(...)` uses true

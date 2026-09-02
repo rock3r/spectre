@@ -214,6 +214,14 @@ Always wait before querying state that depends on a prior action.
   before every poll, so a popup that closes its own `Window` counts as gone.
   Throws `IllegalStateException` naming the selector on timeout. Use this
   after dismissing a popup, menu, or dialog.
+- **`waitUntil(description = "...") { ... }`** — wait until a predicate on the
+  `AutomatorTree` snapshot holds. The lambda's receiver is the tree, so phrase
+  the condition with `windows()` / `allNodes()` / `roots()`; every poll re-reads
+  it (refreshing windows first). Throws `IllegalStateException` naming your
+  `description` on timeout, so write it as the state you were waiting for. Use
+  this for barriers no tag/text selector expresses — a node count, a comparison,
+  a combination. It is scoped to Spectre-observable state: wait for a service
+  flag, a file, or an HTTP response with the tool that owns it, not in here.
 - **`waitForIdle()`** — wait until the semantics fingerprint stabilizes and
   all registered `AutomatorIdlingResource`s are idle. Use this when you've
   triggered work that updates semantics but no specific node appears.
@@ -230,10 +238,10 @@ is more precise.
 
 ### Rule 3: never call any wait on the EDT
 
-All four of `waitForNode`, `waitUntilGone`, `waitForIdle`, and `waitForVisualIdle`
-actively reject being called from the AWT event dispatch thread — they need to
-`invokeAndWait` onto the EDT to read state, so running them *on* the EDT would
-deadlock. If your dispatcher is Swing-backed (the IntelliJ EDT dispatcher, a
+All five of `waitForNode`, `waitUntilGone`, `waitUntil`, `waitForIdle`, and
+`waitForVisualIdle` actively reject being called from the AWT event dispatch
+thread — they need to `invokeAndWait` onto the EDT to read state, so running
+them *on* the EDT would deadlock. If your dispatcher is Swing-backed (the IntelliJ EDT dispatcher, a
 custom `Swing` dispatcher, etc.), wrap the wait in
 `withContext(Dispatchers.Default) { … }` (or any non-EDT dispatcher) so the
 wait suspends off-thread. The user docs you may have read elsewhere have an
@@ -334,7 +342,7 @@ touches that area*; they are not needed for the common case.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `findOneBy…` returns `null` right after an interaction | Selectors don't wait | Add `waitForNode(...)` or `waitForVisualIdle()` first |
-| Test deadlocks or throws inside any `waitFor…` / `waitUntilGone` | Called from the AWT EDT | Wrap in `withContext(Dispatchers.Default) { … }` — applies to all four waits, including `waitForNode` and `waitUntilGone` |
+| Test deadlocks or throws inside any `waitFor…` / `waitUntil…` | Called from the AWT EDT | Wrap in `withContext(Dispatchers.Default) { … }` — applies to all five waits, including `waitForNode`, `waitUntilGone`, and `waitUntil` |
 | `longClick`/`swipe`/`typeText` complete instantly and miss | Test body uses `runTest` | Switch to `runSpectreTest` |
 | Two parallel test JVMs steal focus from each other | Both use real `RobotDriver()` | Use `RobotDriver.synthetic(rootWindow)` |
 | Parallel JVMs must preserve real OS input behavior | Real focus/pointer/clipboard state is shared across processes | Opt in to experimental coordination, add `spectre-input-coordinator-server` at runtime, use `Required` and JUnit `InputIsolationConfig.perTest()` |

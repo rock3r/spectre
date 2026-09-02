@@ -100,6 +100,9 @@ What this means in practice:
   `waitUntilGone(tag = "…")` before touching what was behind it. A popup that rendered in
   its own `Window` takes its whole semantics tree with it, so absence is the only thing
   left to observe.
+- When the barrier is about the shape of the UI rather than one node — a row count, a
+  combination of conditions, the tracked-window set — **`waitUntil(description) { … }`**
+  takes a predicate on the tree snapshot.
 - A failing assertion isn't necessarily a bug in your UI — it's often "the UI hadn't
   finished updating before I read it back".
 
@@ -107,8 +110,8 @@ See [Synchronization](synchronization.md) for the full toolkit.
 
 ## The EDT rule
 
-All four wait helpers — `waitForNode`, `waitUntilGone`, `waitForIdle`, and
-`waitForVisualIdle` — refuse to run on the AWT event dispatch thread (EDT):
+All five wait helpers — `waitForNode`, `waitUntilGone`, `waitUntil`, `waitForIdle`,
+and `waitForVisualIdle` — refuse to run on the AWT event dispatch thread (EDT):
 
 ```
 waitForNode must not be called from the AWT event dispatch thread;

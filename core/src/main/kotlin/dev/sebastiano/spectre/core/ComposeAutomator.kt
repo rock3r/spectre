@@ -675,48 +675,7 @@ private constructor(
 
     private fun computeUiFingerprintUnbounded(): String = readOnEdt {
         refreshWindows()
-        buildString {
-            for (window in windows) {
-                append(window.surfaceId)
-                append('|')
-                val nodes = semanticsReader.readAllNodes(listOf(window))
-                append(nodes.size)
-                append('|')
-                for (node in nodes) {
-                    append(node.key.toString())
-                    val bounds = node.boundsInWindow
-                    append('@')
-                    append(bounds.left.toBits())
-                    append(',')
-                    append(bounds.top.toBits())
-                    append(',')
-                    append(bounds.right.toBits())
-                    append(',')
-                    append(bounds.bottom.toBits())
-                    node.role?.let {
-                        append(':')
-                        append(it.toString())
-                    }
-                    if (node.isFocused) append(":F")
-                    if (node.isDisabled) append(":D")
-                    if (node.isSelected) append(":S")
-                    if (node.texts.isNotEmpty()) {
-                        append(":T")
-                        append(node.texts.joinToString(separator = "").hashCode())
-                    }
-                    if (node.contentDescriptions.isNotEmpty()) {
-                        append(":C")
-                        append(node.contentDescriptions.joinToString(separator = "").hashCode())
-                    }
-                    node.editableText?.let {
-                        append(":E")
-                        append(it.hashCode())
-                    }
-                    append(';')
-                }
-                append("||")
-            }
-        }
+        uiFingerprint(windows, semanticsReader)
     }
 
     private suspend fun sampleFrameHash(budgetMs: Long): Int? {
@@ -874,7 +833,7 @@ private constructor(
         // the more actionable signal in that case.
         require(tag != null || text != null) { "Either tag or text must be specified" }
         rejectEdtCaller("waitForNode")
-        return waitUntil(timeout = timeout, pollInterval = pollInterval) {
+        return pollUntilNotNull(timeout = timeout, pollInterval = pollInterval) {
             refreshedNodes().firstOrNull { it.matchesSelector(tag, text) }
         }
     }
@@ -908,6 +867,49 @@ private constructor(
             pollInterval = pollInterval,
             selector = describeNodeSelector(tag, text),
             countPresent = { refreshedNodes().count { it.matchesSelector(tag, text) } },
+        )
+    }
+
+    /**
+     * Waits until [condition] holds for the Spectre-visible semantics tree: the open-ended
+     * counterpart to [waitForNode] and [waitUntilGone], for barriers a tag/text selector cannot
+     * express — "three rows are showing", "the label no longer reads Loading…", "the dialog and the
+     * toast are both gone".
+     *
+     * Each poll calls [tree], so the condition always sees a freshly refreshed snapshot rather than
+     * a stale one; the tree is read on the EDT and [condition] then runs on the calling coroutine,
+     * so a slow predicate cannot stall the UI it is observing. Returns as soon as the condition
+     * holds. On timeout throws [IllegalStateException] naming [description] and the timeout —
+     * [description] is all the failure can say about the condition, so phrase it as the state you
+     * were waiting for ("the settings dialog is showing"), not as an action.
+     *
+     * **Scope: Spectre-observable state only.** [condition] is a lambda on [AutomatorTree], and
+     * that receiver is the whole point: what this verb waits on is the semantics tree. Kotlin
+     * closures can of course capture whatever is in scope, so this is a boundary the API declines
+     * to invite rather than one it can enforce — but waiting on state Spectre cannot see (a service
+     * flag, a file on disk, an HTTP response) is your own job, and doing it here buys you nothing
+     * but a misleading timeout message. Await that state with the tool that owns it — `withTimeout`
+     * around your own suspending call, an `awaitility`-style helper, a [registerIdlingResource]
+     * implementation if it should also gate [waitForIdle] — and use this verb for the UI barrier
+     * that follows.
+     *
+     * @throws IllegalArgumentException if [description] is blank.
+     */
+    public suspend fun waitUntil(
+        description: String,
+        timeout: Duration = 5.seconds,
+        pollInterval: Duration = 100.milliseconds,
+        condition: AutomatorTree.() -> Boolean,
+    ) {
+        // Same ordering as waitForNode / waitUntilGone: bad arguments are the more actionable
+        // error for an EDT caller doing two things wrong.
+        require(description.isNotBlank()) { "description must not be blank" }
+        rejectEdtCaller("waitUntil")
+        waitUntilInternal(
+            timeout = timeout,
+            pollInterval = pollInterval,
+            description = description,
+            condition = { readOnEdt { tree() }.condition() },
         )
     }
 

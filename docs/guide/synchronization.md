@@ -2,7 +2,7 @@
 
 Spectre deliberately doesn't wrap reads and actions in an implicit idle barrier. The
 flip side is that you have a small but explicit set of wait helpers, and you decide
-where to put them. This page covers all four.
+where to put them. This page covers all five.
 
 ## Interactive-only: Compose Hot Reload settle
 
@@ -14,8 +14,8 @@ documented under [Compose Hot Reload awareness](hot-reload.md). Prefer
 
 ## The EDT rule
 
-All four wait helpers — `waitForNode`, `waitUntilGone`, `waitForIdle`, and
-`waitForVisualIdle` — refuse to run on the AWT event dispatch thread:
+All five wait helpers — `waitForNode`, `waitUntilGone`, `waitUntil`, `waitForIdle`,
+and `waitForVisualIdle` — refuse to run on the AWT event dispatch thread:
 
 ```
 waitForNode must not be called from the AWT event dispatch thread;
@@ -24,7 +24,7 @@ wrap the call with withContext(Dispatchers.Default) or similar.
 
 This is enforced because their loops snapshot semantics via `invokeAndWait`/`readOnEdt`
 — running on the EDT would either deadlock or skip the bounded worker that enforces the
-timeout. None of the four are exempt.
+timeout. None of the five are exempt.
 
 The standard pattern in tests — JUnit runs tests off the EDT, so no `withContext` is
 needed:
@@ -107,6 +107,69 @@ waitUntilGone timed out after 5000ms: 1 node(s) matching tag="popup.body" still 
 Use it after dismissing a popup, menu, or dialog — before asserting on whatever the
 dismissal revealed, or before the next click that would otherwise land on the closing
 surface.
+
+## `waitUntil`
+
+The open-ended barrier, for conditions a tag/text selector cannot express — a node
+*count*, a *comparison*, a *combination*:
+
+```kotlin
+automator.waitUntil(
+    description = "the lazy list has realised at least five rows",
+    timeout = 5.seconds,
+    pollInterval = 100.milliseconds,
+) {
+    allNodes().count { it.testTag?.startsWith("row.") == true } >= 5
+}
+```
+
+The lambda is a predicate on
+[`AutomatorTree`](automator.md#surfaces-and-the-semantics-tree) — the same snapshot
+`tree()` returns, so `windows()`, `allNodes()`, and `roots()` are what you phrase the
+condition against. Every poll re-reads that tree (and refreshes windows
+first, exactly like `waitUntilGone`), so a window or popup that appeared between two
+polls is seen rather than answered from a stale snapshot. Returns as soon as the
+condition holds.
+
+`description` is required and must not be blank: it is the only thing the failure can
+say about your condition, so phrase it as the state you were waiting for, not as an
+action.
+
+```
+waitUntil timed out after 5000ms: condition "the lazy list has realised at least five rows" never held in tracked windows
+```
+
+Reach for it when the barrier is about the shape of the UI rather than one node:
+
+```kotlin
+// A combination — "the popup is gone AND its trigger is back" is one barrier, not two.
+automator.click(dismissButton)
+automator.waitUntil(description = "the popup is dismissed and its trigger is usable") {
+    val tags = allNodes().mapNotNull { it.testTag }.toSet()
+    "popup.body" !in tags && "popup.toggleButton" in tags
+}
+
+// The tracked-window set itself.
+automator.waitUntil(description = "the secondary window is being tracked") {
+    windows().size > 1
+}
+```
+
+For a single node appearing or disappearing, `waitForNode` and `waitUntilGone` say what
+you mean with less ceremony — use those.
+
+### It waits on the UI, not on your program
+
+`waitUntil` is scoped to what Spectre can see: the semantics tree it hands your
+predicate. Kotlin closures can capture anything in scope, so nothing stops you polling a
+service flag, a file, or an HTTP response from inside the lambda — but that is a
+boundary this helper declines to invite rather than one it can enforce, and crossing it
+buys you nothing except a timeout message that describes the wrong thing.
+
+Wait for non-UI state with the tool that owns it: `withTimeout` around your own
+suspending call, your test framework's polling helper, or an
+[`AutomatorIdlingResource`](#idling-resources) if that state should also gate
+`waitForIdle`. Then use `waitUntil` for the UI barrier that follows.
 
 ## `waitForIdle`
 
@@ -248,5 +311,7 @@ don't have to fall back to `Thread.sleep`.
 | `waitForNode.pollInterval`| 100 ms                |
 | `waitUntilGone.timeout`   | 5 s                   |
 | `waitUntilGone.pollInterval` | 100 ms             |
+| `waitUntil.timeout`       | 5 s                   |
+| `waitUntil.pollInterval`  | 100 ms                |
 
 These are tuned for desktop; bump them up freely if your scenarios are heavier.
