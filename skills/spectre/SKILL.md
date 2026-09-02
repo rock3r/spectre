@@ -209,6 +209,11 @@ Always wait before querying state that depends on a prior action.
 - **`waitForNode(tag = "...", timeout = 5.seconds)`** — wait until a node with
   the given tag (or text) exists. Throws on timeout. Use this when a *new*
   node must appear.
+- **`waitUntilGone(tag = "...", timeout = 5.seconds)`** — wait until *no* node
+  with the given tag (or text) exists in any tracked window. Refreshes windows
+  before every poll, so a popup that closes its own `Window` counts as gone.
+  Throws `IllegalStateException` naming the selector on timeout. Use this
+  after dismissing a popup, menu, or dialog.
 - **`waitForIdle()`** — wait until the semantics fingerprint stabilizes and
   all registered `AutomatorIdlingResource`s are idle. Use this when you've
   triggered work that updates semantics but no specific node appears.
@@ -225,8 +230,8 @@ is more precise.
 
 ### Rule 3: never call any wait on the EDT
 
-All three of `waitForNode`, `waitForIdle`, and `waitForVisualIdle` actively
-reject being called from the AWT event dispatch thread — they need to
+All four of `waitForNode`, `waitUntilGone`, `waitForIdle`, and `waitForVisualIdle`
+actively reject being called from the AWT event dispatch thread — they need to
 `invokeAndWait` onto the EDT to read state, so running them *on* the EDT would
 deadlock. If your dispatcher is Swing-backed (the IntelliJ EDT dispatcher, a
 custom `Swing` dispatcher, etc.), wrap the wait in
@@ -329,7 +334,7 @@ touches that area*; they are not needed for the common case.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `findOneBy…` returns `null` right after an interaction | Selectors don't wait | Add `waitForNode(...)` or `waitForVisualIdle()` first |
-| Test deadlocks or throws inside any `waitFor…` | Called from the AWT EDT | Wrap in `withContext(Dispatchers.Default) { … }` — applies to all three waits, including `waitForNode` |
+| Test deadlocks or throws inside any `waitFor…` / `waitUntilGone` | Called from the AWT EDT | Wrap in `withContext(Dispatchers.Default) { … }` — applies to all four waits, including `waitForNode` and `waitUntilGone` |
 | `longClick`/`swipe`/`typeText` complete instantly and miss | Test body uses `runTest` | Switch to `runSpectreTest` |
 | Two parallel test JVMs steal focus from each other | Both use real `RobotDriver()` | Use `RobotDriver.synthetic(rootWindow)` |
 | Parallel JVMs must preserve real OS input behavior | Real focus/pointer/clipboard state is shared across processes | Opt in to experimental coordination, add `spectre-input-coordinator-server` at runtime, use `Required` and JUnit `InputIsolationConfig.perTest()` |

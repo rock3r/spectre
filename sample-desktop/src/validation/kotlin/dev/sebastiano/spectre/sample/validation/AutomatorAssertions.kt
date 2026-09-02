@@ -47,13 +47,6 @@ suspend fun ComposeAutomator.waitForTestTag(
         findOneByTestTag(tag)
     }
 
-/** Wait until no node with the given testTag is present. */
-suspend fun ComposeAutomator.waitUntilGone(tag: String, timeout: Duration = 5.seconds) {
-    eventually(description = "no node with testTag '$tag'", timeout = timeout) {
-        if (findOneByTestTag(tag) == null) Unit else null
-    }
-}
-
 /**
  * Click the picker entry for a scenario by its `scenario.<name>` testTag, then wait until the
  * right-pane `scenario.title` node either gains a value (first navigation) or its text changes

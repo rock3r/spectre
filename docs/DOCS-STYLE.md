@@ -95,8 +95,8 @@ corresponding doc page is touched:
 
 - **No auto-wait.** Queries (`findByTestTag`, `findByText`, `hasTag`, `hasText`, etc.)
   do a single read. They never retry. Document them as such.
-- **EDT rule applies to all three waits.** `waitForNode`, `waitForIdle`, and
-  `waitForVisualIdle` all reject EDT callers via `rejectEdtCaller` (see
+- **EDT rule applies to all four waits.** `waitForNode`, `waitUntilGone`, `waitForIdle`,
+  and `waitForVisualIdle` all reject EDT callers via `rejectEdtCaller` (see
   `WaitForNodeTest.waitForNode rejects EDT callers with valid arguments`). Earlier
   drafts of the docs carved out `waitForNode` as exempt — that exemption is gone in
   current code. Do say "all wait helpers reject the EDT".
@@ -106,7 +106,8 @@ corresponding doc page is touched:
 - **`findOneBy*` exists only for `testTag` and `text`.** Not for content
   description, not for role.
 - **`waitForNode(tag, text)` is AND, not OR.** Both criteria must match the same
-  node.
+  node. `waitUntilGone(tag, text)` mirrors it: it returns once no single node carries
+  both, and it refreshes windows before every poll (unlike the finders).
 - **`AutomatorIdlingResource.isIdleNow` and `diagnosticMessage()`.** Not `isIdle()`,
   not `name`. Identity-based register/unregister.
 - **`AutoRecorder` has explicit capture modes.** `startWindow(...)` uses true

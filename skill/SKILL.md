@@ -28,8 +28,8 @@ If you're testing an individual composable in isolation → use `ComposeTestRule
 ## Gotchas
 
 - **Use `runSpectreTest`, not `runTest`.** `runTest` collapses `delay()` to zero, which silently breaks `longClick` hold durations, `swipe` step pacing, and clipboard-settle polling. Prefer `runSpectreTest` from the testing module (real wall time + leak detection); plain `runBlocking` is a fallback.
-- **Selectors are non-waiting.** Every `findBy...` / `findOneBy...` call reads the semantics tree once. Call `waitForNode` before querying any node that might not exist yet.
-- **EDT rule.** All three wait helpers (`waitForNode`, `waitForIdle`, and `waitForVisualIdle`) throw `IllegalStateException` when called from the AWT event dispatch thread. Standard JUnit test methods run off the EDT so this isn't normally an issue; if you call them from the EDT, wrap with `withContext(Dispatchers.Default)`.
+- **Selectors are non-waiting.** Every `findBy...` / `findOneBy...` call reads the semantics tree once. Call `waitForNode` before querying any node that might not exist yet, and `waitUntilGone` after dismissing a popup, menu, or dialog before touching what was behind it.
+- **EDT rule.** All four wait helpers (`waitForNode`, `waitUntilGone`, `waitForIdle`, and `waitForVisualIdle`) throw `IllegalStateException` when called from the AWT event dispatch thread. Standard JUnit test methods run off the EDT so this isn't normally an issue; if you call them from the EDT, wrap with `withContext(Dispatchers.Default)`.
 - **Expression-body tests.** Write `@Test fun mySpec(): Unit = runSpectreTest { ... }`. JUnit 5.14+ rejects non-void test methods, and Kotlin infers the return type from the last expression in the `runSpectreTest` body.
 
 ## Setup
@@ -149,6 +149,9 @@ val img = automator.screenshot(node)                    // native window capture
 // After launching — poll until a node appears
 automator.waitForNode(tag = "root-content")
 
+// After dismissing a popup / menu / dialog — poll until nothing matches in any tracked window
+automator.waitUntilGone(tag = "popup.body")
+
 // After an interaction — wait for semantics tree + idling resources to settle
 automator.waitForIdle()
 
@@ -165,7 +168,7 @@ automator.waitForVisualIdle()  // pixels settled
 val result = automator.findOneByTestTag("Result")
 ```
 
-All three wait helpers are `suspend` and **must not** be called from the AWT EDT. Default timeout is 5 s; all parameters are tunable.
+All four wait helpers are `suspend` and **must not** be called from the AWT EDT. Default timeout is 5 s; all parameters are tunable.
 
 ## Input drivers
 

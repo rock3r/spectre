@@ -133,8 +133,8 @@ description, or role — see [Finding nodes](selectors.md).
   when the call originates on the AWT event dispatch thread.
 
 All interaction methods (`click`, `doubleClick`, `swipe`, `typeText`, `pasteText`, …) and all wait
-helpers (`waitForNode`, `waitForIdle`, `waitForVisualIdle`) are `suspend`, so the test
-body runs inside `runSpectreTest { … }` from the testing module. JUnit test methods don't
+helpers (`waitForNode`, `waitUntilGone`, `waitForIdle`, `waitForVisualIdle`) are `suspend`, so
+the test body runs inside `runSpectreTest { … }` from the testing module. JUnit test methods don't
 run on the AWT event dispatch thread, so no extra `withContext` is needed here. If you
 ever call wait helpers from a coroutine on `Dispatchers.Main` (Swing EDT), wrap them in
 `withContext(Dispatchers.Default)` — they reject EDT callers at runtime. See

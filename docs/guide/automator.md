@@ -96,6 +96,10 @@ What this means in practice:
 - After an interaction that triggers state change or animation, call
   **`waitForVisualIdle()`** (pixels stable for N frames) or **`waitForIdle()`**
   (semantics fingerprint stable plus any registered idling resources).
+- After dismissing a popup, menu, or dialog, **wait for it to leave** with
+  `waitUntilGone(tag = "…")` before touching what was behind it. A popup that rendered in
+  its own `Window` takes its whole semantics tree with it, so absence is the only thing
+  left to observe.
 - A failing assertion isn't necessarily a bug in your UI — it's often "the UI hadn't
   finished updating before I read it back".
 
@@ -103,8 +107,8 @@ See [Synchronization](synchronization.md) for the full toolkit.
 
 ## The EDT rule
 
-All three wait helpers — `waitForNode`, `waitForIdle`, and `waitForVisualIdle` — refuse
-to run on the AWT event dispatch thread (EDT):
+All four wait helpers — `waitForNode`, `waitUntilGone`, `waitForIdle`, and
+`waitForVisualIdle` — refuse to run on the AWT event dispatch thread (EDT):
 
 ```
 waitForNode must not be called from the AWT event dispatch thread;

@@ -875,14 +875,40 @@ private constructor(
         require(tag != null || text != null) { "Either tag or text must be specified" }
         rejectEdtCaller("waitForNode")
         return waitUntil(timeout = timeout, pollInterval = pollInterval) {
-            readOnEdt {
-                refreshWindows()
-                allNodes().firstOrNull { node ->
-                    (tag == null || node.testTag == tag) &&
-                        (text == null || node.texts.any { it == text } || node.editableText == text)
-                }
-            }
+            refreshedNodes().firstOrNull { it.matchesSelector(tag, text) }
         }
+    }
+
+    /**
+     * Waits until no node in any tracked window matches [tag] and/or [text]: the absence
+     * counterpart to [waitForNode], for dismissed popups, menus, and dialogs.
+     *
+     * Compose Desktop popups can render in their own `Window`, so dismissing one removes the whole
+     * window — and every node in it — from the tracked set; there is no node left to query, only
+     * its absence across all tracked windows. Each poll therefore calls [refreshWindows] first, the
+     * same cadence as [waitForNode], so a window vanishing between polls is observed rather than
+     * answered from a stale snapshot.
+     *
+     * Returns as soon as nothing matches. When both criteria are given they must match the same
+     * node, mirroring [waitForNode]. On timeout throws [IllegalStateException] naming the selector,
+     * the timeout, and how many matching nodes were still present.
+     */
+    public suspend fun waitUntilGone(
+        tag: String? = null,
+        text: String? = null,
+        timeout: Duration = 5.seconds,
+        pollInterval: Duration = 100.milliseconds,
+    ) {
+        // Same ordering as waitForNode: bad arguments are the more actionable error for an EDT
+        // caller doing both things wrong.
+        require(tag != null || text != null) { "Either tag or text must be specified" }
+        rejectEdtCaller("waitUntilGone")
+        waitUntilGoneInternal(
+            timeout = timeout,
+            pollInterval = pollInterval,
+            selector = describeNodeSelector(tag, text),
+            countPresent = { refreshedNodes().count { it.matchesSelector(tag, text) } },
+        )
     }
 
     public fun printTree(): String {
@@ -926,6 +952,25 @@ private const val FRAME_HASH_BUDGET_MS: Long = 2_000
 private const val FINGERPRINT_BUDGET_MS: Long = 500
 private const val WORKER_INTERRUPT_GRACE_MS: Long = 50
 private const val EMPTY_FINGERPRINT_PREFIX: String = "spectre-fingerprint-budget-elapsed:"
+
+/**
+ * One poll of the selector waits ([ComposeAutomator.waitForNode],
+ * [ComposeAutomator.waitUntilGone]): refresh the tracked windows, then read every live node, both
+ * on the EDT so a popup window that appeared or vanished since the last poll is part of the
+ * snapshot.
+ */
+private fun ComposeAutomator.refreshedNodes(): List<AutomatorNode> = readOnEdt {
+    refreshWindows()
+    allNodes()
+}
+
+/**
+ * Shared tag/text criterion for [ComposeAutomator.waitForNode] and
+ * [ComposeAutomator.waitUntilGone]: every non-null criterion must hold on this one node.
+ */
+private fun AutomatorNode.matchesSelector(tag: String?, text: String?): Boolean =
+    (tag == null || testTag == tag) &&
+        (text == null || texts.any { it == text } || editableText == text)
 
 private fun StringBuilder.appendNodeTree(node: AutomatorNode, depth: Int) {
     append("  ".repeat(depth))
