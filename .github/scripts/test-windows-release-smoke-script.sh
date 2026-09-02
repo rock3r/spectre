@@ -111,6 +111,7 @@ grep -F -q 'TwoClientJvmContentionTest' "$script" || fail "Windows runner missin
 grep -F -q 'two independent client JVMs never hold the desktop lease at the same time' "$script" || fail "Windows runner missing two-client-JVM contention needle"
 grep -F -q 'ParallelPerTestInputIsolationTest' "$script" || fail "Windows runner missing parallel per-test isolation proof"
 grep -F -q 'concurrent per-test invocations never hold the desktop lease at the same time' "$script" || fail "Windows runner missing parallel per-test needle"
+grep -F -q 'the per-test lease is still held while failure evidence is captured' "$script" || fail "Windows runner missing evidence-capture needle"
 grep -F -q 'windows-ssh' "$script" || fail "SSH displayMode honesty for WGC missing"
 grep -F -q 'WGC requires native interactive console' "$script" || fail "WGC interactive-console N/A reason missing"
 grep -F -q 'AgentAttachIntegration e2e includes WGC node screenshots' "$script" || fail "SSH agent-attach-core hard n/a reason missing"

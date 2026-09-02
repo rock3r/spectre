@@ -665,6 +665,9 @@ def main(argv: list[str] | None = None) -> int:
             (
                 "InputIsolationLifecycleTest",
                 "concurrent per-test invocations never hold the desktop lease at the same time",
+                # Named explicitly: the class-level filter would still run without it, so gating
+                # only the class name would let the evidence half of the bullet silently vanish.
+                "the per-test lease is still held while failure evidence is captured",
             ),
         ),
     )

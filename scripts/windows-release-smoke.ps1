@@ -748,7 +748,7 @@ try {
                 -Task ":testing:test" `
                 -Filters @("*InputIsolationLifecycleTest", "*ParallelPerTestInputIsolationTest") `
                 -ResultsSubPath $testingResults `
-                -Needles @("InputIsolationLifecycleTest", "concurrent per-test invocations never hold the desktop lease at the same time")))
+                -Needles @("InputIsolationLifecycleTest", "concurrent per-test invocations never hold the desktop lease at the same time", "the per-test lease is still held while failure evidence is captured")))
 
     if (-not $SkipAgentE2e) {
         # AgentAttachIntegration e2e includes WGC node screenshots (#362). Under SSH that is the

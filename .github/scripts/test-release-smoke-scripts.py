@@ -606,6 +606,11 @@ class SmokeLibSchemaTest(unittest.TestCase):
         self.assertIn(
             "concurrent per-test invocations never hold the desktop lease at the same time", text
         )
+        # Each half of the per-test bullet is gated by name. Gating only the class would let the
+        # evidence-capture method be removed or renamed while the cell still reported pass.
+        self.assertIn(
+            "the per-test lease is still held while failure evidence is captured", text
+        )
         # Non-login SSH / xvfb-run must still see rustup cargo for helper rebuilds.
         self.assertIn("apply_linux_toolchain_path", text)
         # Nested buildSrc test must not start a daemon that --stops parent ./gradlew check.
