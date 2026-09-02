@@ -86,10 +86,25 @@ grep -F -q 'hard skip without N/A reason' "$script" || fail "fail-closed hard N/
 for scenario_id in \
   preflight check junit-live agent-attach-core agent-contract-corpus agent-inject \
   agent-launch-and-attach cli-packaged cli-native-helper-layout cli-user-flow \
-  mcp-sdk-flow host-native-recording maven-local-consumer portal-token-warmup pointer-move
+  mcp-sdk-flow host-native-recording maven-local-consumer portal-token-warmup pointer-move \
+  input-coord-contention input-coord-cancellation input-coord-quarantine input-coord-revoke \
+  input-coord-forced-recovery input-coord-junit-pertest
 do
   grep -F -q "$scenario_id" "$script" || fail "Windows runner missing stable scenario id: $scenario_id"
 done
+
+# --- #459 experimental input-coordination delta hard cells ---
+# The coordination cells must drive the coordinator's own deterministic + forked-process + JUnit
+# isolation tests and fail closed on the JUnit XML (never a fake PASS). Hard on Windows including SSH.
+grep -F -q 'Get-InputCoordinationSkipReason' "$script" || fail "Windows runner missing input-coordination skip-reason probe"
+grep -F -q 'Assert-JUnitTestcasesPassed' "$script" || fail "Windows runner missing coordination JUnit XML fail-closed gate"
+grep -F -q 'Invoke-CoordinationCell' "$script" || fail "Windows runner missing coordination cell runner"
+grep -F -q ':input-coordinator-server:test' "$script" || fail "Windows runner missing coordinator server test task"
+grep -F -q ':testing:test' "$script" || fail "Windows runner missing JUnit isolation test task"
+grep -F -q 'LocalCoordinatorServerTest' "$script" || fail "Windows runner missing LocalCoordinatorServerTest filter"
+grep -F -q 'CoordinatorProcessLauncherTest' "$script" || fail "Windows runner missing forked-coordinator filter"
+grep -F -q 'InputIsolationLifecycleTest' "$script" || fail "Windows runner missing JUnit PerTest isolation filter"
+grep -F -q 'explicit force advances FIFO and reports unsafe takeover' "$script" || fail "Windows runner missing forced-recovery testcase needle"
 grep -F -q 'windows-ssh' "$script" || fail "SSH displayMode honesty for WGC missing"
 grep -F -q 'WGC requires native interactive console' "$script" || fail "WGC interactive-console N/A reason missing"
 grep -F -q 'AgentAttachIntegration e2e includes WGC node screenshots' "$script" || fail "SSH agent-attach-core hard n/a reason missing"

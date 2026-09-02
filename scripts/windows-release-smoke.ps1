@@ -66,7 +66,15 @@ $script:RequiredScenarioIds = @(
     "host-native-recording",
     "maven-local-consumer",
     "portal-token-warmup",
-    "pointer-move"
+    "pointer-move",
+    # Experimental desktop input coordination (#459) delta hard cells -- hard on Windows too
+    # (coordinator protocol tests need no display; run under SSH as well as an interactive console).
+    "input-coord-contention",
+    "input-coord-cancellation",
+    "input-coord-quarantine",
+    "input-coord-revoke",
+    "input-coord-forced-recovery",
+    "input-coord-junit-pertest"
 )
 $ErrorActionPreference = "Stop"
 # Avoid StrictMode edge cases with dynamic PSCustomObject / native interop on WinPS 5.1.
@@ -366,6 +374,108 @@ function Assert-PointerMoveLiveExecuted {
     }
 }
 
+function Get-InputCoordinationSkipReason {
+    param([Parameter(Mandatory = $true)][string] $RepoRoot)
+    # Hard N/A only when the experimental coordination test surface is gone (regression signal).
+    # These are hard cells on every OS per the spectre-release skill; Experimental does not make
+    # them soft. Mirrors smoke_lib.input_coordination_smoke_skip_reason.
+    $sources = @(
+        "input-coordinator-server\src\test\kotlin\dev\sebastiano\spectre\input\server\LocalCoordinatorServerTest.kt",
+        "testing\src\test\kotlin\dev\sebastiano\spectre\testing\InputIsolationLifecycleTest.kt"
+    )
+    foreach ($rel in $sources) {
+        if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot $rel))) {
+            $name = Split-Path -Leaf $rel
+            return ("experimental input coordination test surface missing ({0}); re-scope the release gate before smoking coordination" -f $name)
+        }
+    }
+    return $null
+}
+
+function Assert-JUnitTestcasesPassed {
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $ResultsSubPath,
+        [Parameter(Mandatory = $true)][string[]] $Needles,
+        [Parameter(Mandatory = $true)][string] $Cell
+    )
+    # Fail closed: Gradle --tests exits 0 when a filter matches nothing or every method
+    # assumption-skips, so a hard coordination pass must prove each named testcase actually ran
+    # (present, not <skipped/>, no suite failures/errors). Mirrors Assert-PointerMoveLiveExecuted.
+    $resultsDir = Join-Path $RepoRoot $ResultsSubPath
+    if (-not (Test-Path -LiteralPath $resultsDir)) {
+        throw "$Cell test results missing under $resultsDir (Gradle did not write JUnit XML)"
+    }
+    $xmlFiles = @(Get-ChildItem -LiteralPath $resultsDir -Filter "TEST-*.xml" -ErrorAction SilentlyContinue)
+    if ($xmlFiles.Count -eq 0) {
+        throw "$Cell produced no TEST-*.xml under $resultsDir"
+    }
+    foreach ($needle in $Needles) {
+        $found = $false
+        foreach ($f in $xmlFiles) {
+            $raw = [string](Get-Content -LiteralPath $f.FullName -Raw -ErrorAction SilentlyContinue)
+            if ([string]::IsNullOrWhiteSpace($raw)) { continue }
+            if ($raw -notmatch [regex]::Escape($needle)) { continue }
+            $found = $true
+            if ($raw -match "<skipped") {
+                throw "$Cell testcase '$needle' was skipped (assumption); hard pass requires the coordination test to execute"
+            }
+            if ($raw -match 'failures="[1-9]' -or $raw -match 'errors="[1-9]') {
+                throw "$Cell reported failures/errors for '$needle' in $($f.Name)"
+            }
+            break
+        }
+        if (-not $found) {
+            throw "$Cell testcase '$needle' not found in JUnit XML under $resultsDir"
+        }
+    }
+}
+
+function Invoke-CoordinationCell {
+    # Explicit-parameter cell runner (no closure over loop variables -- avoids the WinPS
+    # dot-sourced-scriptblock scope gotcha). Returns a New-StepResult row.
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $Id,
+        [Parameter(Mandatory = $true)][string] $Name,
+        [Parameter(Mandatory = $true)][string] $Task,
+        [Parameter(Mandatory = $true)][string[]] $Filters,
+        [Parameter(Mandatory = $true)][string] $ResultsSubPath,
+        [Parameter(Mandatory = $true)][string[]] $Needles,
+        [string] $SkipReason = "",
+        [ValidateRange(1, 86400)][int] $TimeoutSeconds = 600
+    )
+    if (-not [string]::IsNullOrWhiteSpace($SkipReason)) {
+        return (New-StepResult -Id $Id -Name $Name -Result "n/a" -Reason $SkipReason)
+    }
+    Write-Host ""
+    Write-Host ("==== {0} ({1}) ====" -f $Id, $Name) -ForegroundColor Cyan
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        $gradleArgs = New-Object System.Collections.Generic.List[string]
+        [void]$gradleArgs.Add($Task)
+        foreach ($f in $Filters) {
+            [void]$gradleArgs.Add("--tests")
+            [void]$gradleArgs.Add($f)
+        }
+        [void]$gradleArgs.Add("--rerun-tasks")
+        [void]$gradleArgs.Add("--no-build-cache")
+        Invoke-Gradle -RepoRoot $RepoRoot -TimeoutSeconds $TimeoutSeconds -LogName $Id -GradleArgs ([string[]]$gradleArgs)
+        Assert-JUnitTestcasesPassed -RepoRoot $RepoRoot -ResultsSubPath $ResultsSubPath -Needles $Needles -Cell $Id
+        $sw.Stop()
+        $secs = [int]$sw.Elapsed.TotalSeconds
+        Write-Host ("PASS  {0}  ({1}s)" -f $Id, $secs) -ForegroundColor Green
+        return (New-StepResult -Id $Id -Name $Name -Result "pass" -Seconds $secs)
+    }
+    catch {
+        $sw.Stop()
+        $secs = [int]$sw.Elapsed.TotalSeconds
+        $msg = [string]$_.Exception.Message
+        Write-Host ("FAIL  {0}  ({1}s): {2}" -f $Id, $secs, $msg) -ForegroundColor Red
+        return (New-StepResult -Id $Id -Name $Name -Result "fail" -Seconds $secs -Detail $msg)
+    }
+}
+
 function Get-GitText {
     param([string] $RepoRoot, [string[]] $GitArgs)
     try {
@@ -595,6 +705,50 @@ try {
         }
         [void]$results.Add($step)
     }
+
+    # Experimental desktop input coordination (#459 delta hard cells). Deterministic coordinator
+    # protocol + forked-process + JUnit-isolation proofs; no display is needed, so these stay hard
+    # on Windows including SSH (unlike the WGC / attach-screenshot cells). See docs/RELEASE-SMOKE.md
+    # "Experimental input coordination release gate".
+    $coordinationSkip = Get-InputCoordinationSkipReason -RepoRoot $repoRoot
+    $serverResults = "input-coordinator-server\build\test-results\test"
+    $testingResults = "testing\build\test-results\test"
+    [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -SkipReason $coordinationSkip -TimeoutSeconds $AgentE2eTimeoutSeconds `
+                -Id "input-coord-contention" -Name "Two independent JVMs take one desktop lease in FIFO order" `
+                -Task ":input-coordinator-server:test" `
+                -Filters @("*LocalCoordinatorServerTest.two independent clients receive one desktop lease in FIFO order", "*CoordinatorProcessLauncherTest.forked coordinator accepts a real client lease") `
+                -ResultsSubPath $serverResults `
+                -Needles @("two independent clients receive one desktop lease in FIFO order", "forked coordinator accepts a real client lease")))
+    [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -SkipReason $coordinationSkip -TimeoutSeconds $AgentE2eTimeoutSeconds `
+                -Id "input-coord-cancellation" -Name "Cancelled queued waiter does not strand the next waiter" `
+                -Task ":input-coordinator-server:test" `
+                -Filters @("*LocalCoordinatorServerTest.interrupting a queued acquisition removes it without disturbing FIFO") `
+                -ResultsSubPath $serverResults `
+                -Needles @("interrupting a queued acquisition removes it without disturbing FIFO")))
+    [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -SkipReason $coordinationSkip -TimeoutSeconds $AgentE2eTimeoutSeconds `
+                -Id "input-coord-quarantine" -Name "Crashed holder stays fenced/quarantined without stale ownership" `
+                -Task ":input-coordinator-server:test" `
+                -Filters @("*LocalCoordinatorServerTest.successor quarantines a crashed holder until exact-id unsafe recovery") `
+                -ResultsSubPath $serverResults `
+                -Needles @("successor quarantines a crashed holder until exact-id unsafe recovery")))
+    [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -SkipReason $coordinationSkip -TimeoutSeconds $AgentE2eTimeoutSeconds `
+                -Id "input-coord-revoke" -Name "Exact-ID normal revoke cannot affect a newer lease" `
+                -Task ":input-coordinator-server:test" `
+                -Filters @("*LocalCoordinatorServerTest.exact-id revoke rejects stale observation and fences the actual holder") `
+                -ResultsSubPath $serverResults `
+                -Needles @("exact-id revoke rejects stale observation and fences the actual holder")))
+    [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -SkipReason $coordinationSkip -TimeoutSeconds $AgentE2eTimeoutSeconds `
+                -Id "input-coord-forced-recovery" -Name "Explicit forced recovery reports unsafeTakeover and advances the queue" `
+                -Task ":input-coordinator-server:test" `
+                -Filters @("*LocalCoordinatorServerTest.explicit force advances FIFO and reports unsafe takeover") `
+                -ResultsSubPath $serverResults `
+                -Needles @("explicit force advances FIFO and reports unsafe takeover")))
+    [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -SkipReason $coordinationSkip -TimeoutSeconds $AgentE2eTimeoutSeconds `
+                -Id "input-coord-junit-pertest" -Name "Parallel JUnit PerTest serialises factory/body/evidence/teardown" `
+                -Task ":testing:test" `
+                -Filters @("*InputIsolationLifecycleTest") `
+                -ResultsSubPath $testingResults `
+                -Needles @("InputIsolationLifecycleTest")))
 
     if (-not $SkipAgentE2e) {
         # AgentAttachIntegration e2e includes WGC node screenshots (#362). Under SSH that is the

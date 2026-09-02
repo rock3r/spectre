@@ -44,6 +44,16 @@ REQUIRED_SCENARIO_IDS: tuple[str, ...] = (
     "maven-local-consumer",
     "portal-token-warmup",
     "pointer-move",
+    # Experimental desktop input coordination (#459). Delta hard cells on macOS, Windows, and
+    # Linux Xorg/Xvfb per the spectre-release skill. The coordinator protocol/lifecycle tests are
+    # deterministic and display-independent, so these stay hard on every OS entrypoint (including
+    # Windows SSH) rather than n/a like the WGC/attach-screenshot cells.
+    "input-coord-contention",
+    "input-coord-cancellation",
+    "input-coord-quarantine",
+    "input-coord-revoke",
+    "input-coord-forced-recovery",
+    "input-coord-junit-pertest",
 )
 
 RESULT_PASS = "pass"
@@ -1001,6 +1011,87 @@ def assert_pointer_move_live_executed(root: Path) -> None:
         raise RuntimeError(
             f"PointerMoveLive testcase not found in JUnit XML under {results_dir}"
         )
+
+
+# --- Experimental desktop input coordination (#459 release gate) ---------------------------------
+
+# The coordinator's own deterministic + forked-process tests are the automated proof for each
+# gate bullet in docs/RELEASE-SMOKE.md. They do not need a display, so the cells stay hard on
+# every OS. A missing test source means the experimental surface was removed or moved, which is a
+# regression the smoke must surface (mirrors pointer_move_api_skip_reason).
+_INPUT_COORDINATOR_SERVER_TEST_SOURCE = Path(
+    "input-coordinator-server/src/test/kotlin/dev/sebastiano/spectre/input/server/"
+    "LocalCoordinatorServerTest.kt"
+)
+_INPUT_ISOLATION_TEST_SOURCE = Path(
+    "testing/src/test/kotlin/dev/sebastiano/spectre/testing/InputIsolationLifecycleTest.kt"
+)
+
+
+def input_coordination_smoke_skip_reason(root: Path) -> str | None:
+    """Hard N/A reason only when the experimental coordination test surface is gone.
+
+    These are hard cells on macOS, Windows, and Linux Xorg/Xvfb per the spectre-release skill;
+    Experimental status does not make them soft. The only legitimate N/A is the surface having
+    been removed or graduated, in which case the release plan must be re-scoped — treat it as a
+    regression signal, not a routine skip.
+    """
+    for source in (_INPUT_COORDINATOR_SERVER_TEST_SOURCE, _INPUT_ISOLATION_TEST_SOURCE):
+        if not (Path(root) / source).is_file():
+            return (
+                f"experimental input coordination test surface missing ({source.name}); "
+                "re-scope the release gate before smoking coordination"
+            )
+    return None
+
+
+def assert_junit_testcases_passed(
+    results_dir: Path,
+    *,
+    needles: Sequence[str],
+    cell: str,
+) -> None:
+    """Fail closed unless every named JUnit testcase actually executed and passed.
+
+    Gradle `--tests` exits 0 when a filter matches nothing or when every method assumption-skips,
+    so a hard coordination pass must prove the specific testcase ran (present, not `<skipped/>`,
+    and its testsuite reported no failures/errors). Mirrors assert_pointer_move_live_executed and
+    assert_mcp_fixture_e2e_executed.
+    """
+    results_dir = Path(results_dir)
+    if not results_dir.is_dir():
+        raise RuntimeError(
+            f"{cell} test results missing under {results_dir} (Gradle did not write JUnit XML)"
+        )
+    xml_files = sorted(results_dir.glob("TEST-*.xml"))
+    if not xml_files:
+        raise RuntimeError(f"{cell} produced no TEST-*.xml under {results_dir}")
+    for needle in needles:
+        found = False
+        for path in xml_files:
+            try:
+                raw = path.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                raise RuntimeError(f"unable to read {path}: {exc}") from exc
+            if needle not in raw:
+                continue
+            found = True
+            if "<skipped" in raw:
+                raise RuntimeError(
+                    f"{cell} testcase '{needle}' was skipped (assumption); hard pass "
+                    "requires the coordination test to execute"
+                )
+            for attr in ("failures", "errors"):
+                match = re.search(rf'{attr}="(\d+)"', raw)
+                if match and int(match.group(1)) > 0:
+                    raise RuntimeError(
+                        f"{cell} reported {attr}={match.group(1)} for '{needle}' in {path.name}"
+                    )
+            break
+        if not found:
+            raise RuntimeError(
+                f"{cell} testcase '{needle}' not found in JUnit XML under {results_dir}"
+            )
 
 
 def packaged_cli_executable(root: Path, system: str | None = None, machine: str | None = None) -> Path:

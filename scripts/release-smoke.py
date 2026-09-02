@@ -31,9 +31,11 @@ from smoke_lib import (  # noqa: E402
     RESULT_PASS,
     ScenarioResult,
     apply_linux_toolchain_path,
+    assert_junit_testcases_passed,
     assert_linux_portal_tokens_captured,
     assert_mcp_fixture_e2e_executed,
     assert_pointer_move_live_executed,
+    input_coordination_smoke_skip_reason,
     WAYLAND_PORTAL_WARMUP_TOKEN_KEYS,
     linux_portal_token_path,
     build_report,
@@ -579,6 +581,120 @@ def main(argv: list[str] | None = None) -> int:
                     log=pointer.log,
                 )
         add(pointer)
+
+    # --- experimental desktop input coordination (#459 delta hard cells) ---
+    # Deterministic coordinator protocol + forked-process + JUnit-isolation proofs for the
+    # spectre-release input-coordination gate. These do not need a display, so they stay hard on
+    # macOS, Windows, and Linux Xorg/Xvfb (Experimental status does not make them soft — see
+    # docs/RELEASE-SMOKE.md "Experimental input coordination release gate"). They are not Robot
+    # cells, so they run with the plain scenario env, never the xvfb/robot wrapper.
+    coordination_skip = input_coordination_smoke_skip_reason(ROOT)
+    server_results = ROOT / "input-coordinator-server" / "build" / "test-results" / "test"
+    testing_results = ROOT / "testing" / "build" / "test-results" / "test"
+    coordination_cells = (
+        (
+            "input-coord-contention",
+            "Two independent JVMs take one desktop lease in FIFO order",
+            ":input-coordinator-server:test",
+            (
+                "*LocalCoordinatorServerTest.two independent clients receive one desktop "
+                "lease in FIFO order",
+                "*CoordinatorProcessLauncherTest.forked coordinator accepts a real client lease",
+            ),
+            server_results,
+            (
+                "two independent clients receive one desktop lease in FIFO order",
+                "forked coordinator accepts a real client lease",
+            ),
+        ),
+        (
+            "input-coord-cancellation",
+            "Cancelled queued waiter does not strand the next waiter",
+            ":input-coordinator-server:test",
+            (
+                "*LocalCoordinatorServerTest.interrupting a queued acquisition removes it "
+                "without disturbing FIFO",
+            ),
+            server_results,
+            ("interrupting a queued acquisition removes it without disturbing FIFO",),
+        ),
+        (
+            "input-coord-quarantine",
+            "Crashed holder stays fenced/quarantined without stale ownership",
+            ":input-coordinator-server:test",
+            (
+                "*LocalCoordinatorServerTest.successor quarantines a crashed holder until "
+                "exact-id unsafe recovery",
+            ),
+            server_results,
+            ("successor quarantines a crashed holder until exact-id unsafe recovery",),
+        ),
+        (
+            "input-coord-revoke",
+            "Exact-ID normal revoke cannot affect a newer lease",
+            ":input-coordinator-server:test",
+            (
+                "*LocalCoordinatorServerTest.exact-id revoke rejects stale observation and "
+                "fences the actual holder",
+            ),
+            server_results,
+            ("exact-id revoke rejects stale observation and fences the actual holder",),
+        ),
+        (
+            "input-coord-forced-recovery",
+            "Explicit forced recovery reports unsafeTakeover and advances the queue",
+            ":input-coordinator-server:test",
+            ("*LocalCoordinatorServerTest.explicit force advances FIFO and reports unsafe takeover",),
+            server_results,
+            ("explicit force advances FIFO and reports unsafe takeover",),
+        ),
+        (
+            "input-coord-junit-pertest",
+            "Parallel JUnit PerTest serialises factory/body/evidence/teardown",
+            ":testing:test",
+            ("*InputIsolationLifecycleTest",),
+            testing_results,
+            ("InputIsolationLifecycleTest",),
+        ),
+    )
+    for scenario_id, name, task, filters, results_dir, needles in coordination_cells:
+        if coordination_skip is not None:
+            add(
+                scenario_result(
+                    scenario_id,
+                    name=name,
+                    result="n/a",
+                    reason=coordination_skip,
+                    hard=True,
+                )
+            )
+            continue
+        tests_args: list[str] = []
+        for test_filter in filters:
+            tests_args += ["--tests", test_filter]
+        cell = run_scenario(
+            scenario_id,
+            name=name,
+            command=[gradle, task, *tests_args, *force],
+            cwd=ROOT,
+            timeout=600,
+            out_dir=out_dir,
+            env=scenario_env,
+            overall_deadline=overall_deadline,
+        )
+        if cell.result == RESULT_PASS:
+            try:
+                assert_junit_testcases_passed(results_dir, needles=needles, cell=scenario_id)
+            except RuntimeError as exc:
+                cell = scenario_result(
+                    scenario_id,
+                    name=name,
+                    result=RESULT_FAIL,
+                    seconds=cell.seconds,
+                    detail=str(exc),
+                    log=cell.log,
+                )
+        add(cell)
 
     # --- agent attach / corpus / inject / launch-and-attach ---
     for scenario_id, name, test_filter in (

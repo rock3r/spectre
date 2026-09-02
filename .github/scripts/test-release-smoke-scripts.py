@@ -231,6 +231,12 @@ class SmokeLibSchemaTest(unittest.TestCase):
             "maven-local-consumer",
             "portal-token-warmup",
             "pointer-move",
+            "input-coord-contention",
+            "input-coord-cancellation",
+            "input-coord-quarantine",
+            "input-coord-revoke",
+            "input-coord-forced-recovery",
+            "input-coord-junit-pertest",
         }
         self.assertEqual(expected, set(smoke_lib.REQUIRED_SCENARIO_IDS))
 
@@ -297,6 +303,79 @@ class SmokeLibSchemaTest(unittest.TestCase):
             with self.assertRaises(RuntimeError) as raised:
                 smoke_lib.assert_pointer_move_live_executed(root)
             self.assertIn("skipped", str(raised.exception))
+
+    def test_input_coordination_smoke_skip_reason_present_on_this_checkout(self):
+        # The experimental coordinator + isolation test surface exists on this tree, so the cells
+        # are hard-runnable (no display needed) and must not be N/A.
+        self.assertIsNone(smoke_lib.input_coordination_smoke_skip_reason(ROOT))
+
+    def test_input_coordination_smoke_skip_reason_when_surface_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reason = smoke_lib.input_coordination_smoke_skip_reason(Path(tmp))
+            self.assertIsNotNone(reason)
+            self.assertIn("re-scope the release gate", reason)
+
+    def test_assert_junit_testcases_passed_rejects_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            (results / "TEST-coord.xml").write_text(
+                '<?xml version="1.0"?>\n'
+                '<testsuite name="LocalCoordinatorServerTest" tests="1" failures="0" '
+                'errors="0" skipped="1">\n'
+                '  <testcase name="explicit force advances FIFO and reports unsafe takeover" '
+                'classname="x"><skipped/></testcase>\n'
+                "</testsuite>\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(RuntimeError) as ctx:
+                smoke_lib.assert_junit_testcases_passed(
+                    results,
+                    needles=["explicit force advances FIFO and reports unsafe takeover"],
+                    cell="input-coord-forced-recovery",
+                )
+            self.assertIn("skipped", str(ctx.exception).lower())
+
+    def test_assert_junit_testcases_passed_requires_every_needle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            (results / "TEST-coord.xml").write_text(
+                '<?xml version="1.0"?>\n'
+                '<testsuite name="LocalCoordinatorServerTest" tests="1" failures="0" '
+                'errors="0" skipped="0">\n'
+                '  <testcase name="two independent clients receive one desktop lease in FIFO '
+                'order" classname="x" time="1.0"/>\n'
+                "</testsuite>\n",
+                encoding="utf-8",
+            )
+            # The FIFO needle is present, but the forked-coordinator needle is not: fail closed.
+            with self.assertRaises(RuntimeError) as ctx:
+                smoke_lib.assert_junit_testcases_passed(
+                    results,
+                    needles=[
+                        "two independent clients receive one desktop lease in FIFO order",
+                        "forked coordinator accepts a real client lease",
+                    ],
+                    cell="input-coord-contention",
+                )
+            self.assertIn("not found", str(ctx.exception).lower())
+
+    def test_assert_junit_testcases_passed_accepts_executed_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            (results / "TEST-coord.xml").write_text(
+                '<?xml version="1.0"?>\n'
+                '<testsuite name="LocalCoordinatorServerTest" tests="1" failures="0" '
+                'errors="0" skipped="0">\n'
+                '  <testcase name="exact-id revoke rejects stale observation and fences the '
+                'actual holder" classname="x" time="1.0"/>\n'
+                "</testsuite>\n",
+                encoding="utf-8",
+            )
+            smoke_lib.assert_junit_testcases_passed(
+                results,
+                needles=["exact-id revoke rejects stale observation and fences the actual holder"],
+                cell="input-coord-revoke",
+            )
 
     def test_hard_na_without_reason_becomes_fail(self):
         result = smoke_lib.scenario_result(
@@ -485,6 +564,16 @@ class SmokeLibSchemaTest(unittest.TestCase):
         # #433: live pointer-move cell must stay fail-closed once moveTo/moveBy ship.
         self.assertIn("pointer_move_api_skip_reason", text)
         self.assertIn("*PointerMoveLive*", text)
+        # #459: experimental input-coordination delta hard cells must drive the coordinator's own
+        # deterministic + forked-process + JUnit-isolation tests, fail-closed on the JUnit XML.
+        self.assertIn("input_coordination_smoke_skip_reason", text)
+        self.assertIn("assert_junit_testcases_passed", text)
+        self.assertIn(":input-coordinator-server:test", text)
+        self.assertIn(":testing:test", text)
+        self.assertIn("LocalCoordinatorServerTest", text)
+        self.assertIn("CoordinatorProcessLauncherTest", text)
+        self.assertIn("InputIsolationLifecycleTest", text)
+        self.assertIn("explicit force advances FIFO and reports unsafe takeover", text)
         # Non-login SSH / xvfb-run must still see rustup cargo for helper rebuilds.
         self.assertIn("apply_linux_toolchain_path", text)
         # Nested buildSrc test must not start a daemon that --stops parent ./gradlew check.
@@ -875,6 +964,17 @@ class DocsAndSchemaPolicyTest(unittest.TestCase):
         self.assertIn("bump", docs.lower())
         self.assertIn("--preflight-only", docs)
         self.assertIn("preflight-only", docs)
+        # #459: the experimental input-coordination delta cells are reusable scenario IDs, so the
+        # stable-ID table / gate must document them (not leave the commands only in chat).
+        for coordination_id in (
+            "input-coord-contention",
+            "input-coord-cancellation",
+            "input-coord-quarantine",
+            "input-coord-revoke",
+            "input-coord-forced-recovery",
+            "input-coord-junit-pertest",
+        ):
+            self.assertIn(coordination_id, docs)
 
     def test_validate_report_rejects_missing_required_ids(self):
         preflight = smoke_lib.collect_preflight(ROOT, version="0.5.0")
