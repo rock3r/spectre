@@ -304,6 +304,28 @@ class SmokeLibSchemaTest(unittest.TestCase):
                 smoke_lib.assert_pointer_move_live_executed(root)
             self.assertIn("skipped", str(raised.exception))
 
+    def test_coordination_cross_process_and_parallel_proofs_exist(self):
+        """The cells must be backed by real multi-JVM / concurrent tests, not just docs claims."""
+        contention = (
+            ROOT
+            / "input-coordinator-server/src/test/kotlin/dev/sebastiano/spectre/input/server"
+            / "TwoClientJvmContentionTest.kt"
+        )
+        probe = contention.with_name("TwoClientJvmContentionProbe.kt")
+        parallel = (
+            ROOT
+            / "testing/src/test/kotlin/dev/sebastiano/spectre/testing"
+            / "ParallelPerTestInputIsolationTest.kt"
+        )
+        for path in (contention, probe, parallel):
+            self.assertTrue(path.is_file(), f"missing coordination gate proof: {path}")
+        # The contention proof must genuinely fork a second client process.
+        self.assertIn("ProcessBuilder", contention.read_text(encoding="utf-8"))
+        # The parallel proof must drive concurrent invocations against a real coordinator.
+        parallel_text = parallel.read_text(encoding="utf-8")
+        self.assertIn("LocalCoordinatorServer", parallel_text)
+        self.assertIn("Executors", parallel_text)
+
     def test_input_coordination_smoke_skip_reason_present_on_this_checkout(self):
         # The experimental coordinator + isolation test surface exists on this tree, so the cells
         # are hard-runnable (no display needed) and must not be N/A.
@@ -574,6 +596,16 @@ class SmokeLibSchemaTest(unittest.TestCase):
         self.assertIn("CoordinatorProcessLauncherTest", text)
         self.assertIn("InputIsolationLifecycleTest", text)
         self.assertIn("explicit force advances FIFO and reports unsafe takeover", text)
+        # The two cells whose gate bullets need cross-process / concurrent proof must drive the
+        # tests that actually supply it, not only the single-JVM sequential ones.
+        self.assertIn("TwoClientJvmContentionTest", text)
+        self.assertIn(
+            "two independent client JVMs never hold the desktop lease at the same time", text
+        )
+        self.assertIn("ParallelPerTestInputIsolationTest", text)
+        self.assertIn(
+            "concurrent per-test invocations never hold the desktop lease at the same time", text
+        )
         # Non-login SSH / xvfb-run must still see rustup cargo for helper rebuilds.
         self.assertIn("apply_linux_toolchain_path", text)
         # Nested buildSrc test must not start a daemon that --stops parent ./gradlew check.

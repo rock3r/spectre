@@ -111,19 +111,35 @@ coordinator's own JUnit XML:
 
 | Gate bullet | Scenario ID | Proof driven |
 | --- | --- | --- |
-| Two independent JVMs, FIFO, no interleave | `input-coord-contention` | `LocalCoordinatorServerTest` FIFO across two client sessions **+** `CoordinatorProcessLauncherTest` real forked-coordinator JVM |
+| Two independent JVMs, FIFO, no interleave | `input-coord-contention` | `TwoClientJvmContentionTest` — two forked **client** JVMs whose held intervals must be disjoint — **+** `LocalCoordinatorServerTest` FIFO across two client sessions **+** `CoordinatorProcessLauncherTest` real forked-coordinator JVM |
 | Cancelled waiter, next not stranded | `input-coord-cancellation` | `LocalCoordinatorServerTest` cancelled-acquire-preserves-FIFO |
 | Holder loss fenced until ack / exact force | `input-coord-quarantine` | `LocalCoordinatorServerTest` crashed-holder quarantine → exact-ID unsafe recovery |
 | Exact-ID revoke cannot hit a newer lease | `input-coord-revoke` | `LocalCoordinatorServerTest` stale-observation revoke fences the actual holder |
 | Forced recovery reports `unsafeTakeover=true` | `input-coord-forced-recovery` | `LocalCoordinatorServerTest` explicit force advances FIFO + unsafe takeover |
-| Parallel JUnit `perTest()` serialises lifecycle | `input-coord-junit-pertest` | `InputIsolationLifecycleTest` (JUnit 4 + 5 whole-test lease across factory/body/evidence/teardown) |
+| Parallel JUnit `perTest()` serialises lifecycle | `input-coord-junit-pertest` | `InputIsolationLifecycleTest` (JUnit 4 + 5 whole-test lease across factory/body/evidence/teardown) **+** `ParallelPerTestInputIsolationTest` (concurrent invocations against a real coordinator must not overlap) |
 
 These proofs are deterministic and display-independent, so the cells are **hard on all three OSes**
 (macOS, Windows including SSH, and Linux Xorg/Xvfb) and are not Robot cells — they run with the plain
-scenario env, never the Xvfb/Robot wrapper. A physical two-process real-mouse contention run (two
-`RobotDriver(InputLeasePolicy.Required)` JVMs interleaving actual OS input on a headed desktop) is
-beyond any automated test and stays an **optional manual residual** — it does not gate the tag once
-the `input-coord-*` cells are green. To add or change one of these cells, follow
+scenario env, never the Xvfb/Robot wrapper.
+
+Two of the bullets need proof that a single sequential JVM cannot give, so they are backed by
+dedicated tests rather than by the coordinator's in-process suite alone:
+
+- `TwoClientJvmContentionTest` forks **two independent client JVMs** against one coordinator and
+  asserts their held wall-clock intervals are disjoint. Give the two processes separate desktop
+  keys and it fails, so the assertion is load-bearing rather than vacuous.
+- `ParallelPerTestInputIsolationTest` runs concurrent `perTest()` extension lifecycles against a
+  real coordinator on a hermetic endpoint and asserts no two leases overlap. Remove the mutual
+  exclusion and all invocations overlap and it fails.
+
+Non-overlap in both is an invariant, not a timing race: the lease is mutually exclusive, so a
+waiter cannot be granted until the holder releases. A failure means genuine interleaving, never a
+slow machine.
+
+What remains outside automation is narrower than the bullets: a physical two-process **real-mouse**
+run (two `RobotDriver(InputLeasePolicy.Required)` JVMs dispatching actual OS input on a headed
+desktop) proves the Robot layer on top of the lease, and stays an **optional manual residual** — it
+does not gate the tag once the `input-coord-*` cells are green. To add or change one of these cells, follow
 [Adding a scenario ID](#adding-a-scenario-id-per-release-delta-or-permanent-baseline); do not leave
 one-off `./gradlew` commands only in chat.
 
@@ -478,12 +494,14 @@ release SHA.
 - **#459 experimental input coordination:** the six delta hard cells are automated as the
   `input-coord-*` scenario IDs on both entrypoints. Each forces `--rerun-tasks --no-build-cache`
   over the coordinator's own tests (`LocalCoordinatorServerTest` FIFO/cancellation/quarantine/
-  revoke/forced-recovery, `CoordinatorProcessLauncherTest` forked coordinator JVM, and
-  `InputIsolationLifecycleTest` JUnit PerTest) and fails closed on the JUnit XML. They need no
-  display, so they are hard on macOS, Windows (including SSH), and Linux Xorg/Xvfb. A hard `n/a`
-  means the experimental coordinator test surface was removed or graduated — re-scope the gate.
-  A fully-headed two-`RobotDriver(InputLeasePolicy.Required)` physical-mouse contention run is the
-  only piece these cells do not cover and stays an **optional** operator step, not a tag blocker.
+  revoke/forced-recovery, `CoordinatorProcessLauncherTest` forked coordinator JVM,
+  `TwoClientJvmContentionTest` two forked client JVMs, and `InputIsolationLifecycleTest` +
+  `ParallelPerTestInputIsolationTest` for JUnit PerTest) and fails closed on the JUnit XML. They
+  need no display, so they are hard on macOS, Windows (including SSH), and Linux Xorg/Xvfb. A hard
+  `n/a` means the experimental coordinator test surface was removed or graduated — re-scope the
+  gate. A fully-headed two-`RobotDriver(InputLeasePolicy.Required)` physical **real-mouse** run is
+  the only piece these cells do not cover and stays an **optional** operator step, not a tag
+  blocker.
 - **Linux helper `cargo` on Robot cells:** Unix harness prepends `$CARGO_HOME/bin` or
   `~/.cargo/bin` to PATH. Non-login SSH + `xvfb-run` otherwise cannot start
   `:recording:buildWaylandHelper` when `--rerun-tasks` rebuilds the helper. Do **not**

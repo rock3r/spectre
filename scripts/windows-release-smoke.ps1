@@ -714,11 +714,11 @@ try {
     $serverResults = "input-coordinator-server\build\test-results\test"
     $testingResults = "testing\build\test-results\test"
     [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -SkipReason $coordinationSkip -TimeoutSeconds $AgentE2eTimeoutSeconds `
-                -Id "input-coord-contention" -Name "Two independent JVMs take one desktop lease in FIFO order" `
+                -Id "input-coord-contention" -Name "Two independent client JVMs take one desktop lease without interleaving" `
                 -Task ":input-coordinator-server:test" `
-                -Filters @("*LocalCoordinatorServerTest.two independent clients receive one desktop lease in FIFO order", "*CoordinatorProcessLauncherTest.forked coordinator accepts a real client lease") `
+                -Filters @("*TwoClientJvmContentionTest", "*LocalCoordinatorServerTest.two independent clients receive one desktop lease in FIFO order", "*CoordinatorProcessLauncherTest.forked coordinator accepts a real client lease") `
                 -ResultsSubPath $serverResults `
-                -Needles @("two independent clients receive one desktop lease in FIFO order", "forked coordinator accepts a real client lease")))
+                -Needles @("two independent client JVMs never hold the desktop lease at the same time", "two independent clients receive one desktop lease in FIFO order", "forked coordinator accepts a real client lease")))
     [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -SkipReason $coordinationSkip -TimeoutSeconds $AgentE2eTimeoutSeconds `
                 -Id "input-coord-cancellation" -Name "Cancelled queued waiter does not strand the next waiter" `
                 -Task ":input-coordinator-server:test" `
@@ -746,9 +746,9 @@ try {
     [void]$results.Add((Invoke-CoordinationCell -RepoRoot $repoRoot -SkipReason $coordinationSkip -TimeoutSeconds $AgentE2eTimeoutSeconds `
                 -Id "input-coord-junit-pertest" -Name "Parallel JUnit PerTest serialises factory/body/evidence/teardown" `
                 -Task ":testing:test" `
-                -Filters @("*InputIsolationLifecycleTest") `
+                -Filters @("*InputIsolationLifecycleTest", "*ParallelPerTestInputIsolationTest") `
                 -ResultsSubPath $testingResults `
-                -Needles @("InputIsolationLifecycleTest")))
+                -Needles @("InputIsolationLifecycleTest", "concurrent per-test invocations never hold the desktop lease at the same time")))
 
     if (-not $SkipAgentE2e) {
         # AgentAttachIntegration e2e includes WGC node screenshots (#362). Under SSH that is the

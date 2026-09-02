@@ -594,15 +594,18 @@ def main(argv: list[str] | None = None) -> int:
     coordination_cells = (
         (
             "input-coord-contention",
-            "Two independent JVMs take one desktop lease in FIFO order",
+            "Two independent client JVMs take one desktop lease without interleaving",
             ":input-coordinator-server:test",
             (
+                # The real gate claim: two separate client processes, not two sessions in one JVM.
+                "*TwoClientJvmContentionTest",
                 "*LocalCoordinatorServerTest.two independent clients receive one desktop "
                 "lease in FIFO order",
                 "*CoordinatorProcessLauncherTest.forked coordinator accepts a real client lease",
             ),
             server_results,
             (
+                "two independent client JVMs never hold the desktop lease at the same time",
                 "two independent clients receive one desktop lease in FIFO order",
                 "forked coordinator accepts a real client lease",
             ),
@@ -652,9 +655,17 @@ def main(argv: list[str] | None = None) -> int:
             "input-coord-junit-pertest",
             "Parallel JUnit PerTest serialises factory/body/evidence/teardown",
             ":testing:test",
-            ("*InputIsolationLifecycleTest",),
+            (
+                # Lifecycle test proves the lease spans factory/body/evidence/teardown; the
+                # parallel test proves concurrent invocations cannot overlap. Both are required.
+                "*InputIsolationLifecycleTest",
+                "*ParallelPerTestInputIsolationTest",
+            ),
             testing_results,
-            ("InputIsolationLifecycleTest",),
+            (
+                "InputIsolationLifecycleTest",
+                "concurrent per-test invocations never hold the desktop lease at the same time",
+            ),
         ),
     )
     for scenario_id, name, task, filters, results_dir, needles in coordination_cells:

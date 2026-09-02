@@ -105,6 +105,12 @@ grep -F -q 'LocalCoordinatorServerTest' "$script" || fail "Windows runner missin
 grep -F -q 'CoordinatorProcessLauncherTest' "$script" || fail "Windows runner missing forked-coordinator filter"
 grep -F -q 'InputIsolationLifecycleTest' "$script" || fail "Windows runner missing JUnit PerTest isolation filter"
 grep -F -q 'explicit force advances FIFO and reports unsafe takeover' "$script" || fail "Windows runner missing forced-recovery testcase needle"
+# The contention and per-test cells must drive the cross-process / concurrent proofs, not just the
+# single-JVM sequential tests, or a green cell would overstate the release gate.
+grep -F -q 'TwoClientJvmContentionTest' "$script" || fail "Windows runner missing two-client-JVM contention proof"
+grep -F -q 'two independent client JVMs never hold the desktop lease at the same time' "$script" || fail "Windows runner missing two-client-JVM contention needle"
+grep -F -q 'ParallelPerTestInputIsolationTest' "$script" || fail "Windows runner missing parallel per-test isolation proof"
+grep -F -q 'concurrent per-test invocations never hold the desktop lease at the same time' "$script" || fail "Windows runner missing parallel per-test needle"
 grep -F -q 'windows-ssh' "$script" || fail "SSH displayMode honesty for WGC missing"
 grep -F -q 'WGC requires native interactive console' "$script" || fail "WGC interactive-console N/A reason missing"
 grep -F -q 'AgentAttachIntegration e2e includes WGC node screenshots' "$script" || fail "SSH agent-attach-core hard n/a reason missing"
