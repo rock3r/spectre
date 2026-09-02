@@ -6,6 +6,7 @@ import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.condition.DisabledOnOs
@@ -83,6 +84,59 @@ class PatchStartScriptsTest {
     }
 
     @Test
+    fun `the preflight ignores a version-shaped agent banner`(@TempDir root: Path) {
+        // A -javaagent installed through JAVA_TOOL_OPTIONS can print its own premain banner
+        // ahead of the JVM record, and a single-token one such as `Agent version "17.0.2"` has
+        // the very shape of a record. Only `java`/`openjdk` name a real record.
+        // Raised by Codex review on PR #485.
+        val jdk = fakeJdk(root, "agent", version = "21.0.2", banner = false)
+        Files.writeString(
+            jdk.resolve("bin/java"),
+            """
+            #!/bin/sh
+            case "${'$'}1" in
+                -version)
+                    echo 'Agent version "17.0.2"' >&2
+                    echo 'openjdk version "21.0.2" 2024-01-16' >&2
+                    ;;
+                --list-modules)
+                    echo 'jdk.attach@21.0.2'
+                    ;;
+            esac
+            """
+                .trimIndent() + "\n",
+        )
+        check(jdk.resolve("bin/java").toFile().setExecutable(true))
+
+        val result = runLauncher(root, javaHome = jdk)
+
+        assertEquals(0, result.exitCode, "launcher failed:\n${result.output}")
+        assertFalse(
+            result.output.contains("17.0.2"),
+            "the agent banner was parsed as the Java version:\n${result.output}",
+        )
+    }
+
+    @Test
+    fun `a launcher that never exits fails on the timeout instead of hanging`(
+        @TempDir root: Path
+    ) {
+        // The harness must bound its own runs: draining the pipe to EOF before waiting would
+        // block forever here and hang CI rather than failing. Raised by Codex review on PR #485.
+        val jdk = fakeJdk(root, "wedged", version = "21.0.10", banner = false, hangs = true)
+
+        val failure =
+            assertThrows(IllegalStateException::class.java) {
+                runLauncher(root, javaHome = jdk, timeoutSeconds = 2)
+            }
+
+        assertTrue(
+            failure.message.orEmpty().contains("did not finish within 2 seconds"),
+            "unexpected failure: ${failure.message}",
+        )
+    }
+
+    @Test
     fun `the preflight accepts a Java 21 runtime without the banner`(@TempDir root: Path) {
         // Regression guard: the banner fix must not change how a plain `java -version` is read.
         val jdk = fakeJdk(root, "plain", version = "21.0.10", banner = false)
@@ -132,25 +186,31 @@ class PatchStartScriptsTest {
     private fun runLauncher(
         root: Path,
         javaHome: Path?,
+        timeoutSeconds: Long = COMMAND_TIMEOUT_SECONDS,
         configureEnvironment: (MutableMap<String, String>) -> Unit = {},
     ): LauncherResult {
         val launcher = root.resolve("app/bin/spectre")
         Files.createDirectories(launcher.parent)
         Files.writeString(launcher, PatchStartScripts.patchUnixScript(UNPATCHED_LAUNCHER))
 
+        // Redirect to a file rather than draining the pipe inline: reading to EOF first would
+        // block forever on a launcher that never exits, so the timeout below would never be
+        // reached and a regression would hang the whole CI job instead of failing this test.
+        val outputFile = launcher.resolveSibling("launcher-output.txt")
         val processBuilder =
-            ProcessBuilder("/bin/sh", launcher.toString()).redirectErrorStream(true)
+            ProcessBuilder("/bin/sh", launcher.toString())
+                .redirectErrorStream(true)
+                .redirectOutput(outputFile.toFile())
         val environment = processBuilder.environment()
         environment.remove("JAVA_HOME")
         if (javaHome != null) environment["JAVA_HOME"] = javaHome.toString()
         configureEnvironment(environment)
 
         val process = processBuilder.start()
-        val output = process.inputStream.bufferedReader().use { it.readText() }
-        check(process.waitFor(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            process.destroyForcibly()
-            "launcher did not finish within $COMMAND_TIMEOUT_SECONDS seconds:\n$output"
-        }
+        val finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+        if (!finished) process.destroyForcibly().waitFor()
+        val output = Files.readString(outputFile)
+        check(finished) { "launcher did not finish within $timeoutSeconds seconds:\n$output" }
         return LauncherResult(process.exitValue(), output)
     }
 
@@ -160,9 +220,10 @@ class PatchStartScriptsTest {
         version: String,
         banner: Boolean,
         bannerOptions: String = DEFAULT_BANNER_OPTIONS,
+        hangs: Boolean = false,
     ): Path {
         val jdkHome = root.resolve("jdk-$name")
-        writeFakeJava(jdkHome, version, banner, bannerOptions)
+        writeFakeJava(jdkHome, version, banner, bannerOptions, hangs)
         return jdkHome
     }
 
@@ -172,17 +233,21 @@ class PatchStartScriptsTest {
         version: String,
         banner: Boolean,
         bannerOptions: String = DEFAULT_BANNER_OPTIONS,
+        hangs: Boolean = false,
     ) {
         val java = jdkHome.resolve("bin/java")
         Files.createDirectories(java.parent)
         val bannerLine =
             if (banner) "echo 'Picked up JAVA_TOOL_OPTIONS: $bannerOptions' >&2" else ":"
+        // A JVM that never returns wedges the launcher, which is what bounds the harness.
+        val hangLine = if (hangs) "sleep 600" else ":"
         Files.writeString(
             java,
             """
             #!/bin/sh
             case "${'$'}1" in
                 -version)
+                    $hangLine
                     $bannerLine
                     echo 'openjdk version "$version" 2026-01-20' >&2
                     echo 'OpenJDK Runtime Environment (build $version+7)' >&2
