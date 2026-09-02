@@ -45,6 +45,11 @@ internal class TestDaemonSessionAutomator(
         { _, _, _, _ ->
             error("waitForNode not stubbed")
         },
+    private val waitUntilGoneAction:
+        (tag: String?, text: String?, timeoutMs: Long, pollIntervalMs: Long) -> Unit =
+        { _, _, _, _ ->
+            error("waitUntilGone not stubbed")
+        },
     private val finalizeRecordingAction: (Set<String>) -> Unit = {},
     private val closeAction: () -> Unit = {},
 ) : DaemonSessionAutomator {
@@ -82,6 +87,11 @@ internal class TestDaemonSessionAutomator(
     ): NodeSnapshotDto {
         ensureOpen("waitForNode")
         return waitForNodeResult(tag, text, timeoutMs, pollIntervalMs)
+    }
+
+    override fun waitUntilGone(tag: String?, text: String?, timeoutMs: Long, pollIntervalMs: Long) {
+        ensureOpen("waitUntilGone")
+        waitUntilGoneAction(tag, text, timeoutMs, pollIntervalMs)
     }
 
     override fun waitForVisualIdle(timeoutMs: Long, stableFrames: Int, pollIntervalMs: Long): Unit =

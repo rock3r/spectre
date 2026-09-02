@@ -190,6 +190,34 @@ public object SpectreMcpServer {
                 .asResult { it is DaemonResponse.Nodes }
         }
         server.addTool(
+            name = "wait_until_gone",
+            description =
+                "Wait until NO semantics node matches tag and/or text (#438) — the absence " +
+                    "counterpart to wait_for_node, for dismissed popups, menus, and dialogs. " +
+                    "Refreshes tracked windows before each poll, so a popup that closed its whole " +
+                    "window is observed rather than answered from a stale tree. On timeout the " +
+                    "error names the selector, the timeout, and how many matching nodes were " +
+                    "still present.",
+            inputSchema =
+                schema(
+                    "session_id" to "string",
+                    "tag" to "string",
+                    "text" to "string",
+                    "timeout_ms" to "integer",
+                    required = listOf("session_id"),
+                ),
+        ) { call ->
+            request(
+                    DaemonRequest.WaitUntilGone(
+                        sessionId = call.requiredSessionId(),
+                        tag = call.optionalString("tag"),
+                        text = call.optionalString("text"),
+                        timeoutMs = call.optionalLong("timeout_ms") ?: 5_000L,
+                    )
+                )
+                .asResult { it is DaemonResponse.Completed }
+        }
+        server.addTool(
             name = "wait_for_visual_idle",
             description = "Wait until consecutive visual frames are stable (#201).",
             inputSchema =

@@ -3,6 +3,7 @@
 package dev.sebastiano.spectre.agent.transport
 
 import dev.sebastiano.spectre.agent.runtime.ReflectiveAutomatorHandler
+import dev.sebastiano.spectre.agent.runtime.WaitFakeAutomator
 import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
@@ -141,6 +142,51 @@ class WaitOpsInfrastructureTest {
                     assertEquals(AgentErrorCategory.Timeout.wireName, err.category)
                 }
             }
+    }
+
+    /**
+     * Absence wait over the **real** boundary: the server dispatches through
+     * [ReflectiveAutomatorHandler] and the reflective wait bridge, and the reply crosses real CBOR
+     * framing on a real UDS. The timeout diagnostics (selector, timeout, still-present count) are
+     * the point of `waitUntilGone`, so this asserts they arrive intact rather than degrading to a
+     * bare "timed out".
+     */
+    @Test
+    fun `waitUntilGone Ok and timeout diagnostics survive the reflective IPC boundary`() {
+        val diagnostics =
+            """waitUntilGone timed out after 400ms: 3 node(s) matching tag="popup.body" """ +
+                "still present in tracked windows"
+        val calls = AtomicInteger(0)
+        val automator =
+            WaitFakeAutomator(
+                waitUntilGoneImpl = { _, _, _, _ ->
+                    if (calls.getAndIncrement() == 0) Unit else error(diagnostics)
+                }
+            )
+        IpcServer(udsPath, ReflectiveAutomatorHandler(automator)).use {
+            awaitSocket(udsPath)
+            IpcClient(udsPath).use { client ->
+                assertEquals(
+                    AgentResponse.Ok,
+                    client.send(
+                        AgentRequest.WaitUntilGone(
+                            tag = "popup.body",
+                            timeoutMs = 500,
+                            pollIntervalMs = 50,
+                        )
+                    ),
+                )
+                val err =
+                    assertIs<AgentResponse.Error>(
+                        client.send(AgentRequest.WaitUntilGone(tag = "popup.body", timeoutMs = 400))
+                    )
+                assertEquals(AgentErrorCategory.Timeout.wireName, err.category)
+                assertTrue(
+                    err.message.contains(diagnostics),
+                    "absence diagnostics degraded over the wire to \"${err.message}\"",
+                )
+            }
+        }
     }
 
     @Test

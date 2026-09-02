@@ -224,6 +224,26 @@ internal sealed interface AgentRequest {
     ) : AgentRequest
 
     /**
+     * Wait until **no** node matches [tag] and/or [text] (AND when both set), same semantics as
+     * in-process `ComposeAutomator.waitUntilGone` (#438) — the absence counterpart to
+     * [WaitForNode], for dismissed popups, menus, and dialogs.
+     *
+     * Timeouts are milliseconds; null uses the automator defaults (5s timeout, 100ms poll). Replies
+     * with [AgentResponse.Ok] once nothing matches, or [AgentResponse.Error] (`timeout` /
+     * `invalidSelector`). The `timeout` message carries the automator's own absence diagnostics —
+     * selector, timeout, and how many matching nodes were still present — so the wait's whole point
+     * survives the transport boundary.
+     */
+    @Serializable
+    @SerialName("waitUntilGone")
+    data class WaitUntilGone(
+        val tag: String? = null,
+        val text: String? = null,
+        val timeoutMs: Long? = null,
+        val pollIntervalMs: Long? = null,
+    ) : AgentRequest
+
+    /**
      * Wait until consecutive visual frames are stable (#201). Same semantics as in-process
      * `ComposeAutomator.waitForVisualIdle`. Null durations use automator defaults. Replies with
      * [AgentResponse.Ok] or [AgentResponse.Error] category `timeout`.
@@ -283,6 +303,7 @@ internal val AgentRequest.logLabel: String
             is AgentRequest.Hello -> "hello"
             is AgentRequest.Cancel -> "cancel"
             is AgentRequest.WaitForNode -> "waitForNode"
+            is AgentRequest.WaitUntilGone -> "waitUntilGone"
             is AgentRequest.WaitForVisualIdle -> "waitForVisualIdle"
             is AgentRequest.WaitForIdle -> "waitForIdle"
             AgentRequest.PrintTree -> "printTree"
@@ -314,6 +335,7 @@ internal val AgentRequest.requiresInputLane: Boolean
             is AgentRequest.Hello,
             is AgentRequest.Cancel,
             is AgentRequest.WaitForNode,
+            is AgentRequest.WaitUntilGone,
             is AgentRequest.WaitForVisualIdle,
             is AgentRequest.WaitForIdle,
             AgentRequest.PrintTree -> false

@@ -155,6 +155,7 @@ spectre tree <session-id> --json
 spectre find <session-id> save-button --json
 spectre find-text <session-id> "Save" --json
 spectre wait-for-node <session-id> --tag save-button
+spectre wait-until-gone <session-id> --tag popup-body
 spectre wait-for-visual-idle <session-id>
 spectre click <session-id> <node-key>
 spectre double-click <session-id> <node-key>
@@ -201,11 +202,22 @@ Every session command takes the session id as the first argument unless noted. M
 | `find <session-id> <test-tag>` | Exact Compose test-tag match | Single snapshot; does not wait |
 | `find-text <session-id> <text>` | Find by visible/editable text | Exact match by default; `--substring` for contains |
 | `wait-for-node <session-id>` | Poll until tag and/or text match | `--tag`, `--text` (at least one), `--timeout-ms` default **5000** |
+| `wait-until-gone <session-id>` | Poll until **nothing** matches tag and/or text | `--tag`, `--text` (at least one), `--timeout-ms` default **5000** |
 | `wait-for-visual-idle <session-id>` | Wait until consecutive frames are stable | `--timeout-ms` default **5000** |
 | `wait --reload-settled <session-id>` | Compose Hot Reload settle only | Requires `--reload-settled`; `--timeout-ms` default **60000**; fails closed when HR is not active |
 
 Queries (`find`, `find-text`, `tree`) do a **single read** — they never retry. Use
 `wait-for-node` when the UI is still settling.
+
+`wait-until-gone` is the absence counterpart: it returns once nothing matches, so use it after
+dismissing a popup, menu, or dialog rather than polling `find` yourself. It refreshes the tracked
+windows before every poll, which is what lets it see a Compose popup that took its whole window
+with it. On timeout it exits **5** and prints the selector, the timeout, and how many matching
+nodes were still on screen:
+
+```text
+Spectre daemon error: Agent reported timeout for waitUntilGone: IllegalStateException: waitUntilGone timed out after 5000ms: 1 node(s) matching tag="popup.body" still present in tracked windows
+```
 
 ### Input
 
@@ -397,6 +409,7 @@ Inputs use snake_case JSON fields. Successful non-screenshot tools return **JSON
 | `find` | `session_id`, `test_tag` | — | nodes list (exact test tag) |
 | `find_text` | `session_id`, `text` | `exact` (default **true**) | nodes list |
 | `wait_for_node` | `session_id` | `tag`, `text`, `timeout_ms` (**5000**) | nodes when matched |
+| `wait_until_gone` | `session_id` | `tag`, `text`, `timeout_ms` (**5000**) | `{ "sessionId" }` completed once nothing matches; `isError` on timeout, with the selector, timeout, and still-present count in the message |
 | `wait_for_visual_idle` | `session_id` | `timeout_ms` (**5000**) | `{ "sessionId" }` completed |
 | `wait_for_reload_settled` | `session_id` | `timeout_ms` (**60000**) | completed; fails if HR inactive |
 | `click` | `session_id`, `node_key` | — | completed |

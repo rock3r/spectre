@@ -9,8 +9,9 @@ import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import java.lang.reflect.Method
 
 /**
- * Reflective bridge for wait ops (#201 waitForNode/waitForVisualIdle, #362 waitForIdle). Lives
- * outside [ReflectiveAutomatorHandler] to keep that class under detekt complexity limits.
+ * Reflective bridge for wait ops (#201 waitForNode/waitForVisualIdle, #362 waitForIdle, #438
+ * waitUntilGone). Lives outside [ReflectiveAutomatorHandler] to keep that class under detekt
+ * complexity limits.
  *
  * Kotlin mangles `Duration` parameters into primitive `long` carrying [kotlin.time.Duration]'s
  * packed `rawValue` (not plain nanoseconds) and renames methods (e.g. `waitForNode-ck1zr5g`).
@@ -35,6 +36,22 @@ internal class WaitOpsReflectiveMapper(
     private val waitForNodeSuspendMethod: Method? =
         automatorClass.methods.firstOrNull {
             it.name.startsWith("waitForNode") &&
+                it.parameterTypes.size == 5 &&
+                it.parameterTypes[0] == String::class.java &&
+                it.parameterTypes[1] == String::class.java &&
+                it.parameterTypes[2] == longPrimitive &&
+                it.parameterTypes[3] == longPrimitive &&
+                it.parameterTypes[4].name == CONTINUATION_FQN
+        }
+
+    /**
+     * `waitUntilGone(tag, text, timeout, pollInterval)` (#438) — two Strings + two packed
+     * Durations + Continuation. Same JVM shape as `waitForNode`; only the return type differs
+     * (`Unit` rather than a node).
+     */
+    private val waitUntilGoneSuspendMethod: Method? =
+        automatorClass.methods.firstOrNull {
+            it.name.startsWith("waitUntilGone") &&
                 it.parameterTypes.size == 5 &&
                 it.parameterTypes[0] == String::class.java &&
                 it.parameterTypes[1] == String::class.java &&
@@ -100,6 +117,42 @@ internal class WaitOpsReflectiveMapper(
             } else {
                 AgentResponse.Nodes(listOf(mapNode(node)))
             }
+        }
+    }
+
+    /**
+     * Absence wait (#438). The automator raises a plain [IllegalStateException] whose message names
+     * the selector, the timeout, and how many matching nodes were still present; [runWait] keeps
+     * that message verbatim under taxonomy `timeout` so the diagnostics reach the attach client
+     * rather than degrading to a bare "timed out".
+     */
+    fun handleWaitUntilGone(request: AgentRequest.WaitUntilGone): AgentResponse {
+        if (request.tag == null && request.text == null) {
+            return AgentResponse.Error(
+                message = "Either tag or text must be specified",
+                category = AgentErrorCategory.InvalidSelector.wireName,
+            )
+        }
+        val method =
+            waitUntilGoneSuspendMethod
+                ?: return AgentResponse.Error(
+                    message = "ComposeAutomator does not expose waitUntilGone",
+                    category = AgentErrorCategory.UnsupportedOperation.wireName,
+                )
+        val timeoutMs = request.timeoutMs ?: DEFAULT_WAIT_TIMEOUT_MS
+        val pollMs = request.pollIntervalMs ?: DEFAULT_WAIT_POLL_MS
+        return runWait {
+            suspendInvoker.invoke(
+                method,
+                automator,
+                request.tag,
+                request.text,
+                // Duration is a value class: JVM surface is packed rawValue, not plain nanos.
+                durationStorageFromMs(timeoutMs),
+                durationStorageFromMs(pollMs),
+                timeoutMsOverride = timeoutMs + SUSPEND_BRIDGE_SLACK_MS,
+            )
+            AgentResponse.Ok
         }
     }
 

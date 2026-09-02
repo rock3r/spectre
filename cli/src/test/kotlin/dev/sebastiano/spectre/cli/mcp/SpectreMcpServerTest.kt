@@ -83,6 +83,7 @@ class SpectreMcpServerTest {
                 "find",
                 "find_text",
                 "wait_for_node",
+                "wait_until_gone",
                 "wait_for_visual_idle",
                 "wait_for_reload_settled",
                 "click",
@@ -382,6 +383,70 @@ class SpectreMcpServerTest {
             "session session-42 was not found",
             (result.content.single() as TextContent).text,
         )
+    }
+
+    @Test
+    fun `wait_until_gone forwards the selector and timeout to the daemon`() = runBlocking {
+        var seen: DaemonRequest? = null
+        val server =
+            SpectreMcpServer.create(
+                request = { request ->
+                    seen = request
+                    DaemonResponse.Completed("pid-42")
+                }
+            )
+
+        val result =
+            invokeTool(
+                server,
+                "wait_until_gone",
+                buildJsonObject {
+                    put("session_id", "pid-42")
+                    put("tag", "popup.body")
+                    put("timeout_ms", 750)
+                },
+            )
+
+        assertEquals(
+            DaemonRequest.WaitUntilGone(
+                sessionId = "pid-42",
+                tag = "popup.body",
+                text = null,
+                timeoutMs = 750,
+            ),
+            seen,
+        )
+        assertTrue(result.isError != true, "wait_until_gone should succeed on Completed")
+    }
+
+    @Test
+    fun `wait_until_gone surfaces the still-present diagnostics as an MCP error`() = runBlocking {
+        val diagnostics =
+            """waitUntilGone timed out after 400ms: 2 node(s) matching tag="popup.body" """ +
+                "still present in tracked windows"
+        val server =
+            SpectreMcpServer.create(
+                request = {
+                    DaemonResponse.Error(
+                        code = DaemonErrorCode.Timeout,
+                        message = diagnostics,
+                        category = "timeout",
+                    )
+                }
+            )
+
+        val result =
+            invokeTool(
+                server,
+                "wait_until_gone",
+                buildJsonObject {
+                    put("session_id", "pid-42")
+                    put("tag", "popup.body")
+                },
+            )
+
+        assertTrue(result.isError == true)
+        assertEquals(diagnostics, (result.content.single() as TextContent).text)
     }
 
     private suspend fun invokeTool(

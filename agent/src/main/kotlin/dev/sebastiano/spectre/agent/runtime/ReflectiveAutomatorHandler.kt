@@ -191,6 +191,7 @@ internal class ReflectiveAutomatorHandler(
                 )
             is AgentRequest.Cancel -> AgentResponse.Ok
             is AgentRequest.WaitForNode -> waitOps.handleWaitForNode(request)
+            is AgentRequest.WaitUntilGone -> waitOps.handleWaitUntilGone(request)
             is AgentRequest.WaitForVisualIdle -> waitOps.handleWaitForVisualIdle(request)
             is AgentRequest.WaitForIdle -> waitOps.handleWaitForIdle(request)
             AgentRequest.PrintTree -> handlePrintTree()

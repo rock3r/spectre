@@ -54,6 +54,7 @@ internal constructor(
     public fun handle(request: DaemonRequest): DaemonResponse =
         when (request) {
             is DaemonRequest.WaitForNode,
+            is DaemonRequest.WaitUntilGone,
             is DaemonRequest.WaitForVisualIdle,
             is DaemonRequest.WaitForReloadSettled -> handleWaitOutsideLock(request)
             is DaemonRequest.Attach -> attach(request.targetPid)
@@ -105,6 +106,7 @@ internal constructor(
             is DaemonRequest.RecordingStatus -> handleSessionCommand(request)
             // Wait ops / detach / shutdown / attach are dispatched by [handle] outside the monitor.
             is DaemonRequest.WaitForNode,
+            is DaemonRequest.WaitUntilGone,
             is DaemonRequest.WaitForVisualIdle,
             is DaemonRequest.WaitForReloadSettled ->
                 error("wait ops must use handleWaitOutsideLock")
@@ -115,6 +117,7 @@ internal constructor(
         val sessionId =
             when (request) {
                 is DaemonRequest.WaitForNode -> request.sessionId
+                is DaemonRequest.WaitUntilGone -> request.sessionId
                 is DaemonRequest.WaitForVisualIdle -> request.sessionId
                 is DaemonRequest.WaitForReloadSettled -> request.sessionId
                 else -> error("not a wait request")
@@ -122,6 +125,7 @@ internal constructor(
         val waitTimeoutMs =
             when (request) {
                 is DaemonRequest.WaitForNode -> request.timeoutMs
+                is DaemonRequest.WaitUntilGone -> request.timeoutMs
                 is DaemonRequest.WaitForVisualIdle -> request.timeoutMs
                 is DaemonRequest.WaitForReloadSettled -> request.timeoutMs
                 else -> error("not a wait request")
@@ -176,6 +180,7 @@ internal constructor(
                         )
                 DaemonResponse.Nodes(request.sessionId, listOf(stamped))
             }
+            is DaemonRequest.WaitUntilGone -> waitUntilGoneResponse(session.automator, request)
             is DaemonRequest.WaitForVisualIdle -> {
                 session.automator.waitForVisualIdle(
                     timeoutMs = request.timeoutMs,

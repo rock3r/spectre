@@ -108,6 +108,14 @@ Use it after dismissing a popup, menu, or dialog — before asserting on whateve
 dismissal revealed, or before the next click that would otherwise land on the closing
 surface.
 
+It is reachable over every transport `waitForNode` reaches: CLI
+[`wait-until-gone`](cli.md#inspection-and-waits), MCP `wait_until_gone`, and agent attach
+(`AttachedAutomator.waitUntilGone`). The timeout diagnostics above cross those boundaries
+intact — as do the other waits' — so a remote caller still learns which selector stayed on
+screen and how many nodes matched. See the [capability matrix](capability-matrix.md) for the
+per-transport cell states and [agent attach](agent.md) for how the wire deadline is sized to
+let those messages through.
+
 ## `waitForIdle`
 
 The "everything has settled" barrier:
