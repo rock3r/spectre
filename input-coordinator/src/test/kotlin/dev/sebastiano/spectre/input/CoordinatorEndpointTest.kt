@@ -77,6 +77,56 @@ class CoordinatorEndpointTest {
     }
 
     @Test
+    fun `a directory that is not the socket's parent is rejected`() {
+        // The socket's parent is what OwnerOnlyEndpointProtection guards and creates, while the
+        // election lock and recovery ledger are placed in `directory`. Letting the two diverge
+        // would leave the lock and ledger in a directory nothing ever checked.
+        val directory = temporaryDirectory.resolve("lock-and-ledger")
+        val socketPath = temporaryDirectory.resolve("socket").resolve("input.sock")
+
+        val failure =
+            assertFailsWith<IllegalArgumentException> {
+                CoordinatorEndpoint(directory = directory, socketPath = socketPath)
+            }
+
+        val message = failure.message.orEmpty()
+        assertTrue(message.contains("must be the parent of"), message)
+        assertTrue(message.contains(directory.toString()), message)
+        assertTrue(message.contains(socketPath.toString()), message)
+    }
+
+    @Test
+    fun `a directory that only matches the socket's parent after normalisation is rejected`() {
+        // `..` is resolved by the OS through whatever the preceding segment is at the time, so a
+        // spelling that normalises to the socket's parent can still name a different directory
+        // once a symlink sits in between. The comparison is lexical on purpose.
+        val directory =
+            temporaryDirectory.resolve("coordinator").resolve("..").resolve("coordinator")
+        val socketPath = temporaryDirectory.resolve("coordinator").resolve("input.sock")
+
+        assertFailsWith<IllegalArgumentException> {
+            CoordinatorEndpoint(directory = directory, socketPath = socketPath)
+        }
+    }
+
+    @Test
+    fun `a fallback socket candidate keeps the endpoint constructible`() {
+        // InputCoordinatorClient.connect rebuilds the endpoint as `copy(socketPath = located.path)`
+        // once a coordinator answers on a fallback path (#462), which re-runs the check above.
+        // Candidates are generation-suffixed siblings, so they keep the socket's parent; if that
+        // ever stops holding, connecting through a fallback would throw instead of working.
+        val endpoint =
+            CoordinatorEndpoint(
+                directory = temporaryDirectory,
+                socketPath = temporaryDirectory.resolve("input.sock"),
+            )
+
+        CoordinatorSocketCandidates.candidates(endpoint.socketPath).forEach { candidate ->
+            assertEquals(temporaryDirectory, endpoint.copy(socketPath = candidate).directory)
+        }
+    }
+
+    @Test
     fun `owner-only directory is created with private POSIX permissions`() {
         val endpoint =
             CoordinatorEndpoint(
