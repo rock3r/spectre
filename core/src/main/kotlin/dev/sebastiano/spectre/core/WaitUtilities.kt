@@ -33,7 +33,9 @@ internal suspend fun <T : Any> waitUntil(
  * stayed on screen.
  *
  * The loop always samples at least once and takes one final sample at the deadline, so a zero
- * timeout still gets a real observation and the count in the error is the last thing seen.
+ * timeout still gets a real observation and the count in the error is the last thing seen. Each
+ * sleep is clamped to the time left, so a [pollInterval] longer than the remaining timeout never
+ * carries the wait a full interval past the deadline (Codex on #482).
  *
  * The injectable [clock]/[sleep] seam mirrors [waitForIdleInternal] so the loop can run on virtual
  * time in tests without a live Compose tree.
@@ -50,13 +52,14 @@ internal suspend fun waitUntilGoneInternal(
     while (true) {
         val present = countPresent()
         if (present == 0) return
-        if (clock.now() >= deadline) {
+        val remainingMs = deadline - clock.now()
+        if (remainingMs <= 0) {
             error(
                 "waitUntilGone timed out after ${timeout.inWholeMilliseconds}ms: " +
                     "$present node(s) matching $selector still present in tracked windows"
             )
         }
-        sleep(pollInterval)
+        sleep(minOf(pollInterval, remainingMs.milliseconds))
     }
 }
 

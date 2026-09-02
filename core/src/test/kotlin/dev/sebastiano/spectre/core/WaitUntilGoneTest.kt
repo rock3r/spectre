@@ -181,6 +181,58 @@ class WaitUntilGoneTest {
     }
 
     @Test
+    fun `waitUntilGoneInternal clamps the poll sleep to the remaining timeout`() = runTest {
+        // Codex on #482: with pollInterval > remaining time, an unclamped sleep would carry the
+        // wait a full interval past the deadline before it could fail.
+        val clock = FakeClock()
+        val sleeps = mutableListOf<Duration>()
+        var polls = 0
+
+        assertFailsWith<IllegalStateException> {
+            waitUntilGoneInternal(
+                timeout = 50.milliseconds,
+                pollInterval = 1.seconds,
+                selector = "tag=\"popup.body\"",
+                countPresent = {
+                    polls++
+                    1
+                },
+                clock = clock,
+                sleep = {
+                    sleeps += it
+                    clock.advance(it)
+                },
+            )
+        }
+
+        assertEquals(
+            listOf(50.milliseconds),
+            sleeps,
+            "the only sleep must be clamped to the deadline",
+        )
+        assertEquals(50L, clock.now(), "the wait must fail at the deadline, not an interval later")
+        assertEquals(2, polls)
+    }
+
+    @Test
+    fun `waitUntilGoneInternal observes a late disappearance at the deadline, not an interval later`() =
+        runTest {
+            val clock = FakeClock()
+            val presentPerPoll = ArrayDeque(listOf(1, 0))
+
+            waitUntilGoneInternal(
+                timeout = 50.milliseconds,
+                pollInterval = 1.seconds,
+                selector = "tag=\"popup.body\"",
+                countPresent = { presentPerPoll.removeFirst() },
+                clock = clock,
+                sleep = clock::advance,
+            )
+
+            assertEquals(50L, clock.now(), "the second poll must land on the deadline")
+        }
+
+    @Test
     fun `describeNodeSelector names every non-null criterion`() {
         assertEquals("tag=\"a\"", describeNodeSelector(tag = "a", text = null))
         assertEquals("text=\"b\"", describeNodeSelector(tag = null, text = "b"))
