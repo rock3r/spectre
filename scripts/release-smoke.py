@@ -36,6 +36,7 @@ from smoke_lib import (  # noqa: E402
     assert_mcp_fixture_e2e_executed,
     assert_pointer_move_live_executed,
     input_coordination_smoke_skip_reason,
+    HEADED_ROBOT_NA_REASON,
     WAYLAND_PORTAL_WARMUP_TOKEN_KEYS,
     linux_portal_token_path,
     build_report,
@@ -298,6 +299,15 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-recording",
         action="store_true",
         help="Skip host native recording smoke (records hard n/a with reason)",
+    )
+    parser.add_argument(
+        "--headed-robot-evidence",
+        default=None,
+        help=(
+            "Operator attestation that headed two-JVM Robot contention was run on this desktop "
+            "(e.g. a note or run URL). Without it the hard input-coord-headed-robot cell stays "
+            "n/a with a blocking reason; the automated coordinator cells never satisfy it."
+        ),
     )
     parser.add_argument(
         "--preflight-only",
@@ -709,6 +719,34 @@ def main(argv: list[str] | None = None) -> int:
                     log=cell.log,
                 )
         add(cell)
+
+    # --- headed two-JVM Robot contention (operator-run hard cell) ---
+    # SKILL.md requires *headed* two-JVM contention as a delta hard cell. The cells above prove the
+    # coordinator lease is mutually exclusive across processes, but none of them constructs a
+    # RobotDriver, so they pass headless and under SSH. Only a human on a real desktop can close
+    # that gap today, so this records their attestation rather than inventing a pass.
+    headed_name = "Headed two-JVM Robot contention (operator-recorded)"
+    headed_evidence = (args.headed_robot_evidence or "").strip()
+    if headed_evidence:
+        add(
+            scenario_result(
+                "input-coord-headed-robot",
+                name=headed_name,
+                result=RESULT_PASS,
+                detail=f"operator evidence: {headed_evidence}",
+                hard=True,
+            )
+        )
+    else:
+        add(
+            scenario_result(
+                "input-coord-headed-robot",
+                name=headed_name,
+                result="n/a",
+                reason=HEADED_ROBOT_NA_REASON,
+                hard=True,
+            )
+        )
 
     # --- agent attach / corpus / inject / launch-and-attach ---
     for scenario_id, name, test_filter in (

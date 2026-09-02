@@ -237,6 +237,7 @@ class SmokeLibSchemaTest(unittest.TestCase):
             "input-coord-revoke",
             "input-coord-forced-recovery",
             "input-coord-junit-pertest",
+            "input-coord-headed-robot",
         }
         self.assertEqual(expected, set(smoke_lib.REQUIRED_SCENARIO_IDS))
 
@@ -611,6 +612,11 @@ class SmokeLibSchemaTest(unittest.TestCase):
         self.assertIn(
             "the per-test lease is still held while failure evidence is captured", text
         )
+        # The headed cell is operator-recorded and must never be satisfiable by the automated
+        # coordinator cells, which pass headless. It stays hard n/a until evidence is supplied.
+        self.assertIn("input-coord-headed-robot", text)
+        self.assertIn("--headed-robot-evidence", text)
+        self.assertIn("HEADED_ROBOT_NA_REASON", text)
         # Non-login SSH / xvfb-run must still see rustup cargo for helper rebuilds.
         self.assertIn("apply_linux_toolchain_path", text)
         # Nested buildSrc test must not start a daemon that --stops parent ./gradlew check.

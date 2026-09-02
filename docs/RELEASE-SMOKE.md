@@ -69,7 +69,7 @@ These are structural, not one-release accidents:
 | --- | --- | --- |
 | CLI package-channel (Homebrew/Scoop) contracts | Structural on every Unix `check` (`python3`); install-semantics when Ruby present or under `CI` (issue #400) | Optional: install Ruby on a clean Linux box and run `./gradlew verifyHomebrewFormulaInstallSemantics` if claiming formula behaviour beyond CI |
 | Agent attach + contract corpus (live UI) | Linux Xvfb + macOS desktop; Windows **transport/ACL** unit tests | **Windows headed desktop** (not SSH-only for capture) |
-| Input coordinator contention/recovery | Deterministic + forked process on every OS | Automated pre-tag as the `input-coord-*` cells (both entrypoints, fail-closed JUnit XML); optional physical two-`RobotDriver` real-mouse contention on a headed desktop |
+| Input coordinator contention/recovery | Deterministic + forked process on every OS | Automated pre-tag as the `input-coord-*` cells (both entrypoints, fail-closed JUnit XML). Those all pass headless, so headed real-input contention is a **separate hard cell**, `input-coord-headed-robot`, recorded by an operator |
 | Agent Windows UI e2e | Opt-in only: `-Pspectre.agent.attachE2e.allowWindows=true` | Run that property on Mattone-class boxes |
 | Agent real-keyboard `typeText` and `pressKey` | Runs on CI (`CI=true`); **skipped** on developer machines | Add `-Pspectre.agent.realKeyboard=true` on an idle desktop |
 | Agent **inject** attach | Linux + macOS e2e | **Windows** inject fixture (no preinstalled core) |
@@ -136,10 +136,14 @@ Non-overlap in both is an invariant, not a timing race: the lease is mutually ex
 waiter cannot be granted until the holder releases. A failure means genuine interleaving, never a
 slow machine.
 
-What remains outside automation is narrower than the bullets: a physical two-process **real-mouse**
-run (two `RobotDriver(InputLeasePolicy.Required)` JVMs dispatching actual OS input on a headed
-desktop) proves the Robot layer on top of the lease, and stays an **optional manual residual** — it
-does not gate the tag once the `input-coord-*` cells are green. To add or change one of these cells, follow
+What remains outside automation is the **headed** half of the first bullet, and it is a hard cell,
+not a residual. Every automated cell above passes headless and under SSH, because none of them
+constructs a `RobotDriver`: together they prove the *lease* is mutually exclusive, never that two
+processes' real OS input does not interleave. That is `input-coord-headed-robot`, which the harness
+cannot run for you — it stays hard `n/a` with a blocking reason until an operator drives two
+`RobotDriver(InputLeasePolicy.Required)` JVMs on a real desktop and records it
+(`--headed-robot-evidence "<note>"` on Unix, `-HeadedRobotEvidence "<note>"` on Windows). Do not
+treat green `input-coord-*` cells as satisfying it. To add or change one of these cells, follow
 [Adding a scenario ID](#adding-a-scenario-id-per-release-delta-or-permanent-baseline); do not leave
 one-off `./gradlew` commands only in chat.
 
@@ -332,6 +336,7 @@ Shared across macOS / Linux / Windows entrypoints (`scripts/smoke_lib.py` → `R
 | `input-coord-revoke` | Exact-ID normal revoke fences only its own lease and cannot affect a newer one. |
 | `input-coord-forced-recovery` | Explicit forced recovery reports `unsafeTakeover=true` and advances the FIFO queue. |
 | `input-coord-junit-pertest` | `InputIsolationConfig.perTest()` serialises factory, body, evidence, and teardown (`:testing:test` `InputIsolationLifecycleTest`). |
+| `input-coord-headed-robot` | **Operator-run.** Two `RobotDriver(InputLeasePolicy.Required)` JVMs dispatching real OS input on a headed desktop must not interleave. The harness cannot automate this: hard `n/a` with a blocking reason unless the operator passes `--headed-robot-evidence` / `-HeadedRobotEvidence`. Required on every OS whose release notes claim headed coordination. |
 
 The `input-coord-*` cells ([#459](https://github.com/rock3r/spectre/pull/459)) are the automated form of the
 [Experimental input coordination release gate](#experimental-input-coordination-release-gate). Each drives the
@@ -339,7 +344,7 @@ coordinator's own deterministic + forked-process + JUnit-isolation tests with `-
 fails closed on the JUnit XML (the exact testcase must have executed, not assumption-skipped) so a cache-only or
 empty-filter run cannot fake `pass`. They need no display, so they stay **hard** on all three OSes; a hard `n/a`
 means the experimental coordinator test surface was removed or graduated — re-scope the gate, do not treat it as a
-routine skip. Fully-headed two-`RobotDriver` physical-mouse contention stays an optional manual residual (below).
+routine skip. Fully-headed two-`RobotDriver` physical-mouse contention is a separate hard cell, `input-coord-headed-robot`, which only an operator can record (below).
 
 The Unix runner registers **every** required ID end-to-end (fail-closed). Environment-impossible
 cells must be explicit hard `n/a` with reason — never a silent omit or fake `pass`.
@@ -370,7 +375,7 @@ coverage to the runner rather than leaving a one-release command only in chat.
 | Preflight / check / agent attach·inject·launch / CLI package / MCP SDK / Maven Local | `release-smoke.py` (macOS/Linux); Windows PS shares IDs | — |
 | Live JUnit failure artifacts/video + atomic capture | `release-smoke.py` → `junit-live` | Windows: run on macOS/Linux baseline (hard `n/a` on Windows entrypoint with reason) |
 | Pointer-move hover (#433 / #435) | Unix + Windows `pointer-move` → `*PointerMoveLive*` | Fail-closed on all three OSes; hard `n/a` only if the verbs disappear |
-| Input coordination gate (#459: contention / cancellation / quarantine / revoke / forced recovery / JUnit PerTest) | Unix + Windows `input-coord-*` (coordinator protocol + forked process + JUnit isolation, fail-closed XML) | Optional physical two-`RobotDriver` real-mouse contention on a headed desktop |
+| Input coordination gate (#459: contention / cancellation / quarantine / revoke / forced recovery / JUnit PerTest) | Unix + Windows `input-coord-*` (coordinator protocol + forked process + JUnit isolation, fail-closed XML) | **Hard** `input-coord-headed-robot`: two-`RobotDriver` real-mouse contention on a headed desktop, recorded via `--headed-robot-evidence` / `-HeadedRobotEvidence` |
 | Host native recording | macOS SCK + Linux X11 in `release-smoke.py`; WGC in Windows PS when **interactive** | SSH WGC is N/A (not PASS) |
 | TCC / notarization / app seal | — | macOS recipes below |
 | Real Wayland portal | — | Real Wayland session (Xvfb ≠ Wayland) |
@@ -499,9 +504,10 @@ release SHA.
   `ParallelPerTestInputIsolationTest` for JUnit PerTest) and fails closed on the JUnit XML. They
   need no display, so they are hard on macOS, Windows (including SSH), and Linux Xorg/Xvfb. A hard
   `n/a` means the experimental coordinator test surface was removed or graduated — re-scope the
-  gate. A fully-headed two-`RobotDriver(InputLeasePolicy.Required)` physical **real-mouse** run is
-  the only piece these cells do not cover and stays an **optional** operator step, not a tag
-  blocker.
+  gate. The one thing these cells do **not** cover is a fully-headed two-`RobotDriver` physical
+  **real-mouse** run: they all pass headless, so `input-coord-headed-robot` carries that claim as a
+  hard operator-recorded cell and blocks the tag on any OS claiming headed coordination until
+  evidence is supplied. Automating it (a Robot-backed two-JVM contention e2e) is a follow-up.
 - **Linux helper `cargo` on Robot cells:** Unix harness prepends `$CARGO_HOME/bin` or
   `~/.cargo/bin` to PATH. Non-login SSH + `xvfb-run` otherwise cannot start
   `:recording:buildWaylandHelper` when `--rerun-tasks` rebuilds the helper. Do **not**

@@ -88,7 +88,7 @@ for scenario_id in \
   agent-launch-and-attach cli-packaged cli-native-helper-layout cli-user-flow \
   mcp-sdk-flow host-native-recording maven-local-consumer portal-token-warmup pointer-move \
   input-coord-contention input-coord-cancellation input-coord-quarantine input-coord-revoke \
-  input-coord-forced-recovery input-coord-junit-pertest
+  input-coord-forced-recovery input-coord-junit-pertest input-coord-headed-robot
 do
   grep -F -q "$scenario_id" "$script" || fail "Windows runner missing stable scenario id: $scenario_id"
 done
@@ -112,6 +112,10 @@ grep -F -q 'two independent client JVMs never hold the desktop lease at the same
 grep -F -q 'ParallelPerTestInputIsolationTest' "$script" || fail "Windows runner missing parallel per-test isolation proof"
 grep -F -q 'concurrent per-test invocations never hold the desktop lease at the same time' "$script" || fail "Windows runner missing parallel per-test needle"
 grep -F -q 'the per-test lease is still held while failure evidence is captured' "$script" || fail "Windows runner missing evidence-capture needle"
+# Headed contention is operator-recorded: it must stay hard n/a unless evidence is passed, so the
+# automated (headless-capable) coordinator cells can never satisfy the headed claim on their own.
+grep -F -q 'HeadedRobotEvidence' "$script" || fail "Windows runner missing headed-robot operator evidence parameter"
+grep -F -q 'operator-run on a real desktop and was NOT recorded' "$script" || fail "Windows runner missing headed-robot blocking n/a reason"
 grep -F -q 'windows-ssh' "$script" || fail "SSH displayMode honesty for WGC missing"
 grep -F -q 'WGC requires native interactive console' "$script" || fail "WGC interactive-console N/A reason missing"
 grep -F -q 'AgentAttachIntegration e2e includes WGC node screenshots' "$script" || fail "SSH agent-attach-core hard n/a reason missing"

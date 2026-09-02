@@ -54,6 +54,18 @@ REQUIRED_SCENARIO_IDS: tuple[str, ...] = (
     "input-coord-revoke",
     "input-coord-forced-recovery",
     "input-coord-junit-pertest",
+    # Operator-run: the harness cannot drive two real Robot JVMs, and the coordinator-protocol
+    # cells above pass headless. Stays a hard cell so the headed claim needs a human signature.
+    "input-coord-headed-robot",
+)
+
+# Why the headed cell is n/a until an operator records it. The wording is deliberately blunt:
+# a reader skimming a report must not mistake this row for "covered by the automated cells".
+# Both entrypoints emit this exact sentence; the contract tests pin it on each.
+HEADED_ROBOT_NA_REASON: str = (
+    "headed two-JVM Robot contention is operator-run on a real desktop and was NOT recorded; "
+    "the coordinator-protocol cells do not prove real-input non-interleaving, so this blocks "
+    "the tag on any OS whose release notes claim headed coordination"
 )
 
 RESULT_PASS = "pass"
