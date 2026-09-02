@@ -2,7 +2,7 @@
 
 Spectre deliberately doesn't wrap reads and actions in an implicit idle barrier. The
 flip side is that you have a small but explicit set of wait helpers, and you decide
-where to put them. This page covers all three.
+where to put them. This page covers all four.
 
 ## Interactive-only: Compose Hot Reload settle
 
@@ -14,8 +14,8 @@ documented under [Compose Hot Reload awareness](hot-reload.md). Prefer
 
 ## The EDT rule
 
-All three wait helpers — `waitForNode`, `waitForIdle`, and `waitForVisualIdle` — refuse
-to run on the AWT event dispatch thread:
+All four wait helpers — `waitForNode`, `waitUntilGone`, `waitForIdle`, and
+`waitForVisualIdle` — refuse to run on the AWT event dispatch thread:
 
 ```
 waitForNode must not be called from the AWT event dispatch thread;
@@ -24,7 +24,7 @@ wrap the call with withContext(Dispatchers.Default) or similar.
 
 This is enforced because their loops snapshot semantics via `invokeAndWait`/`readOnEdt`
 — running on the EDT would either deadlock or skip the bounded worker that enforces the
-timeout. None of the three are exempt.
+timeout. None of the four are exempt.
 
 The standard pattern in tests — JUnit runs tests off the EDT, so no `withContext` is
 needed:
@@ -72,6 +72,41 @@ between two.
 Use it once after launching the UI to know your test can start touching things, and
 optionally after each interaction that introduces new content (a dialog opening, a list
 item appearing).
+
+## `waitUntilGone`
+
+The "it has left the screen" barrier — `waitForNode`'s counterpart for absence:
+
+```kotlin
+automator.click(dismissButton)
+automator.waitUntilGone(
+    tag = "popup.body",
+    timeout = 5.seconds,
+    pollInterval = 100.milliseconds,
+)
+```
+
+Polls until **no** node in any tracked window matches every non-null criterion you pass,
+then returns. As with `waitForNode`, you must pass at least one of `tag` or `text`, and
+passing both means "no single node carrying this tag **and** this text".
+
+Every poll calls `refreshWindows()` first, and that is the point of the helper. Compose
+Desktop popups — menus, combo boxes, speed search — can render in their own `Window`, so
+dismissing one takes the whole window, and every node in it, out of the tracked-window
+set. There is no node left to query; only its absence across all tracked windows is
+observable, and a window vanishing between two polls is seen rather than answered from a
+stale snapshot.
+
+On timeout it throws an `IllegalStateException` that names the selector, the timeout, and
+what was still on screen:
+
+```
+waitUntilGone timed out after 5000ms: 1 node(s) matching tag="popup.body" still present in tracked windows
+```
+
+Use it after dismissing a popup, menu, or dialog — before asserting on whatever the
+dismissal revealed, or before the next click that would otherwise land on the closing
+surface.
 
 ## `waitForIdle`
 
@@ -211,5 +246,7 @@ don't have to fall back to `Thread.sleep`.
 | `waitForVisualIdle.pollInterval` | 16 ms (~60 FPS)|
 | `waitForNode.timeout`     | 5 s                   |
 | `waitForNode.pollInterval`| 100 ms                |
+| `waitUntilGone.timeout`   | 5 s                   |
+| `waitUntilGone.pollInterval` | 100 ms             |
 
 These are tuned for desktop; bump them up freely if your scenarios are heavier.

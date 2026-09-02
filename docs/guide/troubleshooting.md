@@ -73,8 +73,8 @@ java.lang.IllegalStateException: waitForIdle must not be called from the AWT eve
 dispatch thread; wrap the call with withContext(Dispatchers.Default) or similar.
 ```
 
-All three wait helpers — `waitForNode`, `waitForIdle`, and `waitForVisualIdle` — refuse
-to run on the AWT event dispatch thread. They snapshot semantics via
+All four wait helpers — `waitForNode`, `waitUntilGone`, `waitForIdle`, and
+`waitForVisualIdle` — refuse to run on the AWT event dispatch thread. They snapshot semantics via
 `invokeAndWait`/`readOnEdt`. Running them on the EDT would either deadlock or skip the
 bounded worker that enforces the timeout, so the helpers raise
 `IllegalStateException` instead. The exact wait name in the message tells you which

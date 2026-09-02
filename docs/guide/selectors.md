@@ -90,7 +90,8 @@ val caseInsensitive: Boolean = automator.hasText(TextQuery.exact("submit", ignor
 
 These are the same single snapshot read as the finders: they do **not** call
 `refreshWindows()`. If a popup window may have just appeared or vanished, call
-`refreshWindows()` (or `tree()`) first.
+`refreshWindows()` (or `tree()`) first — or, when you are waiting for the popup to close,
+use [`waitUntilGone`](synchronization.md#waituntilgone), which refreshes before every poll.
 
 ## Working with the result
 

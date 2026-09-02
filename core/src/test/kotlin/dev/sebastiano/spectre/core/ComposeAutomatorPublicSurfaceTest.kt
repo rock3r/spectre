@@ -387,6 +387,7 @@ class ComposeAutomatorPublicSurfaceTest {
                 "waitForIdle",
                 "waitForVisualIdle",
                 "waitForNode",
+                "waitUntilGone",
                 "printTree",
                 "monitorRecompositions",
             )

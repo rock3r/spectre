@@ -41,7 +41,7 @@ class RunSpectreAction : AnAction() {
 
 `executeOnPooledThread` (or any non-EDT dispatcher) is required. The
 automator's outer loop — polling, retries, waits — runs on the calling
-thread. All three wait helpers (`waitForNode`, `waitForIdle`,
+thread. All four wait helpers (`waitForNode`, `waitUntilGone`, `waitForIdle`,
 `waitForVisualIdle`) reject EDT callers with `IllegalStateException`, so
 calling them from the EDT fails fast rather than silently deadlocking on
 the `invokeAndWait` round-trip. Per-tick semantics reads internally marshal
@@ -55,13 +55,17 @@ If the task also involves Jewel popup rendering, `ComposePanel` embedding,
 (`OnSameCanvas` vs separate window), `JewelFlags.useCustomPopupRenderer`,
 and theme rules that affect what the automator sees.
 
-Two facts worth knowing up front:
+Three facts worth knowing up front:
 
 - Compose Desktop defaults `compose.layers.type` to `OnSameCanvas`, so most
   popups render inside their host AWT window rather than creating a new
   one. The automator already handles this — but if you've explicitly opted
   into separate windows, popups will show up as additional discovered
   surfaces in `tree()`.
+- Dismissing a popup that renders in its own window removes that window —
+  and every node in it — from the tracked set. Wait for that with
+  `waitUntilGone(tag = …)`, which refreshes windows before each poll; a
+  one-shot `findBy…` read against the last snapshot cannot observe it.
 - An embedded `ComposePanel` has no top-level title. Window-targeted
   recording can't follow it; use region capture or pass the host IDE frame.
 

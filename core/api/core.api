@@ -141,6 +141,8 @@ public final class dev/sebastiano/spectre/core/ComposeAutomator {
 	public static synthetic fun waitForNode-ck1zr5g$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/lang/String;Ljava/lang/String;JJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun waitForVisualIdle-t_idYME (JIJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun waitForVisualIdle-t_idYME$default (Ldev/sebastiano/spectre/core/ComposeAutomator;JIJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun waitUntilGone-ck1zr5g (Ljava/lang/String;Ljava/lang/String;JJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun waitUntilGone-ck1zr5g$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/lang/String;Ljava/lang/String;JJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun windowIdentities ()Ljava/util/List;
 	public final fun windowIdentity (I)Ldev/sebastiano/spectre/core/WindowIdentitySnapshot;
 	public final fun withExclusiveInput (Ldev/sebastiano/spectre/core/InputLeaseOptions;Lkotlin/jvm/functions/Function2;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
