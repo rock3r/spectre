@@ -35,8 +35,8 @@ class PatchStartScriptsTest {
 
         val result = runLauncher(root, javaHome = jdk)
 
-        assertEquals(0, result.exitCode, "launcher failed:\n${'$'}{result.output}")
-        assertFalse(result.output.contains("ERROR"), "launcher failed:\n${'$'}{result.output}")
+        assertEquals(0, result.exitCode, "launcher failed:\n${result.output}")
+        assertFalse(result.output.contains("ERROR"), "launcher failed:\n${result.output}")
     }
 
     @Test
@@ -48,10 +48,10 @@ class PatchStartScriptsTest {
 
         val result = runLauncher(root, javaHome = jdk)
 
-        assertEquals(1, result.exitCode, "launcher should have died:\n${'$'}{result.output}")
+        assertEquals(1, result.exitCode, "launcher should have died:\n${result.output}")
         assertTrue(
             result.output.contains("Spectre requires JDK 21 or later; found Java 17.0.2"),
-            "unexpected launcher output:\n${'$'}{result.output}",
+            "unexpected launcher output:\n${result.output}",
         )
     }
 
@@ -62,8 +62,8 @@ class PatchStartScriptsTest {
 
         val result = runLauncher(root, javaHome = jdk)
 
-        assertEquals(0, result.exitCode, "launcher failed:\n${'$'}{result.output}")
-        assertFalse(result.output.contains("ERROR"), "launcher failed:\n${'$'}{result.output}")
+        assertEquals(0, result.exitCode, "launcher failed:\n${result.output}")
+        assertFalse(result.output.contains("ERROR"), "launcher failed:\n${result.output}")
     }
 
     @Test
@@ -89,10 +89,10 @@ class PatchStartScriptsTest {
                 environment["PATH"] = pathWithoutJava.toString()
             }
 
-        assertEquals(0, result.exitCode, "launcher failed:\n${'$'}{result.output}")
+        assertEquals(0, result.exitCode, "launcher failed:\n${result.output}")
         assertTrue(
-            result.output.contains("JAVACMD=${'$'}{sdkmanJdk.resolve("bin/java")}"),
-            "the sdkman candidate was not selected:\n${'$'}{result.output}",
+            result.output.contains("JAVACMD=${sdkmanJdk.resolve("bin/java")}"),
+            "the sdkman candidate was not selected:\n${result.output}",
         )
     }
 
@@ -122,13 +122,13 @@ class PatchStartScriptsTest {
         val output = process.inputStream.bufferedReader().use { it.readText() }
         check(process.waitFor(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
             process.destroyForcibly()
-            "launcher did not finish within ${'$'}COMMAND_TIMEOUT_SECONDS seconds:\n${'$'}output"
+            "launcher did not finish within $COMMAND_TIMEOUT_SECONDS seconds:\n$output"
         }
         return LauncherResult(process.exitValue(), output)
     }
 
     private fun fakeJdk(root: Path, name: String, version: String, banner: Boolean): Path {
-        val jdkHome = root.resolve("jdk-${'$'}name")
+        val jdkHome = root.resolve("jdk-$name")
         writeFakeJava(jdkHome, version, banner)
         return jdkHome
     }
@@ -145,20 +145,20 @@ class PatchStartScriptsTest {
             #!/bin/sh
             case "${'$'}1" in
                 -version)
-                    ${'$'}bannerLine
-                    echo 'openjdk version "${'$'}version" 2026-01-20' >&2
-                    echo 'OpenJDK Runtime Environment (build ${'$'}version+7)' >&2
-                    echo 'OpenJDK 64-Bit Server VM (build ${'$'}version+7, mixed mode, sharing)' >&2
+                    $bannerLine
+                    echo 'openjdk version "$version" 2026-01-20' >&2
+                    echo 'OpenJDK Runtime Environment (build $version+7)' >&2
+                    echo 'OpenJDK 64-Bit Server VM (build $version+7, mixed mode, sharing)' >&2
                     ;;
                 --list-modules)
-                    echo 'java.base@${'$'}version'
-                    echo 'jdk.attach@${'$'}version'
+                    echo 'java.base@$version'
+                    echo 'jdk.attach@$version'
                     ;;
             esac
             """
                 .trimIndent() + "\n",
         )
-        check(java.toFile().setExecutable(true)) { "Could not make ${'$'}java executable" }
+        check(java.toFile().setExecutable(true)) { "Could not make $java executable" }
     }
 
     private fun hostTool(name: String): Path =
@@ -168,7 +168,7 @@ class PatchStartScriptsTest {
             .map { File(it, name) }
             .firstOrNull { it.canExecute() }
             ?.toPath()
-            ?: error("Could not find ${'$'}name on PATH")
+            ?: error("Could not find $name on PATH")
 
     private companion object {
         private const val COMMAND_TIMEOUT_SECONDS: Long = 30
