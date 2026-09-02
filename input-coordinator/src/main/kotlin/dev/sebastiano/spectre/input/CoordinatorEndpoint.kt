@@ -21,9 +21,20 @@ import java.util.HexFormat
  * caller-supplied endpoint must be an absolute path beneath a directory the caller already trusts:
  * [OwnerOnlyEndpointProtection.prepareDirectory] refuses a symbolic link at the endpoint directory
  * or at any ancestor of it, but it does not verify who owns those ancestors.
+ *
+ * [directory] must be the parent of [socketPath]. The guard above protects the socket's parent,
+ * while the coordinator keeps its election lock and recovery ledger in [directory]; letting the two
+ * differ would route that state through a directory nothing checked.
  */
 @ExperimentalSpectreInputCoordinationApi
-public data class CoordinatorEndpoint(public val directory: Path, public val socketPath: Path)
+public data class CoordinatorEndpoint(public val directory: Path, public val socketPath: Path) {
+    init {
+        require(socketPath.parent == directory) {
+            "Coordinator endpoint directory $directory must be the socket's parent, " +
+                "was ${socketPath.parent}"
+        }
+    }
+}
 
 /** Resolves a short endpoint that is independent of the launching process's environment. */
 @ExperimentalSpectreInputCoordinationApi
