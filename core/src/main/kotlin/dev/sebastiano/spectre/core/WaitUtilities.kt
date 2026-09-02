@@ -37,6 +37,12 @@ internal suspend fun <T : Any> pollUntilNotNull(
  * is clamped to the time left, so a [pollInterval] longer than the remaining timeout never carries
  * the wait a full interval past the deadline (Codex on #482).
  *
+ * An observation is accepted whenever it finds [satisfied] true, including one that lands past the
+ * deadline because a real `delay` overshot it under load. The timeout is therefore not a hard bound
+ * on returning success. That is deliberate: throwing after observing the condition hold would emit
+ * a diagnostic that is simply false, and failing a wait whose condition did settle manufactures
+ * flakiness on loaded machines. `WaitUntilTest` pins it (Codex on #489).
+ *
  * The injectable [clock]/[sleep] seam mirrors [waitForIdleInternal] so the loop can run on virtual
  * time in tests without a live Compose tree.
  */

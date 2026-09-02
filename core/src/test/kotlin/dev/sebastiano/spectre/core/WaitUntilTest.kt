@@ -283,6 +283,36 @@ class WaitUntilTest {
             assertEquals(50L, clock.now(), "the second poll must land on the deadline")
         }
 
+    @Test
+    fun `waitUntilInternal accepts a condition observed true after the sleep overshoots`() =
+        runTest {
+            // Characterisation test, not a new contract: this pins behaviour the shared loop has
+            // had since waitUntilGone shipped, so it stays a deliberate choice rather than an
+            // accident (Codex on #489). A real delay() can resume past the deadline under
+            // scheduler load. When the condition is true at that observation the wait returns
+            // instead of throwing, for two reasons: reporting "never held" about a condition just
+            // observed to hold would be a false diagnostic, and failing a wait whose condition did
+            // settle manufactures flakiness on loaded machines. The strict alternative — reject
+            // any observation past the deadline — is a semantics change to waitUntilGone as well,
+            // so it is not this PR's to make.
+            val clock = FakeClock()
+            val holdsPerPoll = ArrayDeque(listOf(false, true))
+
+            waitUntilInternal(
+                timeout = 50.milliseconds,
+                pollInterval = 1.seconds,
+                description = "the popup is showing",
+                condition = { holdsPerPoll.removeFirst() },
+                clock = clock,
+                sleep = { clock.advance(it + 20.milliseconds) },
+            )
+
+            assertTrue(
+                clock.now() > 50,
+                "the accepted observation must land past the deadline, got ${clock.now()}",
+            )
+        }
+
     private fun headlessAutomator(): ComposeAutomator =
         ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())
 }
