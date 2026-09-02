@@ -7,7 +7,13 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
+import java.nio.file.SecureDirectoryStream
+import java.nio.file.attribute.BasicFileAttributeView
+import java.nio.file.attribute.BasicFileAttributes
+import java.nio.file.attribute.PosixFileAttributeView
+import java.nio.file.attribute.PosixFileAttributes
 import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.attribute.PosixFilePermissions
 import java.security.MessageDigest
@@ -83,6 +89,12 @@ public sealed interface OwnerOnlyEndpointProtection {
      * only root can create. Missing components are created one at a time so a link planted while
      * this runs is rejected rather than adopted. Ownership of the existing ancestors is not
      * checked: a caller-supplied endpoint must sit beneath a directory the caller already trusts.
+     *
+     * How much a concurrent substitution can do depends on the filesystem. On POSIX the components
+     * are walked with an `openat`-style descent that resolves each of them exactly once
+     * ([prepareEndpointDirectory]); on Windows, where the JDK exposes no such descent, the walk is
+     * lexical and re-resolves the path on every call, so a component accepted a moment ago can
+     * still be swapped before the next call reaches through it (#487).
      */
     @Throws(IOException::class) public fun prepareDirectory(socketPath: Path)
 
@@ -105,21 +117,7 @@ public sealed interface OwnerOnlyEndpointProtection {
 
 private object PosixOwnerOnlyEndpointProtection : OwnerOnlyEndpointProtection {
     override fun prepareDirectory(socketPath: Path) {
-        val directory = socketPath.toAbsolutePath().parent
-        val ownerOnly = PosixFilePermissions.asFileAttribute(OWNER_ONLY_DIRECTORY_PERMISSIONS)
-        // Parents may legitimately be missing (#462); nothing is created when they all exist.
-        prepareAncestors(directory) { ancestor -> Files.createDirectory(ancestor, ownerOnly) }
-        if (Files.exists(directory, NOFOLLOW_LINKS)) {
-            rejectSubstituted(directory, role = "directory")
-            val permissions = Files.getPosixFilePermissions(directory, NOFOLLOW_LINKS)
-            if (permissions != OWNER_ONLY_DIRECTORY_PERMISSIONS) {
-                throw IOException("Existing coordinator directory $directory must be owner-only")
-            }
-        } else {
-            // The atomic createDirectory refuses to adopt anything already at this path, symlinks
-            // included, so a link planted here loses the race rather than capturing the endpoint.
-            Files.createDirectory(directory, ownerOnly)
-        }
+        prepareEndpointDirectory(socketPath.toAbsolutePath().parent)
     }
 
     override fun protectSocket(socketPath: Path) {
@@ -129,12 +127,6 @@ private object PosixOwnerOnlyEndpointProtection : OwnerOnlyEndpointProtection {
         Files.setPosixFilePermissions(socketPath, OWNER_ONLY_SOCKET_PERMISSIONS)
     }
 
-    private val OWNER_ONLY_DIRECTORY_PERMISSIONS: Set<PosixFilePermission> =
-        setOf(
-            PosixFilePermission.OWNER_READ,
-            PosixFilePermission.OWNER_WRITE,
-            PosixFilePermission.OWNER_EXECUTE,
-        )
     private val OWNER_ONLY_SOCKET_PERMISSIONS: Set<PosixFilePermission> =
         setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)
 }
@@ -160,8 +152,202 @@ private object BasicOwnerOnlyEndpointProtection : OwnerOnlyEndpointProtection {
 }
 
 /**
+ * Prepares the endpoint [directory] and every ancestor of it with an `openat`-style descent.
+ *
+ * Every component is opened relative to a descriptor for the component above it, never by
+ * re-resolving the whole path from the root, and always with [NOFOLLOW_LINKS]. That is what a
+ * lexical walk cannot do (#487): `java.nio.file` re-resolves the entire path string on every call,
+ * so an ancestor accepted a moment ago could be replaced with a symbolic link before the next call
+ * resolved through it, and the endpoint landed in the attacker's tree. A descriptor already open on
+ * a directory keeps naming that directory no matter what happens to the name it was reached by, so
+ * the substitution has nothing left to redirect.
+ *
+ * One step still resolves an absolute path: [SecureDirectoryStream] has no `mkdirat`, so a missing
+ * component is created by [Files.createDirectory]. Its result is never trusted — the fd-relative
+ * open that follows is what decides whether anything is adopted — and the file-key guard in
+ * [createChildDirectory] fails the walk closed when the parent has been substituted since it was
+ * accepted. What is left of the window is a directory created in a tree the caller did not intend;
+ * it cannot become the endpoint.
+ *
+ * Missing parents are legitimate (#462): nothing is created when they all exist.
+ *
+ * [afterDescendingInto] is a test seam, in the same spirit as [isTrustedPrivateAlias]'s `root` and
+ * `macOs` parameters; production passes nothing. It fires with each component the descent has just
+ * opened, which is the instant a test needs in order to stage the substitution this walk exists to
+ * survive.
+ */
+internal fun prepareEndpointDirectory(directory: Path, afterDescendingInto: (Path) -> Unit = {}) {
+    val absolute = directory.toAbsolutePath()
+    val root =
+        absolute.root ?: throw IOException("Coordinator directory $directory must be absolute")
+    val lastIndex = absolute.nameCount - 1
+    var current = openRootDirectory(root)
+    var currentPath = root
+    try {
+        absolute.forEachIndexed { index, component ->
+            val descended =
+                current.descendInto(currentPath, component, isEndpoint = index == lastIndex)
+            current.close()
+            current = descended.stream
+            currentPath = descended.path
+            afterDescendingInto(currentPath)
+        }
+    } finally {
+        current.close()
+    }
+}
+
+/** A component the descent has opened, and the path that names it once aliases are followed. */
+private class Descended(val stream: SecureDirectoryStream<Path>, val path: Path)
+
+/**
+ * Opens [component] relative to the directory this stream holds, creating it when it is missing.
+ *
+ * The fd-relative `readAttributes` only classifies the component so the failure can name what is
+ * wrong with it; the `NOFOLLOW_LINKS` open below is what enforces the rule, and it would refuse a
+ * link planted between the two.
+ */
+private fun SecureDirectoryStream<Path>.descendInto(
+    parentPath: Path,
+    component: Path,
+    isEndpoint: Boolean,
+): Descended {
+    val role = if (isEndpoint) "directory" else "ancestor"
+    val childPath = parentPath.resolve(component)
+    val attributes = readAttributesOrNull(component)
+    var created = false
+    when {
+        attributes == null -> created = createChildDirectory(parentPath, childPath, role)
+        attributes.isSymbolicLink -> {
+            if (isEndpoint || !isTrustedPrivateAlias(childPath, childPath.root)) {
+                throw IOException("Coordinator $role $childPath must not be a symbolic link")
+            }
+            // A Darwin root alias. Following it through the descriptor is the exemption; only root
+            // can rewrite an entry directly under /, so there is no unprivileged swap to lose here.
+            val target = childPath.root.resolve(PRIVATE_ALIAS_DIRECTORY).resolve(component)
+            return Descended(newDirectoryStream(component), target)
+        }
+        !attributes.isDirectory ->
+            throw IOException("Coordinator $role $childPath is not a directory")
+    }
+    val stream = newDirectoryStream(component, NOFOLLOW_LINKS)
+    var handedOver = false
+    try {
+        // A directory this walk created is owner-only by construction. One it merely adopted is
+        // not, and "already existed" includes losing the create race to someone else.
+        if (isEndpoint && !created) requireOwnerOnly(stream, childPath)
+        handedOver = true
+    } finally {
+        if (!handedOver) stream.close()
+    }
+    return Descended(stream, childPath)
+}
+
+/**
+ * Rejects an adopted endpoint directory that is not owner-only.
+ *
+ * The mode is read back from the open descriptor rather than from the path: this is the directory
+ * the coordinator will actually use, whatever the path resolves to by now.
+ */
+private fun requireOwnerOnly(stream: SecureDirectoryStream<Path>, path: Path) {
+    val permissions =
+        stream
+            .getFileAttributeView(PosixFileAttributeView::class.java)
+            .readAttributes()
+            .permissions()
+    if (permissions != OWNER_ONLY_DIRECTORY_PERMISSIONS) {
+        throw IOException("Existing coordinator directory $path must be owner-only")
+    }
+}
+
+/**
+ * Creates [childPath], which the descent found missing, leaving adoption to the caller's open.
+ *
+ * This is the one step that cannot be done relative to the descriptor, so it compares the open
+ * directory's file key against the one [parentPath] resolves to now and refuses to create anything
+ * when they differ — that is a parent substituted since the descent accepted it.
+ *
+ * Returns whether this walk is the one that created the directory; losing the race to a concurrent
+ * creator is not an error, but the loser has adopted a directory it cannot vouch for.
+ */
+private fun SecureDirectoryStream<Path>.createChildDirectory(
+    parentPath: Path,
+    childPath: Path,
+    role: String,
+): Boolean {
+    val openKey =
+        getFileAttributeView(BasicFileAttributeView::class.java).readAttributes().fileKey()
+    val resolvedKey =
+        runCatching {
+                Files.readAttributes(parentPath, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
+                    .fileKey()
+            }
+            .getOrNull()
+    if (openKey == null || openKey != resolvedKey) {
+        throw IOException(
+            "Coordinator $role $childPath cannot be created: $parentPath was replaced while the " +
+                "endpoint directory was being prepared"
+        )
+    }
+    return try {
+        Files.createDirectory(
+            childPath,
+            PosixFilePermissions.asFileAttribute(OWNER_ONLY_DIRECTORY_PERMISSIONS),
+        )
+        true
+    } catch (_: FileAlreadyExistsException) {
+        // Another process created it first, legitimately or not. The fd-relative open decides
+        // whether it is usable, and the caller still has to check what it adopted.
+        false
+    }
+}
+
+private fun SecureDirectoryStream<Path>.readAttributesOrNull(
+    component: Path
+): PosixFileAttributes? =
+    try {
+        getFileAttributeView(component, PosixFileAttributeView::class.java, NOFOLLOW_LINKS)
+            .readAttributes()
+    } catch (_: NoSuchFileException) {
+        null
+    }
+
+/**
+ * Opens the filesystem root, which is the only component the descent takes on trust.
+ *
+ * Fails closed when the provider does not hand back a [SecureDirectoryStream]: without one there is
+ * no fd-relative open to descend with, and silently falling back to the lexical walk would leave
+ * callers believing in a guarantee they no longer have. Every POSIX filesystem the coordinator
+ * selects this protection for returns one.
+ */
+private fun openRootDirectory(root: Path): SecureDirectoryStream<Path> {
+    val stream = Files.newDirectoryStream(root)
+    @Suppress("UNCHECKED_CAST") val secure = stream as? SecureDirectoryStream<Path>
+    if (secure == null) {
+        stream.close()
+        throw IOException(
+            "Coordinator endpoint traversal needs a SecureDirectoryStream to resolve each " +
+                "component once; $root gave ${stream.javaClass.name}"
+        )
+    }
+    return secure
+}
+
+private val OWNER_ONLY_DIRECTORY_PERMISSIONS: Set<PosixFilePermission> =
+    setOf(
+        PosixFilePermission.OWNER_READ,
+        PosixFilePermission.OWNER_WRITE,
+        PosixFilePermission.OWNER_EXECUTE,
+    )
+
+/**
  * Validates every ancestor of [directory] top-down and creates the missing ones, one atomic
  * [createDirectory] each.
+ *
+ * This is the fallback for filesystems with no `openat` to descend with, which in practice means
+ * Windows: [Files.newDirectoryStream] returns a plain `DirectoryStream` there, so
+ * [prepareEndpointDirectory]'s fd-relative walk has nothing to hold a component open with. POSIX
+ * callers do not reach this.
  *
  * Each component is checked immediately before it is descended into, rather than validating the
  * whole chain up front and then creating blindly. A link planted between those two passes used to
@@ -172,8 +358,9 @@ private object BasicOwnerOnlyEndpointProtection : OwnerOnlyEndpointProtection {
  *
  * The walk is lexical and deliberately not normalised: the OS resolves a `..` that follows a
  * planted link against the link's target, so the link itself has to stay visible to this check. It
- * cannot make traversal race-free — only an `openat`-style descent could — but every component is
- * now rejected on sight instead of being skipped.
+ * cannot make traversal race-free (#487) — every `java.nio.file` call re-resolves the whole path
+ * from the root, so a component accepted a moment ago can be replaced before the next call reaches
+ * through it — but every component is rejected on sight instead of being skipped.
  */
 private fun prepareAncestors(directory: Path, createDirectory: (Path) -> Unit) {
     val ancestors = generateSequence(directory.parent) { it.parent }.toList().asReversed()
