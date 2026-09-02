@@ -12,7 +12,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 12)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 13)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -66,6 +66,7 @@ public object DaemonProtocol {
             is DaemonRequest.PressKey -> versionFor(INPUT_VERBS_INTRODUCED_MINOR)
             is DaemonRequest.WaitForNode,
             is DaemonRequest.WaitForVisualIdle -> versionFor(WAIT_OPS_INTRODUCED_MINOR)
+            is DaemonRequest.WaitUntilGone -> versionFor(WAIT_UNTIL_GONE_INTRODUCED_MINOR)
             is DaemonRequest.WaitForReloadSettled -> versionFor(RELOAD_SETTLE_INTRODUCED_MINOR)
             is DaemonRequest.FindByText,
             is DaemonRequest.FindByContentDescription,
@@ -124,6 +125,15 @@ public object DaemonProtocol {
      * into the existing "daemon protocol is too old, run `spectre daemon kill`" error instead.
      */
     internal const val SCREEN_PIXEL_STILLS_INTRODUCED_MINOR: Int = 12
+
+    /**
+     * `waitUntilGone`, the wait-for-absence counterpart to `waitForNode` (#438).
+     *
+     * A capability floor: the op is a new wire discriminator, so a daemon built before it rejects
+     * the frame rather than answering it. Requiring 1.13 turns that into the existing "daemon
+     * protocol is too old, run `spectre daemon kill`" error.
+     */
+    private const val WAIT_UNTIL_GONE_INTRODUCED_MINOR: Int = 13
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)
@@ -243,6 +253,25 @@ public sealed interface DaemonRequest {
     @Serializable
     @SerialName("waitForNode")
     public data class WaitForNode(
+        public val sessionId: String,
+        public val tag: String? = null,
+        public val text: String? = null,
+        public val timeoutMs: Long = 5_000,
+        public val pollIntervalMs: Long = 100,
+    ) : DaemonRequest
+
+    /**
+     * Wait until **no** node matches [tag] and/or [text] (AND when both set) — the absence
+     * counterpart to [WaitForNode] (#438), for dismissed popups, menus, and dialogs.
+     *
+     * Replies with [DaemonResponse.Completed] once nothing matches. A timeout is a
+     * [DaemonResponse.Error] with code [DaemonErrorCode.Timeout] and category `timeout` whose
+     * message keeps the automator's own diagnostics — selector, timeout, and how many matching
+     * nodes were still present — because those diagnostics are the point of the verb.
+     */
+    @Serializable
+    @SerialName("waitUntilGone")
+    public data class WaitUntilGone(
         public val sessionId: String,
         public val tag: String? = null,
         public val text: String? = null,

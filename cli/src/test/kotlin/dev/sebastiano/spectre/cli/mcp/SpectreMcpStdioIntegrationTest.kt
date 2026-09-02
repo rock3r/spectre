@@ -127,6 +127,7 @@ class SpectreMcpStdioIntegrationTest {
                         "tree",
                         "type_text",
                         "wait_for_node",
+                        "wait_until_gone",
                         "wait_for_visual_idle",
                         "wait_for_reload_settled",
                         "windows",

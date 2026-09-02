@@ -344,6 +344,45 @@ internal constructor(
     }
 
     /**
+     * Wait until **no** semantics node matches [tag] and/or [text] (AND when both are set), same as
+     * in-process `ComposeAutomator.waitUntilGone` (#438) — the absence counterpart to
+     * [waitForNode], for dismissed popups, menus, and dialogs.
+     *
+     * On timeout throws [SpectreAgentException] with category `timeout`, whose message keeps the
+     * automator's own diagnostics — the selector, the timeout, and how many matching nodes were
+     * still present in tracked windows.
+     *
+     * The wire deadline is [timeoutMs] **plus** [DIAGNOSTIC_DEADLINE_SLACK_MS], unlike
+     * [waitForNode]'s exact-[timeoutMs] deadline, and the slack is what makes those diagnostics
+     * reachable. The agent claims an op whose deadline has passed by the time the handler returns
+     * and answers "Deadline elapsed during op" instead — which, on an exact deadline, is a race the
+     * automator's own timeout always loses, since it fires at the same instant. Trailing the
+     * automator's budget lets the real message come back and still leaves the wire deadline ahead
+     * of the agent's suspend-bridge backstop (`timeoutMs + 2s`), so a wedged automator fails closed
+     * on the wire exactly as before.
+     */
+    @Throws(IOException::class)
+    public fun waitUntilGone(
+        tag: String? = null,
+        text: String? = null,
+        timeoutMs: Long = 5_000,
+        pollIntervalMs: Long = 100,
+    ) {
+        val deadline = System.currentTimeMillis() + timeoutMs + DIAGNOSTIC_DEADLINE_SLACK_MS
+        val resp =
+            exchange(
+                AgentRequest.WaitUntilGone(
+                    tag = tag,
+                    text = text,
+                    timeoutMs = timeoutMs,
+                    pollIntervalMs = pollIntervalMs,
+                ),
+                deadlineEpochMs = deadline,
+            )
+        if (resp !is AgentResponse.Ok) throw wireMismatch("Ok", resp)
+    }
+
+    /**
      * Wait until consecutive visual frames are stable (#201). Same semantics as in-process
      * `ComposeAutomator.waitForVisualIdle`.
      */
@@ -438,3 +477,14 @@ internal constructor(
     private fun wireMismatch(expected: String, actual: AgentResponse): IOException =
         IOException("Wire protocol mismatch: expected $expected, got ${actual::class.simpleName}")
 }
+
+/**
+ * How far [AttachedAutomator.waitUntilGone]'s wire deadline trails its wait budget so the
+ * automator's own timeout — the one carrying the absence diagnostics — wins the race against the
+ * agent's deadline claim. Well under the agent's `timeoutMs + 2s` suspend-bridge backstop, so the
+ * wire deadline is still the earlier of the two safety nets.
+ *
+ * Top-level rather than a companion constant: a `const val` in a companion of a public class is a
+ * public static field on the JVM, and this is an implementation detail, not published API.
+ */
+private const val DIAGNOSTIC_DEADLINE_SLACK_MS: Long = 1_000

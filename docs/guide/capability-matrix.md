@@ -80,7 +80,8 @@ boundary without a different design:
 | `waitForIdle` (idling-resource registration) | Live callbacks — use fingerprint wait over attach instead (#362) |
 
 Remote **waits** (`waitForNode` over agent — #201, also CLI `wait-for-node` / MCP
-`wait_for_node`; **`waitForIdle` fingerprint wait** over agent — #362), **selectors**
+`wait_for_node`; **`waitUntilGone`** over agent — #438, also CLI `wait-until-gone` / MCP
+`wait_until_gone`; **`waitForIdle` fingerprint wait** over agent — #362), **selectors**
 (`findByText` / role / content-description — #202), and **input verbs** (`doubleClick` /
 `swipe` / `scrollWheel` — #203) are **Supported** on agent under Linux Xvfb and macOS desktop
 via `AgentContractCorpusTest` / reflective wait suites against `agent-test-fixture`. Agent
@@ -89,9 +90,21 @@ via `AgentContractCorpusTest` / reflective wait suites against `agent-test-fixtu
 retries — same class as `typeText`). Agent **`focusWindow`** (#364) is **Supported** on Linux
 Xvfb and macOS desktop (raises the window hosting a node before real keyboard input); HTTP
 `focusWindow` is **Unsupported by design** for this issue. HTTP selector entry points are covered
-by headless `HttpContractCorpusTest`. Some HTTP input/wait cells and agent `longClick` /
+by headless `HttpContractCorpusTest`. Some HTTP input cells and agent `longClick` /
 `waitForVisualIdle` remain **Not yet CI-executed**. Idling-resource **registration** over attach
 stays **Unsupported by design**.
+
+The **HTTP** transport exposes no wait route at all — `SpectreServer` has none — so every HTTP wait
+cell (`waitForNode`, `waitUntilGone`, `waitForVisualIdle`) is **Not yet CI-executed** because it is
+unrouted, not because a routed op is waiting on a display-backed fixture. `waitUntilGone` was added
+only where `waitForNode` already reaches: in-process, agent attach, CLI, and MCP.
+
+For `waitUntilGone`, the agent cells are claimed on the strength of two corpus scenarios that run
+inside `AgentContractCorpusTest`: a selector that matches nothing returns instead of burning its
+budget, and a selector that is still on screen times out with taxonomy `timeout` **and** a message
+still naming the selector, the timeout, and the still-present node count. The second scenario is the
+one that matters for a transport claim — a boundary that flattened those diagnostics into a bare
+"timed out" would fail the cell rather than quietly pass it.
 
 ## How to read a cell
 

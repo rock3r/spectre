@@ -148,6 +148,8 @@ public final class dev/sebastiano/spectre/agent/AttachedAutomator : java/lang/Au
 	public static synthetic fun waitForNode$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/String;Ljava/lang/String;JJILjava/lang/Object;)Ldev/sebastiano/spectre/agent/transport/NodeSnapshotDto;
 	public final fun waitForVisualIdle (JIJ)V
 	public static synthetic fun waitForVisualIdle$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;JIJILjava/lang/Object;)V
+	public final fun waitUntilGone (Ljava/lang/String;Ljava/lang/String;JJ)V
+	public static synthetic fun waitUntilGone$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/String;Ljava/lang/String;JJILjava/lang/Object;)V
 	public final fun windowIdentities (Ljava/lang/Integer;)Ljava/util/List;
 	public static synthetic fun windowIdentities$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/Integer;ILjava/lang/Object;)Ljava/util/List;
 	public final fun windows ()Ljava/util/List;

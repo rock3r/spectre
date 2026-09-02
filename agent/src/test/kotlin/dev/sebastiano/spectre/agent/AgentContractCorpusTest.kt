@@ -8,6 +8,7 @@ import dev.sebastiano.spectre.testing.contract.AutomatorContractCorpus
 import dev.sebastiano.spectre.testing.contract.AutomatorContractDriver
 import dev.sebastiano.spectre.testing.contract.AutomatorTransport
 import dev.sebastiano.spectre.testing.contract.ContractNode
+import dev.sebastiano.spectre.testing.contract.ContractWaitFailure
 import dev.sebastiano.spectre.testing.contract.ContractWindow
 import dev.sebastiano.spectre.testing.contract.ScreenshotProbe
 import java.awt.GraphicsEnvironment
@@ -321,6 +322,28 @@ class AgentContractCorpusTest {
                 error("waitForNode was expected to time out")
             } catch (ex: SpectreAgentException) {
                 return ex.category.wireName
+            }
+        }
+
+        override fun waitUntilGone(tag: String?, text: String?, timeoutMs: Long) {
+            automator.waitUntilGone(tag = tag, text = text, timeoutMs = timeoutMs)
+        }
+
+        override fun waitUntilGoneFailure(
+            tag: String?,
+            text: String?,
+            timeoutMs: Long,
+        ): ContractWaitFailure {
+            try {
+                automator.waitUntilGone(tag = tag, text = text, timeoutMs = timeoutMs)
+                error("waitUntilGone was expected to time out")
+            } catch (ex: SpectreAgentException) {
+                // Verbatim: the corpus asserts the absence diagnostics survived attach, so
+                // reshaping the message here would test the driver instead of the transport.
+                return ContractWaitFailure(
+                    category = ex.category.wireName,
+                    message = ex.message.orEmpty(),
+                )
             }
         }
 

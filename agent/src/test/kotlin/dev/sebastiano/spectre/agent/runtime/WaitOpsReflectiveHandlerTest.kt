@@ -8,6 +8,7 @@ import dev.sebastiano.spectre.agent.transport.AgentResponse
 import java.awt.Rectangle
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * #201 wait ops through the real [ReflectiveAutomatorHandler] reflective bridge: success path,
@@ -66,6 +67,60 @@ class WaitOpsReflectiveHandlerTest {
     }
 
     @Test
+    fun `WaitUntilGone success returns Ok with packed Duration rawValues`() {
+        val fake = WaitFakeAutomator()
+        val handler = ReflectiveAutomatorHandler(fake)
+
+        val response =
+            handler.handle(
+                AgentRequest.WaitUntilGone(
+                    tag = "popup.body",
+                    timeoutMs = 1_000,
+                    pollIntervalMs = 50,
+                )
+            )
+        check(response is AgentResponse.Ok) { "expected Ok, got $response" }
+        assertEquals(listOf<String?>("popup.body"), fake.waitUntilGoneTags.toList())
+        // Packed Duration rawValue for 1000ms / 50ms: nanos << 1, not plain inWholeNanoseconds.
+        assertEquals(listOf(1_000L * 1_000_000L shl 1), fake.waitUntilGoneTimeoutRaw.toList())
+        assertEquals(listOf(50L * 1_000_000L shl 1), fake.waitUntilGonePollRaw.toList())
+    }
+
+    @Test
+    fun `WaitUntilGone timeout keeps selector, timeout, and still-present count in the message`() {
+        val stillPresent =
+            """waitUntilGone timed out after 400ms: 2 node(s) matching tag="popup.body" """ +
+                "still present in tracked windows"
+        val fake =
+            WaitFakeAutomator(
+                waitUntilGoneImpl = { _: String?, _: String?, _: Long, _: Long ->
+                    // Core raises a plain IllegalStateException carrying the absence diagnostics.
+                    error(stillPresent)
+                }
+            )
+        val handler = ReflectiveAutomatorHandler(fake)
+
+        val response =
+            handler.handle(
+                AgentRequest.WaitUntilGone(tag = "popup.body", timeoutMs = 400, pollIntervalMs = 50)
+            )
+        check(response is AgentResponse.Error) { "expected Error, got $response" }
+        assertEquals(AgentErrorCategory.Timeout.wireName, response.category)
+        assertTrue(
+            response.message.contains(stillPresent),
+            "absence diagnostics degraded to \"${response.message}\"",
+        )
+    }
+
+    @Test
+    fun `WaitUntilGone refuses when neither tag nor text is set`() {
+        val handler = ReflectiveAutomatorHandler(WaitFakeAutomator())
+        val response = handler.handle(AgentRequest.WaitUntilGone(tag = null, text = null))
+        check(response is AgentResponse.Error)
+        assertEquals(AgentErrorCategory.InvalidSelector.wireName, response.category)
+    }
+
+    @Test
     fun `WaitForIdle success invokes target-side wait with packed Duration rawValues`() {
         val fake = WaitFakeAutomator()
         val handler = ReflectiveAutomatorHandler(fake)
@@ -110,12 +165,16 @@ internal class WaitFakeAutomator(
     private val allNodesValue: List<Any> = emptyList(),
     private val waitForNodeImpl: ((String?, String?, Long, Long) -> Any?)? = null,
     private val waitForIdleImpl: ((Long, Long, Long) -> Any?)? = null,
+    private val waitUntilGoneImpl: ((String?, String?, Long, Long) -> Any?)? = null,
 ) {
     val waitForNodeTags = mutableListOf<String?>()
     val waitForNodeTimeoutRaw = mutableListOf<Long>()
     val waitForIdleTimeoutRaw = mutableListOf<Long>()
     val waitForIdleQuietRaw = mutableListOf<Long>()
     val waitForIdlePollRaw = mutableListOf<Long>()
+    val waitUntilGoneTags = mutableListOf<String?>()
+    val waitUntilGoneTimeoutRaw = mutableListOf<Long>()
+    val waitUntilGonePollRaw = mutableListOf<Long>()
 
     @Suppress("unused") fun refreshWindows() = Unit
 
@@ -167,6 +226,23 @@ internal class WaitFakeAutomator(
         waitForIdlePollRaw += pollRaw
         waitForIdleImpl?.let {
             return it(timeoutRaw, quietRaw, pollRaw)
+        }
+        return Unit
+    }
+
+    @Suppress("unused", "UNUSED_PARAMETER")
+    fun waitUntilGone(
+        tag: String?,
+        text: String?,
+        timeoutRaw: Long,
+        pollRaw: Long,
+        continuation: kotlin.coroutines.Continuation<Any?>,
+    ): Any? {
+        waitUntilGoneTags += tag
+        waitUntilGoneTimeoutRaw += timeoutRaw
+        waitUntilGonePollRaw += pollRaw
+        waitUntilGoneImpl?.let {
+            return it(tag, text, timeoutRaw, pollRaw)
         }
         return Unit
     }

@@ -321,6 +321,7 @@ can add a reliable preflight via `HotSpotDiagnosticMXBean`.
 | `capture(windowIndex)`| `AgentRequest.Capture`           | `AtomicCaptureResult` |
 | `windowIdentities(windowIndex?)` | `AgentRequest.WindowIdentity` | `List<WindowIdentityDto>` |
 | `waitForNode(...)`    | `AgentRequest.WaitForNode`       | `NodeSnapshotDto` |
+| `waitUntilGone(...)`  | `AgentRequest.WaitUntilGone`     | `Unit` (absence wait — #438; timeout error keeps the selector, timeout, and still-present count) |
 | `waitForVisualIdle(...)` | `AgentRequest.WaitForVisualIdle` | `Unit`         |
 | `waitForIdle(...)`    | `AgentRequest.WaitForIdle`       | `Unit` (fingerprint wait; no idling-resource registration over attach — #362) |
 | `printTree()`         | `AgentRequest.PrintTree`         | `String` (human-readable dump — #362) |
@@ -338,11 +339,17 @@ translateY)`; scale widths/heights by `scaleX`/`scaleY` only (no translation). D
 recording (#183) uses this so capture stays on the daemon host rather than over the
 transport.
 
-`waitForNode`, `waitForVisualIdle` (#201), and `waitForIdle` (#362) are available over the
-agent transport. `waitForIdle` runs a **fingerprint-only** wait on the agent's in-target
-automator (timeout / quiet / poll; absolute deadline on the wire like `waitForNode`). It does
-**not** observe idling resources registered on a different automator instance in the app.
-**Idling-resource registration** and `withTracing` remain in-process-only.
+`waitForNode`, `waitForVisualIdle` (#201), `waitForIdle` (#362), and `waitUntilGone` (#438)
+are available over the agent transport. `waitForIdle` runs a **fingerprint-only** wait on the
+agent's in-target automator (timeout / quiet / poll; absolute deadline on the wire like
+`waitForNode`). It does **not** observe idling resources registered on a different automator
+instance in the app. **Idling-resource registration** and `withTracing` remain in-process-only.
+
+`waitUntilGone` is the absence counterpart to `waitForNode` and carries the same absolute
+deadline. Its timeout is category `timeout` like the other waits, but the message is the
+deliverable: the in-target automator's own diagnostics — the selector, the timeout, and how many
+matching nodes were still present in tracked windows — travel back verbatim, so an attach client
+learns *what* is still on screen rather than only that the wait expired.
 
 Richer input verbs (`doubleClick` / `longClick` / `swipe` / `scrollWheel` / `pressKey`)
 are available over agent, HTTP, and daemon/CLI/MCP (#203). `focusWindow(nodeKey)` raises
@@ -585,9 +592,9 @@ Not additive-safe without a version bump:
   # PowerShell: quote -P… so the shell does not split on the property name
   ./gradlew :agent:test "-Pspectre.agent.attachE2e.allowWindows=true" --tests '*AgentAttachIntegration*'
   ```
-- **Wait ops.** `waitForNode`, `waitForVisualIdle`, and fingerprint `waitForIdle` are
-  supported over agent IPC with shared deadline budgets and cancel. Idling-resource
-  registration stays in-process only.
+- **Wait ops.** `waitForNode`, `waitUntilGone`, `waitForVisualIdle`, and fingerprint
+  `waitForIdle` are supported over agent IPC with shared deadline budgets and cancel.
+  Idling-resource registration stays in-process only.
 - **IntelliJ-hosted Compose**: the classloader-disambiguation rule (D-14 in the plan) was
   designed to handle `PluginClassLoader` chains but isn't automatically tested yet. If
   you hit issues attaching to an IntelliJ-hosted target, file a Spectre issue with the
@@ -657,7 +664,8 @@ Restart Claude Code after changing the configuration. It can then use these tool
 1. `list_processes` to find the target PID.
 2. `attach` with that PID and retain the returned `sessionId`.
 3. `tree`, `find`, or `find_text` / `wait_for_node` for keys, then input tools
-   (`click`, `double_click`, `long_click`, `swipe`, `scroll_wheel`, `press_key`, `type_text`).
+   (`click`, `double_click`, `long_click`, `swipe`, `scroll_wheel`, `press_key`, `type_text`),
+   and `wait_until_gone` after a dismissal before touching what it revealed.
 4. `screenshot` with `fullscreen=true` for an inline full-desktop PNG (window/surface targets
    fail closed on attach), or `capture` / `record_*` for daemon-filesystem artifacts (paths only).
 5. When the target runs under Compose Hot Reload: call `wait_for_reload_settled` **before**

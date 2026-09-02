@@ -34,6 +34,19 @@ internal interface DaemonSessionAutomator : AutoCloseable {
         pollIntervalMs: Long = 100,
     ): NodeSnapshotDto
 
+    /**
+     * Wait until no node matches [tag] and/or [text] (#438). Throws on timeout; the thrown
+     * exception carries the automator's absence diagnostics (selector, timeout, still-present
+     * count), which the registry maps onto the daemon wire rather than replacing.
+     */
+    @Throws(IOException::class)
+    fun waitUntilGone(
+        tag: String? = null,
+        text: String? = null,
+        timeoutMs: Long = 5_000,
+        pollIntervalMs: Long = 100,
+    )
+
     @Throws(IOException::class)
     fun waitForVisualIdle(timeoutMs: Long = 5_000, stableFrames: Int = 3, pollIntervalMs: Long = 16)
 
@@ -134,6 +147,13 @@ internal class AttachedDaemonSession(
         timeoutMs: Long,
         pollIntervalMs: Long,
     ): NodeSnapshotDto = delegate.waitForNode(tag, text, timeoutMs, pollIntervalMs)
+
+    override fun waitUntilGone(
+        tag: String?,
+        text: String?,
+        timeoutMs: Long,
+        pollIntervalMs: Long,
+    ): Unit = delegate.waitUntilGone(tag, text, timeoutMs, pollIntervalMs)
 
     override fun waitForVisualIdle(timeoutMs: Long, stableFrames: Int, pollIntervalMs: Long): Unit =
         delegate.waitForVisualIdle(timeoutMs, stableFrames, pollIntervalMs)

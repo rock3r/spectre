@@ -1,5 +1,7 @@
 package dev.sebastiano.spectre.testing.contract
 
+import java.util.concurrent.TimeUnit
+
 /**
  * Transport-agnostic view of a tracked window for the shared contract corpus.
  *
@@ -100,6 +102,29 @@ public interface AutomatorContractDriver : AutoCloseable {
         error("waitForNodeFailureCategory not implemented for $transport")
 
     /**
+     * Optional absence wait (#438). Must return once nothing matches [tag] / [text], and throw when
+     * the selector is still present at [timeoutMs].
+     */
+    public fun waitUntilGone(tag: String?, text: String?, timeoutMs: Long) {
+        error("waitUntilGone not implemented for $transport")
+    }
+
+    /**
+     * Stable taxonomy name **and** message for a failed [waitUntilGone], the counterpart to
+     * [waitForNodeFailureCategory].
+     *
+     * The message is part of the contract, not decoration: an absence wait that times out is only
+     * actionable if it says which selector is still on screen, how long it waited, and how many
+     * nodes matched. Implementations return what the transport actually delivered — never a
+     * synthesised message — so a transport that flattens the diagnostics fails the corpus.
+     */
+    public fun waitUntilGoneFailure(
+        tag: String?,
+        text: String?,
+        timeoutMs: Long,
+    ): ContractWaitFailure = error("waitUntilGoneFailure not implemented for $transport")
+
+    /**
      * Optional screenshot probe. Return `null` if the transport/driver does not exercise screenshot
      * in this corpus level; non-null means bytes or a decoded image were obtained.
      */
@@ -124,14 +149,20 @@ public interface AutomatorContractDriver : AutoCloseable {
         get() = supportsFixtureParity
 
     /**
-     * When true, [waitForNodeFailureCategory] is implemented (agent + in-process). HTTP has no wait
-     * routes (#201 is agent-scoped).
+     * When true, [waitForNodeFailureCategory] and [waitUntilGone] are implemented (agent +
+     * in-process). HTTP has no wait routes at all (#201 is agent-scoped), so it stays false there.
      */
     public val supportsWaitTaxonomy: Boolean
         get() = false
 
     override fun close() {}
 }
+
+/**
+ * What a transport actually reported for a failed wait: the #199-style taxonomy [category] and the
+ * verbatim [message] the caller would see.
+ */
+public data class ContractWaitFailure(public val category: String, public val message: String)
 
 /** Lightweight screenshot proof without forcing BufferedImage on every driver. */
 public data class ScreenshotProbe(public val byteCount: Int, public val formatHint: String = "png")
@@ -339,6 +370,25 @@ public object AutomatorContractCorpus {
                     }
                     "category=$category"
                 }
+            // #438 absence wait, mirror image of the above: a selector that matches nothing is
+            // already gone, so the wait must return rather than burn its budget. Runs headless
+            // too — an empty tree is the strongest possible "nothing matches".
+            out +=
+                scenario("wait-until-gone-absent-selector", driver.transport) {
+                    val budgetMs = ABSENT_SELECTOR_BUDGET_MS
+                    val startedAt = System.nanoTime()
+                    driver.waitUntilGone(
+                        tag = "agent-fixture-never-appears",
+                        text = null,
+                        timeoutMs = budgetMs,
+                    )
+                    val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+                    check(elapsedMs < budgetMs) {
+                        "waitUntilGone waited ${elapsedMs}ms for a selector that never matched; " +
+                            "it should return on the first poll"
+                    }
+                    "elapsedMs=$elapsedMs"
+                }
         }
         return out
     }
@@ -373,17 +423,7 @@ public object AutomatorContractCorpus {
                 check(nodes.isNotEmpty()) { "findByContentDescription empty" }
                 "matched=${nodes.size}"
             }
-        out +=
-            scenario("wait-for-node-present-tag", driver.transport) {
-                val key =
-                    driver.waitForNode(
-                        tag = ContractFixtureTags.BUTTON,
-                        text = null,
-                        timeoutMs = 3_000,
-                    )
-                check(key.isNotBlank()) { "waitForNode returned blank key" }
-                "key=$key"
-            }
+        out += fixtureWaitScenarios(driver)
         // #364: raise the window hosting a known node before further Robot input.
         out +=
             scenario("focus-window-fixture-button", driver.transport) {
@@ -452,6 +492,62 @@ public object AutomatorContractCorpus {
             }
         return out
     }
+
+    /**
+     * Fixture-backed wait scenarios: `waitForNode` finds a node that is there (#201), and
+     * `waitUntilGone` refuses to call one that is still there gone (#438).
+     *
+     * Split out of [fixtureParityScenarios] so each stays readable — the wait pair asserts on
+     * timing and failure diagnostics, the rest asserts on selectors and input verbs.
+     */
+    private fun fixtureWaitScenarios(driver: AutomatorContractDriver): List<ScenarioResult> {
+        val out = mutableListOf<ScenarioResult>()
+        out +=
+            scenario("wait-for-node-present-tag", driver.transport) {
+                val key =
+                    driver.waitForNode(
+                        tag = ContractFixtureTags.BUTTON,
+                        text = null,
+                        timeoutMs = 3_000,
+                    )
+                check(key.isNotBlank()) { "waitForNode returned blank key" }
+                "key=$key"
+            }
+        // #438: the fixture button is permanently on screen, so an absence wait for it must time
+        // out — and the diagnostics are the deliverable. Asserting the message (not just the
+        // taxonomy) is what stops a transport from flattening "2 nodes matching tag=… are still
+        // there" into a bare "timed out" on its way across the boundary.
+        out +=
+            scenario("wait-until-gone-timeout-diagnostics", driver.transport) {
+                val timeoutMs = 400L
+                val failure =
+                    driver.waitUntilGoneFailure(
+                        tag = ContractFixtureTags.BUTTON,
+                        text = null,
+                        timeoutMs = timeoutMs,
+                    )
+                check(failure.category == "timeout") {
+                    "expected timeout taxonomy, got category=${failure.category}"
+                }
+                val missing = buildList {
+                    if (!failure.message.contains(ContractFixtureTags.BUTTON)) add("selector")
+                    if (!failure.message.contains("${timeoutMs}ms")) add("timeout")
+                    if (!STILL_PRESENT_COUNT.containsMatchIn(failure.message)) add("count")
+                }
+                check(missing.isEmpty()) {
+                    "absence diagnostics lost ${missing.joinToString()} crossing the transport: " +
+                        failure.message
+                }
+                "category=${failure.category}"
+            }
+        return out
+    }
+
+    /** Budget for the absent-selector scenario: the wait must return long before this. */
+    private const val ABSENT_SELECTOR_BUDGET_MS: Long = 5_000
+
+    /** Matches the "N node(s)" clause every `waitUntilGone` timeout must carry. */
+    private val STILL_PRESENT_COUNT = Regex("""\d+ node\(s\)""")
 
     private inline fun scenario(
         id: String,
