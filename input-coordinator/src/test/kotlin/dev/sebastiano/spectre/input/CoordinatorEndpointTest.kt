@@ -162,4 +162,60 @@ class CoordinatorEndpointTest {
 
         assertTrue(failure.message.orEmpty().contains("owner-only"))
     }
+
+    @Test
+    fun `an endpoint whose directory is not the socket's parent is rejected`() {
+        // The owner-only guard protects the socket's parent, but the election lock and recovery
+        // ledger live in `directory`. If the two could differ, a caller-supplied endpoint could
+        // route coordinator state through a directory nothing checked.
+        val failure =
+            assertFailsWith<IllegalArgumentException> {
+                CoordinatorEndpoint(
+                    directory = temporaryDirectory.resolve("elsewhere"),
+                    socketPath = temporaryDirectory.resolve("coordinator").resolve("input.sock"),
+                )
+            }
+
+        assertTrue(failure.message.orEmpty().contains("parent"), failure.message)
+    }
+
+    @Test
+    fun `an endpoint whose directory is the socket's parent is accepted`() {
+        val directory = temporaryDirectory.resolve("coordinator")
+
+        val endpoint = CoordinatorEndpoint(directory, directory.resolve("input.sock"))
+
+        assertEquals(directory, endpoint.socketPath.parent)
+    }
+
+    @Test
+    fun `a directory spelled with a dot segment names the socket's parent`() {
+        // Raised by Codex on #486. `.` always names the directory it sits in, whatever symbolic
+        // links are in the path, so these two spell one directory -- but `socketPath.parent` has
+        // no `.` element and `directory` keeps it, so the endpoint was refused.
+        val directory = temporaryDirectory.resolve(".")
+        val socketPath = temporaryDirectory.resolve("input.sock")
+
+        val endpoint = CoordinatorEndpoint(directory = directory, socketPath = socketPath)
+
+        assertEquals(directory, endpoint.directory, "the caller's spelling is kept as given")
+    }
+
+    @Test
+    fun `a fallback socket candidate keeps the endpoint constructible`() {
+        // InputCoordinatorClient.connect rebuilds the endpoint as `copy(socketPath = located.path)`
+        // once a coordinator answers on a fallback path (#462), and copy re-runs the check above.
+        // Candidates are generation-suffixed siblings, so they keep the socket's parent and this
+        // passes today; pinning it means a change to candidate generation fails here rather than
+        // silently turning every fallback connect into a throw.
+        val endpoint =
+            CoordinatorEndpoint(
+                directory = temporaryDirectory,
+                socketPath = temporaryDirectory.resolve("input.sock"),
+            )
+
+        CoordinatorSocketCandidates.candidates(endpoint.socketPath).forEach { candidate ->
+            assertEquals(temporaryDirectory, endpoint.copy(socketPath = candidate).directory)
+        }
+    }
 }

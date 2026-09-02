@@ -61,6 +61,75 @@ class SpectreCliTest {
     }
 
     @Test
+    fun `wait-until-gone sends the absence wait and prints stable JSON completion output`() {
+        val output = StringBuilder()
+        val cli =
+            SpectreCli(
+                request = { request ->
+                    assertEquals(
+                        DaemonRequest.WaitUntilGone(
+                            sessionId = "pid-42",
+                            tag = "popup.body",
+                            text = null,
+                            timeoutMs = 2_000,
+                        ),
+                        request,
+                    )
+                    DaemonResponse.Completed("pid-42")
+                },
+                output = output,
+            )
+
+        assertEquals(
+            0,
+            cli.run(
+                listOf(
+                    "wait-until-gone",
+                    "pid-42",
+                    "--tag",
+                    "popup.body",
+                    "--timeout-ms",
+                    "2000",
+                    "--json",
+                )
+            ),
+        )
+        assertEquals("{\"version\":1,\"id\":\"pid-42\"}\n", output.toString())
+    }
+
+    @Test
+    fun `wait-until-gone reports the still-present diagnostics on timeout`() {
+        val output = StringBuilder()
+        val errorOutput = StringBuilder()
+        val diagnostics =
+            """waitUntilGone timed out after 400ms: 2 node(s) matching tag="popup.body" """ +
+                "still present in tracked windows"
+        val cli =
+            SpectreCli(
+                request = {
+                    DaemonResponse.Error(
+                        code = DaemonErrorCode.Timeout,
+                        message = diagnostics,
+                        category = "timeout",
+                    )
+                },
+                output = output,
+                errorOutput = errorOutput,
+            )
+
+        // Timeout shares the daemon-failure exit code with the other wait verbs (5), so scripts
+        // keep one "the daemon said no" branch; the diagnostics live in the message.
+        assertEquals(
+            5,
+            cli.run(
+                listOf("wait-until-gone", "pid-42", "--tag", "popup.body", "--timeout-ms", "400")
+            ),
+        )
+        assertEquals("", output.toString())
+        assertEquals("Spectre daemon error: $diagnostics\n", errorOutput.toString())
+    }
+
+    @Test
     fun `screenshot writes PNG output and reports its stable JSON path`() {
         val output = StringBuilder()
         val imagePath = Files.createTempFile("spectre-cli-test", ".png")

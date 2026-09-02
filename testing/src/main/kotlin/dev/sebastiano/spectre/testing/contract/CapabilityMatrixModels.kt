@@ -54,6 +54,8 @@ public enum class AutomatorOperation {
     Capture,
     WindowIdentities,
     WaitForNode,
+    /** Wait until nothing matches a tag/text selector — absence counterpart to [WaitForNode]. */
+    WaitUntilGone,
     WaitForVisualIdle,
     WaitForIdle,
     RegisterIdlingResource,

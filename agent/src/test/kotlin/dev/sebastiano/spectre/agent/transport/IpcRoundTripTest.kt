@@ -585,7 +585,8 @@ class IpcRoundTripTest {
             is AgentRequest.TypeText,
             is AgentRequest.Cancel,
             is AgentRequest.WaitForVisualIdle,
-            is AgentRequest.WaitForIdle -> AgentResponse.Ok
+            is AgentRequest.WaitForIdle,
+            is AgentRequest.WaitUntilGone -> AgentResponse.Ok
             AgentRequest.PrintTree -> AgentResponse.TreeDump("")
             is AgentRequest.Screenshot -> AgentResponse.Screenshot(ByteArray(0))
             is AgentRequest.Capture ->

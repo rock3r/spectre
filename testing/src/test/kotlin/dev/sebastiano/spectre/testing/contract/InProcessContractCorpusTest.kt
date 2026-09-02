@@ -107,6 +107,8 @@ private class InProcessContractDriver(private val automator: ComposeAutomator) :
 
     override val supportsWaitTaxonomy: Boolean = true
 
+    override val supportsAbsenceWait: Boolean = true
+
     override fun waitForNode(tag: String?, text: String?, timeoutMs: Long): String = runBlocking {
         automator
             .waitForNode(tag = tag, text = text, timeout = timeoutMs.milliseconds)
@@ -131,6 +133,30 @@ private class InProcessContractDriver(private val automator: ComposeAutomator) :
                 return "timeout"
             }
             throw ex
+        }
+    }
+
+    override fun waitUntilGone(tag: String?, text: String?, timeoutMs: Long) {
+        runBlocking {
+            automator.waitUntilGone(tag = tag, text = text, timeout = timeoutMs.milliseconds)
+        }
+    }
+
+    override fun waitUntilGoneFailure(
+        tag: String?,
+        text: String?,
+        timeoutMs: Long,
+    ): ContractWaitFailure {
+        try {
+            waitUntilGone(tag = tag, text = text, timeoutMs = timeoutMs)
+            error("waitUntilGone was expected to time out")
+        } catch (ex: IllegalStateException) {
+            // In-process has no wire taxonomy; the absence timeout is an IllegalStateException
+            // whose message carries the diagnostics. Report the message verbatim so the corpus
+            // sees exactly what a caller would.
+            val message = ex.message.orEmpty()
+            if (!message.contains("timed out")) throw ex
+            return ContractWaitFailure(category = "timeout", message = message)
         }
     }
 

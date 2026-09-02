@@ -35,6 +35,11 @@ on:
       # (#455). Without this path, a Windows-only fix in `:cli` cannot be verified before
       # merge and `:cli` regressions reach main before CI sees them.
       - "cli/**"
+      # The input coordinator's endpoint layout is OS-specific (`/tmp` resolves to
+      # `/private/tmp` on macOS, `%LOCALAPPDATA%\Temp` on Windows) and its symlink guards can
+      # only be exercised against the real layout, so changes there need the full OS matrix.
+      - "input-coordinator/**"
+      - "input-coordinator-server/**"
       # `buildSrc/` carries Windows-conditional *build* logic, not just Windows-conditional
       # tests: `VerifyCliDistributionZip.verifyLauncher` shells out through cmd.exe to run the
       # packaged `spectre.bat` under a scrubbed PATH, and only that branch can break. #475 was
@@ -65,6 +70,8 @@ on:
       # (#455). Without this path, a Windows-only fix in `:cli` cannot be verified before
       # merge and `:cli` regressions reach main before CI sees them.
       - "cli/**"
+      - "input-coordinator/**"
+      - "input-coordinator-server/**"
       # `buildSrc/` carries Windows-conditional *build* logic, not just Windows-conditional
       # tests: `VerifyCliDistributionZip.verifyLauncher` shells out through cmd.exe to run the
       # packaged `spectre.bat` under a scrubbed PATH, and only that branch can break. #475 was

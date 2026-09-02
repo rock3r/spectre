@@ -441,6 +441,22 @@ public object CapabilityMatrix {
         )
         add(
             CapabilityCell(
+                operation = AutomatorOperation.WaitUntilGone,
+                transport = AutomatorTransport.InProcess,
+                platform = PlatformPrerequisite.AnyJvm,
+                state = CellState.Supported,
+                evidence =
+                    listOf(
+                        coreEvidence(
+                            "core-wait-until-gone",
+                            "WaitUntilGoneTest.kt",
+                            "Core waitUntilGone unit tests, including the timeout diagnostics",
+                        )
+                    ),
+            )
+        )
+        add(
+            CapabilityCell(
                 operation = AutomatorOperation.RegisterIdlingResource,
                 transport = AutomatorTransport.InProcess,
                 platform = PlatformPrerequisite.AnyJvm,
@@ -478,6 +494,7 @@ public object CapabilityMatrix {
         for (op in
             listOf(
                 AutomatorOperation.WaitForNode,
+                AutomatorOperation.WaitUntilGone,
                 AutomatorOperation.FindByText,
                 AutomatorOperation.FindByRole,
                 AutomatorOperation.FindByContentDescription,
@@ -554,7 +571,26 @@ public object CapabilityMatrix {
                 AutomatorOperation.Swipe,
                 AutomatorOperation.ScrollWheel,
                 AutomatorOperation.PressKey,
+            )) {
+            add(
+                CapabilityCell(
+                    operation = op,
+                    transport = AutomatorTransport.Http,
+                    platform = PlatformPrerequisite.AnyJvm,
+                    state = CellState.NotYetCiExecuted,
+                    rationale =
+                        "HTTP routes exist (#203); display-backed HTTP fixture corpus still open.",
+                )
+            )
+        }
+        // Waits are a different gap from the input verbs above: `SpectreServer` exposes no wait
+        // route at all, so these are unrouted rather than routed-but-unexercised. `waitUntilGone`
+        // (#438) inherits `waitForNode`'s position exactly — it is not added to a transport that
+        // carries no waits.
+        for (op in
+            listOf(
                 AutomatorOperation.WaitForNode,
+                AutomatorOperation.WaitUntilGone,
                 AutomatorOperation.WaitForVisualIdle,
             )) {
             add(
@@ -564,7 +600,8 @@ public object CapabilityMatrix {
                     platform = PlatformPrerequisite.AnyJvm,
                     state = CellState.NotYetCiExecuted,
                     rationale =
-                        "HTTP routes exist (#201–#203); display-backed HTTP fixture corpus still open.",
+                        "The HTTP transport has no wait routes (#201 was agent-scoped); use " +
+                            "in-process or agent attach until HTTP waits are designed.",
                 )
             )
         }

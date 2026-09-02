@@ -150,6 +150,7 @@ private class RootCommand(
             FindCommand(request, output),
             FindByTextCommand(request, output),
             WaitForNodeCommand(request, output),
+            WaitUntilGoneCommand(request, output),
             WaitForVisualIdleCommand(request, output),
             WaitCommand(request, output),
             ClickCommand(request, output),
@@ -753,6 +754,47 @@ private class WaitForNodeCommand(
                     "${node.key} ${node.testTag ?: node.role ?: "Node"}"
                 }
             )
+        output.appendLine()
+    }
+}
+
+/**
+ * `spectre wait-until-gone <session> --tag/--text` — wait for absence (#438).
+ *
+ * The absence counterpart to `wait-for-node`: it returns once nothing matches, and on timeout the
+ * daemon error already names the selector, the timeout, and how many matching nodes were still
+ * present, so the command lets that message through rather than restating it.
+ */
+@OptIn(ExperimentalSpectreAgentApi::class)
+private class WaitUntilGoneCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "wait-until-gone") {
+    private val sessionId: String by argument()
+    private val tag: String? by option("--tag")
+    private val text: String? by option("--text")
+    private val timeoutMs: Long by option("--timeout-ms").long().default(5_000)
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun run() {
+        val completedSessionId =
+            when (
+                val response =
+                    request(
+                        DaemonRequest.WaitUntilGone(
+                            sessionId = sessionId,
+                            tag = tag,
+                            text = text,
+                            timeoutMs = timeoutMs,
+                        )
+                    )
+            ) {
+                is DaemonResponse.Completed -> response.sessionId
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
+                else -> error("Daemon returned an unexpected response to wait-until-gone")
+            }
+        if (json) output.append(CLI_JSON.encodeToString(CompletionJson(id = completedSessionId)))
+        else output.append("Selector gone for session $completedSessionId.")
         output.appendLine()
     }
 }

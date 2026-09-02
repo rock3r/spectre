@@ -31,9 +31,12 @@ from smoke_lib import (  # noqa: E402
     RESULT_PASS,
     ScenarioResult,
     apply_linux_toolchain_path,
+    assert_junit_testcases_passed,
     assert_linux_portal_tokens_captured,
     assert_mcp_fixture_e2e_executed,
     assert_pointer_move_live_executed,
+    input_coordination_missing_surface,
+    headed_robot_cell,
     WAYLAND_PORTAL_WARMUP_TOKEN_KEYS,
     linux_portal_token_path,
     build_report,
@@ -296,6 +299,15 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-recording",
         action="store_true",
         help="Skip host native recording smoke (records hard n/a with reason)",
+    )
+    parser.add_argument(
+        "--headed-robot-evidence",
+        default=None,
+        help=(
+            "Operator attestation that headed two-JVM Robot contention was run on this desktop "
+            "(e.g. a note or run URL). Without it the hard input-coord-headed-robot cell stays "
+            "n/a with a blocking reason; the automated coordinator cells never satisfy it."
+        ),
     )
     parser.add_argument(
         "--preflight-only",
@@ -579,6 +591,144 @@ def main(argv: list[str] | None = None) -> int:
                     log=pointer.log,
                 )
         add(pointer)
+
+    # --- experimental desktop input coordination (#459 delta hard cells) ---
+    # Deterministic coordinator protocol + forked-process + JUnit-isolation proofs for the
+    # spectre-release input-coordination gate. These do not need a display, so they stay hard on
+    # macOS, Windows, and Linux Xorg/Xvfb (Experimental status does not make them soft — see
+    # docs/RELEASE-SMOKE.md "Experimental input coordination release gate"). They are not Robot
+    # cells, so they run with the plain scenario env, never the xvfb/robot wrapper.
+    coordination_missing = input_coordination_missing_surface(ROOT)
+    server_results = ROOT / "input-coordinator-server" / "build" / "test-results" / "test"
+    testing_results = ROOT / "testing" / "build" / "test-results" / "test"
+    coordination_cells = (
+        (
+            "input-coord-contention",
+            "Two independent client JVMs take one desktop lease without interleaving",
+            ":input-coordinator-server:test",
+            (
+                # The real gate claim: two separate client processes, not two sessions in one JVM.
+                "*TwoClientJvmContentionTest",
+                "*LocalCoordinatorServerTest.two independent clients receive one desktop "
+                "lease in FIFO order",
+                "*CoordinatorProcessLauncherTest.forked coordinator accepts a real client lease",
+            ),
+            server_results,
+            (
+                "two independent client JVMs never hold the desktop lease at the same time",
+                "two independent clients receive one desktop lease in FIFO order",
+                "forked coordinator accepts a real client lease",
+            ),
+        ),
+        (
+            "input-coord-cancellation",
+            "Cancelled queued waiter does not strand the next waiter",
+            ":input-coordinator-server:test",
+            (
+                "*LocalCoordinatorServerTest.interrupting a queued acquisition removes it "
+                "without disturbing FIFO",
+            ),
+            server_results,
+            ("interrupting a queued acquisition removes it without disturbing FIFO",),
+        ),
+        (
+            "input-coord-quarantine",
+            "Crashed holder stays fenced/quarantined without stale ownership",
+            ":input-coordinator-server:test",
+            (
+                "*LocalCoordinatorServerTest.successor quarantines a crashed holder until "
+                "exact-id unsafe recovery",
+            ),
+            server_results,
+            ("successor quarantines a crashed holder until exact-id unsafe recovery",),
+        ),
+        (
+            "input-coord-revoke",
+            "Exact-ID normal revoke cannot affect a newer lease",
+            ":input-coordinator-server:test",
+            (
+                "*LocalCoordinatorServerTest.exact-id revoke rejects stale observation and "
+                "fences the actual holder",
+            ),
+            server_results,
+            ("exact-id revoke rejects stale observation and fences the actual holder",),
+        ),
+        (
+            "input-coord-forced-recovery",
+            "Explicit forced recovery reports unsafeTakeover and advances the queue",
+            ":input-coordinator-server:test",
+            ("*LocalCoordinatorServerTest.explicit force advances FIFO and reports unsafe takeover",),
+            server_results,
+            ("explicit force advances FIFO and reports unsafe takeover",),
+        ),
+        (
+            "input-coord-junit-pertest",
+            "Parallel JUnit PerTest serialises factory/body/evidence/teardown",
+            ":testing:test",
+            (
+                # Lifecycle test proves the lease spans factory/body/evidence/teardown; the
+                # parallel test proves concurrent invocations cannot overlap. Both are required.
+                "*InputIsolationLifecycleTest",
+                "*ParallelPerTestInputIsolationTest",
+            ),
+            testing_results,
+            (
+                "InputIsolationLifecycleTest",
+                "concurrent per-test invocations never hold the desktop lease at the same time",
+                # Named explicitly: the class-level filter would still run without it, so gating
+                # only the class name would let the evidence half of the bullet silently vanish.
+                "the per-test lease is still held while failure evidence is captured",
+            ),
+        ),
+    )
+    for scenario_id, name, task, filters, results_dir, needles in coordination_cells:
+        if coordination_missing is not None:
+            # Fail, not a reasoned n/a: hard_failures() ignores the latter, so a deleted or
+            # renamed test file would turn every coordination cell green by omission.
+            add(
+                scenario_result(
+                    scenario_id,
+                    name=name,
+                    result=RESULT_FAIL,
+                    detail=coordination_missing,
+                    hard=True,
+                )
+            )
+            continue
+        tests_args: list[str] = []
+        for test_filter in filters:
+            tests_args += ["--tests", test_filter]
+        cell = run_scenario(
+            scenario_id,
+            name=name,
+            command=[gradle, task, *tests_args, *force],
+            cwd=ROOT,
+            timeout=600,
+            out_dir=out_dir,
+            env=scenario_env,
+            overall_deadline=overall_deadline,
+        )
+        if cell.result == RESULT_PASS:
+            try:
+                assert_junit_testcases_passed(results_dir, needles=needles, cell=scenario_id)
+            except RuntimeError as exc:
+                cell = scenario_result(
+                    scenario_id,
+                    name=name,
+                    result=RESULT_FAIL,
+                    seconds=cell.seconds,
+                    detail=str(exc),
+                    log=cell.log,
+                )
+        add(cell)
+
+    # --- headed two-JVM Robot contention (operator-run hard cell) ---
+    # SKILL.md requires *headed* two-JVM contention as a delta hard cell. Every cell above proves
+    # the coordinator lease is mutually exclusive across processes, but none constructs a
+    # RobotDriver, so they all pass headless and under SSH. Absent operator evidence this is a
+    # hard FAIL, not a reasoned n/a: hard_failures() ignores a reasoned n/a, so an n/a here would
+    # print "ALL HARD SCENARIOS PASSED" without the headed proof.
+    add(headed_robot_cell(args.headed_robot_evidence))
 
     # --- agent attach / corpus / inject / launch-and-attach ---
     for scenario_id, name, test_filter in (

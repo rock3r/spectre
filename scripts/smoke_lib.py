@@ -44,6 +44,30 @@ REQUIRED_SCENARIO_IDS: tuple[str, ...] = (
     "maven-local-consumer",
     "portal-token-warmup",
     "pointer-move",
+    # Experimental desktop input coordination (#459). Delta hard cells on macOS, Windows, and
+    # Linux Xorg/Xvfb per the spectre-release skill. The coordinator protocol/lifecycle tests are
+    # deterministic and display-independent, so these stay hard on every OS entrypoint (including
+    # Windows SSH) rather than n/a like the WGC/attach-screenshot cells.
+    "input-coord-contention",
+    "input-coord-cancellation",
+    "input-coord-quarantine",
+    "input-coord-revoke",
+    "input-coord-forced-recovery",
+    "input-coord-junit-pertest",
+    # Operator-run: the harness cannot drive two real Robot JVMs, and the coordinator-protocol
+    # cells above pass headless. Stays a hard cell so the headed claim needs a human signature.
+    "input-coord-headed-robot",
+)
+
+HEADED_ROBOT_SCENARIO_ID: str = "input-coord-headed-robot"
+HEADED_ROBOT_NAME: str = "Headed two-JVM Robot contention (operator-recorded)"
+
+# Deliberately blunt: a reader skimming a report must not mistake this row for "covered by the
+# automated cells". Both entrypoints emit this exact sentence; the contract tests pin it on each.
+HEADED_ROBOT_MISSING_EVIDENCE: str = (
+    "headed two-JVM Robot contention is operator-run on a real desktop and was NOT recorded; "
+    "the coordinator-protocol cells do not prove real-input non-interleaving, so this blocks "
+    "the tag on any OS whose release notes claim headed coordination"
 )
 
 RESULT_PASS = "pass"
@@ -1001,6 +1025,118 @@ def assert_pointer_move_live_executed(root: Path) -> None:
         raise RuntimeError(
             f"PointerMoveLive testcase not found in JUnit XML under {results_dir}"
         )
+
+
+# --- Experimental desktop input coordination (#459 release gate) ---------------------------------
+
+# The coordinator's own deterministic + forked-process tests are the automated proof for each
+# gate bullet in docs/RELEASE-SMOKE.md. They do not need a display, so the cells stay hard on
+# every OS. A missing test source means the experimental surface was removed or moved, which is a
+# regression the smoke must surface (mirrors pointer_move_api_skip_reason).
+_INPUT_COORDINATOR_SERVER_TEST_SOURCE = Path(
+    "input-coordinator-server/src/test/kotlin/dev/sebastiano/spectre/input/server/"
+    "LocalCoordinatorServerTest.kt"
+)
+_INPUT_ISOLATION_TEST_SOURCE = Path(
+    "testing/src/test/kotlin/dev/sebastiano/spectre/testing/InputIsolationLifecycleTest.kt"
+)
+
+
+def input_coordination_missing_surface(root: Path) -> str | None:
+    """Detail for a coordination cell whose proof source is gone, else None.
+
+    Absence is a **fail**, never a reasoned `n/a`. [hard_failures] ignores a reasoned `n/a`, so
+    returning one here would let deleting or renaming a single test file turn all six coordination
+    cells green-by-omission and still print "ALL HARD SCENARIOS PASSED" — the whole gate defeated
+    by a rename. Legitimately dropping the feature means affirmatively re-scoping the release:
+    remove the IDs from [REQUIRED_SCENARIO_IDS] and update docs/RELEASE-SMOKE.md, which is a
+    reviewable change rather than a silent one.
+    """
+    for source in (_INPUT_COORDINATOR_SERVER_TEST_SOURCE, _INPUT_ISOLATION_TEST_SOURCE):
+        if not (Path(root) / source).is_file():
+            return (
+                f"experimental input coordination proof missing ({source.name}); this is a "
+                "failure, not a skip: if the surface was genuinely removed or graduated, "
+                "re-scope the release by dropping the input-coord-* IDs from "
+                "REQUIRED_SCENARIO_IDS and updating docs/RELEASE-SMOKE.md"
+            )
+    return None
+
+
+def assert_junit_testcases_passed(
+    results_dir: Path,
+    *,
+    needles: Sequence[str],
+    cell: str,
+) -> None:
+    """Fail closed unless every named JUnit testcase actually executed and passed.
+
+    Gradle `--tests` exits 0 when a filter matches nothing or when every method assumption-skips,
+    so a hard coordination pass must prove the specific testcase ran (present, not `<skipped/>`,
+    and its testsuite reported no failures/errors). Mirrors assert_pointer_move_live_executed and
+    assert_mcp_fixture_e2e_executed.
+    """
+    results_dir = Path(results_dir)
+    if not results_dir.is_dir():
+        raise RuntimeError(
+            f"{cell} test results missing under {results_dir} (Gradle did not write JUnit XML)"
+        )
+    xml_files = sorted(results_dir.glob("TEST-*.xml"))
+    if not xml_files:
+        raise RuntimeError(f"{cell} produced no TEST-*.xml under {results_dir}")
+    for needle in needles:
+        found = False
+        for path in xml_files:
+            try:
+                raw = path.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                raise RuntimeError(f"unable to read {path}: {exc}") from exc
+            if needle not in raw:
+                continue
+            found = True
+            if "<skipped" in raw:
+                raise RuntimeError(
+                    f"{cell} testcase '{needle}' was skipped (assumption); hard pass "
+                    "requires the coordination test to execute"
+                )
+            for attr in ("failures", "errors"):
+                match = re.search(rf'{attr}="(\d+)"', raw)
+                if match and int(match.group(1)) > 0:
+                    raise RuntimeError(
+                        f"{cell} reported {attr}={match.group(1)} for '{needle}' in {path.name}"
+                    )
+            break
+        if not found:
+            raise RuntimeError(
+                f"{cell} testcase '{needle}' not found in JUnit XML under {results_dir}"
+            )
+
+
+def headed_robot_cell(evidence: str | None) -> ScenarioResult:
+    """Hard cell for the operator-recorded headed two-JVM Robot contention proof.
+
+    Absent evidence is a **fail**, not a reasoned `n/a`. [hard_failures] deliberately ignores an
+    `n/a` that carries a reason, so recording this as `n/a` would let the runner exit 0 and print
+    "ALL HARD SCENARIOS PASSED" without the headed proof the release gate requires — the exact
+    hole a reasoned skip is supposed to prevent. The automated `input-coord-*` cells never satisfy
+    this: they construct no RobotDriver and pass headless and under SSH.
+    """
+    recorded = (evidence or "").strip()
+    if recorded:
+        return scenario_result(
+            HEADED_ROBOT_SCENARIO_ID,
+            name=HEADED_ROBOT_NAME,
+            result=RESULT_PASS,
+            detail=f"operator evidence: {recorded}",
+            hard=True,
+        )
+    return scenario_result(
+        HEADED_ROBOT_SCENARIO_ID,
+        name=HEADED_ROBOT_NAME,
+        result=RESULT_FAIL,
+        detail=HEADED_ROBOT_MISSING_EVIDENCE,
+        hard=True,
+    )
 
 
 def packaged_cli_executable(root: Path, system: str | None = None, machine: str | None = None) -> Path:

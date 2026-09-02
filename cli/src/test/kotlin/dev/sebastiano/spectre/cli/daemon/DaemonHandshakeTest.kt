@@ -115,6 +115,14 @@ class DaemonHandshakeTest {
                 DaemonRequest.WaitForReloadSettled(sessionId = "session-1234")
             ),
         )
+        // waitUntilGone (#438) is a new discriminator: an older daemon would reject the frame
+        // rather than answer it, so it floors at its own minor.
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 13),
+            DaemonProtocol.minimumDaemonVersion(
+                DaemonRequest.WaitUntilGone(sessionId = "session-1234", tag = "popup.body")
+            ),
+        )
     }
 
     @Test

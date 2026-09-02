@@ -48,14 +48,18 @@ out of scope.
    a testing affordance for the same machine and the same user, not a remote-control
    protocol. See [Agent attach](guide/agent.md).
 
-5. **The input coordinator is a same-user cooperative boundary.** Its canonical endpoint lives in
-   a short owner-checked directory and rejects symlink/path substitution. On POSIX filesystems it
-   enforces directory mode 0700 and socket mode 0600. On Windows it uses the current user's
-   `LOCALAPPDATA` and inherits the existing directory ACL; unlike the agent transport, the
-   coordinator layer does not replace that ACL with an owner-only one. Java Unix-domain sockets do
-   not expose portable peer credentials, so requester labels are self-reported attribution, not
-   authentication. The coordinator never records typed text, clipboard contents, selectors,
-   credentials, or prompts.
+5. **The input coordinator is a same-user cooperative boundary.** Its canonical endpoint lives in a
+   short owner-checked directory and rejects symlink/path substitution: neither the endpoint
+   directory nor any ancestor of it may be a symbolic link, with macOS's root-level `/tmp`, `/var`,
+   and `/etc` aliases into `/private` as the only exemption. The default endpoint is canonical
+   before it is prepared. A caller-supplied endpoint must be an absolute path beneath a directory
+   the caller already trusts: Spectre detects substitution there but does not verify who owns the
+   ancestors. On POSIX filesystems it enforces directory mode 0700 and socket mode 0600. On Windows
+   it uses the current user's `LOCALAPPDATA` and inherits the existing directory ACL; unlike the
+   agent transport, the coordinator layer does not replace that ACL with an owner-only one. Java
+   Unix-domain sockets do not expose portable peer credentials, so requester labels are
+   self-reported attribution, not authentication. The coordinator never records typed text,
+   clipboard contents, selectors, credentials, or prompts.
 
    Revocation requires the exact observed lease ID. Normal revoke fences the owner and waits for
    cleanup acknowledgement. Session EOF also fences a live holder rather than advancing FIFO,
