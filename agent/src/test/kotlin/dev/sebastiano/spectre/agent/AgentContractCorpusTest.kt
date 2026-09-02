@@ -309,6 +309,8 @@ class AgentContractCorpusTest {
 
         override val supportsWaitTaxonomy: Boolean = true
 
+        override val supportsAbsenceWait: Boolean = true
+
         override fun waitForNode(tag: String?, text: String?, timeoutMs: Long): String =
             automator.waitForNode(tag = tag, text = text, timeoutMs = timeoutMs).key
 

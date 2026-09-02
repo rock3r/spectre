@@ -149,10 +149,23 @@ public interface AutomatorContractDriver : AutoCloseable {
         get() = supportsFixtureParity
 
     /**
-     * When true, [waitForNodeFailureCategory] and [waitUntilGone] are implemented (agent +
-     * in-process). HTTP has no wait routes at all (#201 is agent-scoped), so it stays false there.
+     * When true, [waitForNodeFailureCategory] is implemented (agent + in-process). HTTP has no wait
+     * routes (#201 is agent-scoped).
      */
     public val supportsWaitTaxonomy: Boolean
+        get() = false
+
+    /**
+     * When true, [waitUntilGone] and [waitUntilGoneFailure] are implemented (#438).
+     *
+     * Deliberately its own gate rather than folded into [supportsWaitTaxonomy]. That flag's
+     * published contract promised only [waitForNodeFailureCategory], so a driver that already sets
+     * it true — including one outside this repo — would suddenly be asked for an absence wait it
+     * never claimed and fail the corpus on the default `error(...)` below. Defaulting to false
+     * keeps upgrading `:testing` a no-op for those drivers, the same compatibility care the
+     * deprecated [supportsExtendedParity] alias exists for.
+     */
+    public val supportsAbsenceWait: Boolean
         get() = false
 
     override fun close() {}
@@ -370,9 +383,12 @@ public object AutomatorContractCorpus {
                     }
                     "category=$category"
                 }
-            // #438 absence wait, mirror image of the above: a selector that matches nothing is
-            // already gone, so the wait must return rather than burn its budget. Runs headless
-            // too — an empty tree is the strongest possible "nothing matches".
+        }
+        if (driver.supportsAbsenceWait) {
+            // #438 absence wait, mirror image of the taxonomy scenario above: a selector that
+            // matches nothing is already gone, so the wait must return rather than burn its
+            // budget. Runs headless too — an empty tree is the strongest possible "nothing
+            // matches".
             out +=
                 scenario("wait-until-gone-absent-selector", driver.transport) {
                     val budgetMs = ABSENT_SELECTOR_BUDGET_MS
@@ -517,6 +533,7 @@ public object AutomatorContractCorpus {
         // out — and the diagnostics are the deliverable. Asserting the message (not just the
         // taxonomy) is what stops a transport from flattening "2 nodes matching tag=… are still
         // there" into a bare "timed out" on its way across the boundary.
+        if (!driver.supportsAbsenceWait) return out
         out +=
             scenario("wait-until-gone-timeout-diagnostics", driver.transport) {
                 val timeoutMs = 400L

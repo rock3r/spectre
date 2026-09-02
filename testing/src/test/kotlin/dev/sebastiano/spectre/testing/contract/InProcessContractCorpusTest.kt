@@ -107,6 +107,8 @@ private class InProcessContractDriver(private val automator: ComposeAutomator) :
 
     override val supportsWaitTaxonomy: Boolean = true
 
+    override val supportsAbsenceWait: Boolean = true
+
     override fun waitForNode(tag: String?, text: String?, timeoutMs: Long): String = runBlocking {
         automator
             .waitForNode(tag = tag, text = text, timeout = timeoutMs.milliseconds)
