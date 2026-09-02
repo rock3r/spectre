@@ -155,7 +155,7 @@ class OwnerOnlyEndpointProtectionAncestorTest {
                 .resolve("tmp")
                 .createSymbolicLinkPointingTo(Path.of("private", "tmp"))
 
-        assertTrue(isTrustedPrivateAlias(alias, root = temporaryDirectory))
+        assertTrue(isTrustedPrivateAlias(alias, root = temporaryDirectory, macOs = true))
     }
 
     @Test
@@ -166,7 +166,7 @@ class OwnerOnlyEndpointProtectionAncestorTest {
         Files.createDirectories(temporaryDirectory.resolve("sub").resolve("private").resolve("tmp"))
         val pointingElsewhere =
             temporaryDirectory.resolve("tmp").createSymbolicLinkPointingTo(Path.of("elsewhere"))
-        val differentName =
+        val mismatchedTarget =
             temporaryDirectory
                 .resolve("var")
                 .createSymbolicLinkPointingTo(Path.of("private", "tmp"))
@@ -177,10 +177,79 @@ class OwnerOnlyEndpointProtectionAncestorTest {
                 .createSymbolicLinkPointingTo(Path.of("private", "tmp"))
         val plainDirectory = temporaryDirectory.resolve("private")
 
-        assertFalse(isTrustedPrivateAlias(pointingElsewhere, root = temporaryDirectory))
-        assertFalse(isTrustedPrivateAlias(differentName, root = temporaryDirectory))
-        assertFalse(isTrustedPrivateAlias(belowTheRoot, root = temporaryDirectory))
-        assertFalse(isTrustedPrivateAlias(plainDirectory, root = temporaryDirectory))
+        assertFalse(isTrustedPrivateAlias(pointingElsewhere, temporaryDirectory, macOs = true))
+        assertFalse(isTrustedPrivateAlias(mismatchedTarget, temporaryDirectory, macOs = true))
+        assertFalse(isTrustedPrivateAlias(belowTheRoot, temporaryDirectory, macOs = true))
+        assertFalse(isTrustedPrivateAlias(plainDirectory, temporaryDirectory, macOs = true))
+    }
+
+    @Test
+    fun `the private alias exemption does not apply off macOS`() {
+        // #483 review: on Windows with Developer Mode, an ordinary user can create an entry at a
+        // drive root, so a planted `C:\tmp -> private\tmp` would otherwise read as trusted. Only
+        // Darwin ships these aliases, so only Darwin honours them.
+        assumeCanCreateSymbolicLinks()
+        Files.createDirectories(temporaryDirectory.resolve("private").resolve("tmp"))
+        val alias =
+            temporaryDirectory
+                .resolve("tmp")
+                .createSymbolicLinkPointingTo(Path.of("private", "tmp"))
+
+        assertFalse(isTrustedPrivateAlias(alias, root = temporaryDirectory, macOs = false))
+    }
+
+    @Test
+    fun `only the aliases macOS actually ships are trusted`() {
+        // The exemption is a fixed list, not a path shape: /tmp, /var and /etc are what Darwin
+        // links into /private, and nothing else gets the same pass.
+        assumeCanCreateSymbolicLinks()
+        Files.createDirectories(temporaryDirectory.resolve("private").resolve("opt"))
+        val undocumented =
+            temporaryDirectory
+                .resolve("opt")
+                .createSymbolicLinkPointingTo(Path.of("private", "opt"))
+
+        assertFalse(isTrustedPrivateAlias(undocumented, root = temporaryDirectory, macOs = true))
+    }
+
+    @Test
+    fun `every macOS root alias is trusted`() {
+        assumeCanCreateSymbolicLinks()
+        listOf("tmp", "var", "etc").forEach { name ->
+            Files.createDirectories(temporaryDirectory.resolve("private").resolve(name))
+            val alias =
+                temporaryDirectory
+                    .resolve(name)
+                    .createSymbolicLinkPointingTo(Path.of("private", name))
+
+            assertTrue(
+                isTrustedPrivateAlias(alias, root = temporaryDirectory, macOs = true),
+                "/$name is a real Darwin alias and must stay usable",
+            )
+        }
+    }
+
+    @Test
+    fun `a symbolic link at the first existing ancestor is rejected before anything is created`() {
+        // #483 review: the parent walk used to stop at the first existing component without
+        // validating it, so a link that appeared there after the ancestor check was followed by
+        // the endpoint directory's own createDirectory. Every component is now checked immediately
+        // before it is descended into.
+        assumeCanCreateSymbolicLinks()
+        val target = Files.createDirectory(temporaryDirectory.resolve("target"))
+        val boundary = temporaryDirectory.resolve("boundary").createSymbolicLinkPointingTo(target)
+        val socket = boundary.resolve(ENDPOINT_DIRECTORY_NAME).resolve("input.sock")
+
+        val failure =
+            assertFailsWith<IOException> {
+                OwnerOnlyEndpointProtection.forPath(socket).prepareDirectory(socket)
+            }
+
+        assertTrue(failure.message.orEmpty().contains("symbolic link"), failure.message)
+        assertFalse(
+            Files.exists(target.resolve(ENDPOINT_DIRECTORY_NAME)),
+            "the endpoint directory must not be created through the link",
+        )
     }
 
     /**
