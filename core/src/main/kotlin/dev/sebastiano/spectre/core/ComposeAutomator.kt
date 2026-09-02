@@ -889,6 +889,10 @@ private constructor(
      * decide, nothing more. That is the same discipline the [AutomatorTree]-only receiver is
      * pointing at, from the other direction (Codex on #489).
      *
+     * Unlike [waitForNode] and [waitUntilGone], this verb is in-process only: [condition] is a
+     * lambda, which does not cross a process boundary, so there is no CLI, MCP, or agent-attach
+     * equivalent. Remote callers phrase the barrier as a selector wait instead.
+     *
      * **Scope: Spectre-observable state only.** [condition] is a lambda on [AutomatorTree], and
      * that receiver is the whole point: what this verb waits on is the semantics tree. Kotlin
      * closures can of course capture whatever is in scope, so this is a boundary the API declines

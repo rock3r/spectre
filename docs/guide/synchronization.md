@@ -170,6 +170,11 @@ automator.waitUntil(description = "the secondary window is being tracked") {
 For a single node appearing or disappearing, `waitForNode` and `waitUntilGone` say what
 you mean with less ceremony — use those.
 
+Unlike those two, `waitUntil` is **in-process only**. Its condition is a Kotlin lambda, and
+a lambda does not cross a process boundary, so there is no CLI, MCP, or agent-attach
+equivalent — see the [capability matrix](capability-matrix.md) for what each transport
+reaches. Over a transport, phrase the barrier as a selector wait instead.
+
 ### It waits on the UI, not on your program
 
 `waitUntil` is scoped to what Spectre can see: the semantics tree it hands your
