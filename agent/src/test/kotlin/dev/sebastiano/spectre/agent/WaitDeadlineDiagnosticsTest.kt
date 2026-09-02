@@ -10,6 +10,7 @@ import dev.sebastiano.spectre.agent.transport.IpcServer
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import kotlin.io.path.deleteIfExists
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -123,6 +124,13 @@ class WaitDeadlineDiagnosticsTest {
     /**
      * A wedged automator — one that never returns — must still fail closed on the wire rather than
      * hanging, so the slack that lets a real timeout through cannot become an unbounded wait.
+     *
+     * Asserts *promptness*, not a taxonomy. Which category a wedged op comes back as is a genuine
+     * race in the session: [MultiplexedIpcSession]'s deadline task claims the response as `timeout`
+     * after aborting the worker, while the aborted worker itself prefers `cancelled` if it wins the
+     * same claim. Both are legitimate answers for "aborted at the deadline" — Linux happened to
+     * land on `timeout` every time and Windows CI on `cancelled` — so pinning one would be pinning
+     * a coin flip. Returning far sooner than the wedge is the property that actually matters here.
      */
     @Test
     fun `a wait that never returns still fails closed on the wire deadline`() {
@@ -135,11 +143,24 @@ class WaitDeadlineDiagnosticsTest {
             )
 
         withAttached(automator) { attached ->
+            val startedAt = System.nanoTime()
             val failure =
                 assertFailsWithAgentTimeout("waitUntilGone") {
                     attached.waitUntilGone(tag = "popup.body", timeoutMs = WAIT_MS)
                 }
-            assertEquals(AgentErrorCategory.Timeout, failure.category)
+            val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+
+            assertTrue(
+                failure.category in setOf(AgentErrorCategory.Timeout, AgentErrorCategory.Cancelled),
+                "a wedged wait must be claimed as an abort, got ${failure.category}: " +
+                    failure.message,
+            )
+            assertTrue(
+                elapsedMs < WEDGED_CLAIM_BUDGET_MS,
+                "wedged wait took ${elapsedMs}ms to fail closed; the wire deadline should have " +
+                    "claimed it around ${WAIT_MS}ms + slack, well before the ${WEDGED_SLEEP_MS}ms " +
+                    "wedge — the slack must not become an unbounded wait",
+            )
         }
     }
 
@@ -204,6 +225,13 @@ class WaitDeadlineDiagnosticsTest {
 
         /** Longer than the wire deadline's slack, so the wedged case is claimed on the wire. */
         const val WEDGED_SLEEP_MS: Long = 30_000
+
+        /**
+         * Ceiling for the wedged case to fail closed. Generous against a loaded CI runner while
+         * still far below [WEDGED_SLEEP_MS], so passing means the deadline fired rather than the
+         * wedge simply finishing.
+         */
+        const val WEDGED_CLAIM_BUDGET_MS: Long = 15_000
 
         /**
          * Inverse of the reflective bridge's `durationStorageFromMs` for the nanos-storage form.
