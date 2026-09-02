@@ -22,6 +22,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.io.TempDir
 
 /**
  * Release-gate proof that **concurrent** `InputIsolationConfig.perTest()` invocations serialise.
@@ -64,7 +65,11 @@ class ParallelPerTestInputIsolationTest {
         val heldIntervals = CopyOnWriteArrayList<Pair<Long, Long>>()
         val leaseFactory = coordinatorBackedLeaseFactory(heldIntervals)
         val executor = Executors.newFixedThreadPool(INVOCATIONS)
-        // Release every invocation at once so they genuinely contend for the same desktop.
+        // Release every invocation at once so they genuinely contend for the same desktop. The
+        // readiness latch is what makes that true: opening the start line before every worker has
+        // reached it would let stragglers run their bodies serially, and the non-overlap assertion
+        // would then pass even with no mutual exclusion at all.
+        val ready = CountDownLatch(INVOCATIONS)
         val startLine = CountDownLatch(1)
 
         try {
@@ -78,6 +83,7 @@ class ParallelPerTestInputIsolationTest {
                                 factory = { newHeadlessAutomator() },
                             )
                         val context = contextFor("invocation-$invocation")
+                        ready.countDown()
                         startLine.await()
                         extension.beforeEach(context)
                         // Stands in for the test body: long enough that a lost lease shows up as
@@ -86,6 +92,10 @@ class ParallelPerTestInputIsolationTest {
                         extension.afterEach(context)
                     }
                 }
+            assertTrue(
+                ready.await(READY_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+                "every worker must be parked on the start line before the run begins",
+            )
             startLine.countDown()
             futures.forEach { it.get(INVOCATION_TIMEOUT_SECONDS, TimeUnit.SECONDS) }
         } finally {
@@ -105,6 +115,57 @@ class ParallelPerTestInputIsolationTest {
                     "[${earlier.first}, ${earlier.second}] and [${later.first}, ${later.second}]",
             )
         }
+    }
+
+    @Test
+    fun `the per-test lease is still held while failure evidence is captured`(
+        @TempDir reportsRoot: Path
+    ) {
+        // The gate requires the lease to span factory, body, *evidence*, and teardown. Lifecycle
+        // ordering implies it, but only driving the real capture callback proves it: a release
+        // moved ahead of evidence capture must fail this test rather than be argued away.
+        var releasedBeforeEvidence: Boolean? = null
+        val released = java.util.concurrent.atomic.AtomicBoolean(false)
+        val leaseFactory = InputTestLeaseFactory { _, _ ->
+            object : AutomatorInputLease {
+                override fun bind(automator: ComposeAutomator): AutoCloseable = AutoCloseable {}
+
+                override fun close() {
+                    released.set(true)
+                }
+            }
+        }
+        val extension =
+            ComposeAutomatorExtension(
+                failureArtifacts = FailureArtifactsConfig(reportsRoot = reportsRoot),
+                inputIsolation = InputIsolationConfig.perTest(),
+                leaseFactory = leaseFactory,
+                factory = { newHeadlessAutomator() },
+            )
+        val context =
+            RecordingExtensionContext(
+                failure = AssertionError("boom"),
+                testClass = javaClass,
+                methodName = fixtureMethod().name,
+                uniqueId = "[test:evidence]",
+            )
+
+        extension.beforeEach(context)
+        extension.afterTestExecution(context)
+        releasedBeforeEvidence = released.get()
+        extension.afterEach(context)
+
+        assertEquals(
+            true,
+            context.storeValue("failureArtifactsCaptured"),
+            "failure evidence capture must actually have run for this to prove anything",
+        )
+        assertEquals(
+            false,
+            releasedBeforeEvidence,
+            "the per-test lease was released before failure evidence was captured",
+        )
+        assertTrue(released.get(), "the per-test lease must be released after teardown")
     }
 
     /**
@@ -160,5 +221,6 @@ class ParallelPerTestInputIsolationTest {
         const val BODY_MILLIS: Long = 150
         const val ACQUIRE_TIMEOUT_SECONDS: Long = 30
         const val INVOCATION_TIMEOUT_SECONDS: Long = 60
+        const val READY_TIMEOUT_SECONDS: Long = 60
     }
 }

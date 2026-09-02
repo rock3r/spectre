@@ -59,10 +59,18 @@ class TwoClientJvmContentionTest {
             }
         val firstOutput = temporaryDirectory.resolve("first.txt")
         val secondOutput = temporaryDirectory.resolve("second.txt")
+        val firstReady = temporaryDirectory.resolve("first.ready")
+        val secondReady = temporaryDirectory.resolve("second.ready")
+        val goFile = temporaryDirectory.resolve("go")
 
-        // Started back to back so they genuinely contend; whichever wins the race holds first.
-        val first = startProbe("first-jvm", firstOutput)
-        val second = startProbe("second-jvm", secondOutput)
+        val first = startProbe("first-jvm", firstOutput, firstReady, goFile)
+        val second = startProbe("second-jvm", secondOutput, secondReady, goFile)
+
+        // Both probes are connected and parked on the gate before either may acquire. Without this
+        // barrier, JVM startup skew could exceed the hold, the two intervals would be trivially
+        // disjoint, and the test would pass even with mutual exclusion removed.
+        awaitReady(firstReady, secondReady)
+        Files.writeString(goFile, "go\n")
 
         assertEquals(0, first.waitFor(), "first client JVM exited non-zero")
         assertEquals(0, second.waitFor(), "second client JVM exited non-zero")
@@ -79,7 +87,12 @@ class TwoClientJvmContentionTest {
         )
     }
 
-    private fun startProbe(ownerLabel: String, output: Path): Process {
+    private fun startProbe(
+        ownerLabel: String,
+        output: Path,
+        readyFile: Path,
+        goFile: Path,
+    ): Process {
         val java = Path.of(System.getProperty("java.home"), "bin", javaExecutableName()).toString()
         val process =
             ProcessBuilder(
@@ -92,12 +105,25 @@ class TwoClientJvmContentionTest {
                     ownerLabel,
                     HOLD_MILLIS.toString(),
                     output.toString(),
+                    readyFile.toString(),
+                    goFile.toString(),
                 )
                 .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                 .redirectError(ProcessBuilder.Redirect.INHERIT)
                 .start()
         children += process
         return process
+    }
+
+    /** Blocks until every probe has connected and parked on the gate. */
+    private fun awaitReady(vararg readyFiles: Path) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(READY_TIMEOUT_SECONDS)
+        while (System.nanoTime() < deadline) {
+            if (readyFiles.all(Files::isRegularFile)) return
+            Thread.sleep(READY_POLL_MILLIS)
+        }
+        val missing = readyFiles.filterNot(Files::isRegularFile)
+        error("client JVMs never signalled readiness: ${missing.joinToString()}")
     }
 
     /** Returns the child's `(acquiredAt, releasedAt)` wall-clock pair. */
@@ -122,6 +148,9 @@ class TwoClientJvmContentionTest {
 
         /** Long enough that a genuine overlap is unmistakable at millisecond clock granularity. */
         const val HOLD_MILLIS: Long = 400
+
+        const val READY_TIMEOUT_SECONDS: Long = 60
+        const val READY_POLL_MILLIS: Long = 5
 
         const val CHILD_DESTROY_TIMEOUT_SECONDS: Long = 5
     }
