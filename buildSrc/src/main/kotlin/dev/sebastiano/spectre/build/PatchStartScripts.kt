@@ -19,12 +19,7 @@ abstract class PatchStartScripts : DefaultTask() {
     }
 
     private fun patchUnix(script: File) {
-        script.writeText(
-            script
-                .readText()
-                .replace("# Determine the Java command to use to start the JVM.", UNIX_JAVA_SEARCH)
-                .replace(UNIX_DEFAULT_JVM_OPTIONS_COMMENT, UNIX_JDK_PREFLIGHT),
-        )
+        script.writeText(patchUnixScript(script.readText()))
     }
 
     private fun patchWindows(script: File) {
@@ -51,7 +46,16 @@ abstract class PatchStartScripts : DefaultTask() {
         script.writeText(patchedScript.replace("\n", "\r\n"))
     }
 
-    private companion object {
+    internal companion object {
+        /**
+         * Injects the local JDK search and the Java 21 preflight into a Gradle-generated Unix
+         * launcher.
+         */
+        internal fun patchUnixScript(original: String): String =
+            original
+                .replace("# Determine the Java command to use to start the JVM.", UNIX_JAVA_SEARCH)
+                .replace(UNIX_DEFAULT_JVM_OPTIONS_COMMENT, UNIX_JDK_PREFLIGHT)
+
         private val UNIX_JAVA_SEARCH =
             """
             # Prefer a bundled runtime only when it matches this host.
@@ -80,7 +84,7 @@ abstract class PatchStartScripts : DefaultTask() {
                     fi
                     for spectre_java_home in "${'$'}{HOME:-}/.sdkman/candidates/java/current" /usr/lib/jvm/* /Library/Java/JavaVirtualMachines/*/Contents/Home; do
                         if [ -x "${'$'}spectre_java_home/bin/java" ]; then
-                            spectre_java_version=${'$'}("${'$'}spectre_java_home/bin/java" -version 2>&1 | sed -n '1s/.*version "\([^" ]*\)".*/\1/p')
+                            spectre_java_version=${'$'}("${'$'}spectre_java_home/bin/java" -version 2>&1 | sed -n '/version "/{s/.*version "\([^" ]*\)".*/\1/p;q;}')
                             spectre_java_feature=${'$'}{spectre_java_version%%.*}
                             case "${'$'}spectre_java_feature" in
                                 '' | *[!0-9]*) continue ;;
@@ -106,7 +110,9 @@ abstract class PatchStartScripts : DefaultTask() {
         private val UNIX_JDK_PREFLIGHT =
             """
             # Spectre requires Java 21 or later. Attach operations validate jdk.attach themselves.
-            spectre_java_version=${'$'}("${'$'}JAVACMD" -version 2>&1 | sed -n '1s/.*version "\([^" ]*\)".*/\1/p')
+            # Match the first line carrying the version: a JVM started with JAVA_TOOL_OPTIONS set
+            # prints "Picked up JAVA_TOOL_OPTIONS: ..." to stderr ahead of it.
+            spectre_java_version=${'$'}("${'$'}JAVACMD" -version 2>&1 | sed -n '/version "/{s/.*version "\([^" ]*\)".*/\1/p;q;}')
             spectre_java_feature=${'$'}{spectre_java_version%%.*}
             case "${'$'}spectre_java_feature" in
                 '' | *[!0-9]*) die "ERROR: Could not determine the Java version from ${'$'}JAVACMD." ;;
