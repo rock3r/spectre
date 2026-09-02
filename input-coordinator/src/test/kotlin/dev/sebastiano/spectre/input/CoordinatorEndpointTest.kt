@@ -110,6 +110,19 @@ class CoordinatorEndpointTest {
     }
 
     @Test
+    fun `a directory spelled with a dot segment is accepted`() {
+        // `.` always names the directory it sits in, whatever symbolic links are in the path, so
+        // folding it away can only accept spellings that were already equivalent -- unlike `..`,
+        // which the OS resolves against whatever precedes it. Raised by Codex review on PR #486.
+        val directory = temporaryDirectory.resolve(".")
+        val socketPath = temporaryDirectory.resolve("input.sock")
+
+        val endpoint = CoordinatorEndpoint(directory = directory, socketPath = socketPath)
+
+        assertEquals(directory, endpoint.directory, "the caller's spelling is kept as given")
+    }
+
+    @Test
     fun `a fallback socket candidate keeps the endpoint constructible`() {
         // InputCoordinatorClient.connect rebuilds the endpoint as `copy(socketPath = located.path)`
         // once a coordinator answers on a fallback path (#462), which re-runs the check above.
