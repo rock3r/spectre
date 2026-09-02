@@ -757,13 +757,14 @@ try {
 
     # Headed two-JVM Robot contention: operator-run hard cell. SKILL.md requires *headed*
     # contention, and every automated cell above passes headless/SSH because none builds a
-    # RobotDriver. Record the operator's attestation rather than inventing a pass.
+    # RobotDriver. Absent evidence this is a hard FAIL, not a reasoned n/a: the summary's failure
+    # count ignores a reasoned n/a, so an n/a here would report success without the headed proof.
     $headedName = "Headed two-JVM Robot contention (operator-recorded)"
     if (-not [string]::IsNullOrWhiteSpace($HeadedRobotEvidence)) {
         [void]$results.Add((New-StepResult -Id "input-coord-headed-robot" -Name $headedName -Result "pass" -Detail ("operator evidence: {0}" -f $HeadedRobotEvidence)))
     }
     else {
-        [void]$results.Add((New-StepResult -Id "input-coord-headed-robot" -Name $headedName -Result "n/a" -Reason "headed two-JVM Robot contention is operator-run on a real desktop and was NOT recorded; the coordinator-protocol cells do not prove real-input non-interleaving, so this blocks the tag on any OS whose release notes claim headed coordination"))
+        [void]$results.Add((New-StepResult -Id "input-coord-headed-robot" -Name $headedName -Result "fail" -Detail "headed two-JVM Robot contention is operator-run on a real desktop and was NOT recorded; the coordinator-protocol cells do not prove real-input non-interleaving, so this blocks the tag on any OS whose release notes claim headed coordination"))
     }
 
     if (-not $SkipAgentE2e) {

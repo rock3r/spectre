@@ -36,7 +36,7 @@ from smoke_lib import (  # noqa: E402
     assert_mcp_fixture_e2e_executed,
     assert_pointer_move_live_executed,
     input_coordination_smoke_skip_reason,
-    HEADED_ROBOT_NA_REASON,
+    headed_robot_cell,
     WAYLAND_PORTAL_WARMUP_TOKEN_KEYS,
     linux_portal_token_path,
     build_report,
@@ -721,32 +721,12 @@ def main(argv: list[str] | None = None) -> int:
         add(cell)
 
     # --- headed two-JVM Robot contention (operator-run hard cell) ---
-    # SKILL.md requires *headed* two-JVM contention as a delta hard cell. The cells above prove the
-    # coordinator lease is mutually exclusive across processes, but none of them constructs a
-    # RobotDriver, so they pass headless and under SSH. Only a human on a real desktop can close
-    # that gap today, so this records their attestation rather than inventing a pass.
-    headed_name = "Headed two-JVM Robot contention (operator-recorded)"
-    headed_evidence = (args.headed_robot_evidence or "").strip()
-    if headed_evidence:
-        add(
-            scenario_result(
-                "input-coord-headed-robot",
-                name=headed_name,
-                result=RESULT_PASS,
-                detail=f"operator evidence: {headed_evidence}",
-                hard=True,
-            )
-        )
-    else:
-        add(
-            scenario_result(
-                "input-coord-headed-robot",
-                name=headed_name,
-                result="n/a",
-                reason=HEADED_ROBOT_NA_REASON,
-                hard=True,
-            )
-        )
+    # SKILL.md requires *headed* two-JVM contention as a delta hard cell. Every cell above proves
+    # the coordinator lease is mutually exclusive across processes, but none constructs a
+    # RobotDriver, so they all pass headless and under SSH. Absent operator evidence this is a
+    # hard FAIL, not a reasoned n/a: hard_failures() ignores a reasoned n/a, so an n/a here would
+    # print "ALL HARD SCENARIOS PASSED" without the headed proof.
+    add(headed_robot_cell(args.headed_robot_evidence))
 
     # --- agent attach / corpus / inject / launch-and-attach ---
     for scenario_id, name, test_filter in (

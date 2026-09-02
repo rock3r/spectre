@@ -327,6 +327,24 @@ class SmokeLibSchemaTest(unittest.TestCase):
         self.assertIn("LocalCoordinatorServer", parallel_text)
         self.assertIn("Executors", parallel_text)
 
+    def test_headed_robot_cell_blocks_without_operator_evidence(self):
+        """A reasoned n/a would let the runner print ALL HARD SCENARIOS PASSED; it must fail."""
+        missing = smoke_lib.headed_robot_cell(None)
+        self.assertEqual("fail", missing.result)
+        self.assertIn("was NOT recorded", missing.detail)
+        # The actual gate: hard_failures() ignores a reasoned n/a, so this must be a fail row.
+        self.assertEqual(
+            ["input-coord-headed-robot"], smoke_lib.hard_failures([missing])
+        )
+        for blank in ("", "   "):
+            self.assertEqual("fail", smoke_lib.headed_robot_cell(blank).result)
+
+    def test_headed_robot_cell_passes_only_with_recorded_evidence(self):
+        recorded = smoke_lib.headed_robot_cell("ran on Mattone; run URL ...")
+        self.assertEqual("pass", recorded.result)
+        self.assertIn("operator evidence: ran on Mattone", recorded.detail)
+        self.assertEqual([], smoke_lib.hard_failures([recorded]))
+
     def test_input_coordination_smoke_skip_reason_present_on_this_checkout(self):
         # The experimental coordinator + isolation test surface exists on this tree, so the cells
         # are hard-runnable (no display needed) and must not be N/A.
@@ -616,7 +634,7 @@ class SmokeLibSchemaTest(unittest.TestCase):
         # coordinator cells, which pass headless. It stays hard n/a until evidence is supplied.
         self.assertIn("input-coord-headed-robot", text)
         self.assertIn("--headed-robot-evidence", text)
-        self.assertIn("HEADED_ROBOT_NA_REASON", text)
+        self.assertIn("headed_robot_cell", text)
         # Non-login SSH / xvfb-run must still see rustup cargo for helper rebuilds.
         self.assertIn("apply_linux_toolchain_path", text)
         # Nested buildSrc test must not start a daemon that --stops parent ./gradlew check.

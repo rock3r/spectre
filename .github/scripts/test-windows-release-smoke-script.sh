@@ -115,7 +115,10 @@ grep -F -q 'the per-test lease is still held while failure evidence is captured'
 # Headed contention is operator-recorded: it must stay hard n/a unless evidence is passed, so the
 # automated (headless-capable) coordinator cells can never satisfy the headed claim on their own.
 grep -F -q 'HeadedRobotEvidence' "$script" || fail "Windows runner missing headed-robot operator evidence parameter"
-grep -F -q 'operator-run on a real desktop and was NOT recorded' "$script" || fail "Windows runner missing headed-robot blocking n/a reason"
+grep -F -q 'operator-run on a real desktop and was NOT recorded' "$script" || fail "Windows runner missing headed-robot blocking message"
+# Absent evidence must be a hard FAIL, not a reasoned n/a: the summary's failure count ignores a
+# reasoned n/a, so an n/a here would report overall success without the headed proof.
+grep -F -q 'Result "fail" -Detail "headed two-JVM Robot contention' "$script" || fail "Windows headed-robot cell must FAIL (not n/a) when evidence is absent"
 grep -F -q 'windows-ssh' "$script" || fail "SSH displayMode honesty for WGC missing"
 grep -F -q 'WGC requires native interactive console' "$script" || fail "WGC interactive-console N/A reason missing"
 grep -F -q 'AgentAttachIntegration e2e includes WGC node screenshots' "$script" || fail "SSH agent-attach-core hard n/a reason missing"

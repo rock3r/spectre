@@ -59,10 +59,12 @@ REQUIRED_SCENARIO_IDS: tuple[str, ...] = (
     "input-coord-headed-robot",
 )
 
-# Why the headed cell is n/a until an operator records it. The wording is deliberately blunt:
-# a reader skimming a report must not mistake this row for "covered by the automated cells".
-# Both entrypoints emit this exact sentence; the contract tests pin it on each.
-HEADED_ROBOT_NA_REASON: str = (
+HEADED_ROBOT_SCENARIO_ID: str = "input-coord-headed-robot"
+HEADED_ROBOT_NAME: str = "Headed two-JVM Robot contention (operator-recorded)"
+
+# Deliberately blunt: a reader skimming a report must not mistake this row for "covered by the
+# automated cells". Both entrypoints emit this exact sentence; the contract tests pin it on each.
+HEADED_ROBOT_MISSING_EVIDENCE: str = (
     "headed two-JVM Robot contention is operator-run on a real desktop and was NOT recorded; "
     "the coordinator-protocol cells do not prove real-input non-interleaving, so this blocks "
     "the tag on any OS whose release notes claim headed coordination"
@@ -1104,6 +1106,33 @@ def assert_junit_testcases_passed(
             raise RuntimeError(
                 f"{cell} testcase '{needle}' not found in JUnit XML under {results_dir}"
             )
+
+
+def headed_robot_cell(evidence: str | None) -> ScenarioResult:
+    """Hard cell for the operator-recorded headed two-JVM Robot contention proof.
+
+    Absent evidence is a **fail**, not a reasoned `n/a`. [hard_failures] deliberately ignores an
+    `n/a` that carries a reason, so recording this as `n/a` would let the runner exit 0 and print
+    "ALL HARD SCENARIOS PASSED" without the headed proof the release gate requires — the exact
+    hole a reasoned skip is supposed to prevent. The automated `input-coord-*` cells never satisfy
+    this: they construct no RobotDriver and pass headless and under SSH.
+    """
+    recorded = (evidence or "").strip()
+    if recorded:
+        return scenario_result(
+            HEADED_ROBOT_SCENARIO_ID,
+            name=HEADED_ROBOT_NAME,
+            result=RESULT_PASS,
+            detail=f"operator evidence: {recorded}",
+            hard=True,
+        )
+    return scenario_result(
+        HEADED_ROBOT_SCENARIO_ID,
+        name=HEADED_ROBOT_NAME,
+        result=RESULT_FAIL,
+        detail=HEADED_ROBOT_MISSING_EVIDENCE,
+        hard=True,
+    )
 
 
 def packaged_cli_executable(root: Path, system: str | None = None, machine: str | None = None) -> Path:

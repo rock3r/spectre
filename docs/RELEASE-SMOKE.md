@@ -140,7 +140,7 @@ What remains outside automation is the **headed** half of the first bullet, and 
 not a residual. Every automated cell above passes headless and under SSH, because none of them
 constructs a `RobotDriver`: together they prove the *lease* is mutually exclusive, never that two
 processes' real OS input does not interleave. That is `input-coord-headed-robot`, which the harness
-cannot run for you — it stays hard `n/a` with a blocking reason until an operator drives two
+cannot run for you — it is a hard **fail** until an operator drives two
 `RobotDriver(InputLeasePolicy.Required)` JVMs on a real desktop and records it
 (`--headed-robot-evidence "<note>"` on Unix, `-HeadedRobotEvidence "<note>"` on Windows). Do not
 treat green `input-coord-*` cells as satisfying it. To add or change one of these cells, follow
@@ -336,7 +336,7 @@ Shared across macOS / Linux / Windows entrypoints (`scripts/smoke_lib.py` → `R
 | `input-coord-revoke` | Exact-ID normal revoke fences only its own lease and cannot affect a newer one. |
 | `input-coord-forced-recovery` | Explicit forced recovery reports `unsafeTakeover=true` and advances the FIFO queue. |
 | `input-coord-junit-pertest` | `InputIsolationConfig.perTest()` serialises factory, body, evidence, and teardown (`:testing:test` `InputIsolationLifecycleTest`). |
-| `input-coord-headed-robot` | **Operator-run.** Two `RobotDriver(InputLeasePolicy.Required)` JVMs dispatching real OS input on a headed desktop must not interleave. The harness cannot automate this: hard `n/a` with a blocking reason unless the operator passes `--headed-robot-evidence` / `-HeadedRobotEvidence`. Required on every OS whose release notes claim headed coordination. |
+| `input-coord-headed-robot` | **Operator-run.** Two `RobotDriver(InputLeasePolicy.Required)` JVMs dispatching real OS input on a headed desktop must not interleave. The harness cannot automate this, so it is a hard **fail** — the smoke exits non-zero — unless the operator passes `--headed-robot-evidence` / `-HeadedRobotEvidence`. A reasoned `n/a` would be ignored by the fail-closed check and report success, so absence is deliberately a failure. Required on every OS whose release notes claim headed coordination. |
 
 The `input-coord-*` cells ([#459](https://github.com/rock3r/spectre/pull/459)) are the automated form of the
 [Experimental input coordination release gate](#experimental-input-coordination-release-gate). Each drives the
@@ -506,8 +506,8 @@ release SHA.
   `n/a` means the experimental coordinator test surface was removed or graduated — re-scope the
   gate. The one thing these cells do **not** cover is a fully-headed two-`RobotDriver` physical
   **real-mouse** run: they all pass headless, so `input-coord-headed-robot` carries that claim as a
-  hard operator-recorded cell and blocks the tag on any OS claiming headed coordination until
-  evidence is supplied. Automating it (a Robot-backed two-JVM contention e2e) is a follow-up.
+  hard operator-recorded cell. Absent evidence it reports **fail** (not a reasoned `n/a`, which
+  `hard_failures()` ignores), so the smoke cannot report success without it. Automating it (a Robot-backed two-JVM contention e2e) is a follow-up.
 - **Linux helper `cargo` on Robot cells:** Unix harness prepends `$CARGO_HOME/bin` or
   `~/.cargo/bin` to PATH. Non-login SSH + `xvfb-run` otherwise cannot start
   `:recording:buildWaylandHelper` when `--rerun-tasks` rebuilds the helper. Do **not**
