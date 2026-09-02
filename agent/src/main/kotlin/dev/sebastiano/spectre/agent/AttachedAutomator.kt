@@ -327,7 +327,7 @@ internal constructor(
         timeoutMs: Long = 5_000,
         pollIntervalMs: Long = 100,
     ): NodeSnapshotDto {
-        val deadline = System.currentTimeMillis() + timeoutMs
+        val deadline = waitDeadlineFor(timeoutMs)
         val resp =
             exchange(
                 AgentRequest.WaitForNode(
@@ -352,14 +352,7 @@ internal constructor(
      * automator's own diagnostics — the selector, the timeout, and how many matching nodes were
      * still present in tracked windows.
      *
-     * The wire deadline is [timeoutMs] **plus** [DIAGNOSTIC_DEADLINE_SLACK_MS], unlike
-     * [waitForNode]'s exact-[timeoutMs] deadline, and the slack is what makes those diagnostics
-     * reachable. The agent claims an op whose deadline has passed by the time the handler returns
-     * and answers "Deadline elapsed during op" instead — which, on an exact deadline, is a race the
-     * automator's own timeout always loses, since it fires at the same instant. Trailing the
-     * automator's budget lets the real message come back and still leaves the wire deadline ahead
-     * of the agent's suspend-bridge backstop (`timeoutMs + 2s`), so a wedged automator fails closed
-     * on the wire exactly as before.
+     * Wire deadline comes from [waitDeadlineFor], like every other wait.
      */
     @Throws(IOException::class)
     public fun waitUntilGone(
@@ -368,7 +361,7 @@ internal constructor(
         timeoutMs: Long = 5_000,
         pollIntervalMs: Long = 100,
     ) {
-        val deadline = System.currentTimeMillis() + timeoutMs + DIAGNOSTIC_DEADLINE_SLACK_MS
+        val deadline = waitDeadlineFor(timeoutMs)
         val resp =
             exchange(
                 AgentRequest.WaitUntilGone(
@@ -392,7 +385,7 @@ internal constructor(
         stableFrames: Int = 3,
         pollIntervalMs: Long = 16,
     ) {
-        val deadline = System.currentTimeMillis() + timeoutMs
+        val deadline = waitDeadlineFor(timeoutMs)
         val resp =
             exchange(
                 AgentRequest.WaitForVisualIdle(
@@ -422,7 +415,7 @@ internal constructor(
         quietPeriodMs: Long = 64,
         pollIntervalMs: Long = 16,
     ) {
-        val deadline = System.currentTimeMillis() + timeoutMs
+        val deadline = waitDeadlineFor(timeoutMs)
         val resp =
             exchange(
                 AgentRequest.WaitForIdle(
@@ -474,17 +467,35 @@ internal constructor(
         return resp
     }
 
+    /**
+     * Absolute wire deadline for a wait whose own budget is [timeoutMs].
+     *
+     * Deliberately **not** `now + timeoutMs`. The agent enforces this deadline twice — a scheduler
+     * claims the op when it passes, and `executeOp` discards the handler's answer for "Deadline
+     * elapsed during op" if it passed while the handler ran — and on an exact deadline both fire at
+     * the same instant the automator's own timeout does. The automator always loses that race, so
+     * callers got the transport's phrase instead of the message the wait exists to produce:
+     * `waitForIdle` names the busy idling resources, `waitForVisualIdle` the frame samples,
+     * `waitUntilGone` the selector and how many nodes are still present.
+     *
+     * [WAIT_DEADLINE_SLACK_MS] of trailing room lets the real message come back while keeping the
+     * wire deadline ahead of the agent's own suspend-bridge backstop (`timeoutMs + 2s`), so a
+     * wedged automator is still claimed on the wire rather than waiting unbounded.
+     */
+    private fun waitDeadlineFor(timeoutMs: Long): Long =
+        System.currentTimeMillis() + timeoutMs + WAIT_DEADLINE_SLACK_MS
+
     private fun wireMismatch(expected: String, actual: AgentResponse): IOException =
         IOException("Wire protocol mismatch: expected $expected, got ${actual::class.simpleName}")
 }
 
 /**
- * How far [AttachedAutomator.waitUntilGone]'s wire deadline trails its wait budget so the
- * automator's own timeout — the one carrying the absence diagnostics — wins the race against the
- * agent's deadline claim. Well under the agent's `timeoutMs + 2s` suspend-bridge backstop, so the
- * wire deadline is still the earlier of the two safety nets.
+ * How far every wait's wire deadline trails its wait budget, so the automator's own timeout — the
+ * one carrying the diagnostics — wins the race against the agent's deadline claim. Well under the
+ * agent's `timeoutMs + 2s` suspend-bridge backstop, so the wire deadline is still the earlier of
+ * the two safety nets.
  *
  * Top-level rather than a companion constant: a `const val` in a companion of a public class is a
  * public static field on the JVM, and this is an implementation detail, not published API.
  */
-private const val DIAGNOSTIC_DEADLINE_SLACK_MS: Long = 1_000
+private const val WAIT_DEADLINE_SLACK_MS: Long = 1_000

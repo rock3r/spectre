@@ -345,11 +345,19 @@ agent's in-target automator (timeout / quiet / poll; absolute deadline on the wi
 `waitForNode`). It does **not** observe idling resources registered on a different automator
 instance in the app. **Idling-resource registration** and `withTracing` remain in-process-only.
 
-`waitUntilGone` is the absence counterpart to `waitForNode` and carries the same absolute
-deadline. Its timeout is category `timeout` like the other waits, but the message is the
-deliverable: the in-target automator's own diagnostics — the selector, the timeout, and how many
-matching nodes were still present in tracked windows — travel back verbatim, so an attach client
-learns *what* is still on screen rather than only that the wait expired.
+Every wait's **timeout message travels back verbatim**. All four report category `timeout`, but
+the message is what makes a timeout actionable, and each wait produces its own: `waitForIdle`
+names the busy idling resources, `waitForVisualIdle` the frame-sample counts, `waitUntilGone` the
+selector and how many matching nodes were still present in tracked windows. An attach client
+learns *why* the wait expired, not merely that it did.
+
+That costs a little trailing room on the wire. The absolute deadline the client attaches to a wait
+is its budget **plus one second**, not the budget exactly: the agent enforces that deadline both
+with a scheduler and with a post-handler check, and on an exact deadline both fire at the same
+instant the in-target automator's own timeout does — a race the automator always loses, leaving
+callers with `Deadline elapsed during op` instead of the real message. The slack stays well inside
+the agent's own `timeout + 2s` suspend-bridge backstop, so a wedged automator is still claimed on
+the wire rather than waiting unbounded.
 
 Richer input verbs (`doubleClick` / `longClick` / `swipe` / `scrollWheel` / `pressKey`)
 are available over agent, HTTP, and daemon/CLI/MCP (#203). `focusWindow(nodeKey)` raises

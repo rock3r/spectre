@@ -166,6 +166,7 @@ internal class WaitFakeAutomator(
     private val waitForNodeImpl: ((String?, String?, Long, Long) -> Any?)? = null,
     private val waitForIdleImpl: ((Long, Long, Long) -> Any?)? = null,
     private val waitUntilGoneImpl: ((String?, String?, Long, Long) -> Any?)? = null,
+    private val waitForVisualIdleImpl: ((Long, Int, Long) -> Any?)? = null,
 ) {
     val waitForNodeTags = mutableListOf<String?>()
     val waitForNodeTimeoutRaw = mutableListOf<Long>()
@@ -212,7 +213,12 @@ internal class WaitFakeAutomator(
         stableFrames: Int,
         pollRaw: Long,
         continuation: kotlin.coroutines.Continuation<Any?>,
-    ): Any? = Unit
+    ): Any? {
+        waitForVisualIdleImpl?.let {
+            return it(timeoutRaw, stableFrames, pollRaw)
+        }
+        return Unit
+    }
 
     @Suppress("unused", "UNUSED_PARAMETER")
     fun waitForIdle(
