@@ -84,7 +84,7 @@ abstract class PatchStartScripts : DefaultTask() {
                     fi
                     for spectre_java_home in "${'$'}{HOME:-}/.sdkman/candidates/java/current" /usr/lib/jvm/* /Library/Java/JavaVirtualMachines/*/Contents/Home; do
                         if [ -x "${'$'}spectre_java_home/bin/java" ]; then
-                            spectre_java_version=${'$'}("${'$'}spectre_java_home/bin/java" -version 2>&1 | sed -n '/version "/{s/.*version "\([^" ]*\)".*/\1/p;q;}')
+                            spectre_java_version=${'$'}("${'$'}spectre_java_home/bin/java" -version 2>&1 | sed -n '/^[^ ]* version "/{s/.*version "\([^" ]*\)".*/\1/p;q;}')
                             spectre_java_feature=${'$'}{spectre_java_version%%.*}
                             case "${'$'}spectre_java_feature" in
                                 '' | *[!0-9]*) continue ;;
@@ -110,9 +110,13 @@ abstract class PatchStartScripts : DefaultTask() {
         private val UNIX_JDK_PREFLIGHT =
             """
             # Spectre requires Java 21 or later. Attach operations validate jdk.attach themselves.
-            # Match the first line carrying the version: a JVM started with JAVA_TOOL_OPTIONS set
-            # prints "Picked up JAVA_TOOL_OPTIONS: ..." to stderr ahead of it.
-            spectre_java_version=${'$'}("${'$'}JAVACMD" -version 2>&1 | sed -n '/version "/{s/.*version "\([^" ]*\)".*/\1/p;q;}')
+            # Match the JVM's own version record (`openjdk version "..."` / `java version "..."`),
+            # not merely the first line containing `version "`. A JVM started with JAVA_TOOL_OPTIONS
+            # set prints "Picked up JAVA_TOOL_OPTIONS: ..." to stderr ahead of the record, and that
+            # banner echoes the variable's contents, which can themselves contain `version "..."`.
+            # Anchoring on <word><space>version " skips every such preamble, including the
+            # "NOTE: Picked up JDK_JAVA_OPTIONS: ..." form.
+            spectre_java_version=${'$'}("${'$'}JAVACMD" -version 2>&1 | sed -n '/^[^ ]* version "/{s/.*version "\([^" ]*\)".*/\1/p;q;}')
             spectre_java_feature=${'$'}{spectre_java_version%%.*}
             case "${'$'}spectre_java_feature" in
                 '' | *[!0-9]*) die "ERROR: Could not determine the Java version from ${'$'}JAVACMD." ;;

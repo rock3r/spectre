@@ -56,6 +56,33 @@ class PatchStartScriptsTest {
     }
 
     @Test
+    fun `the preflight reads the JVM record, not a version-shaped banner payload`(
+        @TempDir root: Path
+    ) {
+        // JAVA_TOOL_OPTIONS can itself carry `version "..."` — a property default, a note, a
+        // path. The banner then looks like a version record, and matching any line containing
+        // `version "` reads the property instead of the JVM, rejecting a supported runtime.
+        // The same shape reaches the launcher as `NOTE: Picked up JDK_JAVA_OPTIONS: ...`.
+        // Raised by Codex review on PR #485.
+        val jdk =
+            fakeJdk(
+                root,
+                "decoy",
+                version = "21.0.10",
+                banner = true,
+                bannerOptions = "-Dnote=version \"17.0.2\"",
+            )
+
+        val result = runLauncher(root, javaHome = jdk)
+
+        assertEquals(0, result.exitCode, "launcher failed:\n${result.output}")
+        assertFalse(
+            result.output.contains("17.0.2"),
+            "the banner payload was parsed as the Java version:\n${result.output}",
+        )
+    }
+
+    @Test
     fun `the preflight accepts a Java 21 runtime without the banner`(@TempDir root: Path) {
         // Regression guard: the banner fix must not change how a plain `java -version` is read.
         val jdk = fakeJdk(root, "plain", version = "21.0.10", banner = false)
@@ -127,18 +154,29 @@ class PatchStartScriptsTest {
         return LauncherResult(process.exitValue(), output)
     }
 
-    private fun fakeJdk(root: Path, name: String, version: String, banner: Boolean): Path {
+    private fun fakeJdk(
+        root: Path,
+        name: String,
+        version: String,
+        banner: Boolean,
+        bannerOptions: String = DEFAULT_BANNER_OPTIONS,
+    ): Path {
         val jdkHome = root.resolve("jdk-$name")
-        writeFakeJava(jdkHome, version, banner)
+        writeFakeJava(jdkHome, version, banner, bannerOptions)
         return jdkHome
     }
 
     /** Writes a `bin/java` script that answers `-version` and `--list-modules` like a real JDK. */
-    private fun writeFakeJava(jdkHome: Path, version: String, banner: Boolean) {
+    private fun writeFakeJava(
+        jdkHome: Path,
+        version: String,
+        banner: Boolean,
+        bannerOptions: String = DEFAULT_BANNER_OPTIONS,
+    ) {
         val java = jdkHome.resolve("bin/java")
         Files.createDirectories(java.parent)
         val bannerLine =
-            if (banner) "echo 'Picked up JAVA_TOOL_OPTIONS: -Dspectre.test=true' >&2" else ":"
+            if (banner) "echo 'Picked up JAVA_TOOL_OPTIONS: $bannerOptions' >&2" else ":"
         Files.writeString(
             java,
             """
@@ -172,6 +210,8 @@ class PatchStartScriptsTest {
 
     private companion object {
         private const val COMMAND_TIMEOUT_SECONDS: Long = 30
+
+        private const val DEFAULT_BANNER_OPTIONS = "-Dspectre.test=true"
 
         /**
          * Minimal stand-in for the Gradle-generated launcher: the two anchors [PatchStartScripts]
