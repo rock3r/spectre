@@ -11,9 +11,25 @@ import java.nio.file.attribute.PosixFilePermission
 import java.security.MessageDigest
 import java.util.HexFormat
 
-/** Canonical per-user directory and Unix-domain socket used by the local coordinator. */
+/**
+ * Canonical per-user directory and Unix-domain socket used by the local coordinator.
+ *
+ * [directory] must be the parent of [socketPath]. The socket's parent is the directory
+ * [OwnerOnlyEndpointProtection.prepareDirectory] guards and creates, while the election lock and
+ * the recovery ledger are placed in [directory]; if the two could diverge, those two files would
+ * land in a directory nothing ever checked.
+ */
 @ExperimentalSpectreInputCoordinationApi
-public data class CoordinatorEndpoint(public val directory: Path, public val socketPath: Path)
+public data class CoordinatorEndpoint(public val directory: Path, public val socketPath: Path) {
+    init {
+        // Lexical on purpose, so `..` is not folded away: the OS resolves it against whatever
+        // precedes it at the time, so a spelling that only normalises to the socket's parent can
+        // still name a different directory once a symbolic link sits in between.
+        require(socketPath.toAbsolutePath().parent == directory.toAbsolutePath()) {
+            "Coordinator directory $directory must be the parent of socket $socketPath"
+        }
+    }
+}
 
 /** Resolves a short endpoint that is independent of the launching process's environment. */
 @ExperimentalSpectreInputCoordinationApi
