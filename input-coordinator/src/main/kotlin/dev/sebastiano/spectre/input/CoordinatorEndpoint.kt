@@ -29,7 +29,15 @@ import java.util.HexFormat
 @ExperimentalSpectreInputCoordinationApi
 public data class CoordinatorEndpoint(public val directory: Path, public val socketPath: Path) {
     init {
-        require(socketPath.parent == directory) {
+        // Compared as absolute paths with `.` folded out. Absolute because prepareDirectory guards
+        // socketPath.toAbsolutePath().parent, so that is the directory this has to agree with; and
+        // `.` folded because it always names the directory it sits in, whatever symbolic links are
+        // in the path, so two spellings that differ only by one already name the same place. `..`
+        // is deliberately left where it is: the OS resolves it against whatever precedes it, so
+        // collapsing it lexically is what would let a substituted link through -- which is also
+        // why Path.normalize, which collapses both, cannot be used here.
+        val socketParent = socketPath.toAbsolutePath().withoutDotSegments().parent
+        require(socketParent == directory.toAbsolutePath().withoutDotSegments()) {
             "Coordinator endpoint directory $directory must be the socket's parent, " +
                 "was ${socketPath.parent}"
         }
@@ -221,9 +229,24 @@ private fun rejectSubstituted(path: Path, role: String) {
     }
 }
 
+/**
+ * Drops `.` name elements, leaving every other segment -- `..` included -- exactly where it was.
+ *
+ * [Path.normalize] is not usable here: it also collapses `..`, which the OS resolves against
+ * whatever precedes it rather than lexically.
+ */
+private fun Path.withoutDotSegments(): Path {
+    if (none { it.toString() == CURRENT_DIRECTORY_SEGMENT }) return this
+    return fold(root ?: Path.of("")) { path, segment ->
+        if (segment.toString() == CURRENT_DIRECTORY_SEGMENT) path else path.resolve(segment)
+    }
+}
+
 private fun isMacOs(): Boolean =
     System.getProperty("os.name").orEmpty().startsWith("Mac", ignoreCase = true)
 
 private val MACOS_ROOT_ALIASES: Set<String> = setOf("tmp", "var", "etc")
 
 private const val PRIVATE_ALIAS_DIRECTORY: String = "private"
+
+private const val CURRENT_DIRECTORY_SEGMENT: String = "."
