@@ -86,10 +86,42 @@ grep -F -q 'hard skip without N/A reason' "$script" || fail "fail-closed hard N/
 for scenario_id in \
   preflight check junit-live agent-attach-core agent-contract-corpus agent-inject \
   agent-launch-and-attach cli-packaged cli-native-helper-layout cli-user-flow \
-  mcp-sdk-flow host-native-recording maven-local-consumer portal-token-warmup pointer-move
+  mcp-sdk-flow host-native-recording maven-local-consumer portal-token-warmup pointer-move \
+  input-coord-contention input-coord-cancellation input-coord-quarantine input-coord-revoke \
+  input-coord-forced-recovery input-coord-junit-pertest input-coord-headed-robot
 do
   grep -F -q "$scenario_id" "$script" || fail "Windows runner missing stable scenario id: $scenario_id"
 done
+
+# --- #459 experimental input-coordination delta hard cells ---
+# The coordination cells must drive the coordinator's own deterministic + forked-process + JUnit
+# isolation tests and fail closed on the JUnit XML (never a fake PASS). Hard on Windows including SSH.
+grep -F -q 'Get-InputCoordinationMissingSurface' "$script" || fail "Windows runner missing input-coordination surface probe"
+# A missing proof source must FAIL, not become a reasoned n/a the failure count ignores.
+grep -F -q 'failure, not a skip' "$script" || fail "Windows missing-surface message must say it is a failure"
+grep -F -q 'Result "fail" -Detail $MissingSurface' "$script" || fail "Windows coordination cell must FAIL when its proof source is missing"
+grep -F -q 'Assert-JUnitTestcasesPassed' "$script" || fail "Windows runner missing coordination JUnit XML fail-closed gate"
+grep -F -q 'Invoke-CoordinationCell' "$script" || fail "Windows runner missing coordination cell runner"
+grep -F -q ':input-coordinator-server:test' "$script" || fail "Windows runner missing coordinator server test task"
+grep -F -q ':testing:test' "$script" || fail "Windows runner missing JUnit isolation test task"
+grep -F -q 'LocalCoordinatorServerTest' "$script" || fail "Windows runner missing LocalCoordinatorServerTest filter"
+grep -F -q 'CoordinatorProcessLauncherTest' "$script" || fail "Windows runner missing forked-coordinator filter"
+grep -F -q 'InputIsolationLifecycleTest' "$script" || fail "Windows runner missing JUnit PerTest isolation filter"
+grep -F -q 'explicit force advances FIFO and reports unsafe takeover' "$script" || fail "Windows runner missing forced-recovery testcase needle"
+# The contention and per-test cells must drive the cross-process / concurrent proofs, not just the
+# single-JVM sequential tests, or a green cell would overstate the release gate.
+grep -F -q 'TwoClientJvmContentionTest' "$script" || fail "Windows runner missing two-client-JVM contention proof"
+grep -F -q 'two independent client JVMs never hold the desktop lease at the same time' "$script" || fail "Windows runner missing two-client-JVM contention needle"
+grep -F -q 'ParallelPerTestInputIsolationTest' "$script" || fail "Windows runner missing parallel per-test isolation proof"
+grep -F -q 'concurrent per-test invocations never hold the desktop lease at the same time' "$script" || fail "Windows runner missing parallel per-test needle"
+grep -F -q 'the per-test lease is still held while failure evidence is captured' "$script" || fail "Windows runner missing evidence-capture needle"
+# Headed contention is operator-recorded: it must stay hard n/a unless evidence is passed, so the
+# automated (headless-capable) coordinator cells can never satisfy the headed claim on their own.
+grep -F -q 'HeadedRobotEvidence' "$script" || fail "Windows runner missing headed-robot operator evidence parameter"
+grep -F -q 'operator-run on a real desktop and was NOT recorded' "$script" || fail "Windows runner missing headed-robot blocking message"
+# Absent evidence must be a hard FAIL, not a reasoned n/a: the summary's failure count ignores a
+# reasoned n/a, so an n/a here would report overall success without the headed proof.
+grep -F -q 'Result "fail" -Detail "headed two-JVM Robot contention' "$script" || fail "Windows headed-robot cell must FAIL (not n/a) when evidence is absent"
 grep -F -q 'windows-ssh' "$script" || fail "SSH displayMode honesty for WGC missing"
 grep -F -q 'WGC requires native interactive console' "$script" || fail "WGC interactive-console N/A reason missing"
 grep -F -q 'AgentAttachIntegration e2e includes WGC node screenshots' "$script" || fail "SSH agent-attach-core hard n/a reason missing"

@@ -231,6 +231,13 @@ class SmokeLibSchemaTest(unittest.TestCase):
             "maven-local-consumer",
             "portal-token-warmup",
             "pointer-move",
+            "input-coord-contention",
+            "input-coord-cancellation",
+            "input-coord-quarantine",
+            "input-coord-revoke",
+            "input-coord-forced-recovery",
+            "input-coord-junit-pertest",
+            "input-coord-headed-robot",
         }
         self.assertEqual(expected, set(smoke_lib.REQUIRED_SCENARIO_IDS))
 
@@ -297,6 +304,139 @@ class SmokeLibSchemaTest(unittest.TestCase):
             with self.assertRaises(RuntimeError) as raised:
                 smoke_lib.assert_pointer_move_live_executed(root)
             self.assertIn("skipped", str(raised.exception))
+
+    def test_coordination_cross_process_and_parallel_proofs_exist(self):
+        """The cells must be backed by real multi-JVM / concurrent tests, not just docs claims."""
+        contention = (
+            ROOT
+            / "input-coordinator-server/src/test/kotlin/dev/sebastiano/spectre/input/server"
+            / "TwoClientJvmContentionTest.kt"
+        )
+        probe = contention.with_name("TwoClientJvmContentionProbe.kt")
+        parallel = (
+            ROOT
+            / "testing/src/test/kotlin/dev/sebastiano/spectre/testing"
+            / "ParallelPerTestInputIsolationTest.kt"
+        )
+        for path in (contention, probe, parallel):
+            self.assertTrue(path.is_file(), f"missing coordination gate proof: {path}")
+        # The contention proof must genuinely fork a second client process.
+        self.assertIn("ProcessBuilder", contention.read_text(encoding="utf-8"))
+        # The parallel proof must drive concurrent invocations against a real coordinator.
+        parallel_text = parallel.read_text(encoding="utf-8")
+        self.assertIn("LocalCoordinatorServer", parallel_text)
+        self.assertIn("Executors", parallel_text)
+
+    def test_headed_robot_cell_blocks_without_operator_evidence(self):
+        """A reasoned n/a would let the runner print ALL HARD SCENARIOS PASSED; it must fail."""
+        missing = smoke_lib.headed_robot_cell(None)
+        self.assertEqual("fail", missing.result)
+        self.assertIn("was NOT recorded", missing.detail)
+        # The actual gate: hard_failures() ignores a reasoned n/a, so this must be a fail row.
+        self.assertEqual(
+            ["input-coord-headed-robot"], smoke_lib.hard_failures([missing])
+        )
+        for blank in ("", "   "):
+            self.assertEqual("fail", smoke_lib.headed_robot_cell(blank).result)
+
+    def test_headed_robot_cell_passes_only_with_recorded_evidence(self):
+        recorded = smoke_lib.headed_robot_cell("ran on Mattone; run URL ...")
+        self.assertEqual("pass", recorded.result)
+        self.assertIn("operator evidence: ran on Mattone", recorded.detail)
+        self.assertEqual([], smoke_lib.hard_failures([recorded]))
+
+    def test_input_coordination_surface_present_on_this_checkout(self):
+        # The experimental coordinator + isolation proofs exist on this tree, so the cells are
+        # hard-runnable (no display needed) and must actually execute.
+        self.assertIsNone(smoke_lib.input_coordination_missing_surface(ROOT))
+
+    def test_missing_coordination_surface_fails_rather_than_skips(self):
+        """A deleted or renamed proof must not turn six hard cells green by omission."""
+        with tempfile.TemporaryDirectory() as tmp:
+            detail = smoke_lib.input_coordination_missing_surface(Path(tmp))
+            self.assertIsNotNone(detail)
+            self.assertIn("failure, not a skip", detail)
+            self.assertIn("re-scope the release", detail)
+            # The gate that matters: a reasoned n/a is ignored by hard_failures(), so the runner
+            # must record a missing proof as a fail row instead.
+            failed = smoke_lib.scenario_result(
+                "input-coord-contention",
+                name="x",
+                result=smoke_lib.RESULT_FAIL,
+                detail=detail,
+            )
+            self.assertEqual(["input-coord-contention"], smoke_lib.hard_failures([failed]))
+            ignored = smoke_lib.scenario_result(
+                "input-coord-contention", name="x", result="n/a", reason=detail
+            )
+            self.assertEqual(
+                [],
+                smoke_lib.hard_failures([ignored]),
+                "a reasoned n/a is ignored by hard_failures — exactly why a missing proof "
+                "must not be recorded as one",
+            )
+
+    def test_assert_junit_testcases_passed_rejects_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            (results / "TEST-coord.xml").write_text(
+                '<?xml version="1.0"?>\n'
+                '<testsuite name="LocalCoordinatorServerTest" tests="1" failures="0" '
+                'errors="0" skipped="1">\n'
+                '  <testcase name="explicit force advances FIFO and reports unsafe takeover" '
+                'classname="x"><skipped/></testcase>\n'
+                "</testsuite>\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(RuntimeError) as ctx:
+                smoke_lib.assert_junit_testcases_passed(
+                    results,
+                    needles=["explicit force advances FIFO and reports unsafe takeover"],
+                    cell="input-coord-forced-recovery",
+                )
+            self.assertIn("skipped", str(ctx.exception).lower())
+
+    def test_assert_junit_testcases_passed_requires_every_needle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            (results / "TEST-coord.xml").write_text(
+                '<?xml version="1.0"?>\n'
+                '<testsuite name="LocalCoordinatorServerTest" tests="1" failures="0" '
+                'errors="0" skipped="0">\n'
+                '  <testcase name="two independent clients receive one desktop lease in FIFO '
+                'order" classname="x" time="1.0"/>\n'
+                "</testsuite>\n",
+                encoding="utf-8",
+            )
+            # The FIFO needle is present, but the forked-coordinator needle is not: fail closed.
+            with self.assertRaises(RuntimeError) as ctx:
+                smoke_lib.assert_junit_testcases_passed(
+                    results,
+                    needles=[
+                        "two independent clients receive one desktop lease in FIFO order",
+                        "forked coordinator accepts a real client lease",
+                    ],
+                    cell="input-coord-contention",
+                )
+            self.assertIn("not found", str(ctx.exception).lower())
+
+    def test_assert_junit_testcases_passed_accepts_executed_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            (results / "TEST-coord.xml").write_text(
+                '<?xml version="1.0"?>\n'
+                '<testsuite name="LocalCoordinatorServerTest" tests="1" failures="0" '
+                'errors="0" skipped="0">\n'
+                '  <testcase name="exact-id revoke rejects stale observation and fences the '
+                'actual holder" classname="x" time="1.0"/>\n'
+                "</testsuite>\n",
+                encoding="utf-8",
+            )
+            smoke_lib.assert_junit_testcases_passed(
+                results,
+                needles=["exact-id revoke rejects stale observation and fences the actual holder"],
+                cell="input-coord-revoke",
+            )
 
     def test_hard_na_without_reason_becomes_fail(self):
         result = smoke_lib.scenario_result(
@@ -485,6 +625,36 @@ class SmokeLibSchemaTest(unittest.TestCase):
         # #433: live pointer-move cell must stay fail-closed once moveTo/moveBy ship.
         self.assertIn("pointer_move_api_skip_reason", text)
         self.assertIn("*PointerMoveLive*", text)
+        # #459: experimental input-coordination delta hard cells must drive the coordinator's own
+        # deterministic + forked-process + JUnit-isolation tests, fail-closed on the JUnit XML.
+        self.assertIn("input_coordination_missing_surface", text)
+        self.assertIn("assert_junit_testcases_passed", text)
+        self.assertIn(":input-coordinator-server:test", text)
+        self.assertIn(":testing:test", text)
+        self.assertIn("LocalCoordinatorServerTest", text)
+        self.assertIn("CoordinatorProcessLauncherTest", text)
+        self.assertIn("InputIsolationLifecycleTest", text)
+        self.assertIn("explicit force advances FIFO and reports unsafe takeover", text)
+        # The two cells whose gate bullets need cross-process / concurrent proof must drive the
+        # tests that actually supply it, not only the single-JVM sequential ones.
+        self.assertIn("TwoClientJvmContentionTest", text)
+        self.assertIn(
+            "two independent client JVMs never hold the desktop lease at the same time", text
+        )
+        self.assertIn("ParallelPerTestInputIsolationTest", text)
+        self.assertIn(
+            "concurrent per-test invocations never hold the desktop lease at the same time", text
+        )
+        # Each half of the per-test bullet is gated by name. Gating only the class would let the
+        # evidence-capture method be removed or renamed while the cell still reported pass.
+        self.assertIn(
+            "the per-test lease is still held while failure evidence is captured", text
+        )
+        # The headed cell is operator-recorded and must never be satisfiable by the automated
+        # coordinator cells, which pass headless. It stays hard n/a until evidence is supplied.
+        self.assertIn("input-coord-headed-robot", text)
+        self.assertIn("--headed-robot-evidence", text)
+        self.assertIn("headed_robot_cell", text)
         # Non-login SSH / xvfb-run must still see rustup cargo for helper rebuilds.
         self.assertIn("apply_linux_toolchain_path", text)
         # Nested buildSrc test must not start a daemon that --stops parent ./gradlew check.
@@ -875,6 +1045,17 @@ class DocsAndSchemaPolicyTest(unittest.TestCase):
         self.assertIn("bump", docs.lower())
         self.assertIn("--preflight-only", docs)
         self.assertIn("preflight-only", docs)
+        # #459: the experimental input-coordination delta cells are reusable scenario IDs, so the
+        # stable-ID table / gate must document them (not leave the commands only in chat).
+        for coordination_id in (
+            "input-coord-contention",
+            "input-coord-cancellation",
+            "input-coord-quarantine",
+            "input-coord-revoke",
+            "input-coord-forced-recovery",
+            "input-coord-junit-pertest",
+        ):
+            self.assertIn(coordination_id, docs)
 
     def test_validate_report_rejects_missing_required_ids(self):
         preflight = smoke_lib.collect_preflight(ROOT, version="0.5.0")
