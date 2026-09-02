@@ -22,10 +22,13 @@ import java.util.HexFormat
 @ExperimentalSpectreInputCoordinationApi
 public data class CoordinatorEndpoint(public val directory: Path, public val socketPath: Path) {
     init {
-        // Lexical on purpose, so `..` is not folded away: the OS resolves it against whatever
-        // precedes it at the time, so a spelling that only normalises to the socket's parent can
-        // still name a different directory once a symbolic link sits in between.
-        require(socketPath.toAbsolutePath().parent == directory.toAbsolutePath()) {
+        // `..` is never folded away: the OS resolves it against whatever precedes it at the time,
+        // so a spelling that only normalises to the socket's parent can still name a different
+        // directory once a symbolic link sits in between. A `.` segment cannot do that -- it
+        // always names the directory it sits in -- and toAbsolutePath() preserves it, so folding
+        // only `.` accepts spellings that were already equivalent without weakening the check.
+        val socketParent = socketPath.toAbsolutePath().withoutDotSegments().parent
+        require(socketParent == directory.toAbsolutePath().withoutDotSegments()) {
             "Coordinator directory $directory must be the parent of socket $socketPath"
         }
     }
@@ -163,6 +166,21 @@ private fun rejectSubstitutedDirectory(directory: Path) {
         throw IOException("Coordinator directory $directory is not a directory")
     }
 }
+
+/**
+ * Drops `.` name elements, leaving every other segment -- `..` included -- exactly where it was.
+ *
+ * [Path.normalize] cannot be used here because it also collapses `..`, which the OS resolves
+ * against whatever precedes it rather than lexically.
+ */
+private fun Path.withoutDotSegments(): Path {
+    if (none { it.toString() == CURRENT_DIRECTORY_SEGMENT }) return this
+    return fold(root ?: Path.of("")) { path, segment ->
+        if (segment.toString() == CURRENT_DIRECTORY_SEGMENT) path else path.resolve(segment)
+    }
+}
+
+private const val CURRENT_DIRECTORY_SEGMENT: String = "."
 
 private fun rejectSymbolicParent(parent: Path?) {
     if (parent != null && Files.isSymbolicLink(parent)) {
