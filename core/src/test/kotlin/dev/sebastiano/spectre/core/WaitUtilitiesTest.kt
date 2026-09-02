@@ -12,7 +12,8 @@ class WaitUtilitiesTest {
 
     @Test
     fun `returns immediately when predicate succeeds on first call`() = runTest {
-        val result = waitUntil(timeout = 5.seconds, pollInterval = 100.milliseconds) { "found" }
+        val result =
+            pollUntilNotNull(timeout = 5.seconds, pollInterval = 100.milliseconds) { "found" }
         assertEquals("found", result)
     }
 
@@ -20,7 +21,7 @@ class WaitUtilitiesTest {
     fun `retries until predicate succeeds`() = runTest {
         var calls = 0
         val result =
-            waitUntil(timeout = 5.seconds, pollInterval = 10.milliseconds) {
+            pollUntilNotNull(timeout = 5.seconds, pollInterval = 10.milliseconds) {
                 calls++
                 if (calls >= 3) "found" else null
             }
@@ -31,7 +32,7 @@ class WaitUtilitiesTest {
     @Test
     fun `throws TimeoutCancellationException when timeout expires`() = runTest {
         assertFailsWith<TimeoutCancellationException> {
-            waitUntil(timeout = 100.milliseconds, pollInterval = 10.milliseconds) { null }
+            pollUntilNotNull(timeout = 100.milliseconds, pollInterval = 10.milliseconds) { null }
         }
     }
 
@@ -39,7 +40,7 @@ class WaitUtilitiesTest {
     fun `predicate is called multiple times before timeout`() = runTest {
         var calls = 0
         try {
-            waitUntil(timeout = 200.milliseconds, pollInterval = 10.milliseconds) {
+            pollUntilNotNull(timeout = 200.milliseconds, pollInterval = 10.milliseconds) {
                 calls++
                 null
             }

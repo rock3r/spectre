@@ -41,8 +41,9 @@ class RunSpectreAction : AnAction() {
 
 `executeOnPooledThread` (or any non-EDT dispatcher) is required. The
 automator's outer loop — polling, retries, waits — runs on the calling
-thread. All four wait helpers (`waitForNode`, `waitUntilGone`, `waitForIdle`,
-`waitForVisualIdle`) reject EDT callers with `IllegalStateException`, so
+thread. All five wait helpers (`waitForNode`, `waitUntilGone`, `waitUntil`,
+`waitForIdle`, `waitForVisualIdle`) reject EDT callers with
+`IllegalStateException`, so
 calling them from the EDT fails fast rather than silently deadlocking on
 the `invokeAndWait` round-trip. Per-tick semantics reads internally marshal
 back to the EDT.
