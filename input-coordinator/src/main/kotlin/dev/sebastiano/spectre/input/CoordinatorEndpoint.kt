@@ -4,16 +4,37 @@ package dev.sebastiano.spectre.input
 
 import java.io.IOException
 import java.nio.charset.StandardCharsets
+import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermission
+import java.nio.file.attribute.PosixFilePermissions
 import java.security.MessageDigest
 import java.util.HexFormat
 
-/** Canonical per-user directory and Unix-domain socket used by the local coordinator. */
+/**
+ * Canonical per-user directory and Unix-domain socket used by the local coordinator.
+ *
+ * [CoordinatorEndpointResolver.resolve] canonicalises an existing base, so the default endpoint
+ * from [LocalCoordinatorEnvironment.defaultEndpoint] carries no symbolic link above it. A
+ * caller-supplied endpoint must be an absolute path beneath a directory the caller already trusts:
+ * [OwnerOnlyEndpointProtection.prepareDirectory] refuses a symbolic link at the endpoint directory
+ * or at any ancestor of it, but it does not verify who owns those ancestors.
+ *
+ * [directory] must be the parent of [socketPath]. The guard above protects the socket's parent,
+ * while the coordinator keeps its election lock and recovery ledger in [directory]; letting the two
+ * differ would route that state through a directory nothing checked.
+ */
 @ExperimentalSpectreInputCoordinationApi
-public data class CoordinatorEndpoint(public val directory: Path, public val socketPath: Path)
+public data class CoordinatorEndpoint(public val directory: Path, public val socketPath: Path) {
+    init {
+        require(socketPath.parent == directory) {
+            "Coordinator endpoint directory $directory must be the socket's parent, " +
+                "was ${socketPath.parent}"
+        }
+    }
+}
 
 /** Resolves a short endpoint that is independent of the launching process's environment. */
 @ExperimentalSpectreInputCoordinationApi
@@ -54,7 +75,15 @@ public object CoordinatorEndpointResolver {
 /** Enforces the same-user trust boundary for a coordinator endpoint and its socket file. */
 @ExperimentalSpectreInputCoordinationApi
 public sealed interface OwnerOnlyEndpointProtection {
-    /** Creates or validates the socket's parent directory without following a substituted link. */
+    /**
+     * Creates or validates the socket's parent directory without following a substituted link.
+     *
+     * Neither the endpoint directory nor any ancestor of it may be a symbolic link. The one
+     * exemption is a root-level alias into `/private` — `/tmp`, `/var`, and `/etc` on macOS — which
+     * only root can create. Missing components are created one at a time so a link planted while
+     * this runs is rejected rather than adopted. Ownership of the existing ancestors is not
+     * checked: a caller-supplied endpoint must sit beneath a directory the caller already trusts.
+     */
     @Throws(IOException::class) public fun prepareDirectory(socketPath: Path)
 
     /** Applies owner-only access to a socket after it has been bound. */
@@ -77,24 +106,18 @@ public sealed interface OwnerOnlyEndpointProtection {
 private object PosixOwnerOnlyEndpointProtection : OwnerOnlyEndpointProtection {
     override fun prepareDirectory(socketPath: Path) {
         val directory = socketPath.toAbsolutePath().parent
+        val ownerOnly = PosixFilePermissions.asFileAttribute(OWNER_ONLY_DIRECTORY_PERMISSIONS)
+        // Parents may legitimately be missing (#462); nothing is created when they all exist.
+        prepareAncestors(directory) { ancestor -> Files.createDirectory(ancestor, ownerOnly) }
         if (Files.exists(directory, NOFOLLOW_LINKS)) {
-            rejectSubstitutedDirectory(directory)
+            rejectSubstituted(directory, role = "directory")
             val permissions = Files.getPosixFilePermissions(directory, NOFOLLOW_LINKS)
             if (permissions != OWNER_ONLY_DIRECTORY_PERMISSIONS) {
                 throw IOException("Existing coordinator directory $directory must be owner-only")
             }
         } else {
-            rejectSymbolicParent(directory.parent)
-            val ownerOnly =
-                java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
-                    OWNER_ONLY_DIRECTORY_PERMISSIONS
-                )
-            // Parents may legitimately be missing (#462), but only they are created loosely. The
-            // endpoint directory itself still goes through the atomic createDirectory: on a
-            // world-writable /tmp another user could plant a symlink between the exists() check
-            // above and this call, and createDirectories would happily adopt a symlink whose
-            // target is a directory, putting the lock, ledger, and socket under their control.
-            directory.parent?.let { Files.createDirectories(it, ownerOnly) }
+            // The atomic createDirectory refuses to adopt anything already at this path, symlinks
+            // included, so a link planted here loses the race rather than capturing the endpoint.
             Files.createDirectory(directory, ownerOnly)
         }
     }
@@ -119,15 +142,12 @@ private object PosixOwnerOnlyEndpointProtection : OwnerOnlyEndpointProtection {
 private object BasicOwnerOnlyEndpointProtection : OwnerOnlyEndpointProtection {
     override fun prepareDirectory(socketPath: Path) {
         val directory = socketPath.toAbsolutePath().parent
+        // Parents may be missing: on Windows the base is %LOCALAPPDATA%\Temp, which is absent on
+        // profiles whose temp directory has been redirected (#462).
+        prepareAncestors(directory) { ancestor -> Files.createDirectory(ancestor) }
         if (Files.exists(directory, NOFOLLOW_LINKS)) {
-            rejectSubstitutedDirectory(directory)
+            rejectSubstituted(directory, role = "directory")
         } else {
-            rejectSymbolicParent(directory.parent)
-            // Only the parents are created loosely: on Windows the base is %LOCALAPPDATA%\Temp,
-            // which is absent on profiles whose temp directory has been redirected (#462). The
-            // endpoint directory itself keeps the atomic createDirectory, which refuses to adopt
-            // anything already sitting at that path, symlinks included.
-            directory.parent?.let { Files.createDirectories(it) }
             Files.createDirectory(directory)
         }
     }
@@ -139,17 +159,71 @@ private object BasicOwnerOnlyEndpointProtection : OwnerOnlyEndpointProtection {
     }
 }
 
-private fun rejectSubstitutedDirectory(directory: Path) {
-    if (Files.isSymbolicLink(directory)) {
-        throw IOException("Coordinator directory $directory must not be a symbolic link")
-    }
-    if (!Files.isDirectory(directory, NOFOLLOW_LINKS)) {
-        throw IOException("Coordinator directory $directory is not a directory")
+/**
+ * Validates every ancestor of [directory] top-down and creates the missing ones, one atomic
+ * [createDirectory] each.
+ *
+ * Each component is checked immediately before it is descended into, rather than validating the
+ * whole chain up front and then creating blindly. A link planted between those two passes used to
+ * be invisible: the creation scan stopped at the newly existing component without looking at it,
+ * and the endpoint directory's own `createDirectory` then resolved straight through it into the
+ * attacker's target. The atomic creation only ever protected the final component, never the
+ * traversal that reaches it.
+ *
+ * The walk is lexical and deliberately not normalised: the OS resolves a `..` that follows a
+ * planted link against the link's target, so the link itself has to stay visible to this check. It
+ * cannot make traversal race-free — only an `openat`-style descent could — but every component is
+ * now rejected on sight instead of being skipped.
+ */
+private fun prepareAncestors(directory: Path, createDirectory: (Path) -> Unit) {
+    val ancestors = generateSequence(directory.parent) { it.parent }.toList().asReversed()
+    ancestors.forEach { ancestor ->
+        if (Files.exists(ancestor, NOFOLLOW_LINKS)) {
+            if (!isTrustedPrivateAlias(ancestor, ancestor.root)) {
+                rejectSubstituted(ancestor, role = "ancestor")
+            }
+        } else {
+            try {
+                createDirectory(ancestor)
+            } catch (_: FileAlreadyExistsException) {
+                rejectSubstituted(ancestor, role = "ancestor")
+            }
+        }
     }
 }
 
-private fun rejectSymbolicParent(parent: Path?) {
-    if (parent != null && Files.isSymbolicLink(parent)) {
-        throw IOException("Coordinator parent $parent must not be a symbolic link")
+/**
+ * Whether [link] is one of the root-level aliases macOS ships — `/tmp`, `/var`, and `/etc`, each
+ * pointing at `private/<same name>` — and so may be descended into rather than refused.
+ *
+ * The exemption is deliberately narrow. It is a fixed list of names rather than a path shape, and
+ * it applies on Darwin only: an ordinary Windows user with Developer Mode can create an entry at a
+ * drive root, so a planted `C:\tmp -> private\tmp` would otherwise read as trusted. On macOS the
+ * filesystem root is writable by root alone, which is what makes these aliases safe to follow.
+ *
+ * [root] and [macOs] are parameters only so tests can stage a fake root and both platforms;
+ * production passes the real ones.
+ */
+internal fun isTrustedPrivateAlias(link: Path, root: Path, macOs: Boolean = isMacOs()): Boolean {
+    if (!macOs || link.parent != root || !Files.isSymbolicLink(link)) return false
+    val name = link.fileName.toString()
+    if (name !in MACOS_ROOT_ALIASES) return false
+    val target = runCatching { Files.readSymbolicLink(link) }.getOrNull() ?: return false
+    return target == Path.of(PRIVATE_ALIAS_DIRECTORY).resolve(name)
+}
+
+private fun rejectSubstituted(path: Path, role: String) {
+    if (Files.isSymbolicLink(path)) {
+        throw IOException("Coordinator $role $path must not be a symbolic link")
+    }
+    if (!Files.isDirectory(path, NOFOLLOW_LINKS)) {
+        throw IOException("Coordinator $role $path is not a directory")
     }
 }
+
+private fun isMacOs(): Boolean =
+    System.getProperty("os.name").orEmpty().startsWith("Mac", ignoreCase = true)
+
+private val MACOS_ROOT_ALIASES: Set<String> = setOf("tmp", "var", "etc")
+
+private const val PRIVATE_ALIAS_DIRECTORY: String = "private"

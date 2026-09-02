@@ -162,4 +162,29 @@ class CoordinatorEndpointTest {
 
         assertTrue(failure.message.orEmpty().contains("owner-only"))
     }
+
+    @Test
+    fun `an endpoint whose directory is not the socket's parent is rejected`() {
+        // The owner-only guard protects the socket's parent, but the election lock and recovery
+        // ledger live in `directory`. If the two could differ, a caller-supplied endpoint could
+        // route coordinator state through a directory nothing checked.
+        val failure =
+            assertFailsWith<IllegalArgumentException> {
+                CoordinatorEndpoint(
+                    directory = temporaryDirectory.resolve("elsewhere"),
+                    socketPath = temporaryDirectory.resolve("coordinator").resolve("input.sock"),
+                )
+            }
+
+        assertTrue(failure.message.orEmpty().contains("parent"), failure.message)
+    }
+
+    @Test
+    fun `an endpoint whose directory is the socket's parent is accepted`() {
+        val directory = temporaryDirectory.resolve("coordinator")
+
+        val endpoint = CoordinatorEndpoint(directory, directory.resolve("input.sock"))
+
+        assertEquals(directory, endpoint.socketPath.parent)
+    }
 }

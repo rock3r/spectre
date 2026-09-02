@@ -27,6 +27,11 @@ on:
       - "agent-runtime/**"
       - "agent-test-fixture/**"
       - "cli/**"
+      # The input coordinator's endpoint layout is OS-specific (`/tmp` resolves to
+      # `/private/tmp` on macOS, `%LOCALAPPDATA%\Temp` on Windows) and its symlink guards can
+      # only be exercised against the real layout, so changes there need the full OS matrix.
+      - "input-coordinator/**"
+      - "input-coordinator-server/**"
       - "buildSrc/**"
       - "recording/**"
       - "recording-linux/**"
@@ -48,6 +53,8 @@ on:
       - "agent-runtime/**"
       - "agent-test-fixture/**"
       - "cli/**"
+      - "input-coordinator/**"
+      - "input-coordinator-server/**"
       - "buildSrc/**"
       - "recording/**"
       - "recording-linux/**"

@@ -253,6 +253,12 @@ closed until an operator makes an exact-ID forced recovery decision.
   rejects path substitution but does not rewrite the Windows ACL. Labels are diagnostic
   attribution, not authentication; typed text, clipboard contents, selectors, credentials, and
   prompts are never recorded.
+- The default endpoint is canonical, and Spectre keeps its trust boundary. A caller-supplied
+  endpoint must be an absolute path beneath a directory you already trust: Spectre refuses an
+  endpoint directory, or any ancestor of it, that is a symbolic link, with macOS's root-level
+  `/tmp`, `/var`, and `/etc` aliases into `/private` as the one exemption. It does not check who
+  owns the directories above the endpoint. If your path goes through a link, pass the canonical
+  form (`toRealPath()`) instead.
 
 Coordination remains **Experimental** until headed two-process smoke records FIFO contention,
 holder crash, exact revoke, forced recovery, and JUnit parallelism on macOS, Windows, and Linux
