@@ -128,9 +128,17 @@ class OwnerOnlyEndpointProtectionAncestorTest {
     @Test
     fun `the macOS tmp alias keeps a caller-supplied tmp endpoint working`() {
         val tmp = Path.of("/tmp")
+        // Gate on the OS, not just the link: the exemption is Darwin-only, so on a non-macOS host
+        // whose /tmp happens to be a symbolic link -- some container images do that -- production
+        // rejects it and this expectation does not hold. Skipping there keeps `./gradlew check`
+        // green for those contributors, which is the failure shape #467 was about.
+        assumeTrue(
+            System.getProperty("os.name").orEmpty().startsWith("Mac", ignoreCase = true),
+            "the /private aliases are a Darwin layout",
+        )
         assumeTrue(
             Files.isSymbolicLink(tmp),
-            "only meaningful where /tmp is an alias into /private, which is the macOS layout",
+            "only meaningful where /tmp is an alias into /private",
         )
         // A base under /tmp that does not exist yet: resolve() would only normalise it, so the
         // /tmp link stays in the path handed to prepareDirectory. This must keep working.
