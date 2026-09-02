@@ -135,6 +135,10 @@ condition holds.
 say about your condition, so phrase it as the state you were waiting for, not as an
 action.
 
+Keep the condition cheap and side-effect free — read the tree and decide, nothing more.
+`timeout` bounds the polling loop rather than a single poll: each poll runs to completion
+before the deadline is re-checked, so a condition that blocks will overrun it.
+
 ```
 waitUntil timed out after 5000ms: condition "the lazy list has realised at least five rows" never held in tracked windows
 ```

@@ -883,6 +883,12 @@ private constructor(
      * [description] is all the failure can say about the condition, so phrase it as the state you
      * were waiting for ("the settings dialog is showing"), not as an action.
      *
+     * [timeout] bounds the polling loop, not a single poll: each poll runs to completion before the
+     * deadline is re-checked, so a [condition] that blocks overruns it (as a hung EDT would, for
+     * this wait and every other). Keep the condition cheap and side-effect free — read the tree and
+     * decide, nothing more. That is the same discipline the [AutomatorTree]-only receiver is
+     * pointing at, from the other direction (Codex on #489).
+     *
      * **Scope: Spectre-observable state only.** [condition] is a lambda on [AutomatorTree], and
      * that receiver is the whole point: what this verb waits on is the semantics tree. Kotlin
      * closures can of course capture whatever is in scope, so this is a boundary the API declines

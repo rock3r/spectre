@@ -51,11 +51,11 @@ private fun StringBuilder.appendNodeFingerprint(node: AutomatorNode) {
     if (node.isSelected) append(":S")
     if (node.texts.isNotEmpty()) {
         append(":T")
-        append(node.texts.joinToString(separator = "").hashCode())
+        append(fingerprintHashOf(node.texts))
     }
     if (node.contentDescriptions.isNotEmpty()) {
         append(":C")
-        append(node.contentDescriptions.joinToString(separator = "").hashCode())
+        append(fingerprintHashOf(node.contentDescriptions))
     }
     node.editableText?.let {
         append(":E")
@@ -63,3 +63,16 @@ private fun StringBuilder.appendNodeFingerprint(node: AutomatorNode) {
     }
     append(';')
 }
+
+/**
+ * Collapses a node's text or content-description list into the hash [uiFingerprint] embeds.
+ *
+ * The separator is load-bearing. Joining with nothing makes `["ab", "c"]` and `["a", "bc"]` hash
+ * identically, so re-segmented text would read as an unchanged fingerprint and let
+ * [ComposeAutomator.waitForIdle] return on a UI that actually did change. U+0001 is a control
+ * character that cannot occur in rendered UI text, so it can never collide with content. It is
+ * written as an escape rather than a raw control byte so it stays visible to anyone reading,
+ * copying, or reviewing this line — as a raw byte it once went missing in a refactor unnoticed.
+ */
+internal fun fingerprintHashOf(values: List<String>): Int =
+    values.joinToString(separator = "\u0001").hashCode()
