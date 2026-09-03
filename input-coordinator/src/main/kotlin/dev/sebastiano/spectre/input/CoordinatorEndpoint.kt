@@ -179,6 +179,15 @@ private object BasicOwnerOnlyEndpointProtection : OwnerOnlyEndpointProtection {
  *
  * Missing parents are legitimate (#462): nothing is created when they all exist.
  *
+ * A filesystem-root directory (`/` on POSIX) has no components to descend into, so it is rejected
+ * rather than adopted: the walk would otherwise open the root, skip the owner-only check, and
+ * return. The previous lexical walk rejected that shape because `/` is not mode 0700.
+ *
+ * After this function returns the descriptors are closed. Later path-based operations — election
+ * lock, recovery ledger, socket bind — re-resolve from the root and are outside this walk's
+ * guarantee. Pinning an endpoint descriptor through server startup is a follow-up, not the mkdirat
+ * leftover #487 accepted.
+ *
  * [afterDescendingInto] is a test seam, in the same spirit as [isTrustedPrivateAlias]'s `root` and
  * `macOs` parameters; production passes nothing. It fires with each component the descent has just
  * opened, which is the instant a test needs in order to stage the substitution this walk exists to
@@ -188,6 +197,9 @@ internal fun prepareEndpointDirectory(directory: Path, afterDescendingInto: (Pat
     val absolute = directory.toAbsolutePath()
     val root =
         absolute.root ?: throw IOException("Coordinator directory $directory must be absolute")
+    if (absolute.nameCount == 0) {
+        throw IOException("Coordinator directory $directory must not be the filesystem root")
+    }
     val lastIndex = absolute.nameCount - 1
     var current = openRootDirectory(root)
     var currentPath = root

@@ -9,6 +9,8 @@ import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import kotlin.io.path.createSymbolicLinkPointingTo
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
@@ -108,6 +110,23 @@ class OwnerOnlyEndpointProtectionDescentTest {
         val failure =
             assertIs<IOException>(outcome.exceptionOrNull(), "the descent must fail closed")
         assertTrue(failure.message.orEmpty().contains("replaced"), failure.message)
+    }
+
+    @Test
+    fun `a filesystem-root endpoint directory is rejected`() {
+        assumePosixFilesystem()
+        // `/input.sock` makes the socket's parent the filesystem root. The descent opens `/` and
+        // then has zero components left, so without an explicit check it would return without
+        // ever applying the owner-only invariant the previous lexical walk enforced on `/`.
+        val socket = Path.of("/input.sock")
+        assertEquals(0, socket.toAbsolutePath().parent.nameCount)
+
+        val failure =
+            assertFailsWith<IOException> {
+                OwnerOnlyEndpointProtection.forPath(socket).prepareDirectory(socket)
+            }
+
+        assertTrue(failure.message.orEmpty().contains("filesystem root"), failure.message)
     }
 
     /**
