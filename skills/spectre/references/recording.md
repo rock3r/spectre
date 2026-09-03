@@ -96,11 +96,13 @@ If a test must run on those compositors, use `startRegion(...)` with a fixed
 ## HiDPI and coordinates
 
 `Rectangle` arguments are in **screen pixels** (post-HiDPI scaling), as is
-`AutomatorNode.boundsOnScreen`. `AutomatorNode.boundsInWindow` is already in
-**Compose / device pixels** (density-scaled). Reaching AWT or recording-region
-coordinates means **dividing** by the display scale — or just use
-`boundsOnScreen`, which does that conversion. Multiplying by density
-double-scales the region on a Retina display.
+`AutomatorNode.boundsOnScreen`. Prefer `boundsOnScreen`: it already divides by
+the display scale and adds the surface/panel screen origin.
+`AutomatorNode.boundsInWindow` is already in **Compose / device pixels**
+(density-scaled) and window-relative. If you convert it yourself, do both
+steps — dividing alone lands near `(0, 0)` when the window is not at the
+screen origin. Multiplying by density double-scales the region on a Retina
+display.
 
 ## Frame drops
 
