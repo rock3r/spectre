@@ -479,7 +479,7 @@ class InputLeaseGuardTest {
         }
 
     @Test
-    fun `cancellation after production acquisition closes the discarded lease`() = runTest {
+    fun `cancellation after production acquisition closes the discarded lease`() = runBlocking {
         val directory = Files.createTempDirectory("spc-h-")
         val endpoint = CoordinatorEndpoint(directory, directory.resolve("coordinator.sock"))
         val resource = DesktopResourceKey("test/cancelled-handoff")
@@ -496,6 +496,12 @@ class InputLeaseGuardTest {
                 },
             )
         try {
+            // Same real-coordinator shape as the queued-cancel test above: runBlocking, not
+            // runTest. The test dispatcher plus a blocking status poll left a window where
+            // cancel() ran after acquire() had already published the lease, so the successor
+            // hit a still-held desktop. That showed up on macOS hosted check as
+            // InputCoordinatorException with no message (check-macos on da0165b); Linux and
+            // the other production-coordinator tests in this class stayed green.
             val discarded =
                 async(start = CoroutineStart.UNDISPATCHED) {
                     coordinator.acquire(InputLeaseOptions(), "discarded", immediate = false)
@@ -504,6 +510,10 @@ class InputLeaseGuardTest {
 
             discarded.cancel()
             discarded.join()
+
+            awaitCoordinatorStatus(endpoint, resource, "the discarded lease to be released") {
+                it.holder == null
+            }
 
             LocalInputCoordinatorClient.connect(endpoint, resource, "successor").use { successor ->
                 successor.acquire(JavaDuration.ofSeconds(2), "successor").close()
