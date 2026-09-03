@@ -54,20 +54,44 @@ REQUIRED_SCENARIO_IDS: tuple[str, ...] = (
     "input-coord-revoke",
     "input-coord-forced-recovery",
     "input-coord-junit-pertest",
-    # Operator-run: the harness cannot drive two real Robot JVMs, and the coordinator-protocol
-    # cells above pass headless. Stays a hard cell so the headed claim needs a human signature.
+    # The headed half of the gate: two real RobotDriver JVMs, which every cell above avoids
+    # constructing (that is why they all pass headless and under SSH). Driven by its own e2e on
+    # hosts that can run one, and by an operator signature on hosts that cannot -- never by the
+    # coordinator-protocol cells.
     "input-coord-headed-robot",
 )
 
 HEADED_ROBOT_SCENARIO_ID: str = "input-coord-headed-robot"
-HEADED_ROBOT_NAME: str = "Headed two-JVM Robot contention (operator-recorded)"
+HEADED_ROBOT_NAME: str = "Headed two-JVM Robot contention"
+
+# The automated proof (#491). Two forked JVMs, each with RobotDriver(InputLeasePolicy.Required),
+# type one distinguishable block into the same focused text field of one fixture window; a field
+# holding `ababab` is the failure being ruled out, and it is exactly what a lease-level proof
+# cannot observe. Both entrypoints run this task and both verify the testcase in the JUnit XML.
+HEADED_ROBOT_GRADLE_TASK: str = ":sample-desktop:headedRobotContentionTest"
+HEADED_ROBOT_RESULTS_SUBPATH: str = "sample-desktop/build/test-results/headedRobotContentionTest"
+HEADED_ROBOT_TESTCASE: str = (
+    "two Robot JVMs typing into one field never interleave their keystrokes"
+)
+_HEADED_ROBOT_SAMPLE_TEST_DIR: str = (
+    "sample-desktop/src/test/kotlin/dev/sebastiano/spectre/sample"
+)
+HEADED_ROBOT_TEST_SOURCE: str = f"{_HEADED_ROBOT_SAMPLE_TEST_DIR}/HeadedRobotContentionTest.kt"
+HEADED_ROBOT_PROBE_SOURCE: str = f"{_HEADED_ROBOT_SAMPLE_TEST_DIR}/HeadedRobotContentionProbe.kt"
+
+HEADED_ROBOT_AUTOMATED_DETAIL: str = (
+    f"automated headed two-JVM Robot contention passed ({HEADED_ROBOT_GRADLE_TASK}): two forked "
+    "RobotDriver(InputLeasePolicy.Required) JVMs released from one barrier typed into a single "
+    "focused field without interleaving"
+)
 
 # Deliberately blunt: a reader skimming a report must not mistake this row for "covered by the
 # automated cells". Both entrypoints emit this exact sentence; the contract tests pin it on each.
 HEADED_ROBOT_MISSING_EVIDENCE: str = (
-    "headed two-JVM Robot contention is operator-run on a real desktop and was NOT recorded; "
-    "the coordinator-protocol cells do not prove real-input non-interleaving, so this blocks "
-    "the tag on any OS whose release notes claim headed coordination"
+    "headed two-JVM Robot contention was NOT recorded: this host did not run the automated "
+    "proof and no operator evidence was supplied; the coordinator-protocol cells do not prove "
+    "real-input non-interleaving, so this blocks the tag on any OS whose release notes claim "
+    "headed coordination"
 )
 
 RESULT_PASS = "pass"
@@ -1112,29 +1136,111 @@ def assert_junit_testcases_passed(
             )
 
 
-def headed_robot_cell(evidence: str | None) -> ScenarioResult:
-    """Hard cell for the operator-recorded headed two-JVM Robot contention proof.
+def headed_robot_missing_surface(root: Path) -> str | None:
+    """Detail when the headed Robot contention e2e's sources are gone, else None.
 
-    Absent evidence is a **fail**, not a reasoned `n/a`. [hard_failures] deliberately ignores an
-    `n/a` that carries a reason, so recording this as `n/a` would let the runner exit 0 and print
-    "ALL HARD SCENARIOS PASSED" without the headed proof the release gate requires — the exact
-    hole a reasoned skip is supposed to prevent. The automated `input-coord-*` cells never satisfy
-    this: they construct no RobotDriver and pass headless and under SSH.
+    Same fail-closed rule as [input_coordination_missing_surface], and kept separate from it so a
+    change to one proof cannot quietly re-colour the other's cells. Deleting the e2e does not fall
+    back to the operator signature: the signature covers a *host* that cannot run the proof, not
+    the proof ceasing to exist. Dropping the claim means re-scoping the release on purpose.
     """
+    for source in (HEADED_ROBOT_TEST_SOURCE, HEADED_ROBOT_PROBE_SOURCE):
+        if not (Path(root) / source).is_file():
+            name = source.rsplit("/", maxsplit=1)[-1]
+            return (
+                f"headed two-JVM Robot contention proof missing ({name}); this is a failure, "
+                "not a skip, and an operator signature does not substitute for a deleted test: "
+                "if the surface was genuinely removed or graduated, re-scope the release by "
+                "dropping input-coord-headed-robot from REQUIRED_SCENARIO_IDS and updating "
+                "docs/RELEASE-SMOKE.md"
+            )
+    return None
+
+
+def headed_robot_cell(
+    evidence: str | None,
+    automated: ScenarioResult | None = None,
+    unavailable_reason: str | None = None,
+    missing_surface: str | None = None,
+) -> ScenarioResult:
+    """Hard cell for the headed two-JVM Robot contention proof (#459, #484, #491).
+
+    Four inputs, one precedence, and the order is the whole design:
+
+    1. `missing_surface` — the e2e's sources are gone. Fail; nothing else is consulted.
+    2. `automated` — the e2e actually ran on this host. Its verdict wins, and a **red** run wins
+       over operator evidence too: a signature is a claim about a run nobody can re-read, and an
+       observed interleave is a measurement. Letting the note outrank the measurement would put
+       the escape hatch exactly where it must never be.
+    3. `evidence` — nothing ran here, but an operator attests they ran it on a real desktop. The
+       host's `unavailable_reason` is recorded alongside so the report says *why* automation was
+       skipped rather than leaving a reader to assume it passed.
+    4. Neither — **fail**, never a reasoned `n/a`. [hard_failures] deliberately ignores an `n/a`
+       that carries a reason, so recording this as `n/a` would let the runner exit 0 and print
+       "ALL HARD SCENARIOS PASSED" without the headed proof the release gate requires. The
+       `input-coord-*` cells never fill this gap: they construct no RobotDriver and pass headless.
+    """
+    if missing_surface:
+        return scenario_result(
+            HEADED_ROBOT_SCENARIO_ID,
+            name=HEADED_ROBOT_NAME,
+            result=RESULT_FAIL,
+            detail=missing_surface,
+            hard=True,
+        )
     recorded = (evidence or "").strip()
+    if automated is not None:
+        if automated.result == RESULT_PASS:
+            detail = HEADED_ROBOT_AUTOMATED_DETAIL
+            if recorded:
+                detail = f"{detail}; operator evidence also recorded: {recorded}"
+            return scenario_result(
+                HEADED_ROBOT_SCENARIO_ID,
+                name=HEADED_ROBOT_NAME,
+                result=RESULT_PASS,
+                seconds=automated.seconds,
+                detail=detail,
+                log=automated.log,
+                hard=True,
+            )
+        detail = (
+            "the automated headed two-JVM Robot contention proof "
+            f"({HEADED_ROBOT_GRADLE_TASK}) went red on this host: {automated.detail}"
+        )
+        if recorded:
+            detail = (
+                f"{detail}. Operator evidence was also supplied ({recorded}) and does not "
+                "override an observed failure."
+            )
+        return scenario_result(
+            HEADED_ROBOT_SCENARIO_ID,
+            name=HEADED_ROBOT_NAME,
+            result=RESULT_FAIL,
+            seconds=automated.seconds,
+            detail=detail,
+            log=automated.log,
+            hard=True,
+        )
+    blocked = (unavailable_reason or "").strip()
     if recorded:
+        detail = f"operator evidence: {recorded}"
+        if blocked:
+            detail = f"{detail} (the automated proof did not run here: {blocked})"
         return scenario_result(
             HEADED_ROBOT_SCENARIO_ID,
             name=HEADED_ROBOT_NAME,
             result=RESULT_PASS,
-            detail=f"operator evidence: {recorded}",
+            detail=detail,
             hard=True,
         )
+    detail = HEADED_ROBOT_MISSING_EVIDENCE
+    if blocked:
+        detail = f"{detail}. The automated proof did not run here: {blocked}"
     return scenario_result(
         HEADED_ROBOT_SCENARIO_ID,
         name=HEADED_ROBOT_NAME,
         result=RESULT_FAIL,
-        detail=HEADED_ROBOT_MISSING_EVIDENCE,
+        detail=detail,
         hard=True,
     )
 

@@ -49,6 +49,13 @@ dependencies {
     detektPlugins(libs.compose.rules.detekt)
 
     testImplementation(libs.kotlin.testJunit5)
+    // @Tag on the headed Robot contention e2e (#491), which `test` filters out and the dedicated
+    // `headedRobotContentionTest` task selects.
+    testImplementation(libs.junit5.api)
+    // The forked contention probes construct RobotDriver(InputLeasePolicy.Required), which reaches
+    // the coordinator through a ServiceLoader provider. Without the server artifact on the probe's
+    // runtime classpath every acquisition fails COORDINATOR_PROVIDER_MISSING.
+    testRuntimeOnly(projects.inputCoordinatorServer)
 
     "validationImplementation"(libs.kotlin.testJunit5)
     "validationImplementation"(libs.junit5.api)
@@ -58,6 +65,13 @@ dependencies {
 }
 
 tasks.withType<Test>().configureEach { useJUnitPlatform() }
+
+// The headed two-JVM Robot contention e2e (#491) lives in `test` next to the Robot smoke rig it
+// reuses, but it drives the real OS keyboard and forks two coordinator clients, so it must never
+// run as part of `check` on a headless CI worker. Tag literal mirrors `HEADED_ROBOT_TAG`.
+val headedRobotTag = "headedRobot"
+
+tasks.test { useJUnitPlatform { excludeTags(headedRobotTag) } }
 
 // Configuration Cache "Runs tasks in parallel within the same project"
 // (https://docs.gradle.org/current/userguide/configuration_cache.html#config_cache:intro), so the
@@ -99,6 +113,45 @@ tasks
     .withType<Test>()
     .matching { it.name.startsWith("validationTest") }
     .configureEach { usesService(validationTestSerialiser) }
+
+// Backs the `input-coord-headed-robot` release-smoke cell. Run headed: a real macOS/Windows
+// desktop, or Linux under `xvfb-run`. Unlike the `input-coord-*` protocol cells this one cannot
+// pass headless, which is the entire point of it existing.
+@Suppress("UNUSED_VARIABLE")
+val headedRobotContentionTest by
+    tasks.registering(Test::class) {
+        description =
+            "Proves two RobotDriver(InputLeasePolicy.Required) JVMs cannot interleave real input."
+        group = "verification"
+        testClassesDirs = sourceSets["test"].output.classesDirs
+        classpath = sourceSets["test"].runtimeClasspath
+        useJUnitPlatform { includeTags(headedRobotTag) }
+        // One fixture window per JVM; Compose Desktop leaves global EDT state behind.
+        forkEvery = 1
+        // Same Skiko constraint as the validation lane: Xvfb and cold Windows GPU init cannot be
+        // relied on for a hardware context. A caller override still wins for local GPU work.
+        if (OperatingSystem.current().isLinux || OperatingSystem.current().isWindows) {
+            val renderApi = providers.systemProperty("skiko.renderApi").orElse("SOFTWARE_COMPAT")
+            systemProperty("skiko.renderApi", renderApi.get())
+        }
+        // The opposite of the validation lane's default. A macOS UI-element process is
+        // background-only and never takes keyboard focus, so the probes' keystrokes would land
+        // nowhere and the field would come back empty.
+        systemProperty("apple.awt.UIElement", "false")
+        // Red-proof lever, off unless asked for: forwards
+        // -Dspectre.headedContention.distinctDesktopKeys=true to the worker so each probe gets its
+        // own desktop resource key and mutual exclusion is disabled. See HeadedRobotContentionTest.
+        systemProperty(
+            "spectre.headedContention.distinctDesktopKeys",
+            providers
+                .systemProperty("spectre.headedContention.distinctDesktopKeys")
+                .orElse("false")
+                .get(),
+        )
+        // Real OS input plus a forked coordinator: the validation Test tasks are serialised for
+        // the same reason, and a concurrent worker JVM here would contend for the actual keyboard.
+        usesService(validationTestSerialiser)
+    }
 
 // Mark every validation-driven worker JVM as a macOS UI element. AppKit treats UI-element
 // processes as background-only — no Dock icon, no menu bar, and (the part the user cares about)

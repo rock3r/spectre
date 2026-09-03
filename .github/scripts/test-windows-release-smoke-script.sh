@@ -115,13 +115,24 @@ grep -F -q 'two independent client JVMs never hold the desktop lease at the same
 grep -F -q 'ParallelPerTestInputIsolationTest' "$script" || fail "Windows runner missing parallel per-test isolation proof"
 grep -F -q 'concurrent per-test invocations never hold the desktop lease at the same time' "$script" || fail "Windows runner missing parallel per-test needle"
 grep -F -q 'the per-test lease is still held while failure evidence is captured' "$script" || fail "Windows runner missing evidence-capture needle"
-# Headed contention is operator-recorded: it must stay hard n/a unless evidence is passed, so the
-# automated (headless-capable) coordinator cells can never satisfy the headed claim on their own.
+# --- #491 headed two-JVM Robot contention ---
+# The automated (headless-capable) coordinator cells can never satisfy the headed claim on their
+# own, so this cell has its own real-Robot e2e, and the operator flag survives as the escape hatch
+# for hosts that cannot run one (Windows SSH has no interactive desktop for Robot to type into).
+grep -F -q 'Invoke-HeadedRobotCell' "$script" || fail "Windows runner missing headed-robot cell runner"
+grep -F -q ':sample-desktop:headedRobotContentionTest' "$script" || fail "Windows runner missing headed-robot Gradle task"
+grep -F -q 'two Robot JVMs typing into one field never interleave their keystrokes' "$script" || fail "Windows runner missing headed-robot testcase needle"
+grep -F -q 'sample-desktop\build\test-results\headedRobotContentionTest' "$script" || fail "Windows runner missing headed-robot JUnit results path"
+grep -F -q 'Get-HeadedRobotMissingSurface' "$script" || fail "Windows runner missing headed-robot surface probe"
+grep -F -q 'HeadedRobotContentionTest.kt' "$script" || fail "Windows runner missing headed-robot proof source"
 grep -F -q 'HeadedRobotEvidence' "$script" || fail "Windows runner missing headed-robot operator evidence parameter"
-grep -F -q 'operator-run on a real desktop and was NOT recorded' "$script" || fail "Windows runner missing headed-robot blocking message"
-# Absent evidence must be a hard FAIL, not a reasoned n/a: the summary's failure count ignores a
+grep -F -q 'was NOT recorded' "$script" || fail "Windows runner missing headed-robot blocking message"
+# An operator note must never outrank an observed red run -- that is where the escape hatch would
+# do real damage, because the note is unverifiable and the failure is measured.
+grep -F -q 'does not override an observed failure' "$script" || fail "Windows headed-robot cell must not let evidence mask a red automated run"
+# Absent both, it must be a hard FAIL, not a reasoned n/a: the summary's failure count ignores a
 # reasoned n/a, so an n/a here would report overall success without the headed proof.
-grep -F -q 'Result "fail" -Detail "headed two-JVM Robot contention' "$script" || fail "Windows headed-robot cell must FAIL (not n/a) when evidence is absent"
+grep -F -q 'Result "fail" -Detail $headedDetail' "$script" || fail "Windows headed-robot cell must FAIL (not n/a) when neither proof nor evidence is present"
 grep -F -q 'windows-ssh' "$script" || fail "SSH displayMode honesty for WGC missing"
 grep -F -q 'WGC requires native interactive console' "$script" || fail "WGC interactive-console N/A reason missing"
 grep -F -q 'AgentAttachIntegration e2e includes WGC node screenshots' "$script" || fail "SSH agent-attach-core hard n/a reason missing"

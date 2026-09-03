@@ -26,6 +26,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from smoke_lib import (  # noqa: E402
+    HEADED_ROBOT_GRADLE_TASK,
+    HEADED_ROBOT_NAME,
+    HEADED_ROBOT_RESULTS_SUBPATH,
+    HEADED_ROBOT_SCENARIO_ID,
+    HEADED_ROBOT_TESTCASE,
     REQUIRED_SCENARIO_IDS,
     RESULT_FAIL,
     RESULT_PASS,
@@ -37,6 +42,7 @@ from smoke_lib import (  # noqa: E402
     assert_pointer_move_live_executed,
     input_coordination_missing_surface,
     headed_robot_cell,
+    headed_robot_missing_surface,
     WAYLAND_PORTAL_WARMUP_TOKEN_KEYS,
     linux_portal_token_path,
     build_report,
@@ -305,8 +311,10 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help=(
             "Operator attestation that headed two-JVM Robot contention was run on this desktop "
-            "(e.g. a note or run URL). Without it the hard input-coord-headed-robot cell stays "
-            "n/a with a blocking reason; the automated coordinator cells never satisfy it."
+            "(e.g. a note or run URL). Only needed where the automated proof cannot run (no "
+            f"xvfb-run on Linux, no interactive desktop); elsewhere {HEADED_ROBOT_GRADLE_TASK} "
+            "drives the cell. Without either the hard input-coord-headed-robot cell FAILS; the "
+            "automated coordinator cells never satisfy it."
         ),
     )
     parser.add_argument(
@@ -722,13 +730,54 @@ def main(argv: list[str] | None = None) -> int:
                 )
         add(cell)
 
-    # --- headed two-JVM Robot contention (operator-run hard cell) ---
+    # --- headed two-JVM Robot contention (hard cell) ---
     # SKILL.md requires *headed* two-JVM contention as a delta hard cell. Every cell above proves
     # the coordinator lease is mutually exclusive across processes, but none constructs a
-    # RobotDriver, so they all pass headless and under SSH. Absent operator evidence this is a
-    # hard FAIL, not a reasoned n/a: hard_failures() ignores a reasoned n/a, so an n/a here would
-    # print "ALL HARD SCENARIOS PASSED" without the headed proof.
-    add(headed_robot_cell(args.headed_robot_evidence))
+    # RobotDriver, so they all pass headless and under SSH. This one does, so unlike them it runs
+    # under the xvfb/robot wrapper and the forced-X11 env (same lane as junit-live), never the
+    # plain scenario env. Absent both the automated proof and operator evidence this is a hard
+    # FAIL, not a reasoned n/a: hard_failures() ignores a reasoned n/a, so an n/a here would print
+    # "ALL HARD SCENARIOS PASSED" without the headed proof.
+    headed_missing = headed_robot_missing_surface(ROOT)
+    headed_blocked = robot_xvfb_unavailable_reason(system)
+    headed_automated: ScenarioResult | None = None
+    if headed_missing is None and headed_blocked is None:
+        headed_automated = run_scenario(
+            HEADED_ROBOT_SCENARIO_ID,
+            name=HEADED_ROBOT_NAME,
+            command=[*robot_prefix, gradle, HEADED_ROBOT_GRADLE_TASK, *force],
+            cwd=ROOT,
+            timeout=900,
+            out_dir=out_dir,
+            env=_robot_env(scenario_env),
+            overall_deadline=overall_deadline,
+        )
+        if headed_automated.result == RESULT_PASS:
+            try:
+                # Gradle exits 0 on a tag filter that matches nothing, so the pass has to prove
+                # the e2e itself ran -- present in the XML and not <skipped/>.
+                assert_junit_testcases_passed(
+                    ROOT / HEADED_ROBOT_RESULTS_SUBPATH,
+                    needles=(HEADED_ROBOT_TESTCASE,),
+                    cell=HEADED_ROBOT_SCENARIO_ID,
+                )
+            except RuntimeError as exc:
+                headed_automated = scenario_result(
+                    HEADED_ROBOT_SCENARIO_ID,
+                    name=HEADED_ROBOT_NAME,
+                    result=RESULT_FAIL,
+                    seconds=headed_automated.seconds,
+                    detail=str(exc),
+                    log=headed_automated.log,
+                )
+    add(
+        headed_robot_cell(
+            args.headed_robot_evidence,
+            automated=headed_automated,
+            unavailable_reason=headed_blocked,
+            missing_surface=headed_missing,
+        )
+    )
 
     # --- agent attach / corpus / inject / launch-and-attach ---
     for scenario_id, name, test_filter in (

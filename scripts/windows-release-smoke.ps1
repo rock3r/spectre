@@ -40,7 +40,9 @@ param(
     [switch] $SkipCheck,
     [switch] $SkipMavenLocal,
     # Operator attestation that headed two-JVM Robot contention was run on this desktop.
-    # Without it the hard input-coord-headed-robot cell stays n/a with a blocking reason; the
+    # Only needed where the automated proof cannot run (a Windows SSH session has no interactive
+    # desktop for java.awt.Robot to type into); elsewhere :sample-desktop:headedRobotContentionTest
+    # drives the cell. Without either the hard input-coord-headed-robot cell FAILS; the
     # automated coordinator cells never satisfy it (they pass headless and under SSH).
     [string] $HeadedRobotEvidence = "",
     # Schema/preflight self-check only: remaining required IDs are hard n/a with reason.
@@ -262,6 +264,92 @@ function Invoke-Step {
         Write-Host ("FAIL  {0}  ({1}s): {2}" -f $Id, $secs, $msg) -ForegroundColor Red
         return (New-StepResult -Id $Id -Name $Name -Result "fail" -Seconds $secs -Detail $msg)
     }
+}
+
+function Get-HeadedRobotMissingSurface {
+    param([Parameter(Mandatory = $true)][string] $RepoRoot)
+    # Same fail-closed rule as Get-InputCoordinationMissingSurface, kept separate so a change to
+    # one proof cannot quietly re-colour the other's cells. Deleting the e2e does NOT fall back to
+    # the operator signature: that hatch covers a host which cannot run the proof, not the proof
+    # ceasing to exist. Mirrors smoke_lib.headed_robot_missing_surface.
+    $sources = @(
+        "sample-desktop\src\test\kotlin\dev\sebastiano\spectre\sample\HeadedRobotContentionTest.kt",
+        "sample-desktop\src\test\kotlin\dev\sebastiano\spectre\sample\HeadedRobotContentionProbe.kt"
+    )
+    foreach ($rel in $sources) {
+        if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot $rel))) {
+            $name = Split-Path -Leaf $rel
+            return ("headed two-JVM Robot contention proof missing ({0}); this is a failure, not a skip, and an operator signature does not substitute for a deleted test: if the surface was genuinely removed or graduated, re-scope the release by dropping input-coord-headed-robot from RequiredScenarioIds and updating docs/RELEASE-SMOKE.md" -f $name)
+        }
+    }
+    return $null
+}
+
+function Invoke-HeadedRobotCell {
+    # Explicit-parameter cell runner (no closure over caller variables -- avoids the WinPS
+    # dot-sourced-scriptblock scope gotcha). Mirrors smoke_lib.headed_robot_cell, including its
+    # precedence: a missing proof source outranks everything, an automated run outranks an
+    # operator note in BOTH directions, and neither present is a fail rather than a reasoned n/a.
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $Name,
+        [string] $Evidence = "",
+        [string] $MissingSurface = "",
+        [string] $UnavailableReason = "",
+        [ValidateRange(1, 86400)][int] $TimeoutSeconds = 900
+    )
+    $id = "input-coord-headed-robot"
+    $task = ":sample-desktop:headedRobotContentionTest"
+    if (-not [string]::IsNullOrWhiteSpace($MissingSurface)) {
+        return (New-StepResult -Id $id -Name $Name -Result "fail" -Detail $MissingSurface)
+    }
+    $recorded = ""
+    if (-not [string]::IsNullOrWhiteSpace($Evidence)) { $recorded = $Evidence.Trim() }
+
+    if ([string]::IsNullOrWhiteSpace($UnavailableReason)) {
+        Write-Host ""
+        Write-Host ("==== {0} ({1}) ====" -f $id, $Name) -ForegroundColor Cyan
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        try {
+            Invoke-Gradle -RepoRoot $RepoRoot -TimeoutSeconds $TimeoutSeconds -LogName $id -GradleArgs @(
+                $task,
+                "--rerun-tasks",
+                "--no-build-cache"
+            )
+            # Gradle exits 0 on a tag filter that matches nothing, so the pass has to prove the
+            # e2e itself ran -- present in the XML and not skipped.
+            Assert-JUnitTestcasesPassed -RepoRoot $RepoRoot `
+                -ResultsSubPath "sample-desktop\build\test-results\headedRobotContentionTest" `
+                -Needles @("two Robot JVMs typing into one field never interleave their keystrokes") `
+                -Cell $id
+            $sw.Stop()
+            $secs = [int]$sw.Elapsed.TotalSeconds
+            $detail = "automated headed two-JVM Robot contention passed ({0}): two forked RobotDriver(InputLeasePolicy.Required) JVMs released from one barrier typed into a single focused field without interleaving" -f $task
+            if ($recorded) {
+                $detail = ("{0}; operator evidence also recorded: {1}" -f $detail, $recorded)
+            }
+            Write-Host ("PASS  {0}  ({1}s)" -f $id, $secs) -ForegroundColor Green
+            return (New-StepResult -Id $id -Name $Name -Result "pass" -Seconds $secs -Detail $detail)
+        }
+        catch {
+            $sw.Stop()
+            $secs = [int]$sw.Elapsed.TotalSeconds
+            $msg = [string]$_.Exception.Message
+            $detail = ("the automated headed two-JVM Robot contention proof ({0}) went red on this host: {1}" -f $task, $msg)
+            if ($recorded) {
+                $detail = ("{0}. Operator evidence was also supplied ({1}) and does not override an observed failure." -f $detail, $recorded)
+            }
+            Write-Host ("FAIL  {0}  ({1}s): {2}" -f $id, $secs, $msg) -ForegroundColor Red
+            return (New-StepResult -Id $id -Name $Name -Result "fail" -Seconds $secs -Detail $detail)
+        }
+    }
+
+    if ($recorded) {
+        $signedDetail = ("operator evidence: {0} (the automated proof did not run here: {1})" -f $recorded, $UnavailableReason)
+        return (New-StepResult -Id $id -Name $Name -Result "pass" -Detail $signedDetail)
+    }
+    $headedDetail = ("headed two-JVM Robot contention was NOT recorded: this host did not run the automated proof and no operator evidence was supplied; the coordinator-protocol cells do not prove real-input non-interleaving, so this blocks the tag on any OS whose release notes claim headed coordination. The automated proof did not run here: {0}" -f $UnavailableReason)
+    return (New-StepResult -Id $id -Name $Name -Result "fail" -Detail $headedDetail)
 }
 
 function Get-PackagedSpectre {
@@ -757,17 +845,21 @@ try {
                 -ResultsSubPath $testingResults `
                 -Needles @("InputIsolationLifecycleTest", "concurrent per-test invocations never hold the desktop lease at the same time", "the per-test lease is still held while failure evidence is captured")))
 
-    # Headed two-JVM Robot contention: operator-run hard cell. SKILL.md requires *headed*
-    # contention, and every automated cell above passes headless/SSH because none builds a
-    # RobotDriver. Absent evidence this is a hard FAIL, not a reasoned n/a: the summary's failure
-    # count ignores a reasoned n/a, so an n/a here would report success without the headed proof.
-    $headedName = "Headed two-JVM Robot contention (operator-recorded)"
-    if (-not [string]::IsNullOrWhiteSpace($HeadedRobotEvidence)) {
-        [void]$results.Add((New-StepResult -Id "input-coord-headed-robot" -Name $headedName -Result "pass" -Detail ("operator evidence: {0}" -f $HeadedRobotEvidence)))
+    # Headed two-JVM Robot contention: hard cell. SKILL.md requires *headed* contention, and every
+    # automated cell above passes headless/SSH because none builds a RobotDriver. This one does, so
+    # it needs an interactive desktop: over SSH there is no window for Robot to type into and the
+    # operator signature is the only route. Absent both, a hard FAIL, not a reasoned n/a -- the
+    # summary's failure count ignores a reasoned n/a, so an n/a would report success without the
+    # headed proof.
+    $headedName = "Headed two-JVM Robot contention"
+    $headedUnavailable = ""
+    if ((Get-DisplayModeWindows) -eq "windows-ssh") {
+        $headedUnavailable = "a Windows SSH session has no interactive desktop, so java.awt.Robot input cannot reach a window"
     }
-    else {
-        [void]$results.Add((New-StepResult -Id "input-coord-headed-robot" -Name $headedName -Result "fail" -Detail "headed two-JVM Robot contention is operator-run on a real desktop and was NOT recorded; the coordinator-protocol cells do not prove real-input non-interleaving, so this blocks the tag on any OS whose release notes claim headed coordination"))
-    }
+    [void]$results.Add((Invoke-HeadedRobotCell -RepoRoot $repoRoot -Name $headedName -TimeoutSeconds $AgentE2eTimeoutSeconds `
+                -Evidence $HeadedRobotEvidence `
+                -MissingSurface (Get-HeadedRobotMissingSurface -RepoRoot $repoRoot) `
+                -UnavailableReason $headedUnavailable))
 
     if (-not $SkipAgentE2e) {
         # AgentAttachIntegration e2e includes WGC node screenshots (#362). Under SSH that is the
