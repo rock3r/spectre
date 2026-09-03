@@ -158,9 +158,12 @@ shortcuts, real OS drag-and-drop) won't behave the same way. See
 ## "Every input verb fails and the coordinator will not start" {#coordinator-unreachable}
 
 Symptom: semantics reads, `windows()`, `findByTestTag` and screenshots all keep working, while
-`focusWindow`, `click`, `typeText` and `pasteText` all fail at once with a message about the input
-coordinator. That split is the signature — everything that touches the shared desktop is gated on a
-lease, and nothing else is.
+verbs that touch **shared OS state for the current driver** fail with a message about the input
+coordinator. On a real-OS `Required` driver that is `focusWindow`, `click`, `typeText`, and
+`pasteText` together. On the default synthetic `Required` driver (attach / in-process) only
+clipboard-backed `pasteText` and explicit exclusive scopes need a live coordinator — synthetic
+`focusWindow` / `click` / `typeText` do not. That split is the signature: leased shared-desktop
+work fails, everything else does not.
 
 The failure now names its own way out:
 

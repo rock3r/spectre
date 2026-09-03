@@ -278,7 +278,9 @@ internal class InputLeaseGuard(
         return when (resource) {
             CoordinatedResource.DESKTOP_ANY -> true
             CoordinatedResource.REAL_INPUT -> capabilities.realOsInput
-            CoordinatedResource.FOCUS -> true
+            // Synthetic input already skips REAL_INPUT. FOCUS has to follow that, otherwise
+            // attach's first focusWindow is the only verb that needs a live coordinator.
+            CoordinatedResource.FOCUS -> capabilities.realOsInput
             CoordinatedResource.SYSTEM_CLIPBOARD -> capabilities.sharedSystemClipboard
         }
     }
