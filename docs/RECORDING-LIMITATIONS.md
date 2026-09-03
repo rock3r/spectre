@@ -287,8 +287,9 @@ compositor and not raw framebuffer reads.
   window come out at the same resolution. See
   [Atomic capture — Pixel scale](guide/capture.md#pixel-scale).
 - `Rectangle` coordinates passed to `start(...)` are in screen pixels. If you derive the region
-  from `AutomatorNode.boundsOnScreen` you get the right thing for free; if you derive it from
-  `boundsInWindow` you have to apply the density yourself.
+  from `AutomatorNode.boundsOnScreen` you get the right thing for free. `boundsInWindow` is already
+  in Compose / device pixels (density-scaled); converting those to AWT/region coordinates means
+  **dividing** by the display scale. Do not multiply by density.
 
 ## Permissions and process lifecycle
 

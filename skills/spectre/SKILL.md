@@ -164,8 +164,11 @@ Use, in order of preference:
 
 `AutomatorNode` exposes `testTag`, `text`/`texts`, `contentDescription(s)`,
 `role`, `isFocused`, `isDisabled`, `isSelected`, `editableText`, plus
-coordinates: `boundsInWindow` (dp), `boundsOnScreen` (screen pixels,
-post-HiDPI), `centerOnScreen`. Tree navigation via `children`/`parent`.
+coordinates: `boundsInWindow` (Compose pixels, already density-scaled),
+`boundsOnScreen` (screen pixels, post-HiDPI), `centerOnScreen`. Tree
+navigation via `children`/`parent`. Compare `boundsInWindow` against
+`Dp.roundToPx()` / `LocalDensity`-scaled values; compare `boundsOnScreen`
+against dp figures directly.
 
 ## Driving input
 
@@ -356,7 +359,7 @@ touches that area*; they are not needed for the common case.
 | `pasteText` times out on macOS in CI | Clipboard manager rewriting `NSPasteboard` | Disable clipboard utilities in CI |
 | Recording misses popups that escape the host window | Popups live in their own AWT window outside both the region rectangle *and* a window-targeted capture | Choose an explicit region (or full-desktop crop) wide enough to include where the popup opens, or document the limitation — neither region nor window targeting follows cross-window popups |
 | Window-targeted Wayland recording throws `IllegalStateException` | `xprop` missing or non-GNOME compositor | Use `AutoRecorder.startRegion(...)` with an explicit rectangle |
-| Coordinates derived from `boundsInWindow` land off-target on HiDPI | `boundsInWindow` is dp; screen is pixels | Use `boundsOnScreen`/`centerOnScreen`, or apply density |
+| Coordinates derived from `boundsInWindow` land off-target on HiDPI | `boundsInWindow` is Compose pixels (already density-scaled); AWT/Robot and recording regions use screen pixels | Use `boundsOnScreen`/`centerOnScreen` for input and region targeting. If converting yourself, divide Compose pixels by the display scale — do not multiply |
 
 ## What Spectre is NOT (don't pretend it is)
 

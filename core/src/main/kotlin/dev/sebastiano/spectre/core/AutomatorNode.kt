@@ -101,6 +101,14 @@ internal constructor(
     // Geometry is always read live: layout can change between node lookup and action,
     // so a snapshot would let click/screenshot drift to stale coordinates after scrolling
     // or recomposition-driven repositioning.
+    /**
+     * Layout bounds within the window's Compose surface, in physical (Compose) pixels.
+     *
+     * Values are already density-scaled: a 24.dp inset measures 48 here on a 2× display. Compare
+     * against `Dp.roundToPx()` / `LocalDensity`-scaled values. For AWT/Robot input and recording
+     * regions, use [boundsOnScreen] or [centerOnScreen], which divide by the display scale; do not
+     * multiply this rect by density.
+     */
     public val boundsInWindow: Rect
         get() = readOnEdt { semanticsNode.boundsInWindow }
 
