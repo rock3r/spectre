@@ -98,11 +98,12 @@ public sealed interface OwnerOnlyEndpointProtection {
      * this runs is rejected rather than adopted. Ownership of the existing ancestors is not
      * checked: a caller-supplied endpoint must sit beneath a directory the caller already trusts.
      *
-     * How much a concurrent substitution can do depends on the filesystem. On POSIX the components
-     * are walked with an `openat`-style descent that resolves each of them exactly once
-     * ([prepareEndpointDirectory]); on Windows, where the JDK exposes no such descent, the walk is
-     * lexical and re-resolves the path on every call, so a component accepted a moment ago can
-     * still be swapped before the next call reaches through it (#487).
+     * How much a concurrent substitution can do depends on the host. Where the JDK exposes an
+     * `openat`-backed [SecureDirectoryStream] — Linux in practice — the components are walked with
+     * a descent that resolves each of them exactly once ([prepareEndpointDirectory]). Where it does
+     * not — Windows, and macOS, which never reports the capability — the walk is lexical and
+     * re-resolves the path on every call, so a component accepted a moment ago can still be swapped
+     * before the next call reaches through it (#487).
      */
     @Throws(IOException::class) public fun prepareDirectory(socketPath: Path)
 
@@ -162,6 +163,10 @@ private object BasicOwnerOnlyEndpointProtection : OwnerOnlyEndpointProtection {
 /**
  * Prepares the endpoint [directory] and every ancestor of it with an `openat`-style descent.
  *
+ * Only where the platform has one. [SecureDirectoryStream] is not a POSIX guarantee: macOS never
+ * reports the JDK's `SUPPORTS_OPENAT` capability, so it takes [prepareEndpointDirectoryLexically]
+ * instead and keeps exactly the guarantees it had before #487. The hardening below is Linux's.
+ *
  * Every component is opened relative to a descriptor for the component above it, never by
  * re-resolving the whole path from the root, and always with [NOFOLLOW_LINKS]. That is what a
  * lexical walk cannot do (#487): `java.nio.file` re-resolves the entire path string on every call,
@@ -201,7 +206,13 @@ internal fun prepareEndpointDirectory(directory: Path, afterDescendingInto: (Pat
         throw IOException("Coordinator directory $directory must not be the filesystem root")
     }
     val lastIndex = absolute.nameCount - 1
-    var current = openRootDirectory(root)
+    var current =
+        openRootDirectory(root)
+            ?: run {
+                // No openat on this host (macOS); keep the pre-#487 guarantees rather than refuse.
+                prepareEndpointDirectoryLexically(directory)
+                return
+            }
     var currentPath = root
     try {
         absolute.forEachIndexed { index, component ->
@@ -340,17 +351,47 @@ private fun SecureDirectoryStream<Path>.readAttributesOrNull(
  * callers believing in a guarantee they no longer have. Every POSIX filesystem the coordinator
  * selects this protection for returns one.
  */
-private fun openRootDirectory(root: Path): SecureDirectoryStream<Path> {
+/**
+ * Opens the filesystem root as a [SecureDirectoryStream], or null where the platform has none.
+ *
+ * Not every POSIX host has one. The JDK sets its `SUPPORTS_OPENAT` capability only when all six of
+ * `openat`, `fstatat`, `unlinkat`, `renameat`, `futimesat` and `fdopendir` resolve, and it does not
+ * even look `futimesat` up under `_ALLBSD_SOURCE`, so macOS always returns a plain
+ * `UnixDirectoryStream` and the descent is in practice a Linux one. Null means the caller falls
+ * back to [prepareEndpointDirectoryLexically] rather than failing: refusing to prepare an endpoint
+ * at all would take the coordinator off Darwin entirely, which is a far worse outcome than keeping
+ * the guarantees that platform already had.
+ */
+private fun openRootDirectory(root: Path): SecureDirectoryStream<Path>? {
     val stream = Files.newDirectoryStream(root)
     @Suppress("UNCHECKED_CAST") val secure = stream as? SecureDirectoryStream<Path>
-    if (secure == null) {
-        stream.close()
-        throw IOException(
-            "Coordinator endpoint traversal needs a SecureDirectoryStream to resolve each " +
-                "component once; $root gave ${stream.javaClass.name}"
-        )
-    }
+    if (secure == null) stream.close()
     return secure
+}
+
+/**
+ * Prepares [directory] the way the POSIX path did before #487, for hosts with no `openat` descent.
+ *
+ * Every component is still validated immediately before it is descended into, and the endpoint is
+ * still owner-only, but the walk re-resolves the whole path on every call, so a component accepted
+ * a moment earlier can be replaced before the next call reaches through it. That is the residual
+ * window #487 closes on Linux and cannot close here.
+ */
+internal fun prepareEndpointDirectoryLexically(directory: Path) {
+    val ownerOnly = PosixFilePermissions.asFileAttribute(OWNER_ONLY_DIRECTORY_PERMISSIONS)
+    // Parents may legitimately be missing (#462); nothing is created when they all exist.
+    prepareAncestors(directory) { ancestor -> Files.createDirectory(ancestor, ownerOnly) }
+    if (Files.exists(directory, NOFOLLOW_LINKS)) {
+        rejectSubstituted(directory, role = "directory")
+        val permissions = Files.getPosixFilePermissions(directory, NOFOLLOW_LINKS)
+        if (permissions != OWNER_ONLY_DIRECTORY_PERMISSIONS) {
+            throw IOException("Existing coordinator directory $directory must be owner-only")
+        }
+    } else {
+        // The atomic createDirectory refuses to adopt anything already at this path, symlinks
+        // included, so a link planted here loses the race rather than capturing the endpoint.
+        Files.createDirectory(directory, ownerOnly)
+    }
 }
 
 private val OWNER_ONLY_DIRECTORY_PERMISSIONS: Set<PosixFilePermission> =
@@ -364,10 +405,10 @@ private val OWNER_ONLY_DIRECTORY_PERMISSIONS: Set<PosixFilePermission> =
  * Validates every ancestor of [directory] top-down and creates the missing ones, one atomic
  * [createDirectory] each.
  *
- * This is the fallback for filesystems with no `openat` to descend with, which in practice means
- * Windows: [Files.newDirectoryStream] returns a plain `DirectoryStream` there, so
- * [prepareEndpointDirectory]'s fd-relative walk has nothing to hold a component open with. POSIX
- * callers do not reach this.
+ * This is the walk for hosts with no `openat` to descend with: Windows, whose
+ * [Files.newDirectoryStream] returns a plain `DirectoryStream`, and — through
+ * [prepareEndpointDirectoryLexically] — macOS, which never reports the JDK capability that backs
+ * [SecureDirectoryStream]. Only Linux reaches [prepareEndpointDirectory]'s fd-relative descent.
  *
  * Each component is checked immediately before it is descended into, rather than validating the
  * whole chain up front and then creating blindly. A link planted between those two passes used to

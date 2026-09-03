@@ -7,6 +7,8 @@ import java.nio.file.FileSystemException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
+import java.nio.file.SecureDirectoryStream
+import java.nio.file.attribute.PosixFilePermissions
 import kotlin.io.path.createSymbolicLinkPointingTo
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -39,7 +41,7 @@ class OwnerOnlyEndpointProtectionDescentTest {
 
     @Test
     fun `an ancestor swapped after it was accepted cannot redirect the descent`() {
-        assumePosixFilesystem()
+        assumeSecureDirectoryStreams()
         assumeCanCreateSymbolicLinks()
         val intermediate = Files.createDirectory(temporaryDirectory.resolve("mid"))
         Files.createDirectory(intermediate.resolve("base"))
@@ -81,7 +83,7 @@ class OwnerOnlyEndpointProtectionDescentTest {
 
     @Test
     fun `the endpoint directory is not created through a parent swapped after it was accepted`() {
-        assumePosixFilesystem()
+        assumeSecureDirectoryStreams()
         assumeCanCreateSymbolicLinks()
         val base = Files.createDirectory(temporaryDirectory.resolve("base"))
         val attackerTree = Files.createDirectory(temporaryDirectory.resolve("attacker"))
@@ -129,10 +131,64 @@ class OwnerOnlyEndpointProtectionDescentTest {
         assertTrue(failure.message.orEmpty().contains("filesystem root"), failure.message)
     }
 
+    @Test
+    fun `the lexical fallback still enforces the endpoint contract`() {
+        // macOS never gets a SecureDirectoryStream: the JDK sets SUPPORTS_OPENAT only when all six
+        // *at functions resolve, and futimesat is not looked up under _ALLBSD_SOURCE, so
+        // Files.newDirectoryStream returns a plain UnixDirectoryStream there. The descent falls
+        // back to the lexical walk rather than failing, and that fallback has to keep the
+        // guarantees the walk had before #487. Driven directly because a Linux host cannot produce
+        // a non-secure stream to reach it through the front door.
+        assumePosixFilesystem()
+        val socket =
+            temporaryDirectory
+                .resolve("missing")
+                .resolve("base")
+                .resolve(ENDPOINT_DIRECTORY_NAME)
+                .resolve("input.sock")
+
+        prepareEndpointDirectoryLexically(socket.parent)
+
+        assertTrue(Files.isDirectory(socket.parent), "the endpoint directory should exist")
+        assertEquals(
+            PosixFilePermissions.fromString("rwx------"),
+            Files.getPosixFilePermissions(socket.parent),
+            "the endpoint directory must be owner-only",
+        )
+    }
+
+    @Test
+    fun `the lexical fallback rejects a symbolic link above the endpoint`() {
+        assumePosixFilesystem()
+        assumeCanCreateSymbolicLinks()
+        val target = Files.createDirectory(temporaryDirectory.resolve("target"))
+        val link = temporaryDirectory.resolve("link").createSymbolicLinkPointingTo(target)
+        val directory = link.resolve("base").resolve(ENDPOINT_DIRECTORY_NAME)
+
+        val failure = assertFailsWith<IOException> { prepareEndpointDirectoryLexically(directory) }
+
+        assertTrue(failure.message.orEmpty().contains("symbolic link"), failure.message)
+        assertFalse(
+            Files.exists(target.resolve("base")),
+            "nothing may be created through the link before it is rejected",
+        )
+    }
+
     /**
      * [prepareEndpointDirectory] is the POSIX preparation; Windows keeps the lexical walk in
      * `BasicOwnerOnlyEndpointProtection` and has no `openat` to descend with.
      */
+    private fun assumeSecureDirectoryStreams() {
+        assumePosixFilesystem()
+        val secure =
+            Files.newDirectoryStream(temporaryDirectory).use { it is SecureDirectoryStream<*> }
+        assumeTrue(
+            secure,
+            "the openat descent needs SecureDirectoryStream; macOS never reports SUPPORTS_OPENAT " +
+                "(futimesat is not resolved under _ALLBSD_SOURCE) and falls back to the lexical walk",
+        )
+    }
+
     private fun assumePosixFilesystem() {
         assumeTrue(
             Files.getFileStore(temporaryDirectory).supportsFileAttributeView("posix"),
