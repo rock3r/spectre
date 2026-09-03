@@ -17,8 +17,9 @@ Build one with the default in-process configuration:
 val automator = ComposeAutomator.inProcess()
 ```
 
-For headless CI where constructing a real `java.awt.Robot` (or touching the system
-clipboard or screen) is unavailable, swap in `RobotDriver.headless()`:
+`inProcess()` defaults to synthetic AWT input. For headless CI where constructing a
+`java.awt.Robot` screenshot adapter (or touching the system clipboard or screen) is
+unavailable, swap in `RobotDriver.headless()`:
 
 ```kotlin
 val automator = ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())
@@ -131,16 +132,16 @@ other Swing-backed dispatcher.
 
 ## Real input vs. synthetic input
 
-By default `ComposeAutomator.inProcess()` uses `RobotDriver()` — `java.awt.Robot`-backed
-real OS-level input. That's what end users actually do, so it's the most realistic.
+By default `ComposeAutomator.inProcess()` uses `RobotDriver.synthetic()` — synthetic AWT
+events posted into the live window hierarchy. That stays correct when tests run in
+parallel, when the host also does other UI work, and when the automator shares a JVM
+with IntelliJ/Jewel.
 
-The trade-off is that real OS input fights for global focus. Two parallel test JVMs
-clicking at the same time will collide. For that case `RobotDriver.synthetic(rootWindow)`
-dispatches AWT events directly into the target window's event queue:
+Pass `RobotDriver()` when you specifically need real OS-level `java.awt.Robot` input:
 
-- No real cursor moves, no keyboard focus stolen.
-- Tests in parallel processes can run without coordinating focus.
-- Some interactions (e.g., system-level shortcuts) won't behave the same way as real input.
+- The real cursor moves and the app takes system-wide keyboard focus.
+- End-to-end smokes can exercise system shortcuts and focus handoffs.
+- Two parallel test JVMs clicking at the same time will collide unless they coordinate.
 
 See [Driving input](interactions.md) for the per-call differences.
 

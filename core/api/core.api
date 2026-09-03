@@ -309,6 +309,8 @@ public final class dev/sebastiano/spectre/core/RobotDriver : java/lang/AutoClose
 
 public final class dev/sebastiano/spectre/core/RobotDriver$Companion {
 	public final fun headless ()Ldev/sebastiano/spectre/core/RobotDriver;
+	public final fun synthetic ()Ldev/sebastiano/spectre/core/RobotDriver;
+	public final fun synthetic (Ldev/sebastiano/spectre/core/InputLeasePolicy;)Ldev/sebastiano/spectre/core/RobotDriver;
 	public final fun synthetic (Ljava/awt/Window;)Ldev/sebastiano/spectre/core/RobotDriver;
 	public final fun synthetic (Ljava/awt/Window;Ldev/sebastiano/spectre/core/InputLeasePolicy;)Ldev/sebastiano/spectre/core/RobotDriver;
 }

@@ -112,9 +112,11 @@ capture inside `withExclusiveInput` when it must not race another client's input
 ## When the coordinator cannot be reached {#coordinator-unreachable}
 
 `Required` never degrades — that is what it is for. Every capability that touches shared OS state
-(`focusWindow`, `click`, `typeText`, `pasteText`, …) fails when no coordinator answers, and
-[agent attach](agent.md) always uses `Required`, so on that path a broken coordinator takes down
-the whole input surface at once.
+**for that driver** fails when no coordinator answers. Real-OS `Required` drivers lease pointer,
+keyboard, focus, and clipboard. Synthetic `Required` drivers (attach and the in-process default)
+only lease the system clipboard — `focusWindow`, `click`, and `typeText` do not need a live
+coordinator. [Agent attach](agent.md) still uses `Required`, so a broken coordinator still fails
+clipboard-backed paste and explicit exclusive scopes.
 
 The failure names what it measured and what you can do about it:
 

@@ -97,9 +97,11 @@ version. Unit tests for internal math are necessary, but boundary tests catch dr
 
 `./gradlew check` is the pre-push gate, so it must stay runnable on a machine you are also using.
 
-Two test paths need the whole desktop to themselves. Both send real `java.awt.Robot` key events at
-a spawned Compose window, which only works while that window owns OS keyboard focus. A terminal, an
-editor, or a notification taking focus mid-run used to fail them.
+Two test paths need the whole desktop to themselves when they opt into real
+`java.awt.Robot` key events at a spawned Compose window, which only works while that window
+owns OS keyboard focus. A terminal, an editor, or a notification taking focus mid-run used
+to fail them. The default automator path is synthetic AWT input and does not need OS focus;
+these gated paths exist for the remaining real-keyboard contract cells.
 
 | Path | Where |
 |---|---|

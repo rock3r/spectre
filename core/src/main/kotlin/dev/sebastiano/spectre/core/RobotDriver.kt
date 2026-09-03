@@ -55,9 +55,10 @@ internal constructor(
     internal val allowsPlatformCapture: Boolean
         get() = screenCapture !== HeadlessThrowingScreenCaptureAdapter
 
-    // Public surface: callers may instantiate without arguments (defaults to a fresh
-    // AWT Robot + system clipboard) or hand in an existing Robot. The internal
-    // adapter-injecting constructor is reserved for tests within this module.
+    // Public surface: the no-argument constructor is the explicit real-OS opt-in
+    // (fresh AWT Robot + system clipboard). `ComposeAutomator.inProcess()` defaults to
+    // [synthetic] instead. The internal adapter-injecting constructor is reserved for
+    // tests within this module.
     public constructor() : this(AwtRobotAdapter(), SystemClipboardAdapter())
 
     /** Creates a real Robot driver with explicit cooperative input coordination [policy]. */
@@ -525,25 +526,36 @@ internal constructor(
     public companion object {
 
         /**
+         * Returns a [RobotDriver] that delivers synthetic AWT events into the live AWT hierarchy
+         * instead of routing through `java.awt.Robot`'s OS-level input. This is the default
+         * [ComposeAutomator.inProcess] driver. Windows created after construction are still
+         * hit-tested. Screenshots still use `java.awt.Robot.createScreenCapture` so Compose/Skiko
+         * pixels come from the OS framebuffer rather than Swing repainting the host component.
+         */
+        public fun synthetic(): RobotDriver = syntheticDriver(rootWindow = null)
+
+        /**
          * Returns a [RobotDriver] that delivers synthetic AWT events directly to [rootWindow]'s AWT
          * hierarchy instead of routing through `java.awt.Robot`'s OS-level input. Screenshots still
          * use `java.awt.Robot.createScreenCapture` so Compose/Skiko pixels come from the OS
          * framebuffer rather than Swing repainting the host component.
          */
-        public fun synthetic(rootWindow: Window): RobotDriver =
-            SyntheticRobotAdapter(rootWindow).let { syntheticInput ->
-                val realCapture = AwtRobotAdapter()
-                RobotDriver(
-                    robot = syntheticInput,
-                    clipboard = SystemClipboardAdapter(),
-                    tccGuard = defaultTccGuardFor(syntheticInput, realCapture),
-                    screenCapture = realCapture,
-                )
-            }
+        public fun synthetic(rootWindow: Window): RobotDriver = syntheticDriver(rootWindow)
 
         /** Returns a synthetic-input driver with explicit shared-resource coordination [policy]. */
         @ExperimentalSpectreInputCoordinationApi
+        public fun synthetic(policy: InputLeasePolicy): RobotDriver =
+            syntheticDriver(rootWindow = null, inputLeasePolicy = policy)
+
+        /** Returns a synthetic-input driver pinned to [rootWindow] with coordination [policy]. */
+        @ExperimentalSpectreInputCoordinationApi
         public fun synthetic(rootWindow: Window, policy: InputLeasePolicy): RobotDriver =
+            syntheticDriver(rootWindow, policy)
+
+        private fun syntheticDriver(
+            rootWindow: Window?,
+            inputLeasePolicy: InputLeasePolicy = InputLeasePolicy.Off,
+        ): RobotDriver =
             SyntheticRobotAdapter(rootWindow).let { syntheticInput ->
                 val realCapture = AwtRobotAdapter()
                 RobotDriver(
@@ -551,7 +563,7 @@ internal constructor(
                     clipboard = SystemClipboardAdapter(),
                     tccGuard = defaultTccGuardFor(syntheticInput, realCapture),
                     screenCapture = realCapture,
-                    inputLeasePolicy = policy,
+                    inputLeasePolicy = inputLeasePolicy,
                 )
             }
 

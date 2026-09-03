@@ -7,11 +7,35 @@ package dev.sebastiano.spectre.agent.runtime
 
 import dev.sebastiano.spectre.agent.AttachInputCoordination
 import dev.sebastiano.spectre.core.InputLeasePolicy
+import java.nio.file.Path
+import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class SpectreAgentInputCoordinationCompatibilityTest {
+
+    @Test
+    fun `attach constructs a synthetic driver when the target companion offers one`() {
+        val source =
+            Path.of("src/main/kotlin/dev/sebastiano/spectre/agent/runtime/SpectreAgent.kt")
+                .readText()
+        assertTrue(
+            source.contains("invokeSyntheticFactory") || source.contains("synthetic"),
+            "SpectreAgent must construct RobotDriver.synthetic rather than the real-OS constructor",
+        )
+
+        val driver =
+            SpectreAgent.createCoordinatedRobotDriverOrLegacyFallback(
+                javaClass.classLoader,
+                SyntheticRecordingRobotDriver::class.java,
+            )
+
+        val constructed = assertIs<SyntheticRecordingRobotDriver>(driver)
+        assertEquals(InputLeasePolicy.Required, constructed.policy)
+        assertTrue(constructed.viaSynthetic, "attach must call Companion.synthetic(policy)")
+    }
 
     @Test
     fun `legacy target without InputLeasePolicy falls back to no-argument driver`() {
@@ -112,4 +136,20 @@ class SpectreAgentInputCoordinationCompatibilityTest {
 
     /** Stands in for `RobotDriver`'s `(InputLeasePolicy)` constructor and records what it got. */
     private class PolicyRecordingRobotDriver(val policy: InputLeasePolicy)
+
+    /**
+     * Stands in for current-core `RobotDriver.Companion.synthetic(policy)` so the attach path
+     * cannot silently keep constructing the real-OS `(InputLeasePolicy)` constructor.
+     */
+    private class SyntheticRecordingRobotDriver(
+        val policy: InputLeasePolicy,
+        val viaSynthetic: Boolean,
+    ) {
+        constructor(policy: InputLeasePolicy) : this(policy, viaSynthetic = false)
+
+        companion object {
+            fun synthetic(policy: InputLeasePolicy): SyntheticRecordingRobotDriver =
+                SyntheticRecordingRobotDriver(policy, viaSynthetic = true)
+        }
+    }
 }

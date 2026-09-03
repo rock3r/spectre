@@ -265,12 +265,33 @@ public object SpectreAgent {
                         "See https://github.com/rock3r/spectre/issues/472"
                 )
             }
-            robotDriverClass.getDeclaredConstructor(policyClass).newInstance(policy)
+            invokeSyntheticFactory(robotDriverClass, policy)
+                ?: robotDriverClass.getDeclaredConstructor(policyClass).newInstance(policy)
         } catch (_: ClassNotFoundException) {
-            robotDriverClass.getDeclaredConstructor().newInstance()
+            invokeSyntheticFactory(robotDriverClass, policy = null)
+                ?: robotDriverClass.getDeclaredConstructor().newInstance()
         } catch (_: NoSuchMethodException) {
-            robotDriverClass.getDeclaredConstructor().newInstance()
+            invokeSyntheticFactory(robotDriverClass, policy = null)
+                ?: robotDriverClass.getDeclaredConstructor().newInstance()
         }
+
+    /**
+     * Prefers `RobotDriver.Companion.synthetic(policy)` / `synthetic()` so attach defaults to
+     * synthetic AWT input. Falls back to `null` when the target core predates those factories.
+     */
+    private fun invokeSyntheticFactory(robotDriverClass: Class<*>, policy: Any?): Any? {
+        val companionField =
+            runCatching { robotDriverClass.getField("Companion") }.getOrNull() ?: return null
+        val companion = companionField.get(null) ?: return null
+        val methods = companion.javaClass.methods.filter { method -> method.name == "synthetic" }
+        if (policy != null) {
+            val withPolicy = methods.firstOrNull { method ->
+                method.parameterCount == 1 && method.parameterTypes[0].isInstance(policy)
+            }
+            if (withPolicy != null) return withPolicy.invoke(companion, policy)
+        }
+        return methods.firstOrNull { method -> method.parameterCount == 0 }?.invoke(companion)
+    }
 
     private fun invokeWindowsCountReflectively(automator: Any): Int {
         // `ComposeAutomator.windows` is a stale `@Volatile` cache populated by

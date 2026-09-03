@@ -564,8 +564,21 @@ class InputLeaseGuardTest {
     }
 
     @Test
-    fun `synthetic focus participates when coordination is required`() {
+    fun `real OS focus participates when coordination is required`() {
         val coordinator = RecordingInputLeaseCoordinator()
+        val driver = realDriver(coordinator)
+
+        driver.withBlockingInput("focusWindow") {}
+
+        assertEquals(listOf("focusWindow"), coordinator.operations)
+    }
+
+    @Test
+    fun `synthetic focus bypasses coordinator like synthetic pointer`() {
+        val coordinator =
+            RecordingInputLeaseCoordinator(
+                acquireFailure = InputCoordinatorException("COORDINATOR_IO", "did not become ready")
+            )
         val driver =
             RobotDriver(
                 robot = LeaseTestRobotAdapter(),
@@ -576,9 +589,14 @@ class InputLeaseGuardTest {
                     InputCapabilities(realOsInput = false, sharedSystemClipboard = false),
             )
 
+        // Attach's default is now synthetic+Required. focusWindow is the first coordinated
+        // verb on that path; requiring a live coordinator here is what broke macOS hosted
+        // attach (semantics reads succeeded, focusWindow threw). Synthetic clicks already
+        // skip REAL_INPUT; FOCUS has to match or the first raise dies on an unreachable
+        // coordinator while the rest of the driver never needed one.
         driver.withBlockingInput("focusWindow") {}
 
-        assertEquals(listOf("focusWindow"), coordinator.operations)
+        assertEquals(emptyList(), coordinator.operations)
     }
 
     @Test

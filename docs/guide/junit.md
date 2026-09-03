@@ -484,8 +484,9 @@ need a different driver for headless CI or unit-style isolation. `RobotDriver.he
 throws on input, clipboard, and screenshot calls (see
 [Driving input](interactions.md#real-vs-synthetic-input)), so the example below is
 appropriate for tests that only exercise semantics-tree queries or rule/extension
-lifecycle — anything that needs real input should use `RobotDriver.synthetic(rootWindow)`
-or the default `RobotDriver()` instead:
+lifecycle — anything that needs input should use the default synthetic driver
+(`ComposeAutomator.inProcess()` / `RobotDriver.synthetic(rootWindow)`) or pass
+`RobotDriver()` to opt into real OS input:
 
 ```kotlin
 import dev.sebastiano.spectre.core.ComposeAutomator

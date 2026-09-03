@@ -126,9 +126,11 @@ corresponding doc page is touched:
   doesn't bundle Netty/CIO/Jetty — consumers add the engine themselves.
 - **`HttpComposeAutomator.DEFAULT_PORT` is `9274`.** That's the *client* default;
   the server-side port is whatever the consumer's Ktor engine listens on.
-- **`RobotDriver` public constructors.** `RobotDriver()` (default AWT), `RobotDriver(robot)`,
-  `RobotDriver.headless()`, `RobotDriver.synthetic(rootWindow)`. The
-  adapter-injecting constructor is `internal` and not for consumers.
+- **`RobotDriver` public constructors.** `RobotDriver.synthetic()` /
+  `RobotDriver.synthetic(rootWindow)` (the `ComposeAutomator.inProcess()` default),
+  `RobotDriver()` (explicit real-OS AWT Robot), `RobotDriver(robot)`,
+  `RobotDriver.headless()`. The adapter-injecting constructor is `internal` and not
+  for consumers.
 - **`RobotDriver.headless()` throws on input/screenshot/clipboard.** Every input,
   clipboard, and screenshot call raises `UnsupportedOperationException` so accidental
   real-I/O calls fail at the call site. `WindowTracker`/`SemanticsReader` are

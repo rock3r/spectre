@@ -73,7 +73,7 @@ internal fun interface ManagedAutomatorFactory {
 internal fun defaultManagedAutomatorFactory(
     inputIsolation: InputIsolationConfig,
     coordinatedFactory: ManagedAutomatorFactory = ManagedAutomatorFactory {
-        val driver = RobotDriver(InputLeasePolicy.Required)
+        val driver = RobotDriver.synthetic(InputLeasePolicy.Required)
         runCatching { ManagedAutomator(ComposeAutomator.inProcess(driver), driver) }
             .onFailure { driver.close() }
             .getOrThrow()
