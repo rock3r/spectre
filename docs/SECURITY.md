@@ -56,14 +56,7 @@ out of scope.
    the caller already trusts: Spectre detects substitution there but does not verify who owns the
    ancestors. On POSIX filesystems it enforces directory mode 0700 and socket mode 0600. On Windows
    it uses the current user's `LOCALAPPDATA` and inherits the existing directory ACL; unlike the
-   agent transport, the coordinator layer does not replace that ACL with an owner-only one.
-   Traversal to the endpoint is `openat`-style on POSIX — each component is resolved exactly once,
-   relative to a descriptor already open on the component above it — so an ancestor cannot be
-   substituted midway through the walk. The JDK exposes no equivalent on Windows, where the walk
-   stays lexical and re-resolves the whole path on every check, leaving a component accepted a
-   moment earlier open to being swapped before the next call reaches through it (#487). Creating a
-   missing component resolves an absolute path on both platforms; on POSIX a walk that finds its
-   parent substituted at that point fails rather than adopting what it created. Java
+   agent transport, the coordinator layer does not replace that ACL with an owner-only one. Java
    Unix-domain sockets do not expose portable peer credentials, so requester labels are
    self-reported attribution, not authentication. The coordinator never records typed text,
    clipboard contents, selectors, credentials, or prompts.
