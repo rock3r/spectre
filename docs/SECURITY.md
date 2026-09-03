@@ -1,8 +1,8 @@
 # Security notes
 
 Spectre is a JVM-first library for **automating live Compose Desktop UIs in trusted local /
-test environments**. It drives real OS input, captures screenshots, and records screen content
-by design. This page documents the trust boundaries Spectre relies on, the security-sensitive
+test environments**. It can drive synthetic or real OS input, captures screenshots, and
+records screen content by design. This page documents the trust boundaries Spectre relies on, the security-sensitive
 capabilities it exposes, and the risks that are explicitly accepted for the pre-1.0 release.
 
 Spectre is **pre-1.0**. The HTTP transport and cooperative desktop input coordinator are

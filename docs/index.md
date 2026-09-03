@@ -33,10 +33,10 @@ familiar — Spectre brings the same "find a node, do a thing, assert" loop to C
   than a parallel test harness.
 - **In-process or cross-JVM.** Use `ComposeAutomator.inProcess()` for the simple case, or
   use the `server` module to drive a UI hosted in a different JVM (e.g., an IDE under test).
-- **Real or synthetic input.** [`ComposeAutomator.inProcess()`](guide/interactions.md)
-  defaults to OS-level `java.awt.Robot` events. Swap in `RobotDriver.synthetic(...)` and
-  AWT events go directly into the window hierarchy — useful when tests run in parallel
-  and can't fight over OS focus.
+- **Synthetic input by default.** [`ComposeAutomator.inProcess()`](guide/interactions.md)
+  defaults to synthetic AWT events dispatched straight into the window hierarchy
+  (`RobotDriver.synthetic()`). Pass `RobotDriver()` to opt into OS-level `java.awt.Robot`
+  events when you need real cursor motion, global focus, or system shortcuts.
 - **Experimental cooperative input leases.** Participating real-input test JVMs can serialise
   focus, pointer, keyboard, and clipboard work without disabling parallel query/synthetic tests.
   See [desktop input coordination](guide/input-coordination.md).

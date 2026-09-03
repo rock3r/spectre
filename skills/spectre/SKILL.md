@@ -8,8 +8,9 @@ description: Use when writing, debugging, or reviewing tests that drive a real o
 Spectre drives **live** Compose Desktop UIs from JUnit tests. It is *not* the
 Compose Multiplatform test framework (`runComposeUiTest` / `onNodeWithTag`) —
 that one runs an off-screen Compose tree on a virtual clock. Spectre opens a real
-window, reads its semantics tree, and feeds it real OS input via
-`java.awt.Robot` (or synthetic AWT events).
+window, reads its semantics tree, and feeds it synthetic AWT events by default
+(`RobotDriver.synthetic()`), or real OS input via `java.awt.Robot` when the test
+opts in.
 
 Pick Spectre when the test needs to exercise the actual window, popups,
 IntelliJ/Jewel-hosted Compose, or to record a real video of the UI.
@@ -93,24 +94,25 @@ and `@get:Rule` for `@RegisterExtension`.
 
 ## Choosing a `RobotDriver`
 
-`ComposeAutomator.inProcess()` accepts a `RobotDriver`. Default is real input
-on the host OS. Three variants:
+`ComposeAutomator.inProcess()` accepts a `RobotDriver`. The default is
+synthetic AWT input. Three variants:
 
-- **`RobotDriver()`** — real `java.awt.Robot` input on the host. Highest
-  fidelity, but contends for global focus. Use for the default
-  single-process test run. The no-argument form remains uncoordinated while the feature is
-  experimental; when several processes genuinely require real input, use
-  `RobotDriver(InputLeasePolicy.Required)` and read `references/input-coordination.md`.
-- **`RobotDriver.synthetic(rootWindow = someTopLevelWindow)`** — dispatches
-  AWT events directly into the given `java.awt.Window` hierarchy. No global
-  focus contention, so safe for **parallel test JVMs** and for IDE-hosted
-  Compose where stealing the IDE focus would be hostile. For key events,
-  Spectre uses the current AWT focus owner when available and otherwise falls
-  back to the key-listening AWT descendant under the last pointer target or
+- **`RobotDriver.synthetic()` / `RobotDriver.synthetic(rootWindow = someTopLevelWindow)`**
+  — the default. Dispatches AWT events directly into the live `java.awt.Window`
+  hierarchy. No global focus contention, so safe for **parallel test JVMs** and
+  for IDE-hosted Compose where stealing the IDE focus would be hostile. For key
+  events, Spectre uses the current AWT focus owner when available and otherwise
+  falls back to the key-listening AWT descendant under the last pointer target or
   Compose host; this is what makes Compose Desktop `TextField` typing work in
   macOS helper JVMs launched with `apple.awt.UIElement=true`, where AWT never
   grants a `Window.focusOwner`. Does **not** see OS shortcuts (Cmd+Tab, system
   menus).
+- **`RobotDriver()`** — explicit real `java.awt.Robot` input on the host. Highest
+  fidelity, but contends for global focus. Use when a smoke must exercise OS
+  shortcuts or focus handoffs. The no-argument form remains uncoordinated while
+  the feature is experimental; when several processes genuinely require real
+  input, use `RobotDriver(InputLeasePolicy.Required)` and read
+  `references/input-coordination.md`.
 - **`RobotDriver.headless()`** — refuses to send any input. For tests that
   only read the semantics tree (e.g. asserting a screen layout) without
   driving it.
@@ -344,7 +346,7 @@ touches that area*; they are not needed for the common case.
 | `findOneBy…` returns `null` right after an interaction | Selectors don't wait | Add `waitForNode(...)` or `waitForVisualIdle()` first |
 | Test deadlocks or throws inside any `waitFor…` / `waitUntil…` | Called from the AWT EDT | Wrap in `withContext(Dispatchers.Default) { … }` — applies to all five waits, including `waitForNode`, `waitUntilGone`, and `waitUntil` |
 | `longClick`/`swipe`/`typeText` complete instantly and miss | Test body uses `runTest` | Switch to `runSpectreTest` |
-| Two parallel test JVMs steal focus from each other | Both use real `RobotDriver()` | Use `RobotDriver.synthetic(rootWindow)` |
+| Two parallel test JVMs steal focus from each other | Both opted into real `RobotDriver()` | Stay on the default `RobotDriver.synthetic()` (or pin `rootWindow`) |
 | Parallel JVMs must preserve real OS input behavior | Real focus/pointer/clipboard state is shared across processes | Opt in to experimental coordination, add `spectre-input-coordinator-server` at runtime, use `Required` and JUnit `InputIsolationConfig.perTest()` |
 | Cmd+Tab or OS shortcuts don't work under synthetic driver | Synthetic events bypass HID | Use real `RobotDriver()` for those tests |
 | Screenshot is blurry / mid-animation | Captured before frame stabilised | `waitForVisualIdle()` first |

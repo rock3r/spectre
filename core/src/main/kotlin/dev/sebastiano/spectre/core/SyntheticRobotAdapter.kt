@@ -26,14 +26,16 @@ import javax.swing.SwingUtilities
  * - OS-level shortcuts (Cmd+Tab, system menu access, etc.) are NOT exercised — those scenarios
  *   still need [RobotDriver]
  *
- * The driver discovers click targets by walking the root window plus all owned windows
- * ([Window.getOwnedWindows]) on every dispatch, so popups and secondary windows added after
- * construction work without re-creating the driver.
+ * The driver discovers click targets by walking [rootWindow] (when pinned) plus every other
+ * top-level window and its owned tree ([Window.getWindows] / [Window.getOwnedWindows]) on every
+ * dispatch, so popups and secondary windows added after construction work without re-creating the
+ * driver. A null [rootWindow] is the no-window factory used by `RobotDriver.synthetic()`: hit
+ * testing still walks the live AWT hierarchy, and key events fall back to the first showing window.
  *
  * Clipboard access is left as the system clipboard — paste-based [RobotDriver.pasteText] still
  * works with synthetic Cmd/Ctrl+V keystrokes.
  */
-internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdapter {
+internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : RobotAdapter {
 
     // Synthetic events have no OS-level inter-event delay; we always dispatch immediately.
     // The wait loop in ComposeAutomator handles synchronisation via waitForIdle / fingerprints.
@@ -272,7 +274,7 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
                 ?: pointerTarget
                 ?: composeFallbackTarget?.findKeyListenerSelfOrDescendant()
                 ?: composeFallbackTarget
-                ?: rootWindow
+                ?: keyFallbackWindow(windows)
         val event =
             KeyEvent(
                 target,
@@ -331,7 +333,10 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
 
     private fun allWindows(): List<Window> {
         val collected = LinkedHashSet<Window>()
-        collectWindowTree(rootWindow, collected)
+        val pinned = rootWindow
+        if (pinned != null) {
+            collectWindowTree(pinned, collected)
+        }
         // Walk every other top-level window (and its owned tree). The visibility check is
         // applied per-window inside `collectWindowTree` rather than at the top level: Swing's
         // `SharedOwnerFrame` (parent of `JDialog(null, …)`) is itself a top-level window that
@@ -339,12 +344,21 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window) : RobotAdap
         // here would drop those dialogs and synthetic input would silently miss them, even
         // though `WindowTracker` correctly surfaces them.
         for (other in Window.getWindows()) {
-            if (other.owner == null && other !== rootWindow) {
+            if (other.owner == null && other !== pinned) {
                 collectWindowTree(other, collected)
             }
         }
         return collected.toList()
     }
+
+    private fun keyFallbackWindow(windows: List<Window>): Window =
+        rootWindow
+            ?: windows.firstOrNull { it.isShowing }
+            ?: windows.firstOrNull()
+            ?: error(
+                "RobotDriver.synthetic() has no AWT window to deliver key events to. " +
+                    "Create the Compose/Swing window first, or pass RobotDriver.synthetic(rootWindow)."
+            )
 }
 
 /**

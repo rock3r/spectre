@@ -513,7 +513,9 @@ Same capture-mode distinctions as the CLI table above apply to MCP tool names
   and future incompatibility. The attaching process must be the **same OS user** as the target.
 - The transport is local-only and trusts the operating-system user account. Use it only for
   trusted development and test environments.
-- Input commands send real OS events. They can move focus and change application state.
+- Input commands use the attached target's driver (synthetic AWT events by default;
+  real OS events only if that target opted into `RobotDriver()`). They can still
+  change application state.
 - Node keys are short-lived. After an interaction changes the UI, run `tree` / `find` /
   `find-text` / `wait-for-node` again. On **reload-aware** sessions, keys are also invalidated
   after `wait --reload-settled` completes.

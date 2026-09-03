@@ -940,8 +940,13 @@ private constructor(
 
     public companion object {
 
+        /**
+         * In-process automator. The default [robotDriver] is [RobotDriver.synthetic] — synthetic
+         * AWT events into the live window hierarchy. Pass [RobotDriver] (no-arg or wrapping an
+         * existing `java.awt.Robot`) to opt into real OS-level input.
+         */
         public fun inProcess(
-            robotDriver: RobotDriver = RobotDriver(),
+            robotDriver: RobotDriver = RobotDriver.synthetic(),
             discoverWindows: Boolean = true,
         ): ComposeAutomator =
             ComposeAutomator(

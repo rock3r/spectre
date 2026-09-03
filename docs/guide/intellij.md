@@ -110,19 +110,20 @@ See [Driving input → Real vs. synthetic input](interactions.md#real-vs-synthet
 for the full trade-off rundown across `RobotDriver()`, `RobotDriver.synthetic(...)`,
 and `RobotDriver.headless()`. Two IDE-specific notes on top of that page:
 
-- **`synthetic` is the usual default.** When the JVM running the automator is also
-  the JVM hosting the UI, real OS input would dispatch events back to the IDE
-  you're inside, fight with whatever else has focus on the host machine, and move
-  the user's cursor visibly. Synthetic AWT events skip all of that. On macOS this
+- **`synthetic` is the default.** `ComposeAutomator.inProcess()` already uses
+  `RobotDriver.synthetic()`. When the JVM running the automator is also the JVM
+  hosting the UI, real OS input would dispatch events back to the IDE you're
+  inside, fight with whatever else has focus on the host machine, and move the
+  user's cursor visibly. Synthetic AWT events skip all of that. On macOS this
   also works for helper/test JVMs launched with `apple.awt.UIElement=true`: AWT may
   never report a `Window.focusOwner`, but Spectre routes key events to the
   key-listening Compose Desktop host so focused text fields still receive
-  `typeText`. The IntelliJ-specific recipe for the `rootWindow` argument is
-  `WindowManager.getInstance().getFrame(project)` — that's the `Window` shown in
-  the action sample above.
-- **`RobotDriver()` is still valid** when you specifically need to exercise
-  OS-level shortcut chains, focus transitions, or cross-window interactions —
-  those are the only things synthetic input doesn't cover.
+  `typeText`. Pinning `rootWindow` to
+  `WindowManager.getInstance().getFrame(project)` is still the IntelliJ-specific
+  recipe — that's the `Window` shown in the action sample above.
+- **`RobotDriver()` is the explicit real-OS opt-in** when you specifically need to
+  exercise OS-level shortcut chains, focus transitions, or cross-window
+  interactions — those are the only things synthetic input doesn't cover.
 
 ### Optional: drive interactions via semantics actions
 

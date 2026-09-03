@@ -120,8 +120,9 @@ description, or role — see [Finding nodes](selectors.md).
 ## What just happened
 
 - `ComposeAutomatorExtension` and `ComposeAutomatorRule` each build a fresh
-  `ComposeAutomator` for each test. The default factory is `ComposeAutomator.inProcess()`, which uses
-  `RobotDriver` for real OS-level input.
+  `ComposeAutomator` for each test. The default factory is `ComposeAutomator.inProcess()`, which
+  defaults to synthetic AWT input (`RobotDriver.synthetic()`). Pass `RobotDriver()` if you
+  need real OS-level input.
 - `waitForNode(tag = "CounterValue")` polls the semantics tree until the node exists.
   It's how you bridge the gap between "the test started" and "the UI is on screen".
 - `waitForVisualIdle()` waits until the on-screen pixels stop changing for a few frames in
@@ -129,8 +130,9 @@ description, or role — see [Finding nodes](selectors.md).
 - `findOneByTestTag(...)` does a single semantics-tree read — no waiting. If the result
   isn't what you expect, your UI probably wasn't idle yet.
 - `automator.click(node)` is `suspend` — it resolves the node's centre on screen,
-  dispatches a real mouse click via `java.awt.Robot`, and only hops to `Dispatchers.IO`
-  when the call originates on the AWT event dispatch thread.
+  dispatches a synthetic AWT click (or a real `java.awt.Robot` click if you opted in),
+  and only hops to `Dispatchers.IO` when the call originates on the AWT event dispatch
+  thread and the driver needs it.
 
 All interaction methods (`click`, `doubleClick`, `swipe`, `typeText`, `pasteText`, …) and all wait
 helpers (`waitForNode`, `waitUntilGone`, `waitUntil`, `waitForIdle`, `waitForVisualIdle`) are

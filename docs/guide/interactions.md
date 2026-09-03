@@ -69,8 +69,9 @@ test thread or use JUnit per-test isolation instead of blocking the AUT's event 
 session it proceeds uncoordinated. Choose `Required` when that fallback is unacceptable.
 
 The **attach path uses `Required`** whenever the target can coordinate at all — an injected agent
-drives real input into a process you do not own, so a coordinator it cannot reach fails the input
-verb rather than quietly stopping policing the desktop. When the coordinator itself is broken and
+drives the target's default synthetic driver (or real OS input if that target opted in) into a
+process you do not own, so a coordinator it cannot reach fails coordinated verbs rather than
+quietly stopping policing the desktop. When the coordinator itself is broken and
 that leaves you with no way forward, there is one deliberate opt-out; see
 [When the coordinator cannot be reached](input-coordination.md#coordinator-unreachable).
 
@@ -276,20 +277,12 @@ For test output that records continuous video rather than per-step images, see
 The `RobotDriver` your automator wraps governs how input is actually dispatched. The
 public surface:
 
-- **`RobotDriver()`** — the default. Uses a fresh `java.awt.Robot` plus the system
-  clipboard. Moves the real cursor, takes system-wide keyboard focus, and is visible to
-  other applications. This is what end users experience and what
-  `ComposeAutomator.inProcess()` wires up by default. On macOS, the first input or
-  screenshot call lazily probes TCC permissions (Accessibility for input, Screen
-  Recording for capture) and throws `IllegalStateException` with remediation guidance
-  when either is denied — see [Troubleshooting](troubleshooting.md#macos-robotdriver-throws-illegalstateexception-about-tcc).
-- **`RobotDriver(robot)`** — same as the no-arg form but reuses an existing
-  `java.awt.Robot` you've already constructed (e.g., one targeted at a non-default
-  `GraphicsDevice`).
-- **`RobotDriver.synthetic(rootWindow)`** — synthetic AWT events posted straight into the
-  target window's AWT hierarchy. No real cursor motion, no global focus, doesn't fight
-  with other processes. Mouse and wheel events hit-test against `rootWindow`, its owned
-  windows, and other visible top-level windows. Key events go to the current AWT focus
+- **`RobotDriver.synthetic()` / `RobotDriver.synthetic(rootWindow)`** — the default.
+  `ComposeAutomator.inProcess()` defaults to synthetic AWT events posted straight into
+  the live window hierarchy. No real cursor motion, no global focus, doesn't fight
+  with other processes. The no-window factory hit-tests every visible top-level window;
+  passing `rootWindow` pins the starting tree. Mouse and wheel events hit-test against
+  that tree plus other visible top-level windows. Key events go to the current AWT focus
   owner when one exists; when AWT has no focus owner (for example, a macOS helper JVM
   launched with `apple.awt.UIElement=true`), Spectre falls back to the key-listening AWT
   descendant under the last pointer target or Compose host. That lets Compose Desktop's
@@ -300,6 +293,17 @@ public surface:
   currently exposes rather than a Swing repaint of the Compose host. On macOS this
   still requires Screen Recording permission and an unlocked screen, but synthetic input
   itself does not need Accessibility permission.
+- **`RobotDriver()`** — the explicit real-OS opt-in. Uses a fresh `java.awt.Robot` plus
+  the system clipboard. Moves the real cursor, takes system-wide keyboard focus, and is
+  visible to other applications. This is what end users experience; pass it to
+  `ComposeAutomator.inProcess(robotDriver = RobotDriver())` when you need that fidelity.
+  On macOS, the first input or screenshot call lazily probes TCC permissions
+  (Accessibility for input, Screen Recording for capture) and throws
+  `IllegalStateException` with remediation guidance when either is denied — see
+  [Troubleshooting](troubleshooting.md#macos-robotdriver-throws-illegalstateexception-about-tcc).
+- **`RobotDriver(robot)`** — same as the no-arg real-OS form but reuses an existing
+  `java.awt.Robot` you've already constructed (e.g., one targeted at a non-default
+  `GraphicsDevice`).
 - **`RobotDriver.headless()`** — for read-only flows in headless CI where real OS I/O is
   unavailable. Every input, clipboard, and screenshot call throws
   `UnsupportedOperationException` so an accidental `automator.click(...)` /
@@ -309,21 +313,23 @@ public surface:
   going through the OS. See
   [The automator](automator.md#what-an-automator-owns) for the full picture.
 
-Pass a non-default driver via the `inProcess` factory:
+`ComposeAutomator.inProcess()` already uses `RobotDriver.synthetic()`. Pin a window or
+opt into real OS input via the factory:
 
 ```kotlin
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.RobotDriver
-val automator = ComposeAutomator.inProcess(
+val pinned = ComposeAutomator.inProcess(
     robotDriver = RobotDriver.synthetic(rootWindow = composeWindow),
 )
+val realOs = ComposeAutomator.inProcess(robotDriver = RobotDriver())
 ```
 
-Synthetic input is the right choice when you're running tests in parallel JVMs, when the
-test machine also runs unrelated UI work, or when a macOS test helper runs with
+Synthetic input is the right default for parallel test JVMs, a machine that also runs
+unrelated UI work, IntelliJ/Jewel-hosted Compose, and macOS test helpers launched with
 `apple.awt.UIElement=true` to avoid a Dock icon. That macOS mode is safe for
 per-character `typeText` with `RobotDriver.synthetic(rootWindow = ...)`, but
 clipboard-backed `pasteText` still requires a foreground-capable app
-(`apple.awt.UIElement=false`). Stick to real input for end-to-end smokes where the realism
-of the input matters (e.g., validating that a system shortcut reaches the app). See
-[Running on CI](ci.md#macos-helper-jvms) for the macOS CI trade-off.
+(`apple.awt.UIElement=false`). Opt into real OS input for end-to-end smokes where the
+realism of the input matters (e.g., validating that a system shortcut reaches the app).
+See [Running on CI](ci.md#macos-helper-jvms) for the macOS CI trade-off.

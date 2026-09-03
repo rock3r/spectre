@@ -31,6 +31,7 @@ class DocsGuidanceContractTest {
         assertContains(docs, "printTree()` returns an empty string")
         assertContains(docs, "No Component provided")
         assertContains(docs, "RobotDriver.synthetic(rootWindow =")
+        assertContains(docs, "defaults to synthetic")
         assertContains(docs, "ExperimentalSpectreInputCoordinationApi")
         assertContains(docs, "spectre-input-coordinator-server")
         assertContains(docs, "InputIsolationConfig.perTest()")

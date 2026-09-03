@@ -50,8 +50,8 @@ import org.junit.jupiter.api.extension.ParameterResolver
  * before the keep/delete decision (`onFailureKeep` deletes on pass; `always` keeps pass and fail).
  * Non-failure aborts use the same rules as stills and do not leave a kept video.
  *
- * The [factory] defaults to `ComposeAutomator.inProcess()`. Tests that need a stub for headless CI
- * or focused unit testing can supply their own factory.
+ * The [factory] defaults to `ComposeAutomator.inProcess()` (synthetic AWT input). Tests that need a
+ * stub for headless CI or focused unit testing can supply their own factory.
  *
  * Concurrency: the per-test instance is keyed in [ExtensionContext.Store], so parameter resolution
  * remains correct even when JUnit 5 reuses one extension instance across parallel methods. The

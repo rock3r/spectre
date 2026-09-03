@@ -86,7 +86,8 @@ val automatorExt = ComposeAutomatorExtension {
 }
 ```
 
-Same shape for parallel-safe synthetic input:
+Same shape when you want to pin the synthetic driver to a known window
+(the no-arg `inProcess()` default is already synthetic):
 
 ```kotlin
 @JvmField

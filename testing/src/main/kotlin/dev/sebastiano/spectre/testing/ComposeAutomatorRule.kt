@@ -26,8 +26,9 @@ import org.junit.runners.model.Statement
  * The [factory] is invoked before each `@Test` method; the resulting automator is available via
  * [automator] for the duration of the test and goes out of scope after the test (including after
  * failure-artifact capture). Accessing [automator] outside a running test throws
- * [IllegalStateException]. The default factory is `ComposeAutomator.inProcess()`; tests that need a
- * stub for headless CI or focused unit testing can supply their own factory.
+ * [IllegalStateException]. The default factory is `ComposeAutomator.inProcess()` (synthetic AWT
+ * input); tests that need a stub for headless CI or focused unit testing can supply their own
+ * factory.
  *
  * ## Failure artifacts (#205)
  *

@@ -14,9 +14,10 @@ Test ergonomics for Spectre.
 - `AutomatorFactory` — typealias for the `() -> ComposeAutomator` lambda the rule and extension
   use to build their per-test instances.
 
-Both wrappers default to `ComposeAutomator.inProcess()`. Tests that need a stub for headless CI
-or focused unit testing can pass a custom factory built around `RobotDriver.headless()` (see the
-`newHeadlessAutomator()` fixture in this module's tests for the recipe).
+Both wrappers default to `ComposeAutomator.inProcess()`, which defaults to synthetic AWT
+input. Tests that need a stub for headless CI or focused unit testing can pass a custom
+factory built around `RobotDriver.headless()` (see the `newHeadlessAutomator()` fixture in
+this module's tests for the recipe). Pass `RobotDriver()` to opt into real OS input.
 
 Typical test shape:
 

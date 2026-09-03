@@ -246,8 +246,9 @@ previous clipboard contents. A few failure modes follow from those contracts:
 - **`RobotDriver.headless()` throws on `typeText` and `pasteText`.** It throws on every
   input, clipboard, and screenshot call by design (see [Driving input](interactions.md#real-vs-synthetic-input)),
   so text entry against a headless driver surfaces an `UnsupportedOperationException`
-  at the call site rather than silently dropping. Use `RobotDriver.synthetic(rootWindow)`
-  or the default `RobotDriver()` for any real-input scenario.
+  at the call site rather than silently dropping. Use the default
+  `RobotDriver.synthetic(rootWindow)` for input, or `RobotDriver()` for any real-OS
+  scenario.
 - **Compose's paste action runs on its own dispatcher.** After the keystroke,
   Spectre pumps the EDT and sleeps briefly so the paste handler can read the
   clipboard before the previous contents are restored. If you stack many
@@ -460,7 +461,7 @@ Look for patterns such as `Sandbox: java(...) deny(1) mach-lookup`,
 
 ## "macOS RobotDriver throws `IllegalStateException` about TCC"
 
-The default `RobotDriver()` lazily probes the two macOS TCC entries `java.awt.Robot`
+The real-OS `RobotDriver()` lazily probes the two macOS TCC entries `java.awt.Robot`
 needs and throws on first use if either is denied:
 
 - **Accessibility** — required for mouse and keyboard delivery. Without it,

@@ -9,11 +9,15 @@ import dev.sebastiano.spectre.core.AutomatorInputLease
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.InputLeaseOptions
 import java.lang.reflect.Method
+import java.nio.file.Path
+import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import org.junit.runner.Description
 import org.junit.runners.model.Statement
 
@@ -132,6 +136,21 @@ class InputIsolationLifecycleTest {
         rule.apply(body, Description.createTestDescription(javaClass, "compatibility")).evaluate()
 
         assertEquals(emptyList(), events)
+    }
+
+    @Test
+    fun `per-interaction default factory constructs a synthetic driver`() {
+        val source =
+            Path.of("src/main/kotlin/dev/sebastiano/spectre/testing/InputIsolationConfig.kt")
+                .readText()
+        assertTrue(
+            source.contains("RobotDriver.synthetic(InputLeasePolicy.Required)"),
+            "defaultManagedAutomatorFactory must default to RobotDriver.synthetic, not real OS Robot",
+        )
+        assertFalse(
+            source.contains("val driver = RobotDriver(InputLeasePolicy.Required)"),
+            "defaultManagedAutomatorFactory must not construct the real-OS RobotDriver(policy)",
+        )
     }
 
     @Test

@@ -161,8 +161,9 @@ class ComposeAutomatorFailureVideoTest {
     @Test
     fun `failureVideo-only constructor is source-compatible for documented form`() {
         // Construction-only guard for ComposeAutomatorExtension(failureVideo = …) and the matching
-        // Rule overload. Do not run beforeEach/apply here: the default factory uses RobotDriver(),
-        // which fails on headless CI. Lifecycle coverage uses headless factories elsewhere.
+        // Rule overload. Do not run beforeEach/apply here: the default factory uses
+        // RobotDriver.synthetic(), which still constructs a screenshot Robot and fails on
+        // headless CI. Lifecycle coverage uses headless factories elsewhere.
         val extension =
             ComposeAutomatorExtension(
                 failureVideo = FailureVideoConfig(policy = FailureVideoPolicy.OnFailureKeep)

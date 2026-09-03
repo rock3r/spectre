@@ -31,8 +31,10 @@ top of an in-process `ComposeAutomator`; the test JVM talks to it through
     - Every route is **unauthenticated**. Anything that can reach the bound port
       can click, type, and capture screenshots.
     - Communication is **plaintext HTTP**. There is no TLS support.
-    - `click` and `typeText` drive **real OS input**; `screenshot` captures
-      whatever pixels the host JVM can see, including content from other windows.
+    - `click` and `typeText` drive the host automator's input driver (synthetic AWT
+      events by default; real OS input if that host opted into `RobotDriver()`);
+      `screenshot` captures whatever pixels the host JVM can see, including content
+      from other windows.
     - **Bind to `127.0.0.1`.** Do not expose this server on a network-reachable
       interface. The examples below pin the loopback bind explicitly.
     - Authentication, authorization, and TLS are tracked for a separately

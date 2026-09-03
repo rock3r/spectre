@@ -5,9 +5,9 @@
 </h1>
 
 A Kotlin library for driving Compose Desktop UIs from automated tests. Reads the semantics
-tree, drives mouse and keyboard input — either real OS-level events via `java.awt.Robot` or
-synthetic AWT events dispatched straight into the window hierarchy (`RobotDriver.synthetic(...)`,
-useful when tests run in parallel and can't fight over OS focus) — and records the screen,
+tree, drives mouse and keyboard input — synthetic AWT events dispatched straight into the
+window hierarchy by default (`RobotDriver.synthetic()`), or real OS-level events via
+`java.awt.Robot` when you pass `RobotDriver()` — and records the screen,
 against IDE-hosted Compose surfaces (IntelliJ, Jewel) and standalone desktop apps alike.
 
 > [!IMPORTANT]
@@ -50,7 +50,7 @@ npx skills add rock3r/spectre --skill spectre
 
 ## Modules
 
-- `core` — semantics tree, selectors, coordinate mapping, Robot-backed input.
+- `core` — semantics tree, selectors, coordinate mapping, synthetic-or-Robot input.
 - `server` — embedded HTTP transport (Ktor) for cross-JVM access. **Experimental**; see
   [`docs/SECURITY.md`](docs/SECURITY.md) for the trust model.
 - `recording` — region capture, window-targeted video capture, and native still
