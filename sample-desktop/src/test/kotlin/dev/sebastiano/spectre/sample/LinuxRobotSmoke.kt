@@ -78,7 +78,7 @@ fun main() {
 // detect a pure-Wayland session with no XWayland fallback (DISPLAY unset), abort early with a
 // clear remediation rather than running the scenarios and reporting 0/6 PASS for opaque
 // reasons. Same gate Spectre's LinuxX11Grab uses from #77.
-internal fun checkWaylandGate(): String? {
+internal fun checkWaylandGate(label: String = "LinuxRobotSmoke"): String? {
     val xdgSessionType = System.getenv("XDG_SESSION_TYPE")?.lowercase()
     val waylandDisplay = System.getenv("WAYLAND_DISPLAY")
     val xdgRuntimeDir = System.getenv("XDG_RUNTIME_DIR")
@@ -90,9 +90,7 @@ internal fun checkWaylandGate(): String? {
         xdgSessionType == "wayland" || !waylandDisplay.isNullOrEmpty() || waylandSocketPresent
     if (waylandIndicator && display.isNullOrEmpty()) {
         return buildString {
-            appendLine(
-                "LinuxRobotSmoke aborting: pure-Wayland session detected and no XWayland fallback."
-            )
+            appendLine("$label aborting: pure-Wayland session detected and no XWayland fallback.")
             appendLine(
                 "  XDG_SESSION_TYPE=$xdgSessionType WAYLAND_DISPLAY=$waylandDisplay " +
                     "wayland-socket-present=$waylandSocketPresent DISPLAY=$display"

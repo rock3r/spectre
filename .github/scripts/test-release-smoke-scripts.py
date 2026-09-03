@@ -327,7 +327,7 @@ class SmokeLibSchemaTest(unittest.TestCase):
         self.assertIn("LocalCoordinatorServer", parallel_text)
         self.assertIn("Executors", parallel_text)
 
-    def test_headed_robot_cell_blocks_without_operator_evidence(self):
+    def test_headed_robot_cell_blocks_without_evidence_or_automated_run(self):
         """A reasoned n/a would let the runner print ALL HARD SCENARIOS PASSED; it must fail."""
         missing = smoke_lib.headed_robot_cell(None)
         self.assertEqual("fail", missing.result)
@@ -339,11 +339,83 @@ class SmokeLibSchemaTest(unittest.TestCase):
         for blank in ("", "   "):
             self.assertEqual("fail", smoke_lib.headed_robot_cell(blank).result)
 
-    def test_headed_robot_cell_passes_only_with_recorded_evidence(self):
+    def test_headed_robot_cell_passes_on_recorded_evidence(self):
         recorded = smoke_lib.headed_robot_cell("ran on Mattone; run URL ...")
         self.assertEqual("pass", recorded.result)
         self.assertIn("operator evidence: ran on Mattone", recorded.detail)
         self.assertEqual([], smoke_lib.hard_failures([recorded]))
+
+    def test_headed_robot_cell_passes_on_the_automated_proof_alone(self):
+        """#491: a host that can run the e2e needs no human signature."""
+        automated = smoke_lib.scenario_result(
+            smoke_lib.HEADED_ROBOT_SCENARIO_ID,
+            name=smoke_lib.HEADED_ROBOT_NAME,
+            result="pass",
+            seconds=41,
+        )
+        cell = smoke_lib.headed_robot_cell(None, automated=automated)
+        self.assertEqual("pass", cell.result)
+        self.assertEqual(41, cell.seconds)
+        self.assertIn(smoke_lib.HEADED_ROBOT_GRADLE_TASK, cell.detail)
+        self.assertEqual([], smoke_lib.hard_failures([cell]))
+
+    def test_operator_evidence_cannot_paper_over_a_red_automated_run(self):
+        """The one precedence that matters: an observed failure outranks a signature."""
+        automated = smoke_lib.scenario_result(
+            smoke_lib.HEADED_ROBOT_SCENARIO_ID,
+            name=smoke_lib.HEADED_ROBOT_NAME,
+            result="fail",
+            detail="two headed Robot JVMs interleaved their keystrokes",
+        )
+        cell = smoke_lib.headed_robot_cell("ran on Mattone; looked fine", automated=automated)
+        self.assertEqual("fail", cell.result)
+        self.assertIn("interleaved", cell.detail)
+        self.assertEqual(
+            ["input-coord-headed-robot"], smoke_lib.hard_failures([cell])
+        )
+
+    def test_a_host_that_cannot_run_the_e2e_still_fails_without_evidence(self):
+        """The escape hatch is for the operator, not for the absence of one."""
+        reason = "no xvfb-run on this host"
+        blocked = smoke_lib.headed_robot_cell(None, unavailable_reason=reason)
+        self.assertEqual("fail", blocked.result)
+        self.assertIn(reason, blocked.detail)
+        self.assertEqual(
+            ["input-coord-headed-robot"], smoke_lib.hard_failures([blocked])
+        )
+        # ...and with evidence it passes, still saying why the automation did not run.
+        signed = smoke_lib.headed_robot_cell("ran on Mattone", unavailable_reason=reason)
+        self.assertEqual("pass", signed.result)
+        self.assertIn(reason, signed.detail)
+        self.assertIn("operator evidence: ran on Mattone", signed.detail)
+
+    def test_headed_robot_proof_sources_exist_on_this_checkout(self):
+        self.assertIsNone(smoke_lib.headed_robot_missing_surface(ROOT))
+
+    def test_a_deleted_headed_proof_fails_rather_than_falling_back_to_a_signature(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            detail = smoke_lib.headed_robot_missing_surface(Path(tmp))
+            self.assertIsNotNone(detail)
+            self.assertIn("failure, not a skip", detail)
+            cell = smoke_lib.headed_robot_cell("ran on Mattone", missing_surface=detail)
+            self.assertEqual("fail", cell.result)
+            self.assertEqual(
+                ["input-coord-headed-robot"], smoke_lib.hard_failures([cell])
+            )
+
+    def test_headed_robot_gradle_task_and_testcase_match_the_kotlin_proof(self):
+        """The XML needle is how the cell proves the e2e ran; a rename must break here."""
+        test_source = ROOT / smoke_lib.HEADED_ROBOT_TEST_SOURCE
+        text = test_source.read_text(encoding="utf-8")
+        self.assertIn(smoke_lib.HEADED_ROBOT_TESTCASE, text)
+        # Two forked probe JVMs, released together, each with a Required-policy real Robot.
+        probe = (ROOT / smoke_lib.HEADED_ROBOT_PROBE_SOURCE).read_text(encoding="utf-8")
+        self.assertIn("RobotDriver(InputLeasePolicy.Required)", probe)
+        self.assertIn("ProcessBuilder", text)
+        build_script = (ROOT / "sample-desktop" / "build.gradle.kts").read_text(encoding="utf-8")
+        self.assertIn(
+            smoke_lib.HEADED_ROBOT_GRADLE_TASK.rsplit(":", maxsplit=1)[-1], build_script
+        )
 
     def test_input_coordination_surface_present_on_this_checkout(self):
         # The experimental coordinator + isolation proofs exist on this tree, so the cells are
@@ -650,11 +722,22 @@ class SmokeLibSchemaTest(unittest.TestCase):
         self.assertIn(
             "the per-test lease is still held while failure evidence is captured", text
         )
-        # The headed cell is operator-recorded and must never be satisfiable by the automated
-        # coordinator cells, which pass headless. It stays hard n/a until evidence is supplied.
+        # The headed cell is never satisfiable by the automated coordinator cells above, which
+        # pass headless. It is driven by its own Robot e2e where the host can run one, and the
+        # operator flag stays as the escape hatch for hosts that cannot (#491).
         self.assertIn("input-coord-headed-robot", text)
         self.assertIn("--headed-robot-evidence", text)
         self.assertIn("headed_robot_cell", text)
+        self.assertIn("HEADED_ROBOT_GRADLE_TASK", text)
+        self.assertIn("headed_robot_missing_surface", text)
+        # Robot cells must leave the compositor seat, so the headed cell uses the same xvfb
+        # wrapper and forced-X11 env as junit-live -- not the plain coordination scenario_env.
+        headed = text[text.index("--- headed two-JVM Robot contention") :]
+        headed = headed[: headed.index("# --- agent attach")]
+        self.assertIn("robot_prefix", headed)
+        self.assertIn("_robot_env(", headed)
+        self.assertIn("robot_xvfb_unavailable_reason", headed)
+        self.assertIn("assert_junit_testcases_passed", headed)
         # Non-login SSH / xvfb-run must still see rustup cargo for helper rebuilds.
         self.assertIn("apply_linux_toolchain_path", text)
         # Nested buildSrc test must not start a daemon that --stops parent ./gradlew check.
@@ -1056,6 +1139,18 @@ class DocsAndSchemaPolicyTest(unittest.TestCase):
             "input-coord-junit-pertest",
         ):
             self.assertIn(coordination_id, docs)
+
+    def test_release_smoke_docs_say_where_the_headed_cell_is_automated(self):
+        """#491: an operator must be able to tell, from this page, whether they still sign."""
+        docs = (ROOT / "docs" / "RELEASE-SMOKE.md").read_text(encoding="utf-8")
+        self.assertIn("input-coord-headed-robot", docs)
+        self.assertIn(smoke_lib.HEADED_ROBOT_GRADLE_TASK, docs)
+        # The escape hatch has to stay documented, and so does the one host that still needs it.
+        self.assertIn("--headed-robot-evidence", docs)
+        self.assertIn("-HeadedRobotEvidence", docs)
+        self.assertIn("Windows SSH", docs)
+        # ...as does the precedence, which is the part a reader would otherwise guess wrong.
+        self.assertIn("outranks an unverifiable note", docs)
 
     def test_validate_report_rejects_missing_required_ids(self):
         preflight = smoke_lib.collect_preflight(ROOT, version="0.5.0")

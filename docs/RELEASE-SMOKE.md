@@ -69,7 +69,7 @@ These are structural, not one-release accidents:
 | --- | --- | --- |
 | CLI package-channel (Homebrew/Scoop) contracts | Structural on every Unix `check` (`python3`); install-semantics when Ruby present or under `CI` (issue #400) | Optional: install Ruby on a clean Linux box and run `./gradlew verifyHomebrewFormulaInstallSemantics` if claiming formula behaviour beyond CI |
 | Agent attach + contract corpus (live UI) | Linux Xvfb + macOS desktop; Windows **transport/ACL** unit tests | **Windows headed desktop** (not SSH-only for capture) |
-| Input coordinator contention/recovery | Deterministic + forked process on every OS | Automated pre-tag as the `input-coord-*` cells (both entrypoints, fail-closed JUnit XML). Those all pass headless, so headed real-input contention is a **separate hard cell**, `input-coord-headed-robot`, recorded by an operator |
+| Input coordinator contention/recovery | Deterministic + forked process on every OS | Automated pre-tag as the `input-coord-*` cells (both entrypoints, fail-closed JUnit XML). Those all pass headless, so headed real-input contention is a **separate hard cell**, `input-coord-headed-robot` — automated too (Linux Xvfb, macOS and Windows desktops), with an operator signature only where no host can run it |
 | Agent Windows UI e2e | Opt-in only: `-Pspectre.agent.attachE2e.allowWindows=true` | Run that property on Mattone-class boxes |
 | Agent real-keyboard `typeText` and `pressKey` | Runs on CI (`CI=true`); **skipped** on developer machines | Add `-Pspectre.agent.realKeyboard=true` on an idle desktop |
 | Agent **inject** attach | Linux + macOS e2e | **Windows** inject fixture (no preinstalled core) |
@@ -136,14 +136,34 @@ Non-overlap in both is an invariant, not a timing race: the lease is mutually ex
 waiter cannot be granted until the holder releases. A failure means genuine interleaving, never a
 slow machine.
 
-What remains outside automation is the **headed** half of the first bullet, and it is a hard cell,
-not a residual. Every automated cell above passes headless and under SSH, because none of them
+The **headed** half of the first bullet is a seventh hard cell, `input-coord-headed-robot`, and
+not a residual. Every cell in the table above passes headless and under SSH, because none of them
 constructs a `RobotDriver`: together they prove the *lease* is mutually exclusive, never that two
-processes' real OS input does not interleave. That is `input-coord-headed-robot`, which the harness
-cannot run for you — it is a hard **fail** until an operator drives two
-`RobotDriver(InputLeasePolicy.Required)` JVMs on a real desktop and records it
-(`--headed-robot-evidence "<note>"` on Unix, `-HeadedRobotEvidence "<note>"` on Windows). Do not
-treat green `input-coord-*` cells as satisfying it. To add or change one of these cells, follow
+processes' real OS input does not interleave. Do not treat green `input-coord-*` cells as
+satisfying it.
+
+Since [#491](https://github.com/rock3r/spectre/issues/491) that cell is automated too. Both
+entrypoints run `:sample-desktop:headedRobotContentionTest`, which forks two JVMs, each with its
+own `RobotDriver(InputLeasePolicy.Required)`, releases them from one barrier, and has both type a
+distinguishable block into the same focused text field of one fixture window. An `ababab` field is
+the failure being ruled out. The e2e is genuinely contended by construction, and says so: each
+probe pays for coordinator launch and window focus *before* the barrier, and the test then measures
+that the second probe asked for the keyboard while the first was still typing — otherwise it fails
+as a broken barrier rather than reporting a vacuous pass.
+
+| Platform | How the cell is satisfied |
+| --- | --- |
+| Linux Xorg/Xvfb | Automated. `release-smoke.py` runs the task under the same `xvfb-run` wrapper and forced-X11 env as `junit-live` — Robot cells must leave the compositor seat (#432). Hard **fail** if `xvfb-run` is absent, unless an operator signs. |
+| macOS desktop | Automated, if `java.awt.Robot` has Accessibility (TCC) permission. Without it the probes' input is dropped and the cell **fails**; grant it, or sign for a run on a Mac that has it. |
+| Windows interactive / RDP | Automated. |
+| Windows SSH | **Not** automated — an SSH session has no interactive desktop for Robot to type into, so the cell needs an operator signature there. |
+
+The operator flag survives as that escape hatch: `--headed-robot-evidence "<note>"` on Unix,
+`-HeadedRobotEvidence "<note>"` on Windows. It cannot rescue a red automated run — an observed
+interleave outranks an unverifiable note — and it does not substitute for a deleted proof source.
+Absent both a run and a signature, the cell is a hard **fail**.
+
+To add or change one of these cells, follow
 [Adding a scenario ID](#adding-a-scenario-id-per-release-delta-or-permanent-baseline); do not leave
 one-off `./gradlew` commands only in chat.
 
@@ -336,7 +356,7 @@ Shared across macOS / Linux / Windows entrypoints (`scripts/smoke_lib.py` → `R
 | `input-coord-revoke` | Exact-ID normal revoke fences only its own lease and cannot affect a newer one. |
 | `input-coord-forced-recovery` | Explicit forced recovery reports `unsafeTakeover=true` and advances the FIFO queue. |
 | `input-coord-junit-pertest` | `InputIsolationConfig.perTest()` serialises factory, body, evidence, and teardown (`:testing:test` `InputIsolationLifecycleTest`). |
-| `input-coord-headed-robot` | **Operator-run.** Two `RobotDriver(InputLeasePolicy.Required)` JVMs dispatching real OS input on a headed desktop must not interleave. The harness cannot automate this, so it is a hard **fail** — the smoke exits non-zero — unless the operator passes `--headed-robot-evidence` / `-HeadedRobotEvidence`. A reasoned `n/a` would be ignored by the fail-closed check and report success, so absence is deliberately a failure. Required on every OS whose release notes claim headed coordination. |
+| `input-coord-headed-robot` | Two `RobotDriver(InputLeasePolicy.Required)` JVMs dispatching real OS input on a headed desktop must not interleave. Driven by `:sample-desktop:headedRobotContentionTest` (fail-closed on its JUnit XML) wherever the host can run it: Linux under `xvfb-run`, a macOS desktop with Accessibility granted, Windows interactive/RDP. Where it cannot — Windows SSH, a Linux box without `xvfb-run` — the operator passes `--headed-robot-evidence` / `-HeadedRobotEvidence`. With neither it is a hard **fail** and the smoke exits non-zero; a reasoned `n/a` would be ignored by the fail-closed check and report success, so absence is deliberately a failure. Required on every OS whose release notes claim headed coordination. |
 
 The `input-coord-*` cells ([#459](https://github.com/rock3r/spectre/pull/459)) are the automated form of the
 [Experimental input coordination release gate](#experimental-input-coordination-release-gate). Each drives the
@@ -346,8 +366,8 @@ empty-filter run cannot fake `pass`. They need no display, so they stay **hard**
 **fail**, not a skip: deleting or renaming one of these tests must not turn six hard cells green by
 omission. Dropping the feature legitimately means re-scoping affirmatively — remove the
 `input-coord-*` IDs from `REQUIRED_SCENARIO_IDS` and update this page. Fully-headed
-two-`RobotDriver` physical-mouse contention is a separate hard cell, `input-coord-headed-robot`,
-which only an operator can record (below).
+two-`RobotDriver` real-input contention is a separate hard cell, `input-coord-headed-robot`, which
+runs its own Robot e2e where the host allows and is operator-recorded where it does not (below).
 
 The Unix runner registers **every** required ID end-to-end (fail-closed). Environment-impossible
 cells must be explicit hard `n/a` with reason — never a silent omit or fake `pass`.
@@ -378,7 +398,8 @@ coverage to the runner rather than leaving a one-release command only in chat.
 | Preflight / check / agent attach·inject·launch / CLI package / MCP SDK / Maven Local | `release-smoke.py` (macOS/Linux); Windows PS shares IDs | — |
 | Live JUnit failure artifacts/video + atomic capture | `release-smoke.py` → `junit-live` | Windows: run on macOS/Linux baseline (hard `n/a` on Windows entrypoint with reason) |
 | Pointer-move hover (#433 / #435) | Unix + Windows `pointer-move` → `*PointerMoveLive*` | Fail-closed on all three OSes; hard `n/a` only if the verbs disappear |
-| Input coordination gate (#459: contention / cancellation / quarantine / revoke / forced recovery / JUnit PerTest) | Unix + Windows `input-coord-*` (coordinator protocol + forked process + JUnit isolation, fail-closed XML) | **Hard** `input-coord-headed-robot`: two-`RobotDriver` real-mouse contention on a headed desktop, recorded via `--headed-robot-evidence` / `-HeadedRobotEvidence` |
+| Input coordination gate (#459: contention / cancellation / quarantine / revoke / forced recovery / JUnit PerTest) | Unix + Windows `input-coord-*` (coordinator protocol + forked process + JUnit isolation, fail-closed XML) | — |
+| Headed two-`RobotDriver` real-input contention (#491) | Unix + Windows `input-coord-headed-robot` → `:sample-desktop:headedRobotContentionTest` (Linux Xvfb, macOS desktop with TCC, Windows interactive/RDP) | **Hard** on hosts that cannot run it (Windows SSH; no `xvfb-run`): record via `--headed-robot-evidence` / `-HeadedRobotEvidence` |
 | Host native recording | macOS SCK + Linux X11 in `release-smoke.py`; WGC in Windows PS when **interactive** | SSH WGC is N/A (not PASS) |
 | TCC / notarization / app seal | — | macOS recipes below |
 | Real Wayland portal | — | Real Wayland session (Xvfb ≠ Wayland) |
@@ -508,10 +529,19 @@ release SHA.
   need no display, so they are hard on macOS, Windows (including SSH), and Linux Xorg/Xvfb. A
   missing proof source is a hard **fail** rather than a reasoned `n/a` (which `hard_failures()`
   ignores), so a rename cannot pass six cells by omission; re-scope the release affirmatively if
-  the feature is genuinely dropped. The one thing these cells do **not** cover is a fully-headed two-`RobotDriver` physical
-  **real-mouse** run: they all pass headless, so `input-coord-headed-robot` carries that claim as a
-  hard operator-recorded cell. Absent evidence it reports **fail** (not a reasoned `n/a`, which
-  `hard_failures()` ignores), so the smoke cannot report success without it. Automating it (a Robot-backed two-JVM contention e2e) is a follow-up.
+  the feature is genuinely dropped. The one thing these cells do **not** cover is a fully-headed
+  two-`RobotDriver` **real-input** run: they all pass headless, so `input-coord-headed-robot`
+  carries that claim as a seventh hard cell.
+- **#491 headed two-JVM Robot contention:** `input-coord-headed-robot` is now driven by
+  `:sample-desktop:headedRobotContentionTest` on both entrypoints — two forked JVMs, each with
+  `RobotDriver(InputLeasePolicy.Required)`, released from one barrier onto a single focused text
+  field, asserting the two typed blocks never interleave and that the second probe genuinely
+  contended for the keyboard. It runs on Linux under `xvfb-run`, on a macOS desktop that has
+  granted Robot Accessibility (TCC), and on Windows interactive/RDP; a **Windows SSH** session has
+  no interactive desktop and still needs `-HeadedRobotEvidence`. Absent both a run and a signature
+  the cell reports **fail** (not a reasoned `n/a`, which `hard_failures()` ignores), so the smoke
+  cannot report success without it — and a signature never rescues a red automated run, because an
+  observed interleave is a measurement and a note is not.
 - **Linux helper `cargo` on Robot cells:** Unix harness prepends `$CARGO_HOME/bin` or
   `~/.cargo/bin` to PATH. Non-login SSH + `xvfb-run` otherwise cannot start
   `:recording:buildWaylandHelper` when `--rerun-tasks` rebuilds the helper. Do **not**
