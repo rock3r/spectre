@@ -167,8 +167,10 @@ Use, in order of preference:
 coordinates: `boundsInWindow` (Compose pixels, already density-scaled),
 `boundsOnScreen` (screen pixels, post-HiDPI), `centerOnScreen`. Tree
 navigation via `children`/`parent`. Compare `boundsInWindow` against
-`Dp.roundToPx()` / `LocalDensity`-scaled values; compare `boundsOnScreen`
-against dp figures directly.
+`Dp.roundToPx()` / `LocalDensity`-scaled values. For `boundsOnScreen`, only
+compare sizes and coordinate deltas against dp figures; absolute `x`/`y` also
+include the Compose surface origin, so subtract that (or prefer
+`boundsInWindow` for window-relative position asserts).
 
 ## Driving input
 
