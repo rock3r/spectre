@@ -286,9 +286,12 @@ compositor and not raw framebuffer reads.
 - Still capture follows the same rule, so a `spectre capture` PNG and a recording of the same
   window come out at the same resolution. See
   [Atomic capture — Pixel scale](guide/capture.md#pixel-scale).
-- `Rectangle` coordinates passed to `start(...)` are in screen pixels. If you derive the region
-  from `AutomatorNode.boundsOnScreen` you get the right thing for free; if you derive it from
-  `boundsInWindow` you have to apply the density yourself.
+- `Rectangle` coordinates passed to `start(...)` are in screen pixels. Prefer
+  `AutomatorNode.boundsOnScreen` — it already divides by the display scale and adds the Compose
+  surface's screen origin. `boundsInWindow` is already in Compose / device pixels (density-scaled)
+  and window-relative; if you convert it yourself, divide by the display scale **and** add the
+  surface/panel screen origin. Dividing alone lands near `(0, 0)` when the window is not at the
+  screen origin. Do not multiply by density.
 
 ## Permissions and process lifecycle
 
