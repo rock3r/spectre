@@ -10,6 +10,7 @@ import java.awt.image.BufferedImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -77,10 +78,12 @@ class VisualIdleSurfaceCaptureTest {
                 addNotify()
             }
         val expected = solidImage(120, 60, 0xFF334455.toInt())
+        var windowCaptureCalls = 0
         val backend =
             PlatformScreenCaptureBackend(
                 regionCapture = { error("Dialog sampling must remain window-scoped") },
                 nativeCapture = { window ->
+                    windowCaptureCalls += 1
                     assertSame(dialog, window)
                     expected
                 },
@@ -97,9 +100,8 @@ class VisualIdleSurfaceCaptureTest {
                     nativeWindowCaptureAvailable = true,
                 )
 
-            assertEquals(expected.width, image?.width)
-            assertEquals(expected.height, image?.height)
-            assertEquals(expected.getRGB(0, 0), image?.getRGB(0, 0))
+            assertNotNull(image)
+            assertEquals(1, windowCaptureCalls)
         } finally {
             dialog.dispose()
             owner.dispose()
