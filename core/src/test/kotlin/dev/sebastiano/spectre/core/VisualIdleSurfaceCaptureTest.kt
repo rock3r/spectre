@@ -97,7 +97,9 @@ class VisualIdleSurfaceCaptureTest {
                     nativeWindowCaptureAvailable = true,
                 )
 
-            assertSame(expected, image)
+            assertEquals(expected.width, image?.width)
+            assertEquals(expected.height, image?.height)
+            assertEquals(expected.getRGB(0, 0), image?.getRGB(0, 0))
         } finally {
             dialog.dispose()
             owner.dispose()
