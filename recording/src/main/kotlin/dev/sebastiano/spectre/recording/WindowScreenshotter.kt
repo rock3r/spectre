@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.recording
 
 import dev.sebastiano.spectre.recording.screencapturekit.HelperNotBundledException
 import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitScreenshotter
+import dev.sebastiano.spectre.recording.screencapturekit.TitleDiscriminator
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import dev.sebastiano.spectre.recording.windows.WindowsWindowScreenshotter
 import java.awt.Rectangle
@@ -53,24 +54,23 @@ internal constructor(
             }
         }
         if (isWindows()) {
-            val title = window.title
-            require(!title.isNullOrBlank()) {
-                "AutoScreenshotter.captureWindow requires a non-blank window title on Windows. " +
-                    "Use a region screenshot explicitly if region capture is what you want."
+            return withDisambiguatedTitle(window) {
+                windowsWindowScreenshotter?.captureWindow(window, windowOwnerPid)
+                    ?: throw unavailable("Windows window screenshot", null)
             }
-            return windowsWindowScreenshotter?.captureWindow(window, windowOwnerPid)
-                ?: throw unavailable("Windows window screenshot", null)
         }
         if (isLinux()) {
-            return linuxWindowScreenshotter?.captureWindow(window, windowOwnerPid)
-                ?: throw unavailable(
-                    if (isWayland()) {
-                        "Linux Wayland window screenshot"
-                    } else {
-                        "Linux X11 window screenshot"
-                    },
-                    null,
-                )
+            return withDisambiguatedTitle(window) {
+                linuxWindowScreenshotter?.captureWindow(window, windowOwnerPid)
+                    ?: throw unavailable(
+                        if (isWayland()) {
+                            "Linux Wayland window screenshot"
+                        } else {
+                            "Linux X11 window screenshot"
+                        },
+                        null,
+                    )
+            }
         }
         throw UnsupportedOperationException(
             "AutoScreenshotter.captureWindow is unsupported on this platform because no native " +
@@ -83,6 +83,21 @@ internal constructor(
         val message =
             if (detail == null) "$mode is unavailable." else "$mode is unavailable: $detail"
         return IllegalStateException(message, cause)
+    }
+
+    private fun <T> withDisambiguatedTitle(window: TitledWindow, capture: () -> T): T {
+        val discriminator = TitleDiscriminator(window)
+        discriminator.apply()
+        return try {
+            capture()
+        } finally {
+            val wasInterrupted = Thread.interrupted()
+            try {
+                discriminator.restore()
+            } finally {
+                if (wasInterrupted) Thread.currentThread().interrupt()
+            }
+        }
     }
 
     private companion object {

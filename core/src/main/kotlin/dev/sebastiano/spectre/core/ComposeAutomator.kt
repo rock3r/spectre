@@ -434,6 +434,45 @@ private constructor(
     }
 
     /**
+     * Captures several physical windows independently and composites them at their screen
+     * positions. [windowIndicesBackToFront] is explicit painter's order: owners belong before
+     * dialogs, menus, and tooltips that appear above them.
+     *
+     * Every source remains a native window-scoped capture; this API never substitutes a desktop
+     * crop. The composite canvas is the union of all successfully captured window bounds, including
+     * negative virtual-desktop coordinates. If any requested window fails, successful source images
+     * and per-window diagnostics are returned but [CompositeScreenshot.composite] is null,
+     * preventing an incomplete popup capture from looking successful.
+     *
+     * Source PNGs retain their native device resolution. The composite uses the greatest observed
+     * source density and scales other layers into the shared AWT screen-coordinate space.
+     */
+    public fun screenshotWindows(windowIndicesBackToFront: List<Int>): CompositeScreenshot {
+        require(windowIndicesBackToFront.isNotEmpty()) { "At least one window index is required" }
+        require(windowIndicesBackToFront.distinct().size == windowIndicesBackToFront.size) {
+            "Window indices must be unique"
+        }
+        refreshWindows()
+        val tracked = windowIndicesBackToFront.map { windowIndex ->
+            windowIndex to requireShowingTrackedWindow(windowIndex)
+        }
+        require(tracked.map { it.second.window }.distinct().size == tracked.size) {
+            "Each physical window may only be requested once"
+        }
+        val targets = readOnEdt {
+            tracked.map { (windowIndex, trackedWindow) ->
+                CompositeWindowTarget(
+                    windowIndex,
+                    trackedWindow,
+                    Rectangle(trackedWindow.window.bounds),
+                    windowInsets(trackedWindow.window),
+                )
+            }
+        }
+        return captureCompositeWindows(targets, screenCaptureBackend)
+    }
+
+    /**
      * Atomic capture of one window: semantics tree snapshot + window PNG taken back-to-back.
      *
      * The tree (including node geometry) is read first; the PNG is taken immediately afterward

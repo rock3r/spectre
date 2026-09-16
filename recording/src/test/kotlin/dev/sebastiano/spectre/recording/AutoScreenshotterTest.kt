@@ -63,7 +63,7 @@ class AutoScreenshotterTest {
     }
 
     @Test
-    fun `captureWindow rejects blank Windows titles`() {
+    fun `captureWindow temporarily disambiguates blank Windows titles`() {
         val windows = StubWindowScreenshotter()
         val screenshotter =
             autoScreenshotter(
@@ -72,13 +72,33 @@ class AutoScreenshotterTest {
                 isWindows = { true },
             )
 
-        val error =
-            assertFailsWith<IllegalArgumentException> {
-                screenshotter.captureWindow(StubScreenshotWindow(title = ""))
-            }
+        val window = StubScreenshotWindow(title = "")
 
-        assertTrue(error.message.orEmpty().contains("non-blank window title"))
-        assertEquals(0, windows.captureCallCount)
+        screenshotter.captureWindow(window)
+
+        assertEquals(1, windows.captureCallCount)
+        assertTrue(windows.titleDuringCapture.orEmpty().isNotBlank())
+        assertEquals("", window.title)
+    }
+
+    @Test
+    fun `captureWindow restores title while preserving interruption`() {
+        val windows = StubWindowScreenshotter(behavior = StubScreenshotBehavior.Interrupted)
+        val screenshotter =
+            autoScreenshotter(
+                windowsWindowScreenshotter = windows,
+                isMacOs = { false },
+                isWindows = { true },
+            )
+        val window = StubScreenshotWindow(title = "Popup")
+
+        try {
+            assertFailsWith<InterruptedException> { screenshotter.captureWindow(window) }
+            assertEquals("Popup", window.title)
+            assertTrue(Thread.currentThread().isInterrupted)
+        } finally {
+            Thread.interrupted()
+        }
     }
 
     @Test
@@ -155,6 +175,7 @@ private fun autoScreenshotter(
 private enum class StubScreenshotBehavior {
     Succeeds,
     HelperNotBundled,
+    Interrupted,
 }
 
 private class StubWindowScreenshotter(
@@ -166,13 +187,21 @@ private class StubWindowScreenshotter(
     var lastWindow: TitledWindow? = null
         private set
 
+    var titleDuringCapture: String? = null
+        private set
+
     override fun captureWindow(window: TitledWindow, windowOwnerPid: Long): BufferedImage {
         captureCallCount += 1
         lastWindow = window
+        titleDuringCapture = window.title
         return when (behavior) {
             StubScreenshotBehavior.Succeeds -> BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB)
             StubScreenshotBehavior.HelperNotBundled ->
                 throw HelperNotBundledException("test helper is missing")
+            StubScreenshotBehavior.Interrupted -> {
+                Thread.currentThread().interrupt()
+                throw InterruptedException("test interruption")
+            }
         }
     }
 }
