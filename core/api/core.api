@@ -125,6 +125,7 @@ public final class dev/sebastiano/spectre/core/ComposeAutomator {
 	public static synthetic fun screenshot$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/awt/Rectangle;ILjava/lang/Object;)Ljava/awt/image/BufferedImage;
 	public final fun screenshotAtDeviceScale (Ljava/awt/Rectangle;)Ljava/awt/image/BufferedImage;
 	public static synthetic fun screenshotAtDeviceScale$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/awt/Rectangle;ILjava/lang/Object;)Ljava/awt/image/BufferedImage;
+	public final fun screenshotWindows (Ljava/util/List;)Ldev/sebastiano/spectre/core/CompositeScreenshot;
 	public final fun scrollWheel (Ldev/sebastiano/spectre/core/AutomatorNode;ILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun surfaceIds ()Ljava/util/List;
 	public final fun swipe-x2RqbK4 (IIIIIJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -156,6 +157,34 @@ public final class dev/sebastiano/spectre/core/ComposeAutomator {
 public final class dev/sebastiano/spectre/core/ComposeAutomator$Companion {
 	public final fun inProcess (Ldev/sebastiano/spectre/core/RobotDriver;Z)Ldev/sebastiano/spectre/core/ComposeAutomator;
 	public static synthetic fun inProcess$default (Ldev/sebastiano/spectre/core/ComposeAutomator$Companion;Ldev/sebastiano/spectre/core/RobotDriver;ZILjava/lang/Object;)Ldev/sebastiano/spectre/core/ComposeAutomator;
+}
+
+public final class dev/sebastiano/spectre/core/CompositeScreenshot {
+	public fun <init> (Ljava/util/List;Ldev/sebastiano/spectre/core/CompositedWindowImage;)V
+	public final fun component1 ()Ljava/util/List;
+	public final fun component2 ()Ldev/sebastiano/spectre/core/CompositedWindowImage;
+	public final fun copy (Ljava/util/List;Ldev/sebastiano/spectre/core/CompositedWindowImage;)Ldev/sebastiano/spectre/core/CompositeScreenshot;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/CompositeScreenshot;Ljava/util/List;Ldev/sebastiano/spectre/core/CompositedWindowImage;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/CompositeScreenshot;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getComposite ()Ldev/sebastiano/spectre/core/CompositedWindowImage;
+	public final fun getWindows ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/core/CompositedWindowImage {
+	public fun <init> (Ljava/awt/image/BufferedImage;Ljava/awt/Rectangle;D)V
+	public final fun component1 ()Ljava/awt/image/BufferedImage;
+	public final fun component2 ()Ljava/awt/Rectangle;
+	public final fun component3 ()D
+	public final fun copy (Ljava/awt/image/BufferedImage;Ljava/awt/Rectangle;D)Ldev/sebastiano/spectre/core/CompositedWindowImage;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/CompositedWindowImage;Ljava/awt/image/BufferedImage;Ljava/awt/Rectangle;DILjava/lang/Object;)Ldev/sebastiano/spectre/core/CompositedWindowImage;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBoundsOnScreen ()Ljava/awt/Rectangle;
+	public final fun getDensityScale ()D
+	public final fun getImage ()Ljava/awt/image/BufferedImage;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class dev/sebastiano/spectre/core/ContendedEdtInputLeaseException : java/lang/IllegalStateException {
@@ -417,6 +446,57 @@ public final class dev/sebastiano/spectre/core/WindowIdentitySnapshot {
 	public final fun getWindowBoundsOnScreen ()Ljava/awt/Rectangle;
 	public fun hashCode ()I
 	public final fun isPopup ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class dev/sebastiano/spectre/core/WindowScreenshotResult {
+	public abstract fun getBoundsOnScreen ()Ljava/awt/Rectangle;
+	public abstract fun getCaptureOrder ()I
+	public abstract fun getTitle ()Ljava/lang/String;
+	public abstract fun getWindowIndex ()I
+}
+
+public final class dev/sebastiano/spectre/core/WindowScreenshotResult$Failure : dev/sebastiano/spectre/core/WindowScreenshotResult {
+	public fun <init> (ILjava/lang/String;Ljava/awt/Rectangle;ILjava/lang/String;)V
+	public final fun component1 ()I
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/awt/Rectangle;
+	public final fun component4 ()I
+	public final fun component5 ()Ljava/lang/String;
+	public final fun copy (ILjava/lang/String;Ljava/awt/Rectangle;ILjava/lang/String;)Ldev/sebastiano/spectre/core/WindowScreenshotResult$Failure;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/WindowScreenshotResult$Failure;ILjava/lang/String;Ljava/awt/Rectangle;ILjava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/WindowScreenshotResult$Failure;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun getBoundsOnScreen ()Ljava/awt/Rectangle;
+	public fun getCaptureOrder ()I
+	public final fun getMessage ()Ljava/lang/String;
+	public fun getTitle ()Ljava/lang/String;
+	public fun getWindowIndex ()I
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/core/WindowScreenshotResult$Success : dev/sebastiano/spectre/core/WindowScreenshotResult {
+	public fun <init> (ILjava/lang/String;Ljava/lang/String;Ljava/awt/Rectangle;DDILjava/awt/image/BufferedImage;)V
+	public final fun component1 ()I
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/awt/Rectangle;
+	public final fun component5 ()D
+	public final fun component6 ()D
+	public final fun component7 ()I
+	public final fun component8 ()Ljava/awt/image/BufferedImage;
+	public final fun copy (ILjava/lang/String;Ljava/lang/String;Ljava/awt/Rectangle;DDILjava/awt/image/BufferedImage;)Ldev/sebastiano/spectre/core/WindowScreenshotResult$Success;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/core/WindowScreenshotResult$Success;ILjava/lang/String;Ljava/lang/String;Ljava/awt/Rectangle;DDILjava/awt/image/BufferedImage;ILjava/lang/Object;)Ldev/sebastiano/spectre/core/WindowScreenshotResult$Success;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun getBoundsOnScreen ()Ljava/awt/Rectangle;
+	public fun getCaptureOrder ()I
+	public final fun getDensityScaleX ()D
+	public final fun getDensityScaleY ()D
+	public final fun getImage ()Ljava/awt/image/BufferedImage;
+	public final fun getSurfaceId ()Ljava/lang/String;
+	public fun getTitle ()Ljava/lang/String;
+	public fun getWindowIndex ()I
+	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
 

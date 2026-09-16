@@ -205,6 +205,7 @@ macOS clipboard and `apple.awt.UIElement=true` caveats.
 ## Screenshots
 
 ```kotlin
+import dev.sebastiano.spectre.core.WindowScreenshotResult
 import java.awt.Rectangle
 import java.io.File
 import javax.imageio.ImageIO
@@ -217,6 +218,15 @@ ImageIO.write(full, "png", File("screenshot.png"))
 val mainWindow = automator.screenshot(windowIndex = 0)
 ImageIO.write(mainWindow, "png", File("main.png"))
 
+// several physical windows, listed from back to front (main window, then dialog/popup)
+val scene = automator.screenshotWindows(listOf(0, 1))
+scene.windows.forEachIndexed { index, result ->
+    if (result is WindowScreenshotResult.Success) {
+        ImageIO.write(result.image, "png", File("window-$index.png"))
+    }
+}
+scene.composite?.let { ImageIO.write(it.image, "png", File("composite.png")) }
+
 // a single node
 val send = automator.findOneByTestTag("Send") ?: error("button missing")
 val sendShot = automator.screenshot(send)
@@ -226,6 +236,15 @@ val region = automator.screenshot(Rectangle(0, 0, 800, 600))
 ```
 
 Returns a `BufferedImage` you can save, hash, or compare against a baseline.
+
+`screenshotWindows` is intended for heavyweight popup renderers such as Swing/Jewel dialogs,
+menus, and tooltips. Each requested physical window is captured separately, then placed into a
+transparent canvas using its screen position. The index list is painter's order (back to front),
+so put an owner before its popups. The canvas uses the union of all requested bounds rather than
+the owner's bounds, so a popup that extends above, below, or beside its owner is not clipped.
+Successful source captures include their screen bounds, device density, and capture order. If one
+window cannot be captured, its entry is a `WindowScreenshotResult.Failure` and `composite` is null;
+successful individual images remain available for diagnostics.
 
 !!! note "Window captures prefer native backends"
     `screenshot(windowIndex)` and `screenshot(node)` prefer a native, window-scoped backend when
