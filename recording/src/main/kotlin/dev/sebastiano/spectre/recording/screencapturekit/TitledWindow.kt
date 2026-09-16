@@ -4,6 +4,7 @@ import java.awt.Dialog
 import java.awt.EventQueue
 import java.awt.Frame
 import java.awt.Rectangle
+import java.awt.Window
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -17,6 +18,10 @@ public interface TitledWindow {
     public val bounds: Rectangle
 }
 
+internal interface TitleDiscriminationAware {
+    val requiresTitleDiscriminator: Boolean
+}
+
 /**
  * Adapt an AWT [Frame] (or any subclass — `ComposeWindow`, `JFrame`) to the [TitledWindow] surface
  * [ScreenCaptureKitRecorder] expects. The adapter delegates `getTitle` / `setTitle` and marshals
@@ -28,7 +33,7 @@ public interface TitledWindow {
  * behaviour for `Frame.setTitle(null)`.
  */
 public fun Frame.asTitledWindow(): TitledWindow =
-    object : TitledWindow {
+    object : TitledWindow, TitleDiscriminationAware {
         override var title: String?
             get() = onEdt { this@asTitledWindow.title }
             set(value) {
@@ -37,11 +42,14 @@ public fun Frame.asTitledWindow(): TitledWindow =
 
         override val bounds: Rectangle
             get() = onEdt { this@asTitledWindow.bounds }
+
+        override val requiresTitleDiscriminator: Boolean
+            get() = onEdt { requiresDiscriminator(this@asTitledWindow, title) }
     }
 
 /** Adapt an AWT [Dialog] (including `JDialog`) to the native capture window surface. */
 public fun Dialog.asTitledWindow(): TitledWindow =
-    object : TitledWindow {
+    object : TitledWindow, TitleDiscriminationAware {
         override var title: String?
             get() = onEdt { this@asTitledWindow.title }
             set(value) {
@@ -50,7 +58,23 @@ public fun Dialog.asTitledWindow(): TitledWindow =
 
         override val bounds: Rectangle
             get() = onEdt { this@asTitledWindow.bounds }
+
+        override val requiresTitleDiscriminator: Boolean
+            get() = onEdt { requiresDiscriminator(this@asTitledWindow, title) }
     }
+
+private fun requiresDiscriminator(target: Window, title: String?): Boolean {
+    if (title.isNullOrBlank()) return true
+    return Window.getWindows().any { candidate ->
+        candidate !== target &&
+            candidate.isShowing &&
+            when (candidate) {
+                is Frame -> candidate.title == title
+                is Dialog -> candidate.title == title
+                else -> false
+            }
+    }
+}
 
 /**
  * Run [block] on the AWT EDT and return its result. If already on the EDT, runs inline. Any

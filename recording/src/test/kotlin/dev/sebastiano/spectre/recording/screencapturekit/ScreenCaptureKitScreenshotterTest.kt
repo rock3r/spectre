@@ -18,6 +18,34 @@ import kotlin.test.assertTrue
 class ScreenCaptureKitScreenshotterTest {
 
     @Test
+    fun `captureWindow does not mutate a uniquely titled AWT window`() {
+        val factory = ScreenshotHelperProcessFactory()
+        val screenshotter =
+            ScreenCaptureKitScreenshotter(
+                helperExtractor =
+                    HelperBinaryExtractor(
+                        materialLocator = {
+                            helperAppBundleMaterial(byteArrayOf(0x01), byteArrayOf())
+                        },
+                        targetDirProvider = { Path.of("/tmp") },
+                    ),
+                processFactory = factory,
+                requireScreenCaptureAccess = {},
+            )
+        val window =
+            object : TitledWindow, TitleDiscriminationAware {
+                override var title: String? = "Unique title"
+                override val bounds: Rectangle = Rectangle(0, 0, 100, 100)
+                override val requiresTitleDiscriminator: Boolean = false
+            }
+
+        screenshotter.captureWindow(window, 4242L)
+
+        assertEquals("Unique title", window.title)
+        assertContainsSequence(factory.lastArgv, listOf("--title-contains", "Unique title"))
+    }
+
+    @Test
     fun `captureWindow spawns helper in screenshot mode and restores title`() {
         val factory = ScreenshotHelperProcessFactory()
         val extractor =
