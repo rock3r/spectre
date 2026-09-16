@@ -393,7 +393,7 @@ private constructor(
             ScreenshotGeometry(
                 node.boundsOnScreen,
                 node.trackedWindow.window.bounds,
-                frameInsets(node.trackedWindow.window),
+                windowInsets(node.trackedWindow.window),
             )
         }
         return screenshotTrackedRegion(
@@ -422,7 +422,7 @@ private constructor(
             ScreenshotGeometry(
                 trackedWindow.composeSurfaceBoundsOnScreen,
                 trackedWindow.window.bounds,
-                frameInsets(trackedWindow.window),
+                windowInsets(trackedWindow.window),
             )
         }
         return screenshotTrackedRegion(
@@ -478,7 +478,7 @@ private constructor(
             PreCaptureSnapshot(
                 captureRegion = region,
                 windowBounds = Rectangle(trackedWindow.window.bounds),
-                frameInsets = frameInsets(trackedWindow.window),
+                frameInsets = windowInsets(trackedWindow.window),
                 densityScaleX = transform.scaleX,
                 densityScaleY = transform.scaleY,
                 nodeSnapshots =
@@ -701,7 +701,7 @@ private constructor(
                     val geometry = readOnEdt {
                         surfaces.associate { (window, _) ->
                             window to
-                                (Rectangle(window.window.bounds) to frameInsets(window.window))
+                                (Rectangle(window.window.bounds) to windowInsets(window.window))
                         }
                     }
                     hashTrackedSurfacesForVisualIdle(
@@ -812,15 +812,12 @@ private constructor(
         trackedWindow: TrackedWindow,
         region: Rectangle,
         windowBounds: Rectangle = trackedWindow.window.bounds,
-        frameInsets: java.awt.Insets = frameInsets(trackedWindow.window),
+        frameInsets: java.awt.Insets = windowInsets(trackedWindow.window),
     ): WindowCapture =
         windowStillForRegion(
             screenCaptureBackend.captureWindow(trackedWindow, windowBounds, frameInsets),
             region,
         )
-
-    private fun frameInsets(window: java.awt.Window): java.awt.Insets =
-        (window as? java.awt.Frame)?.insets ?: java.awt.Insets(0, 0, 0, 0)
 
     public suspend fun waitForNode(
         tag: String? = null,
@@ -956,6 +953,13 @@ private constructor(
             )
     }
 }
+
+internal fun windowInsets(window: java.awt.Window): java.awt.Insets =
+    when (window) {
+        is java.awt.Frame -> window.insets
+        is java.awt.Dialog -> window.insets
+        else -> java.awt.Insets(0, 0, 0, 0)
+    }
 
 private val DEFAULT_WAIT_TIMEOUT: Duration = 5.seconds
 private val DEFAULT_QUIET_PERIOD: Duration = 64.milliseconds

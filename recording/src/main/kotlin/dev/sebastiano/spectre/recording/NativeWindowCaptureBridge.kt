@@ -1,8 +1,10 @@
 package dev.sebastiano.spectre.recording
 
 import dev.sebastiano.spectre.recording.screencapturekit.asTitledWindow
+import java.awt.Dialog
 import java.awt.EventQueue
 import java.awt.Frame
+import java.awt.Window
 import java.awt.image.BufferedImage
 import java.util.WeakHashMap
 import java.util.concurrent.locks.ReentrantLock
@@ -15,18 +17,29 @@ import java.util.concurrent.locks.ReentrantLock
  */
 internal object NativeWindowCaptureBridge {
     private val screenshotter: AutoScreenshotter by lazy(::AutoScreenshotter)
-    private val captureLocks = WeakHashMap<Frame, ReentrantLock>()
+    private val captureLocks = WeakHashMap<Window, ReentrantLock>()
 
     @JvmStatic
     @JvmName("captureWindow")
-    internal fun captureWindow(frame: Frame): BufferedImage =
-        withCaptureLock(frame) { screenshotter.captureWindow(frame.asTitledWindow()) }
+    internal fun captureWindow(window: Window): BufferedImage =
+        withCaptureLock(window) {
+            val titledWindow =
+                when (window) {
+                    is Frame -> window.asTitledWindow()
+                    is Dialog -> window.asTitledWindow()
+                    else ->
+                        throw UnsupportedOperationException(
+                            "Native window capture requires a Frame or Dialog host"
+                        )
+                }
+            screenshotter.captureWindow(titledWindow)
+        }
 
-    internal fun <T> withCaptureLock(frame: Frame, action: () -> T): T {
-        val lock = captureLockFor(frame)
+    internal fun <T> withCaptureLock(window: Window, action: () -> T): T {
+        val lock = captureLockFor(window)
         if (EventQueue.isDispatchThread()) {
             check(lock.tryLock()) {
-                "Native window capture is unavailable while another capture for this frame is in progress"
+                "Native window capture is unavailable while another capture for this window is in progress"
             }
         } else {
             lock.lock()
@@ -38,6 +51,6 @@ internal object NativeWindowCaptureBridge {
         }
     }
 
-    internal fun captureLockFor(frame: Frame): ReentrantLock =
-        synchronized(captureLocks) { captureLocks.getOrPut(frame, ::ReentrantLock) }
+    internal fun captureLockFor(window: Window): ReentrantLock =
+        synchronized(captureLocks) { captureLocks.getOrPut(window, ::ReentrantLock) }
 }

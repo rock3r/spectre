@@ -3,9 +3,11 @@
 package dev.sebastiano.spectre.core
 
 import dev.sebastiano.spectre.core.capture.cropImageToScreenRegion
+import java.awt.Dialog
 import java.awt.Frame
 import java.awt.Insets
 import java.awt.Rectangle
+import java.awt.Window
 import java.awt.image.BufferedImage
 import java.lang.reflect.InvocationTargetException
 import java.nio.file.Files
@@ -63,10 +65,10 @@ internal fun windowStillForRegion(capture: WindowCapture, region: Rectangle): Wi
 @Suppress("LongParameterList") // Every collaborator is a seam the capture tests substitute.
 internal class PlatformScreenCaptureBackend(
     private val regionCapture: (Rectangle?) -> BufferedImage,
-    private val nativeCapture: (Frame) -> BufferedImage,
+    private val nativeCapture: (Window) -> BufferedImage,
     private val nativeCaptureEnabled: () -> Boolean = { true },
     private val nativeCaptureDisambiguatesTitles: () -> Boolean = { false },
-    private val nativeCaptureBounds: (Frame, BufferedImage, Rectangle, Insets) -> Rectangle =
+    private val nativeCaptureBounds: (Window, BufferedImage, Rectangle, Insets) -> Rectangle =
         { _, _, windowBounds, frameInsets ->
             nativeWindowCaptureBounds(
                 osName = System.getProperty("os.name"),
@@ -97,10 +99,10 @@ internal class PlatformScreenCaptureBackend(
         windowBounds: Rectangle,
         frameInsets: Insets,
     ): WindowCapture {
-        val frame =
-            window.window as? Frame
+        val nativeWindow =
+            window.window.takeIf { it is Frame || it is Dialog }
                 ?: throw UnsupportedOperationException(
-                    "Window-scoped screenshots require a native backend for a Frame host. " +
+                    "Window-scoped screenshots require a native backend for a Frame or Dialog host. " +
                         "Use screenshot(region) only when a screen-region capture is explicitly intended."
                 )
         if (!nativeCaptureEnabled()) {
@@ -109,34 +111,37 @@ internal class PlatformScreenCaptureBackend(
                     "RobotDriver.headless() does not permit real screenshot capture."
             )
         }
-        check(frame.isDisplayable) {
-            "Native window capture target ${frame.title.quoteForMessage()} is no longer displayable. " +
+        check(nativeWindow.isDisplayable) {
+            "Native window capture target ${nativeWindow.title.quoteForMessage()} is no longer displayable. " +
                 "Refresh the window list before requesting a window screenshot."
         }
         if (!nativeCaptureDisambiguatesTitles()) {
-            ambiguousNativeIdentity(frame)?.let { candidates ->
+            ambiguousNativeIdentity(nativeWindow)?.let { candidates ->
                 throw IllegalStateException(
-                    "Native window capture cannot uniquely select title ${frame.title.quoteForMessage()}. " +
-                        "Matching frames: ${candidates.joinToString()}. " +
+                    "Native window capture cannot uniquely select title ${nativeWindow.title.quoteForMessage()}. " +
+                        "Matching windows: ${candidates.joinToString()}. " +
                         "Provide criteria that identify one window, or request screenshot(region) explicitly."
                 )
             }
         }
-        val image = normalizeNativeImage(nativeCapture(frame))
-        return WindowCapture(image, nativeCaptureBounds(frame, image, windowBounds, frameInsets))
+        val image = normalizeNativeImage(nativeCapture(nativeWindow))
+        return WindowCapture(
+            image,
+            nativeCaptureBounds(nativeWindow, image, windowBounds, frameInsets),
+        )
     }
 
-    private fun ambiguousNativeIdentity(frame: Frame): List<String>? {
-        val title = frame.title
+    private fun ambiguousNativeIdentity(window: Window): List<String>? {
+        val title = window.title
         if (title.isNullOrBlank()) return null
-        val matches = Frame.getFrames().filter { it.isDisplayable && it.title == title }
+        val matches = Window.getWindows().filter { it.isDisplayable && it.title == title }
         return matches
             .takeIf { it.size > 1 }
             ?.map { "title=${it.title.quoteForMessage()}, bounds=${it.bounds}" }
     }
 
     private companion object {
-        fun defaultNativeCapture(): (Frame) -> BufferedImage {
+        fun defaultNativeCapture(): (Window) -> BufferedImage {
             return nativeWindowCaptureFor(PlatformScreenCaptureBackend::class.java.classLoader)
                 ?: {
                     throw UnsupportedOperationException(
@@ -310,7 +315,7 @@ private const val XDPYINFO_READER_JOIN_MS: Long = 500
  * absence of the bridge makes implicit window capture fail loudly; callers may opt in to the
  * independent screen-region API when that is the capture they want.
  */
-internal fun nativeWindowCaptureFor(classLoader: ClassLoader): ((Frame) -> BufferedImage)? {
+internal fun nativeWindowCaptureFor(classLoader: ClassLoader): ((Window) -> BufferedImage)? {
     val bridge =
         try {
             Class.forName(NATIVE_WINDOW_CAPTURE_BRIDGE, false, classLoader)
@@ -319,13 +324,13 @@ internal fun nativeWindowCaptureFor(classLoader: ClassLoader): ((Frame) -> Buffe
         }
     val capture =
         try {
-            bridge.getMethod("captureWindow", Frame::class.java)
+            bridge.getMethod("captureWindow", Window::class.java)
         } catch (_: NoSuchMethodException) {
             return null
         }
-    return { frame ->
+    return { window ->
         try {
-            capture.invoke(null, frame) as BufferedImage
+            capture.invoke(null, window) as BufferedImage
         } catch (e: InvocationTargetException) {
             val cause = e.cause ?: e
             if (cause is RuntimeException) throw cause
@@ -339,6 +344,14 @@ internal fun nativeWindowCaptureFor(classLoader: ClassLoader): ((Frame) -> Buffe
         }
     }
 }
+
+private val Window.title: String?
+    get() =
+        when (this) {
+            is Frame -> title
+            is Dialog -> title
+            else -> null
+        }
 
 private const val NATIVE_WINDOW_CAPTURE_BRIDGE: String =
     "dev.sebastiano.spectre.recording.NativeWindowCaptureBridge"

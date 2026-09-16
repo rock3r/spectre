@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.recording.screencapturekit
 
+import java.awt.Dialog
 import java.awt.EventQueue
 import java.awt.Frame
 import java.awt.Rectangle
@@ -7,9 +8,8 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Minimal view onto a window object that exposes a mutable title. Lives as an interface so
- * [TitleDiscriminator] can be tested without an AWT/Compose window — the production binding for
- * `androidx.compose.ui.awt.ComposeWindow` (which extends `java.awt.Frame` and inherits `getTitle` /
- * `setTitle`) is the [asTitledWindow] adapter below.
+ * [TitleDiscriminator] can be tested without an AWT/Compose window. The [asTitledWindow] adapters
+ * bind Compose/Swing [Frame] and [Dialog] hosts to this surface.
  */
 public interface TitledWindow {
     public var title: String?
@@ -18,17 +18,29 @@ public interface TitledWindow {
 }
 
 /**
- * Adapt an AWT [Frame] (or any subclass — `ComposeWindow`, `JFrame`, `JDialog` parent frame) to the
- * [TitledWindow] surface [ScreenCaptureKitRecorder] expects. The adapter delegates `getTitle` /
- * `setTitle` and marshals all calls onto the AWT/Swing EDT via [EventQueue.invokeAndWait] so
- * callers can drive the recorder lifecycle from any thread (worker threads, coroutines, test
- * runners) without violating AWT's thread-confinement contract. Calls that originate on the EDT
- * skip the marshalling and run inline.
+ * Adapt an AWT [Frame] (or any subclass — `ComposeWindow`, `JFrame`) to the [TitledWindow] surface
+ * [ScreenCaptureKitRecorder] expects. The adapter delegates `getTitle` / `setTitle` and marshals
+ * all calls onto the AWT/Swing EDT via [EventQueue.invokeAndWait] so callers can drive the recorder
+ * lifecycle from any thread (worker threads, coroutines, test runners) without violating AWT's
+ * thread-confinement contract. Calls that originate on the EDT skip the marshalling and run inline.
  *
  * Null titles set through this adapter are written as the empty string, mirroring AWT's own
  * behaviour for `Frame.setTitle(null)`.
  */
 public fun Frame.asTitledWindow(): TitledWindow =
+    object : TitledWindow {
+        override var title: String?
+            get() = onEdt { this@asTitledWindow.title }
+            set(value) {
+                onEdt { this@asTitledWindow.title = value.orEmpty() }
+            }
+
+        override val bounds: Rectangle
+            get() = onEdt { this@asTitledWindow.bounds }
+    }
+
+/** Adapt an AWT [Dialog] (including `JDialog`) to the native capture window surface. */
+public fun Dialog.asTitledWindow(): TitledWindow =
     object : TitledWindow {
         override var title: String?
             get() = onEdt { this@asTitledWindow.title }

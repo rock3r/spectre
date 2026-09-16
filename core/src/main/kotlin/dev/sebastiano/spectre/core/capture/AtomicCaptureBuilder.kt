@@ -2,7 +2,6 @@ package dev.sebastiano.spectre.core.capture
 
 import dev.sebastiano.spectre.core.InternalSpectreApi
 import dev.sebastiano.spectre.core.TrackedWindow
-import java.awt.Frame
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
@@ -101,7 +100,7 @@ public object AtomicCaptureBuilder {
                     CaptureWindow(
                         index = windowIndex,
                         surfaceId = trackedWindow.surfaceId,
-                        title = (trackedWindow.window as? Frame)?.title,
+                        title = trackedWindow.windowTitle,
                         isPopup = trackedWindow.isPopup,
                         boundsScreen =
                             CaptureRect(

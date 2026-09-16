@@ -2,6 +2,7 @@
 
 package dev.sebastiano.spectre.core
 
+import java.awt.Dialog
 import java.awt.Frame
 import java.awt.Insets
 import java.awt.Rectangle
@@ -63,6 +64,45 @@ class VisualIdleSurfaceCaptureTest {
             assertEquals(76, image.height)
         } finally {
             frame.dispose()
+        }
+    }
+
+    @Test
+    fun `samples a tracked Dialog through window-scoped capture`() {
+        assumeLiveAwtAvailable()
+        val owner = Frame()
+        val dialog =
+            Dialog(owner, "visual-idle-dialog").apply {
+                setBounds(80, 90, 120, 60)
+                addNotify()
+            }
+        val expected = solidImage(120, 60, 0xFF334455.toInt())
+        val backend =
+            PlatformScreenCaptureBackend(
+                regionCapture = { error("Dialog sampling must remain window-scoped") },
+                nativeCapture = { window ->
+                    assertSame(dialog, window)
+                    expected
+                },
+                nativeCaptureBounds = { _, _, bounds, _ -> bounds },
+            )
+        try {
+            val image =
+                captureSurfaceForVisualIdle(
+                    backend = backend,
+                    window = TrackedWindow("dialog", dialog, composePanel = null, isPopup = true),
+                    surfaceRegion = Rectangle(dialog.bounds),
+                    windowBounds = Rectangle(dialog.bounds),
+                    frameInsets = Insets(0, 0, 0, 0),
+                    nativeWindowCaptureAvailable = true,
+                )
+
+            assertEquals(expected.width, image?.width)
+            assertEquals(expected.height, image?.height)
+            assertEquals(expected.getRGB(0, 0), image?.getRGB(0, 0))
+        } finally {
+            dialog.dispose()
+            owner.dispose()
         }
     }
 
