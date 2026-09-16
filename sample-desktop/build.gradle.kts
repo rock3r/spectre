@@ -348,6 +348,17 @@ tasks.register<JavaExec>("runLinuxRobotUnfocusedSmoke") {
     jvmArgs("-Dskiko.renderApi=SOFTWARE_COMPAT")
 }
 
+tasks.register<JavaExec>("runCompositeWindowScreenshotSmoke") {
+    group = "verification"
+    description =
+        "Captures an overlapping Compose owner and Swing dialog through native window backends."
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.sample.CompositeWindowScreenshotSmoke")
+    if (OperatingSystem.current().isLinux) {
+        jvmArgs("-Dskiko.renderApi=SOFTWARE_COMPAT")
+    }
+}
+
 // macOS counterparts to the Windows Robot smokes. NOT wired into CI — GitHub-hosted macos-*
 // runners don't grant java.awt.Robot the Accessibility TCC permission required to dispatch
 // real synthetic input (same constraint that already prevents SCK end-to-end testing on

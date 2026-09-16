@@ -185,6 +185,21 @@ jobs:
           xvfb-run -a ./gradlew :sample-desktop:runLinuxRobotUnfocusedSmoke
         shell: bash
 
+      - name: Run native composite-window screenshot smoke under Xvfb
+        if: always()
+        env:
+          SPECTRE_COMPOSITE_SMOKE_OUTPUT: ${{ runner.temp }}/composite-window-linux.png
+        run: xvfb-run -a ./gradlew :sample-desktop:runCompositeWindowScreenshotSmoke
+        shell: bash
+
+      - name: Upload Linux composite-window screenshot
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: composite-window-linux
+          path: ${{ runner.temp }}/composite-window-linux.png
+          if-no-files-found: warn
+
       - name: Run agent attach integration + contract corpus under Xvfb
         # `AgentAttachIntegrationTest` validates the full attach → exercise → detach chain
         # against a child JVM running the `:agent-test-fixture` Compose app.
