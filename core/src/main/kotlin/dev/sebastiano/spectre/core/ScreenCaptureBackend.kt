@@ -85,7 +85,7 @@ internal class PlatformScreenCaptureBackend(
         regionCapture = robotDriver::screenshot,
         nativeCapture = defaultNativeCapture(),
         nativeCaptureEnabled = { robotDriver.allowsPlatformCapture },
-        nativeCaptureDisambiguatesTitles = { true },
+        nativeCaptureDisambiguatesTitles = ::defaultNativeCaptureDisambiguatesTitles,
         deviceScaleRegionCapture = robotDriver::screenshotAtDeviceScale,
     )
 
@@ -149,6 +149,9 @@ internal class PlatformScreenCaptureBackend(
                     )
                 }
         }
+
+        fun defaultNativeCaptureDisambiguatesTitles(): Boolean =
+            System.getProperty("os.name").contains("mac", ignoreCase = true)
     }
 }
 

@@ -90,11 +90,11 @@ class AutoScreenshotterTest {
                 isMacOs = { false },
                 isWindows = { true },
             )
-        val window = StubScreenshotWindow(title = "Popup")
+        val window = StubScreenshotWindow(title = "")
 
         try {
             assertFailsWith<InterruptedException> { screenshotter.captureWindow(window) }
-            assertEquals("Popup", window.title)
+            assertEquals("", window.title)
             assertTrue(Thread.currentThread().isInterrupted)
         } finally {
             Thread.interrupted()

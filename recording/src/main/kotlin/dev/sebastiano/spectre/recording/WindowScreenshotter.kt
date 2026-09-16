@@ -54,13 +54,13 @@ internal constructor(
             }
         }
         if (isWindows()) {
-            return withDisambiguatedTitle(window) {
+            return withTitleForCapture(window) {
                 windowsWindowScreenshotter?.captureWindow(window, windowOwnerPid)
                     ?: throw unavailable("Windows window screenshot", null)
             }
         }
         if (isLinux()) {
-            return withDisambiguatedTitle(window) {
+            return withTitleForCapture(window) {
                 linuxWindowScreenshotter?.captureWindow(window, windowOwnerPid)
                     ?: throw unavailable(
                         if (isWayland()) {
@@ -85,7 +85,8 @@ internal constructor(
         return IllegalStateException(message, cause)
     }
 
-    private fun <T> withDisambiguatedTitle(window: TitledWindow, capture: () -> T): T {
+    private fun <T> withTitleForCapture(window: TitledWindow, capture: () -> T): T {
+        if (!window.title.isNullOrBlank()) return capture()
         val discriminator = TitleDiscriminator(window)
         discriminator.apply()
         return try {
