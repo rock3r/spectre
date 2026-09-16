@@ -166,7 +166,7 @@ private data class SmokeWindows(val owner: JFrame, val dialog: JDialog)
 private val OWNER_COLOR = java.awt.Color.RED
 private val DIALOG_COLOR = java.awt.Color.BLUE
 private const val OWNER_TITLE = "Spectre composite owner"
-private const val DIALOG_TITLE = "Spectre composite dialog"
+private const val DIALOG_TITLE = "Composite dialog"
 private const val OWNER_WIDTH = 420
 private const val OWNER_HEIGHT = 280
 private const val DIALOG_WIDTH = 220
