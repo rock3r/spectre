@@ -3,9 +3,11 @@
 package dev.sebastiano.spectre.core
 
 import dev.sebastiano.spectre.core.capture.cropImageToScreenRegion
+import java.awt.Dialog
 import java.awt.Frame
 import java.awt.Insets
 import java.awt.Rectangle
+import java.awt.Window
 import java.awt.image.BufferedImage
 import java.nio.file.Path
 import kotlin.test.Test
@@ -250,6 +252,50 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
+    fun `tracked Dialog capture prefers the native window backend`() {
+        assumeLiveAwtAvailable()
+        val owner = Frame()
+        val dialog =
+            Dialog(owner, "visual-idle-dialog").apply {
+                setBounds(40, 50, 300, 200)
+                addNotify()
+            }
+        val expected = BufferedImage(300, 200, BufferedImage.TYPE_INT_ARGB)
+        var capturedWindow: Window? = null
+        val backend =
+            PlatformScreenCaptureBackend(
+                regionCapture = { error("should not fall back") },
+                nativeCapture = { window ->
+                    capturedWindow = window
+                    expected
+                },
+                nativeCaptureBounds = { _, _, bounds, _ -> bounds },
+            )
+        try {
+            assertSame(expected, backend.captureWindow(tracked(dialog)).image)
+            assertSame(dialog, capturedWindow)
+        } finally {
+            dialog.dispose()
+            owner.dispose()
+        }
+    }
+
+    @Test
+    fun `Dialog capture geometry uses its decoration insets`() {
+        assumeLiveAwtAvailable()
+        val owner = Frame()
+        val dialog = Dialog(owner, "decorated-dialog")
+        try {
+            dialog.addNotify()
+
+            assertEquals(dialog.insets, windowInsets(dialog))
+        } finally {
+            dialog.dispose()
+            owner.dispose()
+        }
+    }
+
+    @Test
     fun `native helper images normalize to sRGB ARGB`() {
         val source =
             BufferedImage(2, 1, BufferedImage.TYPE_4BYTE_ABGR).apply {
@@ -379,6 +425,6 @@ class ScreenCaptureBackendTest {
         assertEquals(initialHash, imageHash(crop))
     }
 
-    private fun tracked(frame: Frame): TrackedWindow =
-        TrackedWindow("test", frame, composePanel = null, isPopup = false)
+    private fun tracked(window: Window): TrackedWindow =
+        TrackedWindow("test", window, composePanel = null, isPopup = false)
 }

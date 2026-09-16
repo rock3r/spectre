@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.recording.screencapturekit
 
+import java.awt.Dialog
 import java.awt.Frame
 import java.awt.GraphicsEnvironment
 import kotlin.test.Test
@@ -17,6 +18,24 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
  * `-Dspectre.test.liveAwt=true` on macOS to exercise the adapter locally.
  */
 class TitledWindowAdapterTest {
+
+    @Test
+    fun `Dialog adapter exposes title and bounds`() {
+        assumeLiveAwtAvailable()
+        val owner = Frame()
+        val dialog = Dialog(owner, "before").apply { setBounds(11, 22, 333, 222) }
+        try {
+            val adapter = dialog.asTitledWindow()
+
+            adapter.title = "after"
+
+            assertEquals("after", adapter.title)
+            assertEquals(dialog.bounds, adapter.bounds)
+        } finally {
+            dialog.dispose()
+            owner.dispose()
+        }
+    }
 
     @Test
     fun `adapter reads through to the wrapped frame's title`() {
