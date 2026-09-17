@@ -160,6 +160,35 @@ class WaylandOsRobotAdapterTest {
     }
 
     @Test
+    fun `injected flock loser keeps probing for the winning socket`() {
+        var polls = 0
+        val socket = java.nio.file.Path.of("/tmp/spectre-seat/wayland-session.sock")
+        val resolved =
+            awaitInjectedHelperSocket(
+                liveSocket = {
+                    polls += 1
+                    if (polls >= 3) socket else null
+                },
+                helperAlive = { false },
+                exitDetail = { "exit 75" },
+                timeoutMs = 1_000,
+                pollMs = 1,
+                sleep = {},
+                ownershipLost = { true },
+            )
+        assertEquals(socket, resolved)
+        assertTrue(polls >= 3)
+    }
+
+    @Test
+    fun `Wayland adapters read Caps Lock through AWT Toolkit`() {
+        val key = java.awt.event.KeyEvent.VK_CAPS_LOCK
+        val expected = awtLockingKeyState(key)
+        assertEquals(expected, MissingWaylandHelperAdapter.getLockingKeyState(key))
+        assertEquals(expected, seatSocketRobotAdapterForTests().getLockingKeyState(key))
+    }
+
+    @Test
     fun `seat socket path is Spectre-owned not java robot`() {
         val path =
             requireNotNull(

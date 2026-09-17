@@ -114,8 +114,8 @@ class WaylandSessionOwnershipTest {
                         polls >= 3
                     },
                     timeoutMs = 1_000,
-                    helperExited = { true },
-                    helperExitDetail = { "exited with 1" },
+                    helperExited = { false },
+                    helperExitDetail = { "exited with 75" },
                 )
             assertEquals(paths.socket, resolved)
             assertTrue(polls >= 3)

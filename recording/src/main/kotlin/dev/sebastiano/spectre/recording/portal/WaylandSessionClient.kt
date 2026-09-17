@@ -134,9 +134,9 @@ internal constructor(
             },
             waitForSocket = waitForSocket,
             timeoutMs = SESSION_SOCKET_TIMEOUT_MS,
-            helperExited = { helperProcess.get()?.isAlive == false },
+            helperExited = { helperProcess.get().isFatalSessionExit() },
             helperExitDetail = {
-                val code = helperProcess.get()?.exitValue()
+                val code = helperProcess.get()?.takeUnless { it.isAlive }?.exitValue()
                 "exited before binding the session socket (exit $code)"
             },
         )

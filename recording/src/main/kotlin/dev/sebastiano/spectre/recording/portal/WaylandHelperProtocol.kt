@@ -164,6 +164,15 @@ internal fun waylandSessionPaths(dir: java.nio.file.Path): WaylandSessionPaths =
 
 internal const val VERTICAL_POINTER_AXIS: Int = 0
 internal const val SESSION_SOCKET_POLL_MS: Long = 50
+internal const val WAYLAND_SESSION_OWNED_EXIT: Int = 75
+
+internal fun isFatalWaylandHelperExit(exitCode: Int): Boolean =
+    exitCode != 0 && exitCode != WAYLAND_SESSION_OWNED_EXIT
+
+internal fun Process?.isFatalSessionExit(): Boolean {
+    if (this == null || isAlive) return false
+    return isFatalWaylandHelperExit(exitValue())
+}
 
 internal fun resolveWaylandSessionSocket(
     paths: WaylandSessionPaths,
@@ -184,6 +193,7 @@ internal fun resolveWaylandSessionSocket(
         if (waitForSocket(paths.socket, SESSION_SOCKET_POLL_MS)) {
             return paths.socket
         }
+        check(!helperExited()) { "spectre-wayland-helper --session ${helperExitDetail()}" }
     }
     check(!helperExited()) { "spectre-wayland-helper --session ${helperExitDetail()}" }
     error(

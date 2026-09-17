@@ -13,6 +13,10 @@ pub struct SessionLock {
     pub path: PathBuf,
 }
 
+/// Exit status for a `--session` process that lost the flock. Callers should keep probing the
+/// winner's socket instead of treating this as a handshake failure.
+pub const SESSION_OWNED_EXIT: i32 = 75;
+
 pub fn session_dir() -> PathBuf {
     if let Ok(override_dir) = std::env::var("SPECTRE_WAYLAND_SESSION_DIR") {
         if !override_dir.is_empty() {
@@ -81,6 +85,7 @@ mod tests {
             msg.contains("already owned"),
             "error should name the ownership conflict, got: {msg}"
         );
+        assert_eq!(SESSION_OWNED_EXIT, 75);
 
         drop(first);
         let third = acquire_session_lock(&dir);

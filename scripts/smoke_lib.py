@@ -805,10 +805,14 @@ def prepare_linux_portal_token_env(root: Path, out_dir: Path) -> dict[str, str]:
     token_dir = Path(out_dir) / "wayland-restore-tokens"
     token_dir.mkdir(parents=True, exist_ok=True)
     token_dir.chmod(0o700)
+    session_dir = Path(out_dir) / "wayland-session"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    session_dir.chmod(0o700)
     env = {
         "SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(token_dir),
         # PATH takes precedence over DIR in the helper. Unset any inherited override.
         "SPECTRE_WAYLAND_RESTORE_TOKEN_PATH": "",
+        "SPECTRE_WAYLAND_SESSION_DIR": str(session_dir),
     }
     helper = linux_wayland_helper_path(root)
     if helper is not None:

@@ -71,4 +71,11 @@ class WaylandHelperProtocolTest {
         assertFalse(name.contains("robot"))
         assertFalse(name.contains("screencast"))
     }
+
+    @Test
+    fun `flock-loser exit is not a fatal helper handshake failure`() {
+        assertTrue(isFatalWaylandHelperExit(1))
+        assertFalse(isFatalWaylandHelperExit(0))
+        assertFalse(isFatalWaylandHelperExit(WAYLAND_SESSION_OWNED_EXIT))
+    }
 }
