@@ -776,6 +776,7 @@ val buildWaylandHelper by
         workingDir = waylandHelperSource.asFile
         commandLine("cargo", "build", "--release")
         inputs.dir(waylandHelperSource.dir("src"))
+        inputs.dir(waylandHelperSource.dir("resources"))
         inputs.file(waylandHelperSource.file("Cargo.toml"))
         outputs.file(waylandHelperBinary)
     }
@@ -876,6 +877,7 @@ val perArchCargoBuildTasks = linuxHelperTargets.map { target ->
         environment("PKG_CONFIG_PATH_${target.triple.replace("-", "_")}", target.pkgConfigLibPath)
         environment("PKG_CONFIG_ALLOW_CROSS", "1")
         inputs.dir(waylandHelperSource.dir("src"))
+        inputs.dir(waylandHelperSource.dir("resources"))
         inputs.file(waylandHelperSource.file("Cargo.toml"))
         outputs.file(perArchOutput)
     }

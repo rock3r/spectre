@@ -1091,8 +1091,8 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
                 smoke_lib.assert_linux_portal_tokens_captured(
                     {"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(token_dir)}
                 )
-            self.assertIn("monitor-embedded", str(ctx.exception).lower())
-            target = token_dir / "wayland-screencast-restore-token-monitor-embedded"
+            self.assertIn("rd-monitor-embedded", str(ctx.exception).lower())
+            target = token_dir / "wayland-rd-restore-token-rd-monitor-embedded"
             target.write_text("token-abc\n", encoding="utf-8")
             before = target.stat().st_mtime_ns
             with self.assertRaises(RuntimeError):

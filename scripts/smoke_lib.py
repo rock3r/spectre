@@ -697,8 +697,8 @@ def gradle_ui_force_args() -> list[str]:
     ]
 
 
-WAYLAND_RESTORE_TOKEN_PREFIX = "wayland-screencast-restore-token-"
-WAYLAND_PORTAL_SMOKE_TOKEN_KEY = "monitor-embedded"
+WAYLAND_RESTORE_TOKEN_PREFIX = "wayland-rd-restore-token-"
+WAYLAND_PORTAL_SMOKE_TOKEN_KEY = "rd-monitor-embedded"
 WAYLAND_PORTAL_WARMUP_TOKEN_KEYS: tuple[str, ...] = (WAYLAND_PORTAL_SMOKE_TOKEN_KEY,)
 WAYLAND_HELPER_NAME = "spectre-wayland-helper"
 
@@ -833,7 +833,7 @@ def assert_linux_portal_tokens_captured(
     token_dir = Path(env.get("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR") or "")
     if not token_dir.is_dir():
         raise RuntimeError(
-            "ScreenCast restore token dir missing: "
+            "RemoteDesktop restore token dir missing: "
             f"{token_dir or '(SPECTRE_WAYLAND_RESTORE_TOKEN_DIR unset)'}"
         )
     missing: list[str] = []
@@ -854,13 +854,13 @@ def assert_linux_portal_tokens_captured(
             stale.append(path.name)
     if missing:
         raise RuntimeError(
-            "missing ScreenCast restore token(s) "
-            f"{', '.join(missing)} under {token_dir}; approve Share + Remember "
-            "for monitor and window during portal-token-warmup"
+            "missing RemoteDesktop restore token(s) "
+            f"{', '.join(missing)} under {token_dir}; approve Share + Remember / "
+            "Allow remote interaction during portal-token-warmup"
         )
     if stale:
         raise RuntimeError(
-            "ScreenCast restore token(s) not refreshed by this warmup: "
+            "RemoteDesktop restore token(s) not refreshed by this warmup: "
             f"{', '.join(stale)}; later cells may prompt again"
         )
 
