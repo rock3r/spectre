@@ -199,7 +199,12 @@ class WaylandOsRobotAdapterTest {
                     }
                 }
             )
-        assertEquals("/tmp/spectre-seat/wayland-session.sock", path.toString())
+        assertEquals(
+            java.nio.file.Path.of("/tmp/spectre-seat").resolve("wayland-session.sock"),
+            path,
+        )
+        assertTrue(!path.toString().contains(".java"))
+        assertTrue(!path.toString().contains("robot"))
     }
 
     @Test
