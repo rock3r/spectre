@@ -87,18 +87,40 @@ internal constructor(
         synchronized(lock) {
             val socket = ensureSocket()
             SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
-                channel.connect(UnixDomainSocketAddress.of(socket))
-                writeLine(channel, json.encodeToString(Command.serializer(), command))
-                val line = readLine(channel)
-                val event = json.decodeFromString(Event.serializer(), line)
-                if (event is Event.Error) {
-                    error(
-                        "spectre-wayland-helper session error: kind=${event.kind} message=${event.message}"
-                    )
-                }
-                event
+                connectAndExchange(channel, socket, command)
             }
         }
+
+    fun startHeld(command: Command.Start): HeldRecordingSession {
+        val socket = synchronized(lock) { ensureSocket() }
+        val channel = SocketChannel.open(StandardProtocolFamily.UNIX)
+        var transferred = false
+        try {
+            val event = connectAndExchange(channel, socket, command)
+            check(event is Event.Started) {
+                "spectre-wayland-helper session did not start recording: $event"
+            }
+            transferred = true
+            return HeldRecordingSession(channel, json)
+        } finally {
+            if (!transferred) {
+                channel.close()
+            }
+        }
+    }
+
+    private fun connectAndExchange(channel: SocketChannel, socket: Path, command: Command): Event {
+        channel.connect(UnixDomainSocketAddress.of(socket))
+        writeLine(channel, json.encodeToString(Command.serializer(), command))
+        val line = readLine(channel)
+        val event = json.decodeFromString(Event.serializer(), line)
+        if (event is Event.Error) {
+            error(
+                "spectre-wayland-helper session error: kind=${event.kind} message=${event.message}"
+            )
+        }
+        return event
+    }
 
     private fun ensureSocket(): Path {
         val paths = waylandSessionPaths(sessionDir())
@@ -186,6 +208,47 @@ internal constructor(
             return Files.exists(path)
         }
     }
+}
+
+internal class HeldRecordingSession(private val channel: SocketChannel, private val json: Json) :
+    AutoCloseable {
+    fun stop(): Event {
+        writeHeldLine(channel, json.encodeToString(Command.serializer(), Command.Stop))
+        val line = readHeldLine(channel)
+        val event = json.decodeFromString(Event.serializer(), line)
+        if (event is Event.Error) {
+            error(
+                "spectre-wayland-helper session error: kind=${event.kind} message=${event.message}"
+            )
+        }
+        return event
+    }
+
+    override fun close() {
+        channel.close()
+    }
+}
+
+private fun writeHeldLine(channel: SocketChannel, line: String) {
+    val bytes = (line + "\n").toByteArray(StandardCharsets.UTF_8)
+    val buffer = ByteBuffer.wrap(bytes)
+    while (buffer.hasRemaining()) {
+        channel.write(buffer)
+    }
+}
+
+private fun readHeldLine(channel: SocketChannel): String {
+    val builder = StringBuilder()
+    val one = ByteBuffer.allocate(1)
+    while (true) {
+        one.clear()
+        val n = channel.read(one)
+        check(n >= 0) { "Wayland session helper closed the socket before a reply" }
+        val ch = one.get(0).toInt().toChar()
+        if (ch == '\n') break
+        if (ch != '\r') builder.append(ch)
+    }
+    return builder.toString()
 }
 
 internal object DefaultWaylandSessionClient {

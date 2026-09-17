@@ -74,6 +74,50 @@ class WaylandOsRobotAdapterTest {
     }
 
     @Test
+    fun `inject without recording still uses a live seat socket`() {
+        val seat = RecordingWaylandAdapter()
+        val adapter = resolveWaylandRobotAdapter(recordingBridge = null, liveSeat = seat)
+        assertSame(seat, adapter)
+    }
+
+    @Test
+    fun `recording bridge wins over a live seat socket`() {
+        val recording = RecordingWaylandAdapter()
+        val seat = RecordingWaylandAdapter()
+        assertSame(recording, resolveWaylandRobotAdapter(recording, seat))
+    }
+
+    @Test
+    fun `Wayland adapters drain the clipboard after paste`() {
+        assertTrue(MissingWaylandHelperAdapter.shouldDrainAfterClipboardPaste)
+        assertTrue(seatSocketRobotAdapterForTests().shouldDrainAfterClipboardPaste)
+    }
+
+    @Test
+    fun `logical screenshots are resized back to the requested AWT region`() {
+        val device = BufferedImage(288, 144, BufferedImage.TYPE_INT_ARGB)
+        val logical = screenshotToLogicalSize(device, Rectangle(10, 20, 480, 240))
+        assertEquals(480, logical.width)
+        assertEquals(240, logical.height)
+        val alreadyLogical = screenshotToLogicalSize(device, Rectangle(0, 0, 288, 144))
+        assertSame(device, alreadyLogical)
+    }
+
+    @Test
+    fun `seat socket path is Spectre-owned not java robot`() {
+        val path =
+            requireNotNull(
+                waylandSessionSocketFromEnv { key ->
+                    when (key) {
+                        "SPECTRE_WAYLAND_SESSION_DIR" -> "/tmp/spectre-seat"
+                        else -> null
+                    }
+                }
+            )
+        assertEquals("/tmp/spectre-seat/wayland-session.sock", path.toString())
+    }
+
+    @Test
     fun `Wayland helper adapter counts as real OS input for leases`() {
         val driver = RobotDriver(robot = RecordingWaylandAdapter())
         assertTrue(driver.inputCapabilities.realOsInput)
@@ -136,4 +180,7 @@ class WaylandOsRobotAdapterTest {
         override fun createScreenCapture(region: Rectangle): BufferedImage =
             BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB)
     }
+
+    private fun seatSocketRobotAdapterForTests(): RobotAdapter =
+        WaylandSeatSocketAdapter(socketPath = { error("tests must not open a socket") })
 }
