@@ -127,6 +127,39 @@ class WaylandOsRobotAdapterTest {
     }
 
     @Test
+    fun `injected helper spawn fails closed when the child exits before binding`() {
+        val sleeps = mutableListOf<Long>()
+        val error =
+            assertFailsWith<IllegalStateException> {
+                awaitInjectedHelperSocket(
+                    liveSocket = { null },
+                    helperAlive = { false },
+                    exitDetail = { "exit 1" },
+                    timeoutMs = 90_000,
+                    pollMs = 50,
+                    sleep = { sleeps += it },
+                )
+            }
+        assertTrue(error.message.orEmpty().contains("exit 1"))
+        assertTrue(sleeps.isEmpty())
+    }
+
+    @Test
+    fun `injected helper spawn joins a socket that appears after the child exits`() {
+        val socket = java.nio.file.Path.of("/tmp/spectre-seat/wayland-session.sock")
+        val resolved =
+            awaitInjectedHelperSocket(
+                liveSocket = { socket },
+                helperAlive = { false },
+                exitDetail = { "exit 1" },
+                timeoutMs = 90_000,
+                pollMs = 50,
+                sleep = { error("must not wait after a live socket") },
+            )
+        assertEquals(socket, resolved)
+    }
+
+    @Test
     fun `seat socket path is Spectre-owned not java robot`() {
         val path =
             requireNotNull(

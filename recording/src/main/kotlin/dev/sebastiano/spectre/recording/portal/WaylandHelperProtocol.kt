@@ -181,7 +181,6 @@ internal fun resolveWaylandSessionSocket(
     startHelper()
     val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMs)
     while (System.nanoTime() < deadline) {
-        check(!helperExited()) { "spectre-wayland-helper --session ${helperExitDetail()}" }
         if (waitForSocket(paths.socket, SESSION_SOCKET_POLL_MS)) {
             return paths.socket
         }
