@@ -22,7 +22,7 @@ import kotlin.io.path.deleteIfExists
 internal class WaylandSeatSocketAdapter(
     private val socketPath: () -> Path? = ::liveWaylandSessionSocket
 ) : RobotAdapter {
-    override val autoDelayMs: Int = DEFAULT_AUTO_DELAY_MS
+    override val autoDelayMs: Int = 0
     override val requiresOffEdt: Boolean = true
     override val deliversRealOsInput: Boolean = true
     override val shouldDrainAfterClipboardPaste: Boolean
@@ -68,10 +68,11 @@ internal class WaylandSeatSocketAdapter(
             val outputPath =
                 output.toAbsolutePath().toString().replace("\\", "\\\\").replace("\"", "\\\"")
             send(
-                """{"command":"screenshot","backend":"wayland_portal","target":"region",""" +
-                    """"source_types":["monitor"],"cursor_mode":"hidden",""" +
-                    """"region":{"x":${region.x},"y":${region.y},"width":${region.width},""" +
-                    """"height":${region.height}},"output":"$outputPath"}"""
+                waylandScreenshotCommandJson(
+                    region = region,
+                    outputPath = outputPath,
+                    screenSize = awtDisplayBoundsContaining(region),
+                )
             )
             return ImageIO.read(output.toFile())
                 ?: error("Wayland session helper did not produce a readable PNG at $output")
@@ -99,6 +100,41 @@ internal class WaylandSeatSocketAdapter(
 }
 
 internal const val VERTICAL_SEAT_POINTER_AXIS: Int = 0
+
+internal fun waylandScreenshotCommandJson(
+    region: Rectangle,
+    outputPath: String,
+    screenSize: Rectangle?,
+): String = buildString {
+    append("""{"command":"screenshot","backend":"wayland_portal","target":"region",""")
+    append(""""source_types":["monitor"],"cursor_mode":"hidden",""")
+    append(""""region":{"x":${region.x},"y":${region.y},"width":${region.width},""")
+    append(""""height":${region.height}},"output":"$outputPath"""")
+    if (screenSize != null) {
+        append(
+            ""","screen_size":[${screenSize.x},${screenSize.y},${screenSize.width},${screenSize.height}]"""
+        )
+    }
+    append("}")
+}
+
+internal fun awtDisplayBoundsContaining(
+    region: Rectangle,
+    displays: List<Rectangle> = currentAwtDisplayBounds(),
+): Rectangle? {
+    if (displays.isEmpty()) return null
+    val centerX = region.centerX
+    val centerY = region.centerY
+    return displays.firstOrNull { it.contains(centerX, centerY) }
+        ?: displays.firstOrNull { it.intersects(region) }
+}
+
+private fun currentAwtDisplayBounds(): List<Rectangle> {
+    if (java.awt.GraphicsEnvironment.isHeadless()) return emptyList()
+    return java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices.map { device ->
+        device.defaultConfiguration.bounds
+    }
+}
 
 internal fun waylandSessionSocketFromEnv(env: (String) -> String? = System::getenv): Path? {
     val override = env("SPECTRE_WAYLAND_SESSION_DIR")?.takeIf { it.isNotBlank() }

@@ -94,6 +94,24 @@ class WaylandOsRobotAdapterTest {
     }
 
     @Test
+    fun `Wayland adapters do not advertise an unapplied auto-delay`() {
+        assertEquals(0, MissingWaylandHelperAdapter.autoDelayMs)
+        assertEquals(0, seatSocketRobotAdapterForTests().autoDelayMs)
+    }
+
+    @Test
+    fun `seat screenshot commands include AWT display bounds for HiDPI mapping`() {
+        val json =
+            waylandScreenshotCommandJson(
+                region = Rectangle(1362, 10, 480, 240),
+                outputPath = "/tmp/a.png",
+                screenSize = Rectangle(0, 0, 2560, 1440),
+            )
+        assertTrue(json.contains("\"screen_size\":[0,0,2560,1440]"))
+        assertTrue(json.contains("\"region\":{\"x\":1362"))
+    }
+
+    @Test
     fun `logical screenshots are resized back to the requested AWT region`() {
         val device = BufferedImage(288, 144, BufferedImage.TYPE_INT_ARGB)
         val logical = screenshotToLogicalSize(device, Rectangle(10, 20, 480, 240))

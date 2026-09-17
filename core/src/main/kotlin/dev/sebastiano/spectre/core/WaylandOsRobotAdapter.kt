@@ -78,7 +78,7 @@ private fun loadRecordingWaylandBridge(classLoader: ClassLoader): RobotAdapter? 
 }
 
 private class WaylandBridgeRobotAdapter(private val bridge: Class<*>) : RobotAdapter {
-    override val autoDelayMs: Int = DEFAULT_AUTO_DELAY_MS
+    override val autoDelayMs: Int = 0
     override val requiresOffEdt: Boolean = true
     override val deliversRealOsInput: Boolean = true
     override val shouldDrainAfterClipboardPaste: Boolean
