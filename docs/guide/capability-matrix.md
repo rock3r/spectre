@@ -90,7 +90,12 @@ via `AgentContractCorpusTest` / reflective wait suites against `agent-test-fixtu
 retries — same class as `typeText`). Agent **`focusWindow`** (#364) is **Supported** on Linux
 Xvfb and macOS desktop (raises the window hosting a node before real keyboard input); HTTP
 `focusWindow` is **Unsupported by design** for this issue. HTTP selector entry points are covered
-by headless `HttpContractCorpusTest`. Some HTTP input cells and agent `longClick` /
+by headless `HttpContractCorpusTest`. `clearAndTypeText` and node-screenshot HTTP error
+paths are **Supported** on the headless envelope (`HttpTransportExpansionTest`). HTTP
+`tree` / `printTree` remain **Not yet CI-executed** — the same bar as HTTP `findByText` /
+role / content-description — until a display-backed fixture exercises nested
+`WindowTreeDto` conversion. `findOneBy*` / structured `TextQuery` envelopes are covered by
+the same expansion test (no separate matrix ops). Some HTTP input cells and agent `longClick` /
 `waitForVisualIdle` remain **Not yet CI-executed**. Idling-resource **registration** over attach
 stays **Unsupported by design**.
 

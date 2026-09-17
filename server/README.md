@@ -16,15 +16,16 @@ guarantees. See [`docs/SECURITY.md`](../docs/SECURITY.md) for the trust model an
   `HttpComposeAutomator` connected to a remote `installSpectreRoutes` host. The instance owns
   its `HttpClient` and must be `close()`d.
 - `HttpComposeAutomator` — client class with the current transport surface: `windows`,
-  `allNodes`, `findByTestTag`, `click`, `typeText`, `screenshot`.
+  `allNodes`, selectors (`findBy*` / `findOneBy*` including structured `TextQuery`), input
+  verbs (`click`, `doubleClick`, `longClick`, `swipe`, `scrollWheel`, `pressKey`, `typeText`,
+  `clearAndTypeText`), `tree` / `printTree`, and screenshot (full-frame or node-targeted).
 - DTOs in `dev.sebastiano.spectre.server.dto` — kotlinx-serialization wire shapes that pin the
   request/response contract. `DtoSerializationTest` round-trips every one.
 
 ## Current scope
 
-Endpoints land the most-used queries and actions. Advanced features — `registerIdlingResource`,
-`waitForIdle` / `waitForVisualIdle`, `withTracing`, `printTree` — are intentionally
-in-process-only:
+Endpoints land the data-only queries and actions. Advanced features — `registerIdlingResource`,
+`waitForIdle` / `waitForVisualIdle`, `withTracing` — are intentionally in-process-only:
 
 - Idling resources are JVM objects without a serializable shape; HTTP-side polling would need a
   pluggable driver design out of scope for the current transport.

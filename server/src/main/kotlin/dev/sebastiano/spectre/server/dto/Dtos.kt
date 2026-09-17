@@ -93,10 +93,71 @@ public data class PressKeyRequest(val keyCode: Int, val modifiers: Int = 0)
 /** Request body for `POST /typeText`. */
 @ExperimentalSpectreHttpApi @Serializable public data class TypeTextRequest(val text: String)
 
+/** Request body for `POST /clearAndTypeText` (#96). */
+@ExperimentalSpectreHttpApi
+@Serializable
+public data class ClearAndTypeTextRequest(val nodeKey: String, val text: String)
+
+/**
+ * Structured text selector matching in-process [dev.sebastiano.spectre.core.TextQuery] (#96).
+ *
+ * On the wire this is expressed as `GET /nodes` (or `GET /node`) query parameters `text`,
+ * `matchType`, and `ignoreCase`. Combining these with the shorthand `exact` flag is
+ * `invalidSelector`.
+ */
+@ExperimentalSpectreHttpApi
+@Serializable
+public data class TextQueryDto(
+    val value: String,
+    val matchType: TextMatchTypeDto = TextMatchTypeDto.Exact,
+    val ignoreCase: Boolean = false,
+)
+
+/** Wire form of [dev.sebastiano.spectre.core.TextMatchType]. */
+@ExperimentalSpectreHttpApi
+@Serializable
+public enum class TextMatchTypeDto {
+    Exact,
+    Substring,
+}
+
 /** Response body for `GET /screenshot` — the captured image as base64-encoded PNG bytes. */
 @ExperimentalSpectreHttpApi
 @Serializable
 public data class ScreenshotResponse(val pngBase64: String, val width: Int, val height: Int)
+
+/** Response body for `GET /node` (`findOneBy*`): a single match or JSON null. */
+@ExperimentalSpectreHttpApi @Serializable public data class NodeResponse(val node: NodeSnapshotDto?)
+
+/** Response body for `GET /printTree`. */
+@ExperimentalSpectreHttpApi @Serializable public data class PrintTreeResponse(val dump: String)
+
+/** Nested semantics node inside [WindowTreeDto]. */
+@ExperimentalSpectreHttpApi
+@Serializable
+public data class TreeNodeDto(
+    val node: NodeSnapshotDto,
+    val children: List<TreeNodeDto> = emptyList(),
+)
+
+/**
+ * Wire shape for one [dev.sebastiano.spectre.core.AutomatorWindow]: window identity plus the nested
+ * semantics tree rather than a flat node list.
+ */
+@ExperimentalSpectreHttpApi
+@Serializable
+public data class WindowTreeDto(
+    val index: Int,
+    val surfaceId: String,
+    val isPopup: Boolean,
+    val composeSurfaceBounds: RectangleDto,
+    val roots: List<TreeNodeDto> = emptyList(),
+)
+
+/** Response body for `GET /tree`. */
+@ExperimentalSpectreHttpApi
+@Serializable
+public data class TreeResponse(val windows: List<WindowTreeDto>)
 
 /** Response body for `GET /nodes` and similar list endpoints. */
 @ExperimentalSpectreHttpApi

@@ -31,6 +31,18 @@ public object CapabilityMatrix {
             gradleTaskHint = "./gradlew :server:test --tests \"*HttpContractCorpusTest*\"",
         )
 
+    private val httpTransportExpansion =
+        CapabilityEvidence(
+            id = "http-transport-expansion",
+            description =
+                "HTTP data-only expansion envelope (#96): tree, printTree, findOne, TextQuery, " +
+                    "clearAndTypeText, node screenshot",
+            sourcePath =
+                "server/src/test/kotlin/dev/sebastiano/spectre/server/HttpTransportExpansionTest.kt",
+            workflowPath = ".github/workflows/ci.yml",
+            gradleTaskHint = "./gradlew :server:test --tests \"*HttpTransportExpansionTest*\"",
+        )
+
     private val agentLinuxXvfb =
         CapabilityEvidence(
             id = "agent-attach-linux-xvfb",
@@ -552,6 +564,7 @@ public object CapabilityMatrix {
                 )
             )
         }
+        addAll(httpExpansionCapabilityCells(httpTransportExpansion))
         for (op in listOf(AutomatorOperation.LongClick, AutomatorOperation.WaitForVisualIdle)) {
             add(
                 CapabilityCell(

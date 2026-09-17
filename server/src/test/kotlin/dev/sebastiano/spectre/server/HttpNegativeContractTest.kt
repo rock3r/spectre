@@ -42,9 +42,11 @@ import kotlinx.coroutines.runBlocking
  * - **Client-side** ([HttpComposeAutomator]): server 5xx on `click` surfaces as
  *   `IllegalStateException` (existing `check {}` guard), and `screenshot` decoding a response with
  *   non-image bytes surfaces as the existing `checkNotNull` failure. Other client methods
- *   (`windows`, `allNodes`, `findByTestTag`, `typeText`) go directly into `body<T>()` on the
- *   response — adding curated handling for them would expand the transport surface, which R4
- *   explicitly declines (tracked as R-future, post-#96).
+ *   (`windows`, `allNodes`, `findByTestTag`, string `findByText`, full-frame `screenshot`) go
+ *   directly into `body<T>()` on the response — adding curated handling for those pre-existing
+ *   getters would change their 4xx shape, which R4 explicitly declines (R-future). New #96 GET
+ *   helpers (`findOneBy*`, structured `findByText`, `tree`, `printTree`, node screenshot) check
+ *   status first via `getSuccess`.
  */
 class HttpNegativeContractTest {
 
@@ -147,6 +149,20 @@ class HttpNegativeContractTest {
             postRaw("/spectre/typeText", body = "", contentType = ContentType.Application.Json)
         assertEquals(HttpStatusCode.UnsupportedMediaType, response.status)
     }
+
+    @Test
+    fun `POST clearAndTypeText with invalid JSON returns 400 with a useful message`() =
+        testApplication {
+            application { installSpectreRoutes(headlessAutomator()) }
+            val response =
+                postRaw(
+                    "/spectre/clearAndTypeText",
+                    body = "not json",
+                    contentType = ContentType.Application.Json,
+                )
+            assertEquals(HttpStatusCode.BadRequest, response.status)
+            assertBodyMentions(response, "ClearAndTypeTextRequest")
+        }
 
     @Test
     fun `POST typeText with invalid JSON returns 400 with a useful message`() = testApplication {

@@ -6,10 +6,10 @@ import dev.sebastiano.spectre.core.AutomatorNode
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.InternalSpectreApi
 import dev.sebastiano.spectre.core.NodeKey
+import dev.sebastiano.spectre.server.dto.ClearAndTypeTextRequest
 import dev.sebastiano.spectre.server.dto.ClickRequest
 import dev.sebastiano.spectre.server.dto.DoubleClickRequest
 import dev.sebastiano.spectre.server.dto.LongClickRequest
-import dev.sebastiano.spectre.server.dto.NodesResponse
 import dev.sebastiano.spectre.server.dto.PressKeyRequest
 import dev.sebastiano.spectre.server.dto.ScreenshotResponse
 import dev.sebastiano.spectre.server.dto.ScrollWheelRequest
@@ -40,12 +40,12 @@ import kotlin.time.Duration.Companion.milliseconds
  * Mounts the Spectre HTTP transport on this Ktor [Application], backed by the supplied in-process
  * [automator]. All routes live under [basePath] (default `/spectre`).
  *
- * The route surface is intentionally a subset of the public automator API — windows, nodes by tag,
- * click, typeText, screenshot — enough to drive cross-JVM smoke tests. Advanced features (idling
- * resources, withTracing, waitForVisualIdle) are in-process only because they either require live
- * JVM objects (Tracer, IdlingResource) or stateful long-poll semantics that are out of scope for
- * the experimental transport. See [the stability policy](https://spectre.sebastiano.dev/STABILITY/)
- * for the API tier definitions.
+ * The route surface is a data-only subset of the public automator API: windows, selectors
+ * (including structured `TextQuery` and `findOneBy*`), input verbs, node-targeted screenshot,
+ * `tree()` / `printTree()`. Advanced features (idling resources, withTracing, waitForVisualIdle)
+ * are in-process only because they either require live JVM objects (Tracer, IdlingResource) or
+ * stateful long-poll semantics that are out of scope for the experimental transport. See
+ * [the stability policy](https://spectre.sebastiano.dev/STABILITY/) for the API tier definitions.
  *
  * ## Trust boundary
  *
@@ -54,8 +54,9 @@ import kotlin.time.Duration.Companion.milliseconds
  * - **Unauthenticated.** Every route is open to any caller that can reach the bound port. There are
  *   no tokens, headers, or origin checks.
  * - **Plaintext.** Communication is HTTP, not HTTPS. There is no TLS support.
- * - **Privileged side effects.** `click` and `typeText` drive real OS input; `screenshot` captures
- *   pixels visible to the host JVM. Anything that can reach this server can do all of the above.
+ * - **Privileged side effects.** Input verbs drive the host automator's driver; `screenshot`
+ *   captures pixels visible to the host JVM. Anything that can reach this server can do all of the
+ *   above.
  * - **Binding is the host application's responsibility.** This function does not start a server —
  *   pick an engine and bind to `127.0.0.1`. Do not expose the routes to a network interface.
  * - **Authentication, authorization, and TLS** are tracked for a separately reviewed future design
@@ -99,39 +100,12 @@ private fun Route.spectreRoutes(automator: ComposeAutomator) {
         call.respond(response)
     }
 
-    get("/nodes") {
-        automator.refreshWindows()
-        val nodes = selectNodes(automator, call.request.queryParameters)
-        if (nodes == null) {
-            call.respond(
-                SpectreErrorCategory.httpStatus(SpectreErrorCategory.InvalidSelector),
-                SpectreErrorCategory.InvalidSelector.wireName,
-            )
-            return@get
-        }
-        call.respond(NodesResponse(nodes = nodes.map { it.toDto() }))
-    }
-
-    inputRoutes(automator)
-
-    get("/screenshot") {
-        try {
-            val image = automator.screenshot()
-            call.respond(image.toScreenshotResponse())
-        } catch (ex: kotlinx.coroutines.CancellationException) {
-            throw ex
-        } catch (_: IllegalStateException) {
-            // Screen Recording TCC / Robot refusal → inputRejected (409).
-            call.respond(
-                SpectreErrorCategory.httpStatus(SpectreErrorCategory.InputRejected),
-                SpectreErrorCategory.InputRejected.wireName,
-            )
-        }
-    }
+    spectreQueryRoutes(automator)
+    pointerInputRoutes(automator)
+    keyInputRoutes(automator)
 }
 
-/** Input verbs (#203) — kept out of [spectreRoutes] for length/complexity budgets. */
-private fun Route.inputRoutes(automator: ComposeAutomator) {
+private fun Route.pointerInputRoutes(automator: ComposeAutomator) {
     post("/click") {
         automator.refreshWindows()
         val request = receiveOrRespond400<ClickRequest>(call, "ClickRequest") ?: return@post
@@ -151,10 +125,7 @@ private fun Route.inputRoutes(automator: ComposeAutomator) {
         automator.refreshWindows()
         val request = receiveOrRespond400<LongClickRequest>(call, "LongClickRequest") ?: return@post
         if (request.holdForMs <= 0L) {
-            call.respond(
-                SpectreErrorCategory.httpStatus(SpectreErrorCategory.InvalidSelector),
-                SpectreErrorCategory.InvalidSelector.wireName,
-            )
+            respondInvalidSelector(call)
             return@post
         }
         val node = resolveNodeOrRespond(call, automator, request.nodeKey) ?: return@post
@@ -174,7 +145,9 @@ private fun Route.inputRoutes(automator: ComposeAutomator) {
         val node = resolveNodeOrRespond(call, automator, request.nodeKey) ?: return@post
         respondInputVoid(call) { automator.scrollWheel(node, request.wheelClicks) }
     }
+}
 
+private fun Route.keyInputRoutes(automator: ComposeAutomator) {
     post("/pressKey") {
         val request = receiveOrRespond400<PressKeyRequest>(call, "PressKeyRequest") ?: return@post
         if (request.keyCode <= 0) {
@@ -187,6 +160,15 @@ private fun Route.inputRoutes(automator: ComposeAutomator) {
     post("/typeText") {
         val request = receiveOrRespond400<TypeTextRequest>(call, "TypeTextRequest") ?: return@post
         respondInputVoid(call) { automator.typeText(request.text) }
+    }
+
+    post("/clearAndTypeText") {
+        automator.refreshWindows()
+        val request =
+            receiveOrRespond400<ClearAndTypeTextRequest>(call, "ClearAndTypeTextRequest")
+                ?: return@post
+        val node = resolveNodeOrRespond(call, automator, request.nodeKey) ?: return@post
+        respondInputVoid(call) { automator.clearAndTypeText(node, request.text) }
     }
 }
 
@@ -249,7 +231,7 @@ private suspend fun handleCoordSwipePost(
     }
 }
 
-private suspend fun respondInvalidSelector(call: io.ktor.server.application.ApplicationCall) {
+internal suspend fun respondInvalidSelector(call: io.ktor.server.application.ApplicationCall) {
     call.respond(
         SpectreErrorCategory.httpStatus(SpectreErrorCategory.InvalidSelector),
         SpectreErrorCategory.InvalidSelector.wireName,
@@ -273,7 +255,7 @@ internal fun BufferedImage.toScreenshotResponse(): ScreenshotResponse {
  * Looks up a node by wire key. Responds with invalidSelector (malformed key) or nodeNotFound and
  * returns null when the caller should stop. Does not echo the raw key in the body (R5).
  */
-private suspend fun resolveNodeOrRespond(
+internal suspend fun resolveNodeOrRespond(
     call: io.ktor.server.application.ApplicationCall,
     automator: ComposeAutomator,
     nodeKey: String,
@@ -316,70 +298,6 @@ private suspend fun respondInputVoid(
         )
     }
 }
-
-/**
- * Resolves `/nodes` selectors (#202). Returns null for invalidSelector cases: more than one
- * selector query param, whitespace-only text, blank contentDescription/role, or an unknown role
- * name.
- *
- * Empty text (`text=`) is allowed so exact match can target empty [editableText] fields, matching
- * in-process `findByText("")`.
- */
-private fun selectNodes(
-    automator: ComposeAutomator,
-    params: io.ktor.http.Parameters,
-): List<dev.sebastiano.spectre.core.AutomatorNode>? {
-    val testTag = params["testTag"]
-    val text = params["text"]
-    val contentDescription = params["contentDescription"]
-    val role = params["role"]
-    if (listOfNotNull(testTag, text, contentDescription, role).size > 1) return null
-    return when {
-        testTag != null -> automator.findByTestTag(testTag)
-        text != null -> {
-            // Whitespace-only (but not empty) is almost never intentional.
-            if (text.isNotEmpty() && text.isBlank()) return null
-            // Absent `exact` defaults to true; present-but-non-boolean is invalidSelector
-            // (do not silently coerce `FALSE` / `yes` into the default).
-            val exactParam = params["exact"]
-            val exact =
-                if (exactParam == null) {
-                    true
-                } else {
-                    exactParam.toBooleanStrictOrNull() ?: return null
-                }
-            automator.findByText(text, exact = exact)
-        }
-        contentDescription != null -> {
-            if (contentDescription.isBlank()) return null
-            automator.findByContentDescription(contentDescription)
-        }
-        // Role is a Compose value class; match by toString() name ("Button", …).
-        role != null -> {
-            if (role.isBlank() || role !in KNOWN_ROLE_WIRE_NAMES) return null
-            automator.allNodes().filter { it.role?.toString() == role }
-        }
-        else -> automator.allNodes()
-    }
-}
-
-/**
- * Compose [androidx.compose.ui.semantics.Role.toString] names. Kept local to the server module so
- * HTTP and agent agree without a shared compile-time Role dependency in agent. [Role.ValuePicker]
- * stringifies as `"Picker"`.
- */
-private val KNOWN_ROLE_WIRE_NAMES: Set<String> =
-    setOf(
-        "Button",
-        "Checkbox",
-        "Switch",
-        "RadioButton",
-        "Tab",
-        "Image",
-        "DropdownList",
-        "Picker",
-        "Carousel",
-    )
 
 /**
  * Narrow decode-error mapping for `call.receive<T>()` (R4): Ktor's default response when

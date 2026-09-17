@@ -4,6 +4,7 @@ package dev.sebastiano.spectre.server
 
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.RobotDriver
+import dev.sebastiano.spectre.core.TextQuery
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
@@ -93,6 +94,95 @@ class HttpComposeAutomatorE2ETest {
             )
         }
     }
+
+    @Test
+    fun `findByText(query) forwards structured TextQuery parameters`() = runBlocking {
+        client().use { remote ->
+            assertEquals(
+                emptyList(),
+                remote.findByText(TextQuery.substring("sub", ignoreCase = true)),
+            )
+        }
+    }
+
+    @Test
+    fun `findOneByTestTag() returns null when unmatched`() = runBlocking {
+        client().use { remote -> assertEquals(null, remote.findOneByTestTag("Send")) }
+    }
+
+    @Test
+    fun `findOneByText(query) returns null when unmatched`() = runBlocking {
+        client().use { remote ->
+            assertEquals(null, remote.findOneByText(TextQuery.substring("nope", ignoreCase = true)))
+        }
+    }
+
+    @Test
+    fun `findOneByContentDescription() returns null when unmatched`() = runBlocking {
+        client().use { remote -> assertEquals(null, remote.findOneByContentDescription("Send")) }
+    }
+
+    @Test
+    fun `findOneByRole() returns null when unmatched`() = runBlocking {
+        client().use { remote -> assertEquals(null, remote.findOneByRole("Button")) }
+    }
+
+    @Test
+    fun `findOneByRole() against an unknown role surfaces the server error`() = runBlocking {
+        client().use { remote ->
+            val ex = assertFailsWith<IllegalStateException> { remote.findOneByRole("Bogus") }
+            val message = checkNotNull(ex.message)
+            assertTrue(message.contains("400"), "Expected 400 in error message, got: $message")
+        }
+    }
+
+    @Test
+    fun `tree() round-trips an empty snapshot`() = runBlocking {
+        client().use { remote -> assertEquals(emptyList(), remote.tree()) }
+    }
+
+    @Test
+    fun `printTree() round-trips an empty dump`() = runBlocking {
+        client().use { remote -> assertEquals("", remote.printTree()) }
+    }
+
+    @Test
+    fun `tree(windowIndex) against an empty automator surfaces the server error`() = runBlocking {
+        client().use { remote ->
+            val ex = assertFailsWith<IllegalStateException> { remote.tree(0) }
+            val message = checkNotNull(ex.message)
+            assertTrue(message.contains("400"), "Expected 400 in error message, got: $message")
+        }
+    }
+
+    @Test
+    fun `clearAndTypeText() against an unknown node key surfaces the server error`() = runBlocking {
+        client().use { remote ->
+            val ex =
+                assertFailsWith<IllegalStateException> {
+                    remote.clearAndTypeText(nodeKey = "nonexistent:0:1", text = "hello")
+                }
+            val message = checkNotNull(ex.message)
+            assertTrue(message.contains("404"), "Expected 404 in error message, got: $message")
+            assertTrue(
+                !message.contains("nonexistent:0:1"),
+                "Expected node key NOT to appear in error message, got: $message",
+            )
+        }
+    }
+
+    @Test
+    fun `screenshot(nodeKey) against an unknown node key surfaces the server error`() =
+        runBlocking {
+            client().use { remote ->
+                val ex =
+                    assertFailsWith<IllegalStateException> {
+                        remote.screenshot(nodeKey = "nonexistent:0:1")
+                    }
+                val message = checkNotNull(ex.message)
+                assertTrue(message.contains("404"), "Expected 404 in error message, got: $message")
+            }
+        }
 
     @Test
     fun `close() shuts down the underlying client engine`() {
