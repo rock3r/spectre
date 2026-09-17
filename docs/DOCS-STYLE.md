@@ -71,8 +71,10 @@ the following are true:
 - The sample claims behaviour the implementation doesn't honour (e.g. "auto-wait
   finds the node" when queries are explicitly non-waiting).
 
-When in doubt, grep the source. `findOneByContentDescription` doesn't exist;
-`findByContentDescription(...).firstOrNull()` is what callers write.
+When in doubt, grep the source. In-process `findOneByContentDescription` doesn't exist;
+`findByContentDescription(...).firstOrNull()` is what in-process callers write. The HTTP
+client exposes `findOneByContentDescription` / `findOneByRole` as convenience wrappers over
+`GET /node`.
 
 ### Imports in samples
 
@@ -103,8 +105,9 @@ corresponding doc page is touched:
 - **`refreshWindows` is only auto-called by `tree()`.** `findBy*`, `hasTag`/`hasText`,
   and `allNodes` read against the last refresh. If a popup may have appeared since the
   last call, the user has to refresh.
-- **`findOneBy*` exists only for `testTag` and `text`.** Not for content
-  description, not for role.
+- **`findOneBy*` exists only for `testTag` and `text` on the in-process automator.** Not for
+  content description, not for role. `HttpComposeAutomator` adds `findOneByContentDescription`
+  and `findOneByRole` as HTTP-only conveniences.
 - **`waitForNode(tag, text)` is AND, not OR.** Both criteria must match the same
   node. `waitUntilGone(tag, text)` mirrors it: it returns once no single node carries
   both, and it refreshes windows before every poll (unlike the finders).

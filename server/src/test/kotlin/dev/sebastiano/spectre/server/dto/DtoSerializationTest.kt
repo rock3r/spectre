@@ -92,5 +92,76 @@ class DtoSerializationTest {
         assertEquals(nodes, json.decodeFromString(json.encodeToString(nodes)))
         val windows = WindowsResponse(windows = emptyList())
         assertEquals(windows, json.decodeFromString(json.encodeToString(windows)))
+        assertEquals(
+            ClearAndTypeTextRequest("main:0:42", "hello"),
+            json.decodeFromString(
+                json.encodeToString(ClearAndTypeTextRequest("main:0:42", "hello"))
+            ),
+        )
+        assertEquals(
+            TextQueryDto(
+                value = "Submit",
+                matchType = TextMatchTypeDto.Substring,
+                ignoreCase = true,
+            ),
+            json.decodeFromString(
+                json.encodeToString(
+                    TextQueryDto(
+                        value = "Submit",
+                        matchType = TextMatchTypeDto.Substring,
+                        ignoreCase = true,
+                    )
+                )
+            ),
+        )
+        val snapshot =
+            NodeSnapshotDto(
+                key = "main:0:42",
+                testTag = "Send",
+                boundsInWindow = RectangleDto(0.0, 0.0, 1.0, 1.0),
+                boundsOnScreen = RectangleDto(0.0, 0.0, 1.0, 1.0),
+            )
+        assertEquals(
+            NodeResponse(node = null),
+            json.decodeFromString(json.encodeToString(NodeResponse(node = null))),
+        )
+        assertEquals(
+            NodeResponse(node = snapshot),
+            json.decodeFromString(json.encodeToString(NodeResponse(node = snapshot))),
+        )
+        val nested =
+            TreeNodeDto(
+                node = snapshot,
+                children =
+                    listOf(
+                        TreeNodeDto(
+                            node =
+                                NodeSnapshotDto(
+                                    key = "main:0:43",
+                                    boundsInWindow = RectangleDto(0.0, 0.0, 1.0, 1.0),
+                                    boundsOnScreen = RectangleDto(0.0, 0.0, 1.0, 1.0),
+                                )
+                        )
+                    ),
+            )
+        assertEquals(nested, json.decodeFromString(json.encodeToString(nested)))
+        assertEquals(
+            PrintTreeResponse(dump = ""),
+            json.decodeFromString(json.encodeToString(PrintTreeResponse(dump = ""))),
+        )
+        val tree =
+            TreeResponse(
+                windows =
+                    listOf(
+                        WindowTreeDto(
+                            index = 0,
+                            surfaceId = "main",
+                            isPopup = false,
+                            composeSurfaceBounds = RectangleDto(0.0, 0.0, 100.0, 80.0),
+                            roots = emptyList(),
+                        )
+                    )
+            )
+        assertEquals(tree, json.decodeFromString(json.encodeToString(tree)))
     }
 }

@@ -16,13 +16,15 @@ top of an in-process `ComposeAutomator`; the test JVM talks to it through
 
 !!! note "HTTP transport scope"
     The HTTP transport is a deliberate subset of the in-process automator: windows,
-    nodes (selectors including text / content-description / role), click and richer
-    input verbs (`doubleClick` / `longClick` / `swipe` / `scrollWheel` / `pressKey` /
-    `typeText`), and screenshot. Advanced features that need live JVM objects
-    (idling resources, `withTracing`) remain in-process only. If you need them, run
-    the test JVM in the same process as the UI. The full ops × transports × platforms
-    picture — with multi-state cells and fail-closed CI evidence — lives in the
-    [capability matrix](capability-matrix.md).
+    nodes (selectors including text / content-description / role, structured
+    `TextQuery`, and `findOneBy*`), click and richer input verbs (`doubleClick` /
+    `longClick` / `swipe` / `scrollWheel` / `pressKey` / `typeText` /
+    `clearAndTypeText`), `tree()` / `tree(windowIndex)` / `printTree()`, and
+    screenshot (full-frame or node-targeted). Advanced features that need live JVM
+    objects (idling resources, `withTracing`) remain in-process only. If you need
+    them, run the test JVM in the same process as the UI. The full ops × transports
+    × platforms picture — with multi-state cells and fail-closed CI evidence — lives
+    in the [capability matrix](capability-matrix.md).
 
 !!! warning "Trust boundary"
     The HTTP transport is **experimental** and intended for **trusted local / test
@@ -134,19 +136,34 @@ threads are released.
 Everything is JSON, modelled by DTOs in `dev.sebastiano.spectre.server.dto`. Notable
 shapes:
 
-| DTO                  | Role                                                       |
-| -------------------- | ---------------------------------------------------------- |
-| `WindowSummaryDto`   | Per-window summary (index, surface id, bounds, popup flag).|
-| `NodeSnapshotDto`    | Read-only projection of an `AutomatorNode`.                |
-| `NodesResponse`      | List wrapper around `NodeSnapshotDto`.                     |
-| `WindowsResponse`    | List wrapper around `WindowSummaryDto`.                    |
-| `ClickRequest`       | `{ "nodeKey": "surfaceId:ownerIndex:nodeId" }`.            |
-| `TypeTextRequest`    | `{ "text": "..." }`. Types into whatever has focus.        |
-| `ScreenshotResponse` | Base64-encoded PNG bytes.                                  |
+| DTO                       | Role                                                        |
+| ------------------------- | ----------------------------------------------------------- |
+| `WindowSummaryDto`        | Per-window summary (index, surface id, bounds, popup flag). |
+| `NodeSnapshotDto`         | Read-only projection of an `AutomatorNode`.                 |
+| `NodesResponse`           | List wrapper around `NodeSnapshotDto`.                      |
+| `NodeResponse`            | Singular `findOneBy*` wrapper; `node` is JSON `null` if unmatched. |
+| `WindowsResponse`         | List wrapper around `WindowSummaryDto`.                     |
+| `TreeResponse`            | Nested `tree()` snapshot (`WindowTreeDto` + `TreeNodeDto`). |
+| `PrintTreeResponse`       | `{ "dump": "..." }` from `printTree()`.                     |
+| `TextQueryDto`            | Query-param form of structured text matching (`matchType` + `ignoreCase`); not a JSON request body. |
+| `ClickRequest`            | `{ "nodeKey": "surfaceId:ownerIndex:nodeId" }`.             |
+| `ClearAndTypeTextRequest` | `{ "nodeKey": "...", "text": "..." }`.                      |
+| `TypeTextRequest`         | `{ "text": "..." }`. Types into whatever has focus.         |
+| `ScreenshotResponse`      | Base64-encoded PNG bytes.                                   |
 
 Node keys travel as the canonical string form `surfaceId:ownerIndex:nodeId` — the
 stable string form used by the transport contract and pinned by `NodeKeyContractTest`
 in the testing module.
+
+Structured text matching uses query parameters on `GET /nodes` and `GET /node`:
+
+```text
+/spectre/nodes?text=Submit&matchType=Substring&ignoreCase=true
+```
+
+`matchType` is `Exact` or `Substring`. Do not combine `matchType` / `ignoreCase` with
+the older `exact` shorthand. Node-targeted screenshots use
+`GET /spectre/screenshot?nodeKey=…`.
 
 ## Use cases
 

@@ -3,22 +3,29 @@
 package dev.sebastiano.spectre.server
 
 import dev.sebastiano.spectre.core.ComposeAutomator
+import dev.sebastiano.spectre.core.TextQuery
+import dev.sebastiano.spectre.server.dto.ClearAndTypeTextRequest
 import dev.sebastiano.spectre.server.dto.ClickRequest
 import dev.sebastiano.spectre.server.dto.DoubleClickRequest
 import dev.sebastiano.spectre.server.dto.LongClickRequest
+import dev.sebastiano.spectre.server.dto.NodeResponse
 import dev.sebastiano.spectre.server.dto.NodeSnapshotDto
 import dev.sebastiano.spectre.server.dto.NodesResponse
 import dev.sebastiano.spectre.server.dto.PressKeyRequest
+import dev.sebastiano.spectre.server.dto.PrintTreeResponse
 import dev.sebastiano.spectre.server.dto.ScreenshotResponse
 import dev.sebastiano.spectre.server.dto.ScrollWheelRequest
 import dev.sebastiano.spectre.server.dto.SwipeRequest
+import dev.sebastiano.spectre.server.dto.TreeResponse
 import dev.sebastiano.spectre.server.dto.TypeTextRequest
 import dev.sebastiano.spectre.server.dto.WindowSummaryDto
+import dev.sebastiano.spectre.server.dto.WindowTreeDto
 import dev.sebastiano.spectre.server.dto.WindowsResponse
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
@@ -35,15 +42,16 @@ import javax.imageio.ImageIO
 /**
  * Cross-JVM client for a `ComposeAutomator` running behind [installSpectreRoutes].
  *
- * Created via the companion extension [ComposeAutomator.http][http]. The client surface mirrors the
- * in-process automator's most-used queries and actions; advanced features (idling resources,
- * `withTracing`, `waitForVisualIdle`) remain in-process only and are documented as such.
+ * Created via the companion extension [ComposeAutomator.http][http]. The client surface mirrors
+ * windows, selectors (including structured [TextQuery] and `findOneBy*`), input verbs, node
+ * screenshot, `tree()`, and `printTree()`. Advanced features (idling resources, `withTracing`,
+ * `waitForVisualIdle`) remain in-process only and are documented as such.
  *
  * The instance owns its [HttpClient] and must be `close()`d to release pooled connections. Use `use
  * { ... }` from `kotlin.AutoCloseable` for scoped lifecycles.
  */
 @ExperimentalSpectreHttpApi
-@Suppress("TooManyFunctions") // Mirrors remote input surface (#203).
+@Suppress("TooManyFunctions") // Mirrors remote query + input surface (#96).
 public class HttpComposeAutomator internal constructor(private val baseUrl: String) :
     AutoCloseable {
 
@@ -61,7 +69,12 @@ public class HttpComposeAutomator internal constructor(private val baseUrl: Stri
     public suspend fun allNodes(): List<NodeSnapshotDto> =
         client.get("$baseUrl/nodes").body<NodesResponse>().nodes
 
-    /** Fetches semantics nodes carrying the given `testTag` from the remote automator. */
+    /**
+     * Fetches semantics nodes matching [text], using the in-process `exact` shorthand.
+     *
+     * Non-2xx responses still decode through Ktor `body()` (R-future curated mapping). The
+     * structured [findByText] overload and `findOneBy*` check status first.
+     */
     public suspend fun findByText(text: String, exact: Boolean = true): List<NodeSnapshotDto> =
         client
             .get("$baseUrl/nodes") {
@@ -69,6 +82,15 @@ public class HttpComposeAutomator internal constructor(private val baseUrl: Stri
                 parameter("exact", exact.toString())
             }
             .body<NodesResponse>()
+            .nodes
+
+    /** Structured [TextQuery] (#96). Do not combine with the `exact` shorthand on the wire. */
+    public suspend fun findByText(query: TextQuery): List<NodeSnapshotDto> =
+        getSuccess<NodesResponse>("nodes") {
+                parameter("text", query.value)
+                parameter("matchType", query.matchType.name)
+                parameter("ignoreCase", query.ignoreCase.toString())
+            }
             .nodes
 
     public suspend fun findByContentDescription(description: String): List<NodeSnapshotDto> =
@@ -80,8 +102,37 @@ public class HttpComposeAutomator internal constructor(private val baseUrl: Stri
     public suspend fun findByRole(role: String): List<NodeSnapshotDto> =
         client.get("$baseUrl/nodes") { parameter("role", role) }.body<NodesResponse>().nodes
 
+    /** Fetches semantics nodes carrying the given `testTag` from the remote automator. */
     public suspend fun findByTestTag(tag: String): List<NodeSnapshotDto> =
         client.get("$baseUrl/nodes") { parameter("testTag", tag) }.body<NodesResponse>().nodes
+
+    public suspend fun findOneByTestTag(tag: String): NodeSnapshotDto? = findOne {
+        parameter("testTag", tag)
+    }
+
+    public suspend fun findOneByText(text: String, exact: Boolean = true): NodeSnapshotDto? =
+        findOne {
+            parameter("text", text)
+            parameter("exact", exact.toString())
+        }
+
+    public suspend fun findOneByText(query: TextQuery): NodeSnapshotDto? = findOne {
+        parameter("text", query.value)
+        parameter("matchType", query.matchType.name)
+        parameter("ignoreCase", query.ignoreCase.toString())
+    }
+
+    public suspend fun findOneByContentDescription(description: String): NodeSnapshotDto? =
+        findOne {
+            parameter("contentDescription", description)
+        }
+
+    public suspend fun findOneByRole(role: String): NodeSnapshotDto? = findOne {
+        parameter("role", role)
+    }
+
+    private suspend fun findOne(parameters: HttpRequestBuilder.() -> Unit): NodeSnapshotDto? =
+        getSuccess<NodeResponse>("node", parameters).node
 
     /**
      * Asks the remote automator to click the node addressed by [nodeKey] (the canonical string form
@@ -161,6 +212,11 @@ public class HttpComposeAutomator internal constructor(private val baseUrl: Stri
         postInput("typeText", TypeTextRequest(text = text))
     }
 
+    /** Click [nodeKey] then replace its text (#96). */
+    public suspend fun clearAndTypeText(nodeKey: String, text: String) {
+        postInput("clearAndTypeText", ClearAndTypeTextRequest(nodeKey = nodeKey, text = text))
+    }
+
     private suspend fun postInput(path: String, body: Any) {
         val response =
             client.post("$baseUrl/$path") {
@@ -179,6 +235,44 @@ public class HttpComposeAutomator internal constructor(private val baseUrl: Stri
      */
     public suspend fun screenshot(): BufferedImage {
         val response = client.get("$baseUrl/screenshot").body<ScreenshotResponse>()
+        return decodePng(response)
+    }
+
+    /** Node-targeted still (#96). Unknown or malformed keys fail like [click]. */
+    public suspend fun screenshot(nodeKey: String): BufferedImage {
+        val response =
+            getSuccess<ScreenshotResponse>("screenshot") { parameter("nodeKey", nodeKey) }
+        return decodePng(response)
+    }
+
+    public suspend fun tree(): List<WindowTreeDto> = getSuccess<TreeResponse>("tree").windows
+
+    public suspend fun tree(windowIndex: Int): WindowTreeDto {
+        val windows =
+            getSuccess<TreeResponse>("tree") { parameter("windowIndex", windowIndex.toString()) }
+                .windows
+        check(windows.size == 1) { "tree failed: expected 1 window, got ${windows.size}" }
+        return windows.first()
+    }
+
+    public suspend fun printTree(): String = getSuccess<PrintTreeResponse>("printTree").dump
+
+    /**
+     * Decode a GET body only after a 2xx. Used by the #96 surface (`findByText(TextQuery)`,
+     * `findOneBy*`, `tree`, `printTree`, node screenshot). Pre-existing getters still call `body()`
+     * unconditionally so their 4xx shape stays R-future (`HttpNegativeContractTest`).
+     */
+    private suspend inline fun <reified T> getSuccess(
+        path: String,
+        noinline parameters: HttpRequestBuilder.() -> Unit = {},
+    ): T {
+        val response = client.get("$baseUrl/$path") { parameters() }
+        // R5/F5d: status only — never interpolate the response body into the exception.
+        check(response.status.isSuccess()) { "$path failed: ${response.status}" }
+        return response.body()
+    }
+
+    private fun decodePng(response: ScreenshotResponse): BufferedImage {
         val bytes = Base64.getDecoder().decode(response.pngBase64)
         return checkNotNull(ImageIO.read(ByteArrayInputStream(bytes))) {
             "Server returned an image we could not decode"

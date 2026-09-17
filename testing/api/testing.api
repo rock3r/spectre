@@ -254,6 +254,7 @@ public final class dev/sebastiano/spectre/testing/contract/AutomatorContractDriv
 public final class dev/sebastiano/spectre/testing/contract/AutomatorOperation : java/lang/Enum {
 	public static final field AllNodes Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field Capture Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field ClearAndTypeText Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field Click Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field DoubleClick Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field FindByContentDescription Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
@@ -262,11 +263,14 @@ public final class dev/sebastiano/spectre/testing/contract/AutomatorOperation : 
 	public static final field FindByText Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field FocusWindow Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field LongClick Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field NodeScreenshot Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field PressKey Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field PrintTree Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field RegisterIdlingResource Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field Screenshot Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field ScrollWheel Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field Swipe Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
+	public static final field Tree Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field TypeText Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field WaitForIdle Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field WaitForNode Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;

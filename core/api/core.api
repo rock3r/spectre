@@ -60,6 +60,7 @@ public final class dev/sebastiano/spectre/core/AutomatorWindow {
 	public final fun findOneByText (Ljava/lang/String;Z)Ldev/sebastiano/spectre/core/AutomatorNode;
 	public static synthetic fun findOneByText$default (Ldev/sebastiano/spectre/core/AutomatorWindow;Ljava/lang/String;ZILjava/lang/Object;)Ldev/sebastiano/spectre/core/AutomatorNode;
 	public final fun getSurfaceId ()Ljava/lang/String;
+	public final fun getTrackedWindow ()Ldev/sebastiano/spectre/core/TrackedWindow;
 	public final fun getWindowIndex ()I
 	public final fun isPopup ()Z
 	public final fun roots ()Ljava/util/List;

@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.testing.contract
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
@@ -153,6 +154,41 @@ class CapabilityMatrixEvidenceTest {
             agentIdle.state == CellState.Supported,
             "Expected Agent WaitForIdle Supported (#362), got ${agentIdle.state}",
         )
+    }
+
+    @Test
+    fun `in-process tree and printTree are supported on headless`() {
+        for (op in listOf(AutomatorOperation.Tree, AutomatorOperation.PrintTree)) {
+            val cell =
+                CapabilityMatrix.cell(
+                    op,
+                    AutomatorTransport.InProcess,
+                    PlatformPrerequisite.Headless,
+                ) ?: error("Missing InProcess Headless cell for $op")
+            assertEquals(
+                CellState.Supported,
+                cell.state,
+                "$op InProcess Headless must not default to NotYetCiExecuted; empty-tree reads work",
+            )
+            assertTrue(
+                cell.evidence.isNotEmpty(),
+                "$op InProcess Headless Supported must cite executable evidence",
+            )
+        }
+    }
+
+    @Test
+    fun `HTTP node screenshot and clearAndTypeText are unsupported on headless`() {
+        for (op in listOf(AutomatorOperation.NodeScreenshot, AutomatorOperation.ClearAndTypeText)) {
+            val cell =
+                CapabilityMatrix.cell(op, AutomatorTransport.Http, PlatformPrerequisite.Headless)
+                    ?: error("Missing HTTP Headless cell for $op")
+            assertEquals(
+                CellState.UnsupportedByDesign,
+                cell.state,
+                "$op HTTP Headless must not claim Supported on negative-path-only evidence",
+            )
+        }
     }
 
     @Test

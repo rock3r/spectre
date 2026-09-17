@@ -3,6 +3,8 @@ package dev.sebastiano.spectre.testing.contract
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.RobotDriver
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.runBlocking
 
@@ -25,6 +27,17 @@ class InProcessContractCorpusTest {
         InProcessContractDriver(automator).use { driver ->
             AutomatorContractCorpus.run(driver).requireAllPassed()
         }
+    }
+
+    @Test
+    fun `tree and printTree are empty on a headless automator without windows`() {
+        val automator =
+            ComposeAutomator.inProcess(
+                robotDriver = RobotDriver.headless(),
+                discoverWindows = false,
+            )
+        assertTrue(automator.tree().windows().isEmpty())
+        assertEquals("", automator.printTree())
     }
 }
 

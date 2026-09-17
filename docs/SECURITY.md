@@ -97,7 +97,7 @@ out of scope.
 | Capture pixels | `RobotDriver.screenshot(region)` — **captures any rectangle of the virtual desktop**, not just the app under test; `AutoScreenshotter` for native/window-targeted still screenshots where available | In-process; trusted-local HTTP via `/spectre/screenshot` for `RobotDriver`; `AutoScreenshotter` is in-process only |
 | Record video | `AutoRecorder`, native recorders, deprecated explicit `FfmpegRecorder`, `WaylandPortalRecorder` | In-process only |
 | Execute a helper binary | `HelperBinaryExtractor` (SCK), `WaylandHelperBinaryExtractor` | Local file system, JVM process |
-| Expose any of the above over HTTP | `installSpectreRoutes` mounts the windows / nodes / click / typeText / screenshot routes | **Unauthenticated, plaintext** — host application chooses bind address |
+| Expose any of the above over HTTP | `installSpectreRoutes` mounts windows, nodes/`node`, tree/`printTree`, click and other input verbs, `clearAndTypeText`, and screenshot (full-frame or `?nodeKey=`) | **Unauthenticated, plaintext** — host application chooses bind address |
 | Expose any of the above over UDS | `:agent`'s `IpcServer` mounts the same surface plus detach over a Unix Domain Socket | **Unauthenticated** — owner-only filesystem access (POSIX mode 0600 on Linux/macOS, owner-only ACL on Windows/NTFS); same OS user only. Supported on Linux, macOS, and Windows (10 version 1803 / Server 2019+) |
 
 The HTTP exposure column is the most important one to internalise: there are **no auth
@@ -143,9 +143,10 @@ expansion); items that are hygiene fixes get their own issues.
   Tracked under #96.
 - **CORS / Origin policy on the HTTP routes.** No protection against a local browser
   reaching the loopback server. Tracked under #96.
-- **Narrower screenshot API.** `RobotDriver.screenshot(region)` captures any rectangle on
-  the display, including unrelated windows. A per-window / per-node API for remote callers
-  is tracked under #96.
+- **Narrower screenshot API.** `RobotDriver.screenshot(region)` and full-frame HTTP
+  `GET /screenshot` can still capture any rectangle on the display, including unrelated
+  windows. Node-targeted HTTP stills (`GET /screenshot?nodeKey=`) shipped in the #96
+  data-only slice; they do not constrain the full-frame / Robot region path.
 - **Recording output-path validation.** Spectre passes the caller-supplied output path
   through to ffmpeg, GStreamer, or the helpers without rejecting `/dev/`, `/proc/`, symlinks, or
   not-yet-existing parents. Standalone follow-up issue, separate from #96.

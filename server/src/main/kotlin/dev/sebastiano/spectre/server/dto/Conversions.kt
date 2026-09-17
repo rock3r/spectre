@@ -3,7 +3,11 @@
 package dev.sebastiano.spectre.server.dto
 
 import dev.sebastiano.spectre.core.AutomatorNode
+import dev.sebastiano.spectre.core.AutomatorTree
+import dev.sebastiano.spectre.core.AutomatorWindow
 import dev.sebastiano.spectre.core.InternalSpectreApi
+import dev.sebastiano.spectre.core.TextMatchType
+import dev.sebastiano.spectre.core.TextQuery
 import dev.sebastiano.spectre.core.TrackedWindow
 import dev.sebastiano.spectre.server.ExperimentalSpectreHttpApi
 import java.awt.Rectangle
@@ -52,3 +56,29 @@ internal fun Rectangle.toDto(): RectangleDto =
         width = width.toDouble(),
         height = height.toDouble(),
     )
+
+internal fun AutomatorTree.toDto(): TreeResponse =
+    TreeResponse(windows = windows().map { it.toDto() })
+
+internal fun AutomatorWindow.toDto(): WindowTreeDto =
+    WindowTreeDto(
+        index = windowIndex,
+        surfaceId = surfaceId,
+        isPopup = isPopup,
+        // Use the TrackedWindow held by this tree snapshot, not a later automator.windows
+        // read that a concurrent refreshWindows() can shrink.
+        composeSurfaceBounds = trackedWindow.composeSurfaceBoundsOnScreen.toDto(),
+        roots = roots().map { it.toTreeNodeDto() },
+    )
+
+internal fun AutomatorNode.toTreeNodeDto(): TreeNodeDto =
+    TreeNodeDto(node = toDto(), children = children.map { it.toTreeNodeDto() })
+
+internal fun TextQueryDto.toModel(): TextQuery =
+    TextQuery(value = value, matchType = matchType.toModel(), ignoreCase = ignoreCase)
+
+internal fun TextMatchTypeDto.toModel(): TextMatchType =
+    when (this) {
+        TextMatchTypeDto.Exact -> TextMatchType.Exact
+        TextMatchTypeDto.Substring -> TextMatchType.Substring
+    }

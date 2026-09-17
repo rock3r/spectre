@@ -70,6 +70,13 @@ public enum class AutomatorOperation {
     FindByText,
     FindByContentDescription,
     FindByRole,
+    /** Nested window snapshot (`tree()` / `tree(windowIndex)`). */
+    Tree,
+    /** Human-readable semantics dump. */
+    PrintTree,
+    ClearAndTypeText,
+    /** Still of one node's on-screen bounds. */
+    NodeScreenshot,
 }
 
 /**
