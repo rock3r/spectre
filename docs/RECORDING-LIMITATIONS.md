@@ -51,36 +51,58 @@ failure modes, and the section below
 CI and hermetic tests can redirect token storage with:
 
 - `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` — directory for per-source token files (mode `0700`).
-  Files are named `wayland-screencast-restore-token-{key}` (e.g. `…-monitor-embedded`).
+  Monitor+input grants are `wayland-rd-restore-token-rd-monitor-{cursor}`. Window-only
+  ScreenCast grants remain `wayland-screencast-restore-token-{key}` (e.g. `…-window-embedded`).
 - `SPECTRE_WAYLAND_RESTORE_TOKEN_PATH` — **base path** (not a single flat file). Spectre
   writes `{basename}-{key}` next to that path (mode `0600`), so keys stay separate.
   Prefer `DIR` when you only need to relocate the directory.
+- `SPECTRE_WAYLAND_SESSION_DIR` — directory for the long-lived helper lock and unix socket
+  (`wayland-session.lock` / `wayland-session.sock`). Defaults to `$XDG_RUNTIME_DIR/spectre`.
+- `SPECTRE_WAYLAND_DESKTOP_DIR` — override for the installed
+  `dev.sebastiano.spectre.desktop` (defaults to `$XDG_DATA_HOME/applications`).
 
 Headless runners without a seated GNOME session will not expose
-`org.freedesktop.portal.ScreenCast`; unit tests cover persist/reuse/clear without a
-live portal. Interactive first-consent still requires a real compositor seat.
+`org.freedesktop.portal.RemoteDesktop` / `ScreenCast`; unit tests cover persist/reuse/clear
+without a live portal. Interactive first-consent still requires a real compositor seat.
 
-On Linux Wayland, the ScreenCast portal consent dialog is the analogue of macOS TCC:
-interactive and not automatable. Spectre's `spectre-wayland-helper` uses portal
-`persist_mode=persistent` and stores a `restore_token` under
-`$XDG_STATE_HOME/spectre/wayland-screencast-restore-token-{key}` (mode `0600`, directory
-`0700`; override with `SPECTRE_WAYLAND_RESTORE_TOKEN_PATH` or
-`SPECTRE_WAYLAND_RESTORE_TOKEN_DIR`).
+On Linux Wayland, the portal consent dialog is the analogue of macOS TCC: interactive and not
+automatable. `spectre-wayland-helper --session` installs `dev.sebastiano.spectre.desktop`,
+calls `org.freedesktop.host.portal.Registry.Register` **before** any portal method, then
+opens **one** RemoteDesktop session (`SelectDevices` keyboard+pointer + `SelectSources`
+monitor, `persist_mode=2`). The replacement `restore_token` is stored under
+`$XDG_STATE_HOME/spectre/` (mode `0600`, directory `0700`; override with
+`SPECTRE_WAYLAND_RESTORE_TOKEN_PATH` or `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR`) — never under
+`~/.java/robot/`.
 
-- **First run** (no token, or compositor rejects a stale token): the portal dialog is
-  shown. A human must accept once. Release smoke does this up front as `portal-token-warmup`
-  for the **monitor-embedded** grant and pins `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` +
-  `SPECTRE_WAYLAND_HELPER` so later helper monitor ScreenCast cells reuse that token.
-  Release smoke keeps JBR Robot / attach / `check` under `xvfb-run` even on a seated
-  Wayland display. Window-source tokens are bound to the picked window and are not
+In-process `RobotDriver()`, attach, CLI, and MCP input and monitor capture on Wayland talk
+to that helper. They do not open a per-JVM `java.awt.Robot` portal session. The helper
+holds the session for the user seat; parallel JVMs connect to the existing socket.
+
+- **First run** (no token, or compositor rejects a stale token): one Share + Remember /
+  Allow remote interaction dialog. A human must accept once. Release smoke does this up
+  front as `portal-token-warmup` and pins `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` +
+  `SPECTRE_WAYLAND_HELPER`. Release smoke keeps Robot-heavy cells under `xvfb-run` even on
+  a seated Wayland display. Window-source tokens are bound to the picked window and are not
   pre-warmed against an unrelated window.
-- **Later CLI/agent sessions**: the helper reuses the stored token so no dialog appears
-  (validated on GNOME/mutter; other compositors are best-effort). Tokens are single-use at
-  the portal: each successful `Start` writes a replacement file. A cancelled dialog never
-  stores a token. JBR `java.awt.Robot` ScreenCast / Remote Desktop prompts use a different
-  app identity and are not covered by this file.
-- **Invalidation**: if Start/SelectSources rejects the token, Spectre clears the file and
-  retries interactively once, printing a clear message on stderr.
+- **Cursor**: the held RemoteDesktop session is opened with the cursor embedded in the
+  stream. `RecordingOptions.captureCursor = false` and screenshot `HIDDEN` requests do not
+  reopen a second session; monitor frames may include the pointer.
+- **Keys**: helper keyboard mapping covers US letters, digits, modifiers, arrows, Enter,
+  Tab, Escape, Delete, Space, and common punctuation. Other AWT `VK_*` codes fail closed.
+- **Recovery**: if `$XDG_RUNTIME_DIR/spectre/wayland-session.sock` is stale after a helper
+  crash, Spectre unlinks it and starts a new helper. You can also delete that socket by hand.
+- **Coordinates**: pointer motion is translated by the granted stream origin. Fractional
+  HiDPI and a monitor other than the restored one can still miss; pick the same screen at
+  first consent.
+- **Later CLI/agent sessions**: the helper restores the RemoteDesktop grant so no dialog
+  appears (validated on GNOME/mutter; other compositors are best-effort). Tokens are
+  single-use at the portal: each successful `Start` writes a replacement file. A cancelled
+  dialog never stores a token.
+- **Invalidation**: if SelectDevices/SelectSources/Start rejects the token, Spectre clears
+  the file, retries interactively once, and fails closed if that retry fails.
+
+X11, macOS, and Windows input/capture paths are unchanged. `RobotDriver(robot)` still wraps
+the `java.awt.Robot` you pass in.
 
 ## Platform
 

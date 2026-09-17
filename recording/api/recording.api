@@ -162,7 +162,6 @@ public final class dev/sebastiano/spectre/recording/WindowScreenshotter$DefaultI
 
 public final class dev/sebastiano/spectre/recording/portal/WaylandPortalRecorder : dev/sebastiano/spectre/recording/Recorder {
 	public fun <init> ()V
-	public synthetic fun <init> (Ldev/sebastiano/spectre/recording/portal/WaylandHelperBinaryExtractor;Ldev/sebastiano/spectre/recording/portal/WaylandPortalRecorder$ProcessFactory;Ljava/util/List;JJJLkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun start (Ljava/awt/Rectangle;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;)Ldev/sebastiano/spectre/recording/RecordingHandle;
 }
 

@@ -67,31 +67,34 @@ fn run_wayland_screenshot(command: &ScreenshotCommand, output: &PathBuf) -> Resu
     )
     .context("portal screenshot handshake")?;
     ensure_window_source_if_requested(command.target, session.stream.source_type)?;
-    clear_cloexec(session.pipewire_fd).context("allowing PipeWire FD inheritance")?;
+    capture_from_stream(&session.stream, session.pipewire_fd, command, output)?;
+    drop(session);
+    Ok(())
+}
+
+pub(crate) fn capture_from_stream(
+    stream: &portal::StreamMetadata,
+    pipewire_fd: i32,
+    command: &ScreenshotCommand,
+    output: &PathBuf,
+) -> Result<()> {
+    clear_cloexec(pipewire_fd).context("allowing PipeWire FD inheritance")?;
     let stream_relative_region = if command.target == CaptureTarget::Window {
-        crate::stream_region::clamp_region_to_stream(command.region, session.stream.size)
+        crate::stream_region::clamp_region_to_stream(command.region, stream.size)
             .context("clamping window-source screenshot crop to portal stream")?
     } else {
         crate::stream_region::map_awt_region_to_stream(
             command.region,
-            session.stream.position,
-            session.stream.size,
+            stream.position,
+            stream.size,
             command
                 .screen_size
                 .and_then(crate::stream_region::screen_size_to_region),
         )
         .context("mapping AWT screenshot region onto portal stream")?
     };
-    let argv = build_pipewire_png_argv(
-        session.stream.node_id,
-        session.pipewire_fd,
-        stream_relative_region,
-        session.stream.size,
-        output,
-    )?;
-    run_gst_oneshot(&argv)
-        .with_context(|| format!("running Wayland screenshot pipeline: {argv:?}"))?;
-    drop(session);
+    let argv = build_pipewire_png_argv(stream.node_id, pipewire_fd, stream_relative_region, stream.size, output)?;
+    run_gst_oneshot(&argv).with_context(|| format!("running Wayland screenshot pipeline: {argv:?}"))?;
     Ok(())
 }
 
