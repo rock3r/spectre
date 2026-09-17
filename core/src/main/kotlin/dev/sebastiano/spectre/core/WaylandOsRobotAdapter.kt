@@ -27,6 +27,8 @@ internal object MissingWaylandHelperAdapter : RobotAdapter {
     override val autoDelayMs: Int = 0
     override val requiresOffEdt: Boolean = true
     override val deliversRealOsInput: Boolean = true
+    override val shouldDrainAfterClipboardPaste: Boolean
+        get() = true
 
     override fun mouseMove(x: Int, y: Int): Unit = failMissing()
 
@@ -52,9 +54,20 @@ internal object MissingWaylandHelperAdapter : RobotAdapter {
 private const val WAYLAND_OS_BRIDGE: String =
     "dev.sebastiano.spectre.recording.portal.WaylandOsBridge"
 
+internal fun resolveWaylandRobotAdapter(
+    recordingBridge: RobotAdapter?,
+    liveSeat: RobotAdapter?,
+): RobotAdapter? = recordingBridge ?: liveSeat
+
 internal fun loadWaylandRobotAdapter(
     classLoader: ClassLoader = RobotDriver::class.java.classLoader
-): RobotAdapter? {
+): RobotAdapter? =
+    resolveWaylandRobotAdapter(
+        recordingBridge = loadRecordingWaylandBridge(classLoader),
+        liveSeat = WaylandSeatSocketAdapter.takeIfLive(),
+    )
+
+private fun loadRecordingWaylandBridge(classLoader: ClassLoader): RobotAdapter? {
     val bridge =
         try {
             Class.forName(WAYLAND_OS_BRIDGE, false, classLoader)
@@ -68,6 +81,8 @@ private class WaylandBridgeRobotAdapter(private val bridge: Class<*>) : RobotAda
     override val autoDelayMs: Int = DEFAULT_AUTO_DELAY_MS
     override val requiresOffEdt: Boolean = true
     override val deliversRealOsInput: Boolean = true
+    override val shouldDrainAfterClipboardPaste: Boolean
+        get() = true
 
     override fun mouseMove(x: Int, y: Int) {
         invoke("mouseMove", x, y)
@@ -96,6 +111,16 @@ private class WaylandBridgeRobotAdapter(private val bridge: Class<*>) : RobotAda
     override fun waitForIdle() = Unit
 
     override fun createScreenCapture(region: Rectangle): BufferedImage {
+        val method = bridge.getMethod("createScreenCapture", Rectangle::class.java)
+        try {
+            val captured = method.invoke(null, region) as BufferedImage
+            return screenshotToLogicalSize(captured, region)
+        } catch (e: InvocationTargetException) {
+            throw unwrapBridge(e)
+        }
+    }
+
+    override fun createDeviceScaleScreenCapture(region: Rectangle): BufferedImage {
         val method = bridge.getMethod("createScreenCapture", Rectangle::class.java)
         try {
             return method.invoke(null, region) as BufferedImage
@@ -129,4 +154,13 @@ private class WaylandBridgeRobotAdapter(private val bridge: Class<*>) : RobotAda
             else -> IllegalStateException("Wayland portal helper failed", cause)
         }
     }
+}
+
+internal fun screenshotToLogicalSize(image: BufferedImage, region: Rectangle): BufferedImage {
+    if (image.width == region.width && image.height == region.height) return image
+    val scaled = BufferedImage(region.width, region.height, BufferedImage.TYPE_INT_ARGB)
+    val graphics = scaled.createGraphics()
+    graphics.drawImage(image, 0, 0, region.width, region.height, null)
+    graphics.dispose()
+    return scaled
 }

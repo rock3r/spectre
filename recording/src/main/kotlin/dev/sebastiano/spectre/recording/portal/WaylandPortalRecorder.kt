@@ -192,11 +192,8 @@ private constructor(
     ): RecordingHandle {
         Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
         val command = startCommandFactory(region, output, options)
-        val event = client.send(command)
-        check(event is Event.Started) {
-            "spectre-wayland-helper session did not start recording: $event"
-        }
-        return SessionRecordingHandle(client, output)
+        val held = client.startHeld(command)
+        return SessionRecordingHandle(held, output)
     }
 
     @Suppress("LongParameterList", "TooGenericExceptionCaught")
@@ -440,7 +437,7 @@ internal fun killAndReapOrThrow(
 internal const val FORCED_REAP_TIMEOUT_MS: Long = 2_000
 
 private class SessionRecordingHandle(
-    private val client: WaylandSessionClient,
+    private val held: HeldRecordingSession,
     override val output: Path,
 ) : RecordingHandle {
     private val stopInitiated = AtomicBoolean(false)
@@ -458,9 +455,11 @@ private class SessionRecordingHandle(
         }
         @Suppress("TooGenericExceptionCaught")
         try {
-            val event = client.send(Command.Stop)
-            check(event is Event.Stopped) {
-                "spectre-wayland-helper session did not stop recording: $event"
+            held.use { session ->
+                val event = session.stop()
+                check(event is Event.Stopped) {
+                    "spectre-wayland-helper session did not stop recording: $event"
+                }
             }
             result.set(Result.success(Unit))
         } catch (t: Throwable) {

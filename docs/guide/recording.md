@@ -139,7 +139,8 @@ session for monitor capture and real OS input:
 4. If the compositor rejects a stored token, Spectre clears it, retries the dialog once,
    and fails closed if that retry fails.
 
-`RobotDriver()`, attach, CLI, and MCP on Wayland use this helper. `RobotDriver(robot)` still
+`RobotDriver()`, attach (including the inject payload, which talks to the existing seat
+socket without shipping `spectre-recording`), CLI, and MCP on Wayland use this helper. `RobotDriver(robot)` still
 wraps the `java.awt.Robot` you pass in. X11, macOS, and Windows keep their existing backends.
 Window-targeted portal capture is a separate ScreenCast grant and is still bound to the
 picked window.

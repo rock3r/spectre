@@ -13,7 +13,10 @@ use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::process::{Child, Command as ProcessCommand, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+
+static NEXT_CLIENT_ID: AtomicU64 = AtomicU64::new(1);
 
 pub fn serve() -> Result<()> {
     let dir = session_lock::session_dir();
@@ -48,10 +51,11 @@ pub fn serve() -> Result<()> {
         match incoming {
             Ok(stream) => {
                 let state = Arc::clone(&state);
+                let client_id = NEXT_CLIENT_ID.fetch_add(1, Ordering::Relaxed);
                 let _ = std::thread::Builder::new()
                     .name("wayland-session-client".into())
                     .spawn(move || {
-                        if let Err(e) = handle_client(stream, &state) {
+                        if let Err(e) = handle_client(stream, &state, client_id) {
                             eprintln!("spectre-wayland-helper: session client error: {e:#}");
                         }
                     });
@@ -64,8 +68,18 @@ pub fn serve() -> Result<()> {
 
 struct SessionState {
     session: RemoteDesktopSession,
-    recording: Option<(Child, PathBuf)>,
+    recording: Option<ActiveRecording>,
     _lock: SessionLock,
+}
+
+struct ActiveRecording {
+    child: Child,
+    output: PathBuf,
+    owner: u64,
+}
+
+fn recording_owner_should_reap(recording_owner: Option<u64>, client_id: u64) -> bool {
+    recording_owner == Some(client_id)
 }
 
 fn maybe_daemonize() {
@@ -88,7 +102,11 @@ fn dup_keep_pipewire_fd(fd: i32) -> Result<()> {
     Ok(())
 }
 
-fn handle_client(stream: UnixStream, state: &Mutex<SessionState>) -> Result<()> {
+fn handle_client(stream: UnixStream, state: &Mutex<SessionState>, client_id: u64) -> Result<()> {
+    let _reap = DisconnectReap {
+        state,
+        client_id,
+    };
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut writer = stream;
     let mut line = String::new();
@@ -100,12 +118,36 @@ fn handle_client(stream: UnixStream, state: &Mutex<SessionState>) -> Result<()> 
         }
         let command: Command = serde_json::from_str(line.trim())
             .with_context(|| format!("parsing session command: {}", line.trim()))?;
-        let event = dispatch(command, state);
+        let event = dispatch(command, state, client_id);
         write_event(&mut writer, event)?;
     }
 }
 
-fn dispatch(command: Command, state: &Mutex<SessionState>) -> Event {
+struct DisconnectReap<'a> {
+    state: &'a Mutex<SessionState>,
+    client_id: u64,
+}
+
+impl Drop for DisconnectReap<'_> {
+    fn drop(&mut self) {
+        reap_owned_recording(self.state, self.client_id);
+    }
+}
+
+fn reap_owned_recording(state: &Mutex<SessionState>, client_id: u64) {
+    let owner = {
+        let guard = match state.lock() {
+            Ok(guard) => guard,
+            Err(_) => return,
+        };
+        guard.recording.as_ref().map(|r| r.owner)
+    };
+    if recording_owner_should_reap(owner, client_id) {
+        let _ = stop_recording(state);
+    }
+}
+
+fn dispatch(command: Command, state: &Mutex<SessionState>, client_id: u64) -> Event {
     match command {
         Command::PointerMove { x, y } => with_session(state, |s| {
             let (ox, oy) = s.stream.position;
@@ -135,7 +177,7 @@ fn dispatch(command: Command, state: &Mutex<SessionState>) -> Event {
                 message: format!("{e:#}"),
             },
         },
-        Command::Start(start) => match run_recording_start(state, start) {
+        Command::Start(start) => match run_recording_start(state, start, client_id) {
             Ok(event) => event,
             Err(e) => Event::Error {
                 kind: "Helper".into(),
@@ -185,7 +227,11 @@ fn run_screenshot(state: &Mutex<SessionState>, command: ScreenshotCommand) -> Re
     Ok(std::fs::metadata(&output)?.len())
 }
 
-fn run_recording_start(state: &Mutex<SessionState>, start: StartCommand) -> Result<Event> {
+fn run_recording_start(
+    state: &Mutex<SessionState>,
+    start: StartCommand,
+    client_id: u64,
+) -> Result<Event> {
     let mut guard = state.lock().expect("session mutex");
     if guard.recording.is_some() {
         anyhow::bail!("a recording is already running on the Spectre Wayland session");
@@ -228,7 +274,11 @@ fn run_recording_start(state: &Mutex<SessionState>, start: StartCommand) -> Resu
     let gst_pid = child.id();
     drop(owned_fd);
     let output = PathBuf::from(&start.output);
-    guard.recording = Some((child, output));
+    guard.recording = Some(ActiveRecording {
+        child,
+        output,
+        owner: client_id,
+    });
     Ok(Event::Started {
         node_id: stream.node_id,
         stream_size: [stream.size.0, stream.size.1],
@@ -238,7 +288,9 @@ fn run_recording_start(state: &Mutex<SessionState>, start: StartCommand) -> Resu
 }
 
 fn stop_recording(state: &Mutex<SessionState>) -> Result<u64> {
-    let (mut child, output) = {
+    let ActiveRecording {
+        mut child, output, ..
+    } = {
         let mut guard = state.lock().expect("session mutex");
         guard
             .recording
@@ -274,4 +326,16 @@ fn write_event(writer: &mut UnixStream, event: Event) -> Result<()> {
     writer.write_all(b"\n")?;
     writer.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::recording_owner_should_reap;
+
+    #[test]
+    fn owner_disconnect_reaps_that_clients_recording() {
+        assert!(recording_owner_should_reap(Some(7), 7));
+        assert!(!recording_owner_should_reap(Some(7), 8));
+        assert!(!recording_owner_should_reap(None, 7));
+    }
 }

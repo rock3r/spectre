@@ -39,7 +39,7 @@ impl RemoteDesktopSession {
     pub fn notify_pointer_motion_absolute(&self, x: f64, y: f64) -> Result<()> {
         let options: PropMap = HashMap::new();
         self.proxy()
-            .method_call(
+            .method_call::<(), _, _, _>(
                 REMOTE_DESKTOP_INTERFACE,
                 "NotifyPointerMotionAbsolute",
                 (self.session_path(), options, self.stream.node_id, x, y),
@@ -52,7 +52,7 @@ impl RemoteDesktopSession {
         let options: PropMap = HashMap::new();
         let state: u32 = if pressed { 1 } else { 0 };
         self.proxy()
-            .method_call(
+            .method_call::<(), _, _, _>(
                 REMOTE_DESKTOP_INTERFACE,
                 "NotifyPointerButton",
                 (self.session_path(), options, button, state),
@@ -65,7 +65,7 @@ impl RemoteDesktopSession {
         let options: PropMap = HashMap::new();
         let state: u32 = if pressed { 1 } else { 0 };
         self.proxy()
-            .method_call(
+            .method_call::<(), _, _, _>(
                 REMOTE_DESKTOP_INTERFACE,
                 "NotifyKeyboardKeysym",
                 (self.session_path(), options, keysym, state),
@@ -77,7 +77,7 @@ impl RemoteDesktopSession {
     pub fn notify_pointer_axis_discrete(&self, axis: u32, steps: i32) -> Result<()> {
         let options: PropMap = HashMap::new();
         self.proxy()
-            .method_call(
+            .method_call::<(), _, _, _>(
                 REMOTE_DESKTOP_INTERFACE,
                 "NotifyPointerAxisDiscrete",
                 (self.session_path(), options, axis, steps),

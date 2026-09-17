@@ -48,7 +48,7 @@ pub fn acquire_session_lock(dir: &Path) -> Result<SessionLock> {
         .with_context(|| format!("opening session lock {}", path.display()))?;
     match flock(file.as_raw_fd(), FlockArg::LockExclusiveNonblock) {
         Ok(()) => Ok(SessionLock { _file: file, path }),
-        Err(nix::errno::Errno::EWOULDBLOCK) | Err(nix::errno::Errno::EAGAIN) => {
+        Err(e) if e == nix::errno::Errno::EWOULDBLOCK || e == nix::errno::Errno::EAGAIN => {
             bail!(
                 "Spectre Wayland session is already owned by another process (lock {}). \
                  Parallel JVMs must connect to the existing helper socket rather than \
@@ -75,8 +75,8 @@ mod tests {
 
         let first = acquire_session_lock(&dir).expect("first owner");
         let second = acquire_session_lock(&dir);
-        assert!(second.is_err(), "second owner must fail closed");
-        let msg = format!("{:#}", second.unwrap_err());
+        let err = second.err().expect("second owner must fail closed");
+        let msg = format!("{err:#}");
         assert!(
             msg.contains("already owned"),
             "error should name the ownership conflict, got: {msg}"
