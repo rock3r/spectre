@@ -2,8 +2,9 @@ package dev.sebastiano.spectre.testing.contract
 
 /**
  * HTTP data-only expansion cells (#96): nested `tree` / `printTree`, `clearAndTypeText`, and
- * node-targeted screenshot. Kept out of [CapabilityMatrix]'s main object body so Detekt's
- * LargeClass budget stays honest.
+ * node-targeted screenshot. Also records in-process `tree` / `printTree` so adding those
+ * [AutomatorOperation]s does not silently under-report established same-JVM capabilities. Kept out
+ * of [CapabilityMatrix]'s main object body so Detekt's LargeClass budget stays honest.
  */
 internal fun httpExpansionCapabilityCells(
     httpTransportExpansion: CapabilityEvidence
@@ -61,3 +62,17 @@ internal fun httpExpansionCapabilityCells(
         )
     return cells
 }
+
+internal fun inProcessTreeCapabilityCells(
+    inProcessHeadlessCorpus: CapabilityEvidence
+): List<CapabilityCell> =
+    listOf(AutomatorOperation.Tree, AutomatorOperation.PrintTree).map { op ->
+        CapabilityCell(
+            operation = op,
+            transport = AutomatorTransport.InProcess,
+            platform = PlatformPrerequisite.Headless,
+            state = CellState.Supported,
+            evidence = listOf(inProcessHeadlessCorpus),
+            rationale = "Empty-tree / empty-dump reads on a headless automator with no windows.",
+        )
+    }

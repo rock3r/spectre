@@ -90,7 +90,9 @@ via `AgentContractCorpusTest` / reflective wait suites against `agent-test-fixtu
 retries — same class as `typeText`). Agent **`focusWindow`** (#364) is **Supported** on Linux
 Xvfb and macOS desktop (raises the window hosting a node before real keyboard input); HTTP
 `focusWindow` is **Unsupported by design** for this issue. HTTP selector entry points are covered
-by headless `HttpContractCorpusTest`. HTTP `clearAndTypeText` and node screenshot are
+by headless `HttpContractCorpusTest`. In-process `tree` / `printTree` are **Supported** on
+headless (empty snapshot / empty dump; `InProcessContractCorpusTest`). HTTP
+`clearAndTypeText` and node screenshot are
 **Unsupported by design** on headless (same bar as HTTP `typeText` / `screenshot`: the
 happy path needs a live node and display-backed Robot/capture). Display-backed HTTP
 cells for those ops, and HTTP `tree` / `printTree`, remain **Not yet CI-executed** — the

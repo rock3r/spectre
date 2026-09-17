@@ -157,6 +157,27 @@ class CapabilityMatrixEvidenceTest {
     }
 
     @Test
+    fun `in-process tree and printTree are supported on headless`() {
+        for (op in listOf(AutomatorOperation.Tree, AutomatorOperation.PrintTree)) {
+            val cell =
+                CapabilityMatrix.cell(
+                    op,
+                    AutomatorTransport.InProcess,
+                    PlatformPrerequisite.Headless,
+                ) ?: error("Missing InProcess Headless cell for $op")
+            assertEquals(
+                CellState.Supported,
+                cell.state,
+                "$op InProcess Headless must not default to NotYetCiExecuted; empty-tree reads work",
+            )
+            assertTrue(
+                cell.evidence.isNotEmpty(),
+                "$op InProcess Headless Supported must cite executable evidence",
+            )
+        }
+    }
+
+    @Test
     fun `HTTP node screenshot and clearAndTypeText are unsupported on headless`() {
         for (op in listOf(AutomatorOperation.NodeScreenshot, AutomatorOperation.ClearAndTypeText)) {
             val cell =

@@ -565,6 +565,7 @@ public object CapabilityMatrix {
             )
         }
         addAll(httpExpansionCapabilityCells(httpTransportExpansion))
+        addAll(inProcessTreeCapabilityCells(inProcessHeadlessCorpus))
         for (op in listOf(AutomatorOperation.LongClick, AutomatorOperation.WaitForVisualIdle)) {
             add(
                 CapabilityCell(
