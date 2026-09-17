@@ -291,11 +291,32 @@ private suspend fun respondInputVoid(
         call.respond(HttpStatusCode.NoContent)
     } catch (ex: kotlinx.coroutines.CancellationException) {
         throw ex
-    } catch (_: IllegalStateException) {
-        call.respond(
-            SpectreErrorCategory.httpStatus(SpectreErrorCategory.InputRejected),
-            SpectreErrorCategory.InputRejected.wireName,
-        )
+    } catch (ex: UnsupportedOperationException) {
+        respondInputFailure(call, ex)
+    } catch (ex: IllegalStateException) {
+        respondInputFailure(call, ex)
+    }
+}
+
+private suspend fun respondInputFailure(
+    call: io.ktor.server.application.ApplicationCall,
+    ex: Exception,
+) {
+    val category = mapInputFailure(ex)
+    call.respond(SpectreErrorCategory.httpStatus(category), category.wireName)
+}
+
+/**
+ * Host input adapters throw [IllegalStateException] or [UnsupportedOperationException] (headless
+ * Robot, TCC, missing I/O). Both are `inputRejected` (409); [CancellationException] is not an input
+ * refusal.
+ */
+internal fun mapInputFailure(ex: Throwable): SpectreErrorCategory {
+    if (ex is kotlinx.coroutines.CancellationException) throw ex
+    return when (ex) {
+        is UnsupportedOperationException,
+        is IllegalStateException -> SpectreErrorCategory.InputRejected
+        else -> throw ex
     }
 }
 
