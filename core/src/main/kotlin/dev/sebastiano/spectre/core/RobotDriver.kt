@@ -42,7 +42,7 @@ internal constructor(
     public val inputCapabilities: InputCapabilities =
         inputCapabilities
             ?: InputCapabilities(
-                realOsInput = robot is AwtRobotAdapter,
+                realOsInput = robot.deliversRealOsInput,
                 sharedSystemClipboard = clipboard !== HeadlessThrowingClipboardAdapter,
             )
 
@@ -59,14 +59,14 @@ internal constructor(
     // (fresh AWT Robot + system clipboard). `ComposeAutomator.inProcess()` defaults to
     // [synthetic] instead. The internal adapter-injecting constructor is reserved for
     // tests within this module.
-    public constructor() : this(AwtRobotAdapter(), SystemClipboardAdapter())
+    public constructor() : this(defaultRealOsRobotAdapter(), SystemClipboardAdapter())
 
     /** Creates a real Robot driver with explicit cooperative input coordination [policy]. */
     @ExperimentalSpectreInputCoordinationApi
     public constructor(
         policy: InputLeasePolicy
     ) : this(
-        robot = AwtRobotAdapter(),
+        robot = defaultRealOsRobotAdapter(),
         clipboard = SystemClipboardAdapter(),
         inputLeasePolicy = policy,
     )
@@ -527,18 +527,19 @@ internal constructor(
 
         /**
          * Returns a [RobotDriver] that delivers synthetic AWT events into the live AWT hierarchy
-         * instead of routing through `java.awt.Robot`'s OS-level input. This is the default
+         * instead of routing through OS-level input. This is the default
          * [ComposeAutomator.inProcess] driver. Windows created after construction are still
-         * hit-tested. Screenshots still use `java.awt.Robot.createScreenCapture` so Compose/Skiko
-         * pixels come from the OS framebuffer rather than Swing repainting the host component.
+         * hit-tested. Screenshots still use the real OS framebuffer (AWT Robot on
+         * X11/macOS/Windows, `spectre-wayland-helper` on Linux Wayland) so Compose/Skiko pixels
+         * come from the display compositor rather than Swing repainting the host component.
          */
         public fun synthetic(): RobotDriver = syntheticDriver(rootWindow = null)
 
         /**
          * Returns a [RobotDriver] that delivers synthetic AWT events directly to [rootWindow]'s AWT
-         * hierarchy instead of routing through `java.awt.Robot`'s OS-level input. Screenshots still
-         * use `java.awt.Robot.createScreenCapture` so Compose/Skiko pixels come from the OS
-         * framebuffer rather than Swing repainting the host component.
+         * hierarchy instead of routing through OS-level input. Screenshots still use the real OS
+         * framebuffer (AWT Robot on X11/macOS/Windows, `spectre-wayland-helper` on Linux Wayland)
+         * rather than Swing repainting the host component.
          */
         public fun synthetic(rootWindow: Window): RobotDriver = syntheticDriver(rootWindow)
 
@@ -557,7 +558,7 @@ internal constructor(
             inputLeasePolicy: InputLeasePolicy = InputLeasePolicy.Off,
         ): RobotDriver =
             SyntheticRobotAdapter(rootWindow).let { syntheticInput ->
-                val realCapture = AwtRobotAdapter()
+                val realCapture = defaultRealOsRobotAdapter()
                 RobotDriver(
                     robot = syntheticInput,
                     clipboard = SystemClipboardAdapter(),
@@ -642,6 +643,10 @@ internal interface RobotAdapter : ScreenCaptureAdapter {
     val gatesMacOsAccessibilityTcc: Boolean
         get() = false
 
+    /** True when pointer/keyboard go through a real OS input path (AWT Robot or Wayland helper). */
+    val deliversRealOsInput: Boolean
+        get() = false
+
     fun mouseMove(x: Int, y: Int)
 
     /**
@@ -722,7 +727,7 @@ internal interface ClipboardAdapter {
     fun setContents(contents: Transferable)
 }
 
-private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) :
+internal class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) :
     RobotAdapter, ScreenCaptureAdapter {
 
     override val autoDelayMs: Int
@@ -731,9 +736,9 @@ private class AwtRobotAdapter(private val robot: Robot = createAwtRobot()) :
     // Real `java.awt.Robot` calls block when invoked on the EDT, so RobotDriver must marshal
     // them onto a worker thread.
     override val requiresOffEdt: Boolean = true
+    override val deliversRealOsInput: Boolean = true
 
-    // The only adapter that actually drives the OS through Robot, so the only one that ever
-    // hits macOS TCC. Synthetic and headless-throwing adapters inherit the default `false`.
+    // Real `java.awt.Robot` is the macOS TCC subject. The Wayland helper is not.
     override val gatesMacOsAccessibilityTcc: Boolean = true
 
     override val gatesMacOsScreenRecordingTcc: Boolean = true
@@ -1052,7 +1057,7 @@ internal fun virtualDesktopBounds(): Rectangle {
 private fun lerp(start: Int, end: Int, progress: Float): Int =
     (start + ((end - start) * progress)).toInt()
 
-private const val DEFAULT_AUTO_DELAY_MS = 10
+internal const val DEFAULT_AUTO_DELAY_MS = 10
 private const val DOUBLE_CLICK_COUNT = 2
 private const val DEFAULT_SWIPE_STEPS = 12
 private val DEFAULT_SWIPE_DURATION: Duration = 200.milliseconds

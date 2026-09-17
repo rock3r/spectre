@@ -122,6 +122,31 @@ Expected results by platform:
 
   Pick the smoke window in the compositor portal dialog and inspect the resulting video.
 
+## Linux Wayland consent
+
+On a seated GNOME/Mutter desktop, Spectre uses **one** long-lived `spectre-wayland-helper`
+session for monitor capture and real OS input:
+
+1. The helper installs `dev.sebastiano.spectre.desktop` and calls the host portal
+   `Registry.Register` before any ScreenCast or RemoteDesktop method, so the grant is bound
+   to Spectre rather than an empty host `app_id`.
+2. It opens one RemoteDesktop session (keyboard + pointer + monitor source, persist until
+   revoked). The first run shows Share + Remember / Allow remote interaction. Later Spectre
+   processes on that seat connect to `$XDG_RUNTIME_DIR/spectre/wayland-session.sock`
+   instead of opening a new portal.
+3. Replacement `restore_token` values live under `$XDG_STATE_HOME/spectre/` (or
+   `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR`). They are not stored in `~/.java/robot/`.
+4. If the compositor rejects a stored token, Spectre clears it, retries the dialog once,
+   and fails closed if that retry fails.
+
+`RobotDriver()`, attach, CLI, and MCP on Wayland use this helper. `RobotDriver(robot)` still
+wraps the `java.awt.Robot` you pass in. X11, macOS, and Windows keep their existing backends.
+Window-targeted portal capture is a separate ScreenCast grant and is still bound to the
+picked window.
+
+See [Recording limitations](../RECORDING-LIMITATIONS.md) for token env vars and the
+compositor matrix.
+
 For the Windows WGC video path, run:
 
 ```bash

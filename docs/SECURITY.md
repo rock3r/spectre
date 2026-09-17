@@ -191,6 +191,11 @@ no signature check, hash check, or path constraint. Never set it in an environme
 ingests untrusted input. The published platform helper artifacts are the only supported
 configuration for non-dev use.
 
+On Linux Wayland, `spectre-wayland-helper --session` listens on a same-user unix socket under
+`$XDG_RUNTIME_DIR/spectre/` (override with `SPECTRE_WAYLAND_SESSION_DIR`). Any process running
+as that user can connect and drive pointer, keyboard, and monitor capture for the seat.
+Treat that socket like the agent UDS: trusted local / same-user only.
+
 `SPECTRE_CAPTURE_BACKEND` forces Linux still/video routing when auto-detection is wrong for a
 nested setup: `x11` / `xorg` / `xvfb` → X11 helper path; `wayland` / `portal` → portal path;
 unset or any other value → auto (pure-X11 `DISPLAY` probe, then session type /

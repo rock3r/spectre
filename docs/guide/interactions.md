@@ -311,15 +311,23 @@ public surface:
   `Robot.createScreenCapture`, so screenshots show the pixels the display compositor
   currently exposes rather than a Swing repaint of the Compose host. On macOS this
   still requires Screen Recording permission and an unlocked screen, but synthetic input
-  itself does not need Accessibility permission.
-- **`RobotDriver()`** — the explicit real-OS opt-in. Uses a fresh `java.awt.Robot` plus
-  the system clipboard. Moves the real cursor, takes system-wide keyboard focus, and is
-  visible to other applications. This is what end users experience; pass it to
+  itself does not need Accessibility permission. On Linux Wayland, that framebuffer read
+  goes through the same long-lived `spectre-wayland-helper` session as real OS input —
+  not a per-JVM `java.awt.Robot` portal.
+- **`RobotDriver()`** — the explicit real-OS opt-in. On X11, macOS, and Windows this
+  uses a fresh `java.awt.Robot` plus the system clipboard. On Linux Wayland it routes
+  pointer, keyboard, and region capture through `spectre-wayland-helper` so compositor
+  clicks restack without XTest and so parallel JVMs share one RemoteDesktop grant. Moves
+  the real cursor, takes system-wide keyboard focus, and is visible to other applications.
+  This is what end users experience; pass it to
   `ComposeAutomator.inProcess(robotDriver = RobotDriver())` when you need that fidelity.
   On macOS, the first input or screenshot call lazily probes TCC permissions
   (Accessibility for input, Screen Recording for capture) and throws
   `IllegalStateException` with remediation guidance when either is denied — see
   [Troubleshooting](troubleshooting.md#macos-robotdriver-throws-illegalstateexception-about-tcc).
+  On Wayland, the first seated run shows one Share + Remember / Allow remote interaction
+  dialog; later Spectre processes reuse the helper session. See
+  [Linux Wayland consent](recording.md#linux-wayland-consent).
 - **`RobotDriver(robot)`** — same as the no-arg real-OS form but reuses an existing
   `java.awt.Robot` you've already constructed (e.g., one targeted at a non-default
   `GraphicsDevice`).

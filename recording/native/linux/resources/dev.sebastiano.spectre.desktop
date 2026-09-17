@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Spectre
+Comment=Compose Desktop UI automation
+Exec=true
+NoDisplay=true
+StartupNotify=false
+Categories=Development;
+DBusActivatable=false
