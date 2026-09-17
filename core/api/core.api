@@ -345,6 +345,11 @@ public final class dev/sebastiano/spectre/core/RobotDriver$Companion {
 	public final fun synthetic (Ljava/awt/Window;Ldev/sebastiano/spectre/core/InputLeasePolicy;)Ldev/sebastiano/spectre/core/RobotDriver;
 }
 
+public final class dev/sebastiano/spectre/core/ScreenCaptureBackendKt {
+	public static final fun isWaylandSession (Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;)Z
+	public static synthetic fun isWaylandSession$default (Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Z
+}
+
 public final class dev/sebastiano/spectre/core/SurfaceIdAssigner {
 	public static final field HASH_MULTIPLIER I
 	public fun <init> ()V

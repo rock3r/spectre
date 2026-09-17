@@ -164,6 +164,8 @@ ever call wait helpers from a coroutine on `Dispatchers.Main` (Swing EDT), wrap 
 
 ## Where to go next
 
+- **[JUnit integration](junit.md)** for the extension/rule, [screenshot golds](junit.md#screenshot-golds),
+  and failure artifacts.
 - **[The automator](automator.md)** for the mental model — surfaces, the semantics tree,
   and the deliberate lack of auto-wait.
 - **[Finding nodes](selectors.md)** if `testTag` isn't enough.

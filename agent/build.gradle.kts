@@ -1,4 +1,5 @@
 import dev.sebastiano.spectre.build.forwardRealKeyboardGate
+import dev.sebastiano.spectre.build.forwardScreenshotGoldUpdateMode
 import javax.inject.Inject
 import org.gradle.jvm.tasks.Jar
 import org.gradle.process.CommandLineArgumentProvider
@@ -116,6 +117,7 @@ tasks.withType<Test>().configureEach {
     // forwarding and task-input reasoning as the Windows gate above; shared with `:server` and
     // `:testing` so there is one gate and one property name.
     forwardRealKeyboardGate(providers)
+    forwardScreenshotGoldUpdateMode(providers)
 
     jvmArgumentProviders.add(
         CommandLineArgumentProvider {
