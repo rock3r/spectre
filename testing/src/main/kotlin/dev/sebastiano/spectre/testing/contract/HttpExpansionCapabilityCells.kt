@@ -28,18 +28,20 @@ internal fun httpExpansionCapabilityCells(
             operation = AutomatorOperation.ClearAndTypeText,
             transport = AutomatorTransport.Http,
             platform = PlatformPrerequisite.Headless,
-            state = CellState.Supported,
-            evidence = listOf(httpTransportExpansion),
-            rationale = "Unknown-key 404 path; live replacement typing is not-yet-CI-executed.",
+            state = CellState.UnsupportedByDesign,
+            rationale =
+                "HTTP clearAndTypeText needs a live node and host Robot typing; headless " +
+                    "hosts throw. Unknown-key 404 is not a Supported capture of the op.",
         )
     cells +=
         CapabilityCell(
             operation = AutomatorOperation.NodeScreenshot,
             transport = AutomatorTransport.Http,
             platform = PlatformPrerequisite.Headless,
-            state = CellState.Supported,
-            evidence = listOf(httpTransportExpansion),
-            rationale = "Malformed/unknown nodeKey taxonomy; live capture needs a display.",
+            state = CellState.UnsupportedByDesign,
+            rationale =
+                "Node screenshot needs a live node and display-backed capture, matching " +
+                    "HTTP Screenshot Headless. Malformed/unknown-key 4xx is not Supported.",
         )
     cells +=
         CapabilityCell(
