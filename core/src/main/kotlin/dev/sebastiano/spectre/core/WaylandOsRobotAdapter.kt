@@ -64,7 +64,7 @@ internal fun loadWaylandRobotAdapter(
 ): RobotAdapter? =
     resolveWaylandRobotAdapter(
         recordingBridge = loadRecordingWaylandBridge(classLoader),
-        liveSeat = WaylandSeatSocketAdapter.takeIfLive(),
+        liveSeat = WaylandSeatSocketAdapter(),
     )
 
 private fun loadRecordingWaylandBridge(classLoader: ClassLoader): RobotAdapter? {

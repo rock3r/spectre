@@ -217,12 +217,11 @@ fn with_session(
 
 fn run_screenshot(state: &Mutex<SessionState>, command: ScreenshotCommand) -> Result<u64> {
     let output = PathBuf::from(&command.output);
-    let (stream, fd) = {
+    let (stream, owned) = {
         let guard = state.lock().expect("session mutex");
-        (guard.session.stream.clone(), guard.session.pipewire_fd)
+        let owned = guard.session.open_pipewire_remote()?;
+        (guard.session.stream.clone(), owned)
     };
-    let dup_fd = nix::unistd::dup(fd).context("dup PipeWire FD for screenshot")?;
-    let owned = unsafe { std::os::fd::OwnedFd::from_raw_fd(dup_fd) };
     crate::screenshot::capture_from_stream(&stream, owned.as_raw_fd(), &command, &output)?;
     Ok(std::fs::metadata(&output)?.len())
 }
@@ -237,8 +236,7 @@ fn run_recording_start(
         anyhow::bail!("a recording is already running on the Spectre Wayland session");
     }
     let stream = guard.session.stream.clone();
-    let fd = nix::unistd::dup(guard.session.pipewire_fd).context("dup PipeWire FD for recording")?;
-    let owned_fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) };
+    let owned_fd = guard.session.open_pipewire_remote()?;
     let raw = owned_fd.as_raw_fd();
     let mut flags = FdFlag::from_bits_truncate(fcntl(raw, FcntlArg::F_GETFD).context("F_GETFD")?);
     flags.remove(FdFlag::FD_CLOEXEC);

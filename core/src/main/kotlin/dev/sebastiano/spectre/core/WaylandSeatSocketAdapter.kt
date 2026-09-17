@@ -82,7 +82,7 @@ internal class WaylandSeatSocketAdapter(
     }
 
     private fun send(line: String) {
-        val socket = socketPath() ?: error(MISSING_WAYLAND_HELPER_MESSAGE)
+        val socket = socketPath() ?: startHelperFromEnv() ?: error(MISSING_WAYLAND_HELPER_MESSAGE)
         SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
             channel.connect(UnixDomainSocketAddress.of(socket))
             writeLine(channel, line)
@@ -92,14 +92,30 @@ internal class WaylandSeatSocketAdapter(
             }
         }
     }
-
-    companion object {
-        fun takeIfLive(): WaylandSeatSocketAdapter? =
-            if (liveWaylandSessionSocket() != null) WaylandSeatSocketAdapter() else null
-    }
 }
 
 internal const val VERTICAL_SEAT_POINTER_AXIS: Int = 0
+private const val HELPER_START_TIMEOUT_MS: Long = 90_000
+private const val HELPER_START_POLL_MS: Long = 50
+
+internal fun startHelperFromEnv(env: (String) -> String? = System::getenv): Path? {
+    val helper = env("SPECTRE_WAYLAND_HELPER")?.takeIf { it.isNotBlank() } ?: return null
+    ProcessBuilder(helper, "--session")
+        .redirectInput(ProcessBuilder.Redirect.INHERIT)
+        .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+        .redirectError(ProcessBuilder.Redirect.INHERIT)
+        .start()
+    val deadline =
+        System.nanoTime() +
+            java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(HELPER_START_TIMEOUT_MS)
+    while (System.nanoTime() < deadline) {
+        liveWaylandSessionSocket()?.let {
+            return it
+        }
+        Thread.sleep(HELPER_START_POLL_MS)
+    }
+    return liveWaylandSessionSocket()
+}
 
 internal fun waylandScreenshotCommandJson(
     region: Rectangle,

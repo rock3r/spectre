@@ -15,7 +15,7 @@ use dbus::arg::{OwnedFd, PropMap};
 use dbus::blocking::Connection;
 use dbus::Path as DBusPath;
 use std::collections::HashMap;
-use std::os::fd::IntoRawFd;
+use std::os::fd::{FromRawFd, IntoRawFd};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -84,6 +84,19 @@ impl RemoteDesktopSession {
             )
             .context("NotifyPointerAxisDiscrete")?;
         Ok(())
+    }
+
+    pub fn open_pipewire_remote(&self) -> Result<std::os::fd::OwnedFd> {
+        let open_options: PropMap = HashMap::new();
+        let (fd,): (OwnedFd,) = self
+            .proxy()
+            .method_call(
+                SCREEN_CAST_INTERFACE,
+                "OpenPipeWireRemote",
+                (self.session_path(), open_options),
+            )
+            .context("OpenPipeWireRemote")?;
+        Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd.into_raw_fd()) })
     }
 }
 

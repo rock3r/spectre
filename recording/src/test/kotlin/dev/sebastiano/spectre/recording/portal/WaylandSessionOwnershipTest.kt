@@ -98,6 +98,29 @@ class WaylandSessionOwnershipTest {
         }
     }
 
+    @Test
+    fun `helper that exits before binding fails closed instead of waiting out the timeout`() {
+        val dir = Files.createTempDirectory("spectre-wayland-helper-exit-")
+        try {
+            val paths = waylandSessionPaths(dir)
+            val error =
+                assertFailsWith<IllegalStateException> {
+                    resolveWaylandSessionSocket(
+                        paths = paths,
+                        socketIsLive = { false },
+                        startHelper = {},
+                        waitForSocket = { _, _ -> false },
+                        timeoutMs = 5_000,
+                        helperExited = { true },
+                        helperExitDetail = { "exited with 1" },
+                    )
+                }
+            assertTrue(error.message.orEmpty().contains("exited with 1"))
+        } finally {
+            dir.toFile().deleteRecursively()
+        }
+    }
+
     private fun assertFalsePathContainsJavaRobot(path: String) {
         assertTrue(!path.contains(".java/robot"), path)
         assertTrue(!path.contains("robot.properties"), path)

@@ -163,6 +163,7 @@ internal fun waylandSessionPaths(dir: java.nio.file.Path): WaylandSessionPaths =
     )
 
 internal const val VERTICAL_POINTER_AXIS: Int = 0
+internal const val SESSION_SOCKET_POLL_MS: Long = 50
 
 internal fun resolveWaylandSessionSocket(
     paths: WaylandSessionPaths,
@@ -170,19 +171,28 @@ internal fun resolveWaylandSessionSocket(
     startHelper: () -> Unit,
     waitForSocket: (java.nio.file.Path, Long) -> Boolean,
     timeoutMs: Long,
+    helperExited: () -> Boolean = { false },
+    helperExitDetail: () -> String = { "exited before binding the session socket" },
 ): java.nio.file.Path {
     if (java.nio.file.Files.exists(paths.socket) && socketIsLive(paths.socket)) {
         return paths.socket
     }
     java.nio.file.Files.deleteIfExists(paths.socket)
     startHelper()
-    check(waitForSocket(paths.socket, timeoutMs)) {
+    val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+    while (System.nanoTime() < deadline) {
+        check(!helperExited()) { "spectre-wayland-helper --session ${helperExitDetail()}" }
+        if (waitForSocket(paths.socket, SESSION_SOCKET_POLL_MS)) {
+            return paths.socket
+        }
+    }
+    check(!helperExited()) { "spectre-wayland-helper --session ${helperExitDetail()}" }
+    error(
         "spectre-wayland-helper --session did not create ${paths.socket} within ${timeoutMs}ms. " +
             "Accept the compositor Share / Allow remote interaction dialog if it is waiting, " +
             "and check that xdg-desktop-portal is running. If a previous helper died, delete a " +
             "stale ${paths.socket} and retry."
-    }
-    return paths.socket
+    )
 }
 
 internal fun isRestoreTokenRejection(error: Throwable): Boolean {
