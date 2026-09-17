@@ -989,6 +989,8 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
             token_dir = Path(env["SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"])
             self.assertEqual(out_dir / "wayland-restore-tokens", token_dir)
             self.assertTrue(token_dir.is_dir())
+            self.assertEqual(str(out_dir / "wayland-session"), env["SPECTRE_WAYLAND_SESSION_DIR"])
+            self.assertTrue(Path(env["SPECTRE_WAYLAND_SESSION_DIR"]).is_dir())
             self.assertEqual(str(helper), env["SPECTRE_WAYLAND_HELPER"])
             if os.name == "nt":
                 self.assertTrue(token_dir.is_dir())

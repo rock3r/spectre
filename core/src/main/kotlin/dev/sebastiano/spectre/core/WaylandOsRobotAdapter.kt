@@ -30,6 +30,8 @@ internal object MissingWaylandHelperAdapter : RobotAdapter {
     override val shouldDrainAfterClipboardPaste: Boolean
         get() = true
 
+    override fun getLockingKeyState(keyCode: Int): Boolean? = awtLockingKeyState(keyCode)
+
     override fun mouseMove(x: Int, y: Int): Unit = failMissing()
 
     override fun requireInputSupported(): Unit = failMissing()
@@ -83,6 +85,8 @@ private class WaylandBridgeRobotAdapter(private val bridge: Class<*>) : RobotAda
     override val deliversRealOsInput: Boolean = true
     override val shouldDrainAfterClipboardPaste: Boolean
         get() = true
+
+    override fun getLockingKeyState(keyCode: Int): Boolean? = awtLockingKeyState(keyCode)
 
     override fun mouseMove(x: Int, y: Int) {
         invoke("mouseMove", x, y)
@@ -164,3 +168,12 @@ internal fun screenshotToLogicalSize(image: BufferedImage, region: Rectangle): B
     graphics.dispose()
     return scaled
 }
+
+internal fun awtLockingKeyState(keyCode: Int): Boolean? =
+    try {
+        java.awt.Toolkit.getDefaultToolkit().getLockingKeyState(keyCode)
+    } catch (_: UnsupportedOperationException) {
+        null
+    } catch (_: IllegalArgumentException) {
+        null
+    }

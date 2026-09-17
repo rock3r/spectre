@@ -28,6 +28,8 @@ internal class WaylandSeatSocketAdapter(
     override val shouldDrainAfterClipboardPaste: Boolean
         get() = true
 
+    override fun getLockingKeyState(keyCode: Int): Boolean? = awtLockingKeyState(keyCode)
+
     override fun mouseMove(x: Int, y: Int) {
         send("""{"command":"pointer_move","x":$x,"y":$y}""")
     }
@@ -95,6 +97,7 @@ internal class WaylandSeatSocketAdapter(
 }
 
 internal const val VERTICAL_SEAT_POINTER_AXIS: Int = 0
+internal const val WAYLAND_SESSION_OWNED_EXIT: Int = 75
 private const val HELPER_START_TIMEOUT_MS: Long = 90_000
 private const val HELPER_START_POLL_MS: Long = 50
 
@@ -112,8 +115,12 @@ internal fun startHelperFromEnv(env: (String) -> String? = System::getenv): Path
         exitDetail = { "exit ${process.exitValue()}" },
         timeoutMs = HELPER_START_TIMEOUT_MS,
         pollMs = HELPER_START_POLL_MS,
+        ownershipLost = { !process.isAlive && !isFatalInjectedHelperExit(process.exitValue()) },
     )
 }
+
+internal fun isFatalInjectedHelperExit(exitCode: Int): Boolean =
+    exitCode != 0 && exitCode != WAYLAND_SESSION_OWNED_EXIT
 
 internal fun awaitInjectedHelperSocket(
     liveSocket: () -> Path?,
@@ -122,15 +129,18 @@ internal fun awaitInjectedHelperSocket(
     timeoutMs: Long,
     pollMs: Long,
     sleep: (Long) -> Unit = { Thread.sleep(it) },
+    ownershipLost: () -> Boolean = { false },
 ): Path? {
     val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMs)
     while (System.nanoTime() < deadline) {
         liveSocket()?.let {
             return it
         }
-        check(helperAlive()) {
-            "SPECTRE_WAYLAND_HELPER --session exited before binding the seat socket " +
-                "(${exitDetail()})"
+        if (!helperAlive() && !ownershipLost()) {
+            error(
+                "SPECTRE_WAYLAND_HELPER --session exited before binding the seat socket " +
+                    "(${exitDetail()})"
+            )
         }
         sleep(pollMs)
     }

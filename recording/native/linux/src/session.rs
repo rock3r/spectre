@@ -20,7 +20,13 @@ static NEXT_CLIENT_ID: AtomicU64 = AtomicU64::new(1);
 
 pub fn serve() -> Result<()> {
     let dir = session_lock::session_dir();
-    let lock = acquire_session_lock(&dir)?;
+    let lock = match acquire_session_lock(&dir) {
+        Ok(lock) => lock,
+        Err(e) if format!("{e:#}").contains("already owned") => {
+            std::process::exit(session_lock::SESSION_OWNED_EXIT);
+        }
+        Err(e) => return Err(e),
+    };
     let socket = session_lock::socket_path(&dir);
     if socket.exists() {
         let _ = std::fs::remove_file(&socket);
@@ -90,7 +96,9 @@ fn maybe_daemonize() {
     {
         return;
     }
-    if let Err(e) = nix::unistd::daemon(true, true) {
+    // noclose=false redirects stdio to /dev/null so piped parents (Gradle, portal-token-warmup)
+    // still observe EOF after this process becomes a session daemon.
+    if let Err(e) = nix::unistd::daemon(true, false) {
         eprintln!("spectre-wayland-helper: daemonize failed ({e}); staying in foreground");
     }
 }
