@@ -57,25 +57,19 @@ internal fun Rectangle.toDto(): RectangleDto =
         height = height.toDouble(),
     )
 
-internal fun AutomatorTree.toDto(trackedWindows: List<TrackedWindow>): TreeResponse =
-    TreeResponse(windows = windows().map { it.toDto(trackedWindows) })
+internal fun AutomatorTree.toDto(): TreeResponse =
+    TreeResponse(windows = windows().map { it.toDto() })
 
-internal fun AutomatorWindow.toDto(trackedWindows: List<TrackedWindow>): WindowTreeDto {
-    // Pair by stable surfaceId, not list index: a concurrent refreshWindows() between
-    // automator.tree() and reading automator.windows can insert/remove a surface and shift
-    // indices. surfaceId is documented as stable across refreshes.
-    val tracked =
-        checkNotNull(trackedWindows.firstOrNull { it.surfaceId == surfaceId }) {
-            "tree surfaceId $surfaceId missing from tracked window snapshot"
-        }
-    return WindowTreeDto(
+internal fun AutomatorWindow.toDto(): WindowTreeDto =
+    WindowTreeDto(
         index = windowIndex,
         surfaceId = surfaceId,
         isPopup = isPopup,
-        composeSurfaceBounds = tracked.composeSurfaceBoundsOnScreen.toDto(),
+        // Use the TrackedWindow held by this tree snapshot, not a later automator.windows
+        // read that a concurrent refreshWindows() can shrink.
+        composeSurfaceBounds = trackedWindow.composeSurfaceBoundsOnScreen.toDto(),
         roots = roots().map { it.toTreeNodeDto() },
     )
-}
 
 internal fun AutomatorNode.toTreeNodeDto(): TreeNodeDto =
     TreeNodeDto(node = toDto(), children = children.map { it.toTreeNodeDto() })

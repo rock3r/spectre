@@ -56,7 +56,7 @@ internal fun Route.spectreQueryRoutes(automator: ComposeAutomator) {
         val indexParam = call.request.queryParameters["windowIndex"]
         val tree = automator.tree()
         if (indexParam == null) {
-            call.respond(tree.toDto(automator.windows))
+            call.respond(tree.toDto())
             return@get
         }
         val index = indexParam.toIntOrNull()
@@ -64,7 +64,7 @@ internal fun Route.spectreQueryRoutes(automator: ComposeAutomator) {
             respondInvalidSelector(call)
             return@get
         }
-        call.respond(TreeResponse(windows = listOf(tree.window(index).toDto(automator.windows))))
+        call.respond(TreeResponse(windows = listOf(tree.window(index).toDto())))
     }
 
     get("/printTree") { call.respond(PrintTreeResponse(dump = automator.printTree())) }
@@ -86,15 +86,29 @@ private suspend fun respondScreenshot(call: ApplicationCall, capture: () -> Buff
         call.respond(capture().toScreenshotResponse())
     } catch (ex: kotlinx.coroutines.CancellationException) {
         throw ex
-    } catch (_: IllegalStateException) {
-        // Full-frame and node capture share this bucket: native capture backends throw
-        // IllegalStateException, and there is no dedicated SpectreErrorCategory for capture
-        // failure. Keep InputRejected (409) rather than inventing a new wire name in this
-        // expansion.
-        call.respond(
-            SpectreErrorCategory.httpStatus(SpectreErrorCategory.InputRejected),
-            SpectreErrorCategory.InputRejected.wireName,
-        )
+    } catch (ex: UnsupportedOperationException) {
+        respondScreenshotFailure(call, ex)
+    } catch (ex: IllegalStateException) {
+        respondScreenshotFailure(call, ex)
+    }
+}
+
+private suspend fun respondScreenshotFailure(call: ApplicationCall, ex: Exception) {
+    val category = mapScreenshotFailure(ex)
+    call.respond(SpectreErrorCategory.httpStatus(category), category.wireName)
+}
+
+/**
+ * Native capture backends throw [IllegalStateException] or [UnsupportedOperationException] (missing
+ * `:recording` artifact, disabled/headless backend, non-Frame host). Both are `inputRejected`
+ * (409); [CancellationException] is not a capture failure.
+ */
+internal fun mapScreenshotFailure(ex: Throwable): SpectreErrorCategory {
+    if (ex is kotlinx.coroutines.CancellationException) throw ex
+    return when (ex) {
+        is UnsupportedOperationException,
+        is IllegalStateException -> SpectreErrorCategory.InputRejected
+        else -> throw ex
     }
 }
 

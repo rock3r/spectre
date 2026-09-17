@@ -35,7 +35,7 @@ public class AutomatorTree internal constructor(private val windows: List<Automa
 public class AutomatorWindow
 internal constructor(
     public val windowIndex: Int,
-    internal val trackedWindow: TrackedWindow,
+    @property:InternalSpectreApi public val trackedWindow: TrackedWindow,
     private val nodes: List<AutomatorNode>,
 ) {
 
