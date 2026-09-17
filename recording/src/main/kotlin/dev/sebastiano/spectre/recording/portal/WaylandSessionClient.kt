@@ -124,15 +124,21 @@ internal constructor(
 
     private fun ensureSocket(): Path {
         val paths = waylandSessionPaths(sessionDir())
+        val helperProcess = java.util.concurrent.atomic.AtomicReference<Process?>(null)
         return resolveWaylandSessionSocket(
             paths = paths,
             socketIsLive = ::probeUnixSocket,
             startHelper = {
                 val helper = helperExtractor.extract()
-                processFactory.startSession(helper)
+                helperProcess.set(processFactory.startSession(helper))
             },
             waitForSocket = waitForSocket,
             timeoutMs = SESSION_SOCKET_TIMEOUT_MS,
+            helperExited = { helperProcess.get()?.isAlive == false },
+            helperExitDetail = {
+                val code = helperProcess.get()?.exitValue()
+                "exited before binding the session socket (exit $code)"
+            },
         )
     }
 

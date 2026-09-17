@@ -122,6 +122,11 @@ class WaylandOsRobotAdapterTest {
     }
 
     @Test
+    fun `SPECTRE_WAYLAND_HELPER is required to spawn a helper from inject`() {
+        assertEquals(null, startHelperFromEnv { null })
+    }
+
+    @Test
     fun `seat socket path is Spectre-owned not java robot`() {
         val path =
             requireNotNull(
