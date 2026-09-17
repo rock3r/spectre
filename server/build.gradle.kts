@@ -1,4 +1,5 @@
 import dev.sebastiano.spectre.build.forwardRealKeyboardGate
+import dev.sebastiano.spectre.build.forwardScreenshotGoldUpdateMode
 
 plugins {
     alias(libs.plugins.detekt)
@@ -57,4 +58,5 @@ dependencies {
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
     forwardRealKeyboardGate(providers)
+    forwardScreenshotGoldUpdateMode(providers)
 }

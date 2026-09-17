@@ -298,6 +298,108 @@ Do not rely on UI-element mode for clipboard-backed `pasteText`; that path still
 through macOS clipboard services outside the synthetic key-event path. Run recording tests
 as a separate, foreground-capable task while establishing Screen Recording TCC grants.
 
+## Screenshot golds
+
+Opt-in visual assertions against committed PNG golds. This is **not** automatic: nothing
+compares golds unless a test calls `assertMatchesGold`. It is also not a substitute for
+[failure artifacts](#failure-artifacts) (diagnostics on any failure) or
+[failure video](#failure-video).
+
+Prefer a window-scoped `automator.screenshot(windowIndex = …)` when `spectre-recording`
+and the OS helper are on the test runtime classpath. Region and node stills can clip or
+include occlusion; Linux X11 window capture is frontmost-window; embedded Swing/Jewel
+panels may not have a native window handle. Settle the UI first
+(`waitForVisualIdle()`).
+
+```kotlin
+import dev.sebastiano.spectre.core.ComposeAutomator
+import dev.sebastiano.spectre.testing.ScreenshotTolerance
+import dev.sebastiano.spectre.testing.assertMatchesGold
+import dev.sebastiano.spectre.testing.runSpectreTest
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestInfo
+
+@Test
+fun homeMatchesGold(testInfo: TestInfo, automator: ComposeAutomator): Unit = runSpectreTest {
+    automator.waitForVisualIdle()
+    assertMatchesGold(
+        testInfo = testInfo,
+        name = "main-window",
+        image = automator.screenshot(windowIndex = 0),
+        tolerance = ScreenshotTolerance(), // strict: channel delta 0, no differing pixels
+    )
+}
+```
+
+Pass JUnit 5 `TestInfo` when the body runs inside `runSpectreTest` (it executes on a
+worker dispatcher). The name-only `assertMatchesGold(name, image)` overload infers the
+test from the calling thread and is for JUnit methods that call it directly.
+
+Defaults are strict (max channel delta 0, differing-pixel count/fraction 0). Equal
+dimensions are required; there is no auto-scale. Loosen `maxChannelDelta` and/or
+`maxDifferingPixels` / `maxDifferingPixelFraction` when font AA or chrome noise is
+expected. There is no SSIM or perceptual matcher.
+
+### Gold layout
+
+Committed files:
+
+```text
+src/test/resources/spectre-golds/
+  <test-class>/
+    <name>/
+      <os>/                 # macos | windows | linux-x11 | linux-wayland
+        scale-<sx>x<sy>/    # from the default screen transform
+          gold.png
+```
+
+The default root is `src/test/resources/spectre-golds/` (the main JUnit source set). Linux
+keys follow the same session detection as window capture: `SPECTRE_CAPTURE_BACKEND`,
+pure-X11/`Xvfb` `DISPLAY`, then `XDG_SESSION_TYPE` / `WAYLAND_DISPLAY`. A seated Wayland
+desktop that also exports `DISPLAY` (XWayland) still keys as `linux-wayland`, so those
+golds are not mixed with Xvfb `SOFTWARE_COMPAT` stills. Theme, Skiko render API, JDK, and
+font AA are **not** extra path keys — pin the runner (see [Running on CI](ci.md)) or
+loosen tolerance.
+
+On mismatch, the assertion writes `actual.png` and a copy of the expected `gold.png`
+under:
+
+```text
+build/reports/spectre-screenshots/<class>/<method>/<name>/
+```
+
+When dimensions match, it also writes `diff.png` (magenta highlight on black). Size
+mismatches omit the diff. Class, method, and name segments are sanitized (path
+separators, reserved Windows device names). CI upload:
+
+```yaml
+- name: Upload Spectre screenshot gold failures
+  if: failure()
+  uses: actions/upload-artifact@v4
+  with:
+    name: spectre-screenshot-golds
+    path: "**/build/reports/spectre-screenshots/**"
+    if-no-files-found: ignore
+```
+
+Keep that glob **separate** from `**/build/reports/spectre/**` (failure stills).
+
+### Update mode
+
+Off by default. Rewrite the **current** OS + scale gold (not every matrix cell):
+
+| Knob | Effect |
+| --- | --- |
+| `SPECTRE_UPDATE_SCREENSHOT_GOLDS=true` | Environment; read by the test JVM |
+| `-Pspectre.updateScreenshotGolds=true` | Gradle property; Spectre's `:testing` test task forwards it as `-Ddev.sebastiano.spectre.testing.updateScreenshotGolds=true` |
+
+When both are set, the Gradle/system property **wins**, including an explicit `false`
+that disables a true environment variable. Unset property falls back to the environment
+variable. Consumers who use `-P` on their own `Test` task must forward it the same way
+(or set the environment variable, which needs no forwarding).
+
+Update mode must run on the OS and scale that owns that gold file.
+
 ## Failure artifacts
 
 When a Spectre-driven test **fails**, `ComposeAutomatorExtension` and `ComposeAutomatorRule`

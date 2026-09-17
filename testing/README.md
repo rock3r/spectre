@@ -13,6 +13,8 @@ Test ergonomics for Spectre.
   resolution for `ComposeAutomator` test method parameters.
 - `AutomatorFactory` — typealias for the `() -> ComposeAutomator` lambda the rule and extension
   use to build their per-test instances.
+- `assertMatchesGold` — opt-in PNG gold assertion. Off unless a test calls it; see
+  [Screenshot golds](../docs/guide/junit.md#screenshot-golds).
 
 Both wrappers default to `ComposeAutomator.inProcess()`, which defaults to synthetic AWT
 input. Tests that need a stub for headless CI or focused unit testing can pass a custom
