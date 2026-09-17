@@ -99,6 +99,32 @@ class WaylandSessionOwnershipTest {
     }
 
     @Test
+    fun `ownership loser still joins the winning helper socket`() {
+        val dir = Files.createTempDirectory("spectre-wayland-winner-socket-")
+        try {
+            val paths = waylandSessionPaths(dir)
+            var polls = 0
+            val resolved =
+                resolveWaylandSessionSocket(
+                    paths = paths,
+                    socketIsLive = { false },
+                    startHelper = {},
+                    waitForSocket = { _, _ ->
+                        polls += 1
+                        polls >= 3
+                    },
+                    timeoutMs = 1_000,
+                    helperExited = { true },
+                    helperExitDetail = { "exited with 1" },
+                )
+            assertEquals(paths.socket, resolved)
+            assertTrue(polls >= 3)
+        } finally {
+            dir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun `helper that exits before binding fails closed instead of waiting out the timeout`() {
         val dir = Files.createTempDirectory("spectre-wayland-helper-exit-")
         try {
@@ -110,7 +136,7 @@ class WaylandSessionOwnershipTest {
                         socketIsLive = { false },
                         startHelper = {},
                         waitForSocket = { _, _ -> false },
-                        timeoutMs = 5_000,
+                        timeoutMs = 250,
                         helperExited = { true },
                         helperExitDetail = { "exited with 1" },
                     )

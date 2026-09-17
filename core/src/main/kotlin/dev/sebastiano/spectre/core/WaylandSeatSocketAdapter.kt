@@ -100,21 +100,41 @@ private const val HELPER_START_POLL_MS: Long = 50
 
 internal fun startHelperFromEnv(env: (String) -> String? = System::getenv): Path? {
     val helper = env("SPECTRE_WAYLAND_HELPER")?.takeIf { it.isNotBlank() } ?: return null
-    ProcessBuilder(helper, "--session")
-        .redirectInput(ProcessBuilder.Redirect.INHERIT)
-        .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-        .redirectError(ProcessBuilder.Redirect.INHERIT)
-        .start()
-    val deadline =
-        System.nanoTime() +
-            java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(HELPER_START_TIMEOUT_MS)
+    val process =
+        ProcessBuilder(helper, "--session")
+            .redirectInput(ProcessBuilder.Redirect.INHERIT)
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .redirectError(ProcessBuilder.Redirect.INHERIT)
+            .start()
+    return awaitInjectedHelperSocket(
+        liveSocket = ::liveWaylandSessionSocket,
+        helperAlive = { process.isAlive },
+        exitDetail = { "exit ${process.exitValue()}" },
+        timeoutMs = HELPER_START_TIMEOUT_MS,
+        pollMs = HELPER_START_POLL_MS,
+    )
+}
+
+internal fun awaitInjectedHelperSocket(
+    liveSocket: () -> Path?,
+    helperAlive: () -> Boolean,
+    exitDetail: () -> String,
+    timeoutMs: Long,
+    pollMs: Long,
+    sleep: (Long) -> Unit = { Thread.sleep(it) },
+): Path? {
+    val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMs)
     while (System.nanoTime() < deadline) {
-        liveWaylandSessionSocket()?.let {
+        liveSocket()?.let {
             return it
         }
-        Thread.sleep(HELPER_START_POLL_MS)
+        check(helperAlive()) {
+            "SPECTRE_WAYLAND_HELPER --session exited before binding the seat socket " +
+                "(${exitDetail()})"
+        }
+        sleep(pollMs)
     }
-    return liveWaylandSessionSocket()
+    return liveSocket()
 }
 
 internal fun waylandScreenshotCommandJson(
