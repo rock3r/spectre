@@ -77,3 +77,16 @@ jobs:
         # (10 tests, exec the real binary). End-to-end SCK recording is NOT exercised
         # because CI lacks Screen Recording TCC; that's expected and documented.
         run: ./gradlew :recording:check
+
+      - name: Run native composite-window screenshot smoke
+        env:
+          SPECTRE_COMPOSITE_SMOKE_OUTPUT: ${{ runner.temp }}/composite-window-macos.png
+        run: ./gradlew :sample-desktop:runCompositeWindowScreenshotSmoke
+
+      - name: Upload macOS composite-window screenshot
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: composite-window-macos
+          path: ${{ runner.temp }}/composite-window-macos.png
+          if-no-files-found: warn

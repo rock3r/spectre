@@ -25,16 +25,21 @@ internal constructor(
         requireScreenCaptureAccess()
         val helperPath = helperExtractor.extract()
         val output = Files.createTempFile("spectre-sck-window-screenshot-", ".png")
-        val discriminator = TitleDiscriminator(window)
+        val discriminator =
+            if ((window as? TitleDiscriminationAware)?.requiresTitleDiscriminator == false) {
+                null
+            } else {
+                TitleDiscriminator(window)
+            }
         var process: Process? = null
-        discriminator.apply()
+        discriminator?.apply()
         try {
             val argv =
                 HelperArguments(
                         mode = "screenshot",
                         source = HelperSource.Window,
                         pid = windowOwnerPid,
-                        titleContains = discriminator.value,
+                        titleContains = discriminator?.value ?: checkNotNull(window.title),
                         output = output,
                         fps = SCREENSHOT_FRAME_RATE,
                         captureCursor = false,
@@ -63,7 +68,7 @@ internal constructor(
             try {
                 val wasInterrupted = Thread.interrupted()
                 try {
-                    discriminator.restore()
+                    discriminator?.restore()
                 } finally {
                     if (wasInterrupted) Thread.currentThread().interrupt()
                 }
