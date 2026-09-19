@@ -186,10 +186,11 @@ private fun runMissingTitleFailsClosed() {
                     )
             }
             .exceptionOrNull()
-    check(error != null) {
-        "Missing title must fail closed; helper started a recording instead of erroring"
-    }
-    val message = generateSequence(error) { it.cause }.mapNotNull { it.message }.joinToString("\n")
+    val failed =
+        checkNotNull(error) {
+            "Missing title must fail closed; helper started a recording instead of erroring"
+        }
+    val message = generateSequence(failed) { it.cause }.mapNotNull { it.message }.joinToString("\n")
     check(message.contains("was not found") || message.contains("not found")) {
         "Missing-title error must mention the unresolved window, got: $message"
     }
@@ -199,7 +200,7 @@ private fun runMissingTitleFailsClosed() {
     check(!Files.exists(output) || Files.size(output) == 0L) {
         "Fail-closed missing title must not leave a desktop-sized MP4 at $output"
     }
-    println("PASS missing-title: helper failed closed (${error.javaClass.simpleName})")
+    println("PASS missing-title: helper failed closed (${failed.javaClass.simpleName})")
 }
 
 private fun assertWindowSizedMp4(
