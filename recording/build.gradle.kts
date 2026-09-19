@@ -1214,8 +1214,8 @@ tasks.register<JavaExec>("runFfmpegX11GrabSmoke") {
 tasks.register<JavaExec>("runLinuxX11RecordingSmoke") {
     group = "verification"
     description =
-        "Boots a JFrame, records it for ~3s via the Linux helper's X11/XWayland path, " +
-            "prints output stats."
+        "Records a region and a named X11 window (~2–3s) via the Linux helper, asserts " +
+            "window-mode MP4 size is window-scoped, and checks missing titles fail closed."
     onlyIf { OperatingSystem.current().isLinux }
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("dev.sebastiano.spectre.recording.LinuxX11RecordingSmoke")

@@ -71,7 +71,9 @@ fn run_wayland(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
             start.region,
             session.stream.position,
             session.stream.size,
-            start.screen_size.and_then(crate::stream_region::screen_size_to_region),
+            start
+                .screen_size
+                .and_then(crate::stream_region::screen_size_to_region),
         )
         .context("mapping AWT region onto portal stream")?
     };
@@ -259,18 +261,39 @@ fn run_wayland(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
 }
 
 fn run_x11(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
-    let target = match start.target {
-        CaptureTarget::Region => X11CaptureTarget::Region {
-            display_name: start.display_name.clone(),
-            region: start.region,
-        },
-        CaptureTarget::Window => X11CaptureTarget::Window {
-            display_name: start.display_name.clone(),
-            title: start
+    let (target, stream_size, stream_position) = match start.target {
+        CaptureTarget::Region => (
+            X11CaptureTarget::Region {
+                display_name: start.display_name.clone(),
+                region: start.region,
+            },
+            [
+                start.region.width.max(0) as u32,
+                start.region.height.max(0) as u32,
+            ],
+            [start.region.x, start.region.y],
+        ),
+        CaptureTarget::Window => {
+            let title = start
                 .window_title
                 .clone()
-                .ok_or_else(|| anyhow!("X11 window recording requires window_title"))?,
-        },
+                .ok_or_else(|| anyhow!("X11 window recording requires window_title"))?;
+            let resolved =
+                crate::x11_window::find_window_by_title(start.display_name.as_deref(), &title)
+                    .with_context(|| format!("resolving X11 window title {title:?}"))?;
+            eprintln!(
+                "[helper] resolved X11 window title={title:?} xid=0x{:x} size={}x{}",
+                resolved.xid, resolved.width, resolved.height
+            );
+            (
+                X11CaptureTarget::Window {
+                    display_name: start.display_name.clone(),
+                    xid: resolved.xid,
+                },
+                [resolved.width, resolved.height],
+                [0, 0],
+            )
+        }
     };
     let argv = build_x11_recording_argv(
         target,
@@ -285,16 +308,6 @@ fn run_x11(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
         start.target, start.region.x, start.region.y, start.region.width, start.region.height
     );
     eprintln!("[helper] spawning: {argv:?}");
-    let (stream_size, stream_position) = match start.target {
-        CaptureTarget::Region => (
-            [
-                start.region.width.max(0) as u32,
-                start.region.height.max(0) as u32,
-            ],
-            [start.region.x, start.region.y],
-        ),
-        CaptureTarget::Window => ([0, 0], [0, 0]),
-    };
     run_gst_lifecycle(
         argv,
         start.output,

@@ -149,7 +149,8 @@ Current backends:
   shared framework-dependent .NET Windows Graphics Capture helper packaged by
   `:recording-windows` for x64 and arm64.
 - `LinuxX11Recorder` — Linux Xorg/Xvfb region and named-window capture via the
-  `spectre-recording-linux` helper and GStreamer `ximagesrc`.
+  `spectre-recording-linux` helper and GStreamer `ximagesrc`. Window mode resolves
+  an XID from the title and fails if that window is missing.
 - `LinuxNativeScreenshotter` — Linux still screenshots via the same helper: GStreamer
   `ximagesrc` on Xorg/Xvfb, and one-frame portal/PipeWire capture on Wayland.
 - `FfmpegRegionScreenshotter` — deprecated legacy explicit Linux X11 still screenshot
