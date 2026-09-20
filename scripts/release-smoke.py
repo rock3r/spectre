@@ -26,6 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from smoke_lib import (  # noqa: E402
+    GRADLE_STOP_TIMEOUT_SECONDS,
     HEADED_ROBOT_GRADLE_TASK,
     HEADED_ROBOT_NAME,
     HEADED_ROBOT_RESULTS_SUBPATH,
@@ -65,6 +66,7 @@ from smoke_lib import (  # noqa: E402
     robot_xvfb_prefix,
     robot_xvfb_unavailable_reason,
     run_callable_scenario,
+    run_command,
     run_scenario,
     scenario_result,
     utc_now_iso,
@@ -435,19 +437,6 @@ def main(argv: list[str] | None = None) -> int:
         # Non-login SSH PATH lacks ~/.cargo/bin; xvfb-run inherits that and
         # :recording:buildWaylandHelper then cannot start cargo.
         apply_linux_toolchain_path()
-    if system in ("Linux", "Darwin") and not args.preflight_only:
-        # Linux: leftover daemons started without the rustup PATH cannot exec cargo.
-        # macOS: leftover daemons started by an ungranted wrapping app keep that TCC
-        # identity for later Robot/capture cells. macos-tcc helper assembly would
-        # otherwise reuse them. Never --stop during --preflight-only:
-        # verifyReleaseSmokeScripts invokes that entrypoint under ./gradlew check.
-        subprocess.run(
-            [str(ROOT / "gradlew"), "--stop"],
-            cwd=ROOT,
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
     if system == "Windows":
         print(
             "Use scripts/windows-release-smoke.ps1 from the interactive desktop "
@@ -465,8 +454,57 @@ def main(argv: list[str] | None = None) -> int:
     wall_start = time.monotonic()
     overall_deadline = wall_start + max(60, int(args.overall_timeout))
 
+    stop_timeout_detail = ""
+    stop_timeout_log = ""
+    if system in ("Linux", "Darwin") and not args.preflight_only:
+        # Linux: leftover daemons started without the rustup PATH cannot exec cargo.
+        # macOS: leftover daemons started by an ungranted wrapping app keep that TCC
+        # identity for later Robot/capture cells. macos-tcc helper assembly would
+        # otherwise reuse them. Never --stop during --preflight-only:
+        # verifyReleaseSmokeScripts invokes that entrypoint under ./gradlew check.
+        # Bound by --overall-timeout so a stuck wrapper/daemon cannot hang the run.
+        stop_code, stop_detail, stop_log = run_command(
+            [str(ROOT / "gradlew"), "--stop"],
+            cwd=ROOT,
+            timeout=GRADLE_STOP_TIMEOUT_SECONDS,
+            log_path=out_dir / "gradle-stop.log",
+            overall_deadline=overall_deadline,
+        )
+        if stop_code == 124:
+            stop_timeout_detail = stop_detail or "timeout"
+            stop_timeout_log = stop_log
+
     preflight = collect_preflight(ROOT, version=args.version, base=args.base)
     results: list[ScenarioResult] = []
+
+    if stop_timeout_detail:
+        preflight_result = scenario_result(
+            "preflight",
+            name="Environment / SHA / clean-tree preflight",
+            result=RESULT_FAIL,
+            detail=f"gradle --stop timed out before smoke start: {stop_timeout_detail}",
+            log=stop_timeout_log,
+            hard=True,
+        )
+        results.append(preflight_result)
+        _print_result(preflight_result)
+        blocked = fill_blocked_remaining(
+            results, reason="blocked by gradle --stop timeout"
+        )
+        already = {item.id for item in results}
+        results[:] = blocked
+        for item in blocked:
+            if item.id not in already:
+                _print_result(item)
+        _, schema_errors = _write_smoke_report(
+            preflight,
+            results,
+            started_at=started_at,
+            wall_start=wall_start,
+            out_dir=out_dir,
+        )
+        print("HARD FAILURES: preflight")
+        return 2 if schema_errors else 1
 
     preflight_result = _run_preflight_scenario(preflight, out_dir)
     if preflight.dirty and preflight_result.result == RESULT_PASS:

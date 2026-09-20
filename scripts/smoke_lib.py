@@ -327,7 +327,17 @@ WRAPPING_SCREEN_RECORDING_RGB_MASK = 0x00FFFFFF
 SCREENCAPTURE_HELPER_DISPLAY_NAME = "Spectre Capture Helper"
 SCREENCAPTURE_HELPER_APP_NAME = "SpectreCaptureHelper.app"
 ASSEMBLE_SCREENCAPTURE_HELPER_TASK = ":recording:assembleScreenCaptureKitHelper"
+ASSEMBLE_SCREENCAPTURE_HELPER_UNIVERSAL_TASK = (
+    ":recording:assembleScreenCaptureKitHelperUniversal"
+)
+STAGE_PREBUILT_MAC_HELPER_TASK = ":recording:stagePrebuiltMacHelper"
+STAGE_STUB_MAC_HELPER_TASK = ":recording:stageStubMacHelper"
 ASSEMBLE_SCREENCAPTURE_HELPER_TIMEOUT_SECONDS = 180
+GRADLE_STOP_TIMEOUT_SECONDS = 120
+GRADLE_PROJECT_UNIVERSAL_HELPER = "universalHelper"
+GRADLE_PROJECT_NOTARIZE_HELPER = "notarizeScreenCaptureKitHelper"
+GRADLE_PROJECT_PREBUILT_MAC_HELPER = "prebuiltMacHelperPath"
+GRADLE_PROJECT_STUB_MAC_HELPER = "stubMacHelperForTesting"
 MACOS_TCC_ACCESSIBILITY_GUIDANCE = (
     "macOS attributes Robot input to the wrapping app that launched this process "
     "(Terminal, iTerm2, IntelliJ IDEA, Grok Bot, Claude.app, etc.) — not to the JVM "
@@ -1145,13 +1155,96 @@ def _is_executable_helper(path: Path) -> bool:
     return path.is_file() and os.access(path, os.X_OK)
 
 
+class InvalidGradleProjectProperty(RuntimeError):
+    """A Gradle property source exists but cannot be mirrored by the smoke preflight."""
+
+
+def gradle_user_home(environ: Mapping[str, str] | None = None) -> Path:
+    env = environ if environ is not None else os.environ
+    raw = env.get("GRADLE_USER_HOME")
+    if raw:
+        return Path(raw)
+    return Path.home() / ".gradle"
+
+
+def _gradle_properties_defines(path: Path, name: str) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise InvalidGradleProjectProperty(
+            f"could not read Gradle properties {path}: {error}"
+        ) from error
+    aliases = (name, f"systemProp.org.gradle.project.{name}")
+    continued = ""
+    for raw in text.splitlines():
+        line = continued + raw
+        if line.endswith("\\"):
+            continued = line[:-1]
+            continue
+        continued = ""
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("!"):
+            continue
+        if "=" in stripped:
+            key = stripped.split("=", 1)[0]
+        elif ":" in stripped:
+            key = stripped.split(":", 1)[0]
+        else:
+            key = stripped
+        if key.strip() in aliases:
+            return True
+    return False
+
+
+def gradle_project_property_present(
+    name: str,
+    root: Path,
+    environ: Mapping[str, str] | None = None,
+) -> bool:
+    """True when Gradle would see project property `name` as present."""
+    env = environ if environ is not None else os.environ
+    if f"ORG_GRADLE_PROJECT_{name}" in env:
+        return True
+    return _gradle_properties_defines(
+        gradle_user_home(env) / "gradle.properties", name
+    ) or _gradle_properties_defines(root / "gradle.properties", name)
+
+
+def macos_screencapture_assemble_task(
+    root: Path,
+    environ: Mapping[str, str] | None = None,
+) -> str:
+    """Same staging task processResources / processTestResources would depend on."""
+    if gradle_project_property_present(
+        GRADLE_PROJECT_STUB_MAC_HELPER, root, environ
+    ):
+        return STAGE_STUB_MAC_HELPER_TASK
+    if gradle_project_property_present(
+        GRADLE_PROJECT_PREBUILT_MAC_HELPER, root, environ
+    ):
+        return STAGE_PREBUILT_MAC_HELPER_TASK
+    if gradle_project_property_present(
+        GRADLE_PROJECT_UNIVERSAL_HELPER, root, environ
+    ) or gradle_project_property_present(
+        GRADLE_PROJECT_NOTARIZE_HELPER, root, environ
+    ):
+        return ASSEMBLE_SCREENCAPTURE_HELPER_UNIVERSAL_TASK
+    return ASSEMBLE_SCREENCAPTURE_HELPER_TASK
+
+
 def _assemble_screencapture_helper(root: Path) -> int:
     gradlew = root / "gradlew"
     if not gradlew.is_file():
         return 127
     try:
+        task = macos_screencapture_assemble_task(root)
+    except InvalidGradleProjectProperty:
+        return 127
+    try:
         completed = subprocess.run(
-            [str(gradlew), ASSEMBLE_SCREENCAPTURE_HELPER_TASK, "--console=plain"],
+            [str(gradlew), task, "--console=plain"],
             cwd=root,
             timeout=ASSEMBLE_SCREENCAPTURE_HELPER_TIMEOUT_SECONDS,
             check=False,
