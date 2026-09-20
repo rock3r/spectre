@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use nix::fcntl::{fcntl, FcntlArg, FdFlag};
 use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
+use std::collections::{BTreeSet, HashMap};
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -45,6 +46,7 @@ pub fn serve() -> Result<()> {
     let state = Arc::new(Mutex::new(SessionState {
         session,
         recording: None,
+        input_holds: HashMap::new(),
         _lock: lock,
     }));
 
@@ -75,6 +77,7 @@ pub fn serve() -> Result<()> {
 struct SessionState {
     session: RemoteDesktopSession,
     recording: Option<ActiveRecording>,
+    input_holds: HashMap<u64, ClientInputHold>,
     _lock: SessionLock,
 }
 
@@ -84,8 +87,67 @@ struct ActiveRecording {
     owner: u64,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ClientInputHold {
+    buttons: BTreeSet<i32>,
+    keys: BTreeSet<i32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HeldInput {
+    PointerButton(i32),
+    Key(i32),
+}
+
+struct DisconnectCleanup {
+    reap_recording: bool,
+    held_input: ClientInputHold,
+}
+
 fn recording_owner_should_reap(recording_owner: Option<u64>, client_id: u64) -> bool {
     recording_owner == Some(client_id)
+}
+
+fn apply_held_input(
+    holds: &mut HashMap<u64, ClientInputHold>,
+    client_id: u64,
+    input: HeldInput,
+    pressed: bool,
+) {
+    let hold = holds.entry(client_id).or_default();
+    let set = match input {
+        HeldInput::PointerButton(_) => &mut hold.buttons,
+        HeldInput::Key(_) => &mut hold.keys,
+    };
+    let code = match input {
+        HeldInput::PointerButton(code) | HeldInput::Key(code) => code,
+    };
+    if pressed {
+        set.insert(code);
+    } else {
+        set.remove(&code);
+    }
+    if hold.buttons.is_empty() && hold.keys.is_empty() {
+        holds.remove(&client_id);
+    }
+}
+
+fn take_client_held_input(
+    holds: &mut HashMap<u64, ClientInputHold>,
+    client_id: u64,
+) -> ClientInputHold {
+    holds.remove(&client_id).unwrap_or_default()
+}
+
+fn disconnect_cleanup(
+    recording_owner: Option<u64>,
+    client_id: u64,
+    holds: &mut HashMap<u64, ClientInputHold>,
+) -> DisconnectCleanup {
+    DisconnectCleanup {
+        reap_recording: recording_owner_should_reap(recording_owner, client_id),
+        held_input: take_client_held_input(holds, client_id),
+    }
 }
 
 fn maybe_daemonize() {
@@ -138,21 +200,35 @@ struct DisconnectReap<'a> {
 
 impl Drop for DisconnectReap<'_> {
     fn drop(&mut self) {
-        reap_owned_recording(self.state, self.client_id);
+        let reap_recording = release_held_input(self.state, self.client_id);
+        if reap_recording {
+            let _ = stop_recording(self.state);
+        }
     }
 }
 
-fn reap_owned_recording(state: &Mutex<SessionState>, client_id: u64) {
-    let owner = {
-        let guard = match state.lock() {
-            Ok(guard) => guard,
-            Err(_) => return,
-        };
-        guard.recording.as_ref().map(|r| r.owner)
+fn release_held_input(state: &Mutex<SessionState>, client_id: u64) -> bool {
+    let mut guard = match state.lock() {
+        Ok(guard) => guard,
+        Err(_) => return false,
     };
-    if recording_owner_should_reap(owner, client_id) {
-        let _ = stop_recording(state);
+    let owner = guard.recording.as_ref().map(|r| r.owner);
+    let cleanup = disconnect_cleanup(owner, client_id, &mut guard.input_holds);
+    for button in &cleanup.held_input.buttons {
+        if let Err(e) = guard.session.notify_pointer_button(*button, false) {
+            eprintln!(
+                "spectre-wayland-helper: failed to release held button {button} on disconnect: {e:#}"
+            );
+        }
     }
+    for key in &cleanup.held_input.keys {
+        if let Err(e) = guard.session.notify_keyboard_keysym(*key, false) {
+            eprintln!(
+                "spectre-wayland-helper: failed to release held key {key} on disconnect: {e:#}"
+            );
+        }
+    }
+    cleanup.reap_recording
 }
 
 fn dispatch(command: Command, state: &Mutex<SessionState>, client_id: u64) -> Event {
@@ -162,14 +238,21 @@ fn dispatch(command: Command, state: &Mutex<SessionState>, client_id: u64) -> Ev
             s.notify_pointer_motion_absolute((x - ox) as f64, (y - oy) as f64)?;
             Ok(Event::InputAck)
         }),
-        Command::PointerButton { button, pressed } => with_session(state, |s| {
+        Command::PointerButton { button, pressed } => with_state(state, |s| {
             let evdev = awt_button_mask_to_evdev(button)?;
-            s.notify_pointer_button(evdev, pressed)?;
+            s.session.notify_pointer_button(evdev, pressed)?;
+            apply_held_input(
+                &mut s.input_holds,
+                client_id,
+                HeldInput::PointerButton(evdev),
+                pressed,
+            );
             Ok(Event::InputAck)
         }),
-        Command::Key { key_code, pressed } => with_session(state, |s| {
+        Command::Key { key_code, pressed } => with_state(state, |s| {
             let keysym = vk_to_keysym(key_code)?;
-            s.notify_keyboard_keysym(keysym, pressed)?;
+            s.session.notify_keyboard_keysym(keysym, pressed)?;
+            apply_held_input(&mut s.input_holds, client_id, HeldInput::Key(keysym), pressed);
             Ok(Event::InputAck)
         }),
         Command::PointerAxis { axis, steps } => with_session(state, |s| {
@@ -208,8 +291,15 @@ fn with_session(
     state: &Mutex<SessionState>,
     f: impl FnOnce(&RemoteDesktopSession) -> Result<Event>,
 ) -> Event {
+    with_state(state, |s| f(&s.session))
+}
+
+fn with_state(
+    state: &Mutex<SessionState>,
+    f: impl FnOnce(&mut SessionState) -> Result<Event>,
+) -> Event {
     match state.lock() {
-        Ok(guard) => match f(&guard.session) {
+        Ok(mut guard) => match f(&mut guard) {
             Ok(event) => event,
             Err(e) => Event::Error {
                 kind: "Input".into(),
@@ -336,12 +426,73 @@ fn write_event(writer: &mut UnixStream, event: Event) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::recording_owner_should_reap;
+    use super::{
+        apply_held_input, disconnect_cleanup, recording_owner_should_reap, ClientInputHold,
+        HeldInput,
+    };
+    use std::collections::{BTreeSet, HashMap};
 
     #[test]
     fn owner_disconnect_reaps_that_clients_recording() {
         assert!(recording_owner_should_reap(Some(7), 7));
         assert!(!recording_owner_should_reap(Some(7), 8));
         assert!(!recording_owner_should_reap(None, 7));
+    }
+
+    #[test]
+    fn disconnect_releases_that_clients_held_button_and_modifier() {
+        let mut holds = HashMap::new();
+        apply_held_input(
+            &mut holds,
+            3,
+            HeldInput::PointerButton(0x110),
+            true,
+        );
+        apply_held_input(&mut holds, 3, HeldInput::Key(0xffe3), true);
+        apply_held_input(
+            &mut holds,
+            9,
+            HeldInput::PointerButton(0x111),
+            true,
+        );
+
+        let cleanup = disconnect_cleanup(None, 3, &mut holds);
+        assert!(!cleanup.reap_recording);
+        assert_eq!(
+            cleanup.held_input,
+            ClientInputHold {
+                buttons: BTreeSet::from([0x110]),
+                keys: BTreeSet::from([0xffe3]),
+            }
+        );
+        assert_eq!(
+            holds.get(&9).map(|hold| hold.buttons.clone()),
+            Some(BTreeSet::from([0x111])),
+            "another client's held button must survive this disconnect"
+        );
+        assert!(!holds.contains_key(&3));
+    }
+
+    #[test]
+    fn matching_release_leaves_nothing_to_unwind_on_disconnect() {
+        let mut holds = HashMap::new();
+        apply_held_input(
+            &mut holds,
+            4,
+            HeldInput::PointerButton(0x110),
+            true,
+        );
+        apply_held_input(
+            &mut holds,
+            4,
+            HeldInput::PointerButton(0x110),
+            false,
+        );
+        apply_held_input(&mut holds, 4, HeldInput::Key(0xffe3), true);
+        apply_held_input(&mut holds, 4, HeldInput::Key(0xffe3), false);
+
+        let cleanup = disconnect_cleanup(Some(4), 4, &mut holds);
+        assert!(cleanup.reap_recording);
+        assert_eq!(cleanup.held_input, ClientInputHold::default());
     }
 }

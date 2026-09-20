@@ -22,6 +22,8 @@ import kotlin.io.path.deleteIfExists
 internal class WaylandSeatSocketAdapter(
     private val socketPath: () -> Path? = ::liveWaylandSessionSocket
 ) : RobotAdapter {
+    private val sendLock = Any()
+    private var inputChannel: SocketChannel? = null
     override val autoDelayMs: Int = 0
     override val requiresOffEdt: Boolean = true
     override val deliversRealOsInput: Boolean = true
@@ -86,13 +88,39 @@ internal class WaylandSeatSocketAdapter(
 
     private fun send(line: String) {
         val socket = socketPath() ?: startHelperFromEnv() ?: error(MISSING_WAYLAND_HELPER_MESSAGE)
-        SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
-            channel.connect(UnixDomainSocketAddress.of(socket))
-            writeLine(channel, line)
-            val reply = readLine(channel)
-            if (reply.contains("\"event\":\"error\"")) {
-                error("spectre-wayland-helper session error: $reply")
+        synchronized(sendLock) {
+            val channel = openOrReuseInput(socket)
+            try {
+                writeLine(channel, line)
+                val reply = readLine(channel)
+                if (reply.contains("\"event\":\"error\"")) {
+                    error("spectre-wayland-helper session error: $reply")
+                }
+            } catch (error: IOException) {
+                closeInputChannel()
+                throw error
             }
+        }
+    }
+
+    private fun openOrReuseInput(socket: Path): SocketChannel {
+        inputChannel
+            ?.takeIf { it.isOpen && it.isConnected }
+            ?.let {
+                return it
+            }
+        closeInputChannel()
+        val channel = SocketChannel.open(StandardProtocolFamily.UNIX)
+        channel.connect(UnixDomainSocketAddress.of(socket))
+        inputChannel = channel
+        return channel
+    }
+
+    private fun closeInputChannel() {
+        try {
+            inputChannel?.close()
+        } finally {
+            inputChannel = null
         }
     }
 }

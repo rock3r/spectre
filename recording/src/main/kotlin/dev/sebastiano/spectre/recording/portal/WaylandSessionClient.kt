@@ -37,6 +37,7 @@ internal constructor(
 
     private val json = Json { ignoreUnknownKeys = true }
     private val lock = Any()
+    private val inputConnection = WaylandSessionInputConnection(json)
 
     fun mouseMove(x: Int, y: Int) {
         send(Command.PointerMove(x, y))
@@ -84,12 +85,7 @@ internal constructor(
     }
 
     fun send(command: Command): Event =
-        synchronized(lock) {
-            val socket = ensureSocket()
-            SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
-                connectAndExchange(channel, socket, command)
-            }
-        }
+        synchronized(lock) { inputConnection.send(ensureSocket(), command) }
 
     fun startHeld(command: Command.Start): HeldRecordingSession {
         val socket = synchronized(lock) { ensureSocket() }
@@ -111,15 +107,7 @@ internal constructor(
 
     private fun connectAndExchange(channel: SocketChannel, socket: Path, command: Command): Event {
         channel.connect(UnixDomainSocketAddress.of(socket))
-        writeLine(channel, json.encodeToString(Command.serializer(), command))
-        val line = readLine(channel)
-        val event = json.decodeFromString(Event.serializer(), line)
-        if (event is Event.Error) {
-            error(
-                "spectre-wayland-helper session error: kind=${event.kind} message=${event.message}"
-            )
-        }
-        return event
+        return exchangeSessionCommand(channel, json, command)
     }
 
     private fun ensureSocket(): Path {
@@ -166,28 +154,6 @@ internal constructor(
         error("XDG_RUNTIME_DIR or SPECTRE_WAYLAND_SESSION_DIR is required for the Wayland session")
     }
 
-    private fun writeLine(channel: SocketChannel, line: String) {
-        val bytes = (line + "\n").toByteArray(StandardCharsets.UTF_8)
-        val buffer = ByteBuffer.wrap(bytes)
-        while (buffer.hasRemaining()) {
-            channel.write(buffer)
-        }
-    }
-
-    private fun readLine(channel: SocketChannel): String {
-        val builder = StringBuilder()
-        val one = ByteBuffer.allocate(1)
-        while (true) {
-            one.clear()
-            val n = channel.read(one)
-            check(n >= 0) { "Wayland session helper closed the socket before a reply" }
-            val ch = one.get(0).toInt().toChar()
-            if (ch == '\n') break
-            if (ch != '\r') builder.append(ch)
-        }
-        return builder.toString()
-    }
-
     internal fun interface SessionProcessFactory {
         fun startSession(helperPath: Path): Process
     }
@@ -214,6 +180,52 @@ internal constructor(
             return Files.exists(path)
         }
     }
+}
+
+/** Reuses one unix connection so a mid-gesture disconnect can release that client's held input. */
+internal class WaylandSessionInputConnection(private val json: Json) {
+    private var channel: SocketChannel? = null
+
+    fun send(socket: Path, command: Command): Event {
+        val open = openOrReuse(socket)
+        try {
+            return exchangeSessionCommand(open, json, command)
+        } catch (error: IOException) {
+            close()
+            throw error
+        }
+    }
+
+    fun close() {
+        try {
+            channel?.close()
+        } finally {
+            channel = null
+        }
+    }
+
+    private fun openOrReuse(socket: Path): SocketChannel {
+        channel
+            ?.takeIf { it.isOpen && it.isConnected }
+            ?.let {
+                return it
+            }
+        close()
+        val opened = SocketChannel.open(StandardProtocolFamily.UNIX)
+        opened.connect(UnixDomainSocketAddress.of(socket))
+        channel = opened
+        return opened
+    }
+}
+
+private fun exchangeSessionCommand(channel: SocketChannel, json: Json, command: Command): Event {
+    writeHeldLine(channel, json.encodeToString(Command.serializer(), command))
+    val line = readHeldLine(channel)
+    val event = json.decodeFromString(Event.serializer(), line)
+    if (event is Event.Error) {
+        error("spectre-wayland-helper session error: kind=${event.kind} message=${event.message}")
+    }
+    return event
 }
 
 internal class HeldRecordingSession(private val channel: SocketChannel, private val json: Json) :
