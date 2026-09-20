@@ -66,6 +66,33 @@ class ScreenshotGoldScaleKeyTest {
     }
 
     @Test
+    fun `scale key matches an edge-rounded fractional-DPI client crop`() {
+        // 150% density + inset offset: independent size rounding is 122×150, edge rounding
+        // (same as screenRectToImageRect) is 121×150. Another density is visible so a miss
+        // would fall back to the primary display.
+        val image = BufferedImage(121, 150, BufferedImage.TYPE_INT_ARGB)
+        val surfaces =
+            captureSurfacesForBounds(
+                awtWidth = 200,
+                awtHeight = 100,
+                insetLeft = 1,
+                insetTop = 0,
+                insetRight = 118,
+                insetBottom = 0,
+                scaleX = 1.5,
+                scaleY = 1.5,
+            ) + CaptureSurfaceScale(800, 600, 1.0, 1.0)
+        val key =
+            currentScaleKey(
+                image = image,
+                surfaces = surfaces,
+                fallbackScaleX = 1.0,
+                fallbackScaleY = 1.0,
+            )
+        assertEquals("scale-1.5x1.5", key)
+    }
+
+    @Test
     fun `scale key matches an embedded compose panel smaller than the content pane`() {
         val image = BufferedImage(160, 80, BufferedImage.TYPE_INT_ARGB)
         val surfaces =
@@ -129,7 +156,7 @@ class ScreenshotGoldScaleKeyTest {
             panel.setSize(80, 40)
             Container().also { it.add(panel) }
         }
-        assertEquals(emptyList(), composePanelAwtSizes(root))
+        assertEquals(emptyList(), composePanelAwtRegions(root))
     }
 
     @Test

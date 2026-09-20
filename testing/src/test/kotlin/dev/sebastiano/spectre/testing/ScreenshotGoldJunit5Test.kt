@@ -27,6 +27,18 @@ class ScreenshotGoldJunit5Test {
     }
 
     @Test
+    fun `name-only ScreenshotGoldKt facade exposes a two-argument Java overload`() {
+        val method =
+            Class.forName("dev.sebastiano.spectre.testing.ScreenshotGoldKt").methods.singleOrNull {
+                candidate ->
+                candidate.name == "assertMatchesGold" &&
+                    candidate.parameterTypes.map { it.name } ==
+                        listOf("java.lang.String", "java.awt.image.BufferedImage")
+            }
+        assertTrue(method != null, "ScreenshotGoldKt.assertMatchesGold(name, image)")
+    }
+
+    @Test
     fun `JUnit 5 gold facade isolates TestInfo overloads`() {
         val facade = Class.forName("dev.sebastiano.spectre.testing.ScreenshotGoldJunit5")
         assertTrue(

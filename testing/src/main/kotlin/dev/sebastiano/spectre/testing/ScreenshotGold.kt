@@ -45,10 +45,13 @@ import kotlin.math.roundToInt
  *
  * [scaleKey] defaults to the captured window's display scale when a showing AWT window's outer,
  * client, content-pane, or showing embedded ComposePanel size matches the still (or every showing
- * window shares one density). Hidden panels are ignored. Surface geometry is read on the EDT.
+ * window shares one density). Cropped stills use the same edge rounding as
+ * [dev.sebastiano.spectre.core.capture.screenRectToImageRect], so a fractional-DPI client or panel
+ * crop does not miss by one pixel. Hidden panels are ignored. Surface geometry is read on the EDT.
  * Otherwise it uses the primary/default screen transform. Pass an explicit key (from
  * [ScreenshotGoldPaths.scaleKey]) when several densities are visible and inference is ambiguous.
  */
+@JvmOverloads
 public fun assertMatchesGold(
     name: String,
     image: BufferedImage,
@@ -219,6 +222,9 @@ internal fun liveCaptureSurfaces(): List<CaptureSurfaceScale> {
                     (window as? RootPaneContainer)?.contentPane?.takeIf {
                         it.width > 0 && it.height > 0
                     }
+                val contentOrigin = content?.let { pane ->
+                    SwingUtilities.convertPoint(pane, 0, 0, window)
+                }
                 captureSurfacesForBounds(
                     awtWidth = window.width,
                     awtHeight = window.height,
@@ -230,11 +236,15 @@ internal fun liveCaptureSurfaces(): List<CaptureSurfaceScale> {
                     scaleY = configuration.defaultTransform.scaleY,
                     contentWidth = content?.width,
                     contentHeight = content?.height,
-                    extraAwtSizes = composePanelAwtSizes(window),
+                    contentX = contentOrigin?.x ?: window.insets.left,
+                    contentY = contentOrigin?.y ?: window.insets.top,
+                    extraAwtRegions = composePanelAwtRegions(window),
                 )
             }
     }
 }
+
+internal data class CaptureAwtRegion(val x: Int, val y: Int, val width: Int, val height: Int)
 
 internal fun captureSurfacesForBounds(
     awtWidth: Int,
@@ -247,33 +257,55 @@ internal fun captureSurfacesForBounds(
     scaleY: Double,
     contentWidth: Int? = null,
     contentHeight: Int? = null,
+    contentX: Int = insetLeft,
+    contentY: Int = insetTop,
     extraAwtSizes: List<Pair<Int, Int>> = emptyList(),
+    extraAwtRegions: List<CaptureAwtRegion> = emptyList(),
 ): List<CaptureSurfaceScale> {
     val clientWidth = (awtWidth - insetLeft - insetRight).coerceAtLeast(0)
     val clientHeight = (awtHeight - insetTop - insetBottom).coerceAtLeast(0)
-    val awtSizes = buildList {
-        add(awtWidth to awtHeight)
-        add(clientWidth to clientHeight)
+    val regions = buildList {
+        add(CaptureAwtRegion(0, 0, awtWidth, awtHeight))
+        add(CaptureAwtRegion(insetLeft, insetTop, clientWidth, clientHeight))
         if (contentWidth != null && contentHeight != null) {
-            add(contentWidth to contentHeight)
+            add(CaptureAwtRegion(contentX, contentY, contentWidth, contentHeight))
         }
-        addAll(extraAwtSizes)
+        extraAwtSizes.forEach { (width, height) -> add(CaptureAwtRegion(0, 0, width, height)) }
+        addAll(extraAwtRegions)
     }
-    return awtSizes
+    return regions
         .distinct()
-        .filter { (width, height) -> width > 0 && height > 0 }
-        .map { (width, height) ->
+        .filter { region -> region.width > 0 && region.height > 0 }
+        .map { region ->
+            val (pixelWidth, pixelHeight) = capturePixelSize(region, scaleX, scaleY)
             CaptureSurfaceScale(
-                pixelWidth = (width * scaleX).roundToInt(),
-                pixelHeight = (height * scaleY).roundToInt(),
+                pixelWidth = pixelWidth,
+                pixelHeight = pixelHeight,
                 scaleX = scaleX,
                 scaleY = scaleY,
             )
         }
 }
 
-internal fun composePanelAwtSizes(root: Component): List<Pair<Int, Int>> {
-    val sizes = mutableListOf<Pair<Int, Int>>()
+/**
+ * Device-pixel size of an AWT region inside a window-scoped capture. Matches
+ * [dev.sebastiano.spectre.core.capture.screenRectToImageRect]: transform both edges, then derive
+ * size, because rounding origin and size independently can miss a fractional-DPI crop by one pixel.
+ */
+internal fun capturePixelSize(
+    region: CaptureAwtRegion,
+    scaleX: Double,
+    scaleY: Double,
+): Pair<Int, Int> {
+    val left = (region.x * scaleX).roundToInt()
+    val top = (region.y * scaleY).roundToInt()
+    val right = ((region.x + region.width) * scaleX).roundToInt()
+    val bottom = ((region.y + region.height) * scaleY).roundToInt()
+    return (right - left).coerceAtLeast(0) to (bottom - top).coerceAtLeast(0)
+}
+
+internal fun composePanelAwtRegions(root: Component): List<CaptureAwtRegion> {
+    val regions = mutableListOf<CaptureAwtRegion>()
     fun walk(component: Component) {
         if (
             component is ComposePanel &&
@@ -281,14 +313,15 @@ internal fun composePanelAwtSizes(root: Component): List<Pair<Int, Int>> {
                 component.width > 0 &&
                 component.height > 0
         ) {
-            sizes += component.width to component.height
+            val origin = SwingUtilities.convertPoint(component, 0, 0, root)
+            regions += CaptureAwtRegion(origin.x, origin.y, component.width, component.height)
         }
         if (component is Container) {
             component.components.forEach(::walk)
         }
     }
     walk(root)
-    return sizes
+    return regions
 }
 
 internal fun fallbackDisplayScale(): Pair<Double, Double> {
