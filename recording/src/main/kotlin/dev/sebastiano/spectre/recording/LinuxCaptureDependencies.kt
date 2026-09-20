@@ -33,13 +33,22 @@ internal object LinuxCaptureDependencies {
         return true
     }
 
-    private fun startGstLaunchVersion(): Process =
-        ProcessBuilder(GST_LAUNCH, "--version").redirectErrorStream(true).start()
+    private fun startGstLaunchVersion(): Process = gstProbeBuilder(GST_LAUNCH, "--version").start()
 
     private fun inspectGstElement(element: String): Boolean? = awaitGstProcess {
-        ProcessBuilder(GST_INSPECT, element).redirectErrorStream(true).start()
+        gstProbeBuilder(GST_INSPECT, element).start()
     }
 }
+
+/**
+ * Discard probe stdout/stderr. `gst-inspect-1.0` element reports can exceed the OS pipe buffer; if
+ * the child blocks on a full unread pipe, [awaitGstProcess] times out and visual-idle falls back to
+ * Robot even when GStreamer is healthy.
+ */
+internal fun gstProbeBuilder(vararg command: String): ProcessBuilder =
+    ProcessBuilder(*command)
+        .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+        .redirectError(ProcessBuilder.Redirect.DISCARD)
 
 internal fun requiredStillCaptureElements(
     isWayland: () -> Boolean = HostPlatform::isWayland

@@ -137,6 +137,22 @@ class LinuxCaptureDependenciesTest {
     }
 
     @Test
+    fun `gst probe builder discards stdout and stderr`() {
+        val builder = gstProbeBuilder("gst-inspect-1.0", "ximagesrc")
+        assertEquals(ProcessBuilder.Redirect.DISCARD, builder.redirectOutput())
+        assertEquals(ProcessBuilder.Redirect.DISCARD, builder.redirectError())
+    }
+
+    @Test
+    fun `discarded probe output cannot fill the pipe and time out`() {
+        if (!System.getProperty("os.name").contains("linux", ignoreCase = true)) return
+        val result = awaitGstProcess {
+            gstProbeBuilder("python3", "-c", "print('x' * 1_000_000)").start()
+        }
+        assertEquals(true, result, "a 1MB inspect-sized report must not block waitFor")
+    }
+
+    @Test
     fun `required still-capture elements follow the selected backend`() {
         assertEquals(
             listOf("ximagesrc", "videoconvert", "pngenc"),
