@@ -2,7 +2,6 @@ package dev.sebastiano.spectre.testing
 
 import java.nio.file.Path
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
@@ -70,10 +69,12 @@ class ScreenshotGoldPathsTest {
     }
 
     @Test
-    fun `windows reserved device names are escaped without hashing`() {
-        val segment = ScreenshotGoldPaths.sanitizeGoldSegment("NUL")
-        assertEquals("NUL_", segment)
-        assertFalse(segment.contains(Regex("[0-9a-f]{8}")))
+    fun `reserved device names stay distinct from the escaped literal`() {
+        val reserved = ScreenshotGoldPaths.sanitizeGoldSegment("NUL")
+        val literal = ScreenshotGoldPaths.sanitizeGoldSegment("NUL_")
+        assertEquals("NUL_", literal)
+        assertNotEquals(reserved, literal)
+        assertTrue(reserved.matches(Regex("NUL__[0-9a-f]{8}")), reserved)
     }
 
     @Test

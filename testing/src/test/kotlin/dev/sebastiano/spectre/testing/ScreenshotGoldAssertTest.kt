@@ -305,6 +305,30 @@ class ScreenshotGoldAssertTest {
     }
 
     @Test
+    fun `scale key matches a compose client surface when the decorated window does not`() {
+        val image = BufferedImage(200, 100, BufferedImage.TYPE_INT_ARGB)
+        val surfaces =
+            captureSurfacesForBounds(
+                awtWidth = 110,
+                awtHeight = 70,
+                insetLeft = 5,
+                insetTop = 20,
+                insetRight = 5,
+                insetBottom = 0,
+                scaleX = 2.0,
+                scaleY = 2.0,
+            ) + CaptureSurfaceScale(800, 600, 1.0, 1.0)
+        val key =
+            currentScaleKey(
+                image = image,
+                surfaces = surfaces,
+                fallbackScaleX = 1.0,
+                fallbackScaleY = 1.0,
+            )
+        assertEquals("scale-2x2", key)
+    }
+
+    @Test
     fun `scale key uses a unique window density when the still size does not match`() {
         val image = BufferedImage(64, 32, BufferedImage.TYPE_INT_ARGB)
         val key =

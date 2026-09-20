@@ -379,7 +379,8 @@ build/reports/spectre-screenshots/<class>/<method>/<name>/
 When dimensions match, it also writes `diff.png` (magenta highlight on black). Size
 mismatches omit the diff and delete any stale `diff.png` left from a prior equal-size run. Class, method, and name segments are sanitized (path
 separators, reserved Windows device names). Rewritten segments get a short stable suffix so
-distinct names such as `foo/bar` and `foo_bar` cannot share a gold or report path. CI upload:
+distinct names such as `foo/bar` and `foo_bar`, or `NUL` and `NUL_`, cannot share a gold or
+report path. CI upload:
 
 ```yaml
 - name: Upload Spectre screenshot gold failures

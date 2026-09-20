@@ -7,6 +7,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import javax.imageio.ImageIO
+import javax.swing.RootPaneContainer
 import kotlin.math.roundToInt
 import org.junit.jupiter.api.TestInfo
 
@@ -163,13 +164,54 @@ internal fun liveCaptureSurfaces(): List<CaptureSurfaceScale> {
     if (GraphicsEnvironment.isHeadless()) return emptyList()
     return Window.getWindows()
         .filter { it.isShowing }
-        .mapNotNull { window ->
-            val configuration = window.graphicsConfiguration ?: return@mapNotNull null
-            val scaleX = configuration.defaultTransform.scaleX
-            val scaleY = configuration.defaultTransform.scaleY
+        .flatMap { window ->
+            val configuration = window.graphicsConfiguration ?: return@flatMap emptyList()
+            val content =
+                (window as? RootPaneContainer)?.contentPane?.takeIf {
+                    it.width > 0 && it.height > 0
+                }
+            captureSurfacesForBounds(
+                awtWidth = window.width,
+                awtHeight = window.height,
+                insetLeft = window.insets.left,
+                insetTop = window.insets.top,
+                insetRight = window.insets.right,
+                insetBottom = window.insets.bottom,
+                scaleX = configuration.defaultTransform.scaleX,
+                scaleY = configuration.defaultTransform.scaleY,
+                contentWidth = content?.width,
+                contentHeight = content?.height,
+            )
+        }
+}
+
+internal fun captureSurfacesForBounds(
+    awtWidth: Int,
+    awtHeight: Int,
+    insetLeft: Int,
+    insetTop: Int,
+    insetRight: Int,
+    insetBottom: Int,
+    scaleX: Double,
+    scaleY: Double,
+    contentWidth: Int? = null,
+    contentHeight: Int? = null,
+): List<CaptureSurfaceScale> {
+    val clientWidth = (awtWidth - insetLeft - insetRight).coerceAtLeast(0)
+    val clientHeight = (awtHeight - insetTop - insetBottom).coerceAtLeast(0)
+    return buildList {
+            add(awtWidth to awtHeight)
+            add(clientWidth to clientHeight)
+            if (contentWidth != null && contentHeight != null) {
+                add(contentWidth to contentHeight)
+            }
+        }
+        .distinct()
+        .filter { (width, height) -> width > 0 && height > 0 }
+        .map { (width, height) ->
             CaptureSurfaceScale(
-                pixelWidth = (window.width * scaleX).roundToInt(),
-                pixelHeight = (window.height * scaleY).roundToInt(),
+                pixelWidth = (width * scaleX).roundToInt(),
+                pixelHeight = (height * scaleY).roundToInt(),
                 scaleX = scaleX,
                 scaleY = scaleY,
             )

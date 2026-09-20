@@ -111,10 +111,9 @@ public object ScreenshotGoldPaths {
                 else -> replaced.trim('.', ' ').trim('_').ifEmpty { "unnamed" }
             }
         val escaped = escapeReservedWindowsDeviceName(core)
-        // Reserved-device escaping is not a collision (`NUL` → `NUL_`). Character rewriting
-        // (`foo/bar` → `foo_bar`) is; suffix the original so distinct raw segments cannot share
-        // a gold or report path.
-        return if (replaced == raw && core == raw) {
+        // Any rewrite is a collision risk: `foo/bar` vs `foo_bar`, and reserved-device
+        // escaping (`NUL` → `NUL_`) vs a literal `NUL_`. Suffix the original raw segment.
+        return if (escaped == raw) {
             escaped
         } else {
             "${escaped}_${stableSegmentFingerprint(raw)}"
