@@ -25,10 +25,13 @@ internal object LinuxCaptureDependencies {
             } else {
                 process.exitValue() == 0
             }
-        } catch (_: InterruptedException) {
+        } catch (interrupted: InterruptedException) {
             process.destroyForcibly()
             Thread.currentThread().interrupt()
-            false
+            // Do not return false: NativeWindowCaptureBridge caches the first completed
+            // probe for the JVM lifetime. A cancelled waitForVisualIdle budget must not
+            // permanently mark GStreamer missing (#503 / #355).
+            throw interrupted
         }
     }
 

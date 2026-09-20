@@ -8,6 +8,7 @@ import java.io.OutputStream
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -40,10 +41,27 @@ class LinuxCaptureDependenciesTest {
         assertFalse(LinuxCaptureDependencies.isGstLaunchAvailable { process })
         assertTrue(process.destroyed, "a hung gst-launch --version probe must be destroyed")
     }
+
+    @Test
+    fun `gst-launch probe does not treat interruption as missing binary`() {
+        val process = FakeGstLaunchProcess(exit = 0, interruptWait = true)
+        assertFailsWith<InterruptedException> {
+            LinuxCaptureDependencies.isGstLaunchAvailable { process }
+        }
+        assertTrue(process.destroyed, "an interrupted gst-launch probe must still be destroyed")
+        assertTrue(Thread.interrupted(), "interrupt status must be restored so the wait can abort")
+        assertTrue(
+            LinuxCaptureDependencies.isGstLaunchAvailable { FakeGstLaunchProcess(exit = 0) },
+            "a later probe must be allowed to succeed after an interrupted one",
+        )
+    }
 }
 
-private class FakeGstLaunchProcess(private val exit: Int, private val finished: Boolean = true) :
-    Process() {
+private class FakeGstLaunchProcess(
+    private val exit: Int,
+    private val finished: Boolean = true,
+    private val interruptWait: Boolean = false,
+) : Process() {
 
     var destroyed: Boolean = false
         private set
@@ -56,7 +74,10 @@ private class FakeGstLaunchProcess(private val exit: Int, private val finished: 
 
     override fun waitFor(): Int = exit
 
-    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean = finished
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean {
+        if (interruptWait) throw InterruptedException("gst-launch probe cancelled")
+        return finished
+    }
 
     override fun exitValue(): Int = exit
 

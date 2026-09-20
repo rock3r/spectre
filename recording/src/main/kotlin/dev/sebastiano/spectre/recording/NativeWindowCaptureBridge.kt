@@ -18,17 +18,28 @@ import java.util.concurrent.locks.ReentrantLock
 internal object NativeWindowCaptureBridge {
     private val screenshotter: AutoScreenshotter by lazy(::AutoScreenshotter)
     private val captureLocks = WeakHashMap<Window, ReentrantLock>()
-    private val cachedPlatformCaptureUsable: Boolean by lazy { computePlatformCaptureUsable() }
+    @Volatile private var cachedPlatformCaptureUsable: Boolean? = null
+    private val platformCaptureUsableLock = Any()
 
     /**
      * True when the host can actually run a native still (not merely load this class).
      *
-     * Linux stills spawn `gst-launch-1.0` via the bundled helper. If that binary is missing, core
-     * treats native capture as unavailable and falls back to Robot region sampling (#503).
+     * Linux stills spawn `gst-launch-1.0` via the bundled helper. If that binary is missing,
+     * visual- idle treats native capture as unavailable and falls back to Robot region sampling
+     * (#503). An interrupted probe is not cached: a short first `waitForVisualIdle` budget must not
+     * pin Robot for the rest of the JVM.
      */
     @JvmStatic
     @JvmName("isPlatformCaptureUsable")
-    internal fun isPlatformCaptureUsable(): Boolean = cachedPlatformCaptureUsable
+    internal fun isPlatformCaptureUsable(): Boolean {
+        cachedPlatformCaptureUsable?.let {
+            return it
+        }
+        return synchronized(platformCaptureUsableLock) {
+            cachedPlatformCaptureUsable
+                ?: computePlatformCaptureUsable().also { cachedPlatformCaptureUsable = it }
+        }
+    }
 
     internal fun computePlatformCaptureUsable(
         isLinux: () -> Boolean = HostPlatform::isLinux,
