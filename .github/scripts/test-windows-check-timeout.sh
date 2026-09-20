@@ -43,4 +43,61 @@ done
 grep -F -q 'Thread.print' "$dump_script" || fail "dump-jvm-stacks.sh does not dump Thread.print"
 grep -F -q 'jcmd' "$dump_script" || fail "dump-jvm-stacks.sh does not use jcmd"
 
+# Job timeout cancels the whole job; dump after that is not reliable. The Gradle
+# step that can hang must time out first so cancelled()/failure() still has job
+# budget for dump-jvm-stacks.sh.
+assert_step_timeout_below_job() {
+  local workflow="$1"
+  local job="$2"
+  local step_name="$3"
+  python3 - "$workflow" "$job" "$step_name" <<'PY' || fail "$3 step timeout is missing or not below the $2 job timeout"
+import re
+import sys
+
+path, job, step = sys.argv[1], sys.argv[2], sys.argv[3]
+lines = open(path, encoding="utf-8").read().splitlines()
+in_job = False
+job_timeout = None
+in_target_step = False
+step_timeout = None
+job_re = re.compile(rf"^  {re.escape(job)}:")
+next_job_re = re.compile(r"^  [A-Za-z0-9_-]+:")
+job_timeout_re = re.compile(r"^    timeout-minutes:\s*(\d+)\s*$")
+step_name_re = re.compile(r"^      - name:\s*(.+)\s*$")
+step_timeout_re = re.compile(r"^        timeout-minutes:\s*(\d+)\s*$")
+
+for line in lines:
+    if job_re.match(line):
+        in_job = True
+        continue
+    if in_job and next_job_re.match(line) and not job_re.match(line):
+        break
+    if not in_job:
+        continue
+    job_match = job_timeout_re.match(line)
+    if job_match:
+        job_timeout = int(job_match.group(1))
+        continue
+    step_match = step_name_re.match(line)
+    if step_match:
+        in_target_step = step_match.group(1).strip() == step
+        continue
+    if in_target_step:
+        step_match = step_timeout_re.match(line)
+        if step_match:
+            step_timeout = int(step_match.group(1))
+
+if job_timeout is None:
+    sys.exit(f"{path} job {job} missing timeout-minutes")
+if step_timeout is None:
+    sys.exit(f"{path} step {step!r} missing timeout-minutes")
+if step_timeout >= job_timeout:
+    sys.exit(f"{path} step {step!r} timeout {step_timeout} must be < job {job_timeout}")
+print(f"OK {job}/{step}: step {step_timeout} < job {job_timeout}")
+PY
+}
+
+assert_step_timeout_below_job "$windows_workflow" "check-windows" "Run checks"
+assert_step_timeout_below_job "$validation_workflow" "validation-windows" "Run validation tests"
+
 echo "OK: Windows check hang diagnostics (#499) are wired"

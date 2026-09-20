@@ -104,6 +104,10 @@ jobs:
         uses: gradle/actions/setup-gradle@v5
 
       - name: Run validation tests
+        # Shorter than the job timeout so dump-jvm-stacks.sh still has budget
+        # after a hung validation Gradle (#499). A job-level timeout cancels
+        # the job and can skip the dump.
+        timeout-minutes: 50
         # The Gradle test-executor protocol race (originally #72) is suppressed at its source
         # on Linux by serialising the validation Test tasks via a `ValidationTestSerialiser`
         # `BuildService` in `sample-desktop/build.gradle.kts` (see the comment block there for
