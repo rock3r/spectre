@@ -369,9 +369,12 @@ The default `scaleKey` prefers the captured window's display scale when a showin
 window's outer, client, content-pane, or *showing* embedded ComposePanel size matches
 the still (or every showing window shares one density). Cropped stills use the same
 edge rounding as window capture, so a fractional-DPI client or panel crop is not missed
-by one pixel. On Linux X11, native capture starts at the client origin, so those regions
-are offset before rounding. Hidden panels are ignored, and that geometry is read on the
-EDT. Otherwise it uses the primary/default screen transform. Pass
+by one pixel. Crop size uses the predicted capture PNG
+(`round(captureAwt × displayScale)`), then the same `imageWidth / captureAwtWidth`
+ratio as a real crop — not the nominal display scale — so an 801-DP capture at 1.25×
+(1001 px) still matches a 202-DP panel. On Linux X11, native capture starts at the
+client origin, so those regions are offset before rounding. Hidden panels are ignored,
+and that geometry is read on the EDT. Otherwise it uses the primary/default screen transform. Pass
 `scaleKey = ScreenshotGoldPaths.scaleKey(configuration)` when several densities are
 visible and you already have the window's `GraphicsConfiguration`.
 Explicit `invocationKey` values keep surrounding whitespace so `"foo"` and `" foo "`

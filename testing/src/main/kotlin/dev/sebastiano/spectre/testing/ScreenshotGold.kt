@@ -1,9 +1,11 @@
 package dev.sebastiano.spectre.testing
 
 import androidx.compose.ui.awt.ComposePanel
+import dev.sebastiano.spectre.core.capture.screenRectToImageRect
 import java.awt.Component
 import java.awt.Container
 import java.awt.GraphicsEnvironment
+import java.awt.Rectangle
 import java.awt.Window
 import java.awt.image.BufferedImage
 import java.io.IOException
@@ -47,9 +49,12 @@ import kotlin.math.roundToInt
  * client, content-pane, or showing embedded ComposePanel size matches the still (or every showing
  * window shares one density). Cropped stills use the same edge rounding as
  * [dev.sebastiano.spectre.core.capture.screenRectToImageRect], so a fractional-DPI client or panel
- * crop does not miss by one pixel. On Linux X11, native capture starts at the client origin, so
- * those regions are offset before rounding. Hidden panels are ignored. Surface geometry is read on
- * the EDT. Otherwise it uses the primary/default screen transform. Pass an explicit key (from
+ * crop does not miss by one pixel. Crop candidates use the predicted capture PNG size
+ * (`round(captureAwt * gcScale)`), then the same `imageWidth / captureAwtWidth` ratio as a real
+ * crop — not the nominal `GraphicsConfiguration` scale — so an 801-DP capture at 1.25× (1001 px)
+ * still matches a 202-DP panel. On Linux X11, native capture starts at the client origin, so those
+ * regions are offset before rounding. Hidden panels are ignored. Surface geometry is read on the
+ * EDT. Otherwise it uses the primary/default screen transform. Pass an explicit key (from
  * [ScreenshotGoldPaths.scaleKey]) when several densities are visible and inference is ambiguous.
  */
 @JvmOverloads
@@ -227,6 +232,10 @@ internal fun liveCaptureSurfaces(): List<CaptureSurfaceScale> {
                 val contentOrigin = content?.let { pane ->
                     SwingUtilities.convertPoint(pane, 0, 0, window)
                 }
+                val clientWidth =
+                    (window.width - window.insets.left - window.insets.right).coerceAtLeast(0)
+                val clientHeight =
+                    (window.height - window.insets.top - window.insets.bottom).coerceAtLeast(0)
                 captureSurfacesForBounds(
                     awtWidth = window.width,
                     awtHeight = window.height,
@@ -243,6 +252,8 @@ internal fun liveCaptureSurfaces(): List<CaptureSurfaceScale> {
                     extraAwtRegions = composePanelAwtRegions(window),
                     captureOriginX = if (x11ClientOrigin) window.insets.left else 0,
                     captureOriginY = if (x11ClientOrigin) window.insets.top else 0,
+                    captureAwtWidth = if (x11ClientOrigin) clientWidth else window.width,
+                    captureAwtHeight = if (x11ClientOrigin) clientHeight else window.height,
                 )
             }
     }
@@ -267,9 +278,13 @@ internal fun captureSurfacesForBounds(
     extraAwtRegions: List<CaptureAwtRegion> = emptyList(),
     captureOriginX: Int = 0,
     captureOriginY: Int = 0,
+    captureAwtWidth: Int = awtWidth,
+    captureAwtHeight: Int = awtHeight,
 ): List<CaptureSurfaceScale> {
     val clientWidth = (awtWidth - insetLeft - insetRight).coerceAtLeast(0)
     val clientHeight = (awtHeight - insetTop - insetBottom).coerceAtLeast(0)
+    val predictedImageWidth = (captureAwtWidth * scaleX).roundToInt()
+    val predictedImageHeight = (captureAwtHeight * scaleY).roundToInt()
     val regions = buildList {
         add(CaptureAwtRegion(0, 0, awtWidth, awtHeight))
         add(CaptureAwtRegion(insetLeft, insetTop, clientWidth, clientHeight))
@@ -284,7 +299,15 @@ internal fun captureSurfacesForBounds(
         .filter { region -> region.width > 0 && region.height > 0 }
         .map { region ->
             val (pixelWidth, pixelHeight) =
-                capturePixelSize(region, scaleX, scaleY, captureOriginX, captureOriginY)
+                capturePixelSize(
+                    region,
+                    captureAwtWidth,
+                    captureAwtHeight,
+                    predictedImageWidth,
+                    predictedImageHeight,
+                    captureOriginX,
+                    captureOriginY,
+                )
             CaptureSurfaceScale(
                 pixelWidth = pixelWidth,
                 pixelHeight = pixelHeight,
@@ -295,24 +318,31 @@ internal fun captureSurfacesForBounds(
 }
 
 /**
- * Device-pixel size of an AWT region inside a window-scoped capture. Matches
- * [dev.sebastiano.spectre.core.capture.screenRectToImageRect]: transform both edges, then derive
- * size, because rounding origin and size independently can miss a fractional-DPI crop by one pixel.
+ * Device-pixel size of an AWT region inside a window-scoped capture. Predicts the capture PNG as
+ * [imageWidth]×[imageHeight] (`round(captureAwt * gcScale)`), then delegates to
+ * [dev.sebastiano.spectre.core.capture.screenRectToImageRect] so the crop scale is `imageWidth /
+ * captureAwtWidth`, not the nominal `GraphicsConfiguration` scale.
  */
 internal fun capturePixelSize(
     region: CaptureAwtRegion,
-    scaleX: Double,
-    scaleY: Double,
+    captureAwtWidth: Int,
+    captureAwtHeight: Int,
+    imageWidth: Int,
+    imageHeight: Int,
     captureOriginX: Int = 0,
     captureOriginY: Int = 0,
 ): Pair<Int, Int> {
-    val x = region.x - captureOriginX
-    val y = region.y - captureOriginY
-    val left = (x * scaleX).roundToInt()
-    val top = (y * scaleY).roundToInt()
-    val right = ((x + region.width) * scaleX).roundToInt()
-    val bottom = ((y + region.height) * scaleY).roundToInt()
-    return (right - left).coerceAtLeast(0) to (bottom - top).coerceAtLeast(0)
+    val crop =
+        screenRectToImageRect(
+            screen = Rectangle(region.x, region.y, region.width, region.height),
+            captureOriginX = captureOriginX,
+            captureOriginY = captureOriginY,
+            captureAwtWidth = captureAwtWidth,
+            captureAwtHeight = captureAwtHeight,
+            imageWidth = imageWidth,
+            imageHeight = imageHeight,
+        )
+    return crop.width to crop.height
 }
 
 internal fun composePanelAwtRegions(root: Component): List<CaptureAwtRegion> {
