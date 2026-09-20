@@ -184,7 +184,9 @@ Switch drivers only when needed:
 - `RobotDriver()` — real `java.awt.Robot` input; moves the actual cursor and takes OS focus.
 - `RobotDriver.synthetic(rootWindow = window)` — same synthetic path as the default, pinned to a window.
 - `RobotDriver.headless()` — read-only; every input or screenshot call throws `UnsupportedOperationException`. Semantics-tree reads still work.
-- `ComposeAutomator.http("localhost", 7654)` — cross-JVM via HTTP; requires the `:server` module running in the target process.
+- `ComposeAutomator.http(security, host = "localhost", port = 7654)` — authenticated cross-JVM
+  HTTPS; requires matching `SpectreHttpSecurity` and the `:server` module in the target process.
+  Plaintext requires the explicit loopback-only test escape hatch.
 - `AgentAttach.attach(pid)` — attach to a **running** Compose JVM. The target does **not** need `spectre-core` preinstalled: when core is absent, the agent runtime injects nested `META-INF/spectre/inject-runtime.jar`. Prefer a `spectre-core` dependency when you control the target build. The attacher needs `spectre-agent` plus `spectre-agent-runtime`.
 
 ---

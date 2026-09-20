@@ -25,17 +25,21 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
+import java.net.URI
 import java.util.Base64
 import javax.imageio.ImageIO
 
@@ -52,14 +56,22 @@ import javax.imageio.ImageIO
  */
 @ExperimentalSpectreHttpApi
 @Suppress("TooManyFunctions") // Mirrors remote query + input surface (#96).
-public class HttpComposeAutomator internal constructor(private val baseUrl: String) :
-    AutoCloseable {
+public class HttpComposeAutomator
+internal constructor(private val baseUrl: String, security: SpectreHttpSecurity) : AutoCloseable {
 
     // HttpClient(CIO) — the engine *factory* form — makes the client own the engine, so
     // close() shuts down both the client and the underlying CIO engine (its connection pool
     // and selector threads). Passing a pre-built engine instance via HttpClient(engine) would
     // leak the engine on close, since Ktor only auto-closes engines it constructed itself.
-    private val client: HttpClient = HttpClient(CIO) { install(ContentNegotiation) { json() } }
+    private val client: HttpClient =
+        HttpClient(CIO) {
+            install(ContentNegotiation) { json() }
+            defaultRequest {
+                // Do not log or interpolate this value into failures. Ktor's logging plugin is not
+                // installed by Spectre.
+                header(HttpHeaders.Authorization, security.authorizationHeader)
+            }
+        }
 
     /** Fetches the current list of tracked windows from the remote automator. */
     public suspend fun windows(): List<WindowSummaryDto> =
@@ -287,38 +299,64 @@ public class HttpComposeAutomator internal constructor(private val baseUrl: Stri
 
         /** Default port suggested by the gist's HTTP example. */
         public const val DEFAULT_PORT: Int = 9274
+        private const val MAX_PORT: Int = 65_535
 
-        internal fun create(host: String, port: Int, basePath: String): HttpComposeAutomator =
-            HttpComposeAutomator(baseUrl = normaliseBaseUrl(host, port, basePath))
+        internal fun create(
+            host: String,
+            port: Int,
+            basePath: String,
+            security: SpectreHttpSecurity,
+        ): HttpComposeAutomator =
+            HttpComposeAutomator(
+                baseUrl =
+                    normaliseBaseUrl(
+                        host = host,
+                        port = port,
+                        basePath = basePath,
+                        allowInsecureLoopback = security.allowInsecureLoopback,
+                    ),
+                security = security,
+            )
 
         // Normalise basePath so callers can pass any of `""`, `"/spectre"`, `"spectre"`,
         // `"/spectre/"`, `"api/v1/spectre"`, etc. without producing a malformed URL like
         // `http://localhost:9274api/v1/spectre/...`. The result always has exactly one leading
         // slash (or is empty) and never has a trailing slash.
-        internal fun normaliseBaseUrl(host: String, port: Int, basePath: String): String {
+        internal fun normaliseBaseUrl(
+            host: String,
+            port: Int,
+            basePath: String,
+            allowInsecureLoopback: Boolean = false,
+        ): String {
+            require(port in 1..MAX_PORT) { "port must be between 1 and $MAX_PORT" }
+            val uriHost = host.removePrefix("[").removeSuffix("]")
+            require(uriHost.isNotBlank()) { "host must not be blank" }
+            if (allowInsecureLoopback) {
+                require(isLoopbackHost(uriHost)) {
+                    "Plaintext HTTP is restricted to literal loopback hosts or localhost"
+                }
+            }
             val normalisedPath = basePath.trim('/').let { if (it.isEmpty()) "" else "/$it" }
-            return "http://$host:$port$normalisedPath"
+            val scheme = if (allowInsecureLoopback) "http" else "https"
+            return URI(scheme, null, uriHost, port, normalisedPath, null, null).toASCIIString()
         }
     }
 }
 
 /**
- * Companion extension matching the gist's intended public surface `ComposeAutomator.http(host,
- * port)`. Returns an [HttpComposeAutomator] connected to the remote process; the caller is
- * responsible for closing it.
+ * Companion extension returning an [HttpComposeAutomator] connected to the remote process with the
+ * deployment-scoped [security] policy. The caller is responsible for closing it.
  *
- * ## Trust boundary
- *
- * This client speaks **plaintext HTTP** to an **unauthenticated peer**. The caller is responsible
- * for ensuring `host` points at a trusted endpoint — typically `127.0.0.1` for a server bound on
- * the same machine. Authentication, authorization, and TLS are tracked for a separately reviewed
- * future design (#96). See [installSpectreRoutes] and
- * [the published security notes](https://spectre.sebastiano.dev/SECURITY/) for the full exposure
- * model.
+ * The client uses HTTPS and sends [security]'s deployment bearer on every request. For local tests,
+ * [SpectreHttpSecurity.allowInsecureLoopback] may select plaintext HTTP; construction fails unless
+ * [host] is a literal loopback address or `localhost`. See [installSpectreRoutes] and
+ * [the published security notes](https://spectre.sebastiano.dev/SECURITY/) for deployment guidance.
  */
 @ExperimentalSpectreHttpApi
 public fun ComposeAutomator.Companion.http(
+    security: SpectreHttpSecurity,
     host: String = "localhost",
     port: Int = HttpComposeAutomator.DEFAULT_PORT,
     basePath: String = "/spectre",
-): HttpComposeAutomator = HttpComposeAutomator.create(host = host, port = port, basePath = basePath)
+): HttpComposeAutomator =
+    HttpComposeAutomator.create(host = host, port = port, basePath = basePath, security = security)

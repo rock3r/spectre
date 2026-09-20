@@ -17,7 +17,9 @@ package dev.sebastiano.spectre.server
  * Or, at a specific call site:
  * ```
  * @OptIn(ExperimentalSpectreHttpApi::class)
- * fun mountTransport(app: Application) { app.installSpectreRoutes(automator) }
+ * fun mountTransport(app: Application, security: SpectreHttpSecurity) {
+ *     app.installSpectreRoutes(automator, security)
+ * }
  * ```
  *
  * See [the stability policy](https://spectre.sebastiano.dev/STABILITY/) for the full picture of

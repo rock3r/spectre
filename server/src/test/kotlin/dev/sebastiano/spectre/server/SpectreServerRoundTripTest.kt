@@ -43,8 +43,11 @@ class SpectreServerRoundTripTest {
 
     @Test
     fun `windows endpoint returns an empty list for an empty automator`() = testApplication {
-        application { installSpectreRoutes(headlessAutomator()) }
-        val client = createClient { install(ContentNegotiation) { json() } }
+        application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
+        val client = createClient {
+            install(ContentNegotiation) { json() }
+            configureTestBearer()
+        }
 
         val response = client.get("/spectre/windows").body<WindowsResponse>()
 
@@ -53,8 +56,11 @@ class SpectreServerRoundTripTest {
 
     @Test
     fun `nodes endpoint returns an empty list when no windows are tracked`() = testApplication {
-        application { installSpectreRoutes(headlessAutomator()) }
-        val client = createClient { install(ContentNegotiation) { json() } }
+        application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
+        val client = createClient {
+            install(ContentNegotiation) { json() }
+            configureTestBearer()
+        }
 
         val response = client.get("/spectre/nodes").body<NodesResponse>()
 
@@ -63,8 +69,11 @@ class SpectreServerRoundTripTest {
 
     @Test
     fun `nodes endpoint accepts a testTag query parameter`() = testApplication {
-        application { installSpectreRoutes(headlessAutomator()) }
-        val client = createClient { install(ContentNegotiation) { json() } }
+        application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
+        val client = createClient {
+            install(ContentNegotiation) { json() }
+            configureTestBearer()
+        }
 
         val response = client.get("/spectre/nodes?testTag=Send").body<NodesResponse>()
 
@@ -73,8 +82,11 @@ class SpectreServerRoundTripTest {
 
     @Test
     fun `click against an unknown node key returns 404`() = testApplication {
-        application { installSpectreRoutes(headlessAutomator()) }
-        val client = createClient { install(ContentNegotiation) { json() } }
+        application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
+        val client = createClient {
+            install(ContentNegotiation) { json() }
+            configureTestBearer()
+        }
 
         val response =
             client.post("/spectre/click") {
@@ -91,8 +103,11 @@ class SpectreServerRoundTripTest {
 
     @Test
     fun `click against a malformed node key returns 400`() = testApplication {
-        application { installSpectreRoutes(headlessAutomator()) }
-        val client = createClient { install(ContentNegotiation) { json() } }
+        application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
+        val client = createClient {
+            install(ContentNegotiation) { json() }
+            configureTestBearer()
+        }
 
         val response =
             client.post("/spectre/click") {
@@ -107,8 +122,17 @@ class SpectreServerRoundTripTest {
 
     @Test
     fun `routes can be mounted at a custom base path`() = testApplication {
-        application { installSpectreRoutes(headlessAutomator(), basePath = "/api/v1/spectre") }
-        val client = createClient { install(ContentNegotiation) { json() } }
+        application {
+            installSpectreRoutes(
+                headlessAutomator(),
+                testHttpSecurity(),
+                basePath = "/api/v1/spectre",
+            )
+        }
+        val client = createClient {
+            install(ContentNegotiation) { json() }
+            configureTestBearer()
+        }
 
         val response = client.get("/api/v1/spectre/windows").body<WindowsResponse>()
         assertEquals(emptyList(), response.windows)
@@ -122,9 +146,12 @@ class SpectreServerRoundTripTest {
                 // must reuse it rather than calling install() again, which would throw a
                 // duplicate-plugin exception at startup.
                 serverInstall(ServerContentNegotiation) { json() }
-                installSpectreRoutes(headlessAutomator())
+                installSpectreRoutes(headlessAutomator(), testHttpSecurity())
             }
-            val client = createClient { install(ContentNegotiation) { json() } }
+            val client = createClient {
+                install(ContentNegotiation) { json() }
+                configureTestBearer()
+            }
 
             val response = client.get("/spectre/windows").body<WindowsResponse>()
             assertEquals(emptyList(), response.windows)
