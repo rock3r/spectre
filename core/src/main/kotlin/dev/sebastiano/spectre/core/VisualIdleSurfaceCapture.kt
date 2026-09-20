@@ -151,6 +151,9 @@ internal fun isNativeCaptureHelperUnusable(error: Throwable): Boolean {
     ) {
         return true
     }
+    if (messages.any { it.contains("Bundled helper binary not found", ignoreCase = true) }) {
+        return true
+    }
     // Helper Event.Error for a missing gst-launch process (screenshot.rs spawn context).
     // Later pipeline strings also mention gst-launch ("did not exit within", "pipeline
     // exited with status") and must stay unsampleable so #355 does not region-substitute.

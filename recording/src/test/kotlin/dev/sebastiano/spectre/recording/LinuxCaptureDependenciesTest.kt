@@ -22,6 +22,7 @@ class LinuxCaptureDependenciesTest {
             LinuxCaptureDependencies.isGstLaunchAvailable(
                 launch = { FakeGstLaunchProcess(exit = 0) },
                 inspectElement = { true },
+                inspectAvailable = { true },
             ),
         )
     }
@@ -104,10 +105,38 @@ class LinuxCaptureDependenciesTest {
         assertTrue(Thread.interrupted(), "interrupt status must be restored so the wait can abort")
         assertEquals(
             true,
-            LinuxCaptureDependencies.isGstLaunchAvailable(inspectElement = { true }) {
+            LinuxCaptureDependencies.isGstLaunchAvailable(
+                inspectElement = { true },
+                inspectAvailable = { true },
+            ) {
                 FakeGstLaunchProcess(exit = 0)
             },
             "a later probe must be allowed to succeed after an interrupted one",
+        )
+    }
+
+    @Test
+    fun `gst-launch probe stays usable when gst-inspect is missing`() {
+        assertEquals(
+            true,
+            LinuxCaptureDependencies.isGstLaunchAvailable(
+                inspectElement = { error("inspect must not run when gst-inspect is absent") },
+                inspectAvailable = { false },
+            ) {
+                FakeGstLaunchProcess(exit = 0)
+            },
+        )
+    }
+
+    @Test
+    fun `gst-launch probe stays inconclusive when gst-inspect itself times out`() {
+        assertNull(
+            LinuxCaptureDependencies.isGstLaunchAvailable(
+                inspectElement = { error("inspect must not run when gst-inspect is inconclusive") },
+                inspectAvailable = { null },
+            ) {
+                FakeGstLaunchProcess(exit = 0)
+            }
         )
     }
 
@@ -118,6 +147,7 @@ class LinuxCaptureDependenciesTest {
             LinuxCaptureDependencies.isGstLaunchAvailable(
                 inspectElement = { element -> element != "ximagesrc" },
                 requiredElements = listOf("ximagesrc", "videoconvert", "pngenc"),
+                inspectAvailable = { true },
             ) {
                 FakeGstLaunchProcess(exit = 0)
             },
@@ -130,6 +160,7 @@ class LinuxCaptureDependenciesTest {
             LinuxCaptureDependencies.isGstLaunchAvailable(
                 inspectElement = { null },
                 requiredElements = listOf("videoconvert"),
+                inspectAvailable = { true },
             ) {
                 FakeGstLaunchProcess(exit = 0)
             }

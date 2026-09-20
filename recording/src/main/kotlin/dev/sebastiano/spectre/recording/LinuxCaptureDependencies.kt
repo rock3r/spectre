@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.recording
 
+import dev.sebastiano.spectre.recording.portal.DefaultWaylandHelperBinaryExtractor
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -11,18 +12,25 @@ import java.util.concurrent.TimeUnit
  */
 internal object LinuxCaptureDependencies {
     /**
-     * `true` when `gst-launch-1.0 --version` exits 0 **and** every required still-capture element
-     * is present, `false` when the binary or a required element is confirmed missing or a probe
-     * exits non-zero, and `null` when the probe is inconclusive (timeout or a transient
-     * `ProcessBuilder.start()` failure). Inconclusive results must not be negative-cached.
+     * `true` when `gst-launch-1.0 --version` exits 0 and, when `gst-inspect-1.0` is present, every
+     * required still-capture element is present. `gst-inspect-1.0` is optional: the screenshot
+     * pipeline only spawns `gst-launch-1.0`. A missing inspector must not be cached as native
+     * unavailability. `false` when launch or a required element is confirmed missing. `null` when
+     * the probe is inconclusive (timeout or a transient `ProcessBuilder.start()` failure).
      */
     fun isGstLaunchAvailable(
         inspectElement: (String) -> Boolean? = ::inspectGstElement,
         requiredElements: List<String> = requiredStillCaptureElements(),
+        inspectAvailable: () -> Boolean? = ::probeGstInspectVersion,
         launch: () -> Process = ::startGstLaunchVersion,
     ): Boolean? {
         val version = awaitGstProcess(launch) ?: return null
         if (!version) return false
+        when (inspectAvailable()) {
+            false -> return true
+            null -> return null
+            true -> Unit
+        }
         for (element in requiredElements) {
             when (inspectElement(element)) {
                 true -> Unit
@@ -49,6 +57,10 @@ internal fun gstProbeBuilder(vararg command: String): ProcessBuilder =
     ProcessBuilder(*command)
         .redirectOutput(ProcessBuilder.Redirect.DISCARD)
         .redirectError(ProcessBuilder.Redirect.DISCARD)
+
+internal fun probeGstInspectVersion(): Boolean? = awaitGstProcess {
+    gstProbeBuilder(GST_INSPECT, "--version").start()
+}
 
 internal fun requiredStillCaptureElements(
     isWayland: () -> Boolean = HostPlatform::isWayland
@@ -93,6 +105,9 @@ internal fun isConfirmedMissingExecutable(error: IOException): Boolean {
         message.contains("error=2,", ignoreCase = true) ||
         message.contains("error=2)", ignoreCase = true)
 }
+
+internal fun isLinuxNativeHelperBundled(): Boolean =
+    DefaultWaylandHelperBinaryExtractor.instance.isBundled()
 
 private const val GST_LAUNCH: String = "gst-launch-1.0"
 private const val GST_INSPECT: String = "gst-inspect-1.0"

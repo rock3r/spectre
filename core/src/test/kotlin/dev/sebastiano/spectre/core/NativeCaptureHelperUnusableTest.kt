@@ -87,6 +87,14 @@ class NativeCaptureHelperUnusableTest {
                 IllegalStateException("duplicate window title 'same title'")
             )
         )
+        assertTrue(
+            isNativeCaptureHelperUnusable(
+                IllegalStateException(
+                    "Bundled helper binary not found at classpath resource " +
+                        "'native/linux/riscv64/spectre-wayland-helper'."
+                )
+            )
+        )
         assertFalse(isNativeCaptureHelperUnusable(UnsupportedOperationException("not a Frame")))
     }
 }

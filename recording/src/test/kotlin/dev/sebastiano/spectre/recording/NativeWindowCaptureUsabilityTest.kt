@@ -15,6 +15,7 @@ class NativeWindowCaptureUsabilityTest {
             NativeWindowCaptureBridge.computePlatformCaptureUsable(
                 isLinux = { true },
                 gstLaunchAvailable = { false },
+                linuxHelperBundled = { true },
             ),
         )
         assertEquals(
@@ -22,6 +23,19 @@ class NativeWindowCaptureUsabilityTest {
             NativeWindowCaptureBridge.computePlatformCaptureUsable(
                 isLinux = { true },
                 gstLaunchAvailable = { true },
+                linuxHelperBundled = { true },
+            ),
+        )
+    }
+
+    @Test
+    fun `Linux is unusable when the bundled helper is absent`() {
+        assertEquals(
+            false,
+            NativeWindowCaptureBridge.computePlatformCaptureUsable(
+                isLinux = { true },
+                gstLaunchAvailable = { true },
+                linuxHelperBundled = { false },
             ),
         )
     }
@@ -43,6 +57,7 @@ class NativeWindowCaptureUsabilityTest {
             NativeWindowCaptureBridge.computePlatformCaptureUsable(
                 isLinux = { true },
                 gstLaunchAvailable = { null },
+                linuxHelperBundled = { true },
             )
         )
         val first = rememberCompletedProbe(cached = null, waitScoped = null) { null }

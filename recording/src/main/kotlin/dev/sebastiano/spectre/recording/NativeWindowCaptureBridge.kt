@@ -71,7 +71,12 @@ internal object NativeWindowCaptureBridge {
     internal fun computePlatformCaptureUsable(
         isLinux: () -> Boolean = HostPlatform::isLinux,
         gstLaunchAvailable: () -> Boolean? = { LinuxCaptureDependencies.isGstLaunchAvailable() },
-    ): Boolean? = if (isLinux()) gstLaunchAvailable() else true
+        linuxHelperBundled: () -> Boolean = ::isLinuxNativeHelperBundled,
+    ): Boolean? {
+        if (!isLinux()) return true
+        if (!linuxHelperBundled()) return false
+        return gstLaunchAvailable()
+    }
 
     @JvmStatic
     @JvmName("captureWindow")
