@@ -24,11 +24,13 @@ class LinuxCaptureDependenciesTest {
     }
 
     @Test
-    fun `gst-launch probe is false when the binary cannot start`() {
+    fun `gst-launch probe is false when the binary is confirmed missing`() {
         assertEquals(
             false,
             LinuxCaptureDependencies.isGstLaunchAvailable {
-                throw IOException("Cannot run program \"gst-launch-1.0\"")
+                throw IOException(
+                    "Cannot run program \"gst-launch-1.0\": error=2, No such file or directory"
+                )
             },
         )
         assertEquals(
@@ -37,10 +39,28 @@ class LinuxCaptureDependenciesTest {
                 throw IOException("error=2, No such file or directory")
             },
         )
+        assertEquals(
+            false,
+            LinuxCaptureDependencies.isGstLaunchAvailable {
+                throw IOException("No such file or directory")
+            },
+        )
     }
 
     @Test
     fun `gst-launch probe launch IOException is inconclusive unless the binary is missing`() {
+        assertNull(
+            LinuxCaptureDependencies.isGstLaunchAvailable {
+                throw IOException("Cannot run program \"gst-launch-1.0\"")
+            }
+        )
+        assertNull(
+            LinuxCaptureDependencies.isGstLaunchAvailable {
+                throw IOException(
+                    "Cannot run program \"gst-launch-1.0\": error=13, Permission denied"
+                )
+            }
+        )
         assertNull(
             LinuxCaptureDependencies.isGstLaunchAvailable {
                 throw IOException("error=24, Too many open files")

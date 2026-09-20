@@ -45,11 +45,24 @@ class NativeWindowCaptureUsabilityTest {
                 gstLaunchAvailable = { null },
             )
         )
-        val first = rememberCompletedProbe(cached = null, computed = null)
+        val first = rememberCompletedProbe(cached = null) { null }
         assertFalse(first.usableNow)
         assertNull(first.cache)
-        val second = rememberCompletedProbe(cached = first.cache, computed = true)
+        val second = rememberCompletedProbe(cached = first.cache) { true }
         assertTrue(second.usableNow)
         assertEquals(true, second.cache)
+    }
+
+    @Test
+    fun `cached probe is reused without launching another compute`() {
+        var computes = 0
+        val reused =
+            rememberCompletedProbe(cached = true) {
+                computes += 1
+                false
+            }
+        assertTrue(reused.usableNow)
+        assertEquals(true, reused.cache)
+        assertEquals(0, computes, "a completed cache must not start a second gst-launch probe")
     }
 }

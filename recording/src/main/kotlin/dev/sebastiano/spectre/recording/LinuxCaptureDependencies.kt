@@ -45,8 +45,10 @@ internal object LinuxCaptureDependencies {
 
     private fun isConfirmedMissingExecutable(error: IOException): Boolean {
         val message = error.message.orEmpty()
-        return message.contains("Cannot run program", ignoreCase = true) ||
-            message.contains("No such file or directory", ignoreCase = true) ||
+        // ProcessBuilder.start() prefixes every launch failure with "Cannot run program"
+        // regardless of errno. Only ENOENT is a confirmed missing binary; error=13 /
+        // error=24 and similar stay inconclusive so they are not negative-cached.
+        return message.contains("No such file or directory", ignoreCase = true) ||
             message.contains("error=2,", ignoreCase = true) ||
             message.contains("error=2)", ignoreCase = true)
     }

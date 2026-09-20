@@ -36,8 +36,13 @@ internal object NativeWindowCaptureBridge {
             return it
         }
         return synchronized(platformCaptureUsableLock) {
+            cachedPlatformCaptureUsable?.let {
+                return@synchronized it
+            }
             val remembered =
-                rememberCompletedProbe(cachedPlatformCaptureUsable, computePlatformCaptureUsable())
+                rememberCompletedProbe(cachedPlatformCaptureUsable) {
+                    computePlatformCaptureUsable()
+                }
             cachedPlatformCaptureUsable = remembered.cache
             remembered.usableNow
         }
@@ -87,7 +92,8 @@ internal object NativeWindowCaptureBridge {
 /** [cache] is null when [computed] timed out so a later wait can retry the probe. */
 internal data class CompletedProbe(val usableNow: Boolean, val cache: Boolean?)
 
-internal fun rememberCompletedProbe(cached: Boolean?, computed: Boolean?): CompletedProbe {
+internal fun rememberCompletedProbe(cached: Boolean?, compute: () -> Boolean?): CompletedProbe {
     if (cached != null) return CompletedProbe(usableNow = cached, cache = cached)
+    val computed = compute()
     return CompletedProbe(usableNow = computed ?: false, cache = computed)
 }
