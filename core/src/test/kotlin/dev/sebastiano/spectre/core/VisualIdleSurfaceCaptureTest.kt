@@ -406,6 +406,14 @@ class VisualIdleSurfaceCaptureTest {
         )
         assertFalse(
             isNativeCaptureHelperUnusable(
+                IllegalStateException(
+                    "Linux screenshot helper failed",
+                    IOException("simulated EPIPE"),
+                )
+            )
+        )
+        assertFalse(
+            isNativeCaptureHelperUnusable(
                 IllegalStateException("duplicate window title 'same title'")
             )
         )

@@ -7,6 +7,7 @@ import dev.sebastiano.spectre.core.capture.normalizeImageToScreenBounds
 import java.awt.Insets
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
+import java.io.IOException
 
 /**
  * Captures one tracked Compose surface for visual-idle frame hashing.
@@ -121,12 +122,25 @@ internal fun isNativeWindowCaptureAvailable(
  * unsampleable so #355's no-silent-region-substitute rule still holds.
  */
 internal fun isNativeCaptureHelperUnusable(error: Throwable): Boolean {
-    val messages = generateSequence(error) { it.cause }.mapNotNull { it.message }
-    return messages.any { message ->
-        message.contains("Linux screenshot helper failed", ignoreCase = true) ||
-            message.contains("gst-launch", ignoreCase = true) ||
-            (message.contains("Linux", ignoreCase = true) &&
-                message.contains("screenshot is unavailable", ignoreCase = true))
+    val chain = generateSequence(error) { it.cause }.toList()
+    val messages = chain.mapNotNull { it.message }
+    if (messages.any { it.contains("gst-launch", ignoreCase = true) }) return true
+    if (
+        messages.any { message ->
+            message.contains("Linux", ignoreCase = true) &&
+                message.contains("screenshot is unavailable", ignoreCase = true)
+        }
+    ) {
+        return true
+    }
+    // LinuxNativeScreenshotter wraps every IOException as "Linux screenshot helper failed".
+    // Only process-launch / missing-binary causes mean the helper cannot run (#503). Pipe,
+    // filesystem, and decode failures stay unsampleable so #355 does not region-substitute.
+    return chain.filterIsInstance<IOException>().any { ioe ->
+        val message = ioe.message.orEmpty()
+        message.contains("Cannot run program", ignoreCase = true) ||
+            message.contains("No such file or directory", ignoreCase = true) ||
+            message.contains("error=2", ignoreCase = true)
     }
 }
 
