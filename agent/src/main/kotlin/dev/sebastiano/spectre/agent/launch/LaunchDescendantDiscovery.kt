@@ -13,7 +13,7 @@ import kotlin.streams.asSequence
  * the app is **not** a ProcessHandle descendant of the gradlew client.
  *
  * Safety rules:
- * - Never returns a Gradle daemon display-name match.
+ * - Never returns a Gradle daemon or worker display-name match.
  * - Never returns an arbitrary machine-wide JVM.
  * - Never returns a JVM that was already running when the launch began — it belongs to something
  *   else, however well its main class matches (#446). See [predatesLaunch].
@@ -115,7 +115,12 @@ public object LaunchDescendantDiscovery {
         startInstantOf: (Long) -> Instant?,
         nativeFallback: (Long, Set<Long>, String?) -> Long?,
     ): Long? {
-        if (listed.isEmpty()) return null
+        if (listed.isEmpty()) {
+            // VirtualMachine.list() can throw or lag to empty (hsperfdata / attach race).
+            // Still walk the native tree; without listed daemon pids that is client
+            // descendants only, which is enough for --no-daemon layouts.
+            return nativeFallback(clientPid, emptySet(), nameFilter)
+        }
 
         val daemonPids =
             listed.filter { isGradleDaemonDisplayName(it.displayName) }.map { it.pid }.toSet()
@@ -161,7 +166,15 @@ public object LaunchDescendantDiscovery {
                     return it
                 }
             // Native process-tree fallback: hsperfdata/list can lag behind spawn.
-            return nativeFallback(clientPid, daemonPids, nameFilter)
+            nativeFallback(clientPid, daemonPids, nameFilter)?.let {
+                return it
+            }
+            // list() already found a post-launch name match, but we could not prove it is a
+            // client descendant or daemon/worker child. On macOS `ProcessHandle.parent()` is
+            // often empty, JavaExec parents the app to a Worker that VirtualMachine.list()
+            // may omit, and the native walk cannot see argv. predatesLaunch already dropped
+            // leftovers — prefer that listed JVM over polling until JVM_ATTACHABLE times out.
+            return nameMatched.maxByOrNull { it.pid }?.pid
         }
 
         // No name filter: only client descendants (never unfiltered daemon children).
@@ -257,18 +270,24 @@ public object LaunchDescendantDiscovery {
             }
         }
         val daemonPidSet = daemonPids // roots may include daemon pids as walk roots only
-        return roots
-            .asSequence()
-            .flatMap { root -> descendantPidsOf(root).asSequence() }
-            .filter { pid -> pid != clientPid }
-            .filter { pid -> pid !in daemonPidSet }
-            // Same rule as the listed-JVM path: this launch cannot have started a JVM that was
-            // already running when it began (#446).
-            .filter { pid -> !predatesLaunch(startInstantOf(pid), clientStart) }
-            .filter { pid -> looksLikeJavaProcess(pid) }
-            .filter { pid -> !commandLineLooksLikeGradleDaemon(pid) }
-            .filter { pid -> nameFilter.isNullOrBlank() || commandLineContains(pid, nameFilter) }
-            .maxOrNull()
+        val javaDescendants =
+            roots
+                .asSequence()
+                .flatMap { root -> descendantPidsOf(root).asSequence() }
+                .filter { pid -> pid != clientPid }
+                .filter { pid -> pid !in daemonPidSet }
+                // Same rule as the listed-JVM path: this launch cannot have started a JVM that was
+                // already running when it began (#446).
+                .filter { pid -> !predatesLaunch(startInstantOf(pid), clientStart) }
+                .filter { pid -> looksLikeJavaProcess(pid) }
+                .filter { pid -> !commandLineLooksLikeGradleDaemon(pid) }
+                .toList()
+        val named = javaDescendants.filter { pid ->
+            nameFilter.isNullOrBlank() || commandLineContains(pid, nameFilter)
+        }
+        // macOS often hides argv (`ProcessHandle.info().arguments()` is empty), so a unique
+        // post-launch java child of the client/daemon/worker is this launch's app JVM.
+        return named.maxOrNull() ?: javaDescendants.singleOrNull()
     }
 
     private fun commandLineLooksLikeGradleDaemon(pid: Long): Boolean {
@@ -293,13 +312,20 @@ public object LaunchDescendantDiscovery {
         return cmd.contains(needle, ignoreCase = true) || args.contains(needle, ignoreCase = true)
     }
 
-    /** True when [displayName] looks like a Gradle daemon JVM banner from `jps` / Attach list. */
+    /**
+     * True when [displayName] looks like a Gradle daemon **or worker** JVM banner from `jps` /
+     * Attach list. Workers must never be attached to, but they are the usual parent of a `JavaExec`
+     * / `run` app JVM — treat them as walk roots, not as the target.
+     */
     public fun isGradleDaemonDisplayName(displayName: String): Boolean {
         val lower = displayName.lowercase()
         return lower.contains("gradle daemon") ||
             lower.contains("gradledaemon") ||
             lower.contains("org.gradle.launcher.daemon") ||
-            lower.contains("gradle-daemon")
+            lower.contains("gradle-daemon") ||
+            lower.contains("gradle worker") ||
+            lower.contains("workerdaemon") ||
+            lower.contains("org.gradle.process.internal.worker")
     }
 
     /** True when [pid] is visible to the Attach API via `VirtualMachine.list()`. */

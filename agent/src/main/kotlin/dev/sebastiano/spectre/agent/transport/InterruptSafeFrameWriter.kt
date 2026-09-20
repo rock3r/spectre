@@ -14,7 +14,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * socket**. `Executors.newSingleThreadExecutor` is easy to get wrong on that contract (default
  * factory threads are non-daemon; `shutdownNow()` interrupts the worker). This helper starts an
  * explicit daemon thread, waits uninterruptibly for each write, and only interrupts the worker
- * after [close] once the caller has already dropped the channel.
+ * after [close] once the caller has already dropped the channel. Task admission is serialized with
+ * shutdown so a racy [writeFrame] cannot enqueue after the worker exits and hang in
+ * [awaitUninterruptibly].
  */
 internal class InterruptSafeFrameWriter(
     threadName: String,
@@ -22,6 +24,8 @@ internal class InterruptSafeFrameWriter(
 ) : AutoCloseable {
     private val tasks = LinkedBlockingQueue<WriteTask>()
     private val closed = AtomicBoolean(false)
+    /** Serializes [writeFrame] admission with [close] so a racy offer cannot outlive the worker. */
+    private val admission = Any()
     private val thread =
         Thread(::loop, threadName).apply {
             isDaemon = true
@@ -30,17 +34,21 @@ internal class InterruptSafeFrameWriter(
 
     @Throws(IOException::class)
     fun writeFrame(payload: ByteArray) {
-        if (closed.get()) throw IOException("IPC writer is shut down")
         val task = WriteTask(payload)
-        if (!tasks.offer(task)) throw IOException("IPC writer is shut down")
+        synchronized(admission) {
+            if (closed.get()) throw IOException("IPC writer is shut down")
+            if (!tasks.offer(task)) throw IOException("IPC writer is shut down")
+        }
         awaitUninterruptibly(task)
     }
 
     override fun close() {
-        if (!closed.compareAndSet(false, true)) return
-        // Wake take() after the caller has closed the channel so a blocked write unblocks
-        // as ClosedChannelException rather than ClosedByInterruptException-on-an-open-socket.
-        tasks.offer(POISON)
+        synchronized(admission) {
+            if (!closed.compareAndSet(false, true)) return
+            // Wake take() after the caller has closed the channel so a blocked write unblocks
+            // as ClosedChannelException rather than ClosedByInterruptException-on-an-open-socket.
+            tasks.offer(POISON)
+        }
         thread.interrupt()
         runCatching { thread.join(JOIN_MS) }
     }

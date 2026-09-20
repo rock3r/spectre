@@ -134,7 +134,8 @@ internal object LaunchReadiness {
                     // alive — prefer prod-like launch when you control the build (#386).
                     " Prefer a prod-like launch (java -jar / installDist) over ./gradlew when " +
                     "possible; for Gradle, ensure the app has started (cold daemon + compile " +
-                    "can take >15s) and that --app-name matches the main class.",
+                    "can take >15s) and that --app-name matches the main class." +
+                    lastDiscoverySnapshot(launchedPid, nameFilter, clientStart),
         )
     }
 
@@ -488,6 +489,29 @@ internal object LaunchReadiness {
         } catch (_: IOException) {
             ""
         }
+    }
+
+    /**
+     * One last [LaunchDescendantDiscovery.selectAppJvm] snapshot for a Gradle-ish
+     * [JvmNotAttachableException]. Happy-path polls stay cheap (NoOp diagnostics); the failing run
+     * is the one that needs the candidate list (#458).
+     */
+    private fun lastDiscoverySnapshot(
+        launchedPid: Long,
+        nameFilter: String?,
+        clientStart: Instant,
+    ): String {
+        val captured = StringBuilder()
+        runCatching {
+            LaunchDescendantDiscovery.selectAppJvm(
+                clientPid = launchedPid,
+                nameFilter = nameFilter,
+                clientStart = clientStart,
+                onDiagnostics = { captured.append(it.format()) },
+            )
+        }
+        val text = captured.toString().trim()
+        return if (text.isEmpty()) "" else "\n$text"
     }
 
     private fun sleepQuietly(ms: Long) {

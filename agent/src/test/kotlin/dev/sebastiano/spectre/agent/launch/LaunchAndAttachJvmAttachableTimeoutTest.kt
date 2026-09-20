@@ -86,5 +86,9 @@ class LaunchAndAttachJvmAttachableTimeoutTest {
                 msg.contains("nameFilter"),
             "app-name guidance: $msg",
         )
+        assertTrue(
+            msg.contains("[spectre-launch-discovery]"),
+            "timeout must include a last-poll discovery snapshot: $msg",
+        )
     }
 }
