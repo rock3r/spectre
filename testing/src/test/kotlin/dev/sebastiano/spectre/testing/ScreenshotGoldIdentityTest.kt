@@ -229,6 +229,36 @@ class ScreenshotGoldIdentityTest {
     }
 
     @Test
+    fun `TestInfo method-level key is not enough for ParameterizedClass hosts`() {
+        val method =
+            GoldIdentityJunit5ParameterizedClassTemplateHost::class.java.declaredMethods.single {
+                it.name == "nested parameterized"
+            }
+        val info =
+            fakeTestInfo(
+                "[1] dark",
+                GoldIdentityJunit5ParameterizedClassTemplateHost::class.java,
+                method,
+            )
+        assertEquals("[1] dark", invocationKeyFromTestInfo(info))
+        val image = java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+        image.setRGB(0, 0, 0xFFFFFFFF.toInt())
+        val error =
+            assertFailsWith<IllegalStateException> {
+                assertMatchesGold(testInfo = info, name = "main-window", image = image)
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
+        assertEquals(
+            "dark-[1]",
+            resolveInvocationKey(
+                GoldIdentityJunit5ParameterizedClassTemplateHost::class.java.name,
+                method.name,
+                invocationKey = "dark-[1]",
+            ),
+        )
+    }
+
+    @Test
     fun `TestInfo cannot invent a key for ParameterizedClass ordinary tests`() {
         val method =
             GoldIdentityJunit5ParameterizedClassHost::class
@@ -408,6 +438,18 @@ internal class GoldIdentityJunit5ParameterizedClassHost(private val themeIndex: 
                 assertMatchesGold(name = "main-window", image = image)
             }
         assertTrue(error.message!!.contains("invocationKey"), error.message)
+    }
+}
+
+@Disabled("reflective fixture for ParameterizedClass + ParameterizedTest gold identity")
+@ParameterizedClass
+@ValueSource(ints = [1])
+internal class GoldIdentityJunit5ParameterizedClassTemplateHost {
+    @org.junit.jupiter.params.ParameterizedTest
+    @ValueSource(ints = [1])
+    fun `nested parameterized`(value: Int) {
+        assertEquals(1, value)
+        error("parameterized-class template fixture")
     }
 }
 

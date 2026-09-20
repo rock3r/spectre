@@ -93,6 +93,36 @@ class ScreenshotGoldScaleKeyTest {
     }
 
     @Test
+    fun `scale key matches an X11 client-origin panel crop at fractional DPI`() {
+        // Linux X11 native capture starts at the client origin. A panel flush with that
+        // origin is (1,0,81,100) in window space but (0,0,81,100) in capture space:
+        // window-relative edge rounding is 121×150, client-relative is 122×150.
+        val image = BufferedImage(122, 150, BufferedImage.TYPE_INT_ARGB)
+        val surfaces =
+            captureSurfacesForBounds(
+                awtWidth = 200,
+                awtHeight = 100,
+                insetLeft = 1,
+                insetTop = 0,
+                insetRight = 118,
+                insetBottom = 0,
+                scaleX = 1.5,
+                scaleY = 1.5,
+                extraAwtRegions = listOf(CaptureAwtRegion(1, 0, 81, 100)),
+                captureOriginX = 1,
+                captureOriginY = 0,
+            ) + CaptureSurfaceScale(800, 600, 1.0, 1.0)
+        val key =
+            currentScaleKey(
+                image = image,
+                surfaces = surfaces,
+                fallbackScaleX = 1.0,
+                fallbackScaleY = 1.0,
+            )
+        assertEquals("scale-1.5x1.5", key)
+    }
+
+    @Test
     fun `scale key matches an embedded compose panel smaller than the content pane`() {
         val image = BufferedImage(160, 80, BufferedImage.TYPE_INT_ARGB)
         val surfaces =

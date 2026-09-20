@@ -360,14 +360,18 @@ invocation — including JUnit 4 Parameterized and JUnit 5 `@ParameterizedClass`
 `@ClassTemplate` hosts, which re-run ordinary `@Test` methods once per argument
 set — so it always requires `invocationKey` and fails closed without one.
 `TestInfo.displayName` on those ordinary methods is the method name, not the class
-invocation, so the TestInfo facade also requires `invocationKey` there.
+invocation, so the TestInfo facade also requires `invocationKey` there. A
+`@ParameterizedTest` or `@RepeatedTest` inside a `@ParameterizedClass` still needs
+an explicit `invocationKey`: each outer argument set repeats the same method-level
+`[1]` / `repetition 1` index.
 
 The default `scaleKey` prefers the captured window's display scale when a showing AWT
 window's outer, client, content-pane, or *showing* embedded ComposePanel size matches
 the still (or every showing window shares one density). Cropped stills use the same
 edge rounding as window capture, so a fractional-DPI client or panel crop is not missed
-by one pixel. Hidden panels are ignored, and that geometry is read on the EDT. Otherwise
-it uses the primary/default screen transform. Pass
+by one pixel. On Linux X11, native capture starts at the client origin, so those regions
+are offset before rounding. Hidden panels are ignored, and that geometry is read on the
+EDT. Otherwise it uses the primary/default screen transform. Pass
 `scaleKey = ScreenshotGoldPaths.scaleKey(configuration)` when several densities are
 visible and you already have the window's `GraphicsConfiguration`.
 Explicit `invocationKey` values keep surrounding whitespace so `"foo"` and `" foo "`

@@ -47,8 +47,9 @@ import kotlin.math.roundToInt
  * client, content-pane, or showing embedded ComposePanel size matches the still (or every showing
  * window shares one density). Cropped stills use the same edge rounding as
  * [dev.sebastiano.spectre.core.capture.screenRectToImageRect], so a fractional-DPI client or panel
- * crop does not miss by one pixel. Hidden panels are ignored. Surface geometry is read on the EDT.
- * Otherwise it uses the primary/default screen transform. Pass an explicit key (from
+ * crop does not miss by one pixel. On Linux X11, native capture starts at the client origin, so
+ * those regions are offset before rounding. Hidden panels are ignored. Surface geometry is read on
+ * the EDT. Otherwise it uses the primary/default screen transform. Pass an explicit key (from
  * [ScreenshotGoldPaths.scaleKey]) when several densities are visible and inference is ambiguous.
  */
 @JvmOverloads
@@ -213,6 +214,7 @@ internal fun <T> readAwtSnapshotOnEdt(block: () -> T): T {
 
 internal fun liveCaptureSurfaces(): List<CaptureSurfaceScale> {
     if (GraphicsEnvironment.isHeadless()) return emptyList()
+    val x11ClientOrigin = ScreenshotGoldPaths.osKey() == "linux-x11"
     return readAwtSnapshotOnEdt {
         Window.getWindows()
             .filter { it.isShowing }
@@ -239,6 +241,8 @@ internal fun liveCaptureSurfaces(): List<CaptureSurfaceScale> {
                     contentX = contentOrigin?.x ?: window.insets.left,
                     contentY = contentOrigin?.y ?: window.insets.top,
                     extraAwtRegions = composePanelAwtRegions(window),
+                    captureOriginX = if (x11ClientOrigin) window.insets.left else 0,
+                    captureOriginY = if (x11ClientOrigin) window.insets.top else 0,
                 )
             }
     }
@@ -261,6 +265,8 @@ internal fun captureSurfacesForBounds(
     contentY: Int = insetTop,
     extraAwtSizes: List<Pair<Int, Int>> = emptyList(),
     extraAwtRegions: List<CaptureAwtRegion> = emptyList(),
+    captureOriginX: Int = 0,
+    captureOriginY: Int = 0,
 ): List<CaptureSurfaceScale> {
     val clientWidth = (awtWidth - insetLeft - insetRight).coerceAtLeast(0)
     val clientHeight = (awtHeight - insetTop - insetBottom).coerceAtLeast(0)
@@ -277,7 +283,8 @@ internal fun captureSurfacesForBounds(
         .distinct()
         .filter { region -> region.width > 0 && region.height > 0 }
         .map { region ->
-            val (pixelWidth, pixelHeight) = capturePixelSize(region, scaleX, scaleY)
+            val (pixelWidth, pixelHeight) =
+                capturePixelSize(region, scaleX, scaleY, captureOriginX, captureOriginY)
             CaptureSurfaceScale(
                 pixelWidth = pixelWidth,
                 pixelHeight = pixelHeight,
@@ -296,11 +303,15 @@ internal fun capturePixelSize(
     region: CaptureAwtRegion,
     scaleX: Double,
     scaleY: Double,
+    captureOriginX: Int = 0,
+    captureOriginY: Int = 0,
 ): Pair<Int, Int> {
-    val left = (region.x * scaleX).roundToInt()
-    val top = (region.y * scaleY).roundToInt()
-    val right = ((region.x + region.width) * scaleX).roundToInt()
-    val bottom = ((region.y + region.height) * scaleY).roundToInt()
+    val x = region.x - captureOriginX
+    val y = region.y - captureOriginY
+    val left = (x * scaleX).roundToInt()
+    val top = (y * scaleY).roundToInt()
+    val right = ((x + region.width) * scaleX).roundToInt()
+    val bottom = ((y + region.height) * scaleY).roundToInt()
     return (right - left).coerceAtLeast(0) to (bottom - top).coerceAtLeast(0)
 }
 

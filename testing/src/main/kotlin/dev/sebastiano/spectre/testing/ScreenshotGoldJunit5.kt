@@ -23,7 +23,8 @@ import org.junit.jupiter.api.TestInfo
  * resemble JUnit's default, such as `@ParameterizedTest(name = "[1] theme")` — require
  * [invocationKey]. Ordinary `@Test` methods on a JUnit 5 `@ParameterizedClass` or `@ClassTemplate`
  * also require [invocationKey]: [testInfo] exposes the method display name, not the class
- * invocation.
+ * invocation. A method-level `@ParameterizedTest` / `@RepeatedTest` inside a class template still
+ * requires [invocationKey] — each outer argument set repeats the same `[1]` / `repetition 1` index.
  */
 public fun assertMatchesGold(
     testInfo: TestInfo,
@@ -45,7 +46,8 @@ public fun assertMatchesGold(
             resolveInvocationKey(
                 testClassName,
                 testMethodName,
-                invocationKey ?: invocationKeyFromTestInfo(testInfo),
+                invocationKey,
+                derivedInvocationKey = invocationKeyFromTestInfo(testInfo),
             ),
     )
 }

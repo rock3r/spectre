@@ -72,9 +72,21 @@ internal fun resolveInvocationKey(
     testClassName: String,
     testMethodName: String,
     invocationKey: String?,
+    derivedInvocationKey: String? = null,
 ): String? {
-    val present = invocationKey?.takeIf { it.isNotBlank() }
-    if (present != null) return present
+    val explicit = invocationKey?.takeIf { it.isNotBlank() }
+    if (explicit != null) return explicit
+    val cls = runCatching { Class.forName(testClassName) }.getOrNull()
+    // Class-template hosts repeat method-level indexes ([1], repetition 1) once per outer
+    // argument set. A TestInfo-derived method key is not unique across those invocations.
+    if (cls != null && isJunit5ClassTemplateHost(cls)) {
+        error(
+            "assertMatchesGold on a parameterized or repeated test requires invocationKey " +
+                "or a unique TestInfo display name so each invocation gets its own gold"
+        )
+    }
+    val derived = derivedInvocationKey?.takeIf { it.isNotBlank() }
+    if (derived != null) return derived
     if (requiresExplicitInvocationKey(testClassName, testMethodName)) {
         error(
             "assertMatchesGold on a parameterized or repeated test requires invocationKey " +
