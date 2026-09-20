@@ -14,12 +14,14 @@ import org.junit.jupiter.api.TestInfo
  * [scaleKey] follows the same capture-display default as the name-only overload.
  *
  * `@ParameterizedTest` and `@RepeatedTest` invocations are keyed from [testInfo]'s display name
- * only when the annotation `name` pattern varies per invocation *and* the resolved display looks
- * unique (`[index] …` or `repetition N of M`). JUnit 5.14's omitted/`{default_display_name}`
- * pattern counts as varying. Display names that include `Any.toString()` identity-hash text
- * (`Foo@4a12bc`) keep only the stable `[index]` or `repetition N of M` token. Constant custom names
- * — including ones that merely resemble JUnit's default, such as `@ParameterizedTest(name = "[1]
- * theme")` — require [invocationKey].
+ * only when the annotation `name` pattern includes a true invocation index (`{index}` or
+ * `{currentRepetition}`) *and* the resolved display looks unique (`[index] …` or `repetition N of
+ * M`). JUnit 5.14's omitted/`{default_display_name}` pattern counts because it includes `{index}`.
+ * Argument placeholders such as `{0}` or `{arguments}` are not unique when values repeat. Display
+ * names that include `Any.toString()` identity-hash text (`Foo@4a12bc`) keep only the stable
+ * `[index]` or `repetition N of M` token. Constant custom names — including ones that merely
+ * resemble JUnit's default, such as `@ParameterizedTest(name = "[1] theme")` — require
+ * [invocationKey].
  */
 public fun assertMatchesGold(
     testInfo: TestInfo,
@@ -78,9 +80,12 @@ internal fun java.lang.reflect.Method.hasVaryingInvocationNamePattern(): Boolean
     return annotations.any { annotationHasVaryingInvocationPattern(it) }
 }
 
-/** Blank or `{default_display_name}` is JUnit's default varying pattern. */
+/**
+ * Blank or `{default_display_name}` is JUnit's default, which includes `{index}`. Argument
+ * placeholders (`{0}`, `{arguments}`) can repeat and are not unique.
+ */
 private fun patternVariesPerInvocation(pattern: String): Boolean =
-    pattern.isBlank() || VARYING_INVOCATION_PLACEHOLDER.containsMatchIn(pattern)
+    pattern.isBlank() || UNIQUE_INVOCATION_PLACEHOLDER.containsMatchIn(pattern)
 
 internal fun looksUniqueInvocationLabel(display: String): Boolean {
     // JUnit parameterized default: "[{index}] {argumentsWithNames}" → "[1] dark"
@@ -104,12 +109,8 @@ private val REPEATED_INVOCATION_LABEL =
     Regex("""(?:^| )repetition \d+(?: of \d+)?$""", RegexOption.IGNORE_CASE)
 // Object.toString() / default Any.toString(): ClassName@hex, arrays, nested types.
 private val IDENTITY_HASH_TEXT = Regex("""(?:[\w.$]+|\[+[ZBCSIJFD]|\[+L[\w.$]+;)@[0-9a-fA-F]+""")
-private val VARYING_INVOCATION_PLACEHOLDER =
-    Regex(
-        """\{index\}|\{arguments(?:WithNames)?\}|""" +
-            """\{argumentSetName(?:OrArgumentsWithNames)?\}|""" +
-            """\{currentRepetition\}|\{default_display_name\}|\{\d+\}"""
-    )
+private val UNIQUE_INVOCATION_PLACEHOLDER =
+    Regex("""\{index\}|\{currentRepetition\}|\{default_display_name\}""")
 
 private fun annotationHasVaryingInvocationPattern(
     annotation: Annotation,

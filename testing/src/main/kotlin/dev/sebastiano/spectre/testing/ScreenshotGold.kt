@@ -34,10 +34,12 @@ import kotlin.math.roundToInt
  * **calling thread** stack. Inside [runSpectreTest], use the JUnit 5 facade
  * (`ScreenshotGoldJunit5`) instead — the body runs on a worker dispatcher that has no JUnit frame.
  *
- * `@ParameterizedTest` and `@RepeatedTest` invocations that share a [name] must pass
- * [invocationKey] here, or use the TestInfo facade when its display name is unique per invocation
- * (`[1] …` or `repetition N of M`). Identity-hash display text (`Foo@4a12bc`) keeps only that
- * index. Constant custom display names still require [invocationKey].
+ * `@ParameterizedTest`, `@RepeatedTest`, and JUnit 4 `@RunWith(Parameterized)` invocations that
+ * share a [name] must pass [invocationKey] here, or use the TestInfo facade when its display name
+ * is unique per invocation (`[1] …` or `repetition N of M`). The facade only trusts patterns that
+ * include `{index}` / `{currentRepetition}` (or JUnit's default, which includes `{index}`).
+ * Identity-hash display text (`Foo@4a12bc`) keeps only that index. Constant custom display names
+ * and argument-only patterns such as `[{0}] theme` still require [invocationKey].
  *
  * [scaleKey] defaults to the captured window's display scale when a showing AWT window's outer,
  * client, content-pane, or showing embedded ComposePanel size matches the still (or every showing

@@ -75,7 +75,7 @@ internal fun resolveInvocationKey(
 ): String? {
     val present = invocationKey?.takeIf { it.isNotBlank() }
     if (present != null) return present
-    if (isJunitTestTemplateMethod(testClassName, testMethodName)) {
+    if (requiresExplicitInvocationKey(testClassName, testMethodName)) {
         error(
             "assertMatchesGold on a parameterized or repeated test requires invocationKey " +
                 "or a unique TestInfo display name so each invocation gets its own gold"
@@ -96,12 +96,34 @@ private fun identityFromResolved(cls: Class<*>, method: Method): Pair<String, St
     return cls.name to junitMethodIdentity(method)
 }
 
-private fun isJunitTestTemplateMethod(testClassName: String, testMethodName: String): Boolean {
+private fun requiresExplicitInvocationKey(testClassName: String, testMethodName: String): Boolean {
     val cls = runCatching { Class.forName(testClassName) }.getOrNull() ?: return false
+    if (isJunit4ParameterizedHost(cls)) return true
     return cls.declaredMethods.any { method ->
         method.isJunitTestTemplate() &&
             (junitMethodIdentity(method) == testMethodName || method.name == testMethodName)
     }
+}
+
+/**
+ * JUnit 4 `@RunWith(Parameterized)` executes each parameter set as an ordinary `@Test`. Detect that
+ * runner (including subclasses and `@Inherited` declarations) without resolving `Parameterized` at
+ * class-load time so JUnit 5-only consumers stay intact.
+ */
+private fun isJunit4ParameterizedHost(cls: Class<*>): Boolean {
+    // getAnnotations() includes @Inherited @RunWith from a superclass.
+    val runWith =
+        cls.annotations.firstOrNull { it.annotationClass.java.name == JUNIT4_RUN_WITH }
+            ?: return false
+    val runner =
+        runCatching {
+            runWith.annotationClass.java.getMethod("value").invoke(runWith) as? Class<*>
+        }
+            .getOrNull() ?: return false
+    return generateSequence(runner) { current ->
+            current.superclass?.takeUnless { it == Any::class.java }
+        }
+        .any { it.name == JUNIT4_PARAMETERIZED_RUNNER }
 }
 
 private fun methodMatchesType(method: Method, methodType: MethodType): Boolean =
@@ -111,6 +133,9 @@ private fun methodMatchesType(method: Method, methodType: MethodType): Boolean =
 private fun isGoldFacadeClass(className: String): Boolean = GOLD_FACADE_CLASSES.any { facade ->
     className == facade || className.startsWith(facade + "$")
 }
+
+private const val JUNIT4_RUN_WITH = "org.junit.runner.RunWith"
+private const val JUNIT4_PARAMETERIZED_RUNNER = "org.junit.runners.Parameterized"
 
 private val GOLD_FACADE_CLASSES =
     setOf(

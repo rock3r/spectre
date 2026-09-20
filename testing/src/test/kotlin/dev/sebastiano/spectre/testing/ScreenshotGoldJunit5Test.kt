@@ -171,6 +171,41 @@ class ScreenshotGoldJunit5Test {
         assertTrue(error.message!!.contains("invocationKey"), error.message)
     }
 
+    @ParameterizedTest(name = "[{0}] theme")
+    @ValueSource(ints = [1])
+    fun `argument placeholder display that looks unique still requires invocationKey`(value: Int) {
+        assertEquals(1, value)
+        val method =
+            javaClass.declaredMethods.single {
+                it.name ==
+                    "argument placeholder display that looks unique still requires invocationKey"
+            }
+        assertFalse(method.hasVaryingInvocationNamePattern())
+        val info = fakeTestInfo("[1] theme", method)
+        assertNull(invocationKeyFromTestInfo(info))
+        val error =
+            assertFailsWith<IllegalStateException> {
+                resolveInvocationKey(
+                    ScreenshotGoldJunit5Test::class.java.name,
+                    method.name,
+                    invocationKey = invocationKeyFromTestInfo(info),
+                )
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
+    }
+
+    @ParameterizedTest(name = "[{index}] theme")
+    @ValueSource(ints = [1])
+    fun `index placeholder display remains a unique invocation key`(value: Int) {
+        assertEquals(1, value)
+        val method =
+            javaClass.declaredMethods.single {
+                it.name == "index placeholder display remains a unique invocation key"
+            }
+        assertTrue(method.hasVaryingInvocationNamePattern())
+        assertEquals("[1] theme", invocationKeyFromTestInfo(fakeTestInfo("[1] theme", method)))
+    }
+
     @ParameterizedTest(name = "[1] theme")
     @ValueSource(ints = [1])
     fun `constant display that looks unique still requires invocationKey`(value: Int) {

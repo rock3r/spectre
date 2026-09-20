@@ -342,17 +342,21 @@ methods that call it directly. It recognizes `@Test`, `@ParameterizedTest`,
 `@RepeatedTest`, and other annotations meta-annotated with JUnit's `@Testable` /
 `@TestTemplate` (including composed ones).
 
-`@ParameterizedTest` and `@RepeatedTest` invocations that share a screenshot name
-must not share a gold. The `TestInfo` facade keys those invocations from the JUnit
-display name only when the annotation `name` pattern varies per invocation *and* the
-resolved display looks unique (`[1] dark`, `repetition 1 of 2`). JUnit's omitted
-default (`{default_display_name}`) counts as varying. Display names that include
-`Any.toString()` identity-hash text (`Foo@4a12bc`) keep only the stable `[index]` or
-`repetition N of M` token so the gold path does not change between JVM runs. Constant
-custom names such as `@ParameterizedTest(name = "theme")` or
-`@ParameterizedTest(name = "[1] theme")` require an explicit `invocationKey`. The
-name-only overload cannot see the invocation, so it always requires `invocationKey`
-and fails closed without one.
+`@ParameterizedTest`, `@RepeatedTest`, and JUnit 4 `@RunWith(Parameterized)`
+invocations that share a screenshot name must not share a gold. The `TestInfo`
+facade keys those invocations from the JUnit display name only when the annotation
+`name` pattern includes a true invocation index (`{index}` or `{currentRepetition}`)
+*and* the resolved display looks unique (`[1] dark`, `repetition 1 of 2`). JUnit's
+omitted default (`{default_display_name}`) counts because it includes `{index}`.
+Argument placeholders such as `{0}` or `{arguments}` are not unique when values
+repeat. Display names that include `Any.toString()` identity-hash text
+(`Foo@4a12bc`) keep only the stable `[index]` or `repetition N of M` token so the
+gold path does not change between JVM runs. Constant custom names such as
+`@ParameterizedTest(name = "theme")` or `@ParameterizedTest(name = "[1] theme")`,
+and argument-only patterns such as `@ParameterizedTest(name = "[{0}] theme")`,
+require an explicit `invocationKey`. The name-only overload cannot see the
+invocation — including JUnit 4 Parameterized runs, which execute ordinary `@Test`
+methods — so it always requires `invocationKey` and fails closed without one.
 
 The default `scaleKey` prefers the captured window's display scale when a showing AWT
 window's outer, client, content-pane, or *showing* embedded ComposePanel size matches

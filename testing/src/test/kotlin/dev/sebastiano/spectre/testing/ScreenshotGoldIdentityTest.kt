@@ -113,6 +113,38 @@ class ScreenshotGoldIdentityTest {
     }
 
     @Test
+    fun `JUnit 4 Parameterized hosts require invocationKey`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                resolveInvocationKey(
+                    GoldIdentityJunit4ParameterizedHost::class.java.name,
+                    "name-only gold assert requires invocationKey",
+                    invocationKey = null,
+                )
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
+        assertEquals(
+            "dark",
+            resolveInvocationKey(
+                GoldIdentityJunit4ParameterizedHost::class.java.name,
+                "name-only gold assert requires invocationKey",
+                invocationKey = "dark",
+            ),
+        )
+    }
+
+    @Test
+    fun `plain JUnit 4 tests do not require an invocation key`() {
+        assertNull(
+            resolveInvocationKey(
+                GoldIdentityJunit4PlainHost::class.java.name,
+                "probe",
+                invocationKey = null,
+            )
+        )
+    }
+
+    @Test
     fun `inherited tests from a concrete base fail closed without TestInfo`() {
         val frame =
             StackTraceElement(
@@ -216,3 +248,37 @@ internal class GoldIdentityConcreteChildA : GoldIdentityConcreteBase()
 
 @Disabled("reflective fixture for inherited gold identity")
 internal class GoldIdentityConcreteChildB : GoldIdentityConcreteBase()
+
+@Disabled("reflective fixture for JUnit 4 parameterized gold identity")
+@org.junit.Ignore("reflective fixture for JUnit 4 parameterized gold identity")
+internal class GoldIdentityJunit4PlainHost {
+    @org.junit.Test
+    fun probe() {
+        error("plain JUnit 4 fixture")
+    }
+}
+
+/**
+ * Vintage-executed JUnit 4 Parameterized host. Each parameter set runs an ordinary `@Test`, so gold
+ * identity must fail closed without an explicit `invocationKey`.
+ */
+@org.junit.runner.RunWith(org.junit.runners.Parameterized::class)
+internal class GoldIdentityJunit4ParameterizedHost(private val themeIndex: Int) {
+    @org.junit.Test
+    fun `name-only gold assert requires invocationKey`() {
+        assertEquals(1, themeIndex)
+        val image = java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+        image.setRGB(0, 0, 0xFFFFFFFF.toInt())
+        val error =
+            assertFailsWith<IllegalStateException> {
+                assertMatchesGold(name = "main-window", image = image)
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
+    }
+
+    companion object {
+        @JvmStatic
+        @org.junit.runners.Parameterized.Parameters
+        fun data(): Collection<Array<Any>> = listOf(arrayOf(1), arrayOf(1))
+    }
+}
