@@ -138,6 +138,10 @@ constructor(
             // Caller thread interrupted while waiting — cancel the remote op so UI work stops
             // (Codex P2).
             throw cancelDueToInterrupt(opId, request, ex)
+        } catch (ex: java.nio.channels.ClosedByInterruptException) {
+            // macOS NIO: SocketChannel.write on an interrupted thread throws this IOException
+            // subclass instead of InterruptedException. Same caller intent as above.
+            throw cancelDueToInterrupt(opId, request, ex)
         } catch (ex: java.util.concurrent.CancellationException) {
             // CompletableFuture can surface local cancellation as CancellationException rather
             // than InterruptedException on some paths; keep the same cancelled taxonomy.

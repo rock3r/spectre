@@ -697,8 +697,8 @@ def gradle_ui_force_args() -> list[str]:
     ]
 
 
-WAYLAND_RESTORE_TOKEN_PREFIX = "wayland-screencast-restore-token-"
-WAYLAND_PORTAL_SMOKE_TOKEN_KEY = "monitor-embedded"
+WAYLAND_RESTORE_TOKEN_PREFIX = "wayland-rd-restore-token-"
+WAYLAND_PORTAL_SMOKE_TOKEN_KEY = "rd-monitor-embedded"
 WAYLAND_PORTAL_WARMUP_TOKEN_KEYS: tuple[str, ...] = (WAYLAND_PORTAL_SMOKE_TOKEN_KEY,)
 WAYLAND_HELPER_NAME = "spectre-wayland-helper"
 
@@ -805,10 +805,14 @@ def prepare_linux_portal_token_env(root: Path, out_dir: Path) -> dict[str, str]:
     token_dir = Path(out_dir) / "wayland-restore-tokens"
     token_dir.mkdir(parents=True, exist_ok=True)
     token_dir.chmod(0o700)
+    session_dir = Path(out_dir) / "wayland-session"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    session_dir.chmod(0o700)
     env = {
         "SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(token_dir),
         # PATH takes precedence over DIR in the helper. Unset any inherited override.
         "SPECTRE_WAYLAND_RESTORE_TOKEN_PATH": "",
+        "SPECTRE_WAYLAND_SESSION_DIR": str(session_dir),
     }
     helper = linux_wayland_helper_path(root)
     if helper is not None:
@@ -833,7 +837,7 @@ def assert_linux_portal_tokens_captured(
     token_dir = Path(env.get("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR") or "")
     if not token_dir.is_dir():
         raise RuntimeError(
-            "ScreenCast restore token dir missing: "
+            "RemoteDesktop restore token dir missing: "
             f"{token_dir or '(SPECTRE_WAYLAND_RESTORE_TOKEN_DIR unset)'}"
         )
     missing: list[str] = []
@@ -854,13 +858,13 @@ def assert_linux_portal_tokens_captured(
             stale.append(path.name)
     if missing:
         raise RuntimeError(
-            "missing ScreenCast restore token(s) "
-            f"{', '.join(missing)} under {token_dir}; approve Share + Remember "
-            "for monitor and window during portal-token-warmup"
+            "missing RemoteDesktop restore token(s) "
+            f"{', '.join(missing)} under {token_dir}; approve Share + Remember / "
+            "Allow remote interaction during portal-token-warmup"
         )
     if stale:
         raise RuntimeError(
-            "ScreenCast restore token(s) not refreshed by this warmup: "
+            "RemoteDesktop restore token(s) not refreshed by this warmup: "
             f"{', '.join(stale)}; later cells may prompt again"
         )
 

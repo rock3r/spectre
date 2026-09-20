@@ -15,6 +15,10 @@ pub enum Command {
     Start(StartCommand),
     Screenshot(ScreenshotCommand),
     Stop,
+    PointerMove { x: i32, y: i32 },
+    PointerButton { button: i32, pressed: bool },
+    Key { key_code: i32, pressed: bool },
+    PointerAxis { axis: u32, steps: i32 },
 }
 
 /// Initial parameters from the JVM. Mirrors `RecordingOptions` + the geometry needed for the
@@ -139,6 +143,8 @@ pub enum Event {
     Stopped { output_size_bytes: u64 },
     /// One-shot screenshot command completed and wrote a readable image file.
     ScreenshotSaved { output_size_bytes: u64 },
+    /// Pointer/key command applied on the held RemoteDesktop session.
+    InputAck,
     /// Anything that didn't reach a Stopped state. `kind` is a coarse category the JVM can
     /// pattern-match for surfacing the right exception type; `message` is the human-readable
     /// detail.

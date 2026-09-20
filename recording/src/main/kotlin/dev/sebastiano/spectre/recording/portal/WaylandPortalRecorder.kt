@@ -67,6 +67,7 @@ private constructor(
     private val startedTimeout: Long,
     private val shutdownGraceMillis: Long,
     private val processExitTimeoutMillis: Long,
+    private val sessionClient: WaylandSessionClient? = null,
 ) : Recorder {
 
     /**
@@ -82,6 +83,7 @@ private constructor(
             startedTimeout = DEFAULT_STARTED_TIMEOUT_MS,
             shutdownGraceMillis = DEFAULT_SHUTDOWN_GRACE_MS,
             processExitTimeoutMillis = DEFAULT_PROCESS_EXIT_TIMEOUT_MS,
+            sessionClient = DefaultWaylandSessionClient.instance,
         )
 
     @Volatile
@@ -100,6 +102,11 @@ private constructor(
         output: Path,
         options: RecordingOptions,
     ): RecordingHandle {
+        sessionClient?.let { client ->
+            if (sourceTypes.none { it == SourceType.WINDOW }) {
+                return startViaSession(client, region, output, options)
+            }
+        }
         val helperPath = helperExtractor.extract()
         Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
         val process = processFactory.start(helperPath)
@@ -177,6 +184,18 @@ private constructor(
         )
     }
 
+    private fun startViaSession(
+        client: WaylandSessionClient,
+        region: Rectangle,
+        output: Path,
+        options: RecordingOptions,
+    ): RecordingHandle {
+        Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
+        val command = startCommandFactory(region, output, options)
+        val held = client.startHeld(command)
+        return SessionRecordingHandle(held, output)
+    }
+
     @Suppress("LongParameterList", "TooGenericExceptionCaught")
     private fun readerLoop(
         reader: BufferedReader,
@@ -238,8 +257,9 @@ private constructor(
                     stoppedLatch.countDown()
                     return
                 }
-                is Event.FrameProgress -> {
-                    // Reserved for a future progress-streaming UX.
+                is Event.FrameProgress,
+                is Event.InputAck -> {
+                    // Reserved for a future progress-streaming UX / session input acks.
                 }
             }
         }
@@ -415,6 +435,41 @@ internal fun killAndReapOrThrow(
 }
 
 internal const val FORCED_REAP_TIMEOUT_MS: Long = 2_000
+
+private class SessionRecordingHandle(
+    private val held: HeldRecordingSession,
+    override val output: Path,
+) : RecordingHandle {
+    private val stopInitiated = AtomicBoolean(false)
+    private val finished = CountDownLatch(1)
+    private val result = AtomicReference<Result<Unit>?>()
+
+    override val isStopped: Boolean
+        get() = result.get()?.isSuccess == true
+
+    override fun stop() {
+        if (!stopInitiated.compareAndSet(false, true)) {
+            finished.await()
+            result.get()?.getOrThrow()
+            return
+        }
+        @Suppress("TooGenericExceptionCaught")
+        try {
+            held.use { session ->
+                val event = session.stop()
+                check(event is Event.Stopped) {
+                    "spectre-wayland-helper session did not stop recording: $event"
+                }
+            }
+            result.set(Result.success(Unit))
+        } catch (t: Throwable) {
+            result.set(Result.failure(t))
+            throw t
+        } finally {
+            finished.countDown()
+        }
+    }
+}
 
 /**
  * Recording handle for the helper-process pair. `stop()` writes a Stop command, blocks until the

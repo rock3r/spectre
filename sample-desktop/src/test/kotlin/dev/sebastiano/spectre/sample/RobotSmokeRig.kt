@@ -37,6 +37,8 @@ import dev.sebastiano.spectre.core.InternalSpectreApi
 import dev.sebastiano.spectre.core.RobotDriver
 import dev.sebastiano.spectre.core.clickPressDeliveryVerifiable
 import dev.sebastiano.spectre.core.clickVerified
+import java.awt.IllegalComponentStateException
+import java.awt.Point
 import java.awt.Rectangle
 import java.awt.Window
 import java.util.Locale
@@ -204,25 +206,26 @@ internal fun printEnvironment(label: String, state: SmokeState) {
     println("--- /environment ---")
 }
 
-internal fun awtCenter(state: SmokeState, rect: Rect): java.awt.Point? {
+internal fun awtCenter(state: SmokeState, rect: Rect): Point? {
     if (rect.width <= 0f || rect.height <= 0f) return null
     val frame = state.frame ?: return null
     val panel = state.composePanel ?: return null
-    val gc = (frame as Window).graphicsConfiguration ?: return null
-    val xform = gc.defaultTransform
-    val panelLoc =
-        try {
-            panel.locationOnScreen
-        } catch (_: java.awt.IllegalComponentStateException) {
-            return null
-        }
-    val scaleX = xform.scaleX.toFloat()
-    val scaleY = xform.scaleY.toFloat()
-    val awtLeft = (rect.left / scaleX).toInt() + panelLoc.x
-    val awtTop = (rect.top / scaleY).toInt() + panelLoc.y
-    val awtRight = (rect.right / scaleX).toInt() + panelLoc.x
-    val awtBottom = (rect.bottom / scaleY).toInt() + panelLoc.y
-    return java.awt.Point((awtLeft + awtRight) / 2, (awtTop + awtBottom) / 2)
+    return invokeOnEdt {
+        val gc = (frame as Window).graphicsConfiguration ?: return@invokeOnEdt null
+        val xform = gc.defaultTransform
+        val panelLoc =
+            try {
+                panel.locationOnScreen
+            } catch (_: IllegalComponentStateException) {
+                return@invokeOnEdt null
+            }
+        composeCenterOnScreen(
+            rect,
+            panelScreen = panelLoc,
+            scaleX = xform.scaleX.toFloat(),
+            scaleY = xform.scaleY.toFloat(),
+        )
+    }
 }
 
 private fun isMacOs(): Boolean = System.getProperty("os.name").lowercase().contains("mac")
@@ -505,8 +508,9 @@ internal suspend fun scenarioPressKeyOnUnfocusedField(
 internal suspend fun scenarioClickOnUnfocusedCounter(
     driver: RobotDriver,
     state: SmokeState,
+    distractor: JFrame,
 ): ScenarioResult {
-    val target = awtCenter(state, state.counterBounds)
+    val target = unfocusedCounterClick(state, distractor)
     if (target == null) {
         return ScenarioResult("click on unfocused counter", false, "no target rect available")
     }
@@ -580,16 +584,22 @@ internal suspend fun runUnfocusedScenarios(
     state: SmokeState,
     distractor: JFrame,
 ): List<ScenarioResult> {
+    // Xvfb without a WM can ignore the requested setLocation and map both always-on-top
+    // frames at the origin. Separate them from the *observed* screen bounds so the
+    // counter click cannot land on the distractor.
+    pinUnfocusedWindowsApart(state, distractor)
     val results = mutableListOf<ScenarioResult>()
     results += scenarioStartsUnfocused(state, distractor)
     // Robot warmup click on the *distractor* — primes the input pipeline (the same cold-JVM
     // dropped-first-click flake the focused smoke documents) without clicking SUT, because
     // clicking SUT would transfer focus to it and ruin the unfocused starting state.
-    val distractorBounds = distractor.bounds
-    driver.click(distractorBounds.centerX.toInt(), distractorBounds.centerY.toInt())
+    // Use locationOnScreen, not JFrame.bounds: bounds keeps the requested (80,80) even when
+    // the X peer actually mapped at (0,0).
+    val warmup = screenCenter(distractor)
+    driver.click(warmup.x, warmup.y)
     delay(POST_CLICK_SETTLE_MS.milliseconds)
     results += scenarioPressKeyOnUnfocusedField(driver, state)
-    results += scenarioClickOnUnfocusedCounter(driver, state)
+    results += scenarioClickOnUnfocusedCounter(driver, state, distractor)
     // A click miss is the root failure (#470). Do not run typeText on top of it — that
     // downstream assertion is what made the Xvfb flake look like a paste problem.
     if (results.last().passed) {

@@ -5,6 +5,7 @@ import dev.sebastiano.spectre.recording.portal.CaptureTarget
 import dev.sebastiano.spectre.recording.portal.Command
 import dev.sebastiano.spectre.recording.portal.CursorMode
 import dev.sebastiano.spectre.recording.portal.DefaultWaylandHelperBinaryExtractor
+import dev.sebastiano.spectre.recording.portal.DefaultWaylandSessionClient
 import dev.sebastiano.spectre.recording.portal.Event
 import dev.sebastiano.spectre.recording.portal.Region
 import dev.sebastiano.spectre.recording.portal.SourceType
@@ -108,6 +109,12 @@ internal constructor(
     }
 
     private fun capture(command: Command.Screenshot): BufferedImage {
+        if (
+            command.backend == CaptureBackend.WAYLAND_PORTAL &&
+                command.target == CaptureTarget.REGION
+        ) {
+            return captureViaSession(command)
+        }
         val output = Path.of(command.output)
         var process: Process? = null
         var readerThread: Thread? = null
@@ -163,6 +170,18 @@ internal constructor(
         } catch (e: IllegalArgumentException) {
             cleanupFailedCapture(process, readerThread)
             throw e
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    private fun captureViaSession(command: Command.Screenshot): BufferedImage {
+        val output = Path.of(command.output)
+        try {
+            output.toAbsolutePath().parent?.let(Files::createDirectories)
+            DefaultWaylandSessionClient.instance.send(command)
+            return ImageIO.read(output.toFile())
+                ?: error("Linux screenshot helper did not produce a readable PNG at $output")
         } finally {
             output.deleteIfExists()
         }
@@ -224,8 +243,9 @@ internal constructor(
                 is Event.Error -> return event
                 is Event.Started,
                 is Event.Stopped,
-                is Event.FrameProgress -> {
-                    // Ignore recording-only events until a terminal screenshot event arrives.
+                is Event.FrameProgress,
+                is Event.InputAck -> {
+                    // Ignore recording/input-only events until a terminal screenshot event arrives.
                 }
             }
         }

@@ -162,10 +162,12 @@ Current backends:
   `:recording-macos`.
 - `screencapturekit.ScreenCaptureKitScreenshotter` — macOS-only still window screenshots
   through the same Swift helper in `--mode screenshot`.
-- `portal.WaylandPortalRecorder` — Linux Wayland capture via `xdg-desktop-portal`'s
-  ScreenCast interface, driven by a Rust helper
-  (`recording/native/linux/spectre-wayland-helper`) packaged by `:recording-linux`.
-  The helper hands the PipeWire FD to `gst-launch-1.0`.
+- `portal.WaylandPortalRecorder` — Linux Wayland capture via `xdg-desktop-portal`.
+  Region/monitor capture and real OS input share one long-lived
+  `spectre-wayland-helper --session` process (RemoteDesktop + ScreenCast, host
+  `Registry.Register`, Spectre-owned `restore_token` under `$XDG_STATE_HOME/spectre`).
+  Window-source capture still uses a one-shot ScreenCast helper process. The helper
+  is packaged by `:recording-linux` and hands the PipeWire FD to `gst-launch-1.0`.
 - `AutoRecorder` — high-level router that picks per call from `startWindow(...)` /
   `startRegion(...)` + OS detection: Wayland portal first, then macOS SCK for window and
   region capture, Windows Graphics Capture for window and region capture, and Linux helper
