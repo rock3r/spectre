@@ -21,7 +21,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any, Callable, Mapping, MutableMapping, Sequence
 
 # Bump only when report field names/semantics change incompatibly (rename/remove a field,
@@ -690,6 +690,21 @@ class ScreencaptureHelperDirSetting:
     path: Path | None = None
 
 
+def jvm_path_is_absolute(path: PurePath) -> bool:
+    """True for host-absolute paths and Unix-style /... paths on Windows.
+
+    Windows pathlib maps `/tmp/foo` to rooted-relative `\\tmp\\foo`, which
+    `Path.is_absolute()` rejects. JVM -D values and the #520 unit fixtures use
+    both POSIX and Windows absolute forms.
+    """
+    return path.is_absolute() or path.as_posix().startswith("/")
+
+
+def _preserve_windows_path_separators_for_shlex(text: str) -> str:
+    """Double backslashes so POSIX shlex keeps Windows path separators."""
+    return text.replace("\\", "\\\\")
+
+
 def _strip_hotspot_argfile_comments(text: str) -> str:
     """Drop unquoted # comments, matching JDK 21/25 launcher argument-file rules.
 
@@ -734,7 +749,9 @@ def _strip_hotspot_argfile_comments(text: str) -> str:
 def tokenize_jvm_options(text: str, *, expand_argfiles: bool = False) -> list[str]:
     """Split JVM option text; optionally expand JDK_JAVA_OPTIONS @argument files."""
     try:
-        tokens = shlex.split(text, posix=True)
+        tokens = shlex.split(
+            _preserve_windows_path_separators_for_shlex(text), posix=True
+        )
     except ValueError as error:
         raise InvalidScreencaptureHelperDir(
             f"JVM options cannot be parsed: {error}"
@@ -752,7 +769,7 @@ def tokenize_jvm_options(text: str, *, expand_argfiles: bool = False) -> list[st
             expanded.append(token)
             continue
         path = Path(token[1:])
-        if not path.is_absolute():
+        if not jvm_path_is_absolute(path):
             raise InvalidScreencaptureHelperDir(
                 f"JVM @argument file must be an absolute path (got {token!r}). "
                 "Relative files resolve against different working directories "
@@ -822,7 +839,7 @@ def macos_screencapture_configured_helper_dir(
             continue
         if parsed.path is None:
             return None
-        if not parsed.path.is_absolute():
+        if not jvm_path_is_absolute(parsed.path):
             raise InvalidScreencaptureHelperDir(
                 f"{SCREENCAPTURE_HELPER_DIR_PROPERTY} must be an absolute path "
                 f"(got {str(parsed.path)!r} from {name}). Relative values resolve "
@@ -848,7 +865,7 @@ def macos_screencapture_jvm_user_home(
         )
         if not parsed.defined:
             continue
-        if parsed.path is None or not parsed.path.is_absolute():
+        if parsed.path is None or not jvm_path_is_absolute(parsed.path):
             raise InvalidScreencaptureHelperDir(
                 f"user.home must be an absolute path (got {parsed.path!r} from {name})"
             )
@@ -866,7 +883,7 @@ def parse_java_show_settings_property(text: str, name: str) -> Path | None:
         if not value:
             return None
         path = Path(value)
-        if not path.is_absolute():
+        if not jvm_path_is_absolute(path):
             raise InvalidScreencaptureHelperDir(
                 f"{name} from java -XshowSettings:properties must be absolute "
                 f"(got {value!r})"
@@ -922,10 +939,10 @@ def macos_screencapture_override_path(
     # HelperBinaryExtractor.resolveOverrideExecutable accepts a relative Path.of()
     # value, but smoke CWD (repo root) and Gradle JavaExec CWD (module dir) differ.
     # Fail closed instead of probing a different helper than later capture cells.
-    if not override.is_absolute():
+    if not jvm_path_is_absolute(override):
         raise InvalidScreencaptureHelperOverride(
             f"{SCREENCAPTURE_HELPER_OVERRIDE_ENV} must be an absolute path "
-            f"(got {raw!r}). Relative values resolve against different working "
+            f"(got '{raw}'). Relative values resolve against different working "
             f"directories in smoke vs Gradle. Point it at {SCREENCAPTURE_HELPER_NAME} "
             f"or {SCREENCAPTURE_HELPER_APP_NAME}, or unset it."
         )

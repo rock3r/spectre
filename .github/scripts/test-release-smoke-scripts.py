@@ -1764,6 +1764,27 @@ class MacOsTccPreflightTest(unittest.TestCase):
         self.assertTrue(blank.defined)
         self.assertIsNone(blank.path)
 
+    def test_tokenize_jvm_options_preserves_windows_path_separators(self):
+        """POSIX shlex treats \\ as escape; Windows -D and @argfile paths must keep it."""
+        tokens = smoke_lib.tokenize_jvm_options(
+            r"-Duser.home=C:\Users\RUNNER~1\tmp -Xmx2g"
+        )
+        self.assertEqual(
+            [r"-Duser.home=C:\Users\RUNNER~1\tmp", "-Xmx2g"],
+            tokens,
+        )
+
+    def test_jvm_path_is_absolute_accepts_posix_and_windows_forms(self):
+        from pathlib import PureWindowsPath
+
+        self.assertTrue(smoke_lib.jvm_path_is_absolute(Path("/tmp/helper")))
+        self.assertTrue(smoke_lib.jvm_path_is_absolute(PureWindowsPath("/tmp/helper")))
+        self.assertTrue(smoke_lib.jvm_path_is_absolute(PureWindowsPath(r"C:\helpers")))
+        self.assertTrue(smoke_lib.jvm_path_is_absolute(PureWindowsPath(r"\\server\share\h")))
+        self.assertFalse(smoke_lib.jvm_path_is_absolute(Path("tools/helper")))
+        self.assertFalse(smoke_lib.jvm_path_is_absolute(PureWindowsPath("tools/helper")))
+        self.assertFalse(smoke_lib.jvm_path_is_absolute(PureWindowsPath(r"  C:\helpers  ")))
+
     def test_unparseable_helper_dir_property_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
