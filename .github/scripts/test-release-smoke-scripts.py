@@ -1149,6 +1149,8 @@ class DocsAndSchemaPolicyTest(unittest.TestCase):
         self.assertIn("Application Support", docs)
         self.assertIn("SPECTRE_SCREENCAPTURE_HELPER", docs)
         self.assertIn("stale cached helper", docs)
+        self.assertIn("fingerprint", docs)
+        self.assertIn("absolute path", docs)
         self.assertIn("IOConsoleLocked", docs)
         self.assertIn("Robot", docs)
         # #459: the experimental input-coordination delta cells are reusable scenario IDs, so the
@@ -1532,6 +1534,53 @@ class MacOsTccPreflightTest(unittest.TestCase):
                 )
                 self.assertIsNone(found)
 
+    def test_relative_override_fails_closed_without_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = Path(tmp) / "home"
+            staged = smoke_lib.macos_screencapture_staged_helper(root)
+            staged.parent.mkdir(parents=True)
+            staged.write_text("#!/bin/sh\n", encoding="utf-8")
+            staged.chmod(0o755)
+            relative_app = (
+                Path("tools") / smoke_lib.SCREENCAPTURE_HELPER_APP_NAME
+            )
+            exe = (
+                root
+                / relative_app
+                / "Contents"
+                / "MacOS"
+                / smoke_lib.SCREENCAPTURE_HELPER_NAME
+            )
+            exe.parent.mkdir(parents=True)
+            exe.write_text("#!/bin/sh\nrelative\n", encoding="utf-8")
+            exe.chmod(0o755)
+            invoked: list[list[str]] = []
+            env = {"SPECTRE_SCREENCAPTURE_HELPER": str(relative_app)}
+            previous = os.getcwd()
+            try:
+                os.chdir(root)
+                with unittest.mock.patch.dict(os.environ, env, clear=False):
+                    with self.assertRaises(
+                        smoke_lib.InvalidScreencaptureHelperOverride
+                    ) as ctx:
+                        smoke_lib.macos_screencapture_override_path()
+                    self.assertIn("absolute", str(ctx.exception).lower())
+                    found = smoke_lib.ensure_macos_screencapture_helper(
+                        root, assemble=lambda: 0, home=home
+                    )
+                    status = smoke_lib.probe_macos_screen_recording(
+                        root=root,
+                        ensure_helper=lambda: found,
+                        invoke_helper=lambda argv: invoked.append(argv)
+                        or (0, '{"granted": true}\n'),
+                    )
+            finally:
+                os.chdir(previous)
+            self.assertIsNone(found)
+            self.assertEqual(smoke_lib.TCC_UNKNOWN, status)
+            self.assertEqual([], invoked)
+
     def test_helper_dir_property_installs_and_probes_that_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1627,16 +1676,59 @@ class MacOsTccPreflightTest(unittest.TestCase):
             runtime.parent.mkdir(parents=True)
             runtime.write_text("#!/bin/sh\nstale\n", encoding="utf-8")
             runtime.chmod(0o755)
+            invoked: list[str] = []
+            assemble_calls: list[int] = []
+
+            def assemble() -> int:
+                staged.parent.mkdir(parents=True)
+                staged.write_text("#!/bin/sh\nfresh\n", encoding="utf-8")
+                staged.chmod(0o755)
+                assemble_calls.append(1)
+                return 0
+
+            def invoke(argv: list[str]) -> tuple[int, str]:
+                invoked.append(Path(argv[0]).read_text(encoding="utf-8"))
+                if "stale" in invoked[-1]:
+                    return 1, "broken-preflight\n"
+                return 0, '{"granted": true}\n'
+
+            status = smoke_lib.probe_macos_screen_recording(
+                root=root,
+                ensure_helper=lambda: smoke_lib.ensure_macos_screencapture_helper(
+                    root,
+                    assemble=assemble,
+                    home=home,
+                ),
+                refresh_helper=lambda: smoke_lib.ensure_macos_screencapture_helper(
+                    root,
+                    assemble=assemble,
+                    home=home,
+                    refresh=True,
+                ),
+                invoke_helper=invoke,
+            )
+            self.assertEqual(smoke_lib.TCC_GRANTED, status)
+            self.assertEqual(["#!/bin/sh\nstale\n", "#!/bin/sh\nfresh\n"], invoked)
+            self.assertEqual([1], assemble_calls)
+            self.assertIn("fresh", runtime.read_text(encoding="utf-8"))
+
+    def test_granted_stale_runtime_helper_is_replaced_from_staged_before_probe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = Path(tmp) / "home"
+            staged = smoke_lib.macos_screencapture_staged_helper(root)
+            runtime = smoke_lib.macos_screencapture_runtime_helper(home)
+            runtime.parent.mkdir(parents=True)
+            runtime.write_text("#!/bin/sh\nstale-granted\n", encoding="utf-8")
+            runtime.chmod(0o755)
             staged.parent.mkdir(parents=True)
-            staged.write_text("#!/bin/sh\nfresh\n", encoding="utf-8")
+            staged.write_text("#!/bin/sh\nfresh-granted\n", encoding="utf-8")
             staged.chmod(0o755)
             invoked: list[str] = []
             assemble_calls: list[int] = []
 
             def invoke(argv: list[str]) -> tuple[int, str]:
                 invoked.append(Path(argv[0]).read_text(encoding="utf-8"))
-                if "stale" in invoked[-1]:
-                    return 1, "broken-preflight\n"
                 return 0, '{"granted": true}\n'
 
             status = smoke_lib.probe_macos_screen_recording(
@@ -1655,9 +1747,9 @@ class MacOsTccPreflightTest(unittest.TestCase):
                 invoke_helper=invoke,
             )
             self.assertEqual(smoke_lib.TCC_GRANTED, status)
-            self.assertEqual(["#!/bin/sh\nstale\n", "#!/bin/sh\nfresh\n"], invoked)
+            self.assertEqual(["#!/bin/sh\nfresh-granted\n"], invoked)
             self.assertEqual([], assemble_calls)
-            self.assertIn("fresh", runtime.read_text(encoding="utf-8"))
+            self.assertIn("fresh-granted", runtime.read_text(encoding="utf-8"))
 
     def test_blocked_remaining_fills_required_ids_with_reason(self):
         existing = [

@@ -6,6 +6,7 @@ schemaVersion report shape; keep field names stable across both entrypoints.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
@@ -713,13 +714,23 @@ class InvalidScreencaptureHelperOverride(RuntimeError):
 def macos_screencapture_override_path(
     environ: Mapping[str, str] | None = None,
 ) -> Path | None:
-    """Authoritative SPECTRE_SCREENCAPTURE_HELPER, matching HelperBinaryExtractor."""
+    """Authoritative SPECTRE_SCREENCAPTURE_HELPER. Absolute paths only."""
     raw = (environ if environ is not None else os.environ).get(
         SCREENCAPTURE_HELPER_OVERRIDE_ENV, ""
     ).strip()
     if not raw:
         return None
     override = Path(raw)
+    # HelperBinaryExtractor.resolveOverrideExecutable accepts a relative Path.of()
+    # value, but smoke CWD (repo root) and Gradle JavaExec CWD (module dir) differ.
+    # Fail closed instead of probing a different helper than later capture cells.
+    if not override.is_absolute():
+        raise InvalidScreencaptureHelperOverride(
+            f"{SCREENCAPTURE_HELPER_OVERRIDE_ENV} must be an absolute path "
+            f"(got {raw!r}). Relative values resolve against different working "
+            f"directories in smoke vs Gradle. Point it at {SCREENCAPTURE_HELPER_NAME} "
+            f"or {SCREENCAPTURE_HELPER_APP_NAME}, or unset it."
+        )
     # Same shapes as HelperBinaryExtractor.resolveOverrideExecutable: the path
     # itself, a .app bundle, or <dir>/Contents/MacOS/spectre-screencapture.
     if override.is_dir() and override.name.endswith(".app"):
@@ -848,6 +859,26 @@ def probe_macos_screen_recording(
     return status
 
 
+def macos_screencapture_helper_fingerprint(executable: Path) -> str | None:
+    """SHA-256 of the helper .app tree, matching HelperAppBundleMaterial."""
+    if not executable.is_file():
+        return None
+    app = macos_screencapture_app_root(executable)
+    root = app if app is not None and app.is_dir() else executable
+    digest = hashlib.sha256()
+    if root.is_file():
+        digest.update(root.name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(root.read_bytes())
+        return digest.hexdigest()
+    files = sorted(path for path in root.rglob("*") if path.is_file())
+    for path in files:
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
 def macos_screencapture_app_root(executable: Path) -> Path | None:
     cursor = executable
     for _ in range(6):
@@ -909,10 +940,15 @@ def ensure_macos_screencapture_helper(
         return override
 
     runtime = macos_screencapture_runtime_helper(home, helper_dir=helper_dir)
-    if _is_executable_helper(runtime) and not refresh:
-        return runtime
-
     staged = macos_screencapture_staged_helper(root)
+    if _is_executable_helper(runtime) and not refresh:
+        if not _is_executable_helper(staged):
+            return runtime
+        if macos_screencapture_helper_fingerprint(
+            runtime
+        ) == macos_screencapture_helper_fingerprint(staged):
+            return runtime
+
     if not _is_executable_helper(staged):
         assembler = (
             assemble if assemble is not None else (lambda: _assemble_screencapture_helper(root))

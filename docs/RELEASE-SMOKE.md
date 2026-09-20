@@ -336,7 +336,7 @@ Shared across macOS / Linux / Windows entrypoints (`scripts/smoke_lib.py` → `R
 | ID | Cell |
 | --- | --- |
 | `preflight` | Environment / SHA / clean-tree preflight |
-| `macos-tcc` | macOS Screen Recording + Accessibility TCC preflight. Screen Recording uses `MacOsScreenCaptureAccess.preflight` on the runtime `~/Library/Application Support/spectre/helpers/spectre-screencapture/SpectreCaptureHelper.app`, plus the `MacOsTccGuard` wrapping-app Robot probe (`screencapture` 32×32 origin, all-black = denied) and `ioreg` `IOConsoleLocked` (locked console is fail-closed even if the helper reports granted). Accessibility uses the `MacOsTccGuard` osascript (wrapping app). **Fail-closed** on Denied / Locked / Unknown, on helper exit/JSON mismatch, and on a missing `SPECTRE_SCREENCAPTURE_HELPER`. Hard `n/a` on Linux/Windows. Runs before `./gradlew check`. |
+| `macos-tcc` | macOS Screen Recording + Accessibility TCC preflight. Screen Recording uses `MacOsScreenCaptureAccess.preflight` on the runtime `~/Library/Application Support/spectre/helpers/spectre-screencapture/SpectreCaptureHelper.app`, plus the `MacOsTccGuard` wrapping-app Robot probe (`screencapture` 32×32 origin, all-black = denied) and `ioreg` `IOConsoleLocked` (locked console is fail-closed even if the helper reports granted). Accessibility uses the `MacOsTccGuard` osascript (wrapping app). **Fail-closed** on Denied / Locked / Unknown, on helper exit/JSON mismatch, and on a missing, relative, or invalid `SPECTRE_SCREENCAPTURE_HELPER`. Hard `n/a` on Linux/Windows. Runs before `./gradlew check`. |
 | `check` | `./gradlew check` |
 | `junit-live` | Live JUnit failure artifacts/video and atomic capture |
 | `agent-attach-core` | Agent attach with preinstalled core |
@@ -470,7 +470,9 @@ These cannot currently be made portable and fail-closed by the baseline runner:
   to `~/Library/Application Support/spectre/helpers/spectre-screencapture/` (same path later
   capture cells extract) after `:recording:assembleScreenCaptureKitHelper` when missing. An
   inconclusive probe reinstalls that runtime bundle so a stale cached helper cannot pin the
-  gate on Unknown. After a grant, quit/relaunch the
+  gate on Unknown. A granted cached helper is also replaced when the staged assemble tree
+  fingerprints differently, so TCC identity cannot change after macos-tcc already passed.
+  `SPECTRE_SCREENCAPTURE_HELPER` must be an absolute path. After a grant, quit/relaunch the
   wrapping app, run `./gradlew --stop`, and rerun smoke. Live SCK still/record plus signed-app
   `codesign --verify --deep --strict`, `spctl`, and `xcrun stapler validate` remain manual. A local
   ad-hoc app is not notarization evidence.
