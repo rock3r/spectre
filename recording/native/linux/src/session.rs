@@ -102,6 +102,7 @@ enum HeldInput {
 struct DisconnectCleanup {
     reap_recording: bool,
     held_input: ClientInputHold,
+    portal_releases: ClientInputHold,
 }
 
 fn recording_owner_should_reap(recording_owner: Option<u64>, client_id: u64) -> bool {
@@ -139,14 +140,58 @@ fn take_client_held_input(
     holds.remove(&client_id).unwrap_or_default()
 }
 
+fn hold_contains(hold: &ClientInputHold, input: HeldInput) -> bool {
+    match input {
+        HeldInput::PointerButton(button) => hold.buttons.contains(&button),
+        HeldInput::Key(key) => hold.keys.contains(&key),
+    }
+}
+
+fn input_still_held(holds: &HashMap<u64, ClientInputHold>, input: HeldInput) -> bool {
+    holds.values().any(|hold| hold_contains(hold, input))
+}
+
+fn input_held_by_others(
+    holds: &HashMap<u64, ClientInputHold>,
+    client_id: u64,
+    input: HeldInput,
+) -> bool {
+    holds
+        .iter()
+        .any(|(id, hold)| *id != client_id && hold_contains(hold, input))
+}
+
+fn inputs_to_notify_release(
+    remaining: &HashMap<u64, ClientInputHold>,
+    dropped: &ClientInputHold,
+) -> ClientInputHold {
+    ClientInputHold {
+        buttons: dropped
+            .buttons
+            .iter()
+            .copied()
+            .filter(|button| !input_still_held(remaining, HeldInput::PointerButton(*button)))
+            .collect(),
+        keys: dropped
+            .keys
+            .iter()
+            .copied()
+            .filter(|key| !input_still_held(remaining, HeldInput::Key(*key)))
+            .collect(),
+    }
+}
+
 fn disconnect_cleanup(
     recording_owner: Option<u64>,
     client_id: u64,
     holds: &mut HashMap<u64, ClientInputHold>,
 ) -> DisconnectCleanup {
+    let held_input = take_client_held_input(holds, client_id);
+    let portal_releases = inputs_to_notify_release(holds, &held_input);
     DisconnectCleanup {
         reap_recording: recording_owner_should_reap(recording_owner, client_id),
-        held_input: take_client_held_input(holds, client_id),
+        held_input,
+        portal_releases,
     }
 }
 
@@ -214,14 +259,14 @@ fn release_held_input(state: &Mutex<SessionState>, client_id: u64) -> bool {
     };
     let owner = guard.recording.as_ref().map(|r| r.owner);
     let cleanup = disconnect_cleanup(owner, client_id, &mut guard.input_holds);
-    for button in &cleanup.held_input.buttons {
+    for button in &cleanup.portal_releases.buttons {
         if let Err(e) = guard.session.notify_pointer_button(*button, false) {
             eprintln!(
                 "spectre-wayland-helper: failed to release held button {button} on disconnect: {e:#}"
             );
         }
     }
-    for key in &cleanup.held_input.keys {
+    for key in &cleanup.portal_releases.keys {
         if let Err(e) = guard.session.notify_keyboard_keysym(*key, false) {
             eprintln!(
                 "spectre-wayland-helper: failed to release held key {key} on disconnect: {e:#}"
@@ -240,19 +285,20 @@ fn dispatch(command: Command, state: &Mutex<SessionState>, client_id: u64) -> Ev
         }),
         Command::PointerButton { button, pressed } => with_state(state, |s| {
             let evdev = awt_button_mask_to_evdev(button)?;
-            s.session.notify_pointer_button(evdev, pressed)?;
-            apply_held_input(
-                &mut s.input_holds,
-                client_id,
-                HeldInput::PointerButton(evdev),
-                pressed,
-            );
+            let input = HeldInput::PointerButton(evdev);
+            if pressed || !input_held_by_others(&s.input_holds, client_id, input) {
+                s.session.notify_pointer_button(evdev, pressed)?;
+            }
+            apply_held_input(&mut s.input_holds, client_id, input, pressed);
             Ok(Event::InputAck)
         }),
         Command::Key { key_code, pressed } => with_state(state, |s| {
             let keysym = vk_to_keysym(key_code)?;
-            s.session.notify_keyboard_keysym(keysym, pressed)?;
-            apply_held_input(&mut s.input_holds, client_id, HeldInput::Key(keysym), pressed);
+            let input = HeldInput::Key(keysym);
+            if pressed || !input_held_by_others(&s.input_holds, client_id, input) {
+                s.session.notify_keyboard_keysym(keysym, pressed)?;
+            }
+            apply_held_input(&mut s.input_holds, client_id, input, pressed);
             Ok(Event::InputAck)
         }),
         Command::PointerAxis { axis, steps } => with_session(state, |s| {
@@ -466,11 +512,50 @@ mod tests {
             }
         );
         assert_eq!(
+            cleanup.portal_releases,
+            cleanup.held_input,
+            "sole owner must notify the portal on disconnect"
+        );
+        assert_eq!(
             holds.get(&9).map(|hold| hold.buttons.clone()),
             Some(BTreeSet::from([0x111])),
             "another client's held button must survive this disconnect"
         );
         assert!(!holds.contains_key(&3));
+    }
+
+    #[test]
+    fn disconnect_does_not_release_input_still_held_by_another_client() {
+        let mut holds = HashMap::new();
+        apply_held_input(
+            &mut holds,
+            3,
+            HeldInput::PointerButton(0x110),
+            true,
+        );
+        apply_held_input(&mut holds, 3, HeldInput::Key(0xffe3), true);
+        apply_held_input(
+            &mut holds,
+            9,
+            HeldInput::PointerButton(0x110),
+            true,
+        );
+        apply_held_input(&mut holds, 9, HeldInput::Key(0xffe1), true);
+
+        let cleanup = disconnect_cleanup(None, 3, &mut holds);
+        assert_eq!(
+            cleanup.portal_releases,
+            ClientInputHold {
+                buttons: BTreeSet::new(),
+                keys: BTreeSet::from([0xffe3]),
+            },
+            "shared button stays down; this client's exclusive modifier is released"
+        );
+        assert_eq!(
+            holds.get(&9).map(|hold| hold.buttons.clone()),
+            Some(BTreeSet::from([0x110])),
+            "surviving client must keep the shared button"
+        );
     }
 
     #[test]
