@@ -40,6 +40,42 @@ class ScreenshotGoldAssertTest {
     }
 
     @Test
+    fun `a later match deletes stale report files from a prior mismatch`(@TempDir temp: Path) {
+        val goldRoot = temp.resolve("golds")
+        val reportsRoot = temp.resolve("reports")
+        val image = solid(2, 2, 0x00FF00)
+        writeGold(goldRoot, image)
+        val reportDir =
+            ScreenshotGoldPaths.reportDirectory(
+                reportsRoot,
+                "dev.example.HomeTest",
+                "renders",
+                "main-window",
+            )
+        Files.createDirectories(reportDir)
+        Files.writeString(reportDir.resolve("actual.png"), "stale-actual")
+        Files.writeString(reportDir.resolve("gold.png"), "stale-gold")
+        Files.writeString(reportDir.resolve("diff.png"), "stale-diff")
+
+        assertMatchesGold(
+            name = "main-window",
+            image = image,
+            testClassName = "dev.example.HomeTest",
+            testMethodName = "renders",
+            goldRoot = goldRoot,
+            reportsRoot = reportsRoot,
+            osKey = "macos",
+            scaleKey = "scale-1x1",
+            updateEnabled = false,
+        )
+
+        assertFalse(Files.exists(reportDir.resolve("actual.png")))
+        assertFalse(Files.exists(reportDir.resolve("gold.png")))
+        assertFalse(Files.exists(reportDir.resolve("diff.png")))
+        assertFalse(Files.exists(reportDir))
+    }
+
+    @Test
     fun `mismatch writes actual diff and expected gold under the reports tree`(
         @TempDir temp: Path
     ) {
@@ -64,8 +100,7 @@ class ScreenshotGoldAssertTest {
                 )
             }
 
-        val reportDir =
-            reportsRoot.resolve("dev.example.HomeTest").resolve("renders").resolve("main-window")
+        val reportDir = homeReportDir(reportsRoot)
         assertTrue(Files.isRegularFile(reportDir.resolve("actual.png")), error.message)
         assertTrue(Files.isRegularFile(reportDir.resolve("diff.png")), error.message)
         assertTrue(Files.isRegularFile(reportDir.resolve("gold.png")), error.message)
@@ -77,8 +112,7 @@ class ScreenshotGoldAssertTest {
         val goldRoot = temp.resolve("golds")
         val reportsRoot = temp.resolve("reports")
         writeGold(goldRoot, solid(2, 2, 0x000000))
-        val reportDir =
-            reportsRoot.resolve("dev.example.HomeTest").resolve("renders").resolve("main-window")
+        val reportDir = homeReportDir(reportsRoot)
         Files.createDirectories(reportDir)
         // Stale diff from a prior equal-size mismatch must not survive a size-mismatch report.
         Files.writeString(reportDir.resolve("diff.png"), "stale")
@@ -383,6 +417,14 @@ class ScreenshotGoldAssertTest {
             )
         assertTrue(Files.isRegularFile(goldFile))
     }
+
+    private fun homeReportDir(reportsRoot: Path): Path =
+        ScreenshotGoldPaths.reportDirectory(
+            reportsRoot,
+            "dev.example.HomeTest",
+            "renders",
+            "main-window",
+        )
 
     private fun writeGold(goldRoot: Path, image: BufferedImage) {
         val goldFile =

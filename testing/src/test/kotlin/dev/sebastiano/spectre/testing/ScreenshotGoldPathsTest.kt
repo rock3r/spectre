@@ -22,7 +22,7 @@ class ScreenshotGoldPathsTest {
             )
         assertEquals(
             root
-                .resolve("dev.example.MainWindowTest")
+                .resolve(ScreenshotGoldPaths.sanitizeGoldSegment("dev.example.MainWindowTest"))
                 .resolve("main-window")
                 .resolve("macos")
                 .resolve("scale-2x2")
@@ -43,8 +43,8 @@ class ScreenshotGoldPathsTest {
             )
         assertEquals(
             root
-                .resolve("dev.example.MainWindowTest")
-                .resolve("rendersHome")
+                .resolve(ScreenshotGoldPaths.sanitizeGoldSegment("dev.example.MainWindowTest"))
+                .resolve(ScreenshotGoldPaths.sanitizeGoldSegment("rendersHome"))
                 .resolve("main-window"),
             dir,
         )
@@ -72,9 +72,9 @@ class ScreenshotGoldPathsTest {
     fun `reserved device names stay distinct from the escaped literal`() {
         val reserved = ScreenshotGoldPaths.sanitizeGoldSegment("NUL")
         val literal = ScreenshotGoldPaths.sanitizeGoldSegment("NUL_")
-        assertEquals("NUL_", literal)
         assertNotEquals(reserved, literal)
         assertTrue(reserved.matches(Regex("NUL__[0-9a-f]{8}")), reserved)
+        assertTrue(literal.matches(Regex("NUL__[0-9a-f]{8}")), literal)
     }
 
     @Test
@@ -90,9 +90,9 @@ class ScreenshotGoldPathsTest {
     fun `nested class dollar names stay distinct from underscore names`() {
         val nested = ScreenshotGoldPaths.sanitizeGoldSegment("Outer\$Inner")
         val underscore = ScreenshotGoldPaths.sanitizeGoldSegment("Outer_Inner")
-        assertEquals("Outer_Inner", underscore)
         assertNotEquals(nested, underscore)
         assertTrue(nested.matches(Regex("Outer_Inner_[0-9a-f]{8}")), nested)
+        assertTrue(underscore.matches(Regex("Outer_Inner_[0-9a-f]{8}")), underscore)
     }
 
     @Test
@@ -104,12 +104,20 @@ class ScreenshotGoldPathsTest {
     }
 
     @Test
-    fun `lossless names are not hashed`() {
+    fun `lossless lowercase names are not hashed`() {
         assertEquals("main-window", ScreenshotGoldPaths.sanitizeGoldSegment("main-window"))
-        assertEquals(
-            "dev.example.HomeTest",
-            ScreenshotGoldPaths.sanitizeGoldSegment("dev.example.HomeTest"),
-        )
+        assertEquals("macos", ScreenshotGoldPaths.sanitizeGoldSegment("macos"))
+        val mixed = ScreenshotGoldPaths.sanitizeGoldSegment("dev.example.HomeTest")
+        assertTrue(mixed.matches(Regex("dev\\.example\\.HomeTest_[0-9a-f]{8}")), mixed)
+    }
+
+    @Test
+    fun `case-only names stay distinct on case-insensitive filesystems`() {
+        val lower = ScreenshotGoldPaths.sanitizeGoldSegment("main")
+        val title = ScreenshotGoldPaths.sanitizeGoldSegment("Main")
+        assertEquals("main", lower)
+        assertNotEquals(lower, title)
+        assertTrue(title.matches(Regex("Main_[0-9a-f]{8}")), title)
     }
 
     @Test

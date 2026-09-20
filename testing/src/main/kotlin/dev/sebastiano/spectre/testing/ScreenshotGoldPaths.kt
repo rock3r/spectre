@@ -111,9 +111,10 @@ public object ScreenshotGoldPaths {
                 else -> replaced.trim('.', ' ').trim('_').ifEmpty { "unnamed" }
             }
         val escaped = escapeReservedWindowsDeviceName(core)
-        // Any rewrite is a collision risk: `foo/bar` vs `foo_bar`, and reserved-device
-        // escaping (`NUL` → `NUL_`) vs a literal `NUL_`. Suffix the original raw segment.
-        return if (escaped == raw) {
+        // Hash when the segment was rewritten (`foo/bar`, `NUL`) or when it is not already
+        // lowercase, so `Main` and `main` cannot collide on case-insensitive filesystems.
+        val caseFoldingCollision = escaped != escaped.lowercase(Locale.ROOT)
+        return if (escaped == raw && !caseFoldingCollision) {
             escaped
         } else {
             "${escaped}_${stableSegmentFingerprint(raw)}"

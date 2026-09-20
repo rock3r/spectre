@@ -19,7 +19,8 @@ import org.junit.jupiter.api.TestInfo
  * Golds live under `src/test/resources/spectre-golds/<class>/<name>/<os>/scale-<sx>x<sy>/gold.png`.
  * Mismatches write `actual.png` and a copy of `gold.png` under
  * `build/reports/spectre-screenshots/<class>/<method>/<name>/`. `diff.png` is written when
- * dimensions match; a stale `diff.png` is deleted when there is no diff.
+ * dimensions match; a stale `diff.png` is deleted when there is no diff. A later match deletes
+ * leftover report PNGs from a prior mismatch.
  *
  * This overload infers the test from the **calling thread** stack. Inside [runSpectreTest], use the
  * [TestInfo] overload instead — the body runs on a worker dispatcher that has no JUnit frame.
@@ -81,11 +82,14 @@ internal fun assertMatchesGold(
     tolerance: ScreenshotTolerance = ScreenshotTolerance.Strict,
 ) {
     val goldFile = ScreenshotGoldPaths.goldFile(goldRoot, testClassName, name, osKey, scaleKey)
+    val reportDir =
+        ScreenshotGoldPaths.reportDirectory(reportsRoot, testClassName, testMethodName, name)
     if (updateEnabled) {
         Files.createDirectories(goldFile.parent)
         check(ImageIO.write(image, "png", goldFile.toFile())) {
             "Failed to write PNG gold: $goldFile"
         }
+        deleteReportDirectory(reportDir)
         return
     }
     if (!Files.isRegularFile(goldFile)) {
@@ -99,9 +103,10 @@ internal fun assertMatchesGold(
         ImageIO.read(goldFile.toFile())
             ?: throw AssertionError("Screenshot gold is unreadable: $goldFile")
     val result = ScreenshotComparer.compare(expected, image, tolerance)
-    if (result.matches) return
-    val reportDir =
-        ScreenshotGoldPaths.reportDirectory(reportsRoot, testClassName, testMethodName, name)
+    if (result.matches) {
+        deleteReportDirectory(reportDir)
+        return
+    }
     Files.createDirectories(reportDir)
     check(ImageIO.write(image, "png", reportDir.resolve("actual.png").toFile())) {
         "Failed to write actual.png under $reportDir"
@@ -128,6 +133,12 @@ internal fun assertMatchesGold(
         "Screenshot '$name' did not match gold ($reason). " +
             "Wrote diagnostic PNGs under $reportDir"
     )
+}
+
+private fun deleteReportDirectory(reportDir: Path) {
+    if (!Files.exists(reportDir)) return
+    val paths = Files.walk(reportDir).use { it.toList() }
+    paths.sortedByDescending { it.nameCount }.forEach { Files.deleteIfExists(it) }
 }
 
 internal data class CaptureSurfaceScale(
