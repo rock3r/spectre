@@ -651,7 +651,15 @@ class InvalidScreencaptureHelperDir(RuntimeError):
     """helperDir is configured but cannot be mirrored by the smoke preflight."""
 
 
-def parse_screencapture_helper_dir_property(text: str) -> Path | None:
+@dataclass(frozen=True)
+class ScreencaptureHelperDirSetting:
+    """One JVM-option helperDir token: defined-and-blank is not the same as absent."""
+
+    defined: bool
+    path: Path | None = None
+
+
+def parse_screencapture_helper_dir_property(text: str) -> ScreencaptureHelperDirSetting:
     """Last -Dspectre.recording.screencapturekit.helperDir token in JVM option text."""
     prefix = f"-D{SCREENCAPTURE_HELPER_DIR_PROPERTY}"
     try:
@@ -672,7 +680,7 @@ def parse_screencapture_helper_dir_property(text: str) -> Path | None:
             found = True
             value = token[len(prefix) + 1 :]
             last = Path(value) if value.strip() else None
-    return last if found else None
+    return ScreencaptureHelperDirSetting(defined=found, path=last)
 
 
 def macos_screencapture_configured_helper_dir(
@@ -688,15 +696,17 @@ def macos_screencapture_configured_helper_dir(
         if not raw:
             continue
         parsed = parse_screencapture_helper_dir_property(raw)
-        if parsed is None:
+        if not parsed.defined:
             continue
-        if not parsed.is_absolute():
+        if parsed.path is None:
+            return None
+        if not parsed.path.is_absolute():
             raise InvalidScreencaptureHelperDir(
                 f"{SCREENCAPTURE_HELPER_DIR_PROPERTY} must be an absolute path "
-                f"(got {str(parsed)!r} from {name}). Relative values resolve "
+                f"(got {str(parsed.path)!r} from {name}). Relative values resolve "
                 "against different working directories in smoke vs Gradle."
             )
-        return parsed
+        return parsed.path
     return None
 
 
@@ -933,24 +943,21 @@ def ensure_macos_screencapture_helper(
         return override
 
     runtime = macos_screencapture_runtime_helper(home, helper_dir=helper_dir)
+    assembler = (
+        assemble if assemble is not None else (lambda: _assemble_screencapture_helper(root))
+    )
+    if assembler() != 0:
+        return None
     staged = macos_screencapture_staged_helper(root)
-    if _is_executable_helper(runtime) and not refresh:
-        if not _is_executable_helper(staged):
-            return runtime
-        if macos_screencapture_helper_fingerprint(
-            runtime
-        ) == macos_screencapture_helper_fingerprint(staged):
-            return runtime
-
-    if not _is_executable_helper(staged):
-        assembler = (
-            assemble if assemble is not None else (lambda: _assemble_screencapture_helper(root))
-        )
-        if assembler() != 0:
-            return None
-        staged = macos_screencapture_staged_helper(root)
     if not _is_executable_helper(staged):
         return None
+    if (
+        _is_executable_helper(runtime)
+        and not refresh
+        and macos_screencapture_helper_fingerprint(runtime)
+        == macos_screencapture_helper_fingerprint(staged)
+    ):
+        return runtime
 
     if helper_dir is None and home is None and platform.system() != "Darwin":
         return None

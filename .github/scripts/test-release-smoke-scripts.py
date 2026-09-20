@@ -1409,22 +1409,32 @@ class MacOsTccPreflightTest(unittest.TestCase):
         self.assertNotIn("guide-permissions", joined)
         self.assertNotIn("TCC.db", joined)
 
-    def test_ensure_skips_assemble_when_runtime_helper_exists(self):
+    def test_ensure_assembles_before_accepting_matching_cache(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             home = Path(tmp) / "home"
+            staged = smoke_lib.macos_screencapture_staged_helper(root)
             runtime = smoke_lib.macos_screencapture_runtime_helper(home)
             runtime.parent.mkdir(parents=True)
-            runtime.write_text("#!/bin/sh\n", encoding="utf-8")
+            runtime.write_text("#!/bin/sh\nstale\n", encoding="utf-8")
             runtime.chmod(0o755)
+            staged.parent.mkdir(parents=True)
+            staged.write_text("#!/bin/sh\nstale\n", encoding="utf-8")
+            staged.chmod(0o755)
             calls: list[int] = []
+
+            def assemble() -> int:
+                staged.write_text("#!/bin/sh\ncurrent-sha\n", encoding="utf-8")
+                staged.chmod(0o755)
+                calls.append(1)
+                return 0
+
             found = smoke_lib.ensure_macos_screencapture_helper(
-                root,
-                assemble=lambda: calls.append(1) or 0,
-                home=home,
+                root, assemble=assemble, home=home
             )
             self.assertEqual(runtime, found)
-            self.assertEqual([], calls)
+            self.assertEqual([1], calls)
+            self.assertIn("current-sha", runtime.read_text(encoding="utf-8"))
 
     def test_ensure_installs_staged_helper_to_runtime_path(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1449,7 +1459,7 @@ class MacOsTccPreflightTest(unittest.TestCase):
             self.assertTrue(runtime.is_file())
             self.assertNotEqual(staged, runtime)
 
-    def test_ensure_installs_existing_staged_without_assemble(self):
+    def test_ensure_assembles_even_when_staged_already_exists(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             home = Path(tmp) / "home"
@@ -1465,7 +1475,7 @@ class MacOsTccPreflightTest(unittest.TestCase):
                 home=home,
             )
             self.assertEqual(runtime, found)
-            self.assertEqual([], calls)
+            self.assertEqual([1], calls)
             self.assertTrue(runtime.is_file())
 
     def test_probe_invokes_runtime_helper_not_build_tree(self):
@@ -1629,16 +1639,22 @@ class MacOsTccPreflightTest(unittest.TestCase):
         parsed = smoke_lib.parse_screencapture_helper_dir_property(
             f"-D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}={helper_dir} -Xmx2g"
         )
-        self.assertEqual(helper_dir, parsed)
+        self.assertTrue(parsed.defined)
+        self.assertEqual(helper_dir, parsed.path)
         quoted = smoke_lib.parse_screencapture_helper_dir_property(
             f'-ea -D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}="/tmp/my helper" -Xmx2g'
         )
-        self.assertEqual(Path("/tmp/my helper"), quoted)
+        self.assertEqual(Path("/tmp/my helper"), quoted.path)
         last_wins = smoke_lib.parse_screencapture_helper_dir_property(
             f"-D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}=/tmp/first -Xmx2g "
             f"-D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}=/tmp/second"
         )
-        self.assertEqual(Path("/tmp/second"), last_wins)
+        self.assertEqual(Path("/tmp/second"), last_wins.path)
+        blank = smoke_lib.parse_screencapture_helper_dir_property(
+            f"-D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}="
+        )
+        self.assertTrue(blank.defined)
+        self.assertIsNone(blank.path)
 
     def test_unparseable_helper_dir_property_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1689,6 +1705,39 @@ class MacOsTccPreflightTest(unittest.TestCase):
         )
         gradle_only = {"GRADLE_OPTS": f"-D{prop}=/tmp/gradle"}
         self.assertIsNone(smoke_lib.macos_screencapture_configured_helper_dir(gradle_only))
+
+    def test_blank_higher_precedence_helper_dir_uses_default(self):
+        prop = smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY
+        env = {
+            "_JAVA_OPTIONS": f"-D{prop}=",
+            "JDK_JAVA_OPTIONS": f"-D{prop}=/tmp/jdk",
+        }
+        self.assertIsNone(smoke_lib.macos_screencapture_configured_helper_dir(env))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = Path(tmp) / "home"
+            staged = smoke_lib.macos_screencapture_staged_helper(root)
+            default_runtime = smoke_lib.macos_screencapture_runtime_helper(home)
+            jdk_runtime = (
+                Path("/tmp/jdk")
+                / smoke_lib.SCREENCAPTURE_HELPER_APP_NAME
+                / "Contents"
+                / "MacOS"
+                / smoke_lib.SCREENCAPTURE_HELPER_NAME
+            )
+
+            def assemble() -> int:
+                staged.parent.mkdir(parents=True)
+                staged.write_text("#!/bin/sh\n", encoding="utf-8")
+                staged.chmod(0o755)
+                return 0
+
+            with unittest.mock.patch.dict(os.environ, env, clear=False):
+                found = smoke_lib.ensure_macos_screencapture_helper(
+                    root, assemble=assemble, home=home
+                )
+            self.assertEqual(default_runtime, found)
+            self.assertNotEqual(jdk_runtime, found)
 
     def test_helper_dir_ignores_gradle_properties(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1749,8 +1798,13 @@ class MacOsTccPreflightTest(unittest.TestCase):
             assemble_calls: list[int] = []
 
             def assemble() -> int:
-                staged.parent.mkdir(parents=True)
-                staged.write_text("#!/bin/sh\nfresh\n", encoding="utf-8")
+                staged.parent.mkdir(parents=True, exist_ok=True)
+                content = (
+                    "#!/bin/sh\nstale\n"
+                    if not assemble_calls
+                    else "#!/bin/sh\nfresh\n"
+                )
+                staged.write_text(content, encoding="utf-8")
                 staged.chmod(0o755)
                 assemble_calls.append(1)
                 return 0
@@ -1778,7 +1832,7 @@ class MacOsTccPreflightTest(unittest.TestCase):
             )
             self.assertEqual(smoke_lib.TCC_GRANTED, status)
             self.assertEqual(["#!/bin/sh\nstale\n", "#!/bin/sh\nfresh\n"], invoked)
-            self.assertEqual([1], assemble_calls)
+            self.assertEqual([1, 1], assemble_calls)
             self.assertIn("fresh", runtime.read_text(encoding="utf-8"))
 
     def test_granted_stale_runtime_helper_is_replaced_from_staged_before_probe(self):
@@ -1817,7 +1871,7 @@ class MacOsTccPreflightTest(unittest.TestCase):
             )
             self.assertEqual(smoke_lib.TCC_GRANTED, status)
             self.assertEqual(["#!/bin/sh\nfresh-granted\n"], invoked)
-            self.assertEqual([], assemble_calls)
+            self.assertEqual([1], assemble_calls)
             self.assertIn("fresh-granted", runtime.read_text(encoding="utf-8"))
 
     def test_blocked_remaining_fills_required_ids_with_reason(self):

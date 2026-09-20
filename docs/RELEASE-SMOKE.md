@@ -468,10 +468,11 @@ These cannot currently be made portable and fail-closed by the baseline runner:
   Accessibility is Denied / Locked / Unknown. Accessibility names the wrapping app; Screen
   Recording names Spectre Capture Helper (`SpectreCaptureHelper.app`), which the harness installs
   to `~/Library/Application Support/spectre/helpers/spectre-screencapture/` (same path later
-  capture cells extract) after `:recording:assembleScreenCaptureKitHelper` when missing. An
-  inconclusive probe reinstalls that runtime bundle so a stale cached helper cannot pin the
-  gate on Unknown. A granted cached helper is also replaced when the staged assemble tree
-  fingerprints differently, so TCC identity cannot change after macos-tcc already passed.
+  capture cells extract) after `:recording:assembleScreenCaptureKitHelper` (always invoked so
+  the staged tree matches the reviewed SHA). An inconclusive probe reinstalls that runtime
+  bundle so a stale cached helper cannot pin the gate on Unknown. A granted cached helper is
+  also replaced when the freshly assembled tree fingerprints differently, so TCC identity
+  cannot change after macos-tcc already passed.
   `SPECTRE_SCREENCAPTURE_HELPER` must be an absolute path. After a grant, quit/relaunch the
   wrapping app, run `./gradlew --stop`, and rerun smoke. Live SCK still/record plus signed-app
   `codesign --verify --deep --strict`, `spctl`, and `xcrun stapler validate` remain manual. A local
