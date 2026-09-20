@@ -112,4 +112,36 @@ echo "$dump_if" | grep -F -q 'failure()' || fail "validation dump is not gated o
 echo "$dump_if" | grep -F -q "steps.gradle.outcome == 'failure'" ||
   fail "validation dump must also run when continue-on-error hid a Gradle timeout"
 
+# Codex #519: dump must run immediately after Run validation tests. XML verify
+# and the always() CLI smoke can consume the leftover job budget (or hang)
+# before stacks are collected.
+python3 - "$validation_workflow" <<'PY' || fail "validation dump is not immediately after Run validation tests"
+import re
+import sys
+
+path = sys.argv[1]
+names = []
+in_job = False
+for line in open(path, encoding="utf-8"):
+    if line.startswith("  validation-windows:"):
+        in_job = True
+        continue
+    if in_job and re.match(r"^  [A-Za-z0-9_-]+:", line):
+        break
+    match = re.match(r"^      - name:\s*(.+)\s*$", line)
+    if in_job and match:
+        names.append(match.group(1).strip())
+try:
+    gradle = names.index("Run validation tests")
+    dump = names.index("Dump live JVM stacks")
+    smoke = next(i for i, name in enumerate(names) if name.startswith("Smoke Roast MCP"))
+except (ValueError, StopIteration) as error:
+    sys.exit(f"missing expected validation-windows step: {error}")
+if dump != gradle + 1:
+    sys.exit(f"Dump live JVM stacks is step {dump}, expected {gradle + 1} (immediately after Run validation tests); steps={names}")
+if dump >= smoke:
+    sys.exit(f"Dump live JVM stacks must run before the always() CLI smoke; steps={names}")
+print(f"OK validation dump is immediately after Run validation tests (before CLI smoke)")
+PY
+
 echo "OK: Windows check hang diagnostics (#499) are wired"

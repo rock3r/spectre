@@ -136,6 +136,15 @@ jobs:
             --continue
         shell: bash
 
+      - name: Dump live JVM stacks
+        # #499: dump immediately after validation Gradle so XML verify and the
+        # always() CLI smoke cannot spend the leftover job budget first.
+        # continue-on-error turns a step timeout into conclusion=success, so
+        # also key off the pre-tolerance gradle outcome.
+        if: cancelled() || failure() || steps.gradle.outcome == 'failure'
+        shell: bash
+        run: bash .github/scripts/dump-jvm-stacks.sh
+
       - name: Verify validation tests passed via JUnit XML
         # Envelope-detection safety net (issue #72): the `ValidationTestSerialiser` BuildService
         # in `sample-desktop/build.gradle.kts` suppresses the race on Linux but not on Windows
@@ -287,15 +296,6 @@ jobs:
             --rerun-tasks \
             -Dspectre.cli.distributionExecutable="$launcher"
         shell: bash
-
-      - name: Dump live JVM stacks
-        # #499: same hang-diagnosis dump as windows.yml. Validation Gradle can sit
-        # in a worker after a protocol flake; dump daemons before orphan cleanup.
-        # continue-on-error on Run validation tests turns a step timeout into
-        # conclusion=success, so also key off the pre-tolerance gradle outcome.
-        if: cancelled() || failure() || steps.gradle.outcome == 'failure'
-        shell: bash
-        run: bash .github/scripts/dump-jvm-stacks.sh
 
       - name: Upload validation artefacts
         # Always upload — useful both for diagnosing flakes and for confirming what ran on
