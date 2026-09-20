@@ -2,7 +2,10 @@ package dev.sebastiano.spectre.testing
 
 import dev.sebastiano.spectre.core.InternalSpectreApi
 import dev.sebastiano.spectre.core.isWaylandSession
+import java.awt.GraphicsConfiguration
 import java.nio.file.Path
+import java.security.MessageDigest
+import java.util.HexFormat
 import java.util.Locale
 
 /** Layout for committed gold PNGs and mismatch reports (#388). */
@@ -10,6 +13,7 @@ public object ScreenshotGoldPaths {
 
     public const val DEFAULT_GOLD_ROOT: String = "src/test/resources/spectre-golds"
     public const val DEFAULT_REPORTS_ROOT: String = "build/reports/spectre-screenshots"
+    private const val SEGMENT_FINGERPRINT_BYTES: Int = 4
 
     public fun defaultGoldRoot(): Path = Path.of(DEFAULT_GOLD_ROOT).toAbsolutePath().normalize()
 
@@ -47,6 +51,12 @@ public object ScreenshotGoldPaths {
 
     public fun scaleKey(scaleX: Double, scaleY: Double): String =
         "scale-${formatScale(scaleX)}x${formatScale(scaleY)}"
+
+    /** Scale directory name from a window or screen [GraphicsConfiguration]. */
+    public fun scaleKey(configuration: GraphicsConfiguration): String {
+        val transform = configuration.defaultTransform
+        return scaleKey(transform.scaleX, transform.scaleY)
+    }
 
     public fun osKey(
         osName: String = System.getProperty("os.name").orEmpty(),
@@ -100,7 +110,20 @@ public object ScreenshotGoldPaths {
                 replaced.all { it == '.' } -> if (replaced.length == 1) "dot" else "dotdot"
                 else -> replaced.trim('.', ' ').trim('_').ifEmpty { "unnamed" }
             }
-        return escapeReservedWindowsDeviceName(core)
+        val escaped = escapeReservedWindowsDeviceName(core)
+        // Reserved-device escaping is not a collision (`NUL` → `NUL_`). Character rewriting
+        // (`foo/bar` → `foo_bar`) is; suffix the original so distinct raw segments cannot share
+        // a gold or report path.
+        return if (replaced == raw && core == raw) {
+            escaped
+        } else {
+            "${escaped}_${stableSegmentFingerprint(raw)}"
+        }
+    }
+
+    private fun stableSegmentFingerprint(raw: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
+        return HexFormat.of().formatHex(digest, 0, SEGMENT_FINGERPRINT_BYTES)
     }
 
     private fun escapeReservedWindowsDeviceName(name: String): String {

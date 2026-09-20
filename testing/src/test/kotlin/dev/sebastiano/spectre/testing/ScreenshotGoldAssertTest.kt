@@ -8,6 +8,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.RepeatedTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -263,6 +264,102 @@ class ScreenshotGoldAssertTest {
         assertEquals("composed Test meta-annotations are recognized for gold identity", method)
     }
 
+    @Test
+    fun `unannotated overload first does not hide an annotated same-name test`() {
+        val cls = GoldIdentityOverloadHost::class.java
+        val unannotated = cls.getDeclaredMethod("probe")
+        val annotated = cls.getDeclaredMethod("probe", Int::class.java)
+        assertFalse(unannotated.isJunitTestMethod())
+        assertTrue(annotated.isJunitTestMethod())
+        assertEquals("probe", resolveJunitTestMethodName(arrayOf(unannotated, annotated), "probe"))
+        assertEquals("probe", resolveJunitTestMethodName(arrayOf(annotated, unannotated), "probe"))
+        val frame = StackTraceElement(cls.name, "probe", "GoldIdentityOverloadHost.kt", 1)
+        assertEquals(cls.name to "probe", testIdentityFromFrame(frame))
+    }
+
+    @Test
+    fun `scale key uses the matching capture surface instead of the fallback`() {
+        val image = BufferedImage(200, 100, BufferedImage.TYPE_INT_ARGB)
+        val key =
+            currentScaleKey(
+                image = image,
+                surfaces =
+                    listOf(
+                        CaptureSurfaceScale(
+                            pixelWidth = 200,
+                            pixelHeight = 100,
+                            scaleX = 2.0,
+                            scaleY = 2.0,
+                        ),
+                        CaptureSurfaceScale(
+                            pixelWidth = 800,
+                            pixelHeight = 600,
+                            scaleX = 1.0,
+                            scaleY = 1.0,
+                        ),
+                    ),
+                fallbackScaleX = 1.0,
+                fallbackScaleY = 1.0,
+            )
+        assertEquals("scale-2x2", key)
+    }
+
+    @Test
+    fun `scale key uses a unique window density when the still size does not match`() {
+        val image = BufferedImage(64, 32, BufferedImage.TYPE_INT_ARGB)
+        val key =
+            currentScaleKey(
+                image = image,
+                surfaces = listOf(CaptureSurfaceScale(200, 100, 2.0, 2.0)),
+                fallbackScaleX = 1.0,
+                fallbackScaleY = 1.0,
+            )
+        assertEquals("scale-2x2", key)
+    }
+
+    @Test
+    fun `scale key falls back when matching surfaces disagree on density`() {
+        val image = BufferedImage(200, 100, BufferedImage.TYPE_INT_ARGB)
+        val key =
+            currentScaleKey(
+                image = image,
+                surfaces =
+                    listOf(
+                        CaptureSurfaceScale(200, 100, 2.0, 2.0),
+                        CaptureSurfaceScale(200, 100, 1.25, 1.25),
+                    ),
+                fallbackScaleX = 1.0,
+                fallbackScaleY = 1.0,
+            )
+        assertEquals("scale-1x1", key)
+    }
+
+    @Test
+    fun `explicit scale key is used instead of the inferred capture scale`(@TempDir temp: Path) {
+        val goldRoot = temp.resolve("golds")
+        val image = solid(2, 2, 0x00AA00)
+        assertMatchesGold(
+            name = "main-window",
+            image = image,
+            testClassName = "dev.example.HomeTest",
+            testMethodName = "renders",
+            goldRoot = goldRoot,
+            reportsRoot = temp.resolve("reports"),
+            osKey = "macos",
+            scaleKey = "scale-2x2",
+            updateEnabled = true,
+        )
+        val goldFile =
+            ScreenshotGoldPaths.goldFile(
+                goldRoot,
+                "dev.example.HomeTest",
+                "main-window",
+                "macos",
+                "scale-2x2",
+            )
+        assertTrue(Files.isRegularFile(goldFile))
+    }
+
     private fun writeGold(goldRoot: Path, image: BufferedImage) {
         val goldFile =
             ScreenshotGoldPaths.goldFile(
@@ -294,3 +391,17 @@ class ScreenshotGoldAssertTest {
 @Retention(AnnotationRetention.RUNTIME)
 @Test
 private annotation class ComposedGoldTest
+
+/** Host for overload-identity tests; JUnit must not execute these as specs. */
+@Disabled("reflective fixture for gold identity overload resolution")
+internal class GoldIdentityOverloadHost {
+    @Suppress("unused")
+    fun probe() {
+        error("unannotated overload")
+    }
+
+    @Test
+    fun probe(ignored: Int) {
+        error("annotated overload is only used reflectively")
+    }
+}

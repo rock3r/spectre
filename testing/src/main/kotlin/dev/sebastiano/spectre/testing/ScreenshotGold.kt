@@ -1,11 +1,13 @@
 package dev.sebastiano.spectre.testing
 
 import java.awt.GraphicsEnvironment
+import java.awt.Window
 import java.awt.image.BufferedImage
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import javax.imageio.ImageIO
+import kotlin.math.roundToInt
 import org.junit.jupiter.api.TestInfo
 
 /**
@@ -20,11 +22,17 @@ import org.junit.jupiter.api.TestInfo
  *
  * This overload infers the test from the **calling thread** stack. Inside [runSpectreTest], use the
  * [TestInfo] overload instead — the body runs on a worker dispatcher that has no JUnit frame.
+ *
+ * [scaleKey] defaults to the captured window's display scale when that can be inferred from showing
+ * AWT windows; otherwise the primary/default screen transform. Pass an explicit key (from
+ * [ScreenshotGoldPaths.scaleKey]) when the window is on a different monitor than the fallback or
+ * when several densities are visible.
  */
 public fun assertMatchesGold(
     name: String,
     image: BufferedImage,
     tolerance: ScreenshotTolerance = ScreenshotTolerance.Strict,
+    scaleKey: String = currentScaleKey(image),
 ) {
     val (testClassName, testMethodName) = inferTestIdentity()
     assertMatchesGold(
@@ -33,18 +41,20 @@ public fun assertMatchesGold(
         testClassName = testClassName,
         testMethodName = testMethodName,
         tolerance = tolerance,
+        scaleKey = scaleKey,
     )
 }
 
 /**
  * JUnit 5 overload. Safe inside [runSpectreTest] because identity comes from [testInfo], not the
- * worker stack.
+ * worker stack. [scaleKey] follows the same capture-display default as the name-only overload.
  */
 public fun assertMatchesGold(
     testInfo: TestInfo,
     name: String,
     image: BufferedImage,
     tolerance: ScreenshotTolerance = ScreenshotTolerance.Strict,
+    scaleKey: String = currentScaleKey(image),
 ) {
     val (testClassName, testMethodName) = identityFromTestInfo(testInfo)
     assertMatchesGold(
@@ -53,6 +63,7 @@ public fun assertMatchesGold(
         testClassName = testClassName,
         testMethodName = testMethodName,
         tolerance = tolerance,
+        scaleKey = scaleKey,
     )
 }
 
@@ -64,7 +75,7 @@ internal fun assertMatchesGold(
     goldRoot: Path = ScreenshotGoldPaths.defaultGoldRoot(),
     reportsRoot: Path = ScreenshotGoldPaths.defaultReportsRoot(),
     osKey: String = ScreenshotGoldPaths.osKey(),
-    scaleKey: String = currentScaleKey(),
+    scaleKey: String = currentScaleKey(image),
     updateEnabled: Boolean = ScreenshotUpdateMode.isEnabled(),
     tolerance: ScreenshotTolerance = ScreenshotTolerance.Strict,
 ) {
@@ -118,14 +129,61 @@ internal fun assertMatchesGold(
     )
 }
 
-internal fun currentScaleKey(): String {
-    if (GraphicsEnvironment.isHeadless()) return ScreenshotGoldPaths.scaleKey(1.0, 1.0)
+internal data class CaptureSurfaceScale(
+    val pixelWidth: Int,
+    val pixelHeight: Int,
+    val scaleX: Double,
+    val scaleY: Double,
+)
+
+internal fun currentScaleKey(
+    image: BufferedImage? = null,
+    surfaces: List<CaptureSurfaceScale> = liveCaptureSurfaces(),
+    fallbackScaleX: Double = fallbackDisplayScale().first,
+    fallbackScaleY: Double = fallbackDisplayScale().second,
+): String {
+    val matchingScales =
+        if (image == null) {
+            emptyList()
+        } else {
+            surfaces
+                .filter { it.pixelWidth == image.width && it.pixelHeight == image.height }
+                .map { it.scaleX to it.scaleY }
+                .distinct()
+        }
+    val uniqueSurfaceScales = surfaces.map { it.scaleX to it.scaleY }.distinct()
+    val (scaleX, scaleY) =
+        matchingScales.singleOrNull()
+            ?: uniqueSurfaceScales.singleOrNull()
+            ?: (fallbackScaleX to fallbackScaleY)
+    return ScreenshotGoldPaths.scaleKey(scaleX, scaleY)
+}
+
+internal fun liveCaptureSurfaces(): List<CaptureSurfaceScale> {
+    if (GraphicsEnvironment.isHeadless()) return emptyList()
+    return Window.getWindows()
+        .filter { it.isShowing }
+        .mapNotNull { window ->
+            val configuration = window.graphicsConfiguration ?: return@mapNotNull null
+            val scaleX = configuration.defaultTransform.scaleX
+            val scaleY = configuration.defaultTransform.scaleY
+            CaptureSurfaceScale(
+                pixelWidth = (window.width * scaleX).roundToInt(),
+                pixelHeight = (window.height * scaleY).roundToInt(),
+                scaleX = scaleX,
+                scaleY = scaleY,
+            )
+        }
+}
+
+internal fun fallbackDisplayScale(): Pair<Double, Double> {
+    if (GraphicsEnvironment.isHeadless()) return 1.0 to 1.0
     val transform =
         GraphicsEnvironment.getLocalGraphicsEnvironment()
             .defaultScreenDevice
             .defaultConfiguration
             .defaultTransform
-    return ScreenshotGoldPaths.scaleKey(transform.scaleX, transform.scaleY)
+    return transform.scaleX to transform.scaleY
 }
 
 internal fun identityFromTestInfo(testInfo: TestInfo): Pair<String, String> {
@@ -142,7 +200,7 @@ internal fun inferTestIdentity(): Pair<String, String> =
             "assertMatchesGold could not infer the calling test method; pass TestInfo explicitly"
         )
 
-private fun testIdentityFromFrame(frame: StackTraceElement): Pair<String, String>? {
+internal fun testIdentityFromFrame(frame: StackTraceElement): Pair<String, String>? {
     val className = frame.className
     // Only skip frames from this file (ScreenshotGoldKt), not other types whose names
     // happen to start with ScreenshotGold (e.g. ScreenshotGoldAssertTest).
@@ -153,9 +211,15 @@ private fun testIdentityFromFrame(frame: StackTraceElement): Pair<String, String
         return null
     }
     val cls = runCatching { Class.forName(className) }.getOrNull() ?: return null
-    val method = cls.declaredMethods.firstOrNull { it.name == frame.methodName } ?: return null
-    return if (method.isJunitTestMethod()) className to frame.methodName else null
+    val methodName =
+        resolveJunitTestMethodName(cls.declaredMethods, frame.methodName) ?: return null
+    return className to methodName
 }
+
+internal fun resolveJunitTestMethodName(
+    methods: Array<java.lang.reflect.Method>,
+    methodName: String,
+): String? = methods.firstOrNull { it.name == methodName && it.isJunitTestMethod() }?.name
 
 /**
  * True for JUnit 4 `@Test`, JUnit 5 `@Test` / `@TestTemplate` / `@TestFactory`, the platform
