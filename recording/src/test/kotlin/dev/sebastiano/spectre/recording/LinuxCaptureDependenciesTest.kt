@@ -1,0 +1,251 @@
+package dev.sebastiano.spectre.recording
+
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+class LinuxCaptureDependenciesTest {
+
+    @Test
+    fun `gst-launch probe is true when the version process exits zero`() {
+        assertEquals(
+            true,
+            LinuxCaptureDependencies.isGstLaunchAvailable(
+                launch = { FakeGstLaunchProcess(exit = 0) },
+                inspectElement = { true },
+                inspectAvailable = { true },
+            ),
+        )
+    }
+
+    @Test
+    fun `gst-launch probe is false when the binary is confirmed missing`() {
+        assertEquals(
+            false,
+            LinuxCaptureDependencies.isGstLaunchAvailable {
+                throw IOException(
+                    "Cannot run program \"gst-launch-1.0\": error=2, No such file or directory"
+                )
+            },
+        )
+        assertEquals(
+            false,
+            LinuxCaptureDependencies.isGstLaunchAvailable {
+                throw IOException("error=2, No such file or directory")
+            },
+        )
+        assertEquals(
+            false,
+            LinuxCaptureDependencies.isGstLaunchAvailable {
+                throw IOException("No such file or directory")
+            },
+        )
+    }
+
+    @Test
+    fun `gst-launch probe launch IOException is inconclusive unless the binary is missing`() {
+        assertNull(
+            LinuxCaptureDependencies.isGstLaunchAvailable {
+                throw IOException("Cannot run program \"gst-launch-1.0\"")
+            }
+        )
+        assertNull(
+            LinuxCaptureDependencies.isGstLaunchAvailable {
+                throw IOException(
+                    "Cannot run program \"gst-launch-1.0\": error=13, Permission denied"
+                )
+            }
+        )
+        assertNull(
+            LinuxCaptureDependencies.isGstLaunchAvailable {
+                throw IOException("error=24, Too many open files")
+            }
+        )
+        assertNull(
+            LinuxCaptureDependencies.isGstLaunchAvailable {
+                throw IOException("error=11, Resource temporarily unavailable")
+            }
+        )
+    }
+
+    @Test
+    fun `gst-launch probe is false when the version process exits non-zero`() {
+        assertEquals(
+            false,
+            LinuxCaptureDependencies.isGstLaunchAvailable { FakeGstLaunchProcess(exit = 127) },
+        )
+    }
+
+    @Test
+    fun `gst-launch probe timeout is inconclusive not missing`() {
+        val process = FakeGstLaunchProcess(exit = 0, finished = false)
+        assertNull(
+            LinuxCaptureDependencies.isGstLaunchAvailable { process },
+            "a slow gst-launch --version must not be cached as unavailable",
+        )
+        assertTrue(process.destroyed, "a hung gst-launch --version probe must be destroyed")
+    }
+
+    @Test
+    fun `gst-launch probe does not treat interruption as missing binary`() {
+        val process = FakeGstLaunchProcess(exit = 0, interruptWait = true)
+        assertFailsWith<InterruptedException> {
+            LinuxCaptureDependencies.isGstLaunchAvailable { process }
+        }
+        assertTrue(process.destroyed, "an interrupted gst-launch probe must still be destroyed")
+        assertTrue(Thread.interrupted(), "interrupt status must be restored so the wait can abort")
+        assertEquals(
+            true,
+            LinuxCaptureDependencies.isGstLaunchAvailable(
+                inspectElement = { true },
+                inspectAvailable = { true },
+            ) {
+                FakeGstLaunchProcess(exit = 0)
+            },
+            "a later probe must be allowed to succeed after an interrupted one",
+        )
+    }
+
+    @Test
+    fun `gst-launch probe stays usable when gst-inspect is missing`() {
+        assertEquals(
+            true,
+            LinuxCaptureDependencies.isGstLaunchAvailable(
+                inspectElement = { error("inspect must not run when gst-inspect is absent") },
+                inspectAvailable = { false },
+            ) {
+                FakeGstLaunchProcess(exit = 0)
+            },
+        )
+    }
+
+    @Test
+    fun `gst-launch probe stays inconclusive when gst-inspect itself times out`() {
+        assertNull(
+            LinuxCaptureDependencies.isGstLaunchAvailable(
+                inspectElement = { error("inspect must not run when gst-inspect is inconclusive") },
+                inspectAvailable = { null },
+            ) {
+                FakeGstLaunchProcess(exit = 0)
+            }
+        )
+    }
+
+    @Test
+    fun `gst-launch probe is false when a required still-capture element is missing`() {
+        assertEquals(
+            false,
+            LinuxCaptureDependencies.isGstLaunchAvailable(
+                inspectElement = { element -> element != "ximagesrc" },
+                requiredElements = listOf("ximagesrc", "videoconvert", "pngenc"),
+                inspectAvailable = { true },
+            ) {
+                FakeGstLaunchProcess(exit = 0)
+            },
+        )
+    }
+
+    @Test
+    fun `gst-launch probe stays inconclusive when element inspect times out`() {
+        assertNull(
+            LinuxCaptureDependencies.isGstLaunchAvailable(
+                inspectElement = { null },
+                requiredElements = listOf("videoconvert"),
+                inspectAvailable = { true },
+            ) {
+                FakeGstLaunchProcess(exit = 0)
+            }
+        )
+    }
+
+    @Test
+    fun `gst probe builder discards stdout and stderr`() {
+        val builder = gstProbeBuilder("gst-inspect-1.0", "ximagesrc")
+        assertEquals(ProcessBuilder.Redirect.DISCARD, builder.redirectOutput())
+        assertEquals(ProcessBuilder.Redirect.DISCARD, builder.redirectError())
+    }
+
+    @Test
+    fun `discarded probe output cannot fill the pipe and time out`() {
+        if (!System.getProperty("os.name").contains("linux", ignoreCase = true)) return
+        val result = awaitGstProcess {
+            gstProbeBuilder("python3", "-c", "print('x' * 1_000_000)").start()
+        }
+        assertEquals(true, result, "a 1MB inspect-sized report must not block waitFor")
+    }
+
+    @Test
+    fun `gst-launch probe is false when filesink is missing`() {
+        assertEquals(
+            false,
+            LinuxCaptureDependencies.isGstLaunchAvailable(
+                inspectElement = { element -> element != "filesink" },
+                requiredElements = requiredStillCaptureElements(isWayland = { false }),
+                inspectAvailable = { true },
+            ) {
+                FakeGstLaunchProcess(exit = 0)
+            },
+        )
+    }
+
+    @Test
+    fun `required still-capture elements follow the selected backend`() {
+        assertEquals(
+            listOf("ximagesrc", "videoconvert", "pngenc", "filesink"),
+            requiredStillCaptureElements(isWayland = { false }),
+        )
+        assertEquals(
+            listOf("pipewiresrc", "videocrop", "videoconvert", "pngenc", "filesink"),
+            requiredStillCaptureElements(isWayland = { true }),
+        )
+    }
+}
+
+private class FakeGstLaunchProcess(
+    private val exit: Int,
+    private val finished: Boolean = true,
+    private val interruptWait: Boolean = false,
+) : Process() {
+
+    var destroyed: Boolean = false
+        private set
+
+    override fun getOutputStream(): OutputStream = ByteArrayOutputStream()
+
+    override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun waitFor(): Int = exit
+
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean {
+        if (interruptWait) throw InterruptedException("gst-launch probe cancelled")
+        return finished
+    }
+
+    override fun exitValue(): Int = exit
+
+    override fun destroy() {
+        destroyed = true
+    }
+
+    override fun destroyForcibly(): Process {
+        destroyed = true
+        return this
+    }
+
+    override fun isAlive(): Boolean = !destroyed && !finished
+
+    override fun toHandle(): ProcessHandle = ProcessHandle.current()
+
+    override fun onExit(): CompletableFuture<Process> = CompletableFuture.completedFuture(this)
+}

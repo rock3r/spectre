@@ -7,6 +7,8 @@ import java.awt.Frame
 import java.awt.Window
 import java.awt.image.BufferedImage
 import java.util.WeakHashMap
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantLock
 
 /**
@@ -18,6 +20,63 @@ import java.util.concurrent.locks.ReentrantLock
 internal object NativeWindowCaptureBridge {
     private val screenshotter: AutoScreenshotter by lazy(::AutoScreenshotter)
     private val captureLocks = WeakHashMap<Window, ReentrantLock>()
+    @Volatile private var cachedPlatformCaptureUsable: Boolean? = null
+    private val waitScopedProbes = WaitScopedProbeTable()
+    private val platformCaptureUsableLock = Any()
+
+    /**
+     * True when the host can actually run a native still (not merely load this class).
+     *
+     * Linux stills spawn `gst-launch-1.0` via the bundled helper. If that binary is missing,
+     * visual- idle treats native capture as unavailable and falls back to Robot region sampling
+     * (#503). An interrupted or timed-out probe is not globally cached: a later `waitForVisualIdle`
+     * may retry. The inconclusive Robot decision is keyed to [waitId] so overlapping waits cannot
+     * clear each other's state. A timeout is also copied to other waits that were already open
+     * behind the same in-flight probe, so a second 3s `--version` cannot eat the default 5s wait.
+     */
+    @JvmStatic
+    @JvmName("isPlatformCaptureUsable")
+    internal fun isPlatformCaptureUsable(): Boolean = isPlatformCaptureUsable(waitId = 0L)
+
+    @JvmStatic
+    @JvmName("isPlatformCaptureUsableForWait")
+    internal fun isPlatformCaptureUsable(waitId: Long): Boolean {
+        cachedPlatformCaptureUsable?.let {
+            return it
+        }
+        return synchronized(platformCaptureUsableLock) {
+            cachedPlatformCaptureUsable?.let {
+                return@synchronized it
+            }
+            val remembered =
+                waitScopedProbes.remember(waitId, cachedPlatformCaptureUsable) {
+                    computePlatformCaptureUsable()
+                }
+            cachedPlatformCaptureUsable = remembered.cache
+            remembered.usableNow
+        }
+    }
+
+    /** Starts an isolated wait-scoped probe slot. A later overlapping wait gets a different id. */
+    @JvmStatic
+    @JvmName("beginPlatformCaptureWait")
+    internal fun beginPlatformCaptureWait(): Long = waitScopedProbes.begin()
+
+    @JvmStatic
+    @JvmName("endPlatformCaptureWait")
+    internal fun endPlatformCaptureWait(waitId: Long) {
+        waitScopedProbes.end(waitId)
+    }
+
+    internal fun computePlatformCaptureUsable(
+        isLinux: () -> Boolean = HostPlatform::isLinux,
+        gstLaunchAvailable: () -> Boolean? = { LinuxCaptureDependencies.isGstLaunchAvailable() },
+        linuxHelperBundled: () -> Boolean = ::isLinuxNativeHelperBundled,
+    ): Boolean? {
+        if (!isLinux()) return true
+        if (!linuxHelperBundled()) return false
+        return gstLaunchAvailable()
+    }
 
     @JvmStatic
     @JvmName("captureWindow")
@@ -53,4 +112,79 @@ internal object NativeWindowCaptureBridge {
 
     internal fun captureLockFor(window: Window): ReentrantLock =
         synchronized(captureLocks) { captureLocks.getOrPut(window, ::ReentrantLock) }
+}
+
+/**
+ * [cache] is the JVM-lifetime result. [waitScoped] is the Robot decision for this wait when [cache]
+ * is null so later frames do not start another probe; a later wait clears it and retries.
+ */
+internal data class CompletedProbe(
+    val usableNow: Boolean,
+    val cache: Boolean?,
+    val waitScoped: Boolean?,
+)
+
+internal fun rememberCompletedProbe(
+    cached: Boolean?,
+    waitScoped: Boolean? = null,
+    compute: () -> Boolean?,
+): CompletedProbe {
+    if (cached != null)
+        return CompletedProbe(usableNow = cached, cache = cached, waitScoped = waitScoped)
+    if (waitScoped != null) {
+        return CompletedProbe(usableNow = waitScoped, cache = null, waitScoped = waitScoped)
+    }
+    val computed = compute()
+    return CompletedProbe(
+        usableNow = computed ?: false,
+        cache = computed,
+        waitScoped = if (computed == null) false else null,
+    )
+}
+
+/** Per-wait inconclusive Robot decisions. Ending one wait must not drop another wait's slot. */
+internal class WaitScopedProbeTable {
+    private val nextId = AtomicLong()
+    private val tableLock = Any()
+    private val open = ConcurrentHashMap.newKeySet<Long>()
+    private val scoped = ConcurrentHashMap<Long, Boolean>()
+
+    fun begin(): Long {
+        val waitId = nextId.incrementAndGet()
+        synchronized(tableLock) { open.add(waitId) }
+        return waitId
+    }
+
+    fun end(waitId: Long) {
+        if (waitId == 0L) return
+        synchronized(tableLock) {
+            open.remove(waitId)
+            scoped.remove(waitId)
+        }
+    }
+
+    fun remember(waitId: Long, cached: Boolean?, compute: () -> Boolean?): CompletedProbe {
+        val waitScoped = if (waitId == 0L) null else scoped[waitId]
+        val remembered = rememberCompletedProbe(cached, waitScoped, compute)
+        if (waitId == 0L) return remembered
+        synchronized(tableLock) {
+            if (!open.contains(waitId)) return@synchronized
+            val scopedResult = remembered.waitScoped
+            if (scopedResult == null) {
+                scoped.remove(waitId)
+            } else {
+                scoped[waitId] = scopedResult
+                if (waitScoped == null && remembered.cache == null) {
+                    shareInconclusiveWithOpenWaits(waitId, scopedResult)
+                }
+            }
+        }
+        return remembered
+    }
+
+    private fun shareInconclusiveWithOpenWaits(sourceWaitId: Long, result: Boolean) {
+        for (id in open) {
+            if (id != sourceWaitId) scoped.putIfAbsent(id, result)
+        }
+    }
 }

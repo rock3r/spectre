@@ -439,6 +439,50 @@ function Get-PointerMoveSkipReason {
     return ("ComposeAutomator.{0} not shipped (#433)" -f ($missing -join "/"))
 }
 
+function Clear-PointerMoveLiveResults {
+    # Drop leftover validationTest XML so a later compile/task failure cannot
+    # reuse yesterday's green PointerMoveLive report (#519 Codex).
+    param([Parameter(Mandatory = $true)][string] $RepoRoot)
+    $resultsDir = Join-Path $RepoRoot "sample-desktop\build\test-results\validationTest"
+    if (Test-Path -LiteralPath $resultsDir) {
+        Remove-Item -LiteralPath $resultsDir -Recurse -Force
+    }
+}
+
+function Test-PointerMoveTeardownRace {
+    # #500 / #72: worker JVM can die after green PointerMoveLive XML. The Gradle
+    # exception is only "gradlew.bat exited with code 1 (logs: ...)" -- the
+    # MessageIOException lives in THIS invocation's smoke logs (the paths
+    # embedded in the Gradle exception), never leftover files from earlier runs.
+    param(
+        [Parameter(Mandatory = $true)][string] $GradleError
+    )
+    # A hang that reaches AgentE2eTimeoutSeconds also writes "(logs: ...)" and may
+    # already contain MessageIOException from an earlier worker death. Never waive
+    # "timed out after"; only a prompt "exited with code" teardown is #500.
+    if ($GradleError -match 'timed out after') { return $false }
+    if ($GradleError -notmatch 'exited with code') { return $false }
+    $match = [regex]::Match($GradleError, '\(logs: ([^;]+) ; ([^)]+)\)')
+    if (-not $match.Success) { return $false }
+    $paths = @($match.Groups[1].Value.Trim(), $match.Groups[2].Value.Trim())
+    foreach ($path in $paths) {
+        if ([string]::IsNullOrWhiteSpace($path)) { continue }
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $raw = [string](Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue)
+        if ([string]::IsNullOrWhiteSpace($raw)) { continue }
+        # Only the #500/#72 test-executor loopback socket. A generic
+        # "Could not write" (full disk, cache, reports) must stay fatal.
+        if (
+            $raw -match "MessageIOException" -and
+            $raw -match "Could not write" -and
+            $raw.Contains("127.0.0.1")
+        ) {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Assert-PointerMoveLiveExecuted {
     param([Parameter(Mandatory = $true)][string] $RepoRoot)
     $resultsDir = Join-Path $RepoRoot "sample-desktop\build\test-results\validationTest"
@@ -790,13 +834,30 @@ try {
     }
     else {
         $step = Invoke-Step -Id "pointer-move" -Name "In-process moveTo/moveBy hover without click" -Action {
-            Invoke-Gradle -RepoRoot $repoRoot -TimeoutSeconds $AgentE2eTimeoutSeconds -LogName "pointer-move" -GradleArgs @(
-                ":sample-desktop:validationTest",
-                "--tests", "*PointerMoveLive*",
-                "--rerun-tasks",
-                "--no-build-cache"
-            )
+            Clear-PointerMoveLiveResults -RepoRoot $repoRoot
+            $gradleError = $null
+            try {
+                Invoke-Gradle -RepoRoot $repoRoot -TimeoutSeconds $AgentE2eTimeoutSeconds -LogName "pointer-move" -GradleArgs @(
+                    ":sample-desktop:validationTest",
+                    "--tests", "*PointerMoveLive*",
+                    "--rerun-tasks",
+                    "--no-build-cache"
+                )
+            }
+            catch {
+                $gradleError = [string]$_.Exception.Message
+            }
+            # XML is the source of truth: a post-green worker death (#500 / #72) must
+            # not fail the cell when PointerMoveLive actually ran and passed.
             Assert-PointerMoveLiveExecuted -RepoRoot $repoRoot
+            if ($gradleError) {
+                if (Test-PointerMoveTeardownRace -GradleError $gradleError) {
+                    Write-Host "WARNING: Gradle exited non-zero after green PointerMoveLive XML (MessageIOException / #72 / #500). Treating JUnit XML as source of truth." -ForegroundColor Yellow
+                }
+                else {
+                    throw $gradleError
+                }
+            }
         }
         [void]$results.Add($step)
     }

@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.sample.validation
 
+import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -12,6 +13,27 @@ import kotlin.time.Duration.Companion.seconds
  * `application {}` is slow or dies before the latch trips.
  */
 class SampleAppFixtureStartupDiagnosticsTest {
+
+    @Test
+    fun `fixture does not exitProcess on application shutdown`() {
+        // #500 / #72: default application{} kills the validation worker after green XML.
+        assertFalse(
+            SampleAppFixture.EXIT_PROCESS_ON_APPLICATION_EXIT,
+            "SampleAppFixture must pass exitProcessOnExit=false so Windows validationTest " +
+                "workers survive exitApplication teardown",
+        )
+        val source =
+            File(
+                "src/validation/kotlin/dev/sebastiano/spectre/sample/validation/SampleAppFixture.kt"
+            )
+        assertTrue(source.isFile, "expected SampleAppFixture.kt at ${source.absolutePath}")
+        assertTrue(
+            source
+                .readText()
+                .contains("application(exitProcessOnExit = EXIT_PROCESS_ON_APPLICATION_EXIT)"),
+            "SampleAppFixture must pass EXIT_PROCESS_ON_APPLICATION_EXIT into application{}",
+        )
+    }
 
     @Test
     fun `default startup timeout leaves headroom for cold Windows CI JVMs`() {

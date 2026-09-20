@@ -77,6 +77,7 @@ internal constructor(
      * and subscribe/unsubscribe paths; CopyOnWrite so the pump can fan out without holding a lock.
      */
     private val lifecycleSubscribers = CopyOnWriteArrayList<SendChannel<ReloadLifecycleEvent>>()
+    private val invalidationBookkeeping = ReloadInvalidationBookkeeping()
 
     /** True when a live orchestration handle is connected. */
     public val isConnected: Boolean
@@ -115,6 +116,9 @@ internal constructor(
             // fall through to reconnect
         } finally {
             pump.cancel()
+            // Mid-session handle drop: drop in-flight pending only. Keep lastInvalidatedRequestId
+            // so a reconnect that sees the same result/UIRendered pair does not re-fire settle.
+            invalidationBookkeeping.clearPending()
             clearLifecycleSubscribers()
             handleRef.compareAndSet(handle, null)
             runCatching { handle.close() }
@@ -128,7 +132,6 @@ internal constructor(
      */
     private suspend fun pumpLifecycle(handle: OrchestrationHandle) {
         val channel = handle.asChannel()
-        var pendingSuccessfulRequestId: String? = null
         try {
             while (scope.isActive && !closed.get()) {
                 val message = channel.receiveCatching().getOrNull()
@@ -137,8 +140,9 @@ internal constructor(
                 }
                 val event = message.toLifecycleEvent()
                 if (event != null) {
-                    pendingSuccessfulRequestId =
-                        updatePendingSuccess(pendingSuccessfulRequestId, event)
+                    if (invalidationBookkeeping.onEvent(event)) {
+                        reloadSettledListener.get()?.invoke()
+                    }
                     fanOut(event)
                 }
             }
@@ -146,31 +150,6 @@ internal constructor(
             channel.cancel()
         }
     }
-
-    /**
-     * Tracks successful reload → matching UIRendered for the invalidation listener. Does not send
-     * Ping (the settle waiter owns Ping/Ack drain).
-     */
-    private fun updatePendingSuccess(pending: String?, event: ReloadLifecycleEvent): String? =
-        when (event) {
-            is ReloadLifecycleEvent.ReloadClassesResult -> {
-                when {
-                    event.isSuccess -> event.reloadRequestId
-                    event.reloadRequestId == pending -> null
-                    else -> pending
-                }
-            }
-            is ReloadLifecycleEvent.UIRendered -> {
-                val requestId = event.reloadRequestId
-                if (requestId != null && requestId == pending) {
-                    reloadSettledListener.get()?.invoke()
-                    null
-                } else {
-                    pending
-                }
-            }
-            else -> pending
-        }
 
     private fun fanOut(event: ReloadLifecycleEvent) {
         for (subscriber in lifecycleSubscribers) {
@@ -259,6 +238,7 @@ internal constructor(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         reconnectJob?.cancel()
+        invalidationBookkeeping.reset()
         clearLifecycleSubscribers()
         handleRef.getAndSet(null)?.let { runCatching { it.close() } }
         scope.cancel()
@@ -359,6 +339,62 @@ internal constructor(
 private suspend fun defaultConnect(port: Int): OrchestrationHandle? {
     val result = connectOrchestrationClient(OrchestrationClientRole.Tooling, port)
     return if (result.isFailure()) null else result.getOrThrow()
+}
+
+/**
+ * Tracks successful reload → matching UIRendered for the invalidation listener.
+ *
+ * Duplicate `ReloadClassesRequest` ids must not re-fire after the first matching `UIRendered`: e2e
+ * plumbing rebroadcasts the same request while the Tooling client is still connecting, and treating
+ * those repeats as a new generation would bump keys past `g1` after a single settle.
+ */
+internal class ReloadInvalidationBookkeeping {
+    private var pendingSuccessfulRequestId: String? = null
+    private var lastInvalidatedRequestId: String? = null
+
+    /** Returns true when the settled-listener should run for this event. */
+    fun onEvent(event: ReloadLifecycleEvent): Boolean =
+        when (event) {
+            is ReloadLifecycleEvent.ReloadClassesResult -> {
+                pendingSuccessfulRequestId =
+                    when {
+                        event.isSuccess && event.reloadRequestId != lastInvalidatedRequestId ->
+                            event.reloadRequestId
+                        event.reloadRequestId == pendingSuccessfulRequestId -> null
+                        else -> pendingSuccessfulRequestId
+                    }
+                false
+            }
+            is ReloadLifecycleEvent.UIRendered -> {
+                val requestId = event.reloadRequestId
+                if (requestId != null && requestId == pendingSuccessfulRequestId) {
+                    pendingSuccessfulRequestId = null
+                    if (lastInvalidatedRequestId != requestId) {
+                        lastInvalidatedRequestId = requestId
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
+            else -> false
+        }
+
+    /**
+     * Drops an in-flight pending result without forgetting which request already invalidated. Used
+     * when the orchestration handle reconnects mid-session.
+     */
+    fun clearPending() {
+        pendingSuccessfulRequestId = null
+    }
+
+    /** Full wipe when the attach session ends. */
+    fun reset() {
+        pendingSuccessfulRequestId = null
+        lastInvalidatedRequestId = null
+    }
 }
 
 internal fun OrchestrationMessage.toLifecycleEvent(): ReloadLifecycleEvent? =

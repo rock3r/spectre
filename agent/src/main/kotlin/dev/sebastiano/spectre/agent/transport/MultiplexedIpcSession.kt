@@ -60,6 +60,14 @@ internal class MultiplexedIpcSession(
         val writeLock = Any()
         val detachRequested = AtomicBoolean(false)
         val detachOpId = AtomicReference<Long?>()
+        val responseWriter =
+            InterruptSafeFrameWriter("spectre-agent-ipc-writer") { payload ->
+                synchronized(writeLock) {
+                    FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
+                        Framing.writeFrame(output, payload)
+                    }
+                }
+            }
         inputWorkers.register(inputWorker)
         try {
             serveOps(
@@ -70,6 +78,7 @@ internal class MultiplexedIpcSession(
                 deadlineScheduler,
                 inFlight,
                 writeLock,
+                responseWriter,
                 detachRequested,
                 detachOpId,
             )
@@ -93,11 +102,13 @@ internal class MultiplexedIpcSession(
                     writeOpResponse(
                         output,
                         writeLock,
+                        responseWriter,
                         requireNotNull(detachOpId.get()),
                         AgentResponse.Detached,
                     )
                 }
             } finally {
+                responseWriter.close()
                 if (inputWaitInterrupted) Thread.currentThread().interrupt()
             }
         }
@@ -111,6 +122,7 @@ internal class MultiplexedIpcSession(
         deadlineScheduler: ScheduledExecutorService,
         inFlight: ConcurrentHashMap<Long, OpSlot>,
         writeLock: Any,
+        responseWriter: InterruptSafeFrameWriter,
         detachRequested: AtomicBoolean,
         detachOpId: AtomicReference<Long?>,
     ) {
@@ -133,9 +145,10 @@ internal class MultiplexedIpcSession(
                     }
                     throw ex
                 }
-            val op = decodeOpOrReport(requestBytes, output, writeLock) ?: continue
+            val op = decodeOpOrReport(requestBytes, output, writeLock, responseWriter) ?: continue
             when (val body = op.body) {
-                is AgentRequest.Cancel -> handleCancel(body, op.opId, output, writeLock, inFlight)
+                is AgentRequest.Cancel ->
+                    handleCancel(body, op.opId, output, writeLock, responseWriter, inFlight)
                 AgentRequest.Detach -> {
                     handleDetach(op.opId, inFlight, detachRequested, detachOpId)
                     return
@@ -149,6 +162,7 @@ internal class MultiplexedIpcSession(
                         inFlight,
                         output,
                         writeLock,
+                        responseWriter,
                     )
             }
         }
@@ -158,14 +172,17 @@ internal class MultiplexedIpcSession(
         requestBytes: ByteArray,
         output: OutputStream,
         writeLock: Any,
+        responseWriter: InterruptSafeFrameWriter,
     ): OpRequest? =
         try {
             WireCodec.decodeOpRequest(requestBytes)
         } catch (ex: kotlinx.serialization.SerializationException) {
             // Prefer the real opId so the client's pending future unblocks with taxonomy error,
             // not a 120s timeout hang (Bugbot: decode errors must correlate).
-            val opId =
-                runCatching { WireCodec.decodeOpRequestShell(requestBytes).opId }.getOrDefault(-1L)
+            val opId = runCatching {
+                WireCodec.decodeOpRequestShell(requestBytes).opId
+            }
+                .getOrDefault(-1L)
             val category =
                 if (WireCodec.isUnknownDiscriminator(ex)) {
                     AgentErrorCategory.UnsupportedOperation
@@ -175,6 +192,7 @@ internal class MultiplexedIpcSession(
             writeOpResponse(
                 output,
                 writeLock,
+                responseWriter,
                 opId,
                 AgentResponse.Error(
                     message = "Malformed or unsupported op frame: ${ex.message}",
@@ -189,6 +207,7 @@ internal class MultiplexedIpcSession(
         cancelFrameOpId: Long,
         output: OutputStream,
         writeLock: Any,
+        responseWriter: InterruptSafeFrameWriter,
         inFlight: ConcurrentHashMap<Long, OpSlot>,
     ) {
         val slot = inFlight.remove(cancel.opId)
@@ -199,6 +218,7 @@ internal class MultiplexedIpcSession(
                 writeOpResponse(
                     output,
                     writeLock,
+                    responseWriter,
                     cancel.opId,
                     AgentResponse.Error(
                         message = "Operation cancelled",
@@ -207,7 +227,7 @@ internal class MultiplexedIpcSession(
                 )
             }
         }
-        writeOpResponse(output, writeLock, cancelFrameOpId, AgentResponse.Ok)
+        writeOpResponse(output, writeLock, responseWriter, cancelFrameOpId, AgentResponse.Ok)
     }
 
     private fun handleDetach(
@@ -231,6 +251,7 @@ internal class MultiplexedIpcSession(
         inFlight: ConcurrentHashMap<Long, OpSlot>,
         output: OutputStream,
         writeLock: Any,
+        responseWriter: InterruptSafeFrameWriter,
     ) {
         val slot = OpSlot()
         inFlight[op.opId] = slot
@@ -243,6 +264,7 @@ internal class MultiplexedIpcSession(
                             writeOpResponse(
                                 output,
                                 writeLock,
+                                responseWriter,
                                 op.opId,
                                 AgentResponse.Error(
                                     message = "Operation cancelled",
@@ -269,6 +291,7 @@ internal class MultiplexedIpcSession(
                             writeOpResponse(
                                 output,
                                 writeLock,
+                                responseWriter,
                                 op.opId,
                                 AgentResponse.Error(
                                     message = "Operation cancelled",
@@ -285,7 +308,7 @@ internal class MultiplexedIpcSession(
                     }
                     if (slot.tryClaimResponse()) {
                         inFlight.remove(op.opId, slot)
-                        writeOpResponse(output, writeLock, op.opId, response)
+                        writeOpResponse(output, writeLock, responseWriter, op.opId, response)
                     } else {
                         inFlight.remove(op.opId, slot)
                     }
@@ -295,6 +318,7 @@ internal class MultiplexedIpcSession(
                 writeOpResponse(
                     output,
                     writeLock,
+                    responseWriter,
                     op.opId,
                     AgentResponse.Error(
                         message = "Too many concurrent operations (queue full)",
@@ -311,7 +335,15 @@ internal class MultiplexedIpcSession(
             return
         }
         slot.attachDeadlineTask(
-            scheduleDeadline(op, slot, deadlineScheduler, inFlight, output, writeLock)
+            scheduleDeadline(
+                op,
+                slot,
+                deadlineScheduler,
+                inFlight,
+                output,
+                writeLock,
+                responseWriter,
+            )
         )
     }
 
@@ -327,6 +359,7 @@ internal class MultiplexedIpcSession(
         inFlight: ConcurrentHashMap<Long, OpSlot>,
         output: OutputStream,
         writeLock: Any,
+        responseWriter: InterruptSafeFrameWriter,
     ): ScheduledFuture<*>? {
         val deadline = op.deadlineEpochMs ?: return null
         val delayMs = deadline - System.currentTimeMillis()
@@ -337,6 +370,7 @@ internal class MultiplexedIpcSession(
                     writeOpResponse(
                         output,
                         writeLock,
+                        responseWriter,
                         op.opId,
                         AgentResponse.Error(
                             message = "Deadline elapsed during op",
@@ -398,9 +432,11 @@ internal class MultiplexedIpcSession(
         }
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private fun writeOpResponse(
         output: OutputStream,
         writeLock: Any,
+        responseWriter: InterruptSafeFrameWriter,
         opId: Long,
         body: AgentResponse,
     ) {
@@ -424,21 +460,9 @@ internal class MultiplexedIpcSession(
                     )
                 )
             }
-        // SocketChannel is an InterruptibleChannel: a write from a thread with interrupt
-        // status set can close the shared client socket. Cancel paths interrupt workers, so
-        // clear interrupt only for the duration of the write and restore afterward.
-        val wasInterrupted = Thread.interrupted()
-        try {
-            synchronized(writeLock) {
-                FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
-                    Framing.writeFrame(output, toWrite)
-                }
-            }
-        } finally {
-            if (wasInterrupted) {
-                Thread.currentThread().interrupt()
-            }
-        }
+        // [output] / [writeLock] are captured by [responseWriter]'s daemon thread (see run()).
+        // This caller only waits; it is never the thread that touches the InterruptibleChannel.
+        responseWriter.writeFrame(toWrite)
     }
 
     /**

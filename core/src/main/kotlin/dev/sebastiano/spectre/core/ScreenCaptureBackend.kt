@@ -311,13 +311,6 @@ private fun xdpyinfoReportsPureX11(display: String): Boolean {
 private const val XDPYINFO_TIMEOUT_MS: Long = 3_000
 private const val XDPYINFO_READER_JOIN_MS: Long = 500
 
-/**
- * Loads the optional recording-owned native capture bridge without linking it into core.
- *
- * The injected core payload intentionally excludes recording and its transitive dependencies;
- * absence of the bridge makes implicit window capture fail loudly; callers may opt in to the
- * independent screen-region API when that is the capture they want.
- */
 internal fun nativeWindowCaptureFor(classLoader: ClassLoader): ((Window) -> BufferedImage)? {
     val bridge =
         try {
@@ -356,7 +349,7 @@ private val Window.title: String?
             else -> null
         }
 
-private const val NATIVE_WINDOW_CAPTURE_BRIDGE: String =
+internal const val NATIVE_WINDOW_CAPTURE_BRIDGE: String =
     "dev.sebastiano.spectre.recording.NativeWindowCaptureBridge"
 
 internal fun normalizeNativeImage(image: BufferedImage): BufferedImage {

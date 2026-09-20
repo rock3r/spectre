@@ -142,7 +142,7 @@ internal class LeaseStateMachine(
     private val revokeGraceMillis: Long,
     private val recoveryGraceMillis: Long,
     recoveryRecord: RecoveryRecord?,
-    private val leaseIdGenerator: LeaseIdGenerator,
+    leaseIdGenerator: LeaseIdGenerator,
 ) {
     private val resources = mutableMapOf<DesktopResourceKey, ResourceState>()
     private var globalQuarantine: RecoveryQuarantine? = null

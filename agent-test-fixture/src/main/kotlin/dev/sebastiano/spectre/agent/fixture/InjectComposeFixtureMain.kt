@@ -1,3 +1,4 @@
+@file:OptIn(androidx.compose.runtime.tooling.ComposeToolingApi::class)
 @file:Suppress("MatchingDeclarationName")
 
 package dev.sebastiano.spectre.agent.fixture

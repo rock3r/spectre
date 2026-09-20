@@ -207,7 +207,6 @@ public final class dev/sebastiano/spectre/agent/SpectreAgentException : java/io/
 }
 
 public abstract class dev/sebastiano/spectre/agent/SpectreAttachException : java/lang/RuntimeException {
-	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 }
 
@@ -277,7 +276,6 @@ public final class dev/sebastiano/spectre/agent/launch/LaunchDescendantDiscovery
 }
 
 public abstract class dev/sebastiano/spectre/agent/launch/LaunchException : java/lang/RuntimeException {
-	public synthetic fun <init> (Ldev/sebastiano/spectre/agent/launch/LaunchStage;Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Ldev/sebastiano/spectre/agent/launch/LaunchStage;Ljava/lang/String;Ljava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getStage ()Ldev/sebastiano/spectre/agent/launch/LaunchStage;
 }

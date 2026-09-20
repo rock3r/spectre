@@ -65,9 +65,10 @@ public class DesktopIdentityResolver(
                 } else {
                     environment["XDG_RUNTIME_DIR"]?.let(Path::of)?.resolve(rawPath) ?: rawPath
                 }
-            val canonical =
-                runCatching { canonicalPathResolver.canonicalize(socketPath) }
-                    .getOrElse { socketPath.normalize() }
+            val canonical = runCatching {
+                canonicalPathResolver.canonicalize(socketPath)
+            }
+                .getOrElse { socketPath.normalize() }
             return "wayland:$canonical"
         }
         val display = environment["DISPLAY"]?.takeIf(String::isNotBlank) ?: return "linux-user"

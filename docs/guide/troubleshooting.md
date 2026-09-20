@@ -328,20 +328,25 @@ wrapper when your UI reads Jewel locals such as `LocalComponent`.
 
 `screenshot(windowIndex)` and `screenshot(node)` use the platform window-capture backend when
 `spectre-recording` is on the runtime classpath. They fail if that backend is unavailable or cannot
-identify the requested window; they never substitute a screen-region crop. `capture()` and
-`waitForVisualIdle()` use the same window-scoped still when recording is present **and** the
-environment can actually run it (GitHub Actions hosted Windows is treated as non-interactive for
-WGC, so those paths fall back to Robot region capture of the Compose surface). Without recording
-(for example an inject payload that omits it) they likewise use region capture. On Linux X11/Xvfb
-native stills read visible framebuffer pixels — keep the target frontmost. Settle the UI
+identify the requested window; they never substitute a screen-region crop. `capture()` uses the
+same window-scoped still whenever recording is present (GitHub Actions hosted Windows is treated
+as non-interactive for WGC). If the helper cannot actually run — for example Linux without
+`gst-launch-1.0` — `capture()` fails rather than substituting a Robot crop of whatever sits
+under the window. Without recording (for example an inject payload that omits it) `capture()`
+uses Robot region capture of the Compose surface. On Linux X11/Xvfb native stills read visible
+framebuffer pixels — keep the target frontmost. Settle the UI
 (`waitForIdle` / `waitForVisualIdle`) before `capture()` so the semantics snapshot and PNG stay a
 usable pair across one-shot native still latency.
 
 `waitForVisualIdle()` samples **window-scoped** pixels for tracked Compose surfaces when
-`spectre-recording` is present (same native still path as `screenshot(windowIndex)`). Without that
-backend it falls back to Robot region capture of each surface rectangle — keep the target frontmost
-and unobscured in that fallback mode (Linux X11 region and some embedded cases still need
-visibility).
+`spectre-recording` is present **and the platform helper can actually run** (same native still
+path as `screenshot(windowIndex)`). Class presence is not enough: on Linux the helper needs
+`gst-launch-1.0` (with `ximagesrc`, `videoconvert`, and `pngenc` for X11/Xvfb stills). If
+recording is on the classpath but GStreamer is missing, Spectre falls back to Robot region
+capture of each surface rectangle instead of marking every sample unsampleable. Keep the
+target frontmost and unobscured in that fallback mode (Linux X11 region and some embedded
+cases still need visibility). Install GStreamer, or keep `spectre-recording` off the test
+runtime classpath, when you want native window stills.
 
 **Rule of thumb: when you're validating colours from a `screenshot()`, always think
 about the node's interaction state first.** If the node is currently focused,

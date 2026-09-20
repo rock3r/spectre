@@ -52,6 +52,14 @@ constructor(
     private val nextOpId = AtomicLong(1)
     private val pending = ConcurrentHashMap<Long, CompletableFuture<AgentResponse>>()
     private val closed = AtomicBoolean(false)
+    private val writer =
+        InterruptSafeFrameWriter("spectre-ipc-client-writer") { payload ->
+            synchronized(writeLock) {
+                FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
+                    Framing.writeFrame(output, payload)
+                }
+            }
+        }
     private val readerThread: Thread
 
     init {
@@ -96,7 +104,10 @@ constructor(
                 }
             }
         } finally {
-            if (!handshakeOk) runCatching { channel.close() }
+            if (!handshakeOk) {
+                runCatching { channel.close() }
+                writer.close()
+            }
         }
 
         readerThread =
@@ -269,24 +280,12 @@ constructor(
     }
 
     /**
-     * SocketChannel is interruptible: a write from a thread with interrupt status set can close the
-     * shared client socket. Cancel/interrupt paths call [cancel] while interrupted, so clear
-     * interrupt only for the duration of the write and restore afterward (mirrors the server write
-     * path in MultiplexedIpcSession).
+     * SocketChannel is an InterruptibleChannel: a write from a thread that is interrupted closes
+     * the shared client socket. All writes therefore run on [writer], a dedicated daemon thread
+     * that callers never interrupt.
      */
     private fun writeFrameInterruptSafe(payload: ByteArray) {
-        val wasInterrupted = Thread.interrupted()
-        try {
-            synchronized(writeLock) {
-                FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
-                    Framing.writeFrame(output, payload)
-                }
-            }
-        } finally {
-            if (wasInterrupted) {
-                Thread.currentThread().interrupt()
-            }
-        }
+        writer.writeFrame(payload)
     }
 
     /** Bare (pre-envelope) exchange used only for Hello / best-effort Detach on failed Hello. */
@@ -304,7 +303,10 @@ constructor(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         // Drop the socket only — Detach is explicit agent teardown, not implied by close.
+        // Close the channel before the writer so a blocked write unblocks without an
+        // interrupt-on-open-socket (which would close a still-shared UDS).
         runCatching { channel.close() }
+        writer.close()
         runCatching { readerThread.join(READER_JOIN_MS) }
         failAllPending(EOFException("IpcClient closed"))
     }

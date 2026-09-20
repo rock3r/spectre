@@ -12,11 +12,13 @@ import java.util.function.Function
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.MediaType
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.extension.ExecutableInvoker
 import org.junit.jupiter.api.extension.ExtensionContext
 import org.junit.jupiter.api.extension.TestInstances
+import org.junit.jupiter.api.function.ThrowingConsumer
 import org.junit.jupiter.api.io.TempDir
 import org.junit.jupiter.api.parallel.ExecutionMode
 import org.opentest4j.TestAbortedException
@@ -205,6 +207,21 @@ internal class RecordingExtensionContext(
 
     override fun getStore(namespace: ExtensionContext.Namespace): ExtensionContext.Store =
         stores.computeIfAbsent(namespace) { MapBackedStore() }
+
+    override fun getStore(
+        scope: ExtensionContext.StoreScope,
+        namespace: ExtensionContext.Namespace,
+    ): ExtensionContext.Store = getStore(namespace)
+
+    override fun getEnclosingTestClasses(): List<Class<*>> = emptyList()
+
+    override fun publishFile(name: String, mediaType: MediaType, action: ThrowingConsumer<Path>) {
+        // unused in failure-artifact tests
+    }
+
+    override fun publishDirectory(name: String, action: ThrowingConsumer<Path>) {
+        // unused in failure-artifact tests
+    }
 
     override fun getExecutionMode(): ExecutionMode = ExecutionMode.SAME_THREAD
 

@@ -81,7 +81,6 @@ public final class dev/sebastiano/spectre/core/BothBounds {
 
 public final class dev/sebastiano/spectre/core/ComposeAutomator {
 	public static final field Companion Ldev/sebastiano/spectre/core/ComposeAutomator$Companion;
-	public synthetic fun <init> (Ldev/sebastiano/spectre/core/WindowTracker;Ldev/sebastiano/spectre/core/SemanticsReader;Ldev/sebastiano/spectre/core/RobotDriver;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun allNodes ()Ljava/util/List;
 	public final fun capture (I)Ldev/sebastiano/spectre/core/capture/AtomicCapture;
 	public static synthetic fun capture$default (Ldev/sebastiano/spectre/core/ComposeAutomator;IILjava/lang/Object;)Ldev/sebastiano/spectre/core/capture/AtomicCapture;
@@ -251,6 +250,7 @@ public final class dev/sebastiano/spectre/core/InputDeliveryWitnessKt {
 }
 
 public final class dev/sebastiano/spectre/core/InputLeaseOptions {
+	public fun <init> ()V
 	public synthetic fun <init> (JLjava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (JLjava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1-UwyO8pc ()J
@@ -311,7 +311,6 @@ public final class dev/sebastiano/spectre/core/PerfettoTracer$Companion {
 
 public final class dev/sebastiano/spectre/core/RobotDriver : java/lang/AutoCloseable {
 	public static final field Companion Ldev/sebastiano/spectre/core/RobotDriver$Companion;
-	public fun <init> ()V
 	public fun <init> (Ldev/sebastiano/spectre/core/InputLeasePolicy;)V
 	public fun <init> (Ljava/awt/Robot;)V
 	public fun <init> (Ljava/awt/Robot;Ldev/sebastiano/spectre/core/InputLeasePolicy;)V
@@ -351,7 +350,6 @@ public final class dev/sebastiano/spectre/core/ScreenCaptureBackendKt {
 }
 
 public final class dev/sebastiano/spectre/core/SurfaceIdAssigner {
-	public static final field HASH_MULTIPLIER I
 	public fun <init> ()V
 	public final fun assign (Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/String;
 }
@@ -507,7 +505,6 @@ public final class dev/sebastiano/spectre/core/WindowScreenshotResult$Success : 
 }
 
 public final class dev/sebastiano/spectre/core/WindowTracker {
-	public fun <init> ()V
 	public final fun getTrackedWindows ()Lkotlinx/coroutines/flow/StateFlow;
 	public final fun refresh ()V
 }

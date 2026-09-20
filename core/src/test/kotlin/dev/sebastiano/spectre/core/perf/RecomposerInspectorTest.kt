@@ -11,9 +11,9 @@ import kotlin.test.assertSame
 
 /**
  * Unit-tests [RecomposerInspector] against a fake host-object hierarchy that mirrors the field
- * names used by Compose Multiplatform Desktop:
+ * names used by Compose Multiplatform Desktop 1.12:
  * ```
- * host → composePanel → _composeContainer → mediator → scene → recomposer → recomposer (Recomposer)
+ * host → composePanel → _composeContainer → mediator → frameRecomposer → recomposer (Recomposer)
  * ```
  *
  * The intermediate types are irrelevant to the reflection — only field names matter — so the fakes
@@ -78,14 +78,10 @@ private class FakeComposeContainer(recomposer: Recomposer) {
 }
 
 private class FakeMediator(recomposer: Recomposer) {
-    @JvmField val scene = FakeScene(recomposer)
+    @JvmField val frameRecomposer = FakeFrameRecomposer(recomposer)
 }
 
-private class FakeScene(recomposer: Recomposer) {
-    @JvmField val recomposer = FakeSceneRecomposer(recomposer)
-}
-
-private class FakeSceneRecomposer(@JvmField val recomposer: Recomposer)
+private class FakeFrameRecomposer(@JvmField val recomposer: Recomposer)
 
 private class FakeHostWithDeadEnd {
     @JvmField val composePanel: Any = Any()
@@ -104,13 +100,9 @@ private class FakeContainerWithWrongTerminal {
 }
 
 private class FakeMediatorWithWrongTerminal {
-    @JvmField val scene = FakeSceneWithWrongTerminal()
+    @JvmField val frameRecomposer = FakeFrameRecomposerWithWrongTerminal()
 }
 
-private class FakeSceneWithWrongTerminal {
-    @JvmField val recomposer = FakeSceneRecomposerWithWrongTerminal()
-}
-
-private class FakeSceneRecomposerWithWrongTerminal {
+private class FakeFrameRecomposerWithWrongTerminal {
     @JvmField val recomposer = "not a Recomposer"
 }

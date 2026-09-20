@@ -18,20 +18,18 @@ import java.nio.file.Path
  */
 internal object AutoFailureVideoStarter : FailureVideoStarter {
 
-    override fun start(output: Path, automator: ComposeAutomator): RecordingHandle? =
-        runCatching {
-                val recorder = AutoRecorder()
-                val identities =
-                    runCatching { automator.windowIdentities() }.getOrDefault(emptyList())
-                val primary = identities.firstOrNull { !it.isPopup }
-                if (primary != null) {
-                    startForIdentity(recorder, primary, identities, output)
-                        ?: startRegionFallback(recorder, primary, output)
-                } else {
-                    startFullscreenRegion(recorder, output)
-                }
-            }
-            .getOrNull()
+    override fun start(output: Path, automator: ComposeAutomator): RecordingHandle? = runCatching {
+        val recorder = AutoRecorder()
+        val identities = runCatching { automator.windowIdentities() }.getOrDefault(emptyList())
+        val primary = identities.firstOrNull { !it.isPopup }
+        if (primary != null) {
+            startForIdentity(recorder, primary, identities, output)
+                ?: startRegionFallback(recorder, primary, output)
+        } else {
+            startFullscreenRegion(recorder, output)
+        }
+    }
+        .getOrNull()
 
     private fun startForIdentity(
         recorder: AutoRecorder,
@@ -53,15 +51,15 @@ internal object AutoFailureVideoStarter : FailureVideoStarter {
                 null
             }
         return runCatching {
-                recorder.startWindowByTitle(
-                    title = title,
-                    windowOwnerPid = ProcessHandle.current().pid(),
-                    output = output,
-                    cropInWindow = crop,
-                    scaleX = identity.scaleX,
-                    scaleY = identity.scaleY,
-                )
-            }
+            recorder.startWindowByTitle(
+                title = title,
+                windowOwnerPid = ProcessHandle.current().pid(),
+                output = output,
+                cropInWindow = crop,
+                scaleX = identity.scaleX,
+                scaleY = identity.scaleY,
+            )
+        }
             .getOrNull()
     }
 

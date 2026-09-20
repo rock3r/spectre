@@ -93,9 +93,10 @@ val verifyHomebrewFormulaInstallSemantics by
                 false
             } else {
                 val ci = !System.getenv("CI").isNullOrBlank()
-                val hasRuby =
-                    runCatching { ProcessBuilder("ruby", "--version").start().waitFor() == 0 }
-                        .getOrDefault(false)
+                val hasRuby = runCatching {
+                    ProcessBuilder("ruby", "--version").start().waitFor() == 0
+                }
+                    .getOrDefault(false)
                 hasRuby || ci
             }
         }
@@ -209,6 +210,27 @@ val verifyWindowsReleaseSmokeScript by
         outputs.upToDateWhen { false }
     }
 
+val verifyWindowsCheckTimeout by
+    tasks.registering(Exec::class) {
+        description =
+            "Contract tests for Windows check job timeouts and JVM stack dumps on cancel (#499)."
+        group = "verification"
+        workingDir = rootProject.layout.projectDirectory.asFile
+        commandLine("bash", ".github/scripts/test-windows-check-timeout.sh")
+        onlyIf("Unix host with bash") {
+            !System.getProperty("os.name").orEmpty().startsWith("Windows")
+        }
+        inputs
+            .files(
+                ".github/workflows/windows.yml",
+                ".github/workflows/validation-windows.yml",
+                ".github/scripts/dump-jvm-stacks.sh",
+                ".github/scripts/test-windows-check-timeout.sh",
+            )
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+        outputs.upToDateWhen { false }
+    }
+
 val verifyIdeUiTestWorkflow by
     tasks.registering(Exec::class) {
         description = "Asserts the IDE UI workflow uses reliable direct JetBrains repositories."
@@ -290,6 +312,7 @@ tasks.named("check") {
         verifyReleaseVersionScript,
         verifyMacosCliBundleReleaseContract,
         verifyWindowsReleaseSmokeScript,
+        verifyWindowsCheckTimeout,
         verifyIdeUiTestWorkflow,
         verifyReleaseSmokeScripts,
         buildSrcUnitTests,

@@ -59,13 +59,11 @@ public final class dev/sebastiano/spectre/recording/FfmpegWindowScreenshotter : 
 }
 
 public final class dev/sebastiano/spectre/recording/LinuxNativeScreenshotter : dev/sebastiano/spectre/recording/RegionScreenshotter, dev/sebastiano/spectre/recording/WindowScreenshotter {
-	public fun <init> ()V
 	public fun captureRegion (Ljava/awt/Rectangle;)Ljava/awt/image/BufferedImage;
 	public fun captureWindow (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;J)Ljava/awt/image/BufferedImage;
 }
 
 public final class dev/sebastiano/spectre/recording/LinuxX11Recorder : dev/sebastiano/spectre/recording/Recorder, dev/sebastiano/spectre/recording/screencapturekit/WindowRecorder {
-	public fun <init> ()V
 	public fun start (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;JLjava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;)Ldev/sebastiano/spectre/recording/RecordingHandle;
 	public fun start (Ljava/awt/Rectangle;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;)Ldev/sebastiano/spectre/recording/RecordingHandle;
 	public fun startCropped (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;Ljava/awt/Rectangle;JLjava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;DD)Ldev/sebastiano/spectre/recording/RecordingHandle;
@@ -167,7 +165,6 @@ public final class dev/sebastiano/spectre/recording/portal/WaylandPortalRecorder
 
 public final class dev/sebastiano/spectre/recording/portal/WaylandPortalWindowRecorder : dev/sebastiano/spectre/recording/portal/WaylandWindowSourceRecorder {
 	public fun <init> ()V
-	public synthetic fun <init> (Ldev/sebastiano/spectre/recording/Recorder;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun start (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;Ljava/awt/Rectangle;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;)Ldev/sebastiano/spectre/recording/RecordingHandle;
 }
 
@@ -253,7 +250,6 @@ public final class dev/sebastiano/spectre/recording/screencapturekit/ScreenCaptu
 }
 
 public final class dev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureKitRecorder : dev/sebastiano/spectre/recording/Recorder, dev/sebastiano/spectre/recording/screencapturekit/WindowRecorder {
-	public fun <init> ()V
 	public fun start (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;JLjava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;)Ldev/sebastiano/spectre/recording/RecordingHandle;
 	public fun start (Ljava/awt/Rectangle;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;)Ldev/sebastiano/spectre/recording/RecordingHandle;
 	public fun startCropped (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;Ljava/awt/Rectangle;JLjava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;DD)Ldev/sebastiano/spectre/recording/RecordingHandle;
@@ -266,7 +262,6 @@ public abstract interface class dev/sebastiano/spectre/recording/screencaptureki
 }
 
 public final class dev/sebastiano/spectre/recording/screencapturekit/ScreenCaptureKitScreenshotter : dev/sebastiano/spectre/recording/WindowScreenshotter {
-	public fun <init> ()V
 	public fun captureWindow (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;J)Ljava/awt/image/BufferedImage;
 }
 
@@ -295,14 +290,12 @@ public final class dev/sebastiano/spectre/recording/screencapturekit/WindowRecor
 }
 
 public final class dev/sebastiano/spectre/recording/windows/WindowsGraphicsCaptureRecorder : dev/sebastiano/spectre/recording/Recorder, dev/sebastiano/spectre/recording/screencapturekit/WindowRecorder {
-	public fun <init> ()V
 	public fun start (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;JLjava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;)Ldev/sebastiano/spectre/recording/RecordingHandle;
 	public fun start (Ljava/awt/Rectangle;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;)Ldev/sebastiano/spectre/recording/RecordingHandle;
 	public fun startCropped (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;Ljava/awt/Rectangle;JLjava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;DD)Ldev/sebastiano/spectre/recording/RecordingHandle;
 }
 
 public final class dev/sebastiano/spectre/recording/windows/WindowsWindowScreenshotter : dev/sebastiano/spectre/recording/WindowScreenshotter {
-	public fun <init> ()V
 	public fun captureWindow (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;J)Ljava/awt/image/BufferedImage;
 }
 

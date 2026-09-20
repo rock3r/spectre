@@ -205,7 +205,7 @@ class StockIntellijInjectAttachUiTest {
     }
 
     private companion object {
-        const val IDE_BUILD_NUMBER = "262.8665.337"
+        const val IDE_BUILD_NUMBER = "262.10968.63"
         const val TOOL_WINDOW_ID = "Spectre Sample"
         const val NO_CORE_PLUGIN_PROP = "path.to.no.core.plugin"
         const val AGENT_RUNTIME_JAR_PROP = "dev.sebastiano.spectre.agent.runtimeJar"

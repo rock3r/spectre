@@ -70,7 +70,7 @@ class SampleAppFixture(
             Thread(
                     {
                         try {
-                            application {
+                            application(exitProcessOnExit = EXIT_PROCESS_ON_APPLICATION_EXIT) {
                                 exitFn = ::exitApplication
                                 applicationStarted.countDown()
                                 Window(onCloseRequest = ::exitApplication, title = title) {
@@ -164,6 +164,15 @@ class SampleAppFixture(
          * before the application lambda runs.
          */
         val DEFAULT_STARTUP_TIMEOUT: Duration = 30.seconds
+
+        /**
+         * Compose Desktop's default `application {}` calls `exitProcess(0)` when
+         * [androidx.compose.ui.window.application] tears down. That kills the Gradle validation
+         * worker after green JUnit XML and surfaces as `MessageIOException: Could not write
+         * '/127.0.0.1:…'` (#500, same shape as #72). Keep the worker alive so `forkEvery = 1` can
+         * exit cleanly.
+         */
+        const val EXIT_PROCESS_ON_APPLICATION_EXIT: Boolean = false
 
         private val WINDOW_POLL: Duration = 100.milliseconds
         private val SHUTDOWN_TIMEOUT: Duration = 5.seconds

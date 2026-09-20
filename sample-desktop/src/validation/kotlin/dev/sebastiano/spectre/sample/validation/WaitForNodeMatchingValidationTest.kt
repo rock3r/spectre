@@ -80,16 +80,15 @@ class WaitForNodeMatchingValidationTest {
 
             // Negative case: text exists on the button but not under the picker's testTag, so the
             // combined match must time out — AND semantics, not OR.
-            val timeoutError =
-                runCatching {
-                        waitForNode(
-                            tag = "scenario.counter",
-                            text = buttonText,
-                            timeout = 250.milliseconds,
-                            pollInterval = 50.milliseconds,
-                        )
-                    }
-                    .exceptionOrNull()
+            val timeoutError = runCatching {
+                waitForNode(
+                    tag = "scenario.counter",
+                    text = buttonText,
+                    timeout = 250.milliseconds,
+                    pollInterval = 50.milliseconds,
+                )
+            }
+                .exceptionOrNull()
             assertNotNull(
                 timeoutError,
                 "expected timeout when tag+text refer to disjoint nodes (AND, not OR)",
@@ -102,15 +101,14 @@ class WaitForNodeMatchingValidationTest {
     fun `waitForNode throws when no node ever matches within the timeout`() = runBlocking {
         with(fixture.automator) {
             navigateToScenario("scenario.counter")
-            val error =
-                runCatching {
-                        waitForNode(
-                            tag = "this.tag.definitely.does.not.exist",
-                            timeout = 250.milliseconds,
-                            pollInterval = 50.milliseconds,
-                        )
-                    }
-                    .exceptionOrNull()
+            val error = runCatching {
+                waitForNode(
+                    tag = "this.tag.definitely.does.not.exist",
+                    timeout = 250.milliseconds,
+                    pollInterval = 50.milliseconds,
+                )
+            }
+                .exceptionOrNull()
             assertNotNull(error, "expected waitForNode to throw on timeout")
             Unit
         }

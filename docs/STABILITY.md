@@ -126,6 +126,14 @@ Workflow:
 
 ### What's not covered
 
+- **Explicit public no-arg secondary constructors under Kotlin 2.4.** The 2.4 `abiValidation`
+  dump may omit `public fun <init>()V` for a public no-arg constructor that delegates to an
+  internal primary (e.g. `RobotDriver()`, `WindowTracker()`, `ComposeAutomatorExtension()`,
+  `ComposeAutomatorRule()`, and the recording backends). The constructor is still present in
+  bytecode. `PublicNoArgConstructorAbiTest` in `core`, `testing`, and `recording` reflects those
+  constructors so deleting one still fails `check`. Synthetic `DefaultConstructorMarker`
+  constructors for sealed/abstract exceptions may also disappear from the dump when Kotlin 2.4
+  no longer emits them; that match is accepted.
 - **Annotation usages on individual symbols.** The baseline records the shape of declarations,
   not the annotations attached to them. Silently removing `@ExperimentalSpectreHttpApi` from a
   marked declaration would not fail `checkKotlinAbi`, because removing an annotation doesn't
