@@ -338,6 +338,16 @@ GRADLE_PROJECT_UNIVERSAL_HELPER = "universalHelper"
 GRADLE_PROJECT_NOTARIZE_HELPER = "notarizeScreenCaptureKitHelper"
 GRADLE_PROJECT_PREBUILT_MAC_HELPER = "prebuiltMacHelperPath"
 GRADLE_PROJECT_STUB_MAC_HELPER = "stubMacHelperForTesting"
+# Wrapper injects GRADLE_OPTS/JAVA_OPTS as java argv (gradlew:202,242); those
+# argv and JDK_JAVA_OPTIONS expand @argument files. _JAVA_OPTIONS /
+# JAVA_TOOL_OPTIONS @files crash HotSpot, so they fail closed.
+GRADLE_PROJECT_PROPERTY_JVM_ENVS = (
+    ("_JAVA_OPTIONS", False),
+    ("JDK_JAVA_OPTIONS", True),
+    ("JAVA_TOOL_OPTIONS", False),
+    ("JAVA_OPTS", True),
+    ("GRADLE_OPTS", True),
+)
 MACOS_TCC_ACCESSIBILITY_GUIDANCE = (
     "macOS attributes Robot input to the wrapping app that launched this process "
     "(Terminal, iTerm2, IntelliJ IDEA, Grok Bot, Claude.app, etc.) — not to the JVM "
@@ -1123,6 +1133,8 @@ def ensure_macos_screencapture_helper(
     home: Path | None = None,
     install: Callable[[Path, Path], Path | None] | None = None,
     refresh: bool = False,
+    overall_deadline: float | None = None,
+    assemble_log: Path | None = None,
 ) -> Path | None:
     """Install the helper to the runtime TCC path, assembling first when needed."""
     try:
@@ -1139,7 +1151,15 @@ def ensure_macos_screencapture_helper(
     except InvalidScreencaptureHelperDir:
         return None
     assembler = (
-        assemble if assemble is not None else (lambda: _assemble_screencapture_helper(root))
+        assemble
+        if assemble is not None
+        else (
+            lambda: _assemble_screencapture_helper(
+                root,
+                overall_deadline=overall_deadline,
+                log_path=assemble_log,
+            )
+        )
     )
     if assembler() != 0:
         return None
@@ -1176,6 +1196,34 @@ def gradle_user_home(environ: Mapping[str, str] | None = None) -> Path:
     return Path.home() / ".gradle"
 
 
+def _java_properties_key(line: str) -> str | None:
+    """Key of one Java-properties line (Gradle gradle.properties semantics)."""
+    index = 0
+    length = len(line)
+    while index < length and line[index] in " \t\f":
+        index += 1
+    if index >= length or line[index] in "#!":
+        return None
+    key: list[str] = []
+    escaped = False
+    while index < length:
+        char = line[index]
+        if escaped:
+            key.append(char)
+            escaped = False
+            index += 1
+            continue
+        if char == "\\":
+            escaped = True
+            index += 1
+            continue
+        if char in "=: \t\f":
+            break
+        key.append(char)
+        index += 1
+    return "".join(key)
+
+
 def _gradle_properties_defines(path: Path, name: str) -> bool:
     if not path.is_file():
         return False
@@ -1193,18 +1241,24 @@ def _gradle_properties_defines(path: Path, name: str) -> bool:
             continued = line[:-1]
             continue
         continued = ""
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or stripped.startswith("!"):
-            continue
-        if "=" in stripped:
-            key = stripped.split("=", 1)[0]
-        elif ":" in stripped:
-            key = stripped.split(":", 1)[0]
-        else:
-            key = stripped
-        if key.strip() in aliases:
+        key = _java_properties_key(line)
+        if key in aliases:
             return True
     return False
+
+
+def _jvm_defines_system_property(
+    text: str,
+    name: str,
+    *,
+    expand_argfiles: bool,
+) -> bool:
+    prefix = f"-D{name}"
+    try:
+        tokens = tokenize_jvm_options(text, expand_argfiles=expand_argfiles)
+    except InvalidScreencaptureHelperDir as error:
+        raise InvalidGradleProjectProperty(str(error)) from error
+    return any(token == prefix or token.startswith(f"{prefix}=") for token in tokens)
 
 
 def gradle_project_property_present(
@@ -1216,6 +1270,15 @@ def gradle_project_property_present(
     env = environ if environ is not None else os.environ
     if f"ORG_GRADLE_PROJECT_{name}" in env:
         return True
+    sys_name = f"org.gradle.project.{name}"
+    for env_name, expand_argfiles in GRADLE_PROJECT_PROPERTY_JVM_ENVS:
+        raw = env.get(env_name, "")
+        if not raw:
+            continue
+        if _jvm_defines_system_property(
+            raw, sys_name, expand_argfiles=expand_argfiles
+        ):
+            return True
     return _gradle_properties_defines(
         gradle_user_home(env) / "gradle.properties", name
     ) or _gradle_properties_defines(root / "gradle.properties", name)
@@ -1243,7 +1306,12 @@ def macos_screencapture_assemble_task(
     return ASSEMBLE_SCREENCAPTURE_HELPER_TASK
 
 
-def _assemble_screencapture_helper(root: Path) -> int:
+def _assemble_screencapture_helper(
+    root: Path,
+    *,
+    overall_deadline: float | None = None,
+    log_path: Path | None = None,
+) -> int:
     gradlew = root / "gradlew"
     if not gradlew.is_file():
         return 127
@@ -1251,16 +1319,22 @@ def _assemble_screencapture_helper(root: Path) -> int:
         task = macos_screencapture_assemble_task(root)
     except InvalidGradleProjectProperty:
         return 127
+    log = log_path
+    if log is None:
+        handle, tmp = tempfile.mkstemp(prefix="macos-tcc-assemble-", suffix=".log")
+        os.close(handle)
+        log = Path(tmp)
     try:
-        completed = subprocess.run(
+        code, _, _ = run_command(
             [str(gradlew), task, "--console=plain"],
             cwd=root,
             timeout=ASSEMBLE_SCREENCAPTURE_HELPER_TIMEOUT_SECONDS,
-            check=False,
+            log_path=log,
+            overall_deadline=overall_deadline,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except OSError:
         return 124
-    return int(completed.returncode)
+    return int(code)
 
 
 def _run_screencapture_preflight(argv: Sequence[str]) -> tuple[int, str] | None:
