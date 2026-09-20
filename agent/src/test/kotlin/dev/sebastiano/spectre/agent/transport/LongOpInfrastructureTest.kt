@@ -2,6 +2,7 @@
 
 package dev.sebastiano.spectre.agent.transport
 
+import dev.sebastiano.spectre.agent.SpectreAgentException
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
 import java.nio.channels.Channels
@@ -12,6 +13,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.io.path.deleteIfExists
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -292,6 +294,67 @@ class LongOpInfrastructureTest {
                 slowThread.join(5_000)
                 val err = assertIs<AgentResponse.Error>(resultHolder[0])
                 assertEquals(AgentErrorCategory.Cancelled.wireName, err.category)
+            }
+        }
+    }
+
+    @Test
+    fun `interrupt of in-flight send reports cancelled and leaves the session usable`() {
+        val slowStarted = CountDownLatch(1)
+        val server =
+            IpcServer(
+                udsPath,
+                AgentRequestHandler { request ->
+                    when (request) {
+                        AgentRequest.Windows -> {
+                            slowStarted.countDown()
+                            try {
+                                Thread.sleep(30_000)
+                            } catch (_: InterruptedException) {
+                                Thread.currentThread().interrupt()
+                            }
+                            AgentResponse.Windows(emptyList())
+                        }
+                        AgentRequest.Ping -> AgentResponse.Pong
+                        else -> AgentResponse.Ok
+                    }
+                },
+            )
+        server.use {
+            awaitSocket(udsPath)
+            IpcClient(udsPath).use { client ->
+                val error = AtomicReference<Throwable?>(null)
+                val waiter =
+                    Thread({
+                            try {
+                                client.send(AgentRequest.Windows)
+                                error.set(AssertionError("send was expected to be cancelled"))
+                            } catch (ex: Throwable) {
+                                error.set(ex)
+                            }
+                        })
+                        .apply {
+                            isDaemon = true
+                            name = "ipc-interrupt-cancel"
+                            start()
+                        }
+                assertTrue(slowStarted.await(3, TimeUnit.SECONDS), "slow op never started")
+                waiter.interrupt()
+                waiter.join(10_000)
+                assertTrue(!waiter.isAlive, "wait thread still running after interrupt")
+                val thrown = error.get()
+                val agentEx =
+                    assertIs<SpectreAgentException>(
+                        thrown,
+                        "expected SpectreAgentException, got " +
+                            "${thrown?.javaClass?.name}: $thrown",
+                    )
+                assertEquals(AgentErrorCategory.Cancelled, agentEx.category)
+                assertEquals(
+                    AgentResponse.Pong,
+                    client.send(AgentRequest.Ping),
+                    "session must stay usable after interrupt cancel",
+                )
             }
         }
     }
