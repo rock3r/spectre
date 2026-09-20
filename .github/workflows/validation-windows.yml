@@ -133,10 +133,17 @@ jobs:
         continue-on-error: true
         id: gradle
         run: |
+          status=0
           ./gradlew \
             :sample-desktop:validationTest \
             :sample-desktop:validationTestPopupLayers \
-            --continue
+            --continue || status=$?
+          # Prompt exits (including a #72 protocol-flake nonzero) reach this
+          # line. A 50-minute step timeout kills the script first, so
+          # completed stays unset and the verifier must fail the job even
+          # when envelope flakes also exist (#499 / Codex #519).
+          echo "completed=true" >> "$GITHUB_OUTPUT"
+          exit "$status"
         shell: bash
 
       - name: Dump live JVM stacks
@@ -278,8 +285,13 @@ jobs:
           fi
           # continue-on-error on the Gradle step is only for the known #72
           # test-event protocol flake. A hang after clean XML still times the
-          # step out (outcome=failure) and must fail the job — otherwise the
+          # step out (outcome=failure, completed unset) and must fail the job
+          # even if envelope flakes are also present — otherwise the
           # 50-minute timeout is a soft pass (#499 / Codex #519).
+          if [ "${{ steps.gradle.outputs.completed }}" != "true" ]; then
+            echo "::error::Gradle step timed out or was cancelled (outcome=${{ steps.gradle.outcome }}) — not soft-passing even if envelope flakes exist."
+            exit 1
+          fi
           if [ "${{ steps.gradle.outcome }}" != "success" ]; then
             if [ "${#flaked[@]}" -gt 0 ]; then
               echo "::warning::Gradle step outcome=${{ steps.gradle.outcome }} accepted because envelope flakes were detected: ${flaked[*]}"

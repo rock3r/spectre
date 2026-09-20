@@ -184,4 +184,62 @@ if 'no envelope-flake evidence' not in text:
 print("OK validation verifier fails closed on Gradle timeout without envelope flakes")
 PY
 
+# Codex #519 P1 follow-up: outcome=failure + nonempty flaked is not enough.
+# A #72 envelope flake and a later hang share that pair; only a prompt Gradle
+# exit can write completed=true. A timeout must exit 1 before the flake-accept
+# warning, otherwise continue-on-error still soft-passes mixed flake+hang runs.
+python3 - "$validation_workflow" <<'PY' || fail "validation verifier can soft-pass a timeout when envelope flakes exist"
+import re
+import sys
+
+text = open(sys.argv[1], encoding="utf-8").read()
+
+if not re.search(r'echo\s+"completed=true"\s*>>\s*"\$GITHUB_OUTPUT"', text):
+    sys.exit(
+        "Run validation tests must write completed=true to GITHUB_OUTPUT after "
+        "Gradle returns so a 50-minute timeout can be distinguished from a "
+        "prompt #72 protocol-flake exit"
+    )
+
+verify_start = text.find("Verify validation tests passed via JUnit XML")
+if verify_start < 0:
+    sys.exit("missing Verify validation tests step")
+verify = text[verify_start:]
+next_step = re.search(r"\n      - name:", verify)
+if next_step:
+    verify = verify[: next_step.start()]
+
+if "steps.gradle.outputs.completed" not in verify:
+    sys.exit(
+        "verifier must read steps.gradle.outputs.completed and reject a timeout "
+        "even when envelope flakes exist"
+    )
+
+if not re.search(r'outputs\.completed\s*\}\}" != "true"', verify):
+    sys.exit("verifier must test steps.gradle.outputs.completed != true")
+
+completed_check = verify.find("outputs.completed")
+flake_accept = verify.find("accepted because envelope flakes")
+if flake_accept == -1:
+    sys.exit("missing flake-accept warning for prompt #72 protocol-flake exits")
+if completed_check > flake_accept:
+    sys.exit(
+        "flake-accept warning must be gated behind a completed=true check; "
+        "otherwise a timeout + #72 flakes soft-passes the job"
+    )
+between = verify[completed_check:flake_accept]
+if "exit 1" not in between:
+    sys.exit(
+        "verifier must exit 1 on missing completed (timeout) before it can "
+        "accept outcome=failure because flakes exist"
+    )
+if "envelope flakes" not in between and "timed out" not in between.lower():
+    sys.exit(
+        "timeout reject path must mention the hang/timeout (not only empty "
+        "flaked) so mixed flake+hang runs fail closed"
+    )
+
+print("OK validation verifier fails timeouts even when envelope flakes exist")
+PY
+
 echo "OK: Windows check hang diagnostics (#499) are wired"
