@@ -256,7 +256,7 @@ val uiTest by
         group = "verification"
         description =
             "IDE-hosted UI test for the Spectre sample plugin (intellij-ide-starter, #42). " +
-                "Boots an IntelliJ IDEA 2026.2.0.1 in a child process, installs the plugin from " +
+                "Boots an IntelliJ IDEA 2026.2.3 in a child process, installs the plugin from " +
                 "the local buildPlugin output, invokes `RunSpectreAction`, and asserts the " +
                 "expected semantics tags appear in idea.log. NOT wired into :check — opt-in. " +
                 "Targets IU because JetBrains stopped shipping a distinct IC distribution as " +

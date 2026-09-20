@@ -41,12 +41,11 @@ internal class FailureVideoSession(
                     ),
             )
         val output = methodDir.resolve(VIDEO_FILE_NAME)
-        val started =
-            runCatching {
-                    Files.createDirectories(methodDir)
-                    starter.start(output, automator)
-                }
-                .getOrNull()
+        val started = runCatching {
+            Files.createDirectories(methodDir)
+            starter.start(output, automator)
+        }
+            .getOrNull()
         if (started == null) {
             // Starter may have created a partial file before failing; never leave it for a later
             // pass/abort to look like kept failure-video evidence.
@@ -123,11 +122,10 @@ internal class FailureVideoSession(
         }
     }
 
-    private fun isEmptyDirectory(directory: Path): Boolean =
-        runCatching {
-                Files.isDirectory(directory) && Files.list(directory).use { it.findFirst().isEmpty }
-            }
-            .getOrDefault(false)
+    private fun isEmptyDirectory(directory: Path): Boolean = runCatching {
+        Files.isDirectory(directory) && Files.list(directory).use { it.findFirst().isEmpty }
+    }
+        .getOrDefault(false)
 
     internal companion object {
         const val VIDEO_FILE_NAME: String = "failure-video.mp4"

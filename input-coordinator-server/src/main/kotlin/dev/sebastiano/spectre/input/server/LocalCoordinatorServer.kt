@@ -348,15 +348,14 @@ public class LocalCoordinatorServer(
         }
     }
 
-    private fun isLiveCoordinator(path: Path): Boolean =
-        runCatching {
-                SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
-                    channel.connect(UnixDomainSocketAddress.of(path))
-                    codec.write(channel, CoordinatorWireMessage(kind = CoordinatorWireKind.HEALTH))
-                    codec.read(channel).ok
-                }
-            }
-            .getOrDefault(false)
+    private fun isLiveCoordinator(path: Path): Boolean = runCatching {
+        SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
+            channel.connect(UnixDomainSocketAddress.of(path))
+            codec.write(channel, CoordinatorWireMessage(kind = CoordinatorWireKind.HEALTH))
+            codec.read(channel).ok
+        }
+    }
+        .getOrDefault(false)
 
     private companion object {
         const val DEFAULT_HEARTBEAT_TIMEOUT_SECONDS: Long = 10

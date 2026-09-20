@@ -65,8 +65,10 @@ public object LaunchDescendantDiscovery {
         clientPid: Long,
         nameFilter: String?,
         clientStart: Instant?,
-        listed: List<JvmProcessInfo> =
-            runCatching { SpectreProcesses.listJvmProcesses() }.getOrDefault(emptyList()),
+        listed: List<JvmProcessInfo> = runCatching {
+            SpectreProcesses.listJvmProcesses()
+        }
+            .getOrDefault(emptyList()),
         descendantsOf: (Long) -> Set<Long> = ::descendantPidsOf,
         parentOf: (Long) -> Long? = ::parentPid,
         startInstantOf: (Long) -> Instant? = ::processStartInstant,

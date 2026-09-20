@@ -49,15 +49,14 @@ class AgentAttachSameUserPreflightE2eTest {
 
             // Exercise the shipped preflight path. A bare JVM without a Compose UI may fail later
             // in agent bootstrap or attach timeout; ownership must not be the failure mode.
-            val thrown =
-                runCatching {
-                        AgentAttach.attach(
-                                child.pid,
-                                AttachOptions(agentJarPath = agentJar, attachTimeoutMs = 3_000),
-                            )
-                            .close()
-                    }
-                    .exceptionOrNull()
+            val thrown = runCatching {
+                AgentAttach.attach(
+                        child.pid,
+                        AttachOptions(agentJarPath = agentJar, attachTimeoutMs = 3_000),
+                    )
+                    .close()
+            }
+                .exceptionOrNull()
 
             assertTrue(
                 thrown !is AttachPermissionDeniedException,

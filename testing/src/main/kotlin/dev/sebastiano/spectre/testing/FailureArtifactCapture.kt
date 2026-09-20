@@ -36,12 +36,11 @@ public object FailureArtifactCapture {
         val written = ArrayList<CaptureArtifactPaths>(windowCount)
         for (index in 0 until windowCount) {
             val directory = FailureArtifactPaths.windowDirectory(writeRoot, index)
-            val paths =
-                runCatching {
-                        val capture = captureWindow(index)
-                        writeCaptureAtomically(directory, capture)
-                    }
-                    .getOrNull()
+            val paths = runCatching {
+                val capture = captureWindow(index)
+                writeCaptureAtomically(directory, capture)
+            }
+                .getOrNull()
             if (paths != null) written += paths
         }
         return written
@@ -88,17 +87,16 @@ public object FailureArtifactCapture {
         automator: ComposeAutomator,
         methodDirectory: Path,
     ): List<CaptureArtifactPaths> {
-        val surfaceIds =
-            runCatching {
-                    automator.refreshWindows()
-                    automator.surfaceIds()
-                }
-                .getOrElse {
-                    // Still purge prior window-* so discovery failure cannot leave stale captures
-                    // looking like evidence for this failure.
-                    clearStaleWindowDirectories(methodDirectory)
-                    return emptyList()
-                }
+        val surfaceIds = runCatching {
+            automator.refreshWindows()
+            automator.surfaceIds()
+        }
+            .getOrElse {
+                // Still purge prior window-* so discovery failure cannot leave stale captures
+                // looking like evidence for this failure.
+                clearStaleWindowDirectories(methodDirectory)
+                return emptyList()
+            }
         return captureWindows(
             methodDirectory = methodDirectory,
             windowCount = surfaceIds.size,

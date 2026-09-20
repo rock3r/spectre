@@ -63,7 +63,8 @@ class LaunchAndAttachGradleIntegrationTest {
                             agentBootstrapMs = 30_000,
                             firstWindowMs = 60_000,
                         ),
-                    attachOptions = AttachOptions(agentJarPath = agentJar, attachTimeoutMs = 15_000),
+                    attachOptions =
+                        AttachOptions(agentJarPath = agentJar, attachTimeoutMs = 15_000),
                 ),
                 warningSink = { warnings += it },
             )
@@ -120,12 +121,13 @@ class LaunchAndAttachGradleIntegrationTest {
         }
     }
 
-    private fun gradleDaemonPids(): Set<Long> =
-        runCatching { SpectreProcesses.listJvmProcesses() }
-            .getOrDefault(emptyList())
-            .filter { LaunchDescendantDiscovery.isGradleDaemonDisplayName(it.displayName) }
-            .map { it.pid }
-            .toSet()
+    private fun gradleDaemonPids(): Set<Long> = runCatching {
+        SpectreProcesses.listJvmProcesses()
+    }
+        .getOrDefault(emptyList())
+        .filter { LaunchDescendantDiscovery.isGradleDaemonDisplayName(it.displayName) }
+        .map { it.pid }
+        .toSet()
 
     private fun locateRepoRootOrSkip(): Path {
         // Walk up from user.dir looking for settings.gradle.kts + gradlew.

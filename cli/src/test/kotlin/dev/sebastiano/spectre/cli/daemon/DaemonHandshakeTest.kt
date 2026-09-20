@@ -62,7 +62,9 @@ class DaemonHandshakeTest {
         )
         assertEquals(
             DaemonProtocolVersion(major = 1, minor = 3),
-            DaemonProtocol.minimumDaemonVersion(DaemonRequest.ListJvmProcesses(requesterPid = 1234)),
+            DaemonProtocol.minimumDaemonVersion(
+                DaemonRequest.ListJvmProcesses(requesterPid = 1234)
+            ),
         )
         assertEquals(
             DaemonProtocolVersion(major = 1, minor = 6),

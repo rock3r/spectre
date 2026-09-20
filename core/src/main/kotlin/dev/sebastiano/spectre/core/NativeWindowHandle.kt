@@ -30,18 +30,17 @@ internal object NativeWindowHandle {
      * Compose Desktop exposes `windowHandle` on `ComposeWindow` / `ComposeDialog`. Swing-hosted
      * `ComposePanel` layers report `0` (see Compose's `SwingSkiaLayerComponent`).
      */
-    private fun composeWindowHandle(window: Window): Long? =
-        runCatching {
-                val method =
-                    window.javaClass.methods.firstOrNull {
-                        it.name == "getWindowHandle" &&
-                            it.parameterCount == 0 &&
-                            (it.returnType == Long::class.javaPrimitiveType ||
-                                it.returnType == Long::class.javaObjectType)
-                    } ?: return null
-                (method.invoke(window) as Number).toLong()
-            }
-            .getOrNull()
+    private fun composeWindowHandle(window: Window): Long? = runCatching {
+        val method =
+            window.javaClass.methods.firstOrNull {
+                it.name == "getWindowHandle" &&
+                    it.parameterCount == 0 &&
+                    (it.returnType == Long::class.javaPrimitiveType ||
+                        it.returnType == Long::class.javaObjectType)
+            } ?: return null
+        (method.invoke(window) as Number).toLong()
+    }
+        .getOrNull()
 
     private fun awtPeerHandle(window: Window): Long? {
         val peer = peerOf(window) ?: return null
@@ -59,42 +58,39 @@ internal object NativeWindowHandle {
 
     private fun peerOf(window: Window): Any? =
         runCatching {
-                val accessorClass = Class.forName("sun.awt.AWTAccessor")
-                val componentAccessor = accessorClass.getMethod("getComponentAccessor").invoke(null)
-                val getPeer: Method =
-                    componentAccessor.javaClass.getMethod("getPeer", Component::class.java)
-                getPeer.isAccessible = true
-                getPeer.invoke(componentAccessor, window)
-            }
+            val accessorClass = Class.forName("sun.awt.AWTAccessor")
+            val componentAccessor = accessorClass.getMethod("getComponentAccessor").invoke(null)
+            val getPeer: Method =
+                componentAccessor.javaClass.getMethod("getPeer", Component::class.java)
+            getPeer.isAccessible = true
+            getPeer.invoke(componentAccessor, window)
+        }
             .getOrNull()
             ?: runCatching {
-                    val getPeer = Component::class.java.getDeclaredMethod("getPeer")
-                    getPeer.isAccessible = true
-                    getPeer.invoke(window)
-                }
+                val getPeer = Component::class.java.getDeclaredMethod("getPeer")
+                getPeer.isAccessible = true
+                getPeer.invoke(window)
+            }
                 .getOrNull()
 
-    private fun windowsHwnd(peer: Any): Long? =
-        runCatching {
-                val method =
-                    peer.javaClass.methods.firstOrNull { it.name == "getHWnd" } ?: return null
-                (method.invoke(peer) as Number).toLong()
-            }
-            .getOrNull()
+    private fun windowsHwnd(peer: Any): Long? = runCatching {
+        val method = peer.javaClass.methods.firstOrNull { it.name == "getHWnd" } ?: return null
+        (method.invoke(peer) as Number).toLong()
+    }
+        .getOrNull()
 
-    private fun macOsNsWindow(peer: Any): Long? =
-        runCatching {
-                val getPlatformWindow =
-                    peer.javaClass.methods.firstOrNull {
-                        it.name == "getPlatformWindow" && it.parameterCount == 0
-                    } ?: return null
-                val platformWindow = getPlatformWindow.invoke(peer) ?: return null
-                // CFRetainedResource.ptr on current macOS LW AWT; walk superclasses for resilience.
-                val ptrField = findDeclaredField(platformWindow.javaClass, "ptr") ?: return null
-                ptrField.isAccessible = true
-                ptrField.getLong(platformWindow).takeIf { it != 0L }
-            }
-            .getOrNull()
+    private fun macOsNsWindow(peer: Any): Long? = runCatching {
+        val getPlatformWindow =
+            peer.javaClass.methods.firstOrNull {
+                it.name == "getPlatformWindow" && it.parameterCount == 0
+            } ?: return null
+        val platformWindow = getPlatformWindow.invoke(peer) ?: return null
+        // CFRetainedResource.ptr on current macOS LW AWT; walk superclasses for resilience.
+        val ptrField = findDeclaredField(platformWindow.javaClass, "ptr") ?: return null
+        ptrField.isAccessible = true
+        ptrField.getLong(platformWindow).takeIf { it != 0L }
+    }
+        .getOrNull()
 
     private fun findDeclaredField(start: Class<*>, name: String): Field? {
         var current: Class<*>? = start
@@ -107,32 +103,31 @@ internal object NativeWindowHandle {
         return null
     }
 
-    private fun x11Window(peer: Any): Long? =
-        runCatching {
-                // XFramePeer / XWindow / XBaseWindow expose getWindow() as a long XID. Walk the
-                // class hierarchy with setAccessible so package-private methods resolve after
-                // module opens.
-                var type: Class<*>? = peer.javaClass
-                var depth = 0
-                while (type != null && type != Any::class.java && depth < MAX_X11_PEER_WALK_DEPTH) {
-                    val getWindow =
-                        type.declaredMethods.firstOrNull {
-                            it.name == "getWindow" &&
-                                it.parameterCount == 0 &&
-                                (it.returnType == Long::class.javaPrimitiveType ||
-                                    it.returnType == Long::class.javaObjectType)
-                        }
-                    if (getWindow != null) {
-                        getWindow.isAccessible = true
-                        val value = (getWindow.invoke(peer) as Number).toLong()
-                        if (value != 0L) return value
-                    }
-                    type = type.superclass
-                    depth++
+    private fun x11Window(peer: Any): Long? = runCatching {
+        // XFramePeer / XWindow / XBaseWindow expose getWindow() as a long XID. Walk the
+        // class hierarchy with setAccessible so package-private methods resolve after
+        // module opens.
+        var type: Class<*>? = peer.javaClass
+        var depth = 0
+        while (type != null && type != Any::class.java && depth < MAX_X11_PEER_WALK_DEPTH) {
+            val getWindow =
+                type.declaredMethods.firstOrNull {
+                    it.name == "getWindow" &&
+                        it.parameterCount == 0 &&
+                        (it.returnType == Long::class.javaPrimitiveType ||
+                            it.returnType == Long::class.javaObjectType)
                 }
-                null
+            if (getWindow != null) {
+                getWindow.isAccessible = true
+                val value = (getWindow.invoke(peer) as Number).toLong()
+                if (value != 0L) return value
             }
-            .getOrNull()
+            type = type.superclass
+            depth++
+        }
+        null
+    }
+        .getOrNull()
 
     /** Cap peer-chain walks so a pathological hierarchy cannot spin forever. */
     private const val MAX_X11_PEER_WALK_DEPTH: Int = 6

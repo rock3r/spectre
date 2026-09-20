@@ -93,9 +93,10 @@ val verifyHomebrewFormulaInstallSemantics by
                 false
             } else {
                 val ci = !System.getenv("CI").isNullOrBlank()
-                val hasRuby =
-                    runCatching { ProcessBuilder("ruby", "--version").start().waitFor() == 0 }
-                        .getOrDefault(false)
+                val hasRuby = runCatching {
+                    ProcessBuilder("ruby", "--version").start().waitFor() == 0
+                }
+                    .getOrDefault(false)
                 hasRuby || ci
             }
         }

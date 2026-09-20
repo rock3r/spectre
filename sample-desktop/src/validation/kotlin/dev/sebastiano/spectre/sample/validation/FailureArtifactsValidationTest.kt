@@ -20,11 +20,13 @@ import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.BeforeAll
+import org.junit.jupiter.api.MediaType
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.extension.ExecutableInvoker
 import org.junit.jupiter.api.extension.ExtensionContext
 import org.junit.jupiter.api.extension.TestInstances
+import org.junit.jupiter.api.function.ThrowingConsumer
 import org.junit.jupiter.api.io.TempDir
 import org.junit.jupiter.api.parallel.ExecutionMode
 import org.junit.runner.Description
@@ -271,6 +273,21 @@ internal class LiveRecordingExtensionContext(
 
     override fun getStore(namespace: ExtensionContext.Namespace): ExtensionContext.Store =
         stores.computeIfAbsent(namespace) { MapBackedStore() }
+
+    override fun getStore(
+        scope: ExtensionContext.StoreScope,
+        namespace: ExtensionContext.Namespace,
+    ): ExtensionContext.Store = getStore(namespace)
+
+    override fun getEnclosingTestClasses(): List<Class<*>> = emptyList()
+
+    override fun publishFile(name: String, mediaType: MediaType, action: ThrowingConsumer<Path>) {
+        // unused in failure-artifact validation
+    }
+
+    override fun publishDirectory(name: String, action: ThrowingConsumer<Path>) {
+        // unused in failure-artifact validation
+    }
 
     override fun getExecutionMode(): ExecutionMode = ExecutionMode.SAME_THREAD
 

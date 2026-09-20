@@ -142,12 +142,12 @@ private class CapturesPruneCommand(
 
 internal fun liveSessionIdsOrEmpty(request: (DaemonRequest) -> DaemonResponse): Set<String> =
     runCatching {
-            when (val response = request(DaemonRequest.ListSessions)) {
-                is DaemonResponse.Sessions -> response.sessions.map { it.sessionId }.toSet()
-                else -> emptySet()
-            }
+        when (val response = request(DaemonRequest.ListSessions)) {
+            is DaemonResponse.Sessions -> response.sessions.map { it.sessionId }.toSet()
+            else -> emptySet()
         }
-        .getOrDefault(emptySet())
+    }
+    .getOrDefault(emptySet())
 
 internal fun requireLiveSessionIds(request: (DaemonRequest) -> DaemonResponse): Set<String> =
     when (val response = request(DaemonRequest.ListSessions)) {

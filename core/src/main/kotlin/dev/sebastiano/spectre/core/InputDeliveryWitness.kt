@@ -107,13 +107,12 @@ internal object AwtInputDeliveryWitness : InputDeliveryWitness {
 
             // invokeLater is FIFO behind already-queued events, so a press that was merely late
             // will have been dispatched by the time this marker runs.
-            override fun awaitQueueDrain(timeoutMs: Long): Boolean =
-                runCatching {
-                        val drained = CountDownLatch(1)
-                        EventQueue.invokeLater { drained.countDown() }
-                        drained.await(timeoutMs, TimeUnit.MILLISECONDS)
-                    }
-                    .getOrDefault(false)
+            override fun awaitQueueDrain(timeoutMs: Long): Boolean = runCatching {
+                val drained = CountDownLatch(1)
+                EventQueue.invokeLater { drained.countDown() }
+                drained.await(timeoutMs, TimeUnit.MILLISECONDS)
+            }
+                .getOrDefault(false)
 
             override fun close() {
                 runCatching { toolkit.removeAWTEventListener(listener) }

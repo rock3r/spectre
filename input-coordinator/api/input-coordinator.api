@@ -62,8 +62,6 @@ public final class dev/sebastiano/spectre/input/CoordinatorFrame {
 }
 
 public final class dev/sebastiano/spectre/input/CoordinatorFrameCodec {
-	public static final field HEADER_BYTES I
-	public static final field UNSIGNED_SHORT_MASK I
 	public fun <init> (I)V
 	public final fun decode ([B)Ldev/sebastiano/spectre/input/CoordinatorFrame;
 	public final fun encode ([B)[B
@@ -557,7 +555,6 @@ public final class dev/sebastiano/spectre/input/LocalCoordinatorEnvironment {
 
 public final class dev/sebastiano/spectre/input/LocalInputCoordinatorClient : java/lang/AutoCloseable {
 	public static final field Companion Ldev/sebastiano/spectre/input/LocalInputCoordinatorClient$Companion;
-	public synthetic fun <init> (Ldev/sebastiano/spectre/input/CoordinatorEndpoint;Ldev/sebastiano/spectre/input/DesktopResourceKey;Ljava/lang/String;Ldev/sebastiano/spectre/input/LeaseOwner;Ljava/nio/channels/SocketChannel;Ljava/lang/String;Ldev/sebastiano/spectre/input/CoordinatorWireCodec;Ljava/util/concurrent/ScheduledExecutorService;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun acquire (Ljava/time/Duration;Ljava/lang/String;)Ldev/sebastiano/spectre/input/CoordinatedInputLease;
 	public static synthetic fun acquire$default (Ldev/sebastiano/spectre/input/LocalInputCoordinatorClient;Ljava/time/Duration;Ljava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/input/CoordinatedInputLease;
 	public fun close ()V

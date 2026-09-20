@@ -70,9 +70,7 @@ private fun JDialogContent() {
             // driver discovers popup targets by walking `rootWindow.ownedWindows`, so a
             // `null`-owned JDialog would be invisible to it (and to any owner-relative API like
             // `setLocationRelativeTo(parent)`).
-            val parent =
-                java.awt.Frame.getFrames().firstOrNull { it.isShowing && it !is JDialog }
-                    as? java.awt.Frame
+            val parent = java.awt.Frame.getFrames().firstOrNull { it.isShowing }
             val dialog =
                 JDialog(parent, "Spectre — JDialog popup", false).apply {
                     val composePanel = ComposePanel()

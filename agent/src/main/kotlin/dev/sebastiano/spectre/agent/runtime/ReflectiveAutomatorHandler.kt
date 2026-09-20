@@ -155,7 +155,8 @@ internal class ReflectiveAutomatorHandler(
             AgentResponse.Error(
                 message = "${ex.javaClass.simpleName}: ${ex.message ?: "<no message>"}",
                 category =
-                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InputRejected.wireName,
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InputRejected
+                        .wireName,
             )
         }
 
@@ -340,14 +341,16 @@ internal class ReflectiveAutomatorHandler(
                     "Refusing typeText because no focused Spectre node was found in the " +
                         "target JVM. Focus a target node before sending real keyboard events.",
                 category =
-                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InputRejected.wireName,
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InputRejected
+                        .wireName,
             )
         }
         if (focusedNodes.none { extractKey(it).isNotBlank() }) {
             return AgentResponse.Error(
                 message = "Refusing typeText because every focused Spectre node has a blank key.",
                 category =
-                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InputRejected.wireName,
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InputRejected
+                        .wireName,
             )
         }
         if (!isTargetJvmFocused()) {
@@ -356,7 +359,8 @@ internal class ReflectiveAutomatorHandler(
                     "Refusing typeText because the target JVM does not currently own OS keyboard " +
                         "focus. Activate the target window before sending real keyboard events.",
                 category =
-                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InputRejected.wireName,
+                    dev.sebastiano.spectre.agent.transport.AgentErrorCategory.InputRejected
+                        .wireName,
             )
         }
         suspendInvoker.invoke(method, automator, text)
@@ -726,9 +730,10 @@ internal class ReflectiveAutomatorHandler(
         val klass = trackedWindow.javaClass
         val surfaceId = klass.getMethod("getSurfaceId").invoke(trackedWindow) as String
         val isPopup = klass.getMethod("isPopup").invoke(trackedWindow) as Boolean
-        val bounds =
-            runCatching { klass.getMethod("getComposeSurfaceBoundsOnScreen").invoke(trackedWindow) }
-                .getOrNull()
+        val bounds = runCatching {
+            klass.getMethod("getComposeSurfaceBoundsOnScreen").invoke(trackedWindow)
+        }
+            .getOrNull()
         val title = extractWindowTitle(trackedWindow, klass)
         return WindowSummaryDto(
             index = index,
@@ -745,9 +750,10 @@ internal class ReflectiveAutomatorHandler(
             val klass = trackedWindow.javaClass
             val surfaceId =
                 klass.getMethod("getSurfaceId").invoke(trackedWindow) as? String ?: return null
-            val isPopup =
-                runCatching { klass.getMethod("isPopup").invoke(trackedWindow) as Boolean }
-                    .getOrDefault(false)
+            val isPopup = runCatching {
+                klass.getMethod("isPopup").invoke(trackedWindow) as Boolean
+            }
+                .getOrDefault(false)
             WindowSummaryDto(
                 index = index,
                 surfaceId = surfaceId,
@@ -767,10 +773,10 @@ internal class ReflectiveAutomatorHandler(
             runCatching { klass.getMethod("getWindow").invoke(trackedWindow) }.getOrNull()
                 ?: return true
         return runCatching {
-                window.javaClass.methods
-                    .firstOrNull { it.name == "isShowing" && it.parameterCount == 0 }
-                    ?.invoke(window) as? Boolean
-            }
+            window.javaClass.methods
+                .firstOrNull { it.name == "isShowing" && it.parameterCount == 0 }
+                ?.invoke(window) as? Boolean
+        }
             .getOrNull() ?: true
     }
 
@@ -780,10 +786,10 @@ internal class ReflectiveAutomatorHandler(
      */
     private fun extractWindowTitle(trackedWindow: Any, klass: Class<*>): String? {
         runCatching {
-                klass.methods
-                    .firstOrNull { it.name == "getWindowTitle" && it.parameterCount == 0 }
-                    ?.invoke(trackedWindow) as? String
-            }
+            klass.methods
+                .firstOrNull { it.name == "getWindowTitle" && it.parameterCount == 0 }
+                ?.invoke(trackedWindow) as? String
+        }
             .getOrNull()
             ?.let {
                 return it

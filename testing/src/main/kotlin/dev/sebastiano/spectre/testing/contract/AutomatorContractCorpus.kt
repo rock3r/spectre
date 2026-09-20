@@ -571,21 +571,23 @@ public object AutomatorContractCorpus {
         transport: AutomatorTransport,
         block: () -> String,
     ): ScenarioResult =
-        // Scenario bodies use check()/error() and real transport clients that can throw a
-        // variety of checked/unchecked failures. runCatching records them as ScenarioResult
-        // rows so one bad cell does not abort the rest of the corpus mid-suite.
-        runCatching { block() }
-            .fold(
-                onSuccess = { detail ->
-                    ScenarioResult(id = id, transport = transport, passed = true, detail = detail)
-                },
-                onFailure = { error ->
-                    ScenarioResult(
-                        id = id,
-                        transport = transport,
-                        passed = false,
-                        detail = error.message ?: error::class.simpleName ?: "error",
-                    )
-                },
-            )
+    // Scenario bodies use check()/error() and real transport clients that can throw a
+    // variety of checked/unchecked failures. runCatching records them as ScenarioResult
+    // rows so one bad cell does not abort the rest of the corpus mid-suite.
+    runCatching {
+        block()
+    }
+        .fold(
+            onSuccess = { detail ->
+                ScenarioResult(id = id, transport = transport, passed = true, detail = detail)
+            },
+            onFailure = { error ->
+                ScenarioResult(
+                    id = id,
+                    transport = transport,
+                    passed = false,
+                    detail = error.message ?: error::class.simpleName ?: "error",
+                )
+            },
+        )
 }

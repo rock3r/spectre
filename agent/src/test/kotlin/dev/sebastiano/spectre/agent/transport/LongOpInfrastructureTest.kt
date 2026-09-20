@@ -76,16 +76,13 @@ class LongOpInfrastructureTest {
             awaitSocket(udsPath)
             val firstClient = IpcClient(udsPath)
             try {
-                val inputThread =
-                    Thread {
-                            runCatching {
-                                firstClient.send(AgentRequest.Click(nodeKey = "target-node"))
-                            }
-                        }
-                        .apply {
-                            isDaemon = true
-                            start()
-                        }
+                val inputThread = Thread {
+                    runCatching { firstClient.send(AgentRequest.Click(nodeKey = "target-node")) }
+                }
+                    .apply {
+                        isDaemon = true
+                        start()
+                    }
                 assertTrue(inputStarted.await(3, TimeUnit.SECONDS), "input op never started")
 
                 firstClient.close()
@@ -101,8 +98,10 @@ class LongOpInfrastructureTest {
                     inputFinished.await(200, TimeUnit.MILLISECONDS),
                     "ordinary EOF should not abandon the still-running input operation",
                 )
-                val early =
-                    runCatching { replacement.get(200, TimeUnit.MILLISECONDS) }.exceptionOrNull()
+                val early = runCatching {
+                    replacement.get(200, TimeUnit.MILLISECONDS)
+                }
+                    .exceptionOrNull()
                 assertIs<TimeoutException>(
                     early,
                     "replacement handshake/session must wait for orphaned input, not fail: $early",
@@ -154,16 +153,13 @@ class LongOpInfrastructureTest {
         server.use {
             awaitSocket(udsPath)
             val firstClient = IpcClient(udsPath)
-            val inputThread =
-                Thread {
-                        runCatching {
-                            firstClient.send(AgentRequest.Click(nodeKey = "target-node"))
-                        }
-                    }
-                    .apply {
-                        isDaemon = true
-                        start()
-                    }
+            val inputThread = Thread {
+                runCatching { firstClient.send(AgentRequest.Click(nodeKey = "target-node")) }
+            }
+                .apply {
+                    isDaemon = true
+                    start()
+                }
             try {
                 assertTrue(inputStarted.await(3, TimeUnit.SECONDS), "input op never started")
                 firstClient.close()
@@ -225,16 +221,13 @@ class LongOpInfrastructureTest {
             server.use {
                 awaitSocket(udsPath)
                 IpcClient(udsPath).use { client ->
-                    val inputThread =
-                        Thread {
-                                runCatching {
-                                    client.send(AgentRequest.Click(nodeKey = "target-node"))
-                                }
-                            }
-                            .apply {
-                                isDaemon = true
-                                start()
-                            }
+                    val inputThread = Thread {
+                        runCatching { client.send(AgentRequest.Click(nodeKey = "target-node")) }
+                    }
+                        .apply {
+                            isDaemon = true
+                            start()
+                        }
 
                     assertTrue(inputStarted.await(3, TimeUnit.SECONDS), "input op never started")
                     val detach =

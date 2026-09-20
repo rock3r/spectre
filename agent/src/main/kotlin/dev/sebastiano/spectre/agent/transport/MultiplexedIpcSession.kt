@@ -164,8 +164,10 @@ internal class MultiplexedIpcSession(
         } catch (ex: kotlinx.serialization.SerializationException) {
             // Prefer the real opId so the client's pending future unblocks with taxonomy error,
             // not a 120s timeout hang (Bugbot: decode errors must correlate).
-            val opId =
-                runCatching { WireCodec.decodeOpRequestShell(requestBytes).opId }.getOrDefault(-1L)
+            val opId = runCatching {
+                WireCodec.decodeOpRequestShell(requestBytes).opId
+            }
+                .getOrDefault(-1L)
             val category =
                 if (WireCodec.isUnknownDiscriminator(ex)) {
                     AgentErrorCategory.UnsupportedOperation

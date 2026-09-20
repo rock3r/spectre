@@ -308,12 +308,10 @@ private fun SecureDirectoryStream<Path>.createChildDirectory(
 ): Boolean {
     val openKey =
         getFileAttributeView(BasicFileAttributeView::class.java).readAttributes().fileKey()
-    val resolvedKey =
-        runCatching {
-                Files.readAttributes(parentPath, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
-                    .fileKey()
-            }
-            .getOrNull()
+    val resolvedKey = runCatching {
+        Files.readAttributes(parentPath, BasicFileAttributes::class.java, NOFOLLOW_LINKS).fileKey()
+    }
+        .getOrNull()
     if (openKey == null || openKey != resolvedKey) {
         throw IOException(
             "Coordinator $role $childPath cannot be created: $parentPath was replaced while the " +
