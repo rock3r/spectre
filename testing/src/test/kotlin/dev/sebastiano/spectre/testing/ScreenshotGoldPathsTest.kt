@@ -206,6 +206,18 @@ class ScreenshotGoldPathsTest {
     }
 
     @Test
+    fun `overlong segments are truncated to a filesystem-safe length`() {
+        val longName = "a".repeat(300)
+        val longerName = "a".repeat(301)
+        val truncated = ScreenshotGoldPaths.sanitizeGoldSegment(longName)
+        val other = ScreenshotGoldPaths.sanitizeGoldSegment(longerName)
+        assertTrue(truncated.toByteArray(Charsets.UTF_8).size <= 255, truncated)
+        assertTrue(other.toByteArray(Charsets.UTF_8).size <= 255, other)
+        assertNotEquals(truncated, other)
+        assertTrue(truncated.matches(Regex("a+_[0-9a-f]{8}")), truncated)
+    }
+
+    @Test
     fun `lossy sanitization suffix is stable for the same raw segment`() {
         assertEquals(
             ScreenshotGoldPaths.sanitizeGoldSegment("foo/bar"),

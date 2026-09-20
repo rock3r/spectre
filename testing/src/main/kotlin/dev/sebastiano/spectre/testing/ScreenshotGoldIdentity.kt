@@ -1,39 +1,70 @@
 package dev.sebastiano.spectre.testing
 
+import java.lang.StackWalker
+import java.lang.invoke.MethodType
+import java.lang.reflect.Method
+import java.lang.reflect.Modifier
+
 internal fun inferTestIdentity(): Pair<String, String> =
-    Thread.currentThread().stackTrace.firstNotNullOfOrNull(::testIdentityFromFrame)
+    StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE).walk { frames ->
+        frames.iterator().asSequence().firstNotNullOfOrNull(::testIdentityFromWalkerFrame)
+    }
         ?: error(
             "assertMatchesGold could not infer the calling test method; pass TestInfo explicitly"
         )
+
+internal fun testIdentityFromWalkerFrame(frame: StackWalker.StackFrame): Pair<String, String>? {
+    val cls = frame.declaringClass
+    if (isGoldFacadeClass(cls.name)) return null
+    val method =
+        resolveJunitTestMethod(cls.declaredMethods, frame.methodName, frame.methodType)
+            ?: return null
+    return identityFromResolved(cls, method)
+}
 
 internal fun testIdentityFromFrame(frame: StackTraceElement): Pair<String, String>? {
     val className = frame.className
     // Skip gold facade frames, not other types whose names happen to start with
     // ScreenshotGold (e.g. ScreenshotGoldAssertTest).
-    if (isGoldFacadeClass(className)) {
-        return null
-    }
+    if (isGoldFacadeClass(className)) return null
     val cls = runCatching { Class.forName(className) }.getOrNull() ?: return null
-    val methodName =
-        resolveJunitTestMethodName(cls.declaredMethods, frame.methodName) ?: return null
-    return className to methodName
+    val method = resolveJunitTestMethod(cls.declaredMethods, frame.methodName) ?: return null
+    return identityFromResolved(cls, method)
 }
 
-internal fun resolveJunitTestMethodName(
-    methods: Array<java.lang.reflect.Method>,
+internal fun junitMethodIdentity(method: Method): String {
+    if (method.parameterCount == 0) return method.name
+    return buildString {
+        append(method.name)
+        append('(')
+        append(method.parameterTypes.joinToString(",") { it.name })
+        append(')')
+    }
+}
+
+internal fun resolveJunitTestMethod(
+    methods: Array<Method>,
     methodName: String,
-): String? = methods.firstOrNull { it.name == methodName && it.isJunitTestMethod() }?.name
+    methodType: MethodType? = null,
+): Method? {
+    val candidates = methods.filter { it.name == methodName && it.isJunitTestMethod() }
+    if (candidates.isEmpty()) return null
+    if (methodType != null) {
+        return candidates.firstOrNull { methodMatchesType(it, methodType) }
+    }
+    return candidates.singleOrNull()
+}
 
 /**
  * True for JUnit 4 `@Test`, JUnit 5 `@Test` / `@TestTemplate` / `@TestFactory`, the platform
  * `@Testable` meta-annotation, and composed annotations that meta-annotate those (including
  * `@ParameterizedTest` and `@RepeatedTest`).
  */
-internal fun java.lang.reflect.Method.isJunitTestMethod(): Boolean = annotations.any {
+internal fun Method.isJunitTestMethod(): Boolean = annotations.any {
     isJunitTestAnnotation(it.annotationClass.java)
 }
 
-internal fun java.lang.reflect.Method.isJunitTestTemplate(): Boolean = annotations.any {
+internal fun Method.isJunitTestTemplate(): Boolean = annotations.any {
     isJunitTemplateAnnotation(it.annotationClass.java)
 }
 
@@ -47,16 +78,31 @@ internal fun resolveInvocationKey(
     if (isJunitTestTemplateMethod(testClassName, testMethodName)) {
         error(
             "assertMatchesGold on a parameterized or repeated test requires invocationKey " +
-                "or the TestInfo facade so each invocation gets its own gold"
+                "or a unique TestInfo display name so each invocation gets its own gold"
         )
     }
     return null
 }
 
-private fun isJunitTestTemplateMethod(testClassName: String, testMethodName: String): Boolean {
-    val cls = runCatching { Class.forName(testClassName) }.getOrNull() ?: return false
-    return cls.declaredMethods.any { it.name == testMethodName && it.isJunitTestTemplate() }
+private fun identityFromResolved(cls: Class<*>, method: Method): Pair<String, String> {
+    if (cls.isInterface || Modifier.isAbstract(cls.modifiers)) {
+        error(
+            "assertMatchesGold cannot infer the concrete test class from ${cls.name}; " +
+                "pass TestInfo so inherited tests key golds by the executing class"
+        )
+    }
+    return cls.name to junitMethodIdentity(method)
 }
+
+private fun isJunitTestTemplateMethod(testClassName: String, testMethodName: String): Boolean {
+    val simpleName = testMethodName.substringBefore('(')
+    val cls = runCatching { Class.forName(testClassName) }.getOrNull() ?: return false
+    return cls.declaredMethods.any { it.name == simpleName && it.isJunitTestTemplate() }
+}
+
+private fun methodMatchesType(method: Method, methodType: MethodType): Boolean =
+    method.returnType == methodType.returnType() &&
+        method.parameterTypes.contentEquals(methodType.parameterArray())
 
 private fun isGoldFacadeClass(className: String): Boolean = GOLD_FACADE_CLASSES.any { facade ->
     className == facade || className.startsWith(facade + "$")

@@ -14,6 +14,7 @@ public object ScreenshotGoldPaths {
     public const val DEFAULT_GOLD_ROOT: String = "src/test/resources/spectre-golds"
     public const val DEFAULT_REPORTS_ROOT: String = "build/reports/spectre-screenshots"
     private const val SEGMENT_FINGERPRINT_BYTES: Int = 4
+    private const val MAX_SEGMENT_BYTES: Int = 255
     private val FINGERPRINT_SUFFIX = Regex("_[0-9a-f]{8}$")
 
     public fun defaultGoldRoot(): Path = Path.of(DEFAULT_GOLD_ROOT).toAbsolutePath().normalize()
@@ -131,11 +132,29 @@ public object ScreenshotGoldPaths {
         // namespace so a literal `foo_bar_cc5d46bd` cannot collide with hashed `foo/bar`.
         val caseFoldingCollision = escaped != escaped.lowercase(Locale.ROOT)
         val occupiesFingerprintNamespace = FINGERPRINT_SUFFIX.containsMatchIn(escaped)
-        return if (escaped == raw && !caseFoldingCollision && !occupiesFingerprintNamespace) {
-            escaped
-        } else {
-            "${escaped}_${stableSegmentFingerprint(raw)}"
+        val fingerprint = stableSegmentFingerprint(raw)
+        val candidate =
+            if (escaped == raw && !caseFoldingCollision && !occupiesFingerprintNamespace) {
+                escaped
+            } else {
+                "${escaped}_$fingerprint"
+            }
+        return boundGoldSegment(escaped, candidate, fingerprint)
+    }
+
+    private fun boundGoldSegment(
+        escaped: String,
+        candidate: String,
+        fingerprint: String,
+    ): String {
+        if (candidate.toByteArray(Charsets.UTF_8).size <= MAX_SEGMENT_BYTES) return candidate
+        val suffix = "_$fingerprint"
+        val budget = MAX_SEGMENT_BYTES - suffix.toByteArray(Charsets.UTF_8).size
+        var prefix = escaped
+        while (prefix.isNotEmpty() && prefix.toByteArray(Charsets.UTF_8).size > budget) {
+            prefix = prefix.dropLast(1)
         }
+        return prefix.trimEnd('_') + suffix
     }
 
     private fun stableSegmentFingerprint(raw: String): String {

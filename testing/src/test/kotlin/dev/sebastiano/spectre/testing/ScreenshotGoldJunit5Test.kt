@@ -38,8 +38,13 @@ class ScreenshotGoldJunit5Test {
 
     @Test
     fun `TestInfo supplies an invocation key for template methods`() {
-        val info = fakeTestInfo("[1] dark", parameterizedMethod())
-        assertEquals("[1] dark", invocationKeyFromTestInfo(info))
+        val method = parameterizedMethod()
+        val pattern = method.getAnnotation(ParameterizedTest::class.java)!!.name
+        assertTrue(
+            method.hasVaryingInvocationNamePattern(),
+            "default ParameterizedTest name must vary, was '$pattern'",
+        )
+        assertEquals("[1] dark", invocationKeyFromTestInfo(fakeTestInfo("[1] dark", method)))
     }
 
     @Test
@@ -99,6 +104,27 @@ class ScreenshotGoldJunit5Test {
         assertTrue(error.message!!.contains("invocationKey"), error.message)
     }
 
+    @ParameterizedTest(name = "[1] theme")
+    @ValueSource(ints = [1])
+    fun `constant display that looks unique still requires invocationKey`(value: Int) {
+        assertEquals(1, value)
+        val method =
+            javaClass.declaredMethods.single {
+                it.name == "constant display that looks unique still requires invocationKey"
+            }
+        val info = fakeTestInfo("[1] theme", method)
+        assertNull(invocationKeyFromTestInfo(info))
+        val error =
+            assertFailsWith<IllegalStateException> {
+                resolveInvocationKey(
+                    ScreenshotGoldJunit5Test::class.java.name,
+                    method.name,
+                    invocationKey = invocationKeyFromTestInfo(info),
+                )
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
+    }
+
     @ParameterizedTest
     @ValueSource(ints = [1])
     fun `name-only gold assert requires invocationKey on parameterized tests`(value: Int) {
@@ -145,7 +171,7 @@ class ScreenshotGoldJunit5Test {
         assertEquals(1, value)
         val (cls, method) = inferTestIdentity()
         assertEquals(ScreenshotGoldJunit5Test::class.java.name, cls)
-        assertEquals("ParameterizedTest methods are recognized for gold identity", method)
+        assertEquals("ParameterizedTest methods are recognized for gold identity(int)", method)
     }
 
     @ComposedGoldJunit5Test
@@ -162,10 +188,11 @@ class ScreenshotGoldJunit5Test {
         val annotated = cls.getDeclaredMethod("probe", Int::class.java)
         assertFalse(unannotated.isJunitTestMethod())
         assertTrue(annotated.isJunitTestMethod())
-        assertEquals("probe", resolveJunitTestMethodName(arrayOf(unannotated, annotated), "probe"))
-        assertEquals("probe", resolveJunitTestMethodName(arrayOf(annotated, unannotated), "probe"))
+        assertEquals(annotated, resolveJunitTestMethod(arrayOf(unannotated, annotated), "probe"))
+        assertEquals(annotated, resolveJunitTestMethod(arrayOf(annotated, unannotated), "probe"))
+        assertEquals("probe(int)", junitMethodIdentity(annotated))
         val frame = StackTraceElement(cls.name, "probe", "GoldJunit5OverloadHost.kt", 1)
-        assertEquals(cls.name to "probe", testIdentityFromFrame(frame))
+        assertEquals(cls.name to "probe(int)", testIdentityFromFrame(frame))
     }
 
     private fun parameterizedMethod(): java.lang.reflect.Method =

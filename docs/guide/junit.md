@@ -344,8 +344,10 @@ methods that call it directly. It recognizes `@Test`, `@ParameterizedTest`,
 
 `@ParameterizedTest` and `@RepeatedTest` invocations that share a screenshot name
 must not share a gold. The `TestInfo` facade keys those invocations from the JUnit
-display name only when that name is unique per invocation (`[1] dark`,
-`repetition 1 of 2`). Constant custom names such as `@ParameterizedTest(name = "theme")`
+display name only when the annotation `name` pattern varies per invocation *and* the
+resolved display looks unique (`[1] dark`, `repetition 1 of 2`). JUnit's omitted
+default (`{default_display_name}`) counts as varying. Constant custom names such as
+`@ParameterizedTest(name = "theme")` or `@ParameterizedTest(name = "[1] theme")`
 require an explicit `invocationKey`. The name-only overload cannot see the invocation,
 so it always requires `invocationKey` and fails closed without one.
 
@@ -400,9 +402,10 @@ build/reports/spectre-screenshots/<class>/<method>/<name>[/<invocation>]/
 
 When dimensions match, it also writes `diff.png` (magenta highlight on black). Size
 mismatches omit the diff and delete any stale `diff.png` left from a prior equal-size run. Class, method, name, and invocation segments are sanitized (path
-separators, reserved Windows device names). Rewritten segments get a short stable suffix so
-distinct names such as `foo/bar` and `foo_bar`, `NUL` and `NUL_`, or `Main` and `main`, cannot
-share a gold or report path. A later passing run, update-mode write, missing-gold
+separators, reserved Windows device names) and truncated to 255 UTF-8 bytes so long
+parameterized display names stay inside filesystem component limits. Rewritten
+segments get a short stable suffix so distinct names such as `foo/bar` and `foo_bar`,
+`NUL` and `NUL_`, or `Main` and `main`, cannot share a gold or report path. A later passing run, update-mode write, missing-gold
 failure, or unreadable gold deletes leftover report PNGs from a prior mismatch so CI
 does not upload stale failures. CI upload:
 

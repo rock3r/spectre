@@ -33,6 +33,8 @@ dependencies {
     // using; the testing module itself only references their public APIs.
     compileOnly(libs.junit4)
     compileOnly(libs.junit5.api)
+    // Needed to read `@ParameterizedTest(name = …)` when deciding whether a display name varies.
+    compileOnly(libs.junit5.params)
     detektPlugins(libs.compose.rules.detekt)
 
     testImplementation(libs.kotlin.testJunit5)
