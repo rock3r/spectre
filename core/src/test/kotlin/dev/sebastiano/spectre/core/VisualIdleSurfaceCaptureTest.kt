@@ -7,6 +7,7 @@ import java.awt.Frame
 import java.awt.Insets
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
+import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -141,6 +142,141 @@ class VisualIdleSurfaceCaptureTest {
             assertSame(regionImage, image)
             assertEquals(1, regionCalls)
             assertEquals(0, windowCalls)
+        } finally {
+            frame.dispose()
+        }
+    }
+
+    @Test
+    fun `falls back to region when native helper cannot actually run`() {
+        assumeLiveAwtAvailable()
+        val frame =
+            Frame("helper-missing").apply {
+                setBounds(0, 0, 80, 60)
+                addNotify()
+            }
+        val regionImage = solidImage(80, 60, 0xFF00AA00.toInt())
+        var regionCalls = 0
+        var windowCalls = 0
+        val backend =
+            PlatformScreenCaptureBackend(
+                regionCapture = {
+                    regionCalls += 1
+                    regionImage
+                },
+                nativeCapture = {
+                    windowCalls += 1
+                    throw IllegalStateException(
+                        "Linux screenshot helper failed",
+                        IOException(
+                            "Cannot run program \"gst-launch-1.0\": error=2, No such file or directory"
+                        ),
+                    )
+                },
+                nativeCaptureBounds = { _, _, bounds, _ -> bounds },
+            )
+        try {
+            val image =
+                captureSurfaceForVisualIdle(
+                    backend = backend,
+                    window = tracked(frame),
+                    surfaceRegion = Rectangle(frame.bounds),
+                    windowBounds = Rectangle(frame.bounds),
+                    frameInsets = Insets(0, 0, 0, 0),
+                    nativeWindowCaptureAvailable = true,
+                )
+            assertSame(regionImage, image)
+            assertEquals(1, windowCalls)
+            assertEquals(1, regionCalls)
+        } finally {
+            frame.dispose()
+        }
+    }
+
+    @Test
+    fun `does not fall back to region when gst-launch pipeline fails after spawn`() {
+        assumeLiveAwtAvailable()
+        val frame =
+            Frame("gst-pipeline-timeout").apply {
+                setBounds(0, 0, 80, 60)
+                addNotify()
+            }
+        var regionCalls = 0
+        var windowCalls = 0
+        val backend =
+            PlatformScreenCaptureBackend(
+                regionCapture = {
+                    regionCalls += 1
+                    solidImage(80, 60, 0xFF00AA00.toInt())
+                },
+                nativeCapture = {
+                    windowCalls += 1
+                    error(
+                        "spectre-wayland-helper reported an error during screenshot capture: " +
+                            "kind=CaptureFailed message=gst-launch did not exit within 8s " +
+                            "while capturing screenshot"
+                    )
+                },
+                nativeCaptureBounds = { _, _, bounds, _ -> bounds },
+            )
+        try {
+            val image =
+                captureSurfaceForVisualIdle(
+                    backend = backend,
+                    window = tracked(frame),
+                    surfaceRegion = Rectangle(frame.bounds),
+                    windowBounds = Rectangle(frame.bounds),
+                    frameInsets = Insets(0, 0, 0, 0),
+                    nativeWindowCaptureAvailable = true,
+                )
+            assertNull(image, "pipeline timeout must stay unsampleable, not Robot-region")
+            assertEquals(1, windowCalls)
+            assertEquals(0, regionCalls)
+        } finally {
+            frame.dispose()
+        }
+    }
+
+    @Test
+    fun `does not fall back to region when gst-launch spawn is permission denied`() {
+        assumeLiveAwtAvailable()
+        val frame =
+            Frame("gst-permission-denied").apply {
+                setBounds(0, 0, 80, 60)
+                addNotify()
+            }
+        var regionCalls = 0
+        var windowCalls = 0
+        val backend =
+            PlatformScreenCaptureBackend(
+                regionCapture = {
+                    regionCalls += 1
+                    solidImage(80, 60, 0xFF00AA00.toInt())
+                },
+                nativeCapture = {
+                    windowCalls += 1
+                    throw IllegalStateException(
+                        "Linux screenshot helper failed",
+                        IOException(
+                            "Cannot run program \"gst-launch-1.0\": error=13, Permission denied"
+                        ),
+                    )
+                },
+                nativeCaptureBounds = { _, _, bounds, _ -> bounds },
+            )
+        try {
+            val image =
+                captureSurfaceForVisualIdle(
+                    backend = backend,
+                    window = tracked(frame),
+                    surfaceRegion = Rectangle(frame.bounds),
+                    windowBounds = Rectangle(frame.bounds),
+                    frameInsets = Insets(0, 0, 0, 0),
+                    nativeWindowCaptureAvailable = true,
+                )
+            assertNull(image, "permission-denied spawn must stay unsampleable, not Robot-region")
+            assertEquals(1, windowCalls)
+            assertEquals(0, regionCalls)
         } finally {
             frame.dispose()
         }
@@ -326,9 +462,59 @@ class VisualIdleSurfaceCaptureTest {
     }
 
     @Test
+    fun `native window capture is unavailable when the platform helper cannot run`() {
+        assertFalse(
+            isNativeWindowCaptureAvailable(
+                allowsPlatformCapture = true,
+                osName = "Linux",
+                getenv = { null },
+                platformCaptureUsable = { false },
+            )
+        )
+    }
+
+    @Test
+    fun `atomic capture still routes through the native bridge when the helper cannot run`() {
+        assertTrue(
+            isNativeWindowCaptureBridgePresent(
+                allowsPlatformCapture = true,
+                osName = "Linux",
+                getenv = { null },
+            )
+        )
+        assertFalse(
+            isNativeWindowCaptureAvailable(
+                allowsPlatformCapture = true,
+                osName = "Linux",
+                getenv = { null },
+                platformCaptureUsable = { false },
+            )
+        )
+    }
+
+    @Test
+    fun `native window capture stays available when the platform helper can run`() {
+        assertTrue(
+            isNativeWindowCaptureAvailable(
+                allowsPlatformCapture = true,
+                osName = "Linux",
+                getenv = { null },
+                platformCaptureUsable = { true },
+            )
+        )
+    }
+
+    @Test
     fun `native window capture is unavailable on GitHub-hosted Windows`() {
         assertTrue(
             isNonInteractiveHostedWindows(
+                osName = "Windows 11",
+                getenv = { if (it == "RUNNER_ENVIRONMENT") "github-hosted" else null },
+            )
+        )
+        assertFalse(
+            isNativeWindowCaptureBridgePresent(
+                allowsPlatformCapture = true,
                 osName = "Windows 11",
                 getenv = { if (it == "RUNNER_ENVIRONMENT") "github-hosted" else null },
             )

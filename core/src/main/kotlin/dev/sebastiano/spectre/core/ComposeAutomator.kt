@@ -541,10 +541,11 @@ private constructor(
         }
         // Window-scoped still when the recording native bridge is present (#355). Injected core
         // excludes recording, so fall back to an explicit region capture only when the bridge is
-        // absent — never as a silent substitute after a failed native still.
+        // absent — never as a silent substitute after a failed native still, and never because
+        // the helper binary is missing (that must fail closed; visual-idle has its own fallback).
         val windowCapture =
             if (
-                isNativeWindowCaptureAvailable(
+                isNativeWindowCaptureBridgePresent(
                     allowsPlatformCapture = robotDriver.allowsPlatformCapture
                 )
             ) {
@@ -653,17 +654,16 @@ private constructor(
         pollInterval: Duration = DEFAULT_POLL_INTERVAL,
     ) {
         rejectEdtCaller("waitForVisualIdle")
-        val frameHasher =
-            BoundedFrameHasher(
-                steadyStateBudgetMs = FRAME_HASH_BUDGET_MS,
-                sample = ::sampleFrameHash,
+        withNativeCaptureWaitScope(javaClass.classLoader, robotDriver.allowsPlatformCapture) { scope
+            ->
+            waitForVisualIdleInternal(
+                timeout = timeout,
+                stableFrames = stableFrames,
+                pollInterval = pollInterval,
+                frameHash =
+                    BoundedFrameHasher(FRAME_HASH_BUDGET_MS) { sampleFrameHash(it, scope) }::hash,
             )
-        waitForVisualIdleInternal(
-            timeout = timeout,
-            stableFrames = stableFrames,
-            pollInterval = pollInterval,
-            frameHash = frameHasher::hash,
-        )
+        }
     }
 
     /** Exact index; fails if missing or not showing (no silent remap). */
@@ -717,7 +717,10 @@ private constructor(
         uiFingerprint(windows, semanticsReader)
     }
 
-    private suspend fun sampleFrameHash(budgetMs: Long): Int? {
+    private suspend fun sampleFrameHash(
+        budgetMs: Long,
+        captureScope: NativeCaptureWaitScope,
+    ): Int? {
         // Hash tracked Compose surfaces independently: a virtual-desktop capture would let
         // unrelated windows, notifications, or the cursor outside the app reset the streak.
         // Returning null for no surfaces or a budget expiry makes the per-wait hasher produce a
@@ -748,10 +751,7 @@ private constructor(
                         windowBoundsFor = { geometry.getValue(it).first },
                         frameInsetsFor = { geometry.getValue(it).second },
                         backend = screenCaptureBackend,
-                        nativeWindowCaptureAvailable =
-                            isNativeWindowCaptureAvailable(
-                                allowsPlatformCapture = robotDriver.allowsPlatformCapture
-                            ),
+                        nativeWindowCaptureAvailable = captureScope.isAvailable(),
                     )
                 }
             }

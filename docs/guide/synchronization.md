@@ -268,10 +268,13 @@ A few details worth knowing:
   times out rather than reporting fake stability.
 - **`pollInterval` is a floor, not the real cadence.** Each poll captures every tracked
   Compose surface and hashes the pixels. When `spectre-recording` is on the runtime
-  classpath, surfaces are sampled with the same **window-scoped** native still path as
-  `screenshot(windowIndex)` (occlusion-immune on platforms with true window capture).
-  Without that backend, Spectre falls back to `java.awt.Robot` region capture of the
-  surface rectangle. Capture cost dominates the poll cadence — typically tens to a few
+  classpath **and the platform helper can actually run**, surfaces are sampled with the
+  same **window-scoped** native still path as `screenshot(windowIndex)` (occlusion-immune
+  on platforms with true window capture). On Linux that helper needs `gst-launch-1.0`;
+  if recording classes load but GStreamer is missing, Spectre falls back to
+  `java.awt.Robot` region capture instead of treating every sample as unsampleable.
+  Without the recording backend, it also uses region capture of the surface rectangle.
+  Capture cost dominates the poll cadence — typically tens to a few
   hundred milliseconds per surface (one-shot native helper startup is larger on the first
   sample), more on Wayland, large displays, or software-rendered VMs. In practice the gap
   between completed polls is whatever the capture takes, with `pollInterval` only kicking

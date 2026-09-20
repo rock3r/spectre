@@ -32,6 +32,20 @@ internal class WaylandHelperBinaryExtractor(
 
     private var cached: Path? = null
 
+    /**
+     * True when the override path is executable or the per-arch helper resource is on the
+     * classpath.
+     */
+    fun isBundled(): Boolean {
+        envLookup(OVERRIDE_ENV)
+            ?.takeIf { it.isNotBlank() }
+            ?.let { override ->
+                return Files.isExecutable(Path.of(override))
+            }
+        val resourcePath = "$RESOURCE_PATH_BASE/${archProvider()}/$BINARY_NAME"
+        return resourceLocator(resourcePath)?.use { true } ?: false
+    }
+
     @Synchronized
     fun extract(): Path {
         cached?.let {
