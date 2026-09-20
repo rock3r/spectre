@@ -336,6 +336,7 @@ Shared across macOS / Linux / Windows entrypoints (`scripts/smoke_lib.py` → `R
 | ID | Cell |
 | --- | --- |
 | `preflight` | Environment / SHA / clean-tree preflight |
+| `macos-tcc` | macOS Screen Recording + Accessibility TCC preflight. Screen Recording uses `MacOsScreenCaptureAccess.preflight` on the runtime `~/Library/Application Support/spectre/helpers/spectre-screencapture/SpectreCaptureHelper.app`, plus the `MacOsTccGuard` wrapping-app Robot probe (`screencapture` 32×32 origin, all-black = denied) and `ioreg` `IOConsoleLocked` (locked console is fail-closed even if the helper reports granted). Accessibility uses the `MacOsTccGuard` osascript (wrapping app). **Fail-closed** on Denied / Locked / Unknown, on helper exit/JSON mismatch, and on a missing, relative, or invalid `SPECTRE_SCREENCAPTURE_HELPER`. Hard `n/a` on Linux/Windows. Runs before `./gradlew check`. |
 | `check` | `./gradlew check` |
 | `junit-live` | Live JUnit failure artifacts/video and atomic capture |
 | `agent-attach-core` | Agent attach with preinstalled core |
@@ -375,6 +376,7 @@ cells must be explicit hard `n/a` with reason — never a silent omit or fake `p
 The cross-platform runner covers the stable baseline that should not be reinvented per release:
 
 - environment/SHA/dirty-tree preflight recorded in the report
+- macOS `macos-tcc` fail-closed Screen Recording / Accessibility probe before `./gradlew check` (issue [#502](https://github.com/rock3r/spectre/issues/502)); Linux/Windows hard `n/a`
 - the full `check` gate
 - live JUnit validation (failure artifacts/video and capture/wait validation), forced with
   `--rerun-tasks --no-build-cache` so cache-only passes cannot skip UI work
@@ -401,7 +403,8 @@ coverage to the runner rather than leaving a one-release command only in chat.
 | Input coordination gate (#459: contention / cancellation / quarantine / revoke / forced recovery / JUnit PerTest) | Unix + Windows `input-coord-*` (coordinator protocol + forked process + JUnit isolation, fail-closed XML) | — |
 | Headed two-`RobotDriver` real-input contention (#491) | Unix + Windows `input-coord-headed-robot` → `:sample-desktop:headedRobotContentionTest` (Linux Xvfb, macOS desktop with TCC, Windows interactive/RDP) | **Hard** on hosts that cannot run it (Windows SSH; no `xvfb-run`): record via `--headed-robot-evidence` / `-HeadedRobotEvidence` |
 | Host native recording | macOS SCK + Linux X11 in `release-smoke.py`; WGC in Windows PS when **interactive** | SSH WGC is N/A (not PASS) |
-| TCC / notarization / app seal | — | macOS recipes below |
+| macOS Screen Recording / Accessibility TCC | Unix `macos-tcc` fail-closed preflight (no SecurityAgent prompt; no `TCC.db` reads) | Unlock the console if `IOConsoleLocked`; grant Accessibility and Screen Recording to the wrapping app (Robot) and Screen Recording to Spectre Capture Helper; quit/relaunch + `./gradlew --stop`, then rerun |
+| Notarization / app seal | — | macOS recipes below |
 | Real Wayland portal | — | Real Wayland session (Xvfb ≠ Wayland) |
 | Public Homebrew / Scoop / archive installs | — | After draft release undraft |
 | Focus / lock keys / multi-monitor / HiDPI | Soft / env-dependent | Operator notes |
@@ -461,9 +464,19 @@ These cannot currently be made portable and fail-closed by the baseline runner:
   SSH and even `PsExec -i` can use a service/elevated token that WGC rejects with `0x80070424` or
   `UnauthorizedAccessException`. The Windows harness records hard `n/a` with reason when
   `displayMode` is `windows-ssh` — do **not** treat SSH runs as visual PASS evidence.
-- **macOS TCC and release seal:** grant Screen Recording to the actual helper identity, exercise one
-  live SCK still/record, then verify the signed release app with `codesign --verify --deep --strict`,
-  `spctl`, and `xcrun stapler validate`. A local ad-hoc app is not notarization evidence.
+- **macOS TCC grant + release seal:** `macos-tcc` already fail-closes when Screen Recording or
+  Accessibility is Denied / Locked / Unknown. Accessibility names the wrapping app; Screen
+  Recording names Spectre Capture Helper (`SpectreCaptureHelper.app`), which the harness installs
+  to `~/Library/Application Support/spectre/helpers/spectre-screencapture/` (same path later
+  capture cells extract) after `:recording:assembleScreenCaptureKitHelper` (always invoked so
+  the staged tree matches the reviewed SHA). An inconclusive probe reinstalls that runtime
+  bundle so a stale cached helper cannot pin the gate on Unknown. A granted cached helper is
+  also replaced when the freshly assembled tree fingerprints differently, so TCC identity
+  cannot change after macos-tcc already passed.
+  `SPECTRE_SCREENCAPTURE_HELPER` must be an absolute path. After a grant, quit/relaunch the
+  wrapping app, run `./gradlew --stop`, and rerun smoke. Live SCK still/record plus signed-app
+  `codesign --verify --deep --strict`, `spctl`, and `xcrun stapler validate` remain manual. A local
+  ad-hoc app is not notarization evidence.
 - **Wayland portal:** Xvfb proves X11 only. On a real Wayland desktop the Unix harness runs
   `portal-token-warmup` first (`:recording:runWaylandPortalSmoke`) and pins
   `SPECTRE_WAYLAND_HELPER` + `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR`. Approve **Share** + **Remember**
@@ -548,7 +561,8 @@ release SHA.
   move JBR Robot cells onto the seated Wayland display to dodge this — helper ScreenCast
   restore tokens do not cover OpenJDK/JBR Robot (new unparented Share / Remote Desktop
   dialogs per JVM; see #432).
-- **Manual residual (not auto-green):** TCC / notarization / app seal; first Wayland ScreenCast
+- **Manual residual (not auto-green):** first-time TCC grant + quit/relaunch (the `macos-tcc`
+  probe is automated and fail-closed); notarization / app seal; first Wayland ScreenCast
   consent during `portal-token-warmup` (later cells reuse the restore token); public
   Homebrew/Scoop/archive after undraft; focus/lock keys; multi-monitor / HiDPI; stock IntelliJ
   inject. Xvfb still does not prove Wayland portal behaviour.

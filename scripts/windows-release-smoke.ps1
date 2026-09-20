@@ -59,6 +59,7 @@ param(
 # Must match scripts/smoke_lib.py REQUIRED_SCENARIO_IDS (fail-closed matrix completeness).
 $script:RequiredScenarioIds = @(
     "preflight",
+    "macos-tcc",
     "check",
     "junit-live",
     "agent-attach-core",
@@ -805,6 +806,9 @@ try {
         if ([string]::IsNullOrWhiteSpace($Version)) { throw "Version is required" }
     }
     [void]$results.Add($pre)
+    if (-not $PreflightOnly) {
+        [void]$results.Add((New-StepResult -Id "macos-tcc" -Name "macOS Screen Recording / Accessibility TCC preflight" -Result "n/a" -Reason "Windows does not use macOS Screen Recording / Accessibility TCC"))
+    }
 
     if ($PreflightOnly) {
         # Schema/orchestration self-check: every required ID present; none silently omitted.

@@ -25,6 +25,11 @@ promotion, and undrafting.
      - `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-release-smoke.ps1` on stock WinPS 5.1
      → `build/smoke/windows-release-smoke.json` + `.md`
    - Optional wiring check (not a GO): `--preflight-only` / `-PreflightOnly`
+   - macOS full smoke fail-closes on `macos-tcc` (Screen Recording + Accessibility) before
+     `./gradlew check`. The Screen Recording probe installs and execs the helper at
+     `~/Library/Application Support/spectre/helpers/spectre-screencapture/SpectreCaptureHelper.app`
+     (same path later capture cells use). Grant Accessibility to the wrapping app and
+     Screen Recording to Spectre Capture Helper; quit/relaunch, `./gradlew --stop`, then rerun.
 3. Produce a results table from the reports. **Hard red or empty hard cells → do not tag.**
 4. Soft cells (Experimental matrix, focus flakes, Hot Reload) may be notes only.
 5. Manual residual only for TCC/notarization/seal, real Wayland portal, public Homebrew/Scoop/archive,

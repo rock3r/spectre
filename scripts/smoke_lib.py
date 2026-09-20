@@ -6,13 +6,18 @@ schemaVersion report shape; keep field names stable across both entrypoints.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
 import re
+import shlex
+import shutil
 import signal
+import struct
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -30,6 +35,7 @@ SCHEMA_VERSION = 1
 # must emit a result row for each ID that is in scope for that OS entrypoint.
 REQUIRED_SCENARIO_IDS: tuple[str, ...] = (
     "preflight",
+    "macos-tcc",
     "check",
     "junit-live",
     "agent-attach-core",
@@ -280,6 +286,1112 @@ def collect_preflight(
         repo_root=str(root.resolve()),
         environment=env,
     )
+
+
+# --- macOS TCC preflight (#502) ------------------------------------------------
+# Mirrors MacOsTccGuard (Accessibility osascript) and MacOsScreenCaptureAccess
+# (helper --mode preflight / CGPreflightScreenCaptureAccess). Release smoke is
+# fail-closed: Denied, Locked, and Unknown all block before ./gradlew check.
+# Never read TCC.db. Never invoke helper request / guide-permissions.
+
+TCC_GRANTED = "granted"
+TCC_DENIED = "denied"
+TCC_LOCKED = "locked"
+TCC_UNKNOWN = "unknown"
+TCC_NOT_APPLICABLE = "not_applicable"
+
+ACCESSIBILITY_OSASCRIPT = (
+    'tell application "System Events" to return name of first process'
+)
+SCREENCAPTURE_HELPER_NAME = "spectre-screencapture"
+SCREENCAPTURE_PREFLIGHT_TIMEOUT_SECONDS = 15
+SCREENCAPTURE_HELPER_EXIT_NOT_GRANTED = 6
+SCREENCAPTURE_HELPER_OVERRIDE_ENV = "SPECTRE_SCREENCAPTURE_HELPER"
+SCREENCAPTURE_HELPER_DIR_PROPERTY = "spectre.recording.screencapturekit.helperDir"
+# Same effective -D precedence as the java launcher / HotSpot (JDK 21+):
+# _JAVA_OPTIONS appends and wins, JDK_JAVA_OPTIONS prepends onto the command
+# line and beats JAVA_TOOL_OPTIONS. GRADLE_OPTS is not read by child JVMs.
+SCREENCAPTURE_HELPER_DIR_JVM_ENVS = (
+    "_JAVA_OPTIONS",
+    "JDK_JAVA_OPTIONS",
+    "JAVA_TOOL_OPTIONS",
+)
+MACOS_TCC_BLOCKED_REASON = (
+    "blocked by macos-tcc failure; grant Accessibility and Screen Recording to the "
+    "wrapping app and Screen Recording to Spectre Capture Helper, then quit/relaunch "
+    "and ./gradlew --stop"
+)
+IOREG_CONSOLE_LOCK_TIMEOUT_SECONDS = 3
+WRAPPING_SCREEN_RECORDING_PROBE_SIZE_PX = 32
+WRAPPING_SCREEN_RECORDING_RGB_MASK = 0x00FFFFFF
+SCREENCAPTURE_HELPER_DISPLAY_NAME = "Spectre Capture Helper"
+SCREENCAPTURE_HELPER_APP_NAME = "SpectreCaptureHelper.app"
+ASSEMBLE_SCREENCAPTURE_HELPER_TASK = ":recording:assembleScreenCaptureKitHelper"
+ASSEMBLE_SCREENCAPTURE_HELPER_UNIVERSAL_TASK = (
+    ":recording:assembleScreenCaptureKitHelperUniversal"
+)
+STAGE_PREBUILT_MAC_HELPER_TASK = ":recording:stagePrebuiltMacHelper"
+STAGE_STUB_MAC_HELPER_TASK = ":recording:stageStubMacHelper"
+ASSEMBLE_SCREENCAPTURE_HELPER_TIMEOUT_SECONDS = 180
+GRADLE_STOP_TIMEOUT_SECONDS = 120
+GRADLE_PROJECT_UNIVERSAL_HELPER = "universalHelper"
+GRADLE_PROJECT_NOTARIZE_HELPER = "notarizeScreenCaptureKitHelper"
+GRADLE_PROJECT_PREBUILT_MAC_HELPER = "prebuiltMacHelperPath"
+GRADLE_PROJECT_STUB_MAC_HELPER = "stubMacHelperForTesting"
+# Wrapper injects GRADLE_OPTS/JAVA_OPTS as java argv (gradlew:202,242); those
+# argv and JDK_JAVA_OPTIONS expand @argument files. _JAVA_OPTIONS /
+# JAVA_TOOL_OPTIONS @files crash HotSpot, so they fail closed.
+GRADLE_PROJECT_PROPERTY_JVM_ENVS = (
+    ("_JAVA_OPTIONS", False),
+    ("JDK_JAVA_OPTIONS", True),
+    ("JAVA_TOOL_OPTIONS", False),
+    ("JAVA_OPTS", True),
+    ("GRADLE_OPTS", True),
+)
+MACOS_TCC_ACCESSIBILITY_GUIDANCE = (
+    "macOS attributes Robot input to the wrapping app that launched this process "
+    "(Terminal, iTerm2, IntelliJ IDEA, Grok Bot, Claude.app, etc.) — not to the JVM "
+    "binary itself. Grant System Settings → Privacy & Security → Accessibility to that "
+    "wrapping app, then fully quit and relaunch it (macOS only re-evaluates TCC at "
+    "process start). Run `./gradlew --stop` so Gradle daemons started before the grant "
+    "are not reused."
+)
+MACOS_TCC_SCREEN_RECORDING_GUIDANCE = (
+    f"Native capture TCC accrues to {SCREENCAPTURE_HELPER_DISPLAY_NAME} "
+    f"({SCREENCAPTURE_HELPER_APP_NAME}), not the wrapping Terminal/IDE. Grant System "
+    f"Settings → Privacy & Security → Screen & System Audio Recording to that helper "
+    f"row. If the helper is not on disk yet, run `./gradlew "
+    f"{ASSEMBLE_SCREENCAPTURE_HELPER_TASK}` (or set SPECTRE_SCREENCAPTURE_HELPER)."
+)
+MACOS_TCC_WRAPPING_SCREEN_RECORDING_GUIDANCE = (
+    "RobotDriver.screenshot() and junit-live captures require Screen Recording for the "
+    "wrapping Terminal/IDE, in addition to Spectre Capture Helper. Grant System "
+    "Settings → Privacy & Security → Screen & System Audio Recording to that wrapping "
+    "app, then fully quit and relaunch it and run `./gradlew --stop`."
+)
+
+
+def macos_tcc_skip_reason(system: str | None = None) -> str | None:
+    """Hard N/A reason when macOS Screen Recording / Accessibility TCC does not apply."""
+    host = system or platform.system()
+    if host != "Darwin":
+        return f"{host} does not use macOS Screen Recording / Accessibility TCC"
+    return None
+
+
+def evaluate_macos_tcc(
+    *,
+    accessibility: str,
+    screen_recording: str,
+    wrapping_screen_recording: str = TCC_GRANTED,
+) -> None:
+    """Fail closed unless helper, wrapping-app, and Accessibility probes pass."""
+    problems: list[str] = []
+    accessibility_failed = False
+    helper_failed = False
+    wrapping_failed = False
+    for line in _tcc_status_problem(
+        "Accessibility",
+        accessibility,
+        allow_locked=False,
+        grant_target="the wrapping app",
+    ):
+        problems.append(line)
+        accessibility_failed = True
+    for line in _tcc_status_problem(
+        "Screen Recording",
+        screen_recording,
+        allow_locked=True,
+        grant_target=f"{SCREENCAPTURE_HELPER_DISPLAY_NAME} ({SCREENCAPTURE_HELPER_APP_NAME})",
+    ):
+        problems.append(line)
+        helper_failed = True
+    for line in _tcc_status_problem(
+        "wrapping-app Screen Recording",
+        wrapping_screen_recording,
+        allow_locked=True,
+        grant_target="the wrapping app (RobotDriver.screenshot / junit-live)",
+    ):
+        problems.append(line)
+        wrapping_failed = True
+    if accessibility_failed:
+        problems.append(MACOS_TCC_ACCESSIBILITY_GUIDANCE)
+    if helper_failed:
+        problems.append(MACOS_TCC_SCREEN_RECORDING_GUIDANCE)
+    if wrapping_failed:
+        problems.append(MACOS_TCC_WRAPPING_SCREEN_RECORDING_GUIDANCE)
+    if problems:
+        raise RuntimeError("\n".join(problems))
+
+
+def _tcc_status_problem(
+    label: str,
+    status: str,
+    *,
+    allow_locked: bool,
+    grant_target: str,
+) -> list[str]:
+    if status in {TCC_GRANTED, TCC_NOT_APPLICABLE}:
+        return []
+    settings = (
+        "System Settings → Privacy & Security → Accessibility"
+        if label == "Accessibility"
+        else "System Settings → Privacy & Security → Screen & System Audio Recording"
+    )
+    if allow_locked and status == TCC_LOCKED:
+        return [
+            "macOS screen capture is unavailable because the console session is locked. "
+            "Unlock the screen and retry before treating this as a TCC denial."
+        ]
+    if status == TCC_DENIED:
+        return [f"macOS {label} TCC is denied. Grant {settings} to {grant_target}."]
+    extra = ""
+    if label == "Screen Recording":
+        extra = (
+            f" Stage the helper with `./gradlew {ASSEMBLE_SCREENCAPTURE_HELPER_TASK}` "
+            f"and probe the runtime install under "
+            f"~/Library/Application Support/spectre/helpers/{SCREENCAPTURE_HELPER_NAME}/"
+            f"{SCREENCAPTURE_HELPER_APP_NAME}. A missing or non-executable "
+            f"{SCREENCAPTURE_HELPER_OVERRIDE_ENV} is fail-closed."
+        )
+    return [
+        f"could not determine macOS {label} TCC permission state (probe was unknown/"
+        f"inconclusive: {status}). Release smoke is fail-closed — grant {settings} "
+        f"to {grant_target}.{extra}"
+    ]
+
+
+def macos_console_lock_status(ioreg_output: str) -> bool | None:
+    """Same parse as MacOsTccGuard.macOsConsoleLockStatus."""
+    match = re.search(r'"IOConsoleLocked"\s*=\s*(Yes|No)', ioreg_output)
+    if match is None:
+        return None
+    return match.group(1) == "Yes"
+
+
+def probe_macos_console_locked(
+    runner: Callable[[], str | None] | None = None,
+) -> bool | None:
+    """True when ioreg reports IOConsoleLocked=Yes (MacOsTccGuard)."""
+    output = runner() if runner is not None else _run_ioreg_console_lock()
+    if output is None:
+        return None
+    return macos_console_lock_status(output)
+
+
+def _run_ioreg_console_lock() -> str | None:
+    try:
+        completed = subprocess.run(
+            ["/usr/sbin/ioreg", "-n", "Root", "-d", "1", "-r"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=IOREG_CONSOLE_LOCK_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return completed.stdout or ""
+
+
+def interpret_wrapping_screen_recording_pixels(
+    pixels: Sequence[int],
+    *,
+    width: int,
+    height: int,
+) -> str:
+    """Same all-black origin-region rule as MacOsTccGuard.robotScreenRecordingProbe."""
+    if width <= 1 or height <= 1:
+        return TCC_UNKNOWN
+    if len(pixels) < width * height:
+        return TCC_UNKNOWN
+    for rgb in pixels:
+        if (int(rgb) & WRAPPING_SCREEN_RECORDING_RGB_MASK) != 0:
+            return TCC_GRANTED
+    return TCC_DENIED
+
+
+def probe_macos_wrapping_screen_recording(
+    *,
+    runner: Callable[[], str | None] | None = None,
+    console_locked_probe: Callable[[], bool | None] | None = None,
+    system: str | None = None,
+) -> str:
+    """Wrapping-app Screen Recording for RobotDriver.screenshot / junit-live."""
+    if macos_tcc_skip_reason(system=system) is not None:
+        return TCC_NOT_APPLICABLE
+    if (console_locked_probe or probe_macos_console_locked)() is True:
+        return TCC_LOCKED
+    if runner is not None:
+        raw = runner()
+        if raw is None:
+            return TCC_UNKNOWN
+        return _wrapping_status_from_bmp(raw.encode("latin1") if isinstance(raw, str) else raw)
+
+    bmp = _capture_wrapping_screen_recording_bmp()
+    if bmp is None:
+        return TCC_UNKNOWN
+    return _wrapping_status_from_bmp(bmp)
+
+
+def _wrapping_status_from_bmp(data: bytes) -> str:
+    parsed = _bmp_rgb_pixels(data)
+    if parsed is None:
+        return TCC_UNKNOWN
+    pixels, width, height = parsed
+    return interpret_wrapping_screen_recording_pixels(pixels, width=width, height=height)
+
+
+def _bmp_rgb_pixels(data: bytes) -> tuple[list[int], int, int] | None:
+    if len(data) < 30 or data[:2] != b"BM":
+        return None
+    offset = struct.unpack_from("<I", data, 10)[0]
+    width, height = struct.unpack_from("<ii", data, 18)
+    bits = struct.unpack_from("<H", data, 28)[0]
+    height = abs(height)
+    if width <= 0 or height <= 0 or bits not in {24, 32} or offset < 0:
+        return None
+    row_size = ((width * bits + 31) // 32) * 4
+    pixels: list[int] = []
+    for row in range(height):
+        start = offset + row * row_size
+        for col in range(width):
+            pixel_at = start + col * (bits // 8)
+            if pixel_at + 2 >= len(data):
+                return None
+            blue, green, red = data[pixel_at], data[pixel_at + 1], data[pixel_at + 2]
+            pixels.append((red << 16) | (green << 8) | blue)
+    return pixels, width, height
+
+
+def _capture_wrapping_screen_recording_bmp() -> bytes | None:
+    path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".bmp", delete=False) as handle:
+            path = Path(handle.name)
+        completed = subprocess.run(
+            [
+                "screencapture",
+                "-x",
+                "-t",
+                "bmp",
+                "-R",
+                f"0,0,{WRAPPING_SCREEN_RECORDING_PROBE_SIZE_PX},"
+                f"{WRAPPING_SCREEN_RECORDING_PROBE_SIZE_PX}",
+                str(path),
+            ],
+            timeout=SCREENCAPTURE_PREFLIGHT_TIMEOUT_SECONDS,
+            check=False,
+        )
+        if completed.returncode != 0 or not path.is_file():
+            return None
+        return path.read_bytes()
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    finally:
+        if path is not None:
+            path.unlink(missing_ok=True)
+
+
+def probe_macos_accessibility(
+    runner: Callable[[], tuple[int, str] | None] | None = None,
+) -> str:
+    """Same semantics as `MacOsTccGuard.osascriptAccessibilityProbe`."""
+    result = runner() if runner is not None else _run_osascript_accessibility()
+    if result is None:
+        return TCC_UNKNOWN
+    exit_code, output = result
+    text = (output or "").strip()
+    if exit_code == 0 and text:
+        return TCC_GRANTED
+    if exit_code != 0 and "not allowed assistive access" in text.lower():
+        return TCC_DENIED
+    return TCC_UNKNOWN
+
+
+def _run_osascript_accessibility() -> tuple[int, str] | None:
+    try:
+        completed = subprocess.run(
+            ["osascript", "-e", ACCESSIBILITY_OSASCRIPT],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return int(completed.returncode), completed.stdout or ""
+
+
+def macos_screencapture_staged_helper(root: Path) -> Path:
+    return (
+        root
+        / "recording"
+        / "build"
+        / "generated"
+        / "screenCaptureHelper"
+        / "native"
+        / "macos"
+        / SCREENCAPTURE_HELPER_APP_NAME
+        / "Contents"
+        / "MacOS"
+        / SCREENCAPTURE_HELPER_NAME
+    )
+
+
+def macos_screencapture_runtime_helper(
+    home: Path | None = None,
+    helper_dir: Path | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> Path:
+    """Same extract path as HelperBinaryExtractor (helperDir property or default)."""
+    if helper_dir is not None:
+        return (
+            helper_dir
+            / SCREENCAPTURE_HELPER_APP_NAME
+            / "Contents"
+            / "MacOS"
+            / SCREENCAPTURE_HELPER_NAME
+        )
+    resolved = home
+    if resolved is None:
+        resolved = macos_screencapture_jvm_user_home(environ)
+    if resolved is None:
+        resolved = macos_screencapture_query_java_user_home(environ)
+    if resolved is None:
+        raise InvalidScreencaptureHelperDir(
+            "could not resolve JVM user.home for the default helper extract path; "
+            "set -Duser.home to an absolute path or install a usable java"
+        )
+    return (
+        resolved
+        / "Library"
+        / "Application Support"
+        / "spectre"
+        / "helpers"
+        / SCREENCAPTURE_HELPER_NAME
+        / SCREENCAPTURE_HELPER_APP_NAME
+        / "Contents"
+        / "MacOS"
+        / SCREENCAPTURE_HELPER_NAME
+    )
+
+
+class InvalidScreencaptureHelperDir(RuntimeError):
+    """helperDir is configured but cannot be mirrored by the smoke preflight."""
+
+
+@dataclass(frozen=True)
+class ScreencaptureHelperDirSetting:
+    """One JVM-option helperDir token: defined-and-blank is not the same as absent."""
+
+    defined: bool
+    path: Path | None = None
+
+
+def _strip_hotspot_argfile_comments(text: str) -> str:
+    """Drop unquoted # comments, matching JDK 21/25 launcher argument-file rules.
+
+    An unquoted # comments out the rest of the line. If it appears mid-token,
+    HotSpot discards that whole argument (the property is absent) rather than
+    keeping the prefix before #. Quoted # stays part of the token.
+    """
+    cleaned: list[str] = []
+    for line in text.splitlines():
+        in_quote = ""
+        chars: list[str] = []
+        escaped = False
+        for char in line:
+            if escaped:
+                chars.append(char)
+                escaped = False
+                continue
+            if char == "\\" and in_quote:
+                chars.append(char)
+                escaped = True
+                continue
+            if in_quote:
+                chars.append(char)
+                if char == in_quote:
+                    in_quote = ""
+                continue
+            if char in "'\"":
+                in_quote = char
+                chars.append(char)
+                continue
+            if char == "#":
+                # Mid-token #: drop the unfinished argument, then the comment.
+                if chars and not chars[-1].isspace():
+                    while chars and not chars[-1].isspace():
+                        chars.pop()
+                break
+            chars.append(char)
+        cleaned.append("".join(chars))
+    return "\n".join(cleaned)
+
+
+def tokenize_jvm_options(text: str, *, expand_argfiles: bool = False) -> list[str]:
+    """Split JVM option text; optionally expand JDK_JAVA_OPTIONS @argument files."""
+    try:
+        tokens = shlex.split(text, posix=True)
+    except ValueError as error:
+        raise InvalidScreencaptureHelperDir(
+            f"JVM options cannot be parsed: {error}"
+        ) from error
+    if not expand_argfiles:
+        if any(token.startswith("@") and len(token) > 1 for token in tokens):
+            raise InvalidScreencaptureHelperDir(
+                "the Java launcher does not expand @argument files in this env var; "
+                "the child JVM will fail to start"
+            )
+        return tokens
+    expanded: list[str] = []
+    for token in tokens:
+        if not (token.startswith("@") and len(token) > 1):
+            expanded.append(token)
+            continue
+        path = Path(token[1:])
+        if not path.is_absolute():
+            raise InvalidScreencaptureHelperDir(
+                f"JVM @argument file must be an absolute path (got {token!r}). "
+                "Relative files resolve against different working directories "
+                "in smoke vs Gradle."
+            )
+        try:
+            contents = path.read_text(encoding="utf-8")
+        except OSError as error:
+            raise InvalidScreencaptureHelperDir(
+                f"could not read JVM @argument file {path}: {error}"
+            ) from error
+        expanded.extend(
+            tokenize_jvm_options(
+                _strip_hotspot_argfile_comments(contents),
+                expand_argfiles=False,
+            )
+        )
+    return expanded
+
+
+def parse_jvm_system_property(
+    text: str,
+    name: str,
+    *,
+    expand_argfiles: bool = False,
+) -> ScreencaptureHelperDirSetting:
+    """Last -Dname token in JVM option text."""
+    prefix = f"-D{name}"
+    tokens = tokenize_jvm_options(text, expand_argfiles=expand_argfiles)
+    last: Path | None = None
+    found = False
+    for token in tokens:
+        if token == prefix:
+            raise InvalidScreencaptureHelperDir(
+                f"{name} is set without a value; cannot mirror the child JVM"
+            )
+        if token.startswith(f"{prefix}="):
+            found = True
+            value = token[len(prefix) + 1 :]
+            last = Path(value) if value.strip() else None
+    return ScreencaptureHelperDirSetting(defined=found, path=last)
+
+
+def parse_screencapture_helper_dir_property(text: str) -> ScreencaptureHelperDirSetting:
+    """Last -Dspectre.recording.screencapturekit.helperDir token in JVM option text."""
+    return parse_jvm_system_property(text, SCREENCAPTURE_HELPER_DIR_PROPERTY)
+
+
+def macos_screencapture_configured_helper_dir(
+    environ: Mapping[str, str] | None = None,
+    *,
+    root: Path | None = None,
+) -> Path | None:
+    """Resolve helperDir from env vars the child JVM actually inherits."""
+    del root  # gradle.properties is Gradle-JVM only; JavaExec does not forward it.
+    env = environ if environ is not None else os.environ
+    for name in SCREENCAPTURE_HELPER_DIR_JVM_ENVS:
+        raw = env.get(name, "")
+        if not raw:
+            continue
+        parsed = parse_jvm_system_property(
+            raw,
+            SCREENCAPTURE_HELPER_DIR_PROPERTY,
+            expand_argfiles=name == "JDK_JAVA_OPTIONS",
+        )
+        if not parsed.defined:
+            continue
+        if parsed.path is None:
+            return None
+        if not parsed.path.is_absolute():
+            raise InvalidScreencaptureHelperDir(
+                f"{SCREENCAPTURE_HELPER_DIR_PROPERTY} must be an absolute path "
+                f"(got {str(parsed.path)!r} from {name}). Relative values resolve "
+                "against different working directories in smoke vs Gradle."
+            )
+        return parsed.path
+    return None
+
+
+def macos_screencapture_jvm_user_home(
+    environ: Mapping[str, str] | None = None,
+) -> Path | None:
+    """Absolute -Duser.home the child JVM will use, if one is defined."""
+    env = environ if environ is not None else os.environ
+    for name in SCREENCAPTURE_HELPER_DIR_JVM_ENVS:
+        raw = env.get(name, "")
+        if not raw:
+            continue
+        parsed = parse_jvm_system_property(
+            raw,
+            "user.home",
+            expand_argfiles=name == "JDK_JAVA_OPTIONS",
+        )
+        if not parsed.defined:
+            continue
+        if parsed.path is None or not parsed.path.is_absolute():
+            raise InvalidScreencaptureHelperDir(
+                f"user.home must be an absolute path (got {parsed.path!r} from {name})"
+            )
+        return parsed.path
+    return None
+
+
+def parse_java_show_settings_property(text: str, name: str) -> Path | None:
+    """Parse `name = value` from `java -XshowSettings:properties` output."""
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if not stripped.startswith(f"{name} ="):
+            continue
+        value = stripped.split("=", 1)[1].strip()
+        if not value:
+            return None
+        path = Path(value)
+        if not path.is_absolute():
+            raise InvalidScreencaptureHelperDir(
+                f"{name} from java -XshowSettings:properties must be absolute "
+                f"(got {value!r})"
+            )
+        return path
+    return None
+
+
+def macos_screencapture_query_java_user_home(
+    environ: Mapping[str, str] | None = None,
+) -> Path | None:
+    """Effective JVM user.home, including the launcher default (not Path.home())."""
+    env = os.environ if environ is None else {**os.environ, **dict(environ)}
+    java = shutil.which("java", path=env.get("PATH"))
+    java_home = env.get("JAVA_HOME", "").rstrip("/")
+    if java is None and java_home:
+        candidate = Path(java_home) / "bin" / "java"
+        if candidate.is_file():
+            java = str(candidate)
+    if not java:
+        return None
+    try:
+        completed = subprocess.run(
+            [java, "-XshowSettings:properties", "-version"],
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return parse_java_show_settings_property(completed.stdout or "", "user.home")
+
+
+class InvalidScreencaptureHelperOverride(RuntimeError):
+    """SPECTRE_SCREENCAPTURE_HELPER is set but is not an executable helper."""
+
+
+def macos_screencapture_override_path(
+    environ: Mapping[str, str] | None = None,
+) -> Path | None:
+    """Authoritative SPECTRE_SCREENCAPTURE_HELPER. Absolute paths only."""
+    raw = (environ if environ is not None else os.environ).get(
+        SCREENCAPTURE_HELPER_OVERRIDE_ENV, ""
+    )
+    # HelperBinaryExtractor uses isNotBlank() then Path.of(untrimmed). Do not strip:
+    # " /abs/helper" is a different path than "/abs/helper".
+    if not raw.strip():
+        return None
+    override = Path(raw)
+    # HelperBinaryExtractor.resolveOverrideExecutable accepts a relative Path.of()
+    # value, but smoke CWD (repo root) and Gradle JavaExec CWD (module dir) differ.
+    # Fail closed instead of probing a different helper than later capture cells.
+    if not override.is_absolute():
+        raise InvalidScreencaptureHelperOverride(
+            f"{SCREENCAPTURE_HELPER_OVERRIDE_ENV} must be an absolute path "
+            f"(got {raw!r}). Relative values resolve against different working "
+            f"directories in smoke vs Gradle. Point it at {SCREENCAPTURE_HELPER_NAME} "
+            f"or {SCREENCAPTURE_HELPER_APP_NAME}, or unset it."
+        )
+    # Same shapes as HelperBinaryExtractor.resolveOverrideExecutable: the path
+    # itself, a .app bundle, or <dir>/Contents/MacOS/spectre-screencapture.
+    if override.is_dir() and override.name.endswith(".app"):
+        resolved = override / "Contents" / "MacOS" / SCREENCAPTURE_HELPER_NAME
+    elif not _is_executable_helper(override):
+        nested = override / "Contents" / "MacOS" / SCREENCAPTURE_HELPER_NAME
+        resolved = nested if _is_executable_helper(nested) else override
+    else:
+        resolved = override
+    if _is_executable_helper(resolved):
+        return resolved
+    raise InvalidScreencaptureHelperOverride(
+        f"{SCREENCAPTURE_HELPER_OVERRIDE_ENV} points at {raw!r} but no executable "
+        f"helper was found. Point it at {SCREENCAPTURE_HELPER_NAME} or "
+        f"{SCREENCAPTURE_HELPER_APP_NAME}, or unset it."
+    )
+
+
+def macos_screencapture_helper_candidates(
+    root: Path,
+    *,
+    home: Path | None = None,
+) -> list[Path]:
+    candidates: list[Path] = []
+    try:
+        override = macos_screencapture_override_path()
+    except InvalidScreencaptureHelperOverride:
+        return []
+    if override is not None:
+        return [override]
+    try:
+        helper_dir = macos_screencapture_configured_helper_dir(root=root)
+        jvm_home = macos_screencapture_jvm_user_home()
+        resolved_home = home if home is not None else jvm_home
+        if resolved_home is not None or helper_dir is not None or platform.system() == "Darwin":
+            candidates.append(
+                macos_screencapture_runtime_helper(resolved_home, helper_dir=helper_dir)
+            )
+    except InvalidScreencaptureHelperDir:
+        return []
+    return candidates
+
+
+def macos_screencapture_helper_path(
+    root: Path,
+    *,
+    home: Path | None = None,
+) -> Path | None:
+    try:
+        override = macos_screencapture_override_path()
+    except InvalidScreencaptureHelperOverride:
+        return None
+    if override is not None:
+        return override
+    for candidate in macos_screencapture_helper_candidates(root, home=home):
+        if _is_executable_helper(candidate):
+            return candidate
+    return None
+
+
+def parse_screencapture_preflight_json(stdout: str) -> str:
+    """Parse the first nonblank helper line, matching MacOsScreenCaptureAccess.runHelper."""
+    line = next((text for raw in stdout.splitlines() if (text := raw.strip())), "")
+    if not line:
+        return TCC_UNKNOWN
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError:
+        return TCC_UNKNOWN
+    if not isinstance(payload, Mapping) or "granted" not in payload:
+        return TCC_UNKNOWN
+    return TCC_GRANTED if payload.get("granted") is True else TCC_DENIED
+
+
+def interpret_screencapture_preflight(exit_code: int, stdout: str) -> str:
+    """Match MacOsScreenCaptureAccess.runHelper: exit 0 granted, exit 6 denied."""
+    parsed = parse_screencapture_preflight_json(stdout)
+    if exit_code == 0 and parsed == TCC_GRANTED:
+        return TCC_GRANTED
+    if exit_code == SCREENCAPTURE_HELPER_EXIT_NOT_GRANTED and parsed == TCC_DENIED:
+        return TCC_DENIED
+    return TCC_UNKNOWN
+
+
+def probe_macos_screen_recording(
+    *,
+    root: Path | None = None,
+    runner: Callable[[], tuple[int, str] | None] | None = None,
+    helper_path: Path | None = None,
+    invoke_helper: Callable[[list[str]], tuple[int, str] | None] | None = None,
+    ensure_helper: Callable[[], Path | None] | None = None,
+    refresh_helper: Callable[[], Path | None] | None = None,
+    home: Path | None = None,
+    console_locked_probe: Callable[[], bool | None] | None = None,
+) -> str:
+    """Run MacOsScreenCaptureAccess.preflight via the helper; never request/guide."""
+    if (console_locked_probe or probe_macos_console_locked)() is True:
+        return TCC_LOCKED
+    if runner is not None:
+        result = runner()
+        if result is None:
+            return TCC_UNKNOWN
+        return interpret_screencapture_preflight(result[0], result[1])
+
+    try:
+        override = macos_screencapture_override_path()
+    except InvalidScreencaptureHelperOverride:
+        return TCC_UNKNOWN
+    if override is None:
+        try:
+            macos_screencapture_configured_helper_dir(root=root)
+        except InvalidScreencaptureHelperDir:
+            return TCC_UNKNOWN
+    resolved = override if override is not None else helper_path
+    if resolved is None and ensure_helper is not None:
+        resolved = ensure_helper()
+    if resolved is None and root is not None:
+        resolved = macos_screencapture_helper_path(root, home=home)
+    if resolved is None:
+        return TCC_UNKNOWN
+
+    invoker = invoke_helper or _run_screencapture_preflight
+    status = _invoke_screencapture_preflight(resolved, invoker)
+    if (
+        status == TCC_UNKNOWN
+        and override is None
+        and refresh_helper is not None
+    ):
+        refreshed = refresh_helper()
+        if refreshed is not None:
+            status = _invoke_screencapture_preflight(refreshed, invoker)
+    return status
+
+
+def macos_screencapture_helper_fingerprint(executable: Path) -> str | None:
+    """SHA-256 of the helper .app tree, matching HelperAppBundleMaterial."""
+    if not executable.is_file():
+        return None
+    app = macos_screencapture_app_root(executable)
+    root = app if app is not None and app.is_dir() else executable
+    digest = hashlib.sha256()
+    if root.is_file():
+        digest.update(root.name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(root.read_bytes())
+        return digest.hexdigest()
+    files = sorted(path for path in root.rglob("*") if path.is_file())
+    for path in files:
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def macos_screencapture_app_root(executable: Path) -> Path | None:
+    cursor = executable
+    for _ in range(6):
+        if cursor.name.endswith(".app"):
+            return cursor
+        parent = cursor.parent
+        if parent == cursor:
+            break
+        cursor = parent
+    return None
+
+
+def install_macos_screencapture_helper(
+    staged_executable: Path,
+    dest_executable: Path,
+) -> Path | None:
+    """Copy the staged .app onto the HelperBinaryExtractor runtime path."""
+    src_app = macos_screencapture_app_root(staged_executable)
+    dest_app = macos_screencapture_app_root(dest_executable)
+    if src_app is None or dest_app is None or not src_app.is_dir():
+        dest_executable.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(staged_executable, dest_executable)
+        dest_executable.chmod(0o755)
+        return dest_executable if _is_executable_helper(dest_executable) else None
+    if dest_app.exists():
+        shutil.rmtree(dest_app)
+    dest_app.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src_app, dest_app)
+    if dest_executable.is_file():
+        dest_executable.chmod(0o755)
+    return dest_executable if _is_executable_helper(dest_executable) else None
+
+
+def _invoke_screencapture_preflight(
+    helper: Path,
+    invoker: Callable[[list[str]], tuple[int, str] | None],
+) -> str:
+    invoked = invoker([str(helper), "--mode", "preflight"])
+    if invoked is None:
+        return TCC_UNKNOWN
+    return interpret_screencapture_preflight(invoked[0], invoked[1])
+
+
+def ensure_macos_screencapture_helper(
+    root: Path,
+    *,
+    assemble: Callable[[], int] | None = None,
+    home: Path | None = None,
+    install: Callable[[Path, Path], Path | None] | None = None,
+    refresh: bool = False,
+    overall_deadline: float | None = None,
+    assemble_log: Path | None = None,
+) -> Path | None:
+    """Install the helper to the runtime TCC path, assembling first when needed."""
+    try:
+        override = macos_screencapture_override_path()
+    except InvalidScreencaptureHelperOverride:
+        return None
+    if override is not None:
+        return override
+    try:
+        helper_dir = macos_screencapture_configured_helper_dir(root=root)
+        jvm_home = macos_screencapture_jvm_user_home()
+        resolved_home = home if home is not None else jvm_home
+        runtime = macos_screencapture_runtime_helper(resolved_home, helper_dir=helper_dir)
+    except InvalidScreencaptureHelperDir:
+        return None
+    assembler = (
+        assemble
+        if assemble is not None
+        else (
+            lambda: _assemble_screencapture_helper(
+                root,
+                overall_deadline=overall_deadline,
+                log_path=assemble_log,
+            )
+        )
+    )
+    if assembler() != 0:
+        return None
+    staged = macos_screencapture_staged_helper(root)
+    if not _is_executable_helper(staged):
+        return None
+    if (
+        _is_executable_helper(runtime)
+        and not refresh
+        and macos_screencapture_helper_fingerprint(runtime)
+        == macos_screencapture_helper_fingerprint(staged)
+    ):
+        return runtime
+
+    if helper_dir is None and resolved_home is None and platform.system() != "Darwin":
+        return None
+    installer = install if install is not None else install_macos_screencapture_helper
+    return installer(staged, runtime)
+
+
+def _is_executable_helper(path: Path) -> bool:
+    return path.is_file() and os.access(path, os.X_OK)
+
+
+class InvalidGradleProjectProperty(RuntimeError):
+    """A Gradle property source exists but cannot be mirrored by the smoke preflight."""
+
+
+def gradle_user_home(environ: Mapping[str, str] | None = None) -> Path:
+    env = environ if environ is not None else os.environ
+    raw = env.get("GRADLE_USER_HOME")
+    if raw:
+        return Path(raw)
+    return Path.home() / ".gradle"
+
+
+def _java_properties_key(line: str) -> str | None:
+    """Key of one Java-properties line (Gradle gradle.properties semantics)."""
+    index = 0
+    length = len(line)
+    while index < length and line[index] in " \t\f":
+        index += 1
+    if index >= length or line[index] in "#!":
+        return None
+    key: list[str] = []
+    escaped = False
+    while index < length:
+        char = line[index]
+        if escaped:
+            key.append(char)
+            escaped = False
+            index += 1
+            continue
+        if char == "\\":
+            escaped = True
+            index += 1
+            continue
+        if char in "=: \t\f":
+            break
+        key.append(char)
+        index += 1
+    return "".join(key)
+
+
+def _gradle_properties_defines(path: Path, name: str) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise InvalidGradleProjectProperty(
+            f"could not read Gradle properties {path}: {error}"
+        ) from error
+    aliases = (name, f"systemProp.org.gradle.project.{name}")
+    continued = ""
+    for raw in text.splitlines():
+        line = continued + raw
+        if line.endswith("\\"):
+            continued = line[:-1]
+            continue
+        continued = ""
+        key = _java_properties_key(line)
+        if key in aliases:
+            return True
+    return False
+
+
+def _jvm_defines_system_property(
+    text: str,
+    name: str,
+    *,
+    expand_argfiles: bool,
+) -> bool:
+    prefix = f"-D{name}"
+    try:
+        tokens = tokenize_jvm_options(text, expand_argfiles=expand_argfiles)
+    except InvalidScreencaptureHelperDir as error:
+        raise InvalidGradleProjectProperty(str(error)) from error
+    return any(token == prefix or token.startswith(f"{prefix}=") for token in tokens)
+
+
+def gradle_project_property_present(
+    name: str,
+    root: Path,
+    environ: Mapping[str, str] | None = None,
+) -> bool:
+    """True when Gradle would see project property `name` as present."""
+    env = environ if environ is not None else os.environ
+    if f"ORG_GRADLE_PROJECT_{name}" in env:
+        return True
+    sys_name = f"org.gradle.project.{name}"
+    for env_name, expand_argfiles in GRADLE_PROJECT_PROPERTY_JVM_ENVS:
+        raw = env.get(env_name, "")
+        if not raw:
+            continue
+        if _jvm_defines_system_property(
+            raw, sys_name, expand_argfiles=expand_argfiles
+        ):
+            return True
+    return _gradle_properties_defines(
+        gradle_user_home(env) / "gradle.properties", name
+    ) or _gradle_properties_defines(root / "gradle.properties", name)
+
+
+def macos_screencapture_assemble_task(
+    root: Path,
+    environ: Mapping[str, str] | None = None,
+) -> str:
+    """Same staging task processResources / processTestResources would depend on."""
+    if gradle_project_property_present(
+        GRADLE_PROJECT_STUB_MAC_HELPER, root, environ
+    ):
+        return STAGE_STUB_MAC_HELPER_TASK
+    if gradle_project_property_present(
+        GRADLE_PROJECT_PREBUILT_MAC_HELPER, root, environ
+    ):
+        return STAGE_PREBUILT_MAC_HELPER_TASK
+    if gradle_project_property_present(
+        GRADLE_PROJECT_UNIVERSAL_HELPER, root, environ
+    ) or gradle_project_property_present(
+        GRADLE_PROJECT_NOTARIZE_HELPER, root, environ
+    ):
+        return ASSEMBLE_SCREENCAPTURE_HELPER_UNIVERSAL_TASK
+    return ASSEMBLE_SCREENCAPTURE_HELPER_TASK
+
+
+def _assemble_screencapture_helper(
+    root: Path,
+    *,
+    overall_deadline: float | None = None,
+    log_path: Path | None = None,
+) -> int:
+    gradlew = root / "gradlew"
+    if not gradlew.is_file():
+        return 127
+    try:
+        task = macos_screencapture_assemble_task(root)
+    except InvalidGradleProjectProperty:
+        return 127
+    log = log_path
+    if log is None:
+        handle, tmp = tempfile.mkstemp(prefix="macos-tcc-assemble-", suffix=".log")
+        os.close(handle)
+        log = Path(tmp)
+    try:
+        code, _, _ = run_command(
+            [str(gradlew), task, "--console=plain"],
+            cwd=root,
+            timeout=ASSEMBLE_SCREENCAPTURE_HELPER_TIMEOUT_SECONDS,
+            log_path=log,
+            overall_deadline=overall_deadline,
+        )
+    except OSError:
+        return 124
+    return int(code)
+
+
+def _run_screencapture_preflight(argv: Sequence[str]) -> tuple[int, str] | None:
+    try:
+        completed = subprocess.run(
+            list(argv),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=SCREENCAPTURE_PREFLIGHT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return int(completed.returncode), completed.stdout or ""
+
+
+def require_macos_tcc(
+    *,
+    accessibility_probe: Callable[[], str] | None = None,
+    screen_recording_probe: Callable[[], str] | None = None,
+    wrapping_screen_recording_probe: Callable[[], str] | None = None,
+    system: str | None = None,
+) -> None:
+    """Fail closed for live Robot / capture cells when Darwin TCC is missing."""
+    if macos_tcc_skip_reason(system=system) is not None:
+        return
+    evaluate_macos_tcc(
+        accessibility=(accessibility_probe or probe_macos_accessibility)(),
+        screen_recording=(screen_recording_probe or probe_macos_screen_recording)(),
+        wrapping_screen_recording=(
+            wrapping_screen_recording_probe or probe_macos_wrapping_screen_recording
+        )(),
+    )
+
+
+def fill_blocked_remaining(
+    results: Sequence[ScenarioResult],
+    *,
+    reason: str,
+) -> list[ScenarioResult]:
+    """Keep existing rows and hard-N/A any missing required IDs (fail-fast abort)."""
+    filled = list(results)
+    seen = {row.id for row in filled}
+    for scenario_id in REQUIRED_SCENARIO_IDS:
+        if scenario_id in seen:
+            continue
+        filled.append(
+            scenario_result(
+                scenario_id,
+                name=f"{scenario_id} (not executed)",
+                result=RESULT_NA,
+                reason=reason,
+                hard=True,
+            )
+        )
+    return filled
 
 
 def _default_base_tag(root: Path) -> str:
