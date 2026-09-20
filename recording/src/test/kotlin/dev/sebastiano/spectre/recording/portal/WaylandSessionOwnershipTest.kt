@@ -79,20 +79,51 @@ class WaylandSessionOwnershipTest {
             val paths = waylandSessionPaths(dir)
             Files.createFile(paths.socket)
             var started = 0
+            var bound = false
             val resolved =
                 resolveWaylandSessionSocket(
                     paths = paths,
-                    socketIsLive = { false },
+                    socketIsLive = { bound && Files.exists(it) },
                     startHelper = {
                         started += 1
                         Files.deleteIfExists(paths.socket)
                         Files.createFile(paths.socket)
+                        bound = true
                     },
                     waitForSocket = { path, _ -> Files.exists(path) },
                     timeoutMs = 1_000,
                 )
             assertEquals(1, started)
             assertEquals(paths.socket, resolved)
+        } finally {
+            dir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `does not unlink a helper socket that wins the cold-start race`() {
+        val dir = Files.createTempDirectory("spectre-wayland-race-socket-")
+        try {
+            val paths = waylandSessionPaths(dir)
+            Files.createFile(paths.socket)
+            Files.writeString(paths.socket, "winning-helper")
+            var probes = 0
+            var started = 0
+            val resolved =
+                resolveWaylandSessionSocket(
+                    paths = paths,
+                    socketIsLive = {
+                        probes += 1
+                        probes > 1 && Files.exists(it)
+                    },
+                    startHelper = { started += 1 },
+                    waitForSocket = { path, _ -> Files.exists(path) },
+                    timeoutMs = 1_000,
+                )
+            assertEquals(paths.socket, resolved)
+            assertEquals(1, started)
+            assertTrue(Files.exists(paths.socket))
+            assertEquals("winning-helper", Files.readString(paths.socket))
         } finally {
             dir.toFile().deleteRecursively()
         }
@@ -107,7 +138,7 @@ class WaylandSessionOwnershipTest {
             val resolved =
                 resolveWaylandSessionSocket(
                     paths = paths,
-                    socketIsLive = { false },
+                    socketIsLive = { polls >= 3 },
                     startHelper = {},
                     waitForSocket = { _, _ ->
                         polls += 1

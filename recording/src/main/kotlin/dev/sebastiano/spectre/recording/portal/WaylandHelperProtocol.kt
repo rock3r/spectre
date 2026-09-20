@@ -186,11 +186,16 @@ internal fun resolveWaylandSessionSocket(
     if (java.nio.file.Files.exists(paths.socket) && socketIsLive(paths.socket)) {
         return paths.socket
     }
-    java.nio.file.Files.deleteIfExists(paths.socket)
+    // Do not unlink here. A concurrent helper can bind between this miss and deleteIfExists,
+    // which would remove the winner's live socket. The native process unlinks leftovers after
+    // it acquires the session flock.
     startHelper()
     val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMs)
     while (System.nanoTime() < deadline) {
-        if (waitForSocket(paths.socket, SESSION_SOCKET_POLL_MS)) {
+        if (socketIsLive(paths.socket)) {
+            return paths.socket
+        }
+        if (waitForSocket(paths.socket, SESSION_SOCKET_POLL_MS) && socketIsLive(paths.socket)) {
             return paths.socket
         }
         check(!helperExited()) { "spectre-wayland-helper --session ${helperExitDetail()}" }

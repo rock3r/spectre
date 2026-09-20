@@ -208,8 +208,8 @@ internal constructor(
         fun waitUntilExists(path: Path, timeoutMs: Long): Boolean {
             val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
             while (System.nanoTime() < deadline) {
-                if (Files.exists(path)) return true
                 Thread.sleep(SOCKET_POLL_MS)
+                if (Files.exists(path)) return true
             }
             return Files.exists(path)
         }
