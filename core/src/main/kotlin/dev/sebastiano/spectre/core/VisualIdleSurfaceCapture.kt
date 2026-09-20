@@ -124,13 +124,18 @@ internal fun isNativeWindowCaptureAvailable(
 internal fun isNativeCaptureHelperUnusable(error: Throwable): Boolean {
     val chain = generateSequence(error) { it.cause }.toList()
     val messages = chain.mapNotNull { it.message }
-    if (messages.any { it.contains("gst-launch", ignoreCase = true) }) return true
     if (
         messages.any { message ->
             message.contains("Linux", ignoreCase = true) &&
                 message.contains("screenshot is unavailable", ignoreCase = true)
         }
     ) {
+        return true
+    }
+    // Helper Event.Error for a missing gst-launch process (screenshot.rs spawn context).
+    // Later pipeline strings also mention gst-launch ("did not exit within", "pipeline
+    // exited with status") and must stay unsampleable so #355 does not region-substitute.
+    if (messages.any { it.contains("spawning gst-launch", ignoreCase = true) }) {
         return true
     }
     // LinuxNativeScreenshotter wraps every IOException as "Linux screenshot helper failed".

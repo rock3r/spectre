@@ -192,6 +192,50 @@ class VisualIdleSurfaceCaptureTest {
     }
 
     @Test
+    fun `does not fall back to region when gst-launch pipeline fails after spawn`() {
+        assumeLiveAwtAvailable()
+        val frame =
+            Frame("gst-pipeline-timeout").apply {
+                setBounds(0, 0, 80, 60)
+                addNotify()
+            }
+        var regionCalls = 0
+        var windowCalls = 0
+        val backend =
+            PlatformScreenCaptureBackend(
+                regionCapture = {
+                    regionCalls += 1
+                    solidImage(80, 60, 0xFF00AA00.toInt())
+                },
+                nativeCapture = {
+                    windowCalls += 1
+                    error(
+                        "spectre-wayland-helper reported an error during screenshot capture: " +
+                            "kind=CaptureFailed message=gst-launch did not exit within 8s " +
+                            "while capturing screenshot"
+                    )
+                },
+                nativeCaptureBounds = { _, _, bounds, _ -> bounds },
+            )
+        try {
+            val image =
+                captureSurfaceForVisualIdle(
+                    backend = backend,
+                    window = tracked(frame),
+                    surfaceRegion = Rectangle(frame.bounds),
+                    windowBounds = Rectangle(frame.bounds),
+                    frameInsets = Insets(0, 0, 0, 0),
+                    nativeWindowCaptureAvailable = true,
+                )
+            assertNull(image, "pipeline timeout must stay unsampleable, not Robot-region")
+            assertEquals(1, windowCalls)
+            assertEquals(0, regionCalls)
+        } finally {
+            frame.dispose()
+        }
+    }
+
+    @Test
     fun `does not silently fall back to region when native is available but fails`() {
         assumeLiveAwtAvailable()
         val frame =
@@ -404,11 +448,38 @@ class VisualIdleSurfaceCaptureTest {
                 )
             )
         )
+        assertTrue(
+            isNativeCaptureHelperUnusable(
+                IllegalStateException(
+                    "spectre-wayland-helper reported an error during screenshot capture: " +
+                        "kind=CaptureFailed message=spawning gst-launch from argv: " +
+                        "[\"gst-launch-1.0\", \"ximagesrc\"]"
+                )
+            )
+        )
         assertFalse(
             isNativeCaptureHelperUnusable(
                 IllegalStateException(
                     "Linux screenshot helper failed",
                     IOException("simulated EPIPE"),
+                )
+            )
+        )
+        assertFalse(
+            isNativeCaptureHelperUnusable(
+                IllegalStateException(
+                    "spectre-wayland-helper reported an error during screenshot capture: " +
+                        "kind=CaptureFailed message=gst-launch did not exit within 8s " +
+                        "while capturing screenshot"
+                )
+            )
+        )
+        assertFalse(
+            isNativeCaptureHelperUnusable(
+                IllegalStateException(
+                    "spectre-wayland-helper reported an error during screenshot capture: " +
+                        "kind=CaptureFailed message=gst-launch screenshot pipeline " +
+                        "exited with status ExitStatus(code: 1)"
                 )
             )
         )
