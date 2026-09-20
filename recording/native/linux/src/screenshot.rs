@@ -40,13 +40,23 @@ fn build_x11_screenshot_argv(command: &ScreenshotCommand, output: &PathBuf) -> R
             display_name: command.display_name.clone(),
             region: command.region,
         },
-        CaptureTarget::Window => X11CaptureTarget::Window {
-            display_name: command.display_name.clone(),
-            title: command
+        CaptureTarget::Window => {
+            let title = command
                 .window_title
                 .clone()
-                .ok_or_else(|| anyhow!("X11 window screenshot requires window_title"))?,
-        },
+                .ok_or_else(|| anyhow!("X11 window screenshot requires window_title"))?;
+            let resolved =
+                crate::x11_window::find_window_by_title(command.display_name.as_deref(), &title)
+                    .with_context(|| format!("resolving X11 window title {title:?}"))?;
+            eprintln!(
+                "[helper] resolved X11 screenshot window title={title:?} xid=0x{:x} size={}x{}",
+                resolved.xid, resolved.width, resolved.height
+            );
+            X11CaptureTarget::Window {
+                display_name: command.display_name.clone(),
+                xid: resolved.xid,
+            }
+        }
     };
     build_x11_png_argv(target, capture_cursor, output)
 }

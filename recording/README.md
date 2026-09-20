@@ -20,9 +20,11 @@ implementer's view of the same module.
   binary via `PATH` (`resolveFfmpegPath()`) by default; pass `ffmpegPath` to override (testing,
   non-`PATH` installs).
 - `LinuxX11Recorder` — Linux Xorg/Xvfb region and named-window capture through the bundled
-  Linux helper and GStreamer `ximagesrc`. This is the default Linux Xorg/Xvfb route used by
-  `AutoRecorder`; `ffmpeg` is no longer required for that path. The helper currently accepts
-  only `RecordingOptions.codec = "libx264"` or `"x264enc"` for recording.
+  Linux helper and GStreamer `ximagesrc`. Window mode resolves a real XID from the title
+  (`WM_NAME` / `_NET_WM_NAME`) and fails if that window is missing, instead of recording
+  the root/desktop. This is the default Linux Xorg/Xvfb route used by `AutoRecorder`;
+  `ffmpeg` is no longer required for that path. The helper currently accepts only
+  `RecordingOptions.codec = "libx264"` or `"x264enc"` for recording.
 - `screencapturekit.ScreenCaptureKitRecorder` — macOS ScreenCaptureKit region and
   window-targeted capture through the bundled Swift helper. Region mode records a fixed
   rectangle from the selected display; window mode follows the target window and captures
@@ -73,6 +75,10 @@ implementer's view of the same module.
 - `./gradlew :recording:runWindowScreenshotSmoke` — manual cross-platform smoke for
   `AutoScreenshotter`. It writes a PNG on macOS, Windows, Linux Xorg/Xvfb, and Linux
   Wayland. For Wayland window-source video, run `./gradlew :recording:runWaylandPortalWindowSmoke`.
+- `./gradlew :recording:runLinuxX11RecordingSmoke` — Linux Xorg/Xvfb helper smoke (CI uses
+  `xvfb-run`). Records a region and a named window whose title includes `·`, asserts the
+  window-mode MP4 is window-sized rather than the full framebuffer, and checks that a
+  missing title fails closed.
 
 ### Shared
 - `RecordingHandle` — `AutoCloseable`. Stop uses the backend's clean-shutdown path (`q` for

@@ -21,6 +21,7 @@ mod protocol;
 mod recorder;
 mod screenshot;
 mod stream_region;
+mod x11_window;
 
 use anyhow::Result;
 use protocol::{Command, Event};

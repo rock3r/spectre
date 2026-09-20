@@ -48,7 +48,9 @@ pub enum X11CaptureTarget {
     },
     Window {
         display_name: Option<String>,
-        title: String,
+        /// Resolved XID. Must not be 0 — that is the root/desktop window and is how
+        /// GStreamer `ximagesrc xname=` silently degrades when the title is missing.
+        xid: u64,
     },
 }
 
@@ -251,18 +253,18 @@ fn append_x11_source(
                 format!("endy={end_y}"),
             ]);
         }
-        X11CaptureTarget::Window {
-            display_name,
-            title,
-        } => {
-            let title = title.trim();
-            if title.is_empty() {
-                bail!("X11 window capture requires a non-blank window title");
+        X11CaptureTarget::Window { display_name, xid } => {
+            if xid == 0 {
+                bail!(
+                    "X11 window capture refuses xid=0 (the root/desktop window). Resolve a real \
+                     window XID from WM_NAME/_NET_WM_NAME first; do not pass xname= and let \
+                     ximagesrc fall back to the framebuffer."
+                );
             }
             if let Some(display) = non_blank(display_name) {
                 argv.push(gst_string_property("display-name", &display));
             }
-            argv.push(gst_string_property("xname", title));
+            argv.push(format!("xid={xid}"));
         }
     }
     argv.extend([
@@ -551,13 +553,7 @@ mod tests {
         .expect("partially off-stream origin should clamp");
         assert_contains_sequence(
             &argv,
-            &[
-                "videocrop",
-                "top=0",
-                "bottom=990",
-                "left=0",
-                "right=1840",
-            ],
+            &["videocrop", "top=0", "bottom=990", "left=0", "right=1840"],
         );
     }
 
@@ -578,13 +574,7 @@ mod tests {
         .expect("overflowing region should clamp to the visible stream");
         assert_contains_sequence(
             &argv,
-            &[
-                "videocrop",
-                "top=0",
-                "bottom=624",
-                "left=1362",
-                "right=0",
-            ],
+            &["videocrop", "top=0", "bottom=624", "left=1362", "right=0"],
         );
     }
 
@@ -600,7 +590,10 @@ mod tests {
             &PathBuf::from("/tmp/x"),
             "libx264",
         );
-        assert!(miss.is_err(), "region entirely off-stream should still fail");
+        assert!(
+            miss.is_err(),
+            "region entirely off-stream should still fail"
+        );
     }
 
     #[test]
@@ -659,11 +652,11 @@ mod tests {
     }
 
     #[test]
-    fn x11_window_recording_argv_targets_named_window() {
+    fn x11_window_recording_argv_targets_resolved_xid() {
         let argv = build_x11_recording_argv(
             X11CaptureTarget::Window {
                 display_name: None,
-                title: "Spectre smoke".to_string(),
+                xid: 0x2a0_000b,
             },
             15,
             true,
@@ -676,25 +669,47 @@ mod tests {
             &argv,
             &[
                 "ximagesrc",
-                "xname=\"Spectre smoke\"",
+                "xid=44040203",
                 "show-pointer=true",
                 "use-damage=false",
             ],
+        );
+        assert!(
+            !argv.iter().any(|arg| arg.contains("xname=")),
+            "named-window capture must use xid, not xname (silent root fallback): {argv:?}"
         );
         assert_contains_sequence(&argv, &["videorate", "!", "video/x-raw,framerate=15/1"]);
     }
 
     #[test]
-    fn x11_window_recording_argv_quotes_window_titles_for_gst_parse_launch() {
-        let argv = build_x11_recording_argv(
+    fn x11_window_recording_argv_rejects_root_xid() {
+        let err = build_x11_recording_argv(
             X11CaptureTarget::Window {
                 display_name: Some(":0".to_string()),
-                title: "Spectre \"smoke\" window".to_string(),
+                xid: 0,
             },
             15,
             true,
-            &PathBuf::from("/tmp/spectre/window with spaces.mp4"),
+            &PathBuf::from("/tmp/spectre/window.mp4"),
             "libx264",
+        )
+        .expect_err("xid=0 is the root window and must fail closed");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("xid=0") || message.contains("root"),
+            "unexpected error: {message}"
+        );
+    }
+
+    #[test]
+    fn x11_window_png_argv_targets_resolved_xid() {
+        let argv = build_x11_png_argv(
+            X11CaptureTarget::Window {
+                display_name: Some(":1".to_string()),
+                xid: 42,
+            },
+            false,
+            &PathBuf::from("/tmp/spectre/window.png"),
         )
         .unwrap();
 
@@ -702,16 +717,14 @@ mod tests {
             &argv,
             &[
                 "ximagesrc",
-                "display-name=\":0\"",
-                "xname=\"Spectre \\\"smoke\\\" window\"",
+                "num-buffers=1",
+                "display-name=\":1\"",
+                "xid=42",
             ],
         );
-        assert_contains_sequence(
-            &argv,
-            &[
-                "filesink",
-                "location=\"/tmp/spectre/window with spaces.mp4\"",
-            ],
+        assert!(
+            !argv.iter().any(|arg| arg.contains("xname=")),
+            "window screenshots must not use xname=: {argv:?}"
         );
     }
 

@@ -102,7 +102,10 @@ interactive and not automatable. Spectre's `spectre-wayland-helper` uses portal
   as a deprecated explicit legacy backend.
 - **Linux Xorg/Xvfb sessions** — helper-driven GStreamer `ximagesrc` capture. Reads `DISPLAY`.
   `LinuxX11Recorder` records fixed regions or a named X11 window; `LinuxNativeScreenshotter`
-  writes one-frame PNGs through the same helper. Routine
+  writes one-frame PNGs through the same helper. Named-window capture resolves the XID from
+  `WM_NAME` and `_NET_WM_NAME` (exact title, including characters such as `·`) and then
+  runs `ximagesrc xid=`. A title that does not match a mapped window fails at `start(...)`
+  — GStreamer's `xname=` path would otherwise silently record the root/desktop. Routine
   validation has only been on Ubuntu 22.04's Xorg session (one machine, one X server build)
   and on CI under `xvfb-run` (Xorg protocol over a virtual framebuffer, no GPU). Other
   Xorg WMs/distros fall under the "Linux is best-effort, contributions welcome" line in
