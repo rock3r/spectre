@@ -116,7 +116,9 @@ internal constructor(
             // fall through to reconnect
         } finally {
             pump.cancel()
-            invalidationBookkeeping.reset()
+            // Mid-session handle drop: drop in-flight pending only. Keep lastInvalidatedRequestId
+            // so a reconnect that sees the same result/UIRendered pair does not re-fire settle.
+            invalidationBookkeeping.clearPending()
             clearLifecycleSubscribers()
             handleRef.compareAndSet(handle, null)
             runCatching { handle.close() }
@@ -236,6 +238,7 @@ internal constructor(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         reconnectJob?.cancel()
+        invalidationBookkeeping.reset()
         clearLifecycleSubscribers()
         handleRef.getAndSet(null)?.let { runCatching { it.close() } }
         scope.cancel()
@@ -379,6 +382,15 @@ internal class ReloadInvalidationBookkeeping {
             else -> false
         }
 
+    /**
+     * Drops an in-flight pending result without forgetting which request already invalidated. Used
+     * when the orchestration handle reconnects mid-session.
+     */
+    fun clearPending() {
+        pendingSuccessfulRequestId = null
+    }
+
+    /** Full wipe when the attach session ends. */
     fun reset() {
         pendingSuccessfulRequestId = null
         lastInvalidatedRequestId = null
