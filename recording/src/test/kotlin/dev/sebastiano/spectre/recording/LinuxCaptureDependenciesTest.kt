@@ -31,6 +31,26 @@ class LinuxCaptureDependenciesTest {
                 throw IOException("Cannot run program \"gst-launch-1.0\"")
             },
         )
+        assertEquals(
+            false,
+            LinuxCaptureDependencies.isGstLaunchAvailable {
+                throw IOException("error=2, No such file or directory")
+            },
+        )
+    }
+
+    @Test
+    fun `gst-launch probe launch IOException is inconclusive unless the binary is missing`() {
+        assertNull(
+            LinuxCaptureDependencies.isGstLaunchAvailable {
+                throw IOException("error=24, Too many open files")
+            }
+        )
+        assertNull(
+            LinuxCaptureDependencies.isGstLaunchAvailable {
+                throw IOException("error=11, Resource temporarily unavailable")
+            }
+        )
     }
 
     @Test

@@ -11,16 +11,16 @@ import java.util.concurrent.TimeUnit
  */
 internal object LinuxCaptureDependencies {
     /**
-     * `true` when `gst-launch-1.0 --version` exits 0, `false` when the binary is missing or exits
-     * non-zero, and `null` when the probe times out (cold registry scan). A timeout is inconclusive
-     * and must not be negative-cached.
+     * `true` when `gst-launch-1.0 --version` exits 0, `false` when the binary is confirmed missing
+     * or exits non-zero, and `null` when the probe is inconclusive (timeout or a transient
+     * `ProcessBuilder.start()` failure). Inconclusive results must not be negative-cached.
      */
     fun isGstLaunchAvailable(launch: () -> Process = ::startGstLaunchVersion): Boolean? {
         val process =
             try {
                 launch()
-            } catch (_: IOException) {
-                return false
+            } catch (error: IOException) {
+                return if (isConfirmedMissingExecutable(error)) false else null
             }
         return try {
             val finished = process.waitFor(GST_LAUNCH_PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
@@ -42,6 +42,14 @@ internal object LinuxCaptureDependencies {
 
     private fun startGstLaunchVersion(): Process =
         ProcessBuilder(GST_LAUNCH, "--version").redirectErrorStream(true).start()
+
+    private fun isConfirmedMissingExecutable(error: IOException): Boolean {
+        val message = error.message.orEmpty()
+        return message.contains("Cannot run program", ignoreCase = true) ||
+            message.contains("No such file or directory", ignoreCase = true) ||
+            message.contains("error=2,", ignoreCase = true) ||
+            message.contains("error=2)", ignoreCase = true)
+    }
 }
 
 private const val GST_LAUNCH: String = "gst-launch-1.0"
