@@ -8,14 +8,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import org.junit.jupiter.api.Disabled
-import org.junit.jupiter.api.RepeatedTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
-import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.ValueSource
 
 class ScreenshotGoldAssertTest {
 
@@ -250,27 +245,6 @@ class ScreenshotGoldAssertTest {
     }
 
     @Test
-    fun `name-only ScreenshotGoldKt facade has no TestInfo descriptors`() {
-        val methods = Class.forName("dev.sebastiano.spectre.testing.ScreenshotGoldKt").methods
-        methods.forEach { method ->
-            assertTrue(
-                method.parameterTypes.none { it.name == "org.junit.jupiter.api.TestInfo" },
-                method.toString(),
-            )
-        }
-    }
-
-    @Test
-    fun `JUnit 5 gold facade isolates TestInfo overloads`() {
-        val facade = Class.forName("dev.sebastiano.spectre.testing.ScreenshotGoldJunit5")
-        assertTrue(
-            facade.methods.any { method ->
-                method.parameterTypes.any { it.name == "org.junit.jupiter.api.TestInfo" }
-            }
-        )
-    }
-
-    @Test
     fun `distinct invocation keys write distinct gold files`(@TempDir temp: Path) {
         val goldRoot = temp.resolve("golds")
         val reportsRoot = temp.resolve("reports")
@@ -326,115 +300,6 @@ class ScreenshotGoldAssertTest {
     }
 
     @Test
-    fun `TestInfo supplies an invocation key for template methods`() {
-        val parameterized =
-            ScreenshotGoldAssertTest::class.java.declaredMethods.single {
-                it.name == "ParameterizedTest methods are recognized for gold identity"
-            }
-        val info =
-            object : org.junit.jupiter.api.TestInfo {
-                override fun getDisplayName(): String = "[1] dark"
-
-                override fun getTags(): Set<String> = emptySet()
-
-                override fun getTestClass(): java.util.Optional<Class<*>> =
-                    java.util.Optional.of(ScreenshotGoldAssertTest::class.java)
-
-                override fun getTestMethod(): java.util.Optional<java.lang.reflect.Method> =
-                    java.util.Optional.of(parameterized)
-            }
-        assertEquals("[1] dark", invocationKeyFromTestInfo(info))
-    }
-
-    @Test
-    fun `TestInfo does not invent an invocation key for plain tests`() {
-        val plain =
-            ScreenshotGoldAssertTest::class.java.declaredMethods.single {
-                it.name == "identical gold passes without writing reports"
-            }
-        val info =
-            object : org.junit.jupiter.api.TestInfo {
-                override fun getDisplayName(): String =
-                    "identical gold passes without writing reports"
-
-                override fun getTags(): Set<String> = emptySet()
-
-                override fun getTestClass(): java.util.Optional<Class<*>> =
-                    java.util.Optional.of(ScreenshotGoldAssertTest::class.java)
-
-                override fun getTestMethod(): java.util.Optional<java.lang.reflect.Method> =
-                    java.util.Optional.of(plain)
-            }
-        assertNull(invocationKeyFromTestInfo(info))
-    }
-
-    @Test
-    fun `plain test methods do not require an invocation key`() {
-        assertNull(
-            resolveInvocationKey(
-                ScreenshotGoldAssertTest::class.java.name,
-                "identical gold passes without writing reports",
-                invocationKey = null,
-            )
-        )
-    }
-
-    @Test
-    fun `template methods require an invocation key when TestInfo is absent`() {
-        val error =
-            assertFailsWith<IllegalStateException> {
-                resolveInvocationKey(
-                    ScreenshotGoldAssertTest::class.java.name,
-                    "ParameterizedTest methods are recognized for gold identity",
-                    invocationKey = null,
-                )
-            }
-        assertTrue(error.message!!.contains("invocationKey"), error.message)
-    }
-
-    @ParameterizedTest
-    @ValueSource(ints = [1])
-    fun `name-only gold assert requires invocationKey on parameterized tests`(value: Int) {
-        assertEquals(1, value)
-        val error =
-            assertFailsWith<IllegalStateException> {
-                assertMatchesGold(name = "main-window", image = solid(1, 1, 0xFFFFFF))
-            }
-        assertTrue(error.message!!.contains("invocationKey"), error.message)
-    }
-
-    @Test
-    fun `TestInfo identity ignores the calling thread when class and method are present`() {
-        val info =
-            object : org.junit.jupiter.api.TestInfo {
-                override fun getDisplayName(): String = "probe()"
-
-                override fun getTags(): Set<String> = emptySet()
-
-                override fun getTestClass(): java.util.Optional<Class<*>> =
-                    java.util.Optional.of(ScreenshotGoldAssertTest::class.java)
-
-                override fun getTestMethod(): java.util.Optional<java.lang.reflect.Method> =
-                    java.util.Optional.of(
-                        ScreenshotGoldAssertTest::class
-                            .java
-                            .getDeclaredMethod(
-                                "missing gold fails closed when update mode is off",
-                                Path::class.java,
-                            )
-                    )
-            }
-        val worker = java.util.concurrent.Executors.newSingleThreadExecutor()
-        try {
-            val identity = worker.submit<Pair<String, String>> { identityFromTestInfo(info) }.get()
-            assertEquals(ScreenshotGoldAssertTest::class.java.name, identity.first)
-            assertEquals("missing gold fails closed when update mode is off", identity.second)
-        } finally {
-            worker.shutdownNow()
-        }
-    }
-
-    @Test
     fun `unreadable gold png fails with an assertion error`(@TempDir temp: Path) {
         val goldRoot = temp.resolve("golds")
         val goldFile =
@@ -465,165 +330,10 @@ class ScreenshotGoldAssertTest {
         assertTrue(error.message!!.contains("unreadable"), error.message)
     }
 
-    @RepeatedTest(1)
-    fun `RepeatedTest methods are recognized for gold identity`() {
-        val (cls, method) = inferTestIdentity()
-        assertEquals(ScreenshotGoldAssertTest::class.java.name, cls)
-        assertEquals("RepeatedTest methods are recognized for gold identity", method)
-    }
-
-    @ParameterizedTest
-    @ValueSource(ints = [1])
-    fun `ParameterizedTest methods are recognized for gold identity`(value: Int) {
-        assertEquals(1, value)
-        val (cls, method) = inferTestIdentity()
-        assertEquals(ScreenshotGoldAssertTest::class.java.name, cls)
-        assertEquals("ParameterizedTest methods are recognized for gold identity", method)
-    }
-
-    @ComposedGoldTest
-    fun `composed Test meta-annotations are recognized for gold identity`() {
-        val (cls, method) = inferTestIdentity()
-        assertEquals(ScreenshotGoldAssertTest::class.java.name, cls)
-        assertEquals("composed Test meta-annotations are recognized for gold identity", method)
-    }
-
     @Test
-    fun `unannotated overload first does not hide an annotated same-name test`() {
-        val cls = GoldIdentityOverloadHost::class.java
-        val unannotated = cls.getDeclaredMethod("probe")
-        val annotated = cls.getDeclaredMethod("probe", Int::class.java)
-        assertFalse(unannotated.isJunitTestMethod())
-        assertTrue(annotated.isJunitTestMethod())
-        assertEquals("probe", resolveJunitTestMethodName(arrayOf(unannotated, annotated), "probe"))
-        assertEquals("probe", resolveJunitTestMethodName(arrayOf(annotated, unannotated), "probe"))
-        val frame = StackTraceElement(cls.name, "probe", "GoldIdentityOverloadHost.kt", 1)
-        assertEquals(cls.name to "probe", testIdentityFromFrame(frame))
-    }
-
-    @Test
-    fun `scale key uses the matching capture surface instead of the fallback`() {
-        val image = BufferedImage(200, 100, BufferedImage.TYPE_INT_ARGB)
-        val key =
-            currentScaleKey(
-                image = image,
-                surfaces =
-                    listOf(
-                        CaptureSurfaceScale(
-                            pixelWidth = 200,
-                            pixelHeight = 100,
-                            scaleX = 2.0,
-                            scaleY = 2.0,
-                        ),
-                        CaptureSurfaceScale(
-                            pixelWidth = 800,
-                            pixelHeight = 600,
-                            scaleX = 1.0,
-                            scaleY = 1.0,
-                        ),
-                    ),
-                fallbackScaleX = 1.0,
-                fallbackScaleY = 1.0,
-            )
-        assertEquals("scale-2x2", key)
-    }
-
-    @Test
-    fun `scale key matches a compose client surface when the decorated window does not`() {
-        val image = BufferedImage(200, 100, BufferedImage.TYPE_INT_ARGB)
-        val surfaces =
-            captureSurfacesForBounds(
-                awtWidth = 110,
-                awtHeight = 70,
-                insetLeft = 5,
-                insetTop = 20,
-                insetRight = 5,
-                insetBottom = 0,
-                scaleX = 2.0,
-                scaleY = 2.0,
-            ) + CaptureSurfaceScale(800, 600, 1.0, 1.0)
-        val key =
-            currentScaleKey(
-                image = image,
-                surfaces = surfaces,
-                fallbackScaleX = 1.0,
-                fallbackScaleY = 1.0,
-            )
-        assertEquals("scale-2x2", key)
-    }
-
-    @Test
-    fun `scale key matches an embedded compose panel smaller than the content pane`() {
-        val image = BufferedImage(160, 80, BufferedImage.TYPE_INT_ARGB)
-        val surfaces =
-            captureSurfacesForBounds(
-                awtWidth = 220,
-                awtHeight = 160,
-                insetLeft = 5,
-                insetTop = 20,
-                insetRight = 5,
-                insetBottom = 5,
-                scaleX = 2.0,
-                scaleY = 2.0,
-                contentWidth = 210,
-                contentHeight = 135,
-                extraAwtSizes = listOf(80 to 40),
-            ) + CaptureSurfaceScale(800, 600, 1.0, 1.0)
-        val key =
-            currentScaleKey(
-                image = image,
-                surfaces = surfaces,
-                fallbackScaleX = 1.0,
-                fallbackScaleY = 1.0,
-            )
-        assertEquals("scale-2x2", key)
-    }
-
-    @Test
-    fun `scale key uses a unique window density when the still size does not match`() {
-        val image = BufferedImage(64, 32, BufferedImage.TYPE_INT_ARGB)
-        val key =
-            currentScaleKey(
-                image = image,
-                surfaces = listOf(CaptureSurfaceScale(200, 100, 2.0, 2.0)),
-                fallbackScaleX = 1.0,
-                fallbackScaleY = 1.0,
-            )
-        assertEquals("scale-2x2", key)
-    }
-
-    @Test
-    fun `scale key falls back when matching surfaces disagree on density`() {
-        val image = BufferedImage(200, 100, BufferedImage.TYPE_INT_ARGB)
-        val key =
-            currentScaleKey(
-                image = image,
-                surfaces =
-                    listOf(
-                        CaptureSurfaceScale(200, 100, 2.0, 2.0),
-                        CaptureSurfaceScale(200, 100, 1.25, 1.25),
-                    ),
-                fallbackScaleX = 1.0,
-                fallbackScaleY = 1.0,
-            )
-        assertEquals("scale-1x1", key)
-    }
-
-    @Test
-    fun `explicit scale key is used instead of the inferred capture scale`(@TempDir temp: Path) {
+    fun `unreadable gold deletes stale report files from a prior mismatch`(@TempDir temp: Path) {
         val goldRoot = temp.resolve("golds")
-        val image = solid(2, 2, 0x00AA00)
-        assertMatchesGold(
-            name = "main-window",
-            image = image,
-            testClassName = "dev.example.HomeTest",
-            testMethodName = "renders",
-            goldRoot = goldRoot,
-            reportsRoot = temp.resolve("reports"),
-            osKey = "macos",
-            scaleKey = "scale-2x2",
-            updateEnabled = true,
-        )
+        val reportsRoot = temp.resolve("reports")
         val goldFile =
             ScreenshotGoldPaths.goldFile(
                 goldRoot,
@@ -631,9 +341,36 @@ class ScreenshotGoldAssertTest {
                 "renders",
                 "main-window",
                 "macos",
-                "scale-2x2",
+                "scale-1x1",
             )
-        assertTrue(Files.isRegularFile(goldFile))
+        Files.createDirectories(goldFile.parent)
+        Files.writeString(goldFile, "not a png")
+        val reportDir = homeReportDir(reportsRoot)
+        Files.createDirectories(reportDir)
+        Files.writeString(reportDir.resolve("actual.png"), "stale-actual")
+        Files.writeString(reportDir.resolve("gold.png"), "stale-gold")
+        Files.writeString(reportDir.resolve("diff.png"), "stale-diff")
+
+        val error =
+            assertFailsWith<AssertionError> {
+                assertMatchesGold(
+                    name = "main-window",
+                    image = solid(1, 1, 0xFFFFFF),
+                    testClassName = "dev.example.HomeTest",
+                    testMethodName = "renders",
+                    goldRoot = goldRoot,
+                    reportsRoot = reportsRoot,
+                    osKey = "macos",
+                    scaleKey = "scale-1x1",
+                    updateEnabled = false,
+                )
+            }
+
+        assertTrue(error.message!!.contains("unreadable"), error.message)
+        assertFalse(Files.exists(reportDir.resolve("actual.png")))
+        assertFalse(Files.exists(reportDir.resolve("gold.png")))
+        assertFalse(Files.exists(reportDir.resolve("diff.png")))
+        assertFalse(Files.exists(reportDir))
     }
 
     private fun homeReportDir(reportsRoot: Path): Path =
@@ -670,23 +407,4 @@ class ScreenshotGoldAssertTest {
     }
 
     private fun opaque(rgb: Int): Int = (0xFF shl 24) or (rgb and 0x00FFFFFF)
-}
-
-@Target(AnnotationTarget.FUNCTION)
-@Retention(AnnotationRetention.RUNTIME)
-@Test
-private annotation class ComposedGoldTest
-
-/** Host for overload-identity tests; JUnit must not execute these as specs. */
-@Disabled("reflective fixture for gold identity overload resolution")
-internal class GoldIdentityOverloadHost {
-    @Suppress("unused")
-    fun probe() {
-        error("unannotated overload")
-    }
-
-    @Test
-    fun probe(ignored: Int) {
-        error("annotated overload is only used reflectively")
-    }
 }

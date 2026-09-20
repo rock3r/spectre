@@ -185,6 +185,18 @@ class ScreenshotGoldPathsTest {
     }
 
     @Test
+    fun `literal fingerprinted segment does not collide with a hashed rewrite`() {
+        val hashedSlash = ScreenshotGoldPaths.sanitizeGoldSegment("foo/bar")
+        val literalFingerprint = ScreenshotGoldPaths.sanitizeGoldSegment(hashedSlash)
+        assertNotEquals(hashedSlash, literalFingerprint)
+        assertTrue(hashedSlash.matches(Regex("foo_bar_[0-9a-f]{8}")), hashedSlash)
+        assertTrue(
+            literalFingerprint.matches(Regex("foo_bar_[0-9a-f]{8}_[0-9a-f]{8}")),
+            literalFingerprint,
+        )
+    }
+
+    @Test
     fun `nested class dollar names stay distinct from underscore names`() {
         val nested = ScreenshotGoldPaths.sanitizeGoldSegment("Outer\$Inner")
         val underscore = ScreenshotGoldPaths.sanitizeGoldSegment("Outer_Inner")

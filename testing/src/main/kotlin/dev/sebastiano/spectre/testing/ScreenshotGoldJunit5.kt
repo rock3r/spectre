@@ -13,7 +13,8 @@ import org.junit.jupiter.api.TestInfo
  * [scaleKey] follows the same capture-display default as the name-only overload.
  *
  * `@ParameterizedTest` and `@RepeatedTest` invocations are keyed from [testInfo]'s display name
- * unless [invocationKey] is supplied, so two invocations cannot share or overwrite one gold.
+ * only when that name is unique per invocation (JUnit's `[index] …` or `repetition N of M`).
+ * Constant custom names such as `@ParameterizedTest(name = "theme")` require [invocationKey].
  */
 public fun assertMatchesGold(
     testInfo: TestInfo,
@@ -51,5 +52,18 @@ internal fun identityFromTestInfo(testInfo: TestInfo): Pair<String, String> {
 internal fun invocationKeyFromTestInfo(testInfo: TestInfo): String? {
     val method = testInfo.testMethod.orElse(null) ?: return null
     if (!method.isJunitTestTemplate()) return null
-    return testInfo.displayName.trim().takeIf { it.isNotEmpty() }
+    val display = testInfo.displayName.trim().takeIf { it.isNotEmpty() } ?: return null
+    return display.takeIf(::looksUniqueInvocationLabel)
 }
+
+internal fun looksUniqueInvocationLabel(display: String): Boolean {
+    // JUnit parameterized default: "[{index}] {argumentsWithNames}" → "[1] dark"
+    if (PARAMETERIZED_INVOCATION_LABEL.containsMatchIn(display)) return true
+    // RepeatedTest default / short form: "repetition 1 of 2" or "repetition 1"
+    if (REPEATED_INVOCATION_LABEL.containsMatchIn(display)) return true
+    return false
+}
+
+private val PARAMETERIZED_INVOCATION_LABEL = Regex("""^\[\d+]""")
+private val REPEATED_INVOCATION_LABEL =
+    Regex("""(?:^| )repetition \d+(?: of \d+)?$""", RegexOption.IGNORE_CASE)

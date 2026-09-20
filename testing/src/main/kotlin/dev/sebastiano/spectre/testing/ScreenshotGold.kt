@@ -6,6 +6,7 @@ import java.awt.Container
 import java.awt.GraphicsEnvironment
 import java.awt.Window
 import java.awt.image.BufferedImage
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -23,7 +24,8 @@ import kotlin.math.roundToInt
  * Mismatches write `actual.png` and a copy of `gold.png` under
  * `build/reports/spectre-screenshots/<class>/<method>/<name>[/<invocation>]/`. `diff.png` is
  * written when dimensions match; a stale `diff.png` is deleted when there is no diff. A later
- * match, update write, or missing-gold failure deletes leftover report PNGs from a prior mismatch.
+ * match, update write, missing-gold failure, or unreadable gold deletes leftover report PNGs from a
+ * prior mismatch.
  *
  * This name-only overload lives on `ScreenshotGoldKt` and does not mention JUnit 5 `TestInfo`, so
  * JUnit 4-only Java callers can resolve it without `junit-jupiter-api`. It infers the test from the
@@ -31,7 +33,8 @@ import kotlin.math.roundToInt
  * (`ScreenshotGoldJunit5`) instead — the body runs on a worker dispatcher that has no JUnit frame.
  *
  * `@ParameterizedTest` and `@RepeatedTest` invocations that share a [name] must pass
- * [invocationKey] here, or use the TestInfo facade (which keys from the invocation display name).
+ * [invocationKey] here, or use the TestInfo facade when its display name is unique per invocation
+ * (`[1] …` or `repetition N of M`). Constant custom display names still require [invocationKey].
  *
  * [scaleKey] defaults to the captured window's display scale when a showing AWT window's outer,
  * client, content-pane, or embedded ComposePanel size matches the still (or every showing window
@@ -107,8 +110,16 @@ internal fun assertMatchesGold(
         )
     }
     val expected =
-        ImageIO.read(goldFile.toFile())
-            ?: throw AssertionError("Screenshot gold is unreadable: $goldFile")
+        try {
+            ImageIO.read(goldFile.toFile())
+        } catch (e: IOException) {
+            deleteReportDirectory(reportDir)
+            throw AssertionError("Screenshot gold is unreadable: $goldFile", e)
+        }
+    if (expected == null) {
+        deleteReportDirectory(reportDir)
+        throw AssertionError("Screenshot gold is unreadable: $goldFile")
+    }
     val result = ScreenshotComparer.compare(expected, image, tolerance)
     if (result.matches) {
         deleteReportDirectory(reportDir)
@@ -219,14 +230,15 @@ internal fun captureSurfacesForBounds(
 ): List<CaptureSurfaceScale> {
     val clientWidth = (awtWidth - insetLeft - insetRight).coerceAtLeast(0)
     val clientHeight = (awtHeight - insetTop - insetBottom).coerceAtLeast(0)
-    return buildList {
-            add(awtWidth to awtHeight)
-            add(clientWidth to clientHeight)
-            if (contentWidth != null && contentHeight != null) {
-                add(contentWidth to contentHeight)
-            }
-            addAll(extraAwtSizes)
+    val awtSizes = buildList {
+        add(awtWidth to awtHeight)
+        add(clientWidth to clientHeight)
+        if (contentWidth != null && contentHeight != null) {
+            add(contentWidth to contentHeight)
         }
+        addAll(extraAwtSizes)
+    }
+    return awtSizes
         .distinct()
         .filter { (width, height) -> width > 0 && height > 0 }
         .map { (width, height) ->

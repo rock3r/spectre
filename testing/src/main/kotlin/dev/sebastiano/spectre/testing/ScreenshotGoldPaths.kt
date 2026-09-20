@@ -14,6 +14,7 @@ public object ScreenshotGoldPaths {
     public const val DEFAULT_GOLD_ROOT: String = "src/test/resources/spectre-golds"
     public const val DEFAULT_REPORTS_ROOT: String = "build/reports/spectre-screenshots"
     private const val SEGMENT_FINGERPRINT_BYTES: Int = 4
+    private val FINGERPRINT_SUFFIX = Regex("_[0-9a-f]{8}$")
 
     public fun defaultGoldRoot(): Path = Path.of(DEFAULT_GOLD_ROOT).toAbsolutePath().normalize()
 
@@ -125,10 +126,12 @@ public object ScreenshotGoldPaths {
                 else -> replaced.trim('.', ' ').trim('_').ifEmpty { "unnamed" }
             }
         val escaped = escapeReservedWindowsDeviceName(core)
-        // Hash when the segment was rewritten (`foo/bar`, `NUL`) or when it is not already
-        // lowercase, so `Main` and `main` cannot collide on case-insensitive filesystems.
+        // Hash when the segment was rewritten (`foo/bar`, `NUL`), when it is not already
+        // lowercase (`Main` vs `main`), or when it already occupies the `_` + 8-hex suffix
+        // namespace so a literal `foo_bar_cc5d46bd` cannot collide with hashed `foo/bar`.
         val caseFoldingCollision = escaped != escaped.lowercase(Locale.ROOT)
-        return if (escaped == raw && !caseFoldingCollision) {
+        val occupiesFingerprintNamespace = FINGERPRINT_SUFFIX.containsMatchIn(escaped)
+        return if (escaped == raw && !caseFoldingCollision && !occupiesFingerprintNamespace) {
             escaped
         } else {
             "${escaped}_${stableSegmentFingerprint(raw)}"
