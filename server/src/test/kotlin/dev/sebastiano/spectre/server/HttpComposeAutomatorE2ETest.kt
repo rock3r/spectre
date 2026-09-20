@@ -45,7 +45,10 @@ class HttpComposeAutomatorE2ETest {
                 discoverWindows = false,
             )
         server =
-            embeddedServer(CIO, port = 0) { installSpectreRoutes(automator) }.start(wait = false)
+            embeddedServer(CIO, host = "127.0.0.1", port = 0) {
+                    installSpectreRoutes(automator, testHttpSecurity())
+                }
+                .start(wait = false)
         port = runBlocking { server.engine.resolvedConnectors().first().port }
     }
 
@@ -55,7 +58,7 @@ class HttpComposeAutomatorE2ETest {
     }
 
     private fun client(): HttpComposeAutomator =
-        ComposeAutomator.http(host = "127.0.0.1", port = port)
+        ComposeAutomator.http(security = testHttpSecurity(), host = "127.0.0.1", port = port)
 
     @Test
     fun `windows() round-trips through a real CIO engine`() = runBlocking {

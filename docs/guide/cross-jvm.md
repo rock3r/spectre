@@ -27,23 +27,22 @@ top of an in-process `ComposeAutomator`; the test JVM talks to it through
     in the [capability matrix](capability-matrix.md).
 
 !!! warning "Trust boundary"
-    The HTTP transport is **experimental** and intended for **trusted local / test
-    environments only**.
+    The HTTP transport is **experimental** and exposes privileged desktop automation.
 
-    - Every route is **unauthenticated**. Anything that can reach the bound port
-      can click, type, and capture screenshots.
-    - Communication is **plaintext HTTP**. There is no TLS support.
+    - Every non-preflight route requires a deployment-scoped bearer. Treat it as a
+      secret: load it from the deployment environment or a secret manager; never put
+      it in source, command-line arguments, URLs, or logs.
+    - Communication is **HTTPS by default**. The only plaintext escape hatch is an
+      explicit opt-in for loopback tests; both server and client reject its use with
+      a non-loopback peer.
+    - Browser cross-origin access is disabled unless the server is given an exact
+      origin allowlist. Wildcard origins are not supported.
     - `click` and `typeText` drive the host automator's input driver (synthetic AWT
       events by default; real OS input if that host opted into `RobotDriver()`);
       `screenshot` captures whatever pixels the host JVM can see, including content
       from other windows.
-    - **Bind to `127.0.0.1`.** Do not expose this server on a network-reachable
-      interface. The examples below pin the loopback bind explicitly.
-    - Authentication, authorization, and TLS are tracked for a separately
-      reviewed future design (#96).
 
-    See [Security notes](../SECURITY.md) for the full risk register and the
-    accepted-risk list.
+    See [Security notes](../SECURITY.md) for deployment and proxy guidance.
 
     All entry points in this guide require `@OptIn(ExperimentalSpectreHttpApi::class)`
     — see [Stability policy](../STABILITY.md) for the API tier definitions.
@@ -66,17 +65,21 @@ dependencies {
 
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.server.ExperimentalSpectreHttpApi
+import dev.sebastiano.spectre.server.SpectreHttpSecurity
 import dev.sebastiano.spectre.server.installSpectreRoutes
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 
 val automator = ComposeAutomator.inProcess()
+val security = SpectreHttpSecurity(
+    bearerToken = checkNotNull(System.getenv("SPECTRE_HTTP_TOKEN")),
+    // Local test escape hatch only. Omit this for an HTTPS deployment.
+    allowInsecureLoopback = true,
+)
 
-// `host = "127.0.0.1"` is intentional: the HTTP transport is unauthenticated, so the
-// server must not be reachable from outside the local machine. See the "Trust boundary"
-// warning above.
+// This example deliberately uses the loopback-only plaintext test mode.
 embeddedServer(Netty, host = "127.0.0.1", port = 9274) {
-    installSpectreRoutes(automator)
+    installSpectreRoutes(automator, security)
 }.start(wait = false)
 ```
 
@@ -88,6 +91,33 @@ to both `embeddedServer(...)` and `ComposeAutomator.http(...)`.
 
 `installSpectreRoutes` mounts everything under `/spectre` by default; pass `basePath =
 "/foo"` if you need it elsewhere.
+
+For a network deployment, configure an HTTPS connector on the Ktor engine and leave
+`allowInsecureLoopback` at its default `false`. If TLS terminates at a reverse proxy,
+install Ktor's forwarded-header support only when the direct peer is a trusted proxy;
+Spectre uses Ktor's resolved request origin to enforce HTTPS. Do not blindly trust
+client-supplied `Forwarded` or `X-Forwarded-Proto` headers.
+
+### Bearer and CORS configuration
+
+Use one high-entropy bearer per deployment and give the same value to the hosting and
+test JVMs. Bearers must contain at least 32 RFC 6750 characters;
+`openssl rand -base64 32` produces a suitable value. Rotate it through your normal
+secret-management mechanism; Spectre never prints or returns it.
+
+`allowedOrigins` is empty by default, so browser CORS requests fail closed. If a browser
+runner is intentional, list exact origins:
+
+```kotlin
+val security = SpectreHttpSecurity(
+    bearerToken = checkNotNull(System.getenv("SPECTRE_HTTP_TOKEN")),
+    allowedOrigins = setOf("https://tests.example.internal"),
+)
+```
+
+Preflight (`OPTIONS`) requests do not carry the bearer, but still require HTTPS and an
+allowed origin. Every other request requires the bearer, including requests without an
+`Origin` header.
 
 ### ContentNegotiation
 
@@ -113,11 +143,17 @@ companion extension:
 
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.server.ExperimentalSpectreHttpApi
+import dev.sebastiano.spectre.server.SpectreHttpSecurity
 import dev.sebastiano.spectre.server.http
 import kotlinx.coroutines.runBlocking
 
+val security = SpectreHttpSecurity(
+    bearerToken = checkNotNull(System.getenv("SPECTRE_HTTP_TOKEN")),
+    allowInsecureLoopback = true, // Match the loopback-only server example above.
+)
+
 // Connect to the loopback server mounted above.
-ComposeAutomator.http(host = "127.0.0.1", port = 9274).use { remote ->
+ComposeAutomator.http(security, host = "127.0.0.1", port = 9274).use { remote ->
     runBlocking {
         val nodes = remote.findByTestTag("Submit")
         if (nodes.isNotEmpty()) {

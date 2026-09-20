@@ -51,9 +51,9 @@ Four experimental markers exist today:
 
 - **`@ExperimentalSpectreHttpApi`** covers the entire `server` module's public surface — the
   HTTP transport (`installSpectreRoutes`, `HttpComposeAutomator`, the
-  `ComposeAutomator.http(...)` factory, and the DTOs). Authentication, TLS, narrower
-  per-window capture, and other major reshapes are tracked under #96 and will land under this
-  marker.
+  `ComposeAutomator.http(...)` factory, `SpectreHttpSecurity`, and the DTOs). This surface requires
+  a deployment bearer, HTTPS by default, and an explicit CORS allowlist; future major reshapes will
+  continue to land under this marker.
 - **`@ExperimentalSpectreAgentApi`** covers the entire `agent` module's attach-side public
   surface — `AgentAttach`, `AttachedAutomator`, `AttachOptions`, `SpectreProcesses`, and the
   wire DTOs. Tracked under #153; the marker stays in place while the attach UX, streaming wire

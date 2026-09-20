@@ -122,6 +122,32 @@ Expected results by platform:
 
   Pick the smoke window in the compositor portal dialog and inspect the resulting video.
 
+## Linux Wayland consent
+
+On a seated GNOME/Mutter desktop, Spectre uses **one** long-lived `spectre-wayland-helper`
+session for monitor capture and real OS input:
+
+1. The helper installs `dev.sebastiano.spectre.desktop` and calls the host portal
+   `Registry.Register` before any ScreenCast or RemoteDesktop method, so the grant is bound
+   to Spectre rather than an empty host `app_id`.
+2. It opens one RemoteDesktop session (keyboard + pointer + monitor source, persist until
+   revoked). The first run shows Share + Remember / Allow remote interaction. Later Spectre
+   processes on that seat connect to `$XDG_RUNTIME_DIR/spectre/wayland-session.sock`
+   instead of opening a new portal.
+3. Replacement `restore_token` values live under `$XDG_STATE_HOME/spectre/` (or
+   `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR`). They are not stored in `~/.java/robot/`.
+4. If the compositor rejects a stored token, Spectre clears it, retries the dialog once,
+   and fails closed if that retry fails.
+
+`RobotDriver()`, attach (including the inject payload, which talks to the existing seat
+socket without shipping `spectre-recording`), CLI, and MCP on Wayland use this helper. `RobotDriver(robot)` still
+wraps the `java.awt.Robot` you pass in. X11, macOS, and Windows keep their existing backends.
+Window-targeted portal capture is a separate ScreenCast grant and is still bound to the
+picked window.
+
+See [Recording limitations](../RECORDING-LIMITATIONS.md) for token env vars and the
+compositor matrix.
+
 For the Windows WGC video path, run:
 
 ```bash
@@ -163,7 +189,7 @@ view for when you want to know what each backend can and cannot do.
 | `WindowsGraphicsCaptureRecorder` | Named window (exact title + owner pid), optional pre-encode crop, or screen region | Window mode follows the target window across moves; optional crop is **fixed at start** (v1). Region mode is fixed at `start()` | Window mode (with or without crop) captures only the target window's pixels — occluders excluded. Region/fullscreen mode captures visible monitor pixels including overlapping windows and popups | `spectre-recording-windows` runtime helper (`spectre-window-capture.exe`); Windows 10 version 1903 or newer; .NET 8 Desktop Runtime; Windows App Runtime 1.8 | Windows |
 | `FfmpegWindowRecorder` (deprecated) | Legacy named window (`gdigrab title=`) | Yes — `gdigrab` retracks the window across moves and resizes | No — only the window's pixels are captured. Compose `OnWindow` popups land in a separate OS window with a different title, so they are **not** captured. `OnSameCanvas` / `OnComponent` popups are part of the window surface and are captured | `ffmpeg` on `PATH`; visible window with a non-blank exact title | Windows |
 | `ScreenCaptureKitRecorder` | Named window (pid + title substring), optional window-relative crop, or screen region | Window mode follows moves/resizes of the host window; optional `sourceRect` crop is **fixed at start** (v1). Region mode is fixed at `start()` | Window mode (with or without crop) captures only the window's pixels — occluders excluded. Region mode captures visible display pixels including overlapping apps | `spectre-recording-macos` runtime helper (`spectre-screencapture`); macOS Screen Recording TCC for the launching app | macOS |
-| `LinuxX11Recorder` | Screen region or named X11 window (`ximagesrc`) | Region mode is fixed at `start()`; window mode uses GStreamer's `xname` source selection | Captures visible X server pixels for the selected source; occluding apps can appear in region capture | `spectre-recording-linux` runtime helper; `gst-launch-1.0` with `ximagesrc`, `videorate`, `x264enc`, and `mp4mux`; `DISPLAY` | Linux Xorg/Xvfb; named XWayland windows only when the process is deliberately forced onto the X11 backend |
+| `LinuxX11Recorder` | Screen region or named X11 window (`ximagesrc`) | Region mode is fixed at `start()`; window mode resolves the XID from `WM_NAME` / `_NET_WM_NAME` and captures with `ximagesrc xid=` | Captures visible X server pixels for the selected source; occluding apps can appear in region capture. A title that does not match a mapped window fails instead of recording the root/desktop | `spectre-recording-linux` runtime helper; `gst-launch-1.0` with `ximagesrc`, `videorate`, `x264enc`, and `mp4mux`; `DISPLAY`; `libX11.so.6` at runtime for named-window lookup | Linux Xorg/Xvfb; named XWayland windows only when the process is deliberately forced onto the X11 backend |
 | `WaylandPortalRecorder` | Monitor region (portal `SourceType.MONITOR`, cropped) | No — monitor-level source | Depends on the compositor. Validated on GNOME/Mutter to include the user's overlays but exclude apps occluding the recorded region | `spectre-recording-linux` runtime helper (`spectre-wayland-helper`); `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`. First human consent stores a `restore_token` under `$XDG_STATE_HOME/spectre/` so later agent sessions skip the dialog (#188) | Linux Wayland |
 | `WaylandPortalWindowRecorder` | Named window (portal `SourceType.WINDOW` + fixed crop) | **No.** The crop is computed once from `_GTK_FRAME_EXTENTS` at `start()` and stays at those pixel coordinates for the rest of the recording. If the user moves or resizes the window during the recording, the crop no longer aligns with the window's pixels (typically the recording shows blank / black for the unrendered area of the original rectangle) — see `WaylandPortalWindowRecorder`'s KDoc for the detailed rationale | No — only the picked window's pixels are in the stream. `OnWindow` popups not captured | `spectre-recording-linux` runtime helper; `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`; `xprop` on `PATH`; compositor must publish `_GTK_FRAME_EXTENTS` (GNOME/Mutter verified; older Mutter / KDE / sway may not — the recorder throws rather than producing misaligned video) | Linux Wayland |
 
@@ -236,7 +262,7 @@ The routing is platform-keyed. Read the row that matches your OS:
 | **macOS**               | `null`                            | `ScreenCaptureKitRecorder` region capture (`spectre-recording-macos` helper). |
 | **Windows**             | non-null with a non-blank title   | `WindowsGraphicsCaptureRecorder` (`spectre-recording-windows` helper). |
 | **Windows**             | `null`, or non-null with no title | `WindowsGraphicsCaptureRecorder` region capture.                     |
-| **Linux Xorg/Xvfb**     | non-null with a non-blank title   | `LinuxX11Recorder` window capture (`ximagesrc xname`).               |
+| **Linux Xorg/Xvfb**     | non-null with a non-blank title   | `LinuxX11Recorder` window capture (`ximagesrc xid=` after title lookup). |
 | **Linux Xorg/Xvfb**     | `null`, or non-null with no title | `LinuxX11Recorder` region capture (`ximagesrc`).                     |
 | **Linux Wayland**       | non-null                          | `WaylandPortalWindowRecorder` (portal `Window` source type — only the picked window's pixels, window-sized output). |
 | **Linux Wayland**       | `null`                            | `WaylandPortalRecorder` (portal `Monitor` source type — region capture). |
@@ -260,7 +286,9 @@ A few details worth knowing:
 - **Linux Xorg/Xvfb uses the Linux helper by default.** `AutoRecorder` no longer uses
   `ffmpeg` for the Linux Xorg/Xvfb route. Region and window capture go through the
   bundled Rust helper from `spectre-recording-linux`, which spawns `gst-launch-1.0`
-  with `ximagesrc`. The explicit `FfmpegRecorder`, `FfmpegWindowRecorder`,
+  with `ximagesrc`. Window mode looks up the mapped XID (`WM_NAME` / `_NET_WM_NAME`)
+  and fails if the title cannot be resolved — it does not record the root/desktop.
+  The explicit `FfmpegRecorder`, `FfmpegWindowRecorder`,
   `FfmpegRegionScreenshotter`, and `FfmpegWindowScreenshotter` classes are deprecated legacy
   escape hatches; use them only if you intentionally need the old ffmpeg backends. The helper's recording pipeline currently supports
   `RecordingOptions.codec = "libx264"` or `"x264enc"` only; arbitrary GStreamer encoder

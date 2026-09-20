@@ -16,19 +16,31 @@
 //! in this language environment.
 
 mod gst;
+mod identity;
+mod input_map;
 mod portal;
 mod protocol;
+mod rd_handshake;
 mod recorder;
+mod remote_desktop;
 mod screenshot;
+mod session;
+mod session_lock;
 mod stream_region;
+mod x11_window;
 
 use anyhow::Result;
 use protocol::{Command, Event};
+use std::env;
 use std::io::BufRead;
 use std::sync::mpsc;
 use std::thread;
 
 fn main() -> Result<()> {
+    if env::args().any(|a| a == "--session") {
+        return session::serve();
+    }
+
     // Set up the writer thread FIRST so any error — including a malformed Start command on
     // stdin — surfaces as an Event::Error to the JVM instead of an unceremonious exit code
     // the JVM has to guess at. The protocol's contract is "events over stdout, terminal
@@ -47,6 +59,16 @@ fn main() -> Result<()> {
             let _ = event_tx.send(Event::Error {
                 kind: "Protocol".into(),
                 message: "received Stop on stdin before any capture command".into(),
+            });
+            Ok(())
+        }
+        Ok(Command::PointerMove { .. })
+        | Ok(Command::PointerButton { .. })
+        | Ok(Command::Key { .. })
+        | Ok(Command::PointerAxis { .. }) => {
+            let _ = event_tx.send(Event::Error {
+                kind: "Protocol".into(),
+                message: "input commands require spectre-wayland-helper --session".into(),
             });
             Ok(())
         }

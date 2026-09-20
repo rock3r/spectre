@@ -27,10 +27,10 @@ out of scope.
 2. **The local OS is trusted.** Real `RobotDriver`, screenshots, and recording act with the
    privileges of the JVM process and the OS permissions granted to it (macOS TCC, Wayland
    portal, X server access, etc.).
-3. **The HTTP transport assumes a trusted-local peer.** Routes registered by
-   `installSpectreRoutes` expose click, keystroke, and screenshot capture to anyone who can
-   reach the bound port. Bind to `127.0.0.1`. Anything network-reachable broadens the threat
-   model beyond what this release covers.
+3. **The HTTP transport assumes an authenticated deployment peer.** Routes registered by
+   `installSpectreRoutes` expose click, keystroke, and screenshot capture to a caller holding the
+   deployment bearer. HTTPS is mandatory except for an explicit loopback-only test mode. The bearer
+   authorizes the whole transport; Spectre does not provide users, roles, or per-operation grants.
 4. **The agent transport assumes a same-user peer.** `:agent`'s Unix Domain Socket is created
    under a short private directory (in `/tmp/` on Linux/macOS; under `%TEMP%` on Windows, or
    `%LOCALAPPDATA%\Temp` when `%TEMP%` is too deep to leave room for the socket path). On
@@ -97,12 +97,33 @@ out of scope.
 | Capture pixels | `RobotDriver.screenshot(region)` — **captures any rectangle of the virtual desktop**, not just the app under test; `AutoScreenshotter` for native/window-targeted still screenshots where available | In-process; trusted-local HTTP via `/spectre/screenshot` for `RobotDriver`; `AutoScreenshotter` is in-process only |
 | Record video | `AutoRecorder`, native recorders, deprecated explicit `FfmpegRecorder`, `WaylandPortalRecorder` | In-process only |
 | Execute a helper binary | `HelperBinaryExtractor` (SCK), `WaylandHelperBinaryExtractor` | Local file system, JVM process |
-| Expose any of the above over HTTP | `installSpectreRoutes` mounts windows, nodes/`node`, tree/`printTree`, click and other input verbs, `clearAndTypeText`, and screenshot (full-frame or `?nodeKey=`) | **Unauthenticated, plaintext** — host application chooses bind address |
+| Expose any of the above over HTTP | `installSpectreRoutes` mounts windows, nodes/`node`, tree/`printTree`, input verbs, and screenshot (full-frame or `?nodeKey=`) | Deployment bearer on every non-preflight request; **HTTPS required by default**; CORS denied unless exactly allowlisted |
 | Expose any of the above over UDS | `:agent`'s `IpcServer` mounts the same surface plus detach over a Unix Domain Socket | **Unauthenticated** — owner-only filesystem access (POSIX mode 0600 on Linux/macOS, owner-only ACL on Windows/NTFS); same OS user only. Supported on Linux, macOS, and Windows (10 version 1803 / Server 2019+) |
 
-The HTTP exposure column is the most important one to internalise: there are **no auth
-tokens, no TLS, and no origin checks** on any route. The transport is intentionally a
-testing affordance for the same machine, not a remote-control protocol.
+The HTTP exposure column is the most important one to internalise: possession of one deployment
+bearer grants every route, including real input and screenshots. Generate a high-entropy token,
+deliver it through a secret manager or environment variable, and never put it in source,
+command-line arguments, URLs, or logs.
+
+## HTTP exposure controls
+
+- **Bearer authentication.** `SpectreHttpSecurity` is required by both server and client. Every
+  request except a valid CORS preflight carries `Authorization: Bearer …`; comparison uses
+  `MessageDigest.isEqual`. Spectre does not log or echo the configured or presented token, and its
+  client does not install Ktor's logging plugin. Applications that add request logging must redact
+  `Authorization`.
+- **HTTPS by default.** `HttpComposeAutomator` constructs `https://` URLs and the server rejects
+  non-HTTPS requests. `allowInsecureLoopback = true` is a test-only escape hatch: the client accepts
+  only `localhost` or a literal loopback address, and the server checks that the plaintext peer is
+  loopback. TLS keys, certificates, and connector lifecycle remain the host Ktor application's
+  responsibility.
+- **Reverse proxies.** When TLS terminates at a proxy, configure Ktor's forwarded-header handling
+  only if the application's direct peers are trusted proxies. Spectre uses Ktor's resolved origin;
+  trusting arbitrary client-supplied forwarding headers can bypass the HTTPS check.
+- **CORS fails closed.** With the default empty `allowedOrigins`, any request carrying `Origin` and
+  every browser preflight is rejected. Configured origins are exact matches; `*` is rejected.
+  Preflights may request only `GET` or `POST` and the `Authorization` / `Content-Type` headers.
+  Requests without `Origin` still require the bearer.
 
 ## What R5 changed
 
@@ -133,20 +154,16 @@ separately reviewed pass.
 
 ## Accepted risks / deferred follow-ups
 
-These risks are accepted for the pre-1.0 release and tracked for later. Each entry names
-the right venue: items requiring a security-design pass go to #96 (HTTP transport
-expansion); items that are hygiene fixes get their own issues.
+These risks are accepted for the pre-1.0 release.
 
-- **HTTP transport authentication / authorization.** No tokens, no headers, no principal
-  checks. Tracked under #96.
-- **TLS support on the HTTP client.** `HttpComposeAutomator` speaks plaintext only.
-  Tracked under #96.
-- **CORS / Origin policy on the HTTP routes.** No protection against a local browser
-  reaching the loopback server. Tracked under #96.
-- **Narrower screenshot API.** `RobotDriver.screenshot(region)` and full-frame HTTP
-  `GET /screenshot` can still capture any rectangle on the display, including unrelated
-  windows. Node-targeted HTTP stills (`GET /screenshot?nodeKey=`) shipped in the #96
-  data-only slice; they do not constrain the full-frame / Robot region path.
+- **Coarse HTTP authorization.** The deployment bearer grants the complete HTTP surface. There are
+  no identities, roles, route-specific grants, built-in token rotation, or rate limiting.
+- **Host-managed TLS.** Spectre enforces the request scheme and defaults its client to HTTPS, but
+  certificate issuance, private-key storage, connector configuration, and trusted-proxy policy
+  belong to the host deployment.
+- **Screenshot scope.** `RobotDriver.screenshot(region)` and full-frame HTTP `GET /screenshot` can
+  capture pixels from unrelated windows. Node-targeted HTTP stills (`GET /screenshot?nodeKey=`)
+  narrow the request but do not constrain the full-frame / Robot region path.
 - **Recording output-path validation.** Spectre passes the caller-supplied output path
   through to ffmpeg, GStreamer, or the helpers without rejecting `/dev/`, `/proc/`, symlinks, or
   not-yet-existing parents. Standalone follow-up issue, separate from #96.
@@ -173,6 +190,11 @@ locally-built helper binary without rebundling. It is **honored unconditionally*
 no signature check, hash check, or path constraint. Never set it in an environment that
 ingests untrusted input. The published platform helper artifacts are the only supported
 configuration for non-dev use.
+
+On Linux Wayland, `spectre-wayland-helper --session` listens on a same-user unix socket under
+`$XDG_RUNTIME_DIR/spectre/` (override with `SPECTRE_WAYLAND_SESSION_DIR`). Any process running
+as that user can connect and drive pointer, keyboard, and monitor capture for the seat.
+Treat that socket like the agent UDS: trusted local / same-user only.
 
 `SPECTRE_CAPTURE_BACKEND` forces Linux still/video routing when auto-detection is wrong for a
 nested setup: `x11` / `xorg` / `xvfb` → X11 helper path; `wayland` / `portal` → portal path;

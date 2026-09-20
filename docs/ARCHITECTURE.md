@@ -149,7 +149,8 @@ Current backends:
   shared framework-dependent .NET Windows Graphics Capture helper packaged by
   `:recording-windows` for x64 and arm64.
 - `LinuxX11Recorder` — Linux Xorg/Xvfb region and named-window capture via the
-  `spectre-recording-linux` helper and GStreamer `ximagesrc`.
+  `spectre-recording-linux` helper and GStreamer `ximagesrc`. Window mode resolves
+  an XID from the title and fails if that window is missing.
 - `LinuxNativeScreenshotter` — Linux still screenshots via the same helper: GStreamer
   `ximagesrc` on Xorg/Xvfb, and one-frame portal/PipeWire capture on Wayland.
 - `FfmpegRegionScreenshotter` — deprecated legacy explicit Linux X11 still screenshot
@@ -161,10 +162,12 @@ Current backends:
   `:recording-macos`.
 - `screencapturekit.ScreenCaptureKitScreenshotter` — macOS-only still window screenshots
   through the same Swift helper in `--mode screenshot`.
-- `portal.WaylandPortalRecorder` — Linux Wayland capture via `xdg-desktop-portal`'s
-  ScreenCast interface, driven by a Rust helper
-  (`recording/native/linux/spectre-wayland-helper`) packaged by `:recording-linux`.
-  The helper hands the PipeWire FD to `gst-launch-1.0`.
+- `portal.WaylandPortalRecorder` — Linux Wayland capture via `xdg-desktop-portal`.
+  Region/monitor capture and real OS input share one long-lived
+  `spectre-wayland-helper --session` process (RemoteDesktop + ScreenCast, host
+  `Registry.Register`, Spectre-owned `restore_token` under `$XDG_STATE_HOME/spectre`).
+  Window-source capture still uses a one-shot ScreenCast helper process. The helper
+  is packaged by `:recording-linux` and hands the PipeWire FD to `gst-launch-1.0`.
 - `AutoRecorder` — high-level router that picks per call from `startWindow(...)` /
   `startRegion(...)` + OS detection: Wayland portal first, then macOS SCK for window and
   region capture, Windows Graphics Capture for window and region capture, and Linux helper

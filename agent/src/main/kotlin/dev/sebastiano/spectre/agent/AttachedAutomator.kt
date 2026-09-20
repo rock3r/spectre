@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.agent
 
+import dev.sebastiano.spectre.agent.transport.AgentErrorCategory
 import dev.sebastiano.spectre.agent.transport.AgentRequest
 import dev.sebastiano.spectre.agent.transport.AgentResponse
 import dev.sebastiano.spectre.agent.transport.IpcClient
@@ -340,7 +341,14 @@ internal constructor(
             )
         val nodes = (resp as? AgentResponse.Nodes)?.nodes ?: throw wireMismatch("Nodes", resp)
         return nodes.singleOrNull()
-            ?: throw IOException("waitForNode expected a single node, got ${nodes.size}")
+            ?: throw if (Thread.currentThread().isInterrupted) {
+                SpectreAgentException(
+                    category = AgentErrorCategory.Cancelled,
+                    message = "Interrupted during waitForNode; agent returned ${nodes.size} nodes",
+                )
+            } else {
+                IOException("waitForNode expected a single node, got ${nodes.size}")
+            }
     }
 
     /**
@@ -454,7 +462,31 @@ internal constructor(
 
     private fun exchange(request: AgentRequest, deadlineEpochMs: Long? = null): AgentResponse {
         check(!closed.get()) { "AttachedAutomator is closed" }
-        val resp = client.send(request, deadlineEpochMs = deadlineEpochMs)
+        val resp =
+            try {
+                client.send(request, deadlineEpochMs = deadlineEpochMs)
+            } catch (ex: InterruptedException) {
+                throw SpectreAgentException(
+                    category = AgentErrorCategory.Cancelled,
+                    message = "Interrupted during ${request.logLabel}",
+                    cause = ex,
+                )
+            } catch (ex: java.nio.channels.ClosedByInterruptException) {
+                throw SpectreAgentException(
+                    category = AgentErrorCategory.Cancelled,
+                    message = "Interrupted during ${request.logLabel}",
+                    cause = ex,
+                )
+            } catch (ex: IOException) {
+                if (Thread.currentThread().isInterrupted) {
+                    throw SpectreAgentException(
+                        category = AgentErrorCategory.Cancelled,
+                        message = "Interrupted during ${request.logLabel}: ${ex.message}",
+                        cause = ex,
+                    )
+                }
+                throw ex
+            }
         if (resp is AgentResponse.Error) {
             val category =
                 dev.sebastiano.spectre.agent.transport.AgentErrorCategory.fromWire(resp.category)

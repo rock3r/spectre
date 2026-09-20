@@ -776,6 +776,7 @@ val buildWaylandHelper by
         workingDir = waylandHelperSource.asFile
         commandLine("cargo", "build", "--release")
         inputs.dir(waylandHelperSource.dir("src"))
+        inputs.dir(waylandHelperSource.dir("resources"))
         inputs.file(waylandHelperSource.file("Cargo.toml"))
         outputs.file(waylandHelperBinary)
     }
@@ -876,6 +877,7 @@ val perArchCargoBuildTasks = linuxHelperTargets.map { target ->
         environment("PKG_CONFIG_PATH_${target.triple.replace("-", "_")}", target.pkgConfigLibPath)
         environment("PKG_CONFIG_ALLOW_CROSS", "1")
         inputs.dir(waylandHelperSource.dir("src"))
+        inputs.dir(waylandHelperSource.dir("resources"))
         inputs.file(waylandHelperSource.file("Cargo.toml"))
         outputs.file(perArchOutput)
     }
@@ -1214,8 +1216,8 @@ tasks.register<JavaExec>("runFfmpegX11GrabSmoke") {
 tasks.register<JavaExec>("runLinuxX11RecordingSmoke") {
     group = "verification"
     description =
-        "Boots a JFrame, records it for ~3s via the Linux helper's X11/XWayland path, " +
-            "prints output stats."
+        "Records a region and a named X11 window (~2–3s) via the Linux helper, asserts " +
+            "window-mode MP4 size is window-scoped, and checks missing titles fail closed."
     onlyIf { OperatingSystem.current().isLinux }
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("dev.sebastiano.spectre.recording.LinuxX11RecordingSmoke")

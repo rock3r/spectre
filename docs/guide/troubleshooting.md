@@ -399,6 +399,25 @@ ls "$XDG_RUNTIME_DIR" | grep wayland   # should be empty
 
 See [Recording limitations](../RECORDING-LIMITATIONS.md) for the full Wayland story.
 
+## "Linux Wayland keeps asking to share the screen / remote interaction"
+
+A seated GNOME session should show **one** Share + Remember / Allow remote interaction
+dialog for Spectre, then reuse the helper. If every JVM pops a new picker:
+
+- Confirm `spectre-recording-linux` is on the runtime classpath and
+  `spectre-wayland-helper` is the binary in use (`SPECTRE_WAYLAND_HELPER` only for local
+  helper iteration).
+- Check `$XDG_RUNTIME_DIR/spectre/wayland-session.sock` exists after the first grant. If it
+  exists but every call fails immediately, delete the socket (dead helper) and retry.
+- Do not point token storage at `~/.java/robot/` — Spectre stores
+  `wayland-rd-restore-token-*` under `$XDG_STATE_HOME/spectre/` (or
+  `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR`).
+- A rejected token is cleared and retried once. A second failure is fatal; delete the
+  token file only if you intend to re-consent.
+
+SSH / headless sessions without a compositor seat cannot complete the dialog. That is a
+lab limitation, not a silent skip. See [Linux Wayland consent](recording.md#linux-wayland-consent).
+
 ## "macOS `sandbox-exec` blocks my Compose Desktop/Spectre test"
 
 A macOS process sandbox can block AWT, Swing, Compose Desktop, and `java.awt.Robot`
