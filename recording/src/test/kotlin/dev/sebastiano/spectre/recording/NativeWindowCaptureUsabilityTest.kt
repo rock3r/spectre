@@ -131,6 +131,36 @@ class NativeWindowCaptureUsabilityTest {
     }
 
     @Test
+    fun `overlapping first waits reuse one timed-out probe`() {
+        val table = WaitScopedProbeTable()
+        val older = table.begin()
+        val newer = table.begin()
+        var computes = 0
+        val first =
+            table.remember(older, cached = null) {
+                computes += 1
+                null
+            }
+        assertFalse(first.usableNow)
+        val second =
+            table.remember(newer, cached = null) {
+                computes += 1
+                true
+            }
+        assertFalse(second.usableNow)
+        assertEquals(1, computes, "a waiter behind the in-flight probe must reuse its timeout")
+        table.end(newer)
+        table.end(older)
+        val later =
+            table.remember(table.begin(), cached = null) {
+                computes += 1
+                true
+            }
+        assertTrue(later.usableNow)
+        assertEquals(2, computes, "a later wait must still retry after overlapping waits end")
+    }
+
+    @Test
     fun `unscoped wait id does not share an inconclusive probe slot`() {
         val table = WaitScopedProbeTable()
         var computes = 0

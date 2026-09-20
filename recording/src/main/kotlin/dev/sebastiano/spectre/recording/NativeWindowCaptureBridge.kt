@@ -31,7 +31,8 @@ internal object NativeWindowCaptureBridge {
      * visual- idle treats native capture as unavailable and falls back to Robot region sampling
      * (#503). An interrupted or timed-out probe is not globally cached: a later `waitForVisualIdle`
      * may retry. The inconclusive Robot decision is keyed to [waitId] so overlapping waits cannot
-     * clear each other's state.
+     * clear each other's state. A timeout is also copied to other waits that were already open
+     * behind the same in-flight probe, so a second 3s `--version` cannot eat the default 5s wait.
      */
     @JvmStatic
     @JvmName("isPlatformCaptureUsable")
@@ -139,12 +140,19 @@ internal fun rememberCompletedProbe(
 /** Per-wait inconclusive Robot decisions. Ending one wait must not drop another wait's slot. */
 internal class WaitScopedProbeTable {
     private val nextId = AtomicLong()
+    private val open = ConcurrentHashMap.newKeySet<Long>()
     private val scoped = ConcurrentHashMap<Long, Boolean>()
 
-    fun begin(): Long = nextId.incrementAndGet()
+    fun begin(): Long {
+        val waitId = nextId.incrementAndGet()
+        open.add(waitId)
+        return waitId
+    }
 
     fun end(waitId: Long) {
-        if (waitId != 0L) scoped.remove(waitId)
+        if (waitId == 0L) return
+        open.remove(waitId)
+        scoped.remove(waitId)
     }
 
     fun remember(waitId: Long, cached: Boolean?, compute: () -> Boolean?): CompletedProbe {
@@ -152,8 +160,21 @@ internal class WaitScopedProbeTable {
         val remembered = rememberCompletedProbe(cached, waitScoped, compute)
         if (waitId != 0L) {
             val scopedResult = remembered.waitScoped
-            if (scopedResult == null) scoped.remove(waitId) else scoped[waitId] = scopedResult
+            if (scopedResult == null) {
+                scoped.remove(waitId)
+            } else {
+                scoped[waitId] = scopedResult
+                if (waitScoped == null && remembered.cache == null) {
+                    shareInconclusiveWithOpenWaits(waitId, scopedResult)
+                }
+            }
         }
         return remembered
+    }
+
+    private fun shareInconclusiveWithOpenWaits(sourceWaitId: Long, result: Boolean) {
+        for (id in open) {
+            if (id != sourceWaitId) scoped.putIfAbsent(id, result)
+        }
     }
 }
