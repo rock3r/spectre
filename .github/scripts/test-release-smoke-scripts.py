@@ -229,6 +229,7 @@ class SmokeLibSchemaTest(unittest.TestCase):
             "mcp-sdk-flow",
             "host-native-recording",
             "maven-local-consumer",
+            "macos-tcc",
             "portal-token-warmup",
             "pointer-move",
             "input-coord-contention",
@@ -240,6 +241,11 @@ class SmokeLibSchemaTest(unittest.TestCase):
             "input-coord-headed-robot",
         }
         self.assertEqual(expected, set(smoke_lib.REQUIRED_SCENARIO_IDS))
+        self.assertLess(
+            smoke_lib.REQUIRED_SCENARIO_IDS.index("macos-tcc"),
+            smoke_lib.REQUIRED_SCENARIO_IDS.index("check"),
+            "macos-tcc must run before ./gradlew check so missing TCC fails in seconds",
+        )
 
     def test_pointer_move_api_skip_reason_when_verbs_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1130,6 +1136,11 @@ class DocsAndSchemaPolicyTest(unittest.TestCase):
         self.assertIn("bump", docs.lower())
         self.assertIn("--preflight-only", docs)
         self.assertIn("preflight-only", docs)
+        self.assertIn("`macos-tcc`", docs)
+        self.assertIn("fail-closed", docs.lower())
+        self.assertIn("Accessibility", docs)
+        self.assertIn("Screen Recording", docs)
+        self.assertIn("./gradlew --stop", docs)
         # #459: the experimental input-coordination delta cells are reusable scenario IDs, so the
         # stable-ID table / gate must document them (not leave the commands only in chat).
         for coordination_id in (
@@ -1167,6 +1178,272 @@ class DocsAndSchemaPolicyTest(unittest.TestCase):
             report, required_ids=smoke_lib.REQUIRED_SCENARIO_IDS
         )
         self.assertTrue(any("missing required scenario ids" in e for e in errors), errors)
+
+
+class MacOsTccPreflightTest(unittest.TestCase):
+    """#502: release-smoke must fail closed on missing macOS TCC before ./gradlew check."""
+
+    def test_skip_reason_on_non_darwin(self):
+        linux = smoke_lib.macos_tcc_skip_reason(system="Linux")
+        self.assertIsNotNone(linux)
+        self.assertIn("does not use", linux or "")
+        windows = smoke_lib.macos_tcc_skip_reason(system="Windows")
+        self.assertIsNotNone(windows)
+        self.assertIn("Windows", windows or "")
+
+    def test_skip_reason_none_on_darwin(self):
+        self.assertIsNone(smoke_lib.macos_tcc_skip_reason(system="Darwin"))
+
+    def test_evaluate_granted_is_silent(self):
+        smoke_lib.evaluate_macos_tcc(
+            accessibility=smoke_lib.TCC_GRANTED,
+            screen_recording=smoke_lib.TCC_GRANTED,
+        )
+
+    def test_evaluate_not_applicable_is_silent(self):
+        smoke_lib.evaluate_macos_tcc(
+            accessibility=smoke_lib.TCC_NOT_APPLICABLE,
+            screen_recording=smoke_lib.TCC_NOT_APPLICABLE,
+        )
+
+    def test_evaluate_denied_accessibility_names_grant_and_relaunch(self):
+        with self.assertRaises(RuntimeError) as raised:
+            smoke_lib.evaluate_macos_tcc(
+                accessibility=smoke_lib.TCC_DENIED,
+                screen_recording=smoke_lib.TCC_GRANTED,
+            )
+        message = str(raised.exception)
+        self.assertIn("Accessibility", message)
+        self.assertIn("Privacy & Security", message)
+        self.assertTrue(
+            "wrapping" in message or "launching" in message or "parent" in message,
+            message,
+        )
+        self.assertTrue(
+            "relaunch" in message.lower() or "quit" in message.lower(),
+            message,
+        )
+        self.assertIn("./gradlew --stop", message)
+
+    def test_evaluate_denied_screen_recording_names_grant_and_relaunch(self):
+        with self.assertRaises(RuntimeError) as raised:
+            smoke_lib.evaluate_macos_tcc(
+                accessibility=smoke_lib.TCC_GRANTED,
+                screen_recording=smoke_lib.TCC_DENIED,
+            )
+        message = str(raised.exception)
+        self.assertTrue(
+            "Screen Recording" in message or "Screen & System Audio Recording" in message,
+            message,
+        )
+        self.assertIn("Privacy & Security", message)
+        self.assertIn("./gradlew --stop", message)
+
+    def test_evaluate_unknown_is_fail_closed(self):
+        with self.assertRaises(RuntimeError) as raised:
+            smoke_lib.evaluate_macos_tcc(
+                accessibility=smoke_lib.TCC_UNKNOWN,
+                screen_recording=smoke_lib.TCC_GRANTED,
+            )
+        message = str(raised.exception)
+        self.assertIn("Accessibility", message)
+        self.assertTrue(
+            "unknown" in message.lower() or "could not" in message.lower(),
+            message,
+        )
+        self.assertIn("./gradlew --stop", message)
+
+        with self.assertRaises(RuntimeError) as raised:
+            smoke_lib.evaluate_macos_tcc(
+                accessibility=smoke_lib.TCC_GRANTED,
+                screen_recording=smoke_lib.TCC_UNKNOWN,
+            )
+        self.assertTrue(
+            "Screen Recording" in str(raised.exception)
+            or "Screen & System Audio Recording" in str(raised.exception)
+        )
+
+    def test_evaluate_locked_screen_recording_fails(self):
+        with self.assertRaises(RuntimeError) as raised:
+            smoke_lib.evaluate_macos_tcc(
+                accessibility=smoke_lib.TCC_GRANTED,
+                screen_recording=smoke_lib.TCC_LOCKED,
+            )
+        message = str(raised.exception).lower()
+        self.assertIn("locked", message)
+        self.assertIn("unlock", message)
+
+    def test_accessibility_probe_matches_macos_tcc_guard_semantics(self):
+        granted = smoke_lib.probe_macos_accessibility(
+            runner=lambda: (0, "Finder\n")
+        )
+        self.assertEqual(smoke_lib.TCC_GRANTED, granted)
+
+        denied = smoke_lib.probe_macos_accessibility(
+            runner=lambda: (1, "osascript: not allowed assistive access")
+        )
+        self.assertEqual(smoke_lib.TCC_DENIED, denied)
+
+        unknown_automation = smoke_lib.probe_macos_accessibility(
+            runner=lambda: (1, "AppleEvent handler failed (-1743)")
+        )
+        self.assertEqual(smoke_lib.TCC_UNKNOWN, unknown_automation)
+
+        unknown_blank = smoke_lib.probe_macos_accessibility(runner=lambda: (0, "  \n"))
+        self.assertEqual(smoke_lib.TCC_UNKNOWN, unknown_blank)
+
+        unknown_missing = smoke_lib.probe_macos_accessibility(runner=lambda: None)
+        self.assertEqual(smoke_lib.TCC_UNKNOWN, unknown_missing)
+
+    def test_screen_recording_probe_parses_helper_preflight_json(self):
+        granted = smoke_lib.probe_macos_screen_recording(
+            runner=lambda: (
+                0,
+                '{"granted": true, "api": "CGPreflightScreenCaptureAccess"}\n',
+            )
+        )
+        self.assertEqual(smoke_lib.TCC_GRANTED, granted)
+
+        denied = smoke_lib.probe_macos_screen_recording(
+            runner=lambda: (
+                6,
+                '{"granted": false, "guidance": "Grant Screen Recording"}\n',
+            )
+        )
+        self.assertEqual(smoke_lib.TCC_DENIED, denied)
+
+        unknown = smoke_lib.probe_macos_screen_recording(
+            runner=lambda: (1, "not-json\n")
+        )
+        self.assertEqual(smoke_lib.TCC_UNKNOWN, unknown)
+
+    def test_screen_recording_probe_never_requests_or_reads_tcc_db(self):
+        seen: list[list[str]] = []
+
+        def runner(argv: list[str]) -> tuple[int, str]:
+            seen.append(argv)
+            return 0, '{"granted": true}\n'
+
+        status = smoke_lib.probe_macos_screen_recording(
+            helper_path=Path("/tmp/spectre-screencapture"),
+            invoke_helper=runner,
+        )
+        self.assertEqual(smoke_lib.TCC_GRANTED, status)
+        self.assertEqual(1, len(seen))
+        self.assertIn("--mode", seen[0])
+        self.assertIn("preflight", seen[0])
+        joined = " ".join(seen[0])
+        self.assertNotIn("request", joined)
+        self.assertNotIn("guide-permissions", joined)
+        self.assertNotIn("TCC.db", joined)
+
+    def test_blocked_remaining_fills_required_ids_with_reason(self):
+        existing = [
+            smoke_lib.scenario_result("preflight", name="p", result="pass"),
+            smoke_lib.scenario_result(
+                "macos-tcc",
+                name="tcc",
+                result="fail",
+                detail="Accessibility denied",
+            ),
+        ]
+        filled = smoke_lib.fill_blocked_remaining(
+            existing,
+            reason="blocked by macos-tcc failure; grant TCC and relaunch",
+        )
+        ids = [row.id for row in filled]
+        self.assertEqual(list(smoke_lib.REQUIRED_SCENARIO_IDS), ids)
+        by_id = {row.id: row for row in filled}
+        self.assertEqual("fail", by_id["macos-tcc"].result)
+        self.assertEqual("pass", by_id["preflight"].result)
+        self.assertEqual("n/a", by_id["check"].result)
+        self.assertIn("macos-tcc", by_id["check"].reason)
+        self.assertEqual("n/a", by_id["junit-live"].result)
+
+    def test_require_macos_tcc_recheck_fails_closed_on_unknown(self):
+        with self.assertRaises(RuntimeError) as raised:
+            smoke_lib.require_macos_tcc(
+                accessibility_probe=lambda: smoke_lib.TCC_UNKNOWN,
+                screen_recording_probe=lambda: smoke_lib.TCC_GRANTED,
+                system="Darwin",
+            )
+        self.assertIn("Accessibility", str(raised.exception))
+
+
+class ReleaseSmokeMacOsTccWiringTest(unittest.TestCase):
+    """Drive the Unix entrypoint so a denied TCC probe never reaches ./gradlew check."""
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "release_smoke_macos_tcc", RELEASE_SMOKE
+        )
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        cls.rs = module
+
+    @unittest.skipIf(
+        platform.system() == "Windows",
+        "Unix release-smoke entrypoint intentionally rejects Windows",
+    )
+    def test_denied_tcc_aborts_before_check(self):
+        gradle_cmds: list[list[str]] = []
+        real_run = self.rs.subprocess.run
+
+        def wrapped(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args")
+            if isinstance(cmd, (list, tuple)) and any(
+                str(part).endswith("gradlew") for part in cmd
+            ):
+                gradle_cmds.append(list(cmd))
+                return subprocess.CompletedProcess(cmd, 0)
+            return real_run(*args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            with (
+                unittest.mock.patch.object(
+                    self.rs.platform, "system", return_value="Darwin"
+                ),
+                unittest.mock.patch.object(
+                    self.rs, "macos_tcc_skip_reason", return_value=None
+                ),
+                unittest.mock.patch.object(
+                    self.rs,
+                    "probe_macos_accessibility",
+                    return_value=smoke_lib.TCC_DENIED,
+                ),
+                unittest.mock.patch.object(
+                    self.rs,
+                    "probe_macos_screen_recording",
+                    return_value=smoke_lib.TCC_GRANTED,
+                ),
+                unittest.mock.patch.object(
+                    self.rs.subprocess, "run", side_effect=wrapped
+                ),
+            ):
+                code = self.rs.main(
+                    [
+                        "--version",
+                        "0.5.0",
+                        "--base",
+                        "v0.4.1",
+                        "--out-dir",
+                        str(out),
+                        "--overall-timeout",
+                        "60",
+                    ]
+                )
+            self.assertEqual(1, code)
+            self.assertEqual([], gradle_cmds, gradle_cmds)
+            report = json.loads((out / "release-smoke.json").read_text(encoding="utf-8"))
+            by_id = {row["id"]: row for row in report["scenarios"]}
+            self.assertEqual("fail", by_id["macos-tcc"]["result"])
+            self.assertIn("Accessibility", by_id["macos-tcc"]["detail"])
+            self.assertEqual("n/a", by_id["check"]["result"])
+            self.assertIn("macos-tcc", by_id["check"]["reason"])
 
 
 if __name__ == "__main__":

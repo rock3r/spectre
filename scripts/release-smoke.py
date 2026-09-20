@@ -31,6 +31,7 @@ from smoke_lib import (  # noqa: E402
     HEADED_ROBOT_RESULTS_SUBPATH,
     HEADED_ROBOT_SCENARIO_ID,
     HEADED_ROBOT_TESTCASE,
+    MACOS_TCC_BLOCKED_REASON,
     REQUIRED_SCENARIO_IDS,
     RESULT_FAIL,
     RESULT_PASS,
@@ -47,13 +48,18 @@ from smoke_lib import (  # noqa: E402
     linux_portal_token_path,
     build_report,
     collect_preflight,
+    fill_blocked_remaining,
     gradle_ui_force_args,
     hard_failures,
     host_cli_package_target,
+    macos_tcc_skip_reason,
     packaged_cli_executable,
     pointer_move_api_skip_reason,
     portal_token_warmup_skip_reason,
     prepare_linux_portal_token_env,
+    probe_macos_accessibility,
+    probe_macos_screen_recording,
+    require_macos_tcc,
     robot_xvfb_prefix,
     robot_xvfb_unavailable_reason,
     run_callable_scenario,
@@ -96,6 +102,87 @@ def _run_preflight_scenario(preflight, out_dir: Path) -> ScenarioResult:
         action=action,
         out_dir=out_dir,
     )
+
+
+def _run_macos_tcc_scenario(out_dir: Path, system: str) -> ScenarioResult:
+    """Fail closed on missing Screen Recording / Accessibility before ./gradlew check."""
+    skip = macos_tcc_skip_reason(system=system)
+    if skip is not None:
+        return run_callable_scenario(
+            "macos-tcc",
+            name="macOS Screen Recording / Accessibility TCC preflight",
+            action=lambda: None,
+            out_dir=out_dir,
+            na_reason=skip,
+        )
+
+    def action() -> None:
+        require_macos_tcc(
+            accessibility_probe=probe_macos_accessibility,
+            screen_recording_probe=lambda: probe_macos_screen_recording(root=ROOT),
+        )
+
+    return run_callable_scenario(
+        "macos-tcc",
+        name="macOS Screen Recording / Accessibility TCC preflight",
+        action=action,
+        out_dir=out_dir,
+    )
+
+
+def _macos_tcc_recheck_failure(
+    scenario_id: str, name: str, system: str
+) -> ScenarioResult | None:
+    """Optional mid-run TCC re-check so a grant after start cannot salvage stale daemons."""
+    if macos_tcc_skip_reason(system=system) is not None:
+        return None
+    try:
+        require_macos_tcc(
+            accessibility_probe=probe_macos_accessibility,
+            screen_recording_probe=lambda: probe_macos_screen_recording(root=ROOT),
+        )
+    except RuntimeError as error:
+        return scenario_result(
+            scenario_id,
+            name=name,
+            result=RESULT_FAIL,
+            detail=str(error),
+            hard=True,
+        )
+    return None
+
+
+def _write_smoke_report(
+    preflight,
+    results: list[ScenarioResult],
+    *,
+    started_at: str,
+    wall_start: float,
+    out_dir: Path,
+) -> tuple[int, list[str]]:
+    finished_at = utc_now_iso()
+    overall_seconds = int(time.monotonic() - wall_start)
+    report = build_report(
+        preflight,
+        results,
+        started_at=started_at,
+        finished_at=finished_at,
+        overall_seconds=overall_seconds,
+    )
+    schema_errors = validate_report(report, required_ids=list(REQUIRED_SCENARIO_IDS))
+    json_path = out_dir / "release-smoke.json"
+    md_path = out_dir / "release-smoke.md"
+    write_json_report(json_path, report)
+    write_markdown_report(md_path, report)
+    print(f"Report JSON: {json_path}")
+    print(f"Report MD:   {md_path}")
+    print(f"displayMode: {preflight.environment.display_mode}")
+    print(f"SHA: {preflight.sha}  dirty={preflight.dirty}")
+    if schema_errors:
+        print("REPORT SCHEMA ERRORS:", file=sys.stderr)
+        for err in schema_errors:
+            print(f"  - {err}", file=sys.stderr)
+    return overall_seconds, schema_errors
 
 
 def _native_helper_layout_check(root: Path, system: str) -> None:
@@ -430,6 +517,26 @@ def main(argv: list[str] | None = None) -> int:
         results.append(item)
         _print_result(item)
 
+    # --- macOS TCC (#502): fail closed before the long ./gradlew check ---
+    tcc_result = _run_macos_tcc_scenario(out_dir, system)
+    add(tcc_result)
+    if tcc_result.result == RESULT_FAIL:
+        blocked = fill_blocked_remaining(results, reason=MACOS_TCC_BLOCKED_REASON)
+        already = {item.id for item in results}
+        results[:] = blocked
+        for item in blocked:
+            if item.id not in already:
+                _print_result(item)
+        _, schema_errors = _write_smoke_report(
+            preflight,
+            results,
+            started_at=started_at,
+            wall_start=wall_start,
+            out_dir=out_dir,
+        )
+        print("HARD FAILURES: macos-tcc")
+        return 2 if schema_errors else 1
+
     # --- Linux Wayland portal token warmup ---
     portal_skip = portal_token_warmup_skip_reason(system=system)
     if portal_skip is not None:
@@ -535,10 +642,13 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     # --- live JUnit failure artifacts/video + atomic capture ---
-    blocked = _robot_cell_blocked_result(
-        "junit-live",
-        "Live JUnit failure artifacts/video and atomic capture",
-        system,
+    junit_name = "Live JUnit failure artifacts/video and atomic capture"
+    blocked = _macos_tcc_recheck_failure("junit-live", junit_name, system) or (
+        _robot_cell_blocked_result(
+            "junit-live",
+            junit_name,
+            system,
+        )
     )
     add(
         blocked
@@ -568,7 +678,9 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     else:
-        blocked = _robot_cell_blocked_result("pointer-move", pointer_name, system)
+        blocked = _macos_tcc_recheck_failure(
+            "pointer-move", pointer_name, system
+        ) or _robot_cell_blocked_result("pointer-move", pointer_name, system)
         pointer = blocked or run_scenario(
             "pointer-move",
             name=pointer_name,
@@ -740,8 +852,13 @@ def main(argv: list[str] | None = None) -> int:
     # "ALL HARD SCENARIOS PASSED" without the headed proof.
     headed_missing = headed_robot_missing_surface(ROOT)
     headed_blocked = robot_xvfb_unavailable_reason(system)
+    headed_tcc = _macos_tcc_recheck_failure(
+        HEADED_ROBOT_SCENARIO_ID, HEADED_ROBOT_NAME, system
+    )
     headed_automated: ScenarioResult | None = None
-    if headed_missing is None and headed_blocked is None:
+    if headed_tcc is not None:
+        headed_automated = headed_tcc
+    elif headed_missing is None and headed_blocked is None:
         headed_automated = run_scenario(
             HEADED_ROBOT_SCENARIO_ID,
             name=HEADED_ROBOT_NAME,
@@ -794,7 +911,9 @@ def main(argv: list[str] | None = None) -> int:
         ),
         ("agent-launch-and-attach", "Launch-and-attach", "*LaunchAndAttachIntegration*"),
     ):
-        blocked = _robot_cell_blocked_result(scenario_id, name, system)
+        blocked = _macos_tcc_recheck_failure(
+            scenario_id, name, system
+        ) or _robot_cell_blocked_result(scenario_id, name, system)
         add(
             blocked
             or run_scenario(

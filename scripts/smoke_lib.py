@@ -30,6 +30,7 @@ SCHEMA_VERSION = 1
 # must emit a result row for each ID that is in scope for that OS entrypoint.
 REQUIRED_SCENARIO_IDS: tuple[str, ...] = (
     "preflight",
+    "macos-tcc",
     "check",
     "junit-live",
     "agent-attach-core",
@@ -280,6 +281,239 @@ def collect_preflight(
         repo_root=str(root.resolve()),
         environment=env,
     )
+
+
+# --- macOS TCC preflight (#502) ------------------------------------------------
+# Mirrors MacOsTccGuard (Accessibility osascript) and MacOsScreenCaptureAccess
+# (helper --mode preflight / CGPreflightScreenCaptureAccess). Release smoke is
+# fail-closed: Denied, Locked, and Unknown all block before ./gradlew check.
+# Never read TCC.db. Never invoke helper request / guide-permissions.
+
+TCC_GRANTED = "granted"
+TCC_DENIED = "denied"
+TCC_LOCKED = "locked"
+TCC_UNKNOWN = "unknown"
+TCC_NOT_APPLICABLE = "not_applicable"
+
+ACCESSIBILITY_OSASCRIPT = (
+    'tell application "System Events" to return name of first process'
+)
+SCREENCAPTURE_HELPER_NAME = "spectre-screencapture"
+SCREENCAPTURE_PREFLIGHT_TIMEOUT_SECONDS = 15
+MACOS_TCC_BLOCKED_REASON = (
+    "blocked by macos-tcc failure; grant Screen Recording and Accessibility, "
+    "quit/relaunch the wrapping app, then ./gradlew --stop"
+)
+MACOS_TCC_PARENT_PROCESS_GUIDANCE = (
+    "macOS attributes Robot input and Screen Recording to the wrapping app that "
+    "launched this process (Terminal, iTerm2, IntelliJ IDEA, Grok Bot, Claude.app, "
+    "etc.) — not to the JVM binary itself. Grant System Settings → Privacy & Security "
+    "to that wrapping app, then fully quit and relaunch it (macOS only re-evaluates "
+    "TCC at process start). Run `./gradlew --stop` so Gradle daemons started before "
+    "the grant are not reused."
+)
+
+
+def macos_tcc_skip_reason(system: str | None = None) -> str | None:
+    """Hard N/A reason when macOS Screen Recording / Accessibility TCC does not apply."""
+    host = system or platform.system()
+    if host != "Darwin":
+        return f"{host} does not use macOS Screen Recording / Accessibility TCC"
+    return None
+
+
+def evaluate_macos_tcc(*, accessibility: str, screen_recording: str) -> None:
+    """Fail closed unless both probes are granted or not applicable."""
+    problems = [
+        *_tcc_status_problem("Accessibility", accessibility, allow_locked=False),
+        *_tcc_status_problem("Screen Recording", screen_recording, allow_locked=True),
+    ]
+    if problems:
+        raise RuntimeError("\n".join([*problems, MACOS_TCC_PARENT_PROCESS_GUIDANCE]))
+
+
+def _tcc_status_problem(label: str, status: str, *, allow_locked: bool) -> list[str]:
+    if status in {TCC_GRANTED, TCC_NOT_APPLICABLE}:
+        return []
+    settings = (
+        "System Settings → Privacy & Security → Accessibility"
+        if label == "Accessibility"
+        else "System Settings → Privacy & Security → Screen & System Audio Recording"
+    )
+    if allow_locked and status == TCC_LOCKED:
+        return [
+            "macOS screen capture is unavailable because the console session is locked. "
+            "Unlock the screen and retry before treating this as a TCC denial."
+        ]
+    if status == TCC_DENIED:
+        return [f"macOS {label} TCC is denied. Grant {settings} to the wrapping app."]
+    return [
+        f"could not determine macOS {label} TCC permission state (probe was unknown/"
+        f"inconclusive: {status}). Release smoke is fail-closed — grant {settings} "
+        "to the wrapping app and relaunch, or rerun after the probe can decide."
+    ]
+
+
+def probe_macos_accessibility(
+    runner: Callable[[], tuple[int, str] | None] | None = None,
+) -> str:
+    """Same semantics as `MacOsTccGuard.osascriptAccessibilityProbe`."""
+    result = runner() if runner is not None else _run_osascript_accessibility()
+    if result is None:
+        return TCC_UNKNOWN
+    exit_code, output = result
+    text = (output or "").strip()
+    if exit_code == 0 and text:
+        return TCC_GRANTED
+    if exit_code != 0 and "not allowed assistive access" in text.lower():
+        return TCC_DENIED
+    return TCC_UNKNOWN
+
+
+def _run_osascript_accessibility() -> tuple[int, str] | None:
+    try:
+        completed = subprocess.run(
+            ["osascript", "-e", ACCESSIBILITY_OSASCRIPT],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return int(completed.returncode), completed.stdout or ""
+
+
+def macos_screencapture_helper_candidates(root: Path) -> list[Path]:
+    override = os.environ.get("SPECTRE_SCREENCAPTURE_HELPER", "").strip()
+    candidates: list[Path] = []
+    if override:
+        path = Path(override)
+        candidates.append(path)
+        if path.name.endswith(".app"):
+            candidates.append(path / "Contents" / "MacOS" / SCREENCAPTURE_HELPER_NAME)
+        elif path.name != SCREENCAPTURE_HELPER_NAME:
+            candidates.append(path / SCREENCAPTURE_HELPER_NAME)
+    staged_app = (
+        root
+        / "recording"
+        / "build"
+        / "generated"
+        / "screenCaptureHelper"
+        / "native"
+        / "macos"
+        / "SpectreCaptureHelper.app"
+    )
+    candidates.append(staged_app / "Contents" / "MacOS" / SCREENCAPTURE_HELPER_NAME)
+    return candidates
+
+
+def macos_screencapture_helper_path(root: Path) -> Path | None:
+    for candidate in macos_screencapture_helper_candidates(root):
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def parse_screencapture_preflight_json(stdout: str) -> str:
+    """Parse `spectre-screencapture --mode preflight` JSON (MacOsScreenCaptureAccess)."""
+    for line in stdout.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, Mapping) or "granted" not in payload:
+            continue
+        return TCC_GRANTED if payload.get("granted") is True else TCC_DENIED
+    return TCC_UNKNOWN
+
+
+def probe_macos_screen_recording(
+    *,
+    root: Path | None = None,
+    runner: Callable[[], tuple[int, str] | None] | None = None,
+    helper_path: Path | None = None,
+    invoke_helper: Callable[[list[str]], tuple[int, str] | None] | None = None,
+    ensure_helper: Callable[[], Path | None] | None = None,
+) -> str:
+    """Run MacOsScreenCaptureAccess.preflight via the helper; never request/guide."""
+    if runner is not None:
+        result = runner()
+        if result is None:
+            return TCC_UNKNOWN
+        return parse_screencapture_preflight_json(result[1])
+
+    resolved = helper_path
+    if resolved is None and ensure_helper is not None:
+        resolved = ensure_helper()
+    if resolved is None and root is not None:
+        resolved = macos_screencapture_helper_path(root)
+    if resolved is None:
+        return TCC_UNKNOWN
+
+    argv = [str(resolved), "--mode", "preflight"]
+    invoker = invoke_helper or _run_screencapture_preflight
+    invoked = invoker(argv)
+    if invoked is None:
+        return TCC_UNKNOWN
+    return parse_screencapture_preflight_json(invoked[1])
+
+
+def _run_screencapture_preflight(argv: Sequence[str]) -> tuple[int, str] | None:
+    try:
+        completed = subprocess.run(
+            list(argv),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=SCREENCAPTURE_PREFLIGHT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return int(completed.returncode), completed.stdout or ""
+
+
+def require_macos_tcc(
+    *,
+    accessibility_probe: Callable[[], str] | None = None,
+    screen_recording_probe: Callable[[], str] | None = None,
+    system: str | None = None,
+) -> None:
+    """Fail closed for live Robot / capture cells when Darwin TCC is missing."""
+    if macos_tcc_skip_reason(system=system) is not None:
+        return
+    evaluate_macos_tcc(
+        accessibility=(accessibility_probe or probe_macos_accessibility)(),
+        screen_recording=(screen_recording_probe or probe_macos_screen_recording)(),
+    )
+
+
+def fill_blocked_remaining(
+    results: Sequence[ScenarioResult],
+    *,
+    reason: str,
+) -> list[ScenarioResult]:
+    """Keep existing rows and hard-N/A any missing required IDs (fail-fast abort)."""
+    filled = list(results)
+    seen = {row.id for row in filled}
+    for scenario_id in REQUIRED_SCENARIO_IDS:
+        if scenario_id in seen:
+            continue
+        filled.append(
+            scenario_result(
+                scenario_id,
+                name=f"{scenario_id} (not executed)",
+                result=RESULT_NA,
+                reason=reason,
+                hard=True,
+            )
+        )
+    return filled
 
 
 def _default_base_tag(root: Path) -> str:
