@@ -114,6 +114,6 @@ private const val GST_INSPECT: String = "gst-inspect-1.0"
 private const val GST_LAUNCH_PROBE_TIMEOUT_MS: Long = 3_000
 
 internal val X11_STILL_CAPTURE_ELEMENTS: List<String> =
-    listOf("ximagesrc", "videoconvert", "pngenc")
+    listOf("ximagesrc", "videoconvert", "pngenc", "filesink")
 internal val WAYLAND_STILL_CAPTURE_ELEMENTS: List<String> =
-    listOf("pipewiresrc", "videocrop", "videoconvert", "pngenc")
+    listOf("pipewiresrc", "videocrop", "videoconvert", "pngenc", "filesink")

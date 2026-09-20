@@ -184,13 +184,27 @@ class LinuxCaptureDependenciesTest {
     }
 
     @Test
+    fun `gst-launch probe is false when filesink is missing`() {
+        assertEquals(
+            false,
+            LinuxCaptureDependencies.isGstLaunchAvailable(
+                inspectElement = { element -> element != "filesink" },
+                requiredElements = requiredStillCaptureElements(isWayland = { false }),
+                inspectAvailable = { true },
+            ) {
+                FakeGstLaunchProcess(exit = 0)
+            },
+        )
+    }
+
+    @Test
     fun `required still-capture elements follow the selected backend`() {
         assertEquals(
-            listOf("ximagesrc", "videoconvert", "pngenc"),
+            listOf("ximagesrc", "videoconvert", "pngenc", "filesink"),
             requiredStillCaptureElements(isWayland = { false }),
         )
         assertEquals(
-            listOf("pipewiresrc", "videocrop", "videoconvert", "pngenc"),
+            listOf("pipewiresrc", "videocrop", "videoconvert", "pngenc", "filesink"),
             requiredStillCaptureElements(isWayland = { true }),
         )
     }
