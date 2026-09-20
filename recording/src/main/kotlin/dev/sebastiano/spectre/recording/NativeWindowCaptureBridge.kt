@@ -7,6 +7,8 @@ import java.awt.Frame
 import java.awt.Window
 import java.awt.image.BufferedImage
 import java.util.WeakHashMap
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantLock
 
 /**
@@ -19,7 +21,7 @@ internal object NativeWindowCaptureBridge {
     private val screenshotter: AutoScreenshotter by lazy(::AutoScreenshotter)
     private val captureLocks = WeakHashMap<Window, ReentrantLock>()
     @Volatile private var cachedPlatformCaptureUsable: Boolean? = null
-    @Volatile private var waitScopedPlatformCaptureUsable: Boolean? = null
+    private val waitScopedProbes = WaitScopedProbeTable()
     private val platformCaptureUsableLock = Any()
 
     /**
@@ -28,12 +30,16 @@ internal object NativeWindowCaptureBridge {
      * Linux stills spawn `gst-launch-1.0` via the bundled helper. If that binary is missing,
      * visual- idle treats native capture as unavailable and falls back to Robot region sampling
      * (#503). An interrupted or timed-out probe is not globally cached: a later `waitForVisualIdle`
-     * may retry. The inconclusive Robot decision is reused only for the current wait so
-     * BoundedFrameHasher's 2s steady-state budget does not start another 3s probe.
+     * may retry. The inconclusive Robot decision is keyed to [waitId] so overlapping waits cannot
+     * clear each other's state.
      */
     @JvmStatic
     @JvmName("isPlatformCaptureUsable")
-    internal fun isPlatformCaptureUsable(): Boolean {
+    internal fun isPlatformCaptureUsable(): Boolean = isPlatformCaptureUsable(waitId = 0L)
+
+    @JvmStatic
+    @JvmName("isPlatformCaptureUsableForWait")
+    internal fun isPlatformCaptureUsable(waitId: Long): Boolean {
         cachedPlatformCaptureUsable?.let {
             return it
         }
@@ -42,23 +48,23 @@ internal object NativeWindowCaptureBridge {
                 return@synchronized it
             }
             val remembered =
-                rememberCompletedProbe(
-                    cached = cachedPlatformCaptureUsable,
-                    waitScoped = waitScopedPlatformCaptureUsable,
-                ) {
+                waitScopedProbes.remember(waitId, cachedPlatformCaptureUsable) {
                     computePlatformCaptureUsable()
                 }
             cachedPlatformCaptureUsable = remembered.cache
-            waitScopedPlatformCaptureUsable = remembered.waitScoped
             remembered.usableNow
         }
     }
 
-    /** Clears the wait-scoped inconclusive decision so the next wait can retry the probe. */
+    /** Starts an isolated wait-scoped probe slot. A later overlapping wait gets a different id. */
     @JvmStatic
     @JvmName("beginPlatformCaptureWait")
-    internal fun beginPlatformCaptureWait() {
-        synchronized(platformCaptureUsableLock) { waitScopedPlatformCaptureUsable = null }
+    internal fun beginPlatformCaptureWait(): Long = waitScopedProbes.begin()
+
+    @JvmStatic
+    @JvmName("endPlatformCaptureWait")
+    internal fun endPlatformCaptureWait(waitId: Long) {
+        waitScopedProbes.end(waitId)
     }
 
     internal fun computePlatformCaptureUsable(
@@ -128,4 +134,26 @@ internal fun rememberCompletedProbe(
         cache = computed,
         waitScoped = if (computed == null) false else null,
     )
+}
+
+/** Per-wait inconclusive Robot decisions. Ending one wait must not drop another wait's slot. */
+internal class WaitScopedProbeTable {
+    private val nextId = AtomicLong()
+    private val scoped = ConcurrentHashMap<Long, Boolean>()
+
+    fun begin(): Long = nextId.incrementAndGet()
+
+    fun end(waitId: Long) {
+        if (waitId != 0L) scoped.remove(waitId)
+    }
+
+    fun remember(waitId: Long, cached: Boolean?, compute: () -> Boolean?): CompletedProbe {
+        val waitScoped = if (waitId == 0L) null else scoped[waitId]
+        val remembered = rememberCompletedProbe(cached, waitScoped, compute)
+        if (waitId != 0L) {
+            val scopedResult = remembered.waitScoped
+            if (scopedResult == null) scoped.remove(waitId) else scoped[waitId] = scopedResult
+        }
+        return remembered
+    }
 }

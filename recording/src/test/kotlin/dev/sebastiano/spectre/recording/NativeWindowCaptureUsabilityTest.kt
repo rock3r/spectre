@@ -90,4 +90,60 @@ class NativeWindowCaptureUsabilityTest {
         assertTrue(retried.usableNow)
         assertEquals(true, retried.cache)
     }
+
+    @Test
+    fun `overlapping waits keep independent inconclusive probe decisions`() {
+        val table = WaitScopedProbeTable()
+        val older = table.begin()
+        var computes = 0
+        val firstOlder =
+            table.remember(older, cached = null) {
+                computes += 1
+                null
+            }
+        assertFalse(firstOlder.usableNow)
+        val newer = table.begin()
+        val secondOlder =
+            table.remember(older, cached = null) {
+                computes += 1
+                true
+            }
+        assertFalse(secondOlder.usableNow)
+        assertEquals(1, computes, "a newer wait must not clear an older wait's inconclusive probe")
+        val firstNewer =
+            table.remember(newer, cached = null) {
+                computes += 1
+                null
+            }
+        assertFalse(firstNewer.usableNow)
+        assertEquals(2, computes)
+        table.end(newer)
+        val thirdOlder =
+            table.remember(older, cached = null) {
+                computes += 1
+                true
+            }
+        assertFalse(thirdOlder.usableNow)
+        assertEquals(2, computes, "ending a newer wait must not drop the older wait's decision")
+        table.end(older)
+        val retried = table.remember(table.begin(), cached = null) { true }
+        assertTrue(retried.usableNow)
+    }
+
+    @Test
+    fun `unscoped wait id does not share an inconclusive probe slot`() {
+        val table = WaitScopedProbeTable()
+        var computes = 0
+        table.remember(0L, cached = null) {
+            computes += 1
+            null
+        }
+        val retried =
+            table.remember(0L, cached = null) {
+                computes += 1
+                true
+            }
+        assertTrue(retried.usableNow)
+        assertEquals(2, computes, "waitId 0 is the unscoped fallback and must not reuse a slot")
+    }
 }

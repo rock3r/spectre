@@ -308,63 +308,6 @@ private fun xdpyinfoReportsPureX11(display: String): Boolean {
 private const val XDPYINFO_TIMEOUT_MS: Long = 3_000
 private const val XDPYINFO_READER_JOIN_MS: Long = 500
 
-/**
- * Clears the recording bridge's wait-scoped inconclusive probe so this `waitForVisualIdle` can
- * retry `gst-launch` without inheriting the previous wait's Robot decision.
- *
- * Missing method (older recording jars) is a no-op.
- */
-internal fun beginNativePlatformCaptureWait(classLoader: ClassLoader) {
-    val bridge =
-        try {
-            Class.forName(NATIVE_WINDOW_CAPTURE_BRIDGE, false, classLoader)
-        } catch (_: ClassNotFoundException) {
-            return
-        }
-    val begin =
-        try {
-            bridge.getMethod("beginPlatformCaptureWait")
-        } catch (_: NoSuchMethodException) {
-            return
-        }
-    try {
-        begin.invoke(null)
-    } catch (_: InvocationTargetException) {
-        return
-    } catch (_: ReflectiveOperationException) {
-        return
-    }
-}
-
-/**
- * Asks the optional recording bridge whether the platform helper can actually capture.
- *
- * Class presence is not enough on Linux: `spectre-recording` can load while `gst-launch-1.0` is
- * missing (#503). Older recording jars without the probe method keep the 0.6.0 "class present"
- * behaviour.
- */
-internal fun isNativePlatformCaptureUsable(classLoader: ClassLoader): Boolean {
-    val bridge =
-        try {
-            Class.forName(NATIVE_WINDOW_CAPTURE_BRIDGE, false, classLoader)
-        } catch (_: ClassNotFoundException) {
-            return false
-        }
-    val probe =
-        try {
-            bridge.getMethod("isPlatformCaptureUsable")
-        } catch (_: NoSuchMethodException) {
-            return true
-        }
-    return try {
-        probe.invoke(null) as? Boolean ?: false
-    } catch (_: InvocationTargetException) {
-        false
-    } catch (_: ReflectiveOperationException) {
-        false
-    }
-}
-
 internal fun nativeWindowCaptureFor(classLoader: ClassLoader): ((Window) -> BufferedImage)? {
     val bridge =
         try {
@@ -403,7 +346,7 @@ private val Window.title: String?
             else -> null
         }
 
-private const val NATIVE_WINDOW_CAPTURE_BRIDGE: String =
+internal const val NATIVE_WINDOW_CAPTURE_BRIDGE: String =
     "dev.sebastiano.spectre.recording.NativeWindowCaptureBridge"
 
 internal fun normalizeNativeImage(image: BufferedImage): BufferedImage {

@@ -44,7 +44,22 @@ class ScreenCaptureBackendTest {
                     throw ClassNotFoundException(name)
             }
 
-        beginNativePlatformCaptureWait(recordingFreeLoader)
+        assertEquals(0L, beginNativePlatformCaptureWait(recordingFreeLoader))
+        endNativePlatformCaptureWait(recordingFreeLoader, waitId = 1L)
+    }
+
+    @Test
+    fun `overlapping native capture waits receive distinct ids`() {
+        val first = beginNativePlatformCaptureWait(javaClass.classLoader)
+        val second = beginNativePlatformCaptureWait(javaClass.classLoader)
+        try {
+            assertTrue(first != 0L)
+            assertTrue(second != 0L)
+            assertTrue(first != second, "overlapping waits must not share one probe slot")
+        } finally {
+            endNativePlatformCaptureWait(javaClass.classLoader, first)
+            endNativePlatformCaptureWait(javaClass.classLoader, second)
+        }
     }
 
     @Test
