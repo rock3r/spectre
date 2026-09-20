@@ -1,5 +1,8 @@
 package dev.sebastiano.spectre.testing
 
+import androidx.compose.ui.awt.ComposePanel
+import java.awt.Component
+import java.awt.Container
 import java.awt.GraphicsEnvironment
 import java.awt.Window
 import java.awt.image.BufferedImage
@@ -16,7 +19,8 @@ import org.junit.jupiter.api.TestInfo
  * test after capturing a still (prefer [dev.sebastiano.spectre.core.ComposeAutomator.screenshot] on
  * a window when recording helpers are present).
  *
- * Golds live under `src/test/resources/spectre-golds/<class>/<name>/<os>/scale-<sx>x<sy>/gold.png`.
+ * Golds live under
+ * `src/test/resources/spectre-golds/<class>/<method>/<name>/<os>/scale-<sx>x<sy>/gold.png`.
  * Mismatches write `actual.png` and a copy of `gold.png` under
  * `build/reports/spectre-screenshots/<class>/<method>/<name>/`. `diff.png` is written when
  * dimensions match; a stale `diff.png` is deleted when there is no diff. A later match deletes
@@ -26,9 +30,10 @@ import org.junit.jupiter.api.TestInfo
  * [TestInfo] overload instead — the body runs on a worker dispatcher that has no JUnit frame.
  *
  * [scaleKey] defaults to the captured window's display scale when a showing AWT window's outer,
- * client, or content-pane size matches the still (or every showing window shares one density).
- * Otherwise it uses the primary/default screen transform. Pass an explicit key (from
- * [ScreenshotGoldPaths.scaleKey]) when several densities are visible and inference is ambiguous.
+ * client, content-pane, or embedded ComposePanel size matches the still (or every showing window
+ * shares one density). Otherwise it uses the primary/default screen transform. Pass an explicit key
+ * (from [ScreenshotGoldPaths.scaleKey]) when several densities are visible and inference is
+ * ambiguous.
  */
 public fun assertMatchesGold(
     name: String,
@@ -81,7 +86,8 @@ internal fun assertMatchesGold(
     updateEnabled: Boolean = ScreenshotUpdateMode.isEnabled(),
     tolerance: ScreenshotTolerance = ScreenshotTolerance.Strict,
 ) {
-    val goldFile = ScreenshotGoldPaths.goldFile(goldRoot, testClassName, name, osKey, scaleKey)
+    val goldFile =
+        ScreenshotGoldPaths.goldFile(goldRoot, testClassName, testMethodName, name, osKey, scaleKey)
     val reportDir =
         ScreenshotGoldPaths.reportDirectory(reportsRoot, testClassName, testMethodName, name)
     if (updateEnabled) {
@@ -192,6 +198,7 @@ internal fun liveCaptureSurfaces(): List<CaptureSurfaceScale> {
                 scaleY = configuration.defaultTransform.scaleY,
                 contentWidth = content?.width,
                 contentHeight = content?.height,
+                extraAwtSizes = composePanelAwtSizes(window),
             )
         }
 }
@@ -207,6 +214,7 @@ internal fun captureSurfacesForBounds(
     scaleY: Double,
     contentWidth: Int? = null,
     contentHeight: Int? = null,
+    extraAwtSizes: List<Pair<Int, Int>> = emptyList(),
 ): List<CaptureSurfaceScale> {
     val clientWidth = (awtWidth - insetLeft - insetRight).coerceAtLeast(0)
     val clientHeight = (awtHeight - insetTop - insetBottom).coerceAtLeast(0)
@@ -216,6 +224,7 @@ internal fun captureSurfacesForBounds(
             if (contentWidth != null && contentHeight != null) {
                 add(contentWidth to contentHeight)
             }
+            addAll(extraAwtSizes)
         }
         .distinct()
         .filter { (width, height) -> width > 0 && height > 0 }
@@ -227,6 +236,20 @@ internal fun captureSurfacesForBounds(
                 scaleY = scaleY,
             )
         }
+}
+
+internal fun composePanelAwtSizes(root: Component): List<Pair<Int, Int>> {
+    val sizes = mutableListOf<Pair<Int, Int>>()
+    fun walk(component: Component) {
+        if (component is ComposePanel && component.width > 0 && component.height > 0) {
+            sizes += component.width to component.height
+        }
+        if (component is Container) {
+            component.components.forEach(::walk)
+        }
+    }
+    walk(root)
+    return sizes
 }
 
 internal fun fallbackDisplayScale(): Pair<Double, Double> {

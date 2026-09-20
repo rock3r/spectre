@@ -338,10 +338,11 @@ It recognizes `@Test`, `@ParameterizedTest`, `@RepeatedTest`, and other annotati
 meta-annotated with JUnit's `@Testable` / `@TestTemplate` (including composed ones).
 
 The default `scaleKey` prefers the captured window's display scale when a showing AWT
-window matches the still (or every showing window shares one density). Otherwise it uses
-the primary/default screen transform. Pass
-`scaleKey = ScreenshotGoldPaths.scaleKey(configuration)` when several densities are
-visible and you already have the window's `GraphicsConfiguration`.
+window's outer, client, content-pane, or embedded ComposePanel size matches the still
+(or every showing window shares one density). Otherwise it uses the primary/default
+screen transform. Pass `scaleKey = ScreenshotGoldPaths.scaleKey(configuration)` when
+several densities are visible and you already have the window's
+`GraphicsConfiguration`.
 
 Defaults are strict (max channel delta 0, differing-pixel count/fraction 0). Equal
 dimensions are required; there is no auto-scale. Loosen `maxChannelDelta` and/or
@@ -355,11 +356,15 @@ Committed files:
 ```text
 src/test/resources/spectre-golds/
   <test-class>/
-    <name>/
-      <os>/                 # macos | windows | linux-x11 | linux-wayland
-        scale-<sx>x<sy>/    # captured window display; else default screen; or pass scaleKey
-          gold.png
+    <test-method>/
+      <name>/
+        <os>/                 # macos | windows | linux-x11 | linux-wayland
+          scale-<sx>x<sy>/    # captured window display; else default screen; or pass scaleKey
+            gold.png
 ```
+
+The method segment is the inferred JUnit method (or `TestInfo`), so two tests in the
+same class can reuse a natural name such as `main-window` without sharing a gold.
 
 The default root is `src/test/resources/spectre-golds/` (the main JUnit source set). Linux
 keys follow the same session detection as window capture: `SPECTRE_CAPTURE_BACKEND`,

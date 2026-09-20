@@ -10,12 +10,13 @@ import org.junit.jupiter.api.io.TempDir
 class ScreenshotGoldPathsTest {
 
     @Test
-    fun `gold path is class name os scale and gold png`() {
+    fun `gold path is class method name os scale and gold png`() {
         val root = Path.of("src", "test", "resources", "spectre-golds")
         val path =
             ScreenshotGoldPaths.goldFile(
                 goldRoot = root,
                 testClassName = "dev.example.MainWindowTest",
+                testMethodName = "rendersHome",
                 name = "main-window",
                 osKey = "macos",
                 scaleKey = "scale-2x2",
@@ -23,12 +24,38 @@ class ScreenshotGoldPathsTest {
         assertEquals(
             root
                 .resolve(ScreenshotGoldPaths.sanitizeGoldSegment("dev.example.MainWindowTest"))
+                .resolve(ScreenshotGoldPaths.sanitizeGoldSegment("rendersHome"))
                 .resolve("main-window")
                 .resolve("macos")
                 .resolve("scale-2x2")
                 .resolve("gold.png"),
             path,
         )
+    }
+
+    @Test
+    fun `same screenshot name in two methods writes distinct gold files`(@TempDir temp: Path) {
+        val home =
+            ScreenshotGoldPaths.goldFile(
+                temp,
+                "dev.example.MainWindowTest",
+                "rendersHome",
+                "main-window",
+                "macos",
+                "scale-1x1",
+            )
+        val settings =
+            ScreenshotGoldPaths.goldFile(
+                temp,
+                "dev.example.MainWindowTest",
+                "rendersSettings",
+                "main-window",
+                "macos",
+                "scale-1x1",
+            )
+        assertNotEquals(home, settings)
+        assertTrue(home.toString().contains("rendersHome"))
+        assertTrue(settings.toString().contains("rendersSettings"))
     }
 
     @Test
@@ -57,6 +84,7 @@ class ScreenshotGoldPathsTest {
             ScreenshotGoldPaths.goldFile(
                 goldRoot = goldRoot,
                 testClassName = "a/../../etc",
+                testMethodName = "renders",
                 name = "foo/../../passwd",
                 osKey = "linux-x11",
                 scaleKey = "scale-1x1",
@@ -126,6 +154,7 @@ class ScreenshotGoldPathsTest {
             ScreenshotGoldPaths.goldFile(
                 temp,
                 "dev.example.HomeTest",
+                "renders",
                 "foo/bar",
                 "macos",
                 "scale-1x1",
@@ -134,6 +163,7 @@ class ScreenshotGoldPathsTest {
             ScreenshotGoldPaths.goldFile(
                 temp,
                 "dev.example.HomeTest",
+                "renders",
                 "foo_bar",
                 "macos",
                 "scale-1x1",

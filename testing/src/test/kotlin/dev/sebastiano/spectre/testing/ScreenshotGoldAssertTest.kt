@@ -144,6 +144,7 @@ class ScreenshotGoldAssertTest {
             ScreenshotGoldPaths.goldFile(
                 goldRoot,
                 "dev.example.HomeTest",
+                "renders",
                 "main-window",
                 "linux-x11",
                 "scale-1x1",
@@ -176,6 +177,7 @@ class ScreenshotGoldAssertTest {
             ScreenshotGoldPaths.goldFile(
                 goldRoot,
                 "dev.example.HomeTest",
+                "renders",
                 "main-window",
                 "macos",
                 "scale-1x1",
@@ -252,6 +254,7 @@ class ScreenshotGoldAssertTest {
             ScreenshotGoldPaths.goldFile(
                 goldRoot,
                 "dev.example.HomeTest",
+                "renders",
                 "main-window",
                 "macos",
                 "scale-1x1",
@@ -363,6 +366,33 @@ class ScreenshotGoldAssertTest {
     }
 
     @Test
+    fun `scale key matches an embedded compose panel smaller than the content pane`() {
+        val image = BufferedImage(160, 80, BufferedImage.TYPE_INT_ARGB)
+        val surfaces =
+            captureSurfacesForBounds(
+                awtWidth = 220,
+                awtHeight = 160,
+                insetLeft = 5,
+                insetTop = 20,
+                insetRight = 5,
+                insetBottom = 5,
+                scaleX = 2.0,
+                scaleY = 2.0,
+                contentWidth = 210,
+                contentHeight = 135,
+                extraAwtSizes = listOf(80 to 40),
+            ) + CaptureSurfaceScale(800, 600, 1.0, 1.0)
+        val key =
+            currentScaleKey(
+                image = image,
+                surfaces = surfaces,
+                fallbackScaleX = 1.0,
+                fallbackScaleY = 1.0,
+            )
+        assertEquals("scale-2x2", key)
+    }
+
+    @Test
     fun `scale key uses a unique window density when the still size does not match`() {
         val image = BufferedImage(64, 32, BufferedImage.TYPE_INT_ARGB)
         val key =
@@ -411,6 +441,7 @@ class ScreenshotGoldAssertTest {
             ScreenshotGoldPaths.goldFile(
                 goldRoot,
                 "dev.example.HomeTest",
+                "renders",
                 "main-window",
                 "macos",
                 "scale-2x2",
@@ -431,6 +462,7 @@ class ScreenshotGoldAssertTest {
             ScreenshotGoldPaths.goldFile(
                 goldRoot,
                 "dev.example.HomeTest",
+                "renders",
                 "main-window",
                 "macos",
                 "scale-1x1",

@@ -23,12 +23,14 @@ public object ScreenshotGoldPaths {
     public fun goldFile(
         goldRoot: Path,
         testClassName: String,
+        testMethodName: String,
         name: String,
         osKey: String,
         scaleKey: String,
     ): Path =
         goldRoot
             .resolve(sanitizeGoldSegment(testClassName))
+            .resolve(sanitizeGoldSegment(testMethodName))
             .resolve(sanitizeGoldSegment(name))
             .resolve(sanitizeGoldSegment(osKey))
             .resolve(sanitizeGoldSegment(scaleKey))
