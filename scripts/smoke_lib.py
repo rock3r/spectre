@@ -670,15 +670,89 @@ class ScreencaptureHelperDirSetting:
     path: Path | None = None
 
 
-def parse_jvm_system_property(text: str, name: str) -> ScreencaptureHelperDirSetting:
-    """Last -Dname token in JVM option text."""
-    prefix = f"-D{name}"
+def _strip_hotspot_argfile_comments(text: str) -> str:
+    """Drop unquoted # comments, matching the Java launcher argument-file rules."""
+    cleaned: list[str] = []
+    for line in text.splitlines():
+        in_quote = ""
+        chars: list[str] = []
+        escaped = False
+        for char in line:
+            if escaped:
+                chars.append(char)
+                escaped = False
+                continue
+            if char == "\\" and in_quote:
+                chars.append(char)
+                escaped = True
+                continue
+            if in_quote:
+                chars.append(char)
+                if char == in_quote:
+                    in_quote = ""
+                continue
+            if char in "'\"":
+                in_quote = char
+                chars.append(char)
+                continue
+            if char == "#":
+                break
+            chars.append(char)
+        cleaned.append("".join(chars))
+    return "\n".join(cleaned)
+
+
+def tokenize_jvm_options(text: str, *, expand_argfiles: bool = False) -> list[str]:
+    """Split JVM option text; optionally expand JDK_JAVA_OPTIONS @argument files."""
     try:
         tokens = shlex.split(text, posix=True)
     except ValueError as error:
         raise InvalidScreencaptureHelperDir(
-            f"{name} is set but cannot be parsed: {error}"
+            f"JVM options cannot be parsed: {error}"
         ) from error
+    if not expand_argfiles:
+        if any(token.startswith("@") and len(token) > 1 for token in tokens):
+            raise InvalidScreencaptureHelperDir(
+                "the Java launcher does not expand @argument files in this env var; "
+                "the child JVM will fail to start"
+            )
+        return tokens
+    expanded: list[str] = []
+    for token in tokens:
+        if not (token.startswith("@") and len(token) > 1):
+            expanded.append(token)
+            continue
+        path = Path(token[1:])
+        if not path.is_absolute():
+            raise InvalidScreencaptureHelperDir(
+                f"JVM @argument file must be an absolute path (got {token!r}). "
+                "Relative files resolve against different working directories "
+                "in smoke vs Gradle."
+            )
+        try:
+            contents = path.read_text(encoding="utf-8")
+        except OSError as error:
+            raise InvalidScreencaptureHelperDir(
+                f"could not read JVM @argument file {path}: {error}"
+            ) from error
+        expanded.extend(
+            tokenize_jvm_options(
+                _strip_hotspot_argfile_comments(contents),
+                expand_argfiles=False,
+            )
+        )
+    return expanded
+
+
+def parse_jvm_system_property(
+    text: str,
+    name: str,
+    *,
+    expand_argfiles: bool = False,
+) -> ScreencaptureHelperDirSetting:
+    """Last -Dname token in JVM option text."""
+    prefix = f"-D{name}"
+    tokens = tokenize_jvm_options(text, expand_argfiles=expand_argfiles)
     last: Path | None = None
     found = False
     for token in tokens:
@@ -710,7 +784,11 @@ def macos_screencapture_configured_helper_dir(
         raw = env.get(name, "")
         if not raw:
             continue
-        parsed = parse_screencapture_helper_dir_property(raw)
+        parsed = parse_jvm_system_property(
+            raw,
+            SCREENCAPTURE_HELPER_DIR_PROPERTY,
+            expand_argfiles=name == "JDK_JAVA_OPTIONS",
+        )
         if not parsed.defined:
             continue
         if parsed.path is None:
@@ -734,7 +812,11 @@ def macos_screencapture_jvm_user_home(
         raw = env.get(name, "")
         if not raw:
             continue
-        parsed = parse_jvm_system_property(raw, "user.home")
+        parsed = parse_jvm_system_property(
+            raw,
+            "user.home",
+            expand_argfiles=name == "JDK_JAVA_OPTIONS",
+        )
         if not parsed.defined:
             continue
         if parsed.path is None or not parsed.path.is_absolute():

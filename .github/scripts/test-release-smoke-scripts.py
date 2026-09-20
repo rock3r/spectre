@@ -1813,6 +1813,45 @@ class MacOsTccPreflightTest(unittest.TestCase):
         gradle_only = {"GRADLE_OPTS": f"-D{prop}=/tmp/gradle"}
         self.assertIsNone(smoke_lib.macos_screencapture_configured_helper_dir(gradle_only))
 
+    def test_helper_dir_expands_jdk_java_options_argument_file(self):
+        prop = smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY
+        with tempfile.TemporaryDirectory() as tmp:
+            opts = Path(tmp) / "java.opts"
+            opts.write_text(
+                f"# launcher comment\n-D{prop}=/tmp/from-argfile\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                Path("/tmp/from-argfile"),
+                smoke_lib.macos_screencapture_configured_helper_dir(
+                    {"JDK_JAVA_OPTIONS": f"@{opts}"}
+                ),
+            )
+            mixed = Path(tmp) / "mixed.opts"
+            mixed.write_text(f"-D{prop}=/tmp/mixed-file\n", encoding="utf-8")
+            self.assertEqual(
+                Path("/tmp/mixed-file"),
+                smoke_lib.macos_screencapture_configured_helper_dir(
+                    {"JDK_JAVA_OPTIONS": f"-Xmx32m @{mixed}"}
+                ),
+            )
+            with self.assertRaises(smoke_lib.InvalidScreencaptureHelperDir):
+                smoke_lib.macos_screencapture_configured_helper_dir(
+                    {"_JAVA_OPTIONS": f"@{opts}"}
+                )
+            with self.assertRaises(smoke_lib.InvalidScreencaptureHelperDir):
+                smoke_lib.macos_screencapture_configured_helper_dir(
+                    {"JAVA_TOOL_OPTIONS": f"@{opts}"}
+                )
+            with self.assertRaises(smoke_lib.InvalidScreencaptureHelperDir):
+                smoke_lib.macos_screencapture_configured_helper_dir(
+                    {"JDK_JAVA_OPTIONS": "@java.opts"}
+                )
+            with self.assertRaises(smoke_lib.InvalidScreencaptureHelperDir):
+                smoke_lib.macos_screencapture_configured_helper_dir(
+                    {"JDK_JAVA_OPTIONS": f"@{Path(tmp) / 'missing.opts'}"}
+                )
+
     def test_blank_higher_precedence_helper_dir_uses_default(self):
         prop = smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY
         env = {
