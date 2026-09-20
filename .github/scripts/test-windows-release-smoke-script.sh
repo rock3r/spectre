@@ -86,7 +86,7 @@ grep -F -q 'hard skip without N/A reason' "$script" || fail "fail-closed hard N/
 for scenario_id in \
   preflight check junit-live agent-attach-core agent-contract-corpus agent-inject \
   agent-launch-and-attach cli-packaged cli-native-helper-layout cli-user-flow \
-  mcp-sdk-flow host-native-recording maven-local-consumer portal-token-warmup pointer-move \
+  mcp-sdk-flow host-native-recording maven-local-consumer macos-tcc portal-token-warmup pointer-move \
   input-coord-contention input-coord-cancellation input-coord-quarantine input-coord-revoke \
   input-coord-forced-recovery input-coord-junit-pertest input-coord-headed-robot
 do
@@ -171,6 +171,8 @@ echo "$probe_body" | grep -F -q '127.0.0.1' || fail "teardown probe must require
 if echo "$probe_body" | grep -E -q -- '-or \$raw -match "Could not write"'; then
   fail "teardown probe still waives generic Could not write failures"
 fi
+grep -F -q 'macos-tcc' "$script" || fail "Windows runner missing macos-tcc required scenario id"
+grep -F -q 'does not use macOS Screen Recording / Accessibility TCC' "$script" || fail "Windows macos-tcc hard n/a reason missing"
 
 # --- Optional: parse with pwsh when present (macOS/Linux CI agents may have it) ---
 # Note: this is PowerShell Core parse, not Desktop 5.1; ASCII byte check is the 5.1 stand-in.

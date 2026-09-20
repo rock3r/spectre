@@ -26,11 +26,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from smoke_lib import (  # noqa: E402
+    GRADLE_STOP_TIMEOUT_SECONDS,
     HEADED_ROBOT_GRADLE_TASK,
     HEADED_ROBOT_NAME,
     HEADED_ROBOT_RESULTS_SUBPATH,
     HEADED_ROBOT_SCENARIO_ID,
     HEADED_ROBOT_TESTCASE,
+    MACOS_TCC_BLOCKED_REASON,
     REQUIRED_SCENARIO_IDS,
     RESULT_FAIL,
     RESULT_PASS,
@@ -47,16 +49,24 @@ from smoke_lib import (  # noqa: E402
     linux_portal_token_path,
     build_report,
     collect_preflight,
+    ensure_macos_screencapture_helper,
+    fill_blocked_remaining,
     gradle_ui_force_args,
     hard_failures,
     host_cli_package_target,
+    macos_tcc_skip_reason,
     packaged_cli_executable,
     pointer_move_api_skip_reason,
     portal_token_warmup_skip_reason,
     prepare_linux_portal_token_env,
+    probe_macos_accessibility,
+    probe_macos_screen_recording,
+    probe_macos_wrapping_screen_recording,
+    require_macos_tcc,
     robot_xvfb_prefix,
     robot_xvfb_unavailable_reason,
     run_callable_scenario,
+    run_command,
     run_scenario,
     scenario_result,
     utc_now_iso,
@@ -96,6 +106,126 @@ def _run_preflight_scenario(preflight, out_dir: Path) -> ScenarioResult:
         action=action,
         out_dir=out_dir,
     )
+
+
+def _run_macos_tcc_scenario(
+    out_dir: Path,
+    system: str,
+    *,
+    overall_deadline: float | None = None,
+) -> ScenarioResult:
+    """Fail closed on missing Screen Recording / Accessibility before ./gradlew check."""
+    skip = macos_tcc_skip_reason(system=system)
+    if skip is not None:
+        return run_callable_scenario(
+            "macos-tcc",
+            name="macOS Screen Recording / Accessibility TCC preflight",
+            action=lambda: None,
+            out_dir=out_dir,
+            na_reason=skip,
+        )
+
+    def _ensure(*, refresh: bool = False):
+        return ensure_macos_screencapture_helper(
+            ROOT,
+            refresh=refresh,
+            overall_deadline=overall_deadline,
+            assemble_log=out_dir / "macos-tcc-assemble.log",
+        )
+
+    def action() -> None:
+        require_macos_tcc(
+            accessibility_probe=probe_macos_accessibility,
+            screen_recording_probe=lambda: probe_macos_screen_recording(
+                root=ROOT,
+                ensure_helper=lambda: _ensure(),
+                refresh_helper=lambda: _ensure(refresh=True),
+            ),
+            wrapping_screen_recording_probe=probe_macos_wrapping_screen_recording,
+        )
+
+    return run_callable_scenario(
+        "macos-tcc",
+        name="macOS Screen Recording / Accessibility TCC preflight",
+        action=action,
+        out_dir=out_dir,
+    )
+
+
+def _macos_tcc_recheck_failure(
+    scenario_id: str,
+    name: str,
+    system: str,
+    *,
+    overall_deadline: float | None = None,
+    out_dir: Path | None = None,
+) -> ScenarioResult | None:
+    """Optional mid-run TCC re-check so a grant after start cannot salvage stale daemons."""
+    if macos_tcc_skip_reason(system=system) is not None:
+        return None
+
+    def _ensure(*, refresh: bool = False):
+        return ensure_macos_screencapture_helper(
+            ROOT,
+            refresh=refresh,
+            overall_deadline=overall_deadline,
+            assemble_log=(
+                out_dir / "macos-tcc-assemble.log" if out_dir is not None else None
+            ),
+        )
+
+    try:
+        require_macos_tcc(
+            accessibility_probe=probe_macos_accessibility,
+            screen_recording_probe=lambda: probe_macos_screen_recording(
+                root=ROOT,
+                ensure_helper=lambda: _ensure(),
+                refresh_helper=lambda: _ensure(refresh=True),
+            ),
+            wrapping_screen_recording_probe=probe_macos_wrapping_screen_recording,
+        )
+    except RuntimeError as error:
+        return scenario_result(
+            scenario_id,
+            name=name,
+            result=RESULT_FAIL,
+            detail=str(error),
+            hard=True,
+        )
+    return None
+
+
+def _write_smoke_report(
+    preflight,
+    results: list[ScenarioResult],
+    *,
+    started_at: str,
+    wall_start: float,
+    out_dir: Path,
+) -> tuple[int, list[str]]:
+    finished_at = utc_now_iso()
+    overall_seconds = int(time.monotonic() - wall_start)
+    report = build_report(
+        preflight,
+        results,
+        started_at=started_at,
+        finished_at=finished_at,
+        overall_seconds=overall_seconds,
+    )
+    schema_errors = validate_report(report, required_ids=list(REQUIRED_SCENARIO_IDS))
+    json_path = out_dir / "release-smoke.json"
+    md_path = out_dir / "release-smoke.md"
+    write_json_report(json_path, report)
+    write_markdown_report(md_path, report)
+    print(f"Report JSON: {json_path}")
+    print(f"Report MD:   {md_path}")
+    print(f"displayMode: {preflight.environment.display_mode}")
+    print(f"SHA: {preflight.sha}  dirty={preflight.dirty}")
+    if schema_errors:
+        print("REPORT SCHEMA ERRORS:", file=sys.stderr)
+        for err in schema_errors:
+            print(f"  - {err}", file=sys.stderr)
+    return overall_seconds, schema_errors
 
 
 def _native_helper_layout_check(root: Path, system: str) -> None:
@@ -332,17 +462,6 @@ def main(argv: list[str] | None = None) -> int:
         # Non-login SSH PATH lacks ~/.cargo/bin; xvfb-run inherits that and
         # :recording:buildWaylandHelper then cannot start cargo.
         apply_linux_toolchain_path()
-        # A leftover Gradle daemon started without that PATH still cannot exec cargo.
-        # Never --stop during --preflight-only: verifyReleaseSmokeScripts invokes that
-        # entrypoint under ./gradlew check and a stop kills the parent daemon.
-        if not args.preflight_only:
-            subprocess.run(
-                [str(ROOT / "gradlew"), "--stop"],
-                cwd=ROOT,
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
     if system == "Windows":
         print(
             "Use scripts/windows-release-smoke.ps1 from the interactive desktop "
@@ -360,8 +479,59 @@ def main(argv: list[str] | None = None) -> int:
     wall_start = time.monotonic()
     overall_deadline = wall_start + max(60, int(args.overall_timeout))
 
+    stop_failure_detail = ""
+    stop_failure_log = ""
+    if system in ("Linux", "Darwin") and not args.preflight_only:
+        # Linux: leftover daemons started without the rustup PATH cannot exec cargo.
+        # macOS: leftover daemons started by an ungranted wrapping app keep that TCC
+        # identity for later Robot/capture cells. macos-tcc helper assembly would
+        # otherwise reuse them. Never --stop during --preflight-only:
+        # verifyReleaseSmokeScripts invokes that entrypoint under ./gradlew check.
+        # Bound by --overall-timeout so a stuck wrapper/daemon cannot hang the run.
+        # Any nonzero exit (timeout or failed stop) fails closed so a stale TCC
+        # daemon cannot survive into later Robot/capture cells.
+        stop_code, stop_detail, stop_log = run_command(
+            [str(ROOT / "gradlew"), "--stop"],
+            cwd=ROOT,
+            timeout=GRADLE_STOP_TIMEOUT_SECONDS,
+            log_path=out_dir / "gradle-stop.log",
+            overall_deadline=overall_deadline,
+        )
+        if stop_code != 0:
+            stop_failure_detail = stop_detail or f"exit {stop_code}"
+            stop_failure_log = stop_log
+
     preflight = collect_preflight(ROOT, version=args.version, base=args.base)
     results: list[ScenarioResult] = []
+
+    if stop_failure_detail:
+        preflight_result = scenario_result(
+            "preflight",
+            name="Environment / SHA / clean-tree preflight",
+            result=RESULT_FAIL,
+            detail=f"gradle --stop failed before smoke start: {stop_failure_detail}",
+            log=stop_failure_log,
+            hard=True,
+        )
+        results.append(preflight_result)
+        _print_result(preflight_result)
+        blocked = fill_blocked_remaining(
+            results, reason="blocked by gradle --stop failure"
+        )
+        already = {item.id for item in results}
+        results[:] = blocked
+        for item in blocked:
+            if item.id not in already:
+                _print_result(item)
+        _, schema_errors = _write_smoke_report(
+            preflight,
+            results,
+            started_at=started_at,
+            wall_start=wall_start,
+            out_dir=out_dir,
+        )
+        print("HARD FAILURES: preflight")
+        return 2 if schema_errors else 1
 
     preflight_result = _run_preflight_scenario(preflight, out_dir)
     if preflight.dirty and preflight_result.result == RESULT_PASS:
@@ -429,6 +599,28 @@ def main(argv: list[str] | None = None) -> int:
     def add(item: ScenarioResult) -> None:
         results.append(item)
         _print_result(item)
+
+    # --- macOS TCC (#502): fail closed before the long ./gradlew check ---
+    tcc_result = _run_macos_tcc_scenario(
+        out_dir, system, overall_deadline=overall_deadline
+    )
+    add(tcc_result)
+    if tcc_result.result == RESULT_FAIL:
+        blocked = fill_blocked_remaining(results, reason=MACOS_TCC_BLOCKED_REASON)
+        already = {item.id for item in results}
+        results[:] = blocked
+        for item in blocked:
+            if item.id not in already:
+                _print_result(item)
+        _, schema_errors = _write_smoke_report(
+            preflight,
+            results,
+            started_at=started_at,
+            wall_start=wall_start,
+            out_dir=out_dir,
+        )
+        print("HARD FAILURES: macos-tcc")
+        return 2 if schema_errors else 1
 
     # --- Linux Wayland portal token warmup ---
     portal_skip = portal_token_warmup_skip_reason(system=system)
@@ -535,10 +727,19 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     # --- live JUnit failure artifacts/video + atomic capture ---
-    blocked = _robot_cell_blocked_result(
+    junit_name = "Live JUnit failure artifacts/video and atomic capture"
+    blocked = _macos_tcc_recheck_failure(
         "junit-live",
-        "Live JUnit failure artifacts/video and atomic capture",
+        junit_name,
         system,
+        overall_deadline=overall_deadline,
+        out_dir=out_dir,
+    ) or (
+        _robot_cell_blocked_result(
+            "junit-live",
+            junit_name,
+            system,
+        )
     )
     add(
         blocked
@@ -568,7 +769,13 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     else:
-        blocked = _robot_cell_blocked_result("pointer-move", pointer_name, system)
+        blocked = _macos_tcc_recheck_failure(
+            "pointer-move",
+            pointer_name,
+            system,
+            overall_deadline=overall_deadline,
+            out_dir=out_dir,
+        ) or _robot_cell_blocked_result("pointer-move", pointer_name, system)
         pointer = blocked or run_scenario(
             "pointer-move",
             name=pointer_name,
@@ -740,8 +947,17 @@ def main(argv: list[str] | None = None) -> int:
     # "ALL HARD SCENARIOS PASSED" without the headed proof.
     headed_missing = headed_robot_missing_surface(ROOT)
     headed_blocked = robot_xvfb_unavailable_reason(system)
+    headed_tcc = _macos_tcc_recheck_failure(
+        HEADED_ROBOT_SCENARIO_ID,
+        HEADED_ROBOT_NAME,
+        system,
+        overall_deadline=overall_deadline,
+        out_dir=out_dir,
+    )
     headed_automated: ScenarioResult | None = None
-    if headed_missing is None and headed_blocked is None:
+    if headed_tcc is not None:
+        headed_automated = headed_tcc
+    elif headed_missing is None and headed_blocked is None:
         headed_automated = run_scenario(
             HEADED_ROBOT_SCENARIO_ID,
             name=HEADED_ROBOT_NAME,
@@ -794,7 +1010,13 @@ def main(argv: list[str] | None = None) -> int:
         ),
         ("agent-launch-and-attach", "Launch-and-attach", "*LaunchAndAttachIntegration*"),
     ):
-        blocked = _robot_cell_blocked_result(scenario_id, name, system)
+        blocked = _macos_tcc_recheck_failure(
+            scenario_id,
+            name,
+            system,
+            overall_deadline=overall_deadline,
+            out_dir=out_dir,
+        ) or _robot_cell_blocked_result(scenario_id, name, system)
         add(
             blocked
             or run_scenario(
