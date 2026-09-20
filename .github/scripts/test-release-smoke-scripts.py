@@ -746,6 +746,9 @@ class SmokeLibSchemaTest(unittest.TestCase):
         self.assertIn("assert_junit_testcases_passed", headed)
         # Non-login SSH / xvfb-run must still see rustup cargo for helper rebuilds.
         self.assertIn("apply_linux_toolchain_path", text)
+        # #502: macos-tcc must refresh a stale runtime helper after an unknown probe.
+        self.assertIn("refresh_helper", text)
+        self.assertIn("refresh=True", text)
         # Nested buildSrc test must not start a daemon that --stops parent ./gradlew check.
         root_build = (ROOT / "build.gradle.kts").read_text(encoding="utf-8")
         self.assertIn('"--no-daemon"', root_build)
@@ -1143,6 +1146,7 @@ class DocsAndSchemaPolicyTest(unittest.TestCase):
         self.assertIn("./gradlew --stop", docs)
         self.assertIn("Application Support", docs)
         self.assertIn("SPECTRE_SCREENCAPTURE_HELPER", docs)
+        self.assertIn("stale cached helper", docs)
         # #459: the experimental input-coordination delta cells are reusable scenario IDs, so the
         # stable-ID table / gate must document them (not leave the commands only in chat).
         for coordination_id in (
@@ -1469,6 +1473,63 @@ class MacOsTccPreflightTest(unittest.TestCase):
             self.assertIsNone(found)
             self.assertEqual(smoke_lib.TCC_UNKNOWN, status)
             self.assertEqual([], invoked)
+
+    def test_override_bare_child_helper_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp) / "helpers"
+            parent.mkdir()
+            child = parent / smoke_lib.SCREENCAPTURE_HELPER_NAME
+            child.write_text("#!/bin/sh\n", encoding="utf-8")
+            child.chmod(0o755)
+            env = {"SPECTRE_SCREENCAPTURE_HELPER": str(parent)}
+            with unittest.mock.patch.dict(os.environ, env, clear=False):
+                with self.assertRaises(smoke_lib.InvalidScreencaptureHelperOverride):
+                    smoke_lib.macos_screencapture_override_path()
+                found = smoke_lib.ensure_macos_screencapture_helper(
+                    Path(tmp), assemble=lambda: 0, home=Path(tmp) / "home"
+                )
+                self.assertIsNone(found)
+
+    def test_unknown_runtime_helper_is_refreshed_and_reprobed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = Path(tmp) / "home"
+            staged = smoke_lib.macos_screencapture_staged_helper(root)
+            runtime = smoke_lib.macos_screencapture_runtime_helper(home)
+            runtime.parent.mkdir(parents=True)
+            runtime.write_text("#!/bin/sh\nstale\n", encoding="utf-8")
+            runtime.chmod(0o755)
+            staged.parent.mkdir(parents=True)
+            staged.write_text("#!/bin/sh\nfresh\n", encoding="utf-8")
+            staged.chmod(0o755)
+            invoked: list[str] = []
+            assemble_calls: list[int] = []
+
+            def invoke(argv: list[str]) -> tuple[int, str]:
+                invoked.append(Path(argv[0]).read_text(encoding="utf-8"))
+                if "stale" in invoked[-1]:
+                    return 1, "broken-preflight\n"
+                return 0, '{"granted": true}\n'
+
+            status = smoke_lib.probe_macos_screen_recording(
+                root=root,
+                ensure_helper=lambda: smoke_lib.ensure_macos_screencapture_helper(
+                    root,
+                    assemble=lambda: assemble_calls.append(1) or 0,
+                    home=home,
+                ),
+                refresh_helper=lambda: smoke_lib.ensure_macos_screencapture_helper(
+                    root,
+                    assemble=lambda: assemble_calls.append(1) or 0,
+                    home=home,
+                    refresh=True,
+                ),
+                invoke_helper=invoke,
+            )
+            self.assertEqual(smoke_lib.TCC_GRANTED, status)
+            self.assertEqual(["#!/bin/sh\nstale\n", "#!/bin/sh\nfresh\n"], invoked)
+            self.assertEqual([], assemble_calls)
+            self.assertIn("fresh", runtime.read_text(encoding="utf-8"))
 
     def test_blocked_remaining_fills_required_ids_with_reason(self):
         existing = [

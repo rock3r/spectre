@@ -468,7 +468,9 @@ These cannot currently be made portable and fail-closed by the baseline runner:
   Accessibility is Denied / Locked / Unknown. Accessibility names the wrapping app; Screen
   Recording names Spectre Capture Helper (`SpectreCaptureHelper.app`), which the harness installs
   to `~/Library/Application Support/spectre/helpers/spectre-screencapture/` (same path later
-  capture cells extract) after `:recording:assembleScreenCaptureKitHelper` when missing. After a grant, quit/relaunch the
+  capture cells extract) after `:recording:assembleScreenCaptureKitHelper` when missing. An
+  inconclusive probe reinstalls that runtime bundle so a stale cached helper cannot pin the
+  gate on Unknown. After a grant, quit/relaunch the
   wrapping app, run `./gradlew --stop`, and rerun smoke. Live SCK still/record plus signed-app
   `codesign --verify --deep --strict`, `spctl`, and `xcrun stapler validate` remain manual. A local
   ad-hoc app is not notarization evidence.

@@ -123,6 +123,9 @@ def _run_macos_tcc_scenario(out_dir: Path, system: str) -> ScenarioResult:
             screen_recording_probe=lambda: probe_macos_screen_recording(
                 root=ROOT,
                 ensure_helper=lambda: ensure_macos_screencapture_helper(ROOT),
+                refresh_helper=lambda: ensure_macos_screencapture_helper(
+                    ROOT, refresh=True
+                ),
             ),
         )
 
@@ -146,6 +149,9 @@ def _macos_tcc_recheck_failure(
             screen_recording_probe=lambda: probe_macos_screen_recording(
                 root=ROOT,
                 ensure_helper=lambda: ensure_macos_screencapture_helper(ROOT),
+                refresh_helper=lambda: ensure_macos_screencapture_helper(
+                    ROOT, refresh=True
+                ),
             ),
         )
     except RuntimeError as error:

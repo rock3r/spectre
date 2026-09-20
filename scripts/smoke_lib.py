@@ -479,15 +479,17 @@ def macos_screencapture_override_path(
     if not raw:
         return None
     override = Path(raw)
-    candidates = [override]
-    if override.name.endswith(".app"):
-        candidates.append(override / "Contents" / "MacOS" / SCREENCAPTURE_HELPER_NAME)
-    elif override.name != SCREENCAPTURE_HELPER_NAME:
-        candidates.append(override / "Contents" / "MacOS" / SCREENCAPTURE_HELPER_NAME)
-        candidates.append(override / SCREENCAPTURE_HELPER_NAME)
-    for candidate in candidates:
-        if _is_executable_helper(candidate):
-            return candidate
+    # Same shapes as HelperBinaryExtractor.resolveOverrideExecutable: the path
+    # itself, a .app bundle, or <dir>/Contents/MacOS/spectre-screencapture.
+    if override.is_dir() and override.name.endswith(".app"):
+        resolved = override / "Contents" / "MacOS" / SCREENCAPTURE_HELPER_NAME
+    elif not _is_executable_helper(override):
+        nested = override / "Contents" / "MacOS" / SCREENCAPTURE_HELPER_NAME
+        resolved = nested if _is_executable_helper(nested) else override
+    else:
+        resolved = override
+    if _is_executable_helper(resolved):
+        return resolved
     raise InvalidScreencaptureHelperOverride(
         f"{SCREENCAPTURE_HELPER_OVERRIDE_ENV} points at {raw!r} but no executable "
         f"helper was found. Point it at {SCREENCAPTURE_HELPER_NAME} or "
@@ -562,6 +564,7 @@ def probe_macos_screen_recording(
     helper_path: Path | None = None,
     invoke_helper: Callable[[list[str]], tuple[int, str] | None] | None = None,
     ensure_helper: Callable[[], Path | None] | None = None,
+    refresh_helper: Callable[[], Path | None] | None = None,
     home: Path | None = None,
 ) -> str:
     """Run MacOsScreenCaptureAccess.preflight via the helper; never request/guide."""
@@ -583,12 +586,17 @@ def probe_macos_screen_recording(
     if resolved is None:
         return TCC_UNKNOWN
 
-    argv = [str(resolved), "--mode", "preflight"]
     invoker = invoke_helper or _run_screencapture_preflight
-    invoked = invoker(argv)
-    if invoked is None:
-        return TCC_UNKNOWN
-    return interpret_screencapture_preflight(invoked[0], invoked[1])
+    status = _invoke_screencapture_preflight(resolved, invoker)
+    if (
+        status == TCC_UNKNOWN
+        and override is None
+        and refresh_helper is not None
+    ):
+        refreshed = refresh_helper()
+        if refreshed is not None:
+            status = _invoke_screencapture_preflight(refreshed, invoker)
+    return status
 
 
 def macos_screencapture_app_root(executable: Path) -> Path | None:
@@ -624,12 +632,23 @@ def install_macos_screencapture_helper(
     return dest_executable if _is_executable_helper(dest_executable) else None
 
 
+def _invoke_screencapture_preflight(
+    helper: Path,
+    invoker: Callable[[list[str]], tuple[int, str] | None],
+) -> str:
+    invoked = invoker([str(helper), "--mode", "preflight"])
+    if invoked is None:
+        return TCC_UNKNOWN
+    return interpret_screencapture_preflight(invoked[0], invoked[1])
+
+
 def ensure_macos_screencapture_helper(
     root: Path,
     *,
     assemble: Callable[[], int] | None = None,
     home: Path | None = None,
     install: Callable[[Path, Path], Path | None] | None = None,
+    refresh: bool = False,
 ) -> Path | None:
     """Install the helper to the runtime TCC path, assembling first when needed."""
     try:
@@ -640,7 +659,7 @@ def ensure_macos_screencapture_helper(
         return override
 
     runtime = macos_screencapture_runtime_helper(home)
-    if _is_executable_helper(runtime):
+    if _is_executable_helper(runtime) and not refresh:
         return runtime
 
     staged = macos_screencapture_staged_helper(root)
