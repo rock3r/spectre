@@ -168,7 +168,9 @@ class VisualIdleSurfaceCaptureTest {
                     windowCalls += 1
                     throw IllegalStateException(
                         "Linux screenshot helper failed",
-                        IOException("Cannot run program \"gst-launch-1.0\""),
+                        IOException(
+                            "Cannot run program \"gst-launch-1.0\": error=2, No such file or directory"
+                        ),
                     )
                 },
                 nativeCaptureBounds = { _, _, bounds, _ -> bounds },
@@ -228,6 +230,51 @@ class VisualIdleSurfaceCaptureTest {
                     nativeWindowCaptureAvailable = true,
                 )
             assertNull(image, "pipeline timeout must stay unsampleable, not Robot-region")
+            assertEquals(1, windowCalls)
+            assertEquals(0, regionCalls)
+        } finally {
+            frame.dispose()
+        }
+    }
+
+    @Test
+    fun `does not fall back to region when gst-launch spawn is permission denied`() {
+        assumeLiveAwtAvailable()
+        val frame =
+            Frame("gst-permission-denied").apply {
+                setBounds(0, 0, 80, 60)
+                addNotify()
+            }
+        var regionCalls = 0
+        var windowCalls = 0
+        val backend =
+            PlatformScreenCaptureBackend(
+                regionCapture = {
+                    regionCalls += 1
+                    solidImage(80, 60, 0xFF00AA00.toInt())
+                },
+                nativeCapture = {
+                    windowCalls += 1
+                    throw IllegalStateException(
+                        "Linux screenshot helper failed",
+                        IOException(
+                            "Cannot run program \"gst-launch-1.0\": error=13, Permission denied"
+                        ),
+                    )
+                },
+                nativeCaptureBounds = { _, _, bounds, _ -> bounds },
+            )
+        try {
+            val image =
+                captureSurfaceForVisualIdle(
+                    backend = backend,
+                    window = tracked(frame),
+                    surfaceRegion = Rectangle(frame.bounds),
+                    windowBounds = Rectangle(frame.bounds),
+                    frameInsets = Insets(0, 0, 0, 0),
+                    nativeWindowCaptureAvailable = true,
+                )
+            assertNull(image, "permission-denied spawn must stay unsampleable, not Robot-region")
             assertEquals(1, windowCalls)
             assertEquals(0, regionCalls)
         } finally {
@@ -455,59 +502,6 @@ class VisualIdleSurfaceCaptureTest {
                 platformCaptureUsable = { true },
             )
         )
-    }
-
-    @Test
-    fun `native capture helper-unusable recognises Linux gst-launch failures`() {
-        assertTrue(
-            isNativeCaptureHelperUnusable(
-                IllegalStateException(
-                    "Linux screenshot helper failed",
-                    IOException("Cannot run program \"gst-launch-1.0\""),
-                )
-            )
-        )
-        assertTrue(
-            isNativeCaptureHelperUnusable(
-                IllegalStateException(
-                    "spectre-wayland-helper reported an error during screenshot capture: " +
-                        "kind=CaptureFailed message=spawning gst-launch from argv: " +
-                        "[\"gst-launch-1.0\", \"ximagesrc\"]"
-                )
-            )
-        )
-        assertFalse(
-            isNativeCaptureHelperUnusable(
-                IllegalStateException(
-                    "Linux screenshot helper failed",
-                    IOException("simulated EPIPE"),
-                )
-            )
-        )
-        assertFalse(
-            isNativeCaptureHelperUnusable(
-                IllegalStateException(
-                    "spectre-wayland-helper reported an error during screenshot capture: " +
-                        "kind=CaptureFailed message=gst-launch did not exit within 8s " +
-                        "while capturing screenshot"
-                )
-            )
-        )
-        assertFalse(
-            isNativeCaptureHelperUnusable(
-                IllegalStateException(
-                    "spectre-wayland-helper reported an error during screenshot capture: " +
-                        "kind=CaptureFailed message=gst-launch screenshot pipeline " +
-                        "exited with status ExitStatus(code: 1)"
-                )
-            )
-        )
-        assertFalse(
-            isNativeCaptureHelperUnusable(
-                IllegalStateException("duplicate window title 'same title'")
-            )
-        )
-        assertFalse(isNativeCaptureHelperUnusable(UnsupportedOperationException("not a Frame")))
     }
 
     @Test

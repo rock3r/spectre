@@ -158,13 +158,15 @@ internal fun isNativeCaptureHelperUnusable(error: Throwable): Boolean {
         return true
     }
     // LinuxNativeScreenshotter wraps every IOException as "Linux screenshot helper failed".
-    // Only process-launch / missing-binary causes mean the helper cannot run (#503). Pipe,
-    // filesystem, and decode failures stay unsampleable so #355 does not region-substitute.
+    // Only a confirmed missing binary (ENOENT) means the helper cannot run (#503). Permission,
+    // FD exhaustion, pipe, and decode failures stay unsampleable so #355 does not
+    // region-substitute. ProcessBuilder.start() prefixes every launch failure with
+    // "Cannot run program", so that prefix alone is not ENOENT.
     return chain.filterIsInstance<IOException>().any { ioe ->
         val message = ioe.message.orEmpty()
-        message.contains("Cannot run program", ignoreCase = true) ||
-            message.contains("No such file or directory", ignoreCase = true) ||
-            message.contains("error=2", ignoreCase = true)
+        message.contains("No such file or directory", ignoreCase = true) ||
+            message.contains("error=2,", ignoreCase = true) ||
+            message.contains("error=2)", ignoreCase = true)
     }
 }
 
