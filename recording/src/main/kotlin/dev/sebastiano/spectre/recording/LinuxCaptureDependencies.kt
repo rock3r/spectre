@@ -10,7 +10,12 @@ import java.util.concurrent.TimeUnit
  * inject payloads without recording stay free of GStreamer.
  */
 internal object LinuxCaptureDependencies {
-    fun isGstLaunchAvailable(launch: () -> Process = ::startGstLaunchVersion): Boolean {
+    /**
+     * `true` when `gst-launch-1.0 --version` exits 0, `false` when the binary is missing or exits
+     * non-zero, and `null` when the probe times out (cold registry scan). A timeout is inconclusive
+     * and must not be negative-cached.
+     */
+    fun isGstLaunchAvailable(launch: () -> Process = ::startGstLaunchVersion): Boolean? {
         val process =
             try {
                 launch()
@@ -21,7 +26,7 @@ internal object LinuxCaptureDependencies {
             val finished = process.waitFor(GST_LAUNCH_PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
             if (!finished) {
                 process.destroyForcibly()
-                false
+                null
             } else {
                 process.exitValue() == 0
             }

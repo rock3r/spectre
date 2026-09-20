@@ -36,15 +36,17 @@ internal object NativeWindowCaptureBridge {
             return it
         }
         return synchronized(platformCaptureUsableLock) {
-            cachedPlatformCaptureUsable
-                ?: computePlatformCaptureUsable().also { cachedPlatformCaptureUsable = it }
+            val remembered =
+                rememberCompletedProbe(cachedPlatformCaptureUsable, computePlatformCaptureUsable())
+            cachedPlatformCaptureUsable = remembered.cache
+            remembered.usableNow
         }
     }
 
     internal fun computePlatformCaptureUsable(
         isLinux: () -> Boolean = HostPlatform::isLinux,
-        gstLaunchAvailable: () -> Boolean = { LinuxCaptureDependencies.isGstLaunchAvailable() },
-    ): Boolean = if (isLinux()) gstLaunchAvailable() else true
+        gstLaunchAvailable: () -> Boolean? = { LinuxCaptureDependencies.isGstLaunchAvailable() },
+    ): Boolean? = if (isLinux()) gstLaunchAvailable() else true
 
     @JvmStatic
     @JvmName("captureWindow")
@@ -80,4 +82,12 @@ internal object NativeWindowCaptureBridge {
 
     internal fun captureLockFor(window: Window): ReentrantLock =
         synchronized(captureLocks) { captureLocks.getOrPut(window, ::ReentrantLock) }
+}
+
+/** [cache] is null when [computed] timed out so a later wait can retry the probe. */
+internal data class CompletedProbe(val usableNow: Boolean, val cache: Boolean?)
+
+internal fun rememberCompletedProbe(cached: Boolean?, computed: Boolean?): CompletedProbe {
+    if (cached != null) return CompletedProbe(usableNow = cached, cache = cached)
+    return CompletedProbe(usableNow = computed ?: false, cache = computed)
 }

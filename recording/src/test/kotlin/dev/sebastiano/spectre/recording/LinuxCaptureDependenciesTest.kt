@@ -8,37 +8,46 @@ import java.io.OutputStream
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class LinuxCaptureDependenciesTest {
 
     @Test
     fun `gst-launch probe is true when the version process exits zero`() {
-        assertTrue(LinuxCaptureDependencies.isGstLaunchAvailable { FakeGstLaunchProcess(exit = 0) })
+        assertEquals(
+            true,
+            LinuxCaptureDependencies.isGstLaunchAvailable { FakeGstLaunchProcess(exit = 0) },
+        )
     }
 
     @Test
     fun `gst-launch probe is false when the binary cannot start`() {
-        assertFalse(
+        assertEquals(
+            false,
             LinuxCaptureDependencies.isGstLaunchAvailable {
                 throw IOException("Cannot run program \"gst-launch-1.0\"")
-            }
+            },
         )
     }
 
     @Test
     fun `gst-launch probe is false when the version process exits non-zero`() {
-        assertFalse(
-            LinuxCaptureDependencies.isGstLaunchAvailable { FakeGstLaunchProcess(exit = 127) }
+        assertEquals(
+            false,
+            LinuxCaptureDependencies.isGstLaunchAvailable { FakeGstLaunchProcess(exit = 127) },
         )
     }
 
     @Test
-    fun `gst-launch probe is false when the version process hangs`() {
+    fun `gst-launch probe timeout is inconclusive not missing`() {
         val process = FakeGstLaunchProcess(exit = 0, finished = false)
-        assertFalse(LinuxCaptureDependencies.isGstLaunchAvailable { process })
+        assertNull(
+            LinuxCaptureDependencies.isGstLaunchAvailable { process },
+            "a slow gst-launch --version must not be cached as unavailable",
+        )
         assertTrue(process.destroyed, "a hung gst-launch --version probe must be destroyed")
     }
 
@@ -50,7 +59,8 @@ class LinuxCaptureDependenciesTest {
         }
         assertTrue(process.destroyed, "an interrupted gst-launch probe must still be destroyed")
         assertTrue(Thread.interrupted(), "interrupt status must be restored so the wait can abort")
-        assertTrue(
+        assertEquals(
+            true,
             LinuxCaptureDependencies.isGstLaunchAvailable { FakeGstLaunchProcess(exit = 0) },
             "a later probe must be allowed to succeed after an interrupted one",
         )
