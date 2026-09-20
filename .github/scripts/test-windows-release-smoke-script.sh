@@ -151,6 +151,14 @@ grep -F -q 'Assert-PointerMoveLiveExecuted' "$script" || fail "Windows runner mi
 grep -F -q 'Test-PointerMoveTeardownRace' "$script" || fail "Windows runner missing #500 post-green worker-death probe"
 grep -F -q 'MessageIOException' "$script" || fail "Windows runner missing MessageIOException teardown-race needle"
 grep -F -q 'Could not write' "$script" || fail "Windows runner missing Could not write teardown-race needle"
+# Codex #519: a leftover pointer-move-*.log from an earlier MessageIOException must not
+# waive a later unrelated Gradle failure. Probe only the log paths embedded in this
+# invocation's exception, and drop stale validationTest XML before the run.
+if grep -F -q 'pointer-move-*.log' "$script"; then
+  fail "pointer-move teardown probe still globs historical build/smoke pointer-move-*.log files"
+fi
+grep -F -q 'Clear-PointerMoveLiveResults' "$script" || fail "Windows runner must clear this-run PointerMoveLive XML before Gradle"
+grep -F -q 'GradleError' "$script" || fail "teardown probe must take the current Gradle error so it can parse this invocation's log paths"
 
 # --- Optional: parse with pwsh when present (macOS/Linux CI agents may have it) ---
 # Note: this is PowerShell Core parse, not Desktop 5.1; ASCII byte check is the 5.1 stand-in.

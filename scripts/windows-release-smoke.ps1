@@ -439,16 +439,31 @@ function Get-PointerMoveSkipReason {
     return ("ComposeAutomator.{0} not shipped (#433)" -f ($missing -join "/"))
 }
 
+function Clear-PointerMoveLiveResults {
+    # Drop leftover validationTest XML so a later compile/task failure cannot
+    # reuse yesterday's green PointerMoveLive report (#519 Codex).
+    param([Parameter(Mandatory = $true)][string] $RepoRoot)
+    $resultsDir = Join-Path $RepoRoot "sample-desktop\build\test-results\validationTest"
+    if (Test-Path -LiteralPath $resultsDir) {
+        Remove-Item -LiteralPath $resultsDir -Recurse -Force
+    }
+}
+
 function Test-PointerMoveTeardownRace {
     # #500 / #72: worker JVM can die after green PointerMoveLive XML. The Gradle
     # exception is only "gradlew.bat exited with code 1 (logs: ...)" -- the
-    # MessageIOException lives in the smoke log files.
-    param([Parameter(Mandatory = $true)][string] $RepoRoot)
-    $logDir = Join-Path $RepoRoot "build\smoke"
-    if (-not (Test-Path -LiteralPath $logDir)) { return $false }
-    $files = @(Get-ChildItem -LiteralPath $logDir -Filter "pointer-move-*.log" -ErrorAction SilentlyContinue)
-    foreach ($f in $files) {
-        $raw = [string](Get-Content -LiteralPath $f.FullName -Raw -ErrorAction SilentlyContinue)
+    # MessageIOException lives in THIS invocation's smoke logs (the paths
+    # embedded in the Gradle exception), never leftover files from earlier runs.
+    param(
+        [Parameter(Mandatory = $true)][string] $GradleError
+    )
+    $match = [regex]::Match($GradleError, '\(logs: ([^;]+) ; ([^)]+)\)')
+    if (-not $match.Success) { return $false }
+    $paths = @($match.Groups[1].Value.Trim(), $match.Groups[2].Value.Trim())
+    foreach ($path in $paths) {
+        if ([string]::IsNullOrWhiteSpace($path)) { continue }
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $raw = [string](Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue)
         if ([string]::IsNullOrWhiteSpace($raw)) { continue }
         if ($raw -match "MessageIOException" -or $raw -match "Could not write") {
             return $true
@@ -808,6 +823,7 @@ try {
     }
     else {
         $step = Invoke-Step -Id "pointer-move" -Name "In-process moveTo/moveBy hover without click" -Action {
+            Clear-PointerMoveLiveResults -RepoRoot $repoRoot
             $gradleError = $null
             try {
                 Invoke-Gradle -RepoRoot $repoRoot -TimeoutSeconds $AgentE2eTimeoutSeconds -LogName "pointer-move" -GradleArgs @(
@@ -824,7 +840,7 @@ try {
             # not fail the cell when PointerMoveLive actually ran and passed.
             Assert-PointerMoveLiveExecuted -RepoRoot $repoRoot
             if ($gradleError) {
-                if (Test-PointerMoveTeardownRace -RepoRoot $repoRoot) {
+                if (Test-PointerMoveTeardownRace -GradleError $gradleError) {
                     Write-Host "WARNING: Gradle exited non-zero after green PointerMoveLive XML (MessageIOException / #72 / #500). Treating JUnit XML as source of truth." -ForegroundColor Yellow
                 }
                 else {
