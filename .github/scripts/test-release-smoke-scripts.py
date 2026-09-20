@@ -1389,6 +1389,15 @@ class MacOsTccPreflightTest(unittest.TestCase):
         )
         self.assertEqual(smoke_lib.TCC_UNKNOWN, denied_ok_exit)
 
+        warning_then_granted = smoke_lib.interpret_screencapture_preflight(
+            0, "helper warning\n{\"granted\": true}\n"
+        )
+        self.assertEqual(smoke_lib.TCC_UNKNOWN, warning_then_granted)
+        leading_blank = smoke_lib.interpret_screencapture_preflight(
+            0, "\n  \n{\"granted\": true}\n"
+        )
+        self.assertEqual(smoke_lib.TCC_GRANTED, leading_blank)
+
     def test_screen_recording_probe_never_requests_or_reads_tcc_db(self):
         seen: list[list[str]] = []
 
@@ -1784,6 +1793,44 @@ class MacOsTccPreflightTest(unittest.TestCase):
                 Path("/tmp/from-tool"),
                 smoke_lib.macos_screencapture_configured_helper_dir(env, root=root),
             )
+
+    def test_runtime_helper_follows_jvm_user_home(self):
+        tool_home = Path("/tmp/jvm-home")
+        env = {"JAVA_TOOL_OPTIONS": f"-Duser.home={tool_home}"}
+        expected = (
+            tool_home
+            / "Library"
+            / "Application Support"
+            / "spectre"
+            / "helpers"
+            / smoke_lib.SCREENCAPTURE_HELPER_NAME
+            / smoke_lib.SCREENCAPTURE_HELPER_APP_NAME
+            / "Contents"
+            / "MacOS"
+            / smoke_lib.SCREENCAPTURE_HELPER_NAME
+        )
+        self.assertEqual(
+            expected,
+            smoke_lib.macos_screencapture_runtime_helper(environ=env),
+        )
+        precedence = {
+            "HOME": "/tmp/env-home",
+            "_JAVA_OPTIONS": "-Duser.home=/tmp/underscore-home",
+            "JAVA_TOOL_OPTIONS": "-Duser.home=/tmp/tool-home",
+        }
+        self.assertEqual(
+            Path("/tmp/underscore-home")
+            / "Library"
+            / "Application Support"
+            / "spectre"
+            / "helpers"
+            / smoke_lib.SCREENCAPTURE_HELPER_NAME
+            / smoke_lib.SCREENCAPTURE_HELPER_APP_NAME
+            / "Contents"
+            / "MacOS"
+            / smoke_lib.SCREENCAPTURE_HELPER_NAME,
+            smoke_lib.macos_screencapture_runtime_helper(environ=precedence),
+        )
 
     def test_relative_helper_dir_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:

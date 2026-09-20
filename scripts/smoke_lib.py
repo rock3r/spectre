@@ -623,6 +623,7 @@ def macos_screencapture_staged_helper(root: Path) -> Path:
 def macos_screencapture_runtime_helper(
     home: Path | None = None,
     helper_dir: Path | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> Path:
     """Same extract path as HelperBinaryExtractor (helperDir property or default)."""
     if helper_dir is not None:
@@ -633,8 +634,13 @@ def macos_screencapture_runtime_helper(
             / "MacOS"
             / SCREENCAPTURE_HELPER_NAME
         )
+    resolved = home
+    if resolved is None:
+        resolved = macos_screencapture_jvm_user_home(environ)
+    if resolved is None:
+        resolved = Path.home()
     return (
-        (home if home is not None else Path.home())
+        resolved
         / "Library"
         / "Application Support"
         / "spectre"
@@ -659,28 +665,32 @@ class ScreencaptureHelperDirSetting:
     path: Path | None = None
 
 
-def parse_screencapture_helper_dir_property(text: str) -> ScreencaptureHelperDirSetting:
-    """Last -Dspectre.recording.screencapturekit.helperDir token in JVM option text."""
-    prefix = f"-D{SCREENCAPTURE_HELPER_DIR_PROPERTY}"
+def parse_jvm_system_property(text: str, name: str) -> ScreencaptureHelperDirSetting:
+    """Last -Dname token in JVM option text."""
+    prefix = f"-D{name}"
     try:
         tokens = shlex.split(text, posix=True)
     except ValueError as error:
         raise InvalidScreencaptureHelperDir(
-            f"{SCREENCAPTURE_HELPER_DIR_PROPERTY} is set but cannot be parsed: {error}"
+            f"{name} is set but cannot be parsed: {error}"
         ) from error
     last: Path | None = None
     found = False
     for token in tokens:
         if token == prefix:
             raise InvalidScreencaptureHelperDir(
-                f"{SCREENCAPTURE_HELPER_DIR_PROPERTY} is set without a value; "
-                "cannot mirror HelperBinaryExtractor.extract()"
+                f"{name} is set without a value; cannot mirror the child JVM"
             )
         if token.startswith(f"{prefix}="):
             found = True
             value = token[len(prefix) + 1 :]
             last = Path(value) if value.strip() else None
     return ScreencaptureHelperDirSetting(defined=found, path=last)
+
+
+def parse_screencapture_helper_dir_property(text: str) -> ScreencaptureHelperDirSetting:
+    """Last -Dspectre.recording.screencapturekit.helperDir token in JVM option text."""
+    return parse_jvm_system_property(text, SCREENCAPTURE_HELPER_DIR_PROPERTY)
 
 
 def macos_screencapture_configured_helper_dir(
@@ -705,6 +715,26 @@ def macos_screencapture_configured_helper_dir(
                 f"{SCREENCAPTURE_HELPER_DIR_PROPERTY} must be an absolute path "
                 f"(got {str(parsed.path)!r} from {name}). Relative values resolve "
                 "against different working directories in smoke vs Gradle."
+            )
+        return parsed.path
+    return None
+
+
+def macos_screencapture_jvm_user_home(
+    environ: Mapping[str, str] | None = None,
+) -> Path | None:
+    """Absolute -Duser.home the child JVM will use, if one is defined."""
+    env = environ if environ is not None else os.environ
+    for name in SCREENCAPTURE_HELPER_DIR_JVM_ENVS:
+        raw = env.get(name, "")
+        if not raw:
+            continue
+        parsed = parse_jvm_system_property(raw, "user.home")
+        if not parsed.defined:
+            continue
+        if parsed.path is None or not parsed.path.is_absolute():
+            raise InvalidScreencaptureHelperDir(
+                f"user.home must be an absolute path (got {parsed.path!r} from {name})"
             )
         return parsed.path
     return None
@@ -766,10 +796,14 @@ def macos_screencapture_helper_candidates(
         return [override]
     try:
         helper_dir = macos_screencapture_configured_helper_dir(root=root)
+        jvm_home = macos_screencapture_jvm_user_home()
     except InvalidScreencaptureHelperDir:
         return []
-    if home is not None or helper_dir is not None or platform.system() == "Darwin":
-        candidates.append(macos_screencapture_runtime_helper(home, helper_dir=helper_dir))
+    resolved_home = home if home is not None else jvm_home
+    if resolved_home is not None or helper_dir is not None or platform.system() == "Darwin":
+        candidates.append(
+            macos_screencapture_runtime_helper(resolved_home, helper_dir=helper_dir)
+        )
     return candidates
 
 
@@ -791,19 +825,17 @@ def macos_screencapture_helper_path(
 
 
 def parse_screencapture_preflight_json(stdout: str) -> str:
-    """Parse `spectre-screencapture --mode preflight` JSON (MacOsScreenCaptureAccess)."""
-    for line in stdout.splitlines():
-        text = line.strip()
-        if not text:
-            continue
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(payload, Mapping) or "granted" not in payload:
-            continue
-        return TCC_GRANTED if payload.get("granted") is True else TCC_DENIED
-    return TCC_UNKNOWN
+    """Parse the first nonblank helper line, matching MacOsScreenCaptureAccess.runHelper."""
+    line = next((text for raw in stdout.splitlines() if (text := raw.strip())), "")
+    if not line:
+        return TCC_UNKNOWN
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError:
+        return TCC_UNKNOWN
+    if not isinstance(payload, Mapping) or "granted" not in payload:
+        return TCC_UNKNOWN
+    return TCC_GRANTED if payload.get("granted") is True else TCC_DENIED
 
 
 def interpret_screencapture_preflight(exit_code: int, stdout: str) -> str:
@@ -946,10 +978,12 @@ def ensure_macos_screencapture_helper(
         return override
     try:
         helper_dir = macos_screencapture_configured_helper_dir(root=root)
+        jvm_home = macos_screencapture_jvm_user_home()
     except InvalidScreencaptureHelperDir:
         return None
+    resolved_home = home if home is not None else jvm_home
 
-    runtime = macos_screencapture_runtime_helper(home, helper_dir=helper_dir)
+    runtime = macos_screencapture_runtime_helper(resolved_home, helper_dir=helper_dir)
     assembler = (
         assemble if assemble is not None else (lambda: _assemble_screencapture_helper(root))
     )
@@ -966,7 +1000,7 @@ def ensure_macos_screencapture_helper(
     ):
         return runtime
 
-    if helper_dir is None and home is None and platform.system() != "Darwin":
+    if helper_dir is None and resolved_home is None and platform.system() != "Darwin":
         return None
     installer = install if install is not None else install_macos_screencapture_helper
     return installer(staged, runtime)
