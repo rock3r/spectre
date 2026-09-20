@@ -322,6 +322,8 @@ MACOS_TCC_BLOCKED_REASON = (
     "and ./gradlew --stop"
 )
 IOREG_CONSOLE_LOCK_TIMEOUT_SECONDS = 3
+ACCESSIBILITY_OSASCRIPT_TIMEOUT_SECONDS = 3
+JAVA_USER_HOME_QUERY_TIMEOUT_SECONDS = 20
 WRAPPING_SCREEN_RECORDING_PROBE_SIZE_PX = 32
 WRAPPING_SCREEN_RECORDING_RGB_MASK = 0x00FFFFFF
 SCREENCAPTURE_HELPER_DISPLAY_NAME = "Spectre Capture Helper"
@@ -363,6 +365,25 @@ MACOS_TCC_SCREEN_RECORDING_GUIDANCE = (
     f"row. If the helper is not on disk yet, run `./gradlew "
     f"{ASSEMBLE_SCREENCAPTURE_HELPER_TASK}` (or set SPECTRE_SCREENCAPTURE_HELPER)."
 )
+
+
+def remaining_command_timeout(
+    timeout: int,
+    overall_deadline: float | None,
+) -> int | None:
+    """Clip a step timeout to the remaining overall smoke budget.
+
+    Returns None when the overall deadline has already expired so the caller
+    skips starting a subprocess that would overrun `--overall-timeout`.
+    """
+    if overall_deadline is None:
+        return timeout
+    budget_left = int(overall_deadline - time.monotonic())
+    if budget_left <= 0:
+        return None
+    return min(timeout, budget_left)
+
+
 MACOS_TCC_WRAPPING_SCREEN_RECORDING_GUIDANCE = (
     "RobotDriver.screenshot() and junit-live captures require Screen Recording for the "
     "wrapping Terminal/IDE, in addition to Spectre Capture Helper. Grant System "
@@ -471,22 +492,36 @@ def macos_console_lock_status(ioreg_output: str) -> bool | None:
 
 def probe_macos_console_locked(
     runner: Callable[[], str | None] | None = None,
+    *,
+    overall_deadline: float | None = None,
 ) -> bool | None:
     """True when ioreg reports IOConsoleLocked=Yes (MacOsTccGuard)."""
-    output = runner() if runner is not None else _run_ioreg_console_lock()
+    output = (
+        runner()
+        if runner is not None
+        else _run_ioreg_console_lock(overall_deadline=overall_deadline)
+    )
     if output is None:
         return None
     return macos_console_lock_status(output)
 
 
-def _run_ioreg_console_lock() -> str | None:
+def _run_ioreg_console_lock(
+    *,
+    overall_deadline: float | None = None,
+) -> str | None:
+    remaining = remaining_command_timeout(
+        IOREG_CONSOLE_LOCK_TIMEOUT_SECONDS, overall_deadline
+    )
+    if remaining is None:
+        return None
     try:
         completed = subprocess.run(
             ["/usr/sbin/ioreg", "-n", "Root", "-d", "1", "-r"],
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            timeout=IOREG_CONSOLE_LOCK_TIMEOUT_SECONDS,
+            timeout=remaining,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -516,11 +551,17 @@ def probe_macos_wrapping_screen_recording(
     runner: Callable[[], str | None] | None = None,
     console_locked_probe: Callable[[], bool | None] | None = None,
     system: str | None = None,
+    overall_deadline: float | None = None,
 ) -> str:
     """Wrapping-app Screen Recording for RobotDriver.screenshot / junit-live."""
     if macos_tcc_skip_reason(system=system) is not None:
         return TCC_NOT_APPLICABLE
-    if (console_locked_probe or probe_macos_console_locked)() is True:
+    locked = (
+        console_locked_probe()
+        if console_locked_probe is not None
+        else probe_macos_console_locked(overall_deadline=overall_deadline)
+    )
+    if locked is True:
         return TCC_LOCKED
     if runner is not None:
         raw = runner()
@@ -528,7 +569,7 @@ def probe_macos_wrapping_screen_recording(
             return TCC_UNKNOWN
         return _wrapping_status_from_bmp(raw.encode("latin1") if isinstance(raw, str) else raw)
 
-    bmp = _capture_wrapping_screen_recording_bmp()
+    bmp = _capture_wrapping_screen_recording_bmp(overall_deadline=overall_deadline)
     if bmp is None:
         return TCC_UNKNOWN
     return _wrapping_status_from_bmp(bmp)
@@ -564,7 +605,15 @@ def _bmp_rgb_pixels(data: bytes) -> tuple[list[int], int, int] | None:
     return pixels, width, height
 
 
-def _capture_wrapping_screen_recording_bmp() -> bytes | None:
+def _capture_wrapping_screen_recording_bmp(
+    *,
+    overall_deadline: float | None = None,
+) -> bytes | None:
+    remaining = remaining_command_timeout(
+        SCREENCAPTURE_PREFLIGHT_TIMEOUT_SECONDS, overall_deadline
+    )
+    if remaining is None:
+        return None
     path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".bmp", delete=False) as handle:
@@ -580,7 +629,7 @@ def _capture_wrapping_screen_recording_bmp() -> bytes | None:
                 f"{WRAPPING_SCREEN_RECORDING_PROBE_SIZE_PX}",
                 str(path),
             ],
-            timeout=SCREENCAPTURE_PREFLIGHT_TIMEOUT_SECONDS,
+            timeout=remaining,
             check=False,
         )
         if completed.returncode != 0 or not path.is_file():
@@ -595,9 +644,15 @@ def _capture_wrapping_screen_recording_bmp() -> bytes | None:
 
 def probe_macos_accessibility(
     runner: Callable[[], tuple[int, str] | None] | None = None,
+    *,
+    overall_deadline: float | None = None,
 ) -> str:
     """Same semantics as `MacOsTccGuard.osascriptAccessibilityProbe`."""
-    result = runner() if runner is not None else _run_osascript_accessibility()
+    result = (
+        runner()
+        if runner is not None
+        else _run_osascript_accessibility(overall_deadline=overall_deadline)
+    )
     if result is None:
         return TCC_UNKNOWN
     exit_code, output = result
@@ -609,14 +664,22 @@ def probe_macos_accessibility(
     return TCC_UNKNOWN
 
 
-def _run_osascript_accessibility() -> tuple[int, str] | None:
+def _run_osascript_accessibility(
+    *,
+    overall_deadline: float | None = None,
+) -> tuple[int, str] | None:
+    remaining = remaining_command_timeout(
+        ACCESSIBILITY_OSASCRIPT_TIMEOUT_SECONDS, overall_deadline
+    )
+    if remaining is None:
+        return None
     try:
         completed = subprocess.run(
             ["osascript", "-e", ACCESSIBILITY_OSASCRIPT],
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            timeout=3,
+            timeout=remaining,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -644,6 +707,8 @@ def macos_screencapture_runtime_helper(
     home: Path | None = None,
     helper_dir: Path | None = None,
     environ: Mapping[str, str] | None = None,
+    *,
+    overall_deadline: float | None = None,
 ) -> Path:
     """Same extract path as HelperBinaryExtractor (helperDir property or default)."""
     if helper_dir is not None:
@@ -658,7 +723,9 @@ def macos_screencapture_runtime_helper(
     if resolved is None:
         resolved = macos_screencapture_jvm_user_home(environ)
     if resolved is None:
-        resolved = macos_screencapture_query_java_user_home(environ)
+        resolved = macos_screencapture_query_java_user_home(
+            environ, overall_deadline=overall_deadline
+        )
     if resolved is None:
         raise InvalidScreencaptureHelperDir(
             "could not resolve JVM user.home for the default helper extract path; "
@@ -877,8 +944,15 @@ def parse_java_show_settings_property(text: str, name: str) -> Path | None:
 
 def macos_screencapture_query_java_user_home(
     environ: Mapping[str, str] | None = None,
+    *,
+    overall_deadline: float | None = None,
 ) -> Path | None:
     """Effective JVM user.home, including the launcher default (not Path.home())."""
+    remaining = remaining_command_timeout(
+        JAVA_USER_HOME_QUERY_TIMEOUT_SECONDS, overall_deadline
+    )
+    if remaining is None:
+        return None
     env = os.environ if environ is None else {**os.environ, **dict(environ)}
     java = shutil.which("java", path=env.get("PATH"))
     java_home = env.get("JAVA_HOME", "").rstrip("/")
@@ -895,7 +969,7 @@ def macos_screencapture_query_java_user_home(
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            timeout=20,
+            timeout=remaining,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -951,6 +1025,7 @@ def macos_screencapture_helper_candidates(
     root: Path,
     *,
     home: Path | None = None,
+    overall_deadline: float | None = None,
 ) -> list[Path]:
     candidates: list[Path] = []
     try:
@@ -965,7 +1040,11 @@ def macos_screencapture_helper_candidates(
         resolved_home = home if home is not None else jvm_home
         if resolved_home is not None or helper_dir is not None or platform.system() == "Darwin":
             candidates.append(
-                macos_screencapture_runtime_helper(resolved_home, helper_dir=helper_dir)
+                macos_screencapture_runtime_helper(
+                    resolved_home,
+                    helper_dir=helper_dir,
+                    overall_deadline=overall_deadline,
+                )
             )
     except InvalidScreencaptureHelperDir:
         return []
@@ -976,6 +1055,7 @@ def macos_screencapture_helper_path(
     root: Path,
     *,
     home: Path | None = None,
+    overall_deadline: float | None = None,
 ) -> Path | None:
     try:
         override = macos_screencapture_override_path()
@@ -983,7 +1063,9 @@ def macos_screencapture_helper_path(
         return None
     if override is not None:
         return override
-    for candidate in macos_screencapture_helper_candidates(root, home=home):
+    for candidate in macos_screencapture_helper_candidates(
+        root, home=home, overall_deadline=overall_deadline
+    ):
         if _is_executable_helper(candidate):
             return candidate
     return None
@@ -1023,9 +1105,15 @@ def probe_macos_screen_recording(
     refresh_helper: Callable[[], Path | None] | None = None,
     home: Path | None = None,
     console_locked_probe: Callable[[], bool | None] | None = None,
+    overall_deadline: float | None = None,
 ) -> str:
     """Run MacOsScreenCaptureAccess.preflight via the helper; never request/guide."""
-    if (console_locked_probe or probe_macos_console_locked)() is True:
+    locked = (
+        console_locked_probe()
+        if console_locked_probe is not None
+        else probe_macos_console_locked(overall_deadline=overall_deadline)
+    )
+    if locked is True:
         return TCC_LOCKED
     if runner is not None:
         result = runner()
@@ -1046,11 +1134,17 @@ def probe_macos_screen_recording(
     if resolved is None and ensure_helper is not None:
         resolved = ensure_helper()
     if resolved is None and root is not None:
-        resolved = macos_screencapture_helper_path(root, home=home)
+        resolved = macos_screencapture_helper_path(
+            root, home=home, overall_deadline=overall_deadline
+        )
     if resolved is None:
         return TCC_UNKNOWN
 
-    invoker = invoke_helper or _run_screencapture_preflight
+    invoker = invoke_helper or (
+        lambda argv: _run_screencapture_preflight(
+            argv, overall_deadline=overall_deadline
+        )
+    )
     status = _invoke_screencapture_preflight(resolved, invoker)
     if (
         status == TCC_UNKNOWN
@@ -1147,7 +1241,11 @@ def ensure_macos_screencapture_helper(
         helper_dir = macos_screencapture_configured_helper_dir(root=root)
         jvm_home = macos_screencapture_jvm_user_home()
         resolved_home = home if home is not None else jvm_home
-        runtime = macos_screencapture_runtime_helper(resolved_home, helper_dir=helper_dir)
+        runtime = macos_screencapture_runtime_helper(
+            resolved_home,
+            helper_dir=helper_dir,
+            overall_deadline=overall_deadline,
+        )
     except InvalidScreencaptureHelperDir:
         return None
     assembler = (
@@ -1337,14 +1435,23 @@ def _assemble_screencapture_helper(
     return int(code)
 
 
-def _run_screencapture_preflight(argv: Sequence[str]) -> tuple[int, str] | None:
+def _run_screencapture_preflight(
+    argv: Sequence[str],
+    *,
+    overall_deadline: float | None = None,
+) -> tuple[int, str] | None:
+    remaining = remaining_command_timeout(
+        SCREENCAPTURE_PREFLIGHT_TIMEOUT_SECONDS, overall_deadline
+    )
+    if remaining is None:
+        return None
     try:
         completed = subprocess.run(
             list(argv),
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            timeout=SCREENCAPTURE_PREFLIGHT_TIMEOUT_SECONDS,
+            timeout=remaining,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -1358,15 +1465,31 @@ def require_macos_tcc(
     screen_recording_probe: Callable[[], str] | None = None,
     wrapping_screen_recording_probe: Callable[[], str] | None = None,
     system: str | None = None,
+    overall_deadline: float | None = None,
 ) -> None:
     """Fail closed for live Robot / capture cells when Darwin TCC is missing."""
     if macos_tcc_skip_reason(system=system) is not None:
         return
     evaluate_macos_tcc(
-        accessibility=(accessibility_probe or probe_macos_accessibility)(),
-        screen_recording=(screen_recording_probe or probe_macos_screen_recording)(),
+        accessibility=(
+            accessibility_probe
+            or (lambda: probe_macos_accessibility(overall_deadline=overall_deadline))
+        )(),
+        screen_recording=(
+            screen_recording_probe
+            or (
+                lambda: probe_macos_screen_recording(
+                    overall_deadline=overall_deadline
+                )
+            )
+        )(),
         wrapping_screen_recording=(
-            wrapping_screen_recording_probe or probe_macos_wrapping_screen_recording
+            wrapping_screen_recording_probe
+            or (
+                lambda: probe_macos_wrapping_screen_recording(
+                    overall_deadline=overall_deadline
+                )
+            )
         )(),
     )
 
@@ -1653,14 +1776,11 @@ def run_command(
             if key in env and value == "":
                 del merged_env[key]
 
-    remaining = timeout
-    if overall_deadline is not None:
-        budget_left = int(overall_deadline - time.monotonic())
-        if budget_left <= 0:
-            message = "overall smoke deadline exceeded before step start"
-            log_path.write_text(message + "\n", encoding="utf-8")
-            return 124, message, str(log_path)
-        remaining = min(remaining, budget_left)
+    remaining = remaining_command_timeout(timeout, overall_deadline)
+    if remaining is None:
+        message = "overall smoke deadline exceeded before step start"
+        log_path.write_text(message + "\n", encoding="utf-8")
+        return 124, message, str(log_path)
 
     # start_new_session creates a new process group on POSIX so killpg works.
     popen_kwargs: dict[str, Any] = {

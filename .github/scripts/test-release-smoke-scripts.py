@@ -2449,6 +2449,132 @@ class MacOsTccPreflightTest(unittest.TestCase):
                 )
             self.assertEqual(124, code)
 
+    def test_remaining_command_timeout_clips_and_expires(self):
+        self.assertEqual(20, smoke_lib.remaining_command_timeout(20, None))
+        with unittest.mock.patch.object(smoke_lib.time, "monotonic", return_value=100.0):
+            self.assertEqual(5, smoke_lib.remaining_command_timeout(20, 105.0))
+            self.assertEqual(3, smoke_lib.remaining_command_timeout(3, 110.0))
+            self.assertIsNone(smoke_lib.remaining_command_timeout(20, 100.0))
+            self.assertIsNone(smoke_lib.remaining_command_timeout(20, 99.0))
+
+    def test_tcc_subprocess_probes_skip_when_overall_deadline_expired(self):
+        expired = time.monotonic() - 1
+
+        def fail_run(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("subprocess started after overall deadline")
+
+        with unittest.mock.patch.object(
+            smoke_lib.subprocess, "run", side_effect=fail_run
+        ):
+            self.assertIsNone(
+                smoke_lib.macos_screencapture_query_java_user_home(
+                    overall_deadline=expired
+                )
+            )
+            self.assertIsNone(
+                smoke_lib._run_osascript_accessibility(overall_deadline=expired)
+            )
+            self.assertIsNone(
+                smoke_lib._run_ioreg_console_lock(overall_deadline=expired)
+            )
+            self.assertIsNone(
+                smoke_lib._run_screencapture_preflight(
+                    ["/bin/true"], overall_deadline=expired
+                )
+            )
+            self.assertIsNone(
+                smoke_lib._capture_wrapping_screen_recording_bmp(
+                    overall_deadline=expired
+                )
+            )
+
+    def test_tcc_subprocess_probes_clip_timeout_to_overall_deadline(self):
+        seen: list[int | None] = []
+
+        def fake_run(argv, **kwargs):
+            seen.append(kwargs.get("timeout"))
+            return subprocess.CompletedProcess(list(argv), 0, stdout="")
+
+        with (
+            unittest.mock.patch.object(
+                smoke_lib.time, "monotonic", return_value=100.0
+            ),
+            unittest.mock.patch.object(
+                smoke_lib.subprocess, "run", side_effect=fake_run
+            ),
+        ):
+            deadline = 104.0
+            smoke_lib.macos_screencapture_query_java_user_home(
+                overall_deadline=deadline
+            )
+            smoke_lib._run_osascript_accessibility(overall_deadline=deadline)
+            smoke_lib._run_ioreg_console_lock(overall_deadline=deadline)
+            smoke_lib._run_screencapture_preflight(
+                ["/bin/true"], overall_deadline=deadline
+            )
+            smoke_lib._capture_wrapping_screen_recording_bmp(
+                overall_deadline=deadline
+            )
+        self.assertEqual(5, len(seen))
+        for timeout in seen:
+            self.assertIsNotNone(timeout)
+            self.assertLessEqual(int(timeout), 4)
+            self.assertGreater(int(timeout), 0)
+
+    def test_require_macos_tcc_forwards_overall_deadline_to_default_probes(self):
+        seen: dict[str, object] = {}
+
+        def accessibility(*, overall_deadline=None):
+            seen["accessibility"] = overall_deadline
+            return smoke_lib.TCC_GRANTED
+
+        def recording(*, overall_deadline=None, **kwargs):
+            del kwargs
+            seen["recording"] = overall_deadline
+            return smoke_lib.TCC_GRANTED
+
+        def wrapping(*, overall_deadline=None, **kwargs):
+            del kwargs
+            seen["wrapping"] = overall_deadline
+            return smoke_lib.TCC_GRANTED
+
+        with (
+            unittest.mock.patch.object(
+                smoke_lib, "probe_macos_accessibility", side_effect=accessibility
+            ),
+            unittest.mock.patch.object(
+                smoke_lib, "probe_macos_screen_recording", side_effect=recording
+            ),
+            unittest.mock.patch.object(
+                smoke_lib,
+                "probe_macos_wrapping_screen_recording",
+                side_effect=wrapping,
+            ),
+        ):
+            smoke_lib.require_macos_tcc(system="Darwin", overall_deadline=77.5)
+        self.assertEqual(77.5, seen.get("accessibility"))
+        self.assertEqual(77.5, seen.get("recording"))
+        self.assertEqual(77.5, seen.get("wrapping"))
+
+    def test_runtime_helper_forwards_overall_deadline_to_java_user_home(self):
+        seen: dict[str, object] = {}
+
+        def fake_query(environ=None, overall_deadline=None):
+            del environ
+            seen["overall_deadline"] = overall_deadline
+            return Path("/tmp/jvm-home")
+
+        with unittest.mock.patch.object(
+            smoke_lib,
+            "macos_screencapture_query_java_user_home",
+            side_effect=fake_query,
+        ):
+            smoke_lib.macos_screencapture_runtime_helper(
+                environ={}, overall_deadline=12.0
+            )
+        self.assertEqual(12.0, seen.get("overall_deadline"))
+
 
 class ReleaseSmokeMacOsTccWiringTest(unittest.TestCase):
     """Drive the Unix entrypoint so a denied TCC probe never reaches ./gradlew check."""
@@ -2563,7 +2689,7 @@ class ReleaseSmokeMacOsTccWiringTest(unittest.TestCase):
             order.append("gradle")
             return 0, "", str(kwargs.get("log_path") or "")
 
-        def accessibility() -> str:
+        def accessibility(*_args, **_kwargs) -> str:
             order.append("probe")
             return smoke_lib.TCC_DENIED
 
@@ -2698,6 +2824,105 @@ class ReleaseSmokeMacOsTccWiringTest(unittest.TestCase):
                 )
         self.assertEqual("pass", result.result)
         self.assertEqual(1234.5, seen.get("overall_deadline"))
+
+    def test_macos_tcc_forwards_overall_deadline_to_probes(self):
+        seen: dict[str, object] = {}
+
+        def record(name):
+            def probe(*args, **kwargs):
+                del args
+                seen[name] = kwargs.get("overall_deadline")
+                if name == "recording" and kwargs.get("ensure_helper") is not None:
+                    kwargs["ensure_helper"]()
+                return smoke_lib.TCC_GRANTED
+
+            return probe
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            with (
+                unittest.mock.patch.object(
+                    self.rs.platform, "system", return_value="Darwin"
+                ),
+                unittest.mock.patch.object(
+                    self.rs, "macos_tcc_skip_reason", return_value=None
+                ),
+                unittest.mock.patch.object(
+                    self.rs,
+                    "probe_macos_accessibility",
+                    side_effect=record("accessibility"),
+                ),
+                unittest.mock.patch.object(
+                    self.rs,
+                    "probe_macos_wrapping_screen_recording",
+                    side_effect=record("wrapping"),
+                ),
+                unittest.mock.patch.object(
+                    self.rs,
+                    "probe_macos_screen_recording",
+                    side_effect=record("recording"),
+                ),
+                unittest.mock.patch.object(
+                    self.rs,
+                    "ensure_macos_screencapture_helper",
+                    return_value=None,
+                ),
+            ):
+                result = self.rs._run_macos_tcc_scenario(
+                    out, "Darwin", overall_deadline=1234.5
+                )
+        self.assertEqual("pass", result.result)
+        self.assertEqual(1234.5, seen.get("accessibility"))
+        self.assertEqual(1234.5, seen.get("wrapping"))
+        self.assertEqual(1234.5, seen.get("recording"))
+
+    def test_macos_tcc_recheck_forwards_overall_deadline_to_probes(self):
+        seen: dict[str, object] = {}
+
+        def record(name):
+            def probe(*args, **kwargs):
+                del args
+                seen[name] = kwargs.get("overall_deadline")
+                return smoke_lib.TCC_GRANTED
+
+            return probe
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            with (
+                unittest.mock.patch.object(
+                    self.rs.platform, "system", return_value="Darwin"
+                ),
+                unittest.mock.patch.object(
+                    self.rs, "macos_tcc_skip_reason", return_value=None
+                ),
+                unittest.mock.patch.object(
+                    self.rs,
+                    "probe_macos_accessibility",
+                    side_effect=record("accessibility"),
+                ),
+                unittest.mock.patch.object(
+                    self.rs,
+                    "probe_macos_wrapping_screen_recording",
+                    side_effect=record("wrapping"),
+                ),
+                unittest.mock.patch.object(
+                    self.rs,
+                    "probe_macos_screen_recording",
+                    side_effect=record("recording"),
+                ),
+            ):
+                blocked = self.rs._macos_tcc_recheck_failure(
+                    "junit-live",
+                    "junit-live",
+                    "Darwin",
+                    overall_deadline=88.0,
+                    out_dir=out,
+                )
+        self.assertIsNone(blocked)
+        self.assertEqual(88.0, seen.get("accessibility"))
+        self.assertEqual(88.0, seen.get("wrapping"))
+        self.assertEqual(88.0, seen.get("recording"))
 
     def test_macos_daemon_stop_timeout_writes_failure_report(self):
         def wrapped_run_command(command, **kwargs):

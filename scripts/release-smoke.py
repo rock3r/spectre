@@ -135,13 +135,21 @@ def _run_macos_tcc_scenario(
 
     def action() -> None:
         require_macos_tcc(
-            accessibility_probe=probe_macos_accessibility,
+            accessibility_probe=lambda: probe_macos_accessibility(
+                overall_deadline=overall_deadline
+            ),
             screen_recording_probe=lambda: probe_macos_screen_recording(
                 root=ROOT,
                 ensure_helper=lambda: _ensure(),
                 refresh_helper=lambda: _ensure(refresh=True),
+                overall_deadline=overall_deadline,
             ),
-            wrapping_screen_recording_probe=probe_macos_wrapping_screen_recording,
+            wrapping_screen_recording_probe=lambda: (
+                probe_macos_wrapping_screen_recording(
+                    overall_deadline=overall_deadline
+                )
+            ),
+            overall_deadline=overall_deadline,
         )
 
     return run_callable_scenario(
@@ -176,13 +184,21 @@ def _macos_tcc_recheck_failure(
 
     try:
         require_macos_tcc(
-            accessibility_probe=probe_macos_accessibility,
+            accessibility_probe=lambda: probe_macos_accessibility(
+                overall_deadline=overall_deadline
+            ),
             screen_recording_probe=lambda: probe_macos_screen_recording(
                 root=ROOT,
                 ensure_helper=lambda: _ensure(),
                 refresh_helper=lambda: _ensure(refresh=True),
+                overall_deadline=overall_deadline,
             ),
-            wrapping_screen_recording_probe=probe_macos_wrapping_screen_recording,
+            wrapping_screen_recording_probe=lambda: (
+                probe_macos_wrapping_screen_recording(
+                    overall_deadline=overall_deadline
+                )
+            ),
+            overall_deadline=overall_deadline,
         )
     except RuntimeError as error:
         return scenario_result(
