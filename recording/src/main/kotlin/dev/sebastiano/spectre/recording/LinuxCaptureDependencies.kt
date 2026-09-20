@@ -11,48 +11,85 @@ import java.util.concurrent.TimeUnit
  */
 internal object LinuxCaptureDependencies {
     /**
-     * `true` when `gst-launch-1.0 --version` exits 0, `false` when the binary is confirmed missing
-     * or exits non-zero, and `null` when the probe is inconclusive (timeout or a transient
+     * `true` when `gst-launch-1.0 --version` exits 0 **and** every required still-capture element
+     * is present, `false` when the binary or a required element is confirmed missing or a probe
+     * exits non-zero, and `null` when the probe is inconclusive (timeout or a transient
      * `ProcessBuilder.start()` failure). Inconclusive results must not be negative-cached.
      */
-    fun isGstLaunchAvailable(launch: () -> Process = ::startGstLaunchVersion): Boolean? {
-        val process =
-            try {
-                launch()
-            } catch (error: IOException) {
-                return if (isConfirmedMissingExecutable(error)) false else null
+    fun isGstLaunchAvailable(
+        inspectElement: (String) -> Boolean? = ::inspectGstElement,
+        requiredElements: List<String> = requiredStillCaptureElements(),
+        launch: () -> Process = ::startGstLaunchVersion,
+    ): Boolean? {
+        val version = awaitGstProcess(launch) ?: return null
+        if (!version) return false
+        for (element in requiredElements) {
+            when (inspectElement(element)) {
+                true -> Unit
+                false -> return false
+                null -> return null
             }
-        return try {
-            val finished = process.waitFor(GST_LAUNCH_PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-            if (!finished) {
-                process.destroyForcibly()
-                null
-            } else {
-                process.exitValue() == 0
-            }
-        } catch (interrupted: InterruptedException) {
-            process.destroyForcibly()
-            Thread.currentThread().interrupt()
-            // Do not return false: NativeWindowCaptureBridge caches the first completed
-            // probe for the JVM lifetime. A cancelled waitForVisualIdle budget must not
-            // permanently mark GStreamer missing (#503 / #355).
-            throw interrupted
         }
+        return true
     }
 
     private fun startGstLaunchVersion(): Process =
         ProcessBuilder(GST_LAUNCH, "--version").redirectErrorStream(true).start()
 
-    private fun isConfirmedMissingExecutable(error: IOException): Boolean {
-        val message = error.message.orEmpty()
-        // ProcessBuilder.start() prefixes every launch failure with "Cannot run program"
-        // regardless of errno. Only ENOENT is a confirmed missing binary; error=13 /
-        // error=24 and similar stay inconclusive so they are not negative-cached.
-        return message.contains("No such file or directory", ignoreCase = true) ||
-            message.contains("error=2,", ignoreCase = true) ||
-            message.contains("error=2)", ignoreCase = true)
+    private fun inspectGstElement(element: String): Boolean? = awaitGstProcess {
+        ProcessBuilder(GST_INSPECT, element).redirectErrorStream(true).start()
     }
 }
 
+internal fun requiredStillCaptureElements(
+    isWayland: () -> Boolean = HostPlatform::isWayland
+): List<String> =
+    if (isWayland()) {
+        WAYLAND_STILL_CAPTURE_ELEMENTS
+    } else {
+        X11_STILL_CAPTURE_ELEMENTS
+    }
+
+internal fun awaitGstProcess(launch: () -> Process): Boolean? {
+    val process =
+        try {
+            launch()
+        } catch (error: IOException) {
+            return if (isConfirmedMissingExecutable(error)) false else null
+        }
+    return try {
+        val finished = process.waitFor(GST_LAUNCH_PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        if (!finished) {
+            process.destroyForcibly()
+            null
+        } else {
+            process.exitValue() == 0
+        }
+    } catch (interrupted: InterruptedException) {
+        process.destroyForcibly()
+        Thread.currentThread().interrupt()
+        // Do not return false: NativeWindowCaptureBridge caches the first completed
+        // probe for the JVM lifetime. A cancelled waitForVisualIdle budget must not
+        // permanently mark GStreamer missing (#503 / #355).
+        throw interrupted
+    }
+}
+
+internal fun isConfirmedMissingExecutable(error: IOException): Boolean {
+    val message = error.message.orEmpty()
+    // ProcessBuilder.start() prefixes every launch failure with "Cannot run program"
+    // regardless of errno. Only ENOENT is a confirmed missing binary; error=13 /
+    // error=24 and similar stay inconclusive so they are not negative-cached.
+    return message.contains("No such file or directory", ignoreCase = true) ||
+        message.contains("error=2,", ignoreCase = true) ||
+        message.contains("error=2)", ignoreCase = true)
+}
+
 private const val GST_LAUNCH: String = "gst-launch-1.0"
+private const val GST_INSPECT: String = "gst-inspect-1.0"
 private const val GST_LAUNCH_PROBE_TIMEOUT_MS: Long = 3_000
+
+internal val X11_STILL_CAPTURE_ELEMENTS: List<String> =
+    listOf("ximagesrc", "videoconvert", "pngenc")
+internal val WAYLAND_STILL_CAPTURE_ELEMENTS: List<String> =
+    listOf("pipewiresrc", "videocrop", "videoconvert", "pngenc")

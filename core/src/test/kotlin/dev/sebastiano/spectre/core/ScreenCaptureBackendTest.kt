@@ -37,6 +37,17 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
+    fun `begin native capture wait is a no-op without recording on the classpath`() {
+        val recordingFreeLoader =
+            object : ClassLoader(null) {
+                override fun loadClass(name: String, resolve: Boolean): Class<*> =
+                    throw ClassNotFoundException(name)
+            }
+
+        beginNativePlatformCaptureWait(recordingFreeLoader)
+    }
+
+    @Test
     fun `native usability probe is absent without recording on the classpath`() {
         val recordingFreeLoader =
             object : ClassLoader(null) {

@@ -309,12 +309,33 @@ private const val XDPYINFO_TIMEOUT_MS: Long = 3_000
 private const val XDPYINFO_READER_JOIN_MS: Long = 500
 
 /**
- * Loads the optional recording-owned native capture bridge without linking it into core.
+ * Clears the recording bridge's wait-scoped inconclusive probe so this `waitForVisualIdle` can
+ * retry `gst-launch` without inheriting the previous wait's Robot decision.
  *
- * The injected core payload intentionally excludes recording and its transitive dependencies;
- * absence of the bridge makes implicit window capture fail loudly; callers may opt in to the
- * independent screen-region API when that is the capture they want.
+ * Missing method (older recording jars) is a no-op.
  */
+internal fun beginNativePlatformCaptureWait(classLoader: ClassLoader) {
+    val bridge =
+        try {
+            Class.forName(NATIVE_WINDOW_CAPTURE_BRIDGE, false, classLoader)
+        } catch (_: ClassNotFoundException) {
+            return
+        }
+    val begin =
+        try {
+            bridge.getMethod("beginPlatformCaptureWait")
+        } catch (_: NoSuchMethodException) {
+            return
+        }
+    try {
+        begin.invoke(null)
+    } catch (_: InvocationTargetException) {
+        return
+    } catch (_: ReflectiveOperationException) {
+        return
+    }
+}
+
 /**
  * Asks the optional recording bridge whether the platform helper can actually capture.
  *

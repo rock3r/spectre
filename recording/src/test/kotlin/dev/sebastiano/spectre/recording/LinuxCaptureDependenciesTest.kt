@@ -19,7 +19,10 @@ class LinuxCaptureDependenciesTest {
     fun `gst-launch probe is true when the version process exits zero`() {
         assertEquals(
             true,
-            LinuxCaptureDependencies.isGstLaunchAvailable { FakeGstLaunchProcess(exit = 0) },
+            LinuxCaptureDependencies.isGstLaunchAvailable(
+                launch = { FakeGstLaunchProcess(exit = 0) },
+                inspectElement = { true },
+            ),
         )
     }
 
@@ -101,8 +104,47 @@ class LinuxCaptureDependenciesTest {
         assertTrue(Thread.interrupted(), "interrupt status must be restored so the wait can abort")
         assertEquals(
             true,
-            LinuxCaptureDependencies.isGstLaunchAvailable { FakeGstLaunchProcess(exit = 0) },
+            LinuxCaptureDependencies.isGstLaunchAvailable(inspectElement = { true }) {
+                FakeGstLaunchProcess(exit = 0)
+            },
             "a later probe must be allowed to succeed after an interrupted one",
+        )
+    }
+
+    @Test
+    fun `gst-launch probe is false when a required still-capture element is missing`() {
+        assertEquals(
+            false,
+            LinuxCaptureDependencies.isGstLaunchAvailable(
+                inspectElement = { element -> element != "ximagesrc" },
+                requiredElements = listOf("ximagesrc", "videoconvert", "pngenc"),
+            ) {
+                FakeGstLaunchProcess(exit = 0)
+            },
+        )
+    }
+
+    @Test
+    fun `gst-launch probe stays inconclusive when element inspect times out`() {
+        assertNull(
+            LinuxCaptureDependencies.isGstLaunchAvailable(
+                inspectElement = { null },
+                requiredElements = listOf("videoconvert"),
+            ) {
+                FakeGstLaunchProcess(exit = 0)
+            }
+        )
+    }
+
+    @Test
+    fun `required still-capture elements follow the selected backend`() {
+        assertEquals(
+            listOf("ximagesrc", "videoconvert", "pngenc"),
+            requiredStillCaptureElements(isWayland = { false }),
+        )
+        assertEquals(
+            listOf("pipewiresrc", "videocrop", "videoconvert", "pngenc"),
+            requiredStillCaptureElements(isWayland = { true }),
         )
     }
 }

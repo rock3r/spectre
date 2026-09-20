@@ -654,6 +654,7 @@ private constructor(
         pollInterval: Duration = DEFAULT_POLL_INTERVAL,
     ) {
         rejectEdtCaller("waitForVisualIdle")
+        beginNativePlatformCaptureWait(javaClass.classLoader)
         val frameHasher =
             BoundedFrameHasher(
                 steadyStateBudgetMs = FRAME_HASH_BUDGET_MS,

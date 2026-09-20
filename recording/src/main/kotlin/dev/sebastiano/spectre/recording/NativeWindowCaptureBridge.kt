@@ -19,6 +19,7 @@ internal object NativeWindowCaptureBridge {
     private val screenshotter: AutoScreenshotter by lazy(::AutoScreenshotter)
     private val captureLocks = WeakHashMap<Window, ReentrantLock>()
     @Volatile private var cachedPlatformCaptureUsable: Boolean? = null
+    @Volatile private var waitScopedPlatformCaptureUsable: Boolean? = null
     private val platformCaptureUsableLock = Any()
 
     /**
@@ -26,8 +27,9 @@ internal object NativeWindowCaptureBridge {
      *
      * Linux stills spawn `gst-launch-1.0` via the bundled helper. If that binary is missing,
      * visual- idle treats native capture as unavailable and falls back to Robot region sampling
-     * (#503). An interrupted probe is not cached: a short first `waitForVisualIdle` budget must not
-     * pin Robot for the rest of the JVM.
+     * (#503). An interrupted or timed-out probe is not globally cached: a later `waitForVisualIdle`
+     * may retry. The inconclusive Robot decision is reused only for the current wait so
+     * BoundedFrameHasher's 2s steady-state budget does not start another 3s probe.
      */
     @JvmStatic
     @JvmName("isPlatformCaptureUsable")
@@ -40,12 +42,23 @@ internal object NativeWindowCaptureBridge {
                 return@synchronized it
             }
             val remembered =
-                rememberCompletedProbe(cachedPlatformCaptureUsable) {
+                rememberCompletedProbe(
+                    cached = cachedPlatformCaptureUsable,
+                    waitScoped = waitScopedPlatformCaptureUsable,
+                ) {
                     computePlatformCaptureUsable()
                 }
             cachedPlatformCaptureUsable = remembered.cache
+            waitScopedPlatformCaptureUsable = remembered.waitScoped
             remembered.usableNow
         }
+    }
+
+    /** Clears the wait-scoped inconclusive decision so the next wait can retry the probe. */
+    @JvmStatic
+    @JvmName("beginPlatformCaptureWait")
+    internal fun beginPlatformCaptureWait() {
+        synchronized(platformCaptureUsableLock) { waitScopedPlatformCaptureUsable = null }
     }
 
     internal fun computePlatformCaptureUsable(
@@ -89,11 +102,30 @@ internal object NativeWindowCaptureBridge {
         synchronized(captureLocks) { captureLocks.getOrPut(window, ::ReentrantLock) }
 }
 
-/** [cache] is null when [computed] timed out so a later wait can retry the probe. */
-internal data class CompletedProbe(val usableNow: Boolean, val cache: Boolean?)
+/**
+ * [cache] is the JVM-lifetime result. [waitScoped] is the Robot decision for this wait when [cache]
+ * is null so later frames do not start another probe; a later wait clears it and retries.
+ */
+internal data class CompletedProbe(
+    val usableNow: Boolean,
+    val cache: Boolean?,
+    val waitScoped: Boolean?,
+)
 
-internal fun rememberCompletedProbe(cached: Boolean?, compute: () -> Boolean?): CompletedProbe {
-    if (cached != null) return CompletedProbe(usableNow = cached, cache = cached)
+internal fun rememberCompletedProbe(
+    cached: Boolean?,
+    waitScoped: Boolean? = null,
+    compute: () -> Boolean?,
+): CompletedProbe {
+    if (cached != null)
+        return CompletedProbe(usableNow = cached, cache = cached, waitScoped = waitScoped)
+    if (waitScoped != null) {
+        return CompletedProbe(usableNow = waitScoped, cache = null, waitScoped = waitScoped)
+    }
     val computed = compute()
-    return CompletedProbe(usableNow = computed ?: false, cache = computed)
+    return CompletedProbe(
+        usableNow = computed ?: false,
+        cache = computed,
+        waitScoped = if (computed == null) false else null,
+    )
 }
