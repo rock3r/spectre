@@ -305,6 +305,13 @@ SCREENCAPTURE_HELPER_NAME = "spectre-screencapture"
 SCREENCAPTURE_PREFLIGHT_TIMEOUT_SECONDS = 15
 SCREENCAPTURE_HELPER_EXIT_NOT_GRANTED = 6
 SCREENCAPTURE_HELPER_OVERRIDE_ENV = "SPECTRE_SCREENCAPTURE_HELPER"
+SCREENCAPTURE_HELPER_DIR_PROPERTY = "spectre.recording.screencapturekit.helperDir"
+SCREENCAPTURE_HELPER_DIR_JVM_ENVS = (
+    "GRADLE_OPTS",
+    "_JAVA_OPTIONS",
+    "JAVA_TOOL_OPTIONS",
+    "JDK_JAVA_OPTIONS",
+)
 MACOS_TCC_BLOCKED_REASON = (
     "blocked by macos-tcc failure; grant Accessibility and Screen Recording to the "
     "wrapping app and Screen Recording to Spectre Capture Helper, then quit/relaunch "
@@ -609,8 +616,19 @@ def macos_screencapture_staged_helper(root: Path) -> Path:
     )
 
 
-def macos_screencapture_runtime_helper(home: Path | None = None) -> Path:
-    """Same stable extract path as HelperBinaryExtractor.defaultTargetDir()."""
+def macos_screencapture_runtime_helper(
+    home: Path | None = None,
+    helper_dir: Path | None = None,
+) -> Path:
+    """Same extract path as HelperBinaryExtractor (helperDir property or default)."""
+    if helper_dir is not None:
+        return (
+            helper_dir
+            / SCREENCAPTURE_HELPER_APP_NAME
+            / "Contents"
+            / "MacOS"
+            / SCREENCAPTURE_HELPER_NAME
+        )
     return (
         (home if home is not None else Path.home())
         / "Library"
@@ -623,6 +641,70 @@ def macos_screencapture_runtime_helper(home: Path | None = None) -> Path:
         / "MacOS"
         / SCREENCAPTURE_HELPER_NAME
     )
+
+
+class InvalidScreencaptureHelperDir(RuntimeError):
+    """helperDir is configured but cannot be mirrored by the smoke preflight."""
+
+
+def parse_screencapture_helper_dir_property(text: str) -> Path | None:
+    """Last -Dspectre.recording.screencapturekit.helperDir in JVM option text."""
+    pattern = (
+        r"-D"
+        + re.escape(SCREENCAPTURE_HELPER_DIR_PROPERTY)
+        + r"(?:=(.*))?(?=\s|$)"
+    )
+    last: Path | None = None
+    found = False
+    for match in re.finditer(pattern, text):
+        found = True
+        raw = match.group(1)
+        if raw is None:
+            raise InvalidScreencaptureHelperDir(
+                f"{SCREENCAPTURE_HELPER_DIR_PROPERTY} is set without a value; "
+                "cannot mirror HelperBinaryExtractor.extract()"
+            )
+        value = raw.strip()
+        if (value.startswith('"') and value.endswith('"')) or (
+            value.startswith("'") and value.endswith("'")
+        ):
+            value = value[1:-1]
+        last = Path(value) if value.strip() else None
+    return last if found else None
+
+
+def macos_screencapture_configured_helper_dir(
+    environ: Mapping[str, str] | None = None,
+    *,
+    root: Path | None = None,
+) -> Path | None:
+    """Resolve helperDir the same way HelperBinaryExtractor reads the JVM property."""
+    env = environ if environ is not None else os.environ
+    resolved: Path | None = None
+    if root is not None:
+        properties = root / "gradle.properties"
+        if properties.is_file():
+            text = properties.read_text(encoding="utf-8")
+            prefix = f"systemProp.{SCREENCAPTURE_HELPER_DIR_PROPERTY}"
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("#") or "=" not in stripped:
+                    continue
+                key, _, value = stripped.partition("=")
+                if key.strip() == prefix:
+                    value = value.strip()
+                    resolved = Path(value) if value else None
+            jvmargs = parse_screencapture_helper_dir_property(text)
+            if jvmargs is not None:
+                resolved = jvmargs
+    for name in SCREENCAPTURE_HELPER_DIR_JVM_ENVS:
+        raw = env.get(name, "")
+        if not raw:
+            continue
+        parsed = parse_screencapture_helper_dir_property(raw)
+        if parsed is not None:
+            resolved = parsed
+    return resolved
 
 
 class InvalidScreencaptureHelperOverride(RuntimeError):
@@ -669,8 +751,12 @@ def macos_screencapture_helper_candidates(
         return []
     if override is not None:
         return [override]
-    if home is not None or platform.system() == "Darwin":
-        candidates.append(macos_screencapture_runtime_helper(home))
+    try:
+        helper_dir = macos_screencapture_configured_helper_dir(root=root)
+    except InvalidScreencaptureHelperDir:
+        return []
+    if home is not None or helper_dir is not None or platform.system() == "Darwin":
+        candidates.append(macos_screencapture_runtime_helper(home, helper_dir=helper_dir))
     return candidates
 
 
@@ -739,7 +825,8 @@ def probe_macos_screen_recording(
 
     try:
         override = macos_screencapture_override_path()
-    except InvalidScreencaptureHelperOverride:
+        macos_screencapture_configured_helper_dir(root=root)
+    except (InvalidScreencaptureHelperOverride, InvalidScreencaptureHelperDir):
         return TCC_UNKNOWN
     resolved = override if override is not None else helper_path
     if resolved is None and ensure_helper is not None:
@@ -816,12 +903,13 @@ def ensure_macos_screencapture_helper(
     """Install the helper to the runtime TCC path, assembling first when needed."""
     try:
         override = macos_screencapture_override_path()
-    except InvalidScreencaptureHelperOverride:
+        helper_dir = macos_screencapture_configured_helper_dir(root=root)
+    except (InvalidScreencaptureHelperOverride, InvalidScreencaptureHelperDir):
         return None
     if override is not None:
         return override
 
-    runtime = macos_screencapture_runtime_helper(home)
+    runtime = macos_screencapture_runtime_helper(home, helper_dir=helper_dir)
     if _is_executable_helper(runtime) and not refresh:
         return runtime
 
@@ -836,7 +924,7 @@ def ensure_macos_screencapture_helper(
     if not _is_executable_helper(staged):
         return None
 
-    if home is None and platform.system() != "Darwin":
+    if helper_dir is None and home is None and platform.system() != "Darwin":
         return None
     installer = install if install is not None else install_macos_screencapture_helper
     return installer(staged, runtime)

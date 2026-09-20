@@ -1532,6 +1532,76 @@ class MacOsTccPreflightTest(unittest.TestCase):
                 )
                 self.assertIsNone(found)
 
+    def test_helper_dir_property_installs_and_probes_that_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = Path(tmp) / "home"
+            helper_dir = Path(tmp) / "custom-helper-dir"
+            staged = smoke_lib.macos_screencapture_staged_helper(root)
+            configured = (
+                helper_dir
+                / smoke_lib.SCREENCAPTURE_HELPER_APP_NAME
+                / "Contents"
+                / "MacOS"
+                / smoke_lib.SCREENCAPTURE_HELPER_NAME
+            )
+            default_runtime = smoke_lib.macos_screencapture_runtime_helper(home)
+            invoked: list[str] = []
+
+            def assemble() -> int:
+                staged.parent.mkdir(parents=True)
+                staged.write_text("#!/bin/sh\n", encoding="utf-8")
+                staged.chmod(0o755)
+                return 0
+
+            env = {
+                "JAVA_TOOL_OPTIONS": (
+                    f"-D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}={helper_dir}"
+                )
+            }
+            with unittest.mock.patch.dict(os.environ, env, clear=False):
+                found = smoke_lib.ensure_macos_screencapture_helper(
+                    root, assemble=assemble, home=home
+                )
+                status = smoke_lib.probe_macos_screen_recording(
+                    root=root,
+                    ensure_helper=lambda: found,
+                    invoke_helper=lambda argv: invoked.append(argv[0])
+                    or (0, '{"granted": true}\n'),
+                )
+            self.assertEqual(configured, found)
+            self.assertEqual(smoke_lib.TCC_GRANTED, status)
+            self.assertEqual([str(configured)], invoked)
+            self.assertNotEqual(configured, default_runtime)
+            self.assertFalse(default_runtime.exists())
+
+    def test_unparseable_helper_dir_property_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = Path(tmp) / "home"
+            staged = smoke_lib.macos_screencapture_staged_helper(root)
+            staged.parent.mkdir(parents=True)
+            staged.write_text("#!/bin/sh\n", encoding="utf-8")
+            staged.chmod(0o755)
+            env = {
+                "JAVA_TOOL_OPTIONS": (
+                    f"-D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}"
+                )
+            }
+            with unittest.mock.patch.dict(os.environ, env, clear=False):
+                with self.assertRaises(smoke_lib.InvalidScreencaptureHelperDir):
+                    smoke_lib.macos_screencapture_configured_helper_dir()
+                found = smoke_lib.ensure_macos_screencapture_helper(
+                    root, assemble=lambda: 0, home=home
+                )
+                status = smoke_lib.probe_macos_screen_recording(
+                    root=root,
+                    ensure_helper=lambda: found,
+                    invoke_helper=lambda argv: (0, '{"granted": true}\n'),
+                )
+            self.assertIsNone(found)
+            self.assertEqual(smoke_lib.TCC_UNKNOWN, status)
+
     def test_unknown_runtime_helper_is_refreshed_and_reprobed(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
