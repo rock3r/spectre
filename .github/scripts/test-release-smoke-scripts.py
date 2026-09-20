@@ -1575,6 +1575,17 @@ class MacOsTccPreflightTest(unittest.TestCase):
             self.assertNotEqual(configured, default_runtime)
             self.assertFalse(default_runtime.exists())
 
+    def test_helper_dir_parse_stops_at_next_jvm_option(self):
+        helper_dir = Path("/tmp/helper")
+        parsed = smoke_lib.parse_screencapture_helper_dir_property(
+            f"-D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}={helper_dir} -Xmx2g"
+        )
+        self.assertEqual(helper_dir, parsed)
+        quoted = smoke_lib.parse_screencapture_helper_dir_property(
+            f'-ea -D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}="/tmp/my helper" -Xmx2g'
+        )
+        self.assertEqual(Path("/tmp/my helper"), quoted)
+
     def test_unparseable_helper_dir_property_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

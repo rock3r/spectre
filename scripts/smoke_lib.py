@@ -10,6 +10,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import signal
 import struct
@@ -648,28 +649,26 @@ class InvalidScreencaptureHelperDir(RuntimeError):
 
 
 def parse_screencapture_helper_dir_property(text: str) -> Path | None:
-    """Last -Dspectre.recording.screencapturekit.helperDir in JVM option text."""
-    pattern = (
-        r"-D"
-        + re.escape(SCREENCAPTURE_HELPER_DIR_PROPERTY)
-        + r"(?:=(.*))?(?=\s|$)"
-    )
+    """Last -Dspectre.recording.screencapturekit.helperDir token in JVM option text."""
+    prefix = f"-D{SCREENCAPTURE_HELPER_DIR_PROPERTY}"
+    try:
+        tokens = shlex.split(text, posix=True)
+    except ValueError as error:
+        raise InvalidScreencaptureHelperDir(
+            f"{SCREENCAPTURE_HELPER_DIR_PROPERTY} is set but cannot be parsed: {error}"
+        ) from error
     last: Path | None = None
     found = False
-    for match in re.finditer(pattern, text):
-        found = True
-        raw = match.group(1)
-        if raw is None:
+    for token in tokens:
+        if token == prefix:
             raise InvalidScreencaptureHelperDir(
                 f"{SCREENCAPTURE_HELPER_DIR_PROPERTY} is set without a value; "
                 "cannot mirror HelperBinaryExtractor.extract()"
             )
-        value = raw.strip()
-        if (value.startswith('"') and value.endswith('"')) or (
-            value.startswith("'") and value.endswith("'")
-        ):
-            value = value[1:-1]
-        last = Path(value) if value.strip() else None
+        if token.startswith(f"{prefix}="):
+            found = True
+            value = token[len(prefix) + 1 :]
+            last = Path(value) if value.strip() else None
     return last if found else None
 
 
