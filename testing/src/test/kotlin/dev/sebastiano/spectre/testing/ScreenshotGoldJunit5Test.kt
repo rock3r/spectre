@@ -37,6 +37,23 @@ class ScreenshotGoldJunit5Test {
     }
 
     @Test
+    fun `JUnit 5 gold facade class file does not mention ParameterizedTest`() {
+        val resource =
+            requireNotNull(
+                Class.forName("dev.sebastiano.spectre.testing.ScreenshotGoldJunit5")
+                    .getResource("ScreenshotGoldJunit5.class")
+            ) {
+                "ScreenshotGoldJunit5.class"
+            }
+        val bytes = resource.readBytes()
+        val pool = String(bytes, Charsets.ISO_8859_1)
+        assertFalse(
+            pool.contains("org/junit/jupiter/params/ParameterizedTest"),
+            "facade must not load junit-jupiter-params",
+        )
+    }
+
+    @Test
     fun `TestInfo supplies an invocation key for template methods`() {
         val method = parameterizedMethod()
         val pattern = method.getAnnotation(ParameterizedTest::class.java)!!.name

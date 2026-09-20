@@ -9,6 +9,7 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Disabled
+import org.junit.jupiter.api.RepeatedTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInfo
 
@@ -99,6 +100,43 @@ class ScreenshotGoldIdentityTest {
     }
 
     @Test
+    fun `template method names that contain parentheses still require invocationKey`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                resolveInvocationKey(
+                    GoldIdentityParenTemplateHost::class.java.name,
+                    "renders (dark)",
+                    invocationKey = null,
+                )
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
+    }
+
+    @Test
+    fun `inherited tests from a concrete base fail closed without TestInfo`() {
+        val frame =
+            StackTraceElement(
+                GoldIdentityConcreteBase::class.java.name,
+                "inheritedFromConcrete",
+                "GoldIdentityConcreteBase.kt",
+                1,
+            )
+        val error = assertFailsWith<IllegalStateException> { testIdentityFromFrame(frame) }
+        assertTrue(error.message!!.contains("TestInfo"), error.message)
+        assertTrue(error.message!!.contains("concrete"), error.message)
+        val fromA =
+            assertFailsWith<IllegalStateException> {
+                GoldIdentityConcreteChildA().inheritedFromConcrete()
+            }
+        val fromB =
+            assertFailsWith<IllegalStateException> {
+                GoldIdentityConcreteChildB().inheritedFromConcrete()
+            }
+        assertTrue(fromA.message!!.contains("TestInfo"), fromA.message)
+        assertTrue(fromB.message!!.contains("TestInfo"), fromB.message)
+    }
+
+    @Test
     fun `TestInfo keys inherited tests by the concrete class`() {
         val method = GoldIdentityInheritedBase::class.java.getDeclaredMethod("inheritedProbe")
         val info =
@@ -106,6 +144,16 @@ class ScreenshotGoldIdentityTest {
         val identity = identityFromTestInfo(info)
         assertEquals(GoldIdentityInheritedConcrete::class.java.name, identity.first)
         assertEquals("inheritedProbe", identity.second)
+        val fromConcreteBase =
+            identityFromTestInfo(
+                fakeTestInfo(
+                    "inheritedFromConcrete()",
+                    GoldIdentityConcreteChildA::class.java,
+                    GoldIdentityConcreteBase::class.java.getDeclaredMethod("inheritedFromConcrete"),
+                )
+            )
+        assertEquals(GoldIdentityConcreteChildA::class.java.name, fromConcreteBase.first)
+        assertEquals("inheritedFromConcrete", fromConcreteBase.second)
     }
 
     private fun fakeTestInfo(
@@ -149,3 +197,22 @@ internal interface GoldIdentityInheritedInterface {
 
 @Disabled("reflective fixture for inherited gold identity")
 internal class GoldIdentityInheritedImpl : GoldIdentityInheritedInterface
+
+@Disabled("reflective fixture for parenthesized template method names")
+internal class GoldIdentityParenTemplateHost {
+    @RepeatedTest(1)
+    fun `renders (dark)`() {
+        error("template fixture")
+    }
+}
+
+@Disabled("reflective fixture for inherited gold identity")
+internal open class GoldIdentityConcreteBase {
+    @Test fun inheritedFromConcrete(): Pair<String, String> = inferTestIdentity()
+}
+
+@Disabled("reflective fixture for inherited gold identity")
+internal class GoldIdentityConcreteChildA : GoldIdentityConcreteBase()
+
+@Disabled("reflective fixture for inherited gold identity")
+internal class GoldIdentityConcreteChildB : GoldIdentityConcreteBase()

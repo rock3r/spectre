@@ -382,8 +382,10 @@ The method segment is the inferred JUnit method (or `TestInfo`). No-arg tests ke
 bare method name; overloads append `(fqcn,…)` so `@Test render()` and
 `@Test render(testInfo: TestInfo)` cannot share a gold. Parameterized and repeated
 invocations add an extra `<invocation>` segment so they cannot overwrite each other.
-Tests inherited from an abstract class or interface cannot infer the concrete class
-from the stack — pass `TestInfo` so those golds key by the executing class.
+Tests inherited from an abstract class, interface, or non-final concrete base cannot
+infer the concrete executing class from the stack — pass `TestInfo` so those golds key
+by the running class. Method names that contain `(` are matched by the full generated
+identity, not by cutting at the first parenthesis.
 
 The default root is `src/test/resources/spectre-golds/` (the main JUnit source set). Linux
 keys follow the same session detection as window capture: `SPECTRE_CAPTURE_BACKEND`,

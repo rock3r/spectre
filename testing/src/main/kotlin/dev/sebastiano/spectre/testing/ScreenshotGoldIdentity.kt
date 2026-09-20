@@ -85,7 +85,9 @@ internal fun resolveInvocationKey(
 }
 
 private fun identityFromResolved(cls: Class<*>, method: Method): Pair<String, String> {
-    if (cls.isInterface || Modifier.isAbstract(cls.modifiers)) {
+    // Non-final concrete hosts can be subclassed; the stack frame names the declaring
+    // class, so two children would share a gold without TestInfo.
+    if (cls.isInterface || !Modifier.isFinal(cls.modifiers)) {
         error(
             "assertMatchesGold cannot infer the concrete test class from ${cls.name}; " +
                 "pass TestInfo so inherited tests key golds by the executing class"
@@ -95,9 +97,11 @@ private fun identityFromResolved(cls: Class<*>, method: Method): Pair<String, St
 }
 
 private fun isJunitTestTemplateMethod(testClassName: String, testMethodName: String): Boolean {
-    val simpleName = testMethodName.substringBefore('(')
     val cls = runCatching { Class.forName(testClassName) }.getOrNull() ?: return false
-    return cls.declaredMethods.any { it.name == simpleName && it.isJunitTestTemplate() }
+    return cls.declaredMethods.any { method ->
+        method.isJunitTestTemplate() &&
+            (junitMethodIdentity(method) == testMethodName || method.name == testMethodName)
+    }
 }
 
 private fun methodMatchesType(method: Method, methodType: MethodType): Boolean =

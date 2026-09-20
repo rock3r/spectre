@@ -5,7 +5,6 @@ package dev.sebastiano.spectre.testing
 import java.awt.image.BufferedImage
 import org.junit.jupiter.api.RepeatedTest
 import org.junit.jupiter.api.TestInfo
-import org.junit.jupiter.params.ParameterizedTest
 
 /**
  * JUnit 5 facade for [assertMatchesGold]. Isolated from the name-only `ScreenshotGoldKt` overloads
@@ -64,14 +63,10 @@ internal fun invocationKeyFromTestInfo(testInfo: TestInfo): String? {
 }
 
 internal fun java.lang.reflect.Method.hasVaryingInvocationNamePattern(): Boolean {
-    val parameterized = getAnnotation(ParameterizedTest::class.java)
-    if (parameterized != null) {
-        return patternVariesPerInvocation(parameterized.name)
-    }
+    // RepeatedTest lives in junit-jupiter-api. Do not resolve ParameterizedTest::class —
+    // that class is in junit-jupiter-params, which is optional at runtime.
     val repeated = getAnnotation(RepeatedTest::class.java)
-    if (repeated != null) {
-        return patternVariesPerInvocation(repeated.name)
-    }
+    if (repeated != null) return patternVariesPerInvocation(repeated.name)
     return annotations.any { annotationHasVaryingInvocationPattern(it) }
 }
 
