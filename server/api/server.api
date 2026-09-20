@@ -43,8 +43,8 @@ public final class dev/sebastiano/spectre/server/HttpComposeAutomator$Companion 
 }
 
 public final class dev/sebastiano/spectre/server/HttpComposeAutomatorKt {
-	public static final fun http (Ldev/sebastiano/spectre/core/ComposeAutomator$Companion;Ljava/lang/String;ILjava/lang/String;)Ldev/sebastiano/spectre/server/HttpComposeAutomator;
-	public static synthetic fun http$default (Ldev/sebastiano/spectre/core/ComposeAutomator$Companion;Ljava/lang/String;ILjava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/server/HttpComposeAutomator;
+	public static final fun http (Ldev/sebastiano/spectre/core/ComposeAutomator$Companion;Ldev/sebastiano/spectre/server/SpectreHttpSecurity;Ljava/lang/String;ILjava/lang/String;)Ldev/sebastiano/spectre/server/HttpComposeAutomator;
+	public static synthetic fun http$default (Ldev/sebastiano/spectre/core/ComposeAutomator$Companion;Ldev/sebastiano/spectre/server/SpectreHttpSecurity;Ljava/lang/String;ILjava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/server/HttpComposeAutomator;
 }
 
 public final class dev/sebastiano/spectre/server/SpectreErrorCategory : java/lang/Enum {
@@ -69,9 +69,16 @@ public final class dev/sebastiano/spectre/server/SpectreErrorCategory$Companion 
 	public final fun httpStatus (Ldev/sebastiano/spectre/server/SpectreErrorCategory;)Lio/ktor/http/HttpStatusCode;
 }
 
+public final class dev/sebastiano/spectre/server/SpectreHttpSecurity {
+	public fun <init> (Ljava/lang/String;Ljava/util/Set;Z)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/util/Set;ZILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getAllowInsecureLoopback ()Z
+	public final fun getAllowedOrigins ()Ljava/util/Set;
+}
+
 public final class dev/sebastiano/spectre/server/SpectreServerKt {
-	public static final fun installSpectreRoutes (Lio/ktor/server/application/Application;Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/lang/String;)V
-	public static synthetic fun installSpectreRoutes$default (Lio/ktor/server/application/Application;Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/lang/String;ILjava/lang/Object;)V
+	public static final fun installSpectreRoutes (Lio/ktor/server/application/Application;Ldev/sebastiano/spectre/core/ComposeAutomator;Ldev/sebastiano/spectre/server/SpectreHttpSecurity;Ljava/lang/String;)V
+	public static synthetic fun installSpectreRoutes$default (Lio/ktor/server/application/Application;Ldev/sebastiano/spectre/core/ComposeAutomator;Ldev/sebastiano/spectre/server/SpectreHttpSecurity;Ljava/lang/String;ILjava/lang/Object;)V
 }
 
 public final class dev/sebastiano/spectre/server/dto/ClearAndTypeTextRequest {

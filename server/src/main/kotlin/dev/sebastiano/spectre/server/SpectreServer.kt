@@ -27,6 +27,7 @@ import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
+import io.ktor.server.routing.options
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
@@ -38,7 +39,8 @@ import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Mounts the Spectre HTTP transport on this Ktor [Application], backed by the supplied in-process
- * [automator]. All routes live under [basePath] (default `/spectre`).
+ * [automator]. All routes live under [basePath] (default `/spectre`) and are protected by
+ * [security].
  *
  * The route surface is a data-only subset of the public automator API: windows, selectors
  * (including structured `TextQuery` and `findOneBy*`), input verbs, node-targeted screenshot,
@@ -49,18 +51,19 @@ import kotlin.time.Duration.Companion.milliseconds
  *
  * ## Trust boundary
  *
- * The HTTP transport is **experimental** and intended for trusted local / test environments only:
+ * The HTTP transport is **experimental**. Its exposure controls are deliberately fail-closed:
  *
- * - **Unauthenticated.** Every route is open to any caller that can reach the bound port. There are
- *   no tokens, headers, or origin checks.
- * - **Plaintext.** Communication is HTTP, not HTTPS. There is no TLS support.
- * - **Privileged side effects.** Input verbs drive the host automator's driver; `screenshot`
- *   captures pixels visible to the host JVM. Anything that can reach this server can do all of the
- *   above.
- * - **Binding is the host application's responsibility.** This function does not start a server —
- *   pick an engine and bind to `127.0.0.1`. Do not expose the routes to a network interface.
- * - **Authentication, authorization, and TLS** are tracked for a separately reviewed future design
- *   (#96).
+ * - **Authenticated.** Every non-preflight request must carry the deployment bearer configured in
+ *   [security]. Bearers are compared in constant time and are never included in responses.
+ * - **Encrypted by default.** HTTPS is required. Plaintext is accepted only when
+ *   [SpectreHttpSecurity.allowInsecureLoopback] is explicitly enabled and the peer is loopback.
+ * - **No CORS by default.** Browser origins must appear exactly in
+ *   [SpectreHttpSecurity.allowedOrigins]. Preflights need no bearer but still enforce transport and
+ *   origin policy.
+ * - **Privileged side effects.** Input verbs drive the host automator's driver; screenshots capture
+ *   pixels visible to the host JVM. Anything that can reach this server can do all of the above.
+ * - **TLS and binding are the host application's responsibility.** This function mounts routes but
+ *   does not start or configure the server connector. Use an HTTPS connector in production.
  *
  * See [the cross-JVM guide](https://spectre.sebastiano.dev/guide/cross-jvm/) and
  * [the security notes](https://spectre.sebastiano.dev/SECURITY/) for the published exposure model
@@ -82,15 +85,25 @@ import kotlin.time.Duration.Companion.milliseconds
 @ExperimentalSpectreHttpApi
 public fun Application.installSpectreRoutes(
     automator: ComposeAutomator,
+    security: SpectreHttpSecurity,
     basePath: String = "/spectre",
 ) {
     if (pluginOrNull(ContentNegotiation) == null) {
         install(ContentNegotiation) { json() }
     }
-    routing { route(basePath) { spectreRoutes(automator) } }
+    routing {
+        route(basePath) {
+            installExposureGuard(security)
+            spectreRoutes(automator)
+        }
+    }
 }
 
 private fun Route.spectreRoutes(automator: ComposeAutomator) {
+    // Makes preflight requests route successfully so the route-scoped exposure guard can answer
+    // them before authentication. Ordinary OPTIONS requests still require a bearer.
+    options("/{path...}") { call.respond(HttpStatusCode.NoContent) }
+
     get("/windows") {
         automator.refreshWindows()
         val response =

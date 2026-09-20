@@ -61,7 +61,7 @@ class HttpNegativeContractTest {
         // precheck before our `receiveOrRespond400` wrapper. The precheck rejects the
         // zero-byte body with 415 because there's nothing for the JSON converter to read —
         // we pin that here so a future Ktor upgrade that changed it to 400 would notice us.
-        application { installSpectreRoutes(headlessAutomator()) }
+        application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
         val response =
             postRaw("/spectre/click", body = "", contentType = ContentType.Application.Json)
         assertEquals(HttpStatusCode.UnsupportedMediaType, response.status)
@@ -73,7 +73,7 @@ class HttpNegativeContractTest {
         // echoing the underlying decoder message back to the caller (as it did pre-R5), this
         // assertion fails. The test pins the no-echo behaviour without depending on Ktor's
         // exact serializer prose — only the curated type name is part of the contract.
-        application { installSpectreRoutes(headlessAutomator()) }
+        application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
         val response =
             postRaw(
                 "/spectre/click",
@@ -93,7 +93,7 @@ class HttpNegativeContractTest {
             // does `NodeKey.parse` throw `IllegalArgumentException("Invalid NodeKey: $key")`.
             // Pre-R5 that exception message was interpolated into the response body, echoing the
             // attacker key. Pin that no-echo behaviour here.
-            application { installSpectreRoutes(headlessAutomator()) }
+            application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
             val response =
                 postRaw(
                     "/spectre/click",
@@ -111,7 +111,7 @@ class HttpNegativeContractTest {
             // key parses as surfaceId=`<script>alert(1)</script>`, ownerIndex=0, nodeId=1, so
             // `NodeKey.parse` succeeds and the handler falls through to "no node with this key".
             // Pre-R5 that branch interpolated `request.nodeKey` into the response body.
-            application { installSpectreRoutes(headlessAutomator()) }
+            application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
             val response =
                 postRaw(
                     "/spectre/click",
@@ -124,7 +124,7 @@ class HttpNegativeContractTest {
 
     @Test
     fun `POST click with missing nodeKey returns 400 with a useful message`() = testApplication {
-        application { installSpectreRoutes(headlessAutomator()) }
+        application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
         val response =
             postRaw("/spectre/click", body = "{}", contentType = ContentType.Application.Json)
         assertEquals(HttpStatusCode.BadRequest, response.status)
@@ -133,7 +133,7 @@ class HttpNegativeContractTest {
 
     @Test
     fun `POST click with wrong Content-Type returns 415`() = testApplication {
-        application { installSpectreRoutes(headlessAutomator()) }
+        application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
         val response =
             postRaw("/spectre/click", body = "anything", contentType = ContentType.Text.Plain)
         assertEquals(HttpStatusCode.UnsupportedMediaType, response.status)
@@ -144,7 +144,7 @@ class HttpNegativeContractTest {
         // Symmetry confirmation that the same Ktor content-negotiation precheck applies to
         // /typeText — empty body with `application/json` is rejected as 415 before our
         // `receiveOrRespond400` wrapper runs. Pinned for the same reason as the /click case.
-        application { installSpectreRoutes(headlessAutomator()) }
+        application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
         val response =
             postRaw("/spectre/typeText", body = "", contentType = ContentType.Application.Json)
         assertEquals(HttpStatusCode.UnsupportedMediaType, response.status)
@@ -153,7 +153,7 @@ class HttpNegativeContractTest {
     @Test
     fun `POST clearAndTypeText with invalid JSON returns 400 with a useful message`() =
         testApplication {
-            application { installSpectreRoutes(headlessAutomator()) }
+            application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
             val response =
                 postRaw(
                     "/spectre/clearAndTypeText",
@@ -168,7 +168,7 @@ class HttpNegativeContractTest {
     fun `POST typeText with invalid JSON returns 400 with a useful message`() = testApplication {
         // Symmetry confirmation that the `receiveOrRespond400` wrapper is wired on /typeText too,
         // and that the curated body names the request type.
-        application { installSpectreRoutes(headlessAutomator()) }
+        application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
         val response =
             postRaw(
                 "/spectre/typeText",
@@ -201,9 +201,16 @@ class HttpNegativeContractTest {
         }
         try {
             val error =
-                ComposeAutomator.http(host = "127.0.0.1", port = server.port).use {
-                    assertFailsWith<IllegalStateException> { runBlocking { it.click("ignored") } }
-                }
+                ComposeAutomator.http(
+                        security = testHttpSecurity(),
+                        host = "127.0.0.1",
+                        port = server.port,
+                    )
+                    .use {
+                        assertFailsWith<IllegalStateException> {
+                            runBlocking { it.click("ignored") }
+                        }
+                    }
             assertTrue(
                 error.message?.contains("500") == true,
                 "expected status=500 to appear in the error, got: ${error.message}",
@@ -230,11 +237,16 @@ class HttpNegativeContractTest {
         }
         try {
             val error =
-                ComposeAutomator.http(host = "127.0.0.1", port = server.port).use {
-                    assertFailsWith<IllegalStateException> {
-                        runBlocking { it.typeText("ignored") }
+                ComposeAutomator.http(
+                        security = testHttpSecurity(),
+                        host = "127.0.0.1",
+                        port = server.port,
+                    )
+                    .use {
+                        assertFailsWith<IllegalStateException> {
+                            runBlocking { it.typeText("ignored") }
+                        }
                     }
-                }
             assertTrue(
                 error.message?.contains("500") == true,
                 "expected status=500 to appear in the error, got: ${error.message}",
@@ -268,9 +280,14 @@ class HttpNegativeContractTest {
         }
         try {
             val error =
-                ComposeAutomator.http(host = "127.0.0.1", port = server.port).use {
-                    assertFailsWith<IllegalStateException> { runBlocking { it.screenshot() } }
-                }
+                ComposeAutomator.http(
+                        security = testHttpSecurity(),
+                        host = "127.0.0.1",
+                        port = server.port,
+                    )
+                    .use {
+                        assertFailsWith<IllegalStateException> { runBlocking { it.screenshot() } }
+                    }
             assertEquals("Server returned an image we could not decode", error.message)
         } finally {
             server.server.stop(gracePeriodMillis = 0L, timeoutMillis = 0L)
@@ -291,6 +308,7 @@ class HttpNegativeContractTest {
         contentType: ContentType,
     ): HttpResponse =
         client.post(path) {
+            testBearer()
             this.contentType(contentType)
             setBody(body)
         }

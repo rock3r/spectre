@@ -1,7 +1,10 @@
 # Security policy
 
 Spectre is pre-1.0. The HTTP transport in the `server` module is **experimental** and
-**unauthenticated**, and is intended for trusted local / test environments only.
+exposes privileged desktop automation. It requires a deployment-scoped bearer on every
+non-preflight route, requires HTTPS by default, and denies browser cross-origin access unless an
+exact origin allowlist is configured. Plaintext is available only through an explicit
+loopback-only test escape hatch.
 
 The full trust-boundary documentation, capability inventory, and accepted-risk list live on
 the published docs site: <https://spectre.sebastiano.dev/SECURITY/>. Please read that page
