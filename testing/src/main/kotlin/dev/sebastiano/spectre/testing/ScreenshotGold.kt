@@ -16,7 +16,7 @@ import org.junit.jupiter.api.TestInfo
  * Golds live under `src/test/resources/spectre-golds/<class>/<name>/<os>/scale-<sx>x<sy>/gold.png`.
  * Mismatches write `actual.png` and a copy of `gold.png` under
  * `build/reports/spectre-screenshots/<class>/<method>/<name>/`. `diff.png` is written when
- * dimensions match.
+ * dimensions match; a stale `diff.png` is deleted when there is no diff.
  *
  * This overload infers the test from the **calling thread** stack. Inside [runSpectreTest], use the
  * [TestInfo] overload instead — the body runs on a worker dispatcher that has no JUnit frame.
@@ -94,10 +94,15 @@ internal fun assertMatchesGold(
     check(ImageIO.write(image, "png", reportDir.resolve("actual.png").toFile())) {
         "Failed to write actual.png under $reportDir"
     }
-    result.diff?.let {
-        check(ImageIO.write(it, "png", reportDir.resolve("diff.png").toFile())) {
+    val diffFile = reportDir.resolve("diff.png")
+    val diffImage = result.diff
+    if (diffImage != null) {
+        check(ImageIO.write(diffImage, "png", diffFile.toFile())) {
             "Failed to write diff.png under $reportDir"
         }
+    } else {
+        // Size mismatches omit a diff; clear any leftover diff.png from a prior equal-size run.
+        Files.deleteIfExists(diffFile)
     }
     Files.copy(goldFile, reportDir.resolve("gold.png"), StandardCopyOption.REPLACE_EXISTING)
     val reason =
@@ -139,11 +144,43 @@ internal fun inferTestIdentity(): Pair<String, String> =
 
 private fun testIdentityFromFrame(frame: StackTraceElement): Pair<String, String>? {
     val className = frame.className
-    if (className.startsWith("dev.sebastiano.spectre.testing.ScreenshotGold")) return null
+    // Only skip frames from this file (ScreenshotGoldKt), not other types whose names
+    // happen to start with ScreenshotGold (e.g. ScreenshotGoldAssertTest).
+    if (
+        className == "dev.sebastiano.spectre.testing.ScreenshotGoldKt" ||
+            className.startsWith("dev.sebastiano.spectre.testing.ScreenshotGoldKt$")
+    ) {
+        return null
+    }
     val cls = runCatching { Class.forName(className) }.getOrNull() ?: return null
     val method = cls.declaredMethods.firstOrNull { it.name == frame.methodName } ?: return null
-    val isJunit5 =
-        method.annotations.any { it.annotationClass.java.name == "org.junit.jupiter.api.Test" }
-    val isJunit4 = method.annotations.any { it.annotationClass.java.name == "org.junit.Test" }
-    return if (isJunit5 || isJunit4) className to frame.methodName else null
+    return if (method.isJunitTestMethod()) className to frame.methodName else null
+}
+
+/**
+ * True for JUnit 4 `@Test`, JUnit 5 `@Test` / `@TestTemplate` / `@TestFactory`, the platform
+ * `@Testable` meta-annotation, and composed annotations that meta-annotate those (including
+ * `@ParameterizedTest` and `@RepeatedTest`).
+ */
+internal fun java.lang.reflect.Method.isJunitTestMethod(): Boolean = annotations.any {
+    isJunitTestAnnotation(it.annotationClass.java)
+}
+
+private fun isJunitTestAnnotation(
+    annotationType: Class<out Annotation>,
+    visited: MutableSet<String> = mutableSetOf(),
+): Boolean {
+    val name = annotationType.name
+    if (!visited.add(name)) return false
+    when (name) {
+        "org.junit.jupiter.api.Test",
+        "org.junit.jupiter.api.TestTemplate",
+        "org.junit.jupiter.api.TestFactory",
+        "org.junit.platform.commons.annotation.Testable",
+        "org.junit.Test" -> return true
+    }
+    if (name.startsWith("java.") || name.startsWith("kotlin.")) return false
+    return annotationType.annotations.any { meta ->
+        isJunitTestAnnotation(meta.annotationClass.java, visited)
+    }
 }

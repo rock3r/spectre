@@ -8,8 +8,11 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.RepeatedTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 
 class ScreenshotGoldAssertTest {
 
@@ -73,6 +76,11 @@ class ScreenshotGoldAssertTest {
         val goldRoot = temp.resolve("golds")
         val reportsRoot = temp.resolve("reports")
         writeGold(goldRoot, solid(2, 2, 0x000000))
+        val reportDir =
+            reportsRoot.resolve("dev.example.HomeTest").resolve("renders").resolve("main-window")
+        Files.createDirectories(reportDir)
+        // Stale diff from a prior equal-size mismatch must not survive a size-mismatch report.
+        Files.writeString(reportDir.resolve("diff.png"), "stale")
         val error =
             assertFailsWith<AssertionError> {
                 assertMatchesGold(
@@ -88,15 +96,9 @@ class ScreenshotGoldAssertTest {
                 )
             }
         assertTrue(error.message!!.contains("size"), error.message)
-        assertTrue(
-            Files.isRegularFile(
-                reportsRoot
-                    .resolve("dev.example.HomeTest")
-                    .resolve("renders")
-                    .resolve("main-window")
-                    .resolve("actual.png")
-            )
-        )
+        assertTrue(Files.isRegularFile(reportDir.resolve("actual.png")))
+        assertTrue(Files.isRegularFile(reportDir.resolve("gold.png")))
+        assertFalse(Files.exists(reportDir.resolve("diff.png")), "stale diff.png must be deleted")
     }
 
     @Test
@@ -238,6 +240,29 @@ class ScreenshotGoldAssertTest {
         assertTrue(error.message!!.contains("unreadable"), error.message)
     }
 
+    @RepeatedTest(1)
+    fun `RepeatedTest methods are recognized for gold identity`() {
+        val (cls, method) = inferTestIdentity()
+        assertEquals(ScreenshotGoldAssertTest::class.java.name, cls)
+        assertEquals("RepeatedTest methods are recognized for gold identity", method)
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = [1])
+    fun `ParameterizedTest methods are recognized for gold identity`(value: Int) {
+        assertEquals(1, value)
+        val (cls, method) = inferTestIdentity()
+        assertEquals(ScreenshotGoldAssertTest::class.java.name, cls)
+        assertEquals("ParameterizedTest methods are recognized for gold identity", method)
+    }
+
+    @ComposedGoldTest
+    fun `composed Test meta-annotations are recognized for gold identity`() {
+        val (cls, method) = inferTestIdentity()
+        assertEquals(ScreenshotGoldAssertTest::class.java.name, cls)
+        assertEquals("composed Test meta-annotations are recognized for gold identity", method)
+    }
+
     private fun writeGold(goldRoot: Path, image: BufferedImage) {
         val goldFile =
             ScreenshotGoldPaths.goldFile(
@@ -264,3 +289,8 @@ class ScreenshotGoldAssertTest {
 
     private fun opaque(rgb: Int): Int = (0xFF shl 24) or (rgb and 0x00FFFFFF)
 }
+
+@Target(AnnotationTarget.FUNCTION)
+@Retention(AnnotationRetention.RUNTIME)
+@Test
+private annotation class ComposedGoldTest

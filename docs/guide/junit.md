@@ -334,6 +334,8 @@ fun homeMatchesGold(testInfo: TestInfo, automator: ComposeAutomator): Unit = run
 Pass JUnit 5 `TestInfo` when the body runs inside `runSpectreTest` (it executes on a
 worker dispatcher). The name-only `assertMatchesGold(name, image)` overload infers the
 test from the calling thread and is for JUnit methods that call it directly.
+It recognizes `@Test`, `@ParameterizedTest`, `@RepeatedTest`, and other annotations
+meta-annotated with JUnit's `@Testable` / `@TestTemplate` (including composed ones).
 
 Defaults are strict (max channel delta 0, differing-pixel count/fraction 0). Equal
 dimensions are required; there is no auto-scale. Loosen `maxChannelDelta` and/or
@@ -369,7 +371,7 @@ build/reports/spectre-screenshots/<class>/<method>/<name>/
 ```
 
 When dimensions match, it also writes `diff.png` (magenta highlight on black). Size
-mismatches omit the diff. Class, method, and name segments are sanitized (path
+mismatches omit the diff and delete any stale `diff.png` left from a prior equal-size run. Class, method, and name segments are sanitized (path
 separators, reserved Windows device names). CI upload:
 
 ```yaml

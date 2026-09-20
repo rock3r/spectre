@@ -39,6 +39,7 @@ dependencies {
     testImplementation(libs.kotlin.testJunit5)
     testImplementation(libs.junit4)
     testImplementation(libs.junit5.api)
+    testImplementation(libs.junit5.params)
     testRuntimeOnly(libs.junit5.engine)
     // Lets us run the JUnit 4 rule via the JUnit Platform launcher in our own tests.
     testRuntimeOnly(libs.junit5.vintageEngine)
