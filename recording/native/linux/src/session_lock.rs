@@ -39,11 +39,12 @@ pub fn socket_path(dir: &Path) -> PathBuf {
     dir.join("wayland-session.sock")
 }
 
-/// Take exclusive ownership of the session directory. Fails closed if another helper holds it.
+/// Take exclusive ownership of the session directory. Fails closed if another helper holds it
+/// or if the directory cannot be made same-user-only (0700).
 pub fn acquire_session_lock(dir: &Path) -> Result<SessionLock> {
     std::fs::create_dir_all(dir)
         .with_context(|| format!("creating session dir {}", dir.display()))?;
-    let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    ensure_private_session_dir(dir)?;
     let path = lock_path(dir);
     let file = OpenOptions::new()
         .create(true)
@@ -62,6 +63,36 @@ pub fn acquire_session_lock(dir: &Path) -> Result<SessionLock> {
         }
         Err(e) => Err(e).with_context(|| format!("flock {}", path.display())),
     }
+}
+
+fn ensure_private_session_dir(dir: &Path) -> Result<()> {
+    ensure_private_session_dir_with(dir, |d| {
+        std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700))
+    })
+}
+
+fn ensure_private_session_dir_with(
+    dir: &Path,
+    chmod: impl FnOnce(&Path) -> std::io::Result<()>,
+) -> Result<()> {
+    chmod(dir)
+        .with_context(|| format!("restricting session dir {} to mode 0700", dir.display()))?;
+    ensure_session_dir_mode_is_private(dir)
+}
+
+fn ensure_session_dir_mode_is_private(dir: &Path) -> Result<()> {
+    let mode = std::fs::metadata(dir)
+        .with_context(|| format!("stat session dir {}", dir.display()))?
+        .permissions()
+        .mode()
+        & 0o777;
+    if mode & 0o077 != 0 {
+        bail!(
+            "session dir {} is not private (mode {mode:04o}; required 0700)",
+            dir.display()
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -102,5 +133,76 @@ mod tests {
         assert!(!socket_path(&dir)
             .to_string_lossy()
             .contains(".java/robot"));
+    }
+
+    #[test]
+    fn acquire_session_lock_tightens_shared_dir_to_0700() {
+        let dir = std::env::temp_dir().join(format!(
+            "spectre-session-lock-mode-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+
+        let lock = acquire_session_lock(&dir).expect("owner can tighten a directory they own");
+        drop(lock);
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "session dir must be private after acquire");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn shared_dir_that_stays_world_writable_fails_closed() {
+        let dir = std::env::temp_dir().join(format!(
+            "spectre-session-lock-shared-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+
+        let err = ensure_session_dir_mode_is_private(&dir)
+            .err()
+            .expect("0777 must not be treated as a private session dir");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("not private") && msg.contains("0700"),
+            "error should name the 0700 contract, got: {msg}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn chmod_failure_on_shared_dir_fails_closed() {
+        let dir = std::env::temp_dir().join(format!(
+            "spectre-session-lock-eperm-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+
+        // SPECTRE_WAYLAND_SESSION_DIR can point at a writable dir we do not own. chmod
+        // then returns EPERM; discarding it would leave the control socket world-accessible.
+        let err = ensure_private_session_dir_with(&dir, |_| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "operation not permitted",
+            ))
+        })
+        .err()
+        .expect("chmod EPERM must fail closed before the socket is bound");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("restricting") && msg.contains("0700"),
+            "error should name the permission requirement, got: {msg}"
+        );
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o777, "failed chmod must not be treated as success");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
