@@ -145,25 +145,30 @@ internal fun rememberCompletedProbe(
 /** Per-wait inconclusive Robot decisions. Ending one wait must not drop another wait's slot. */
 internal class WaitScopedProbeTable {
     private val nextId = AtomicLong()
+    private val tableLock = Any()
     private val open = ConcurrentHashMap.newKeySet<Long>()
     private val scoped = ConcurrentHashMap<Long, Boolean>()
 
     fun begin(): Long {
         val waitId = nextId.incrementAndGet()
-        open.add(waitId)
+        synchronized(tableLock) { open.add(waitId) }
         return waitId
     }
 
     fun end(waitId: Long) {
         if (waitId == 0L) return
-        open.remove(waitId)
-        scoped.remove(waitId)
+        synchronized(tableLock) {
+            open.remove(waitId)
+            scoped.remove(waitId)
+        }
     }
 
     fun remember(waitId: Long, cached: Boolean?, compute: () -> Boolean?): CompletedProbe {
         val waitScoped = if (waitId == 0L) null else scoped[waitId]
         val remembered = rememberCompletedProbe(cached, waitScoped, compute)
-        if (waitId != 0L) {
+        if (waitId == 0L) return remembered
+        synchronized(tableLock) {
+            if (!open.contains(waitId)) return@synchronized
             val scopedResult = remembered.waitScoped
             if (scopedResult == null) {
                 scoped.remove(waitId)

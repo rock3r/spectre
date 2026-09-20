@@ -176,6 +176,25 @@ class NativeWindowCaptureUsabilityTest {
     }
 
     @Test
+    fun `ended wait does not restore inconclusive probe state`() {
+        val table = WaitScopedProbeTable()
+        val waitId = table.begin()
+        table.end(waitId)
+        var computes = 0
+        table.remember(waitId, cached = null) {
+            computes += 1
+            null
+        }
+        val late =
+            table.remember(waitId, cached = null) {
+                computes += 1
+                true
+            }
+        assertTrue(late.usableNow)
+        assertEquals(2, computes, "a cancelled wait must not republish a scoped slot after end")
+    }
+
+    @Test
     fun `unscoped wait id does not share an inconclusive probe slot`() {
         val table = WaitScopedProbeTable()
         var computes = 0
