@@ -838,9 +838,13 @@ def probe_macos_screen_recording(
 
     try:
         override = macos_screencapture_override_path()
-        macos_screencapture_configured_helper_dir(root=root)
-    except (InvalidScreencaptureHelperOverride, InvalidScreencaptureHelperDir):
+    except InvalidScreencaptureHelperOverride:
         return TCC_UNKNOWN
+    if override is None:
+        try:
+            macos_screencapture_configured_helper_dir(root=root)
+        except InvalidScreencaptureHelperDir:
+            return TCC_UNKNOWN
     resolved = override if override is not None else helper_path
     if resolved is None and ensure_helper is not None:
         resolved = ensure_helper()
@@ -936,11 +940,14 @@ def ensure_macos_screencapture_helper(
     """Install the helper to the runtime TCC path, assembling first when needed."""
     try:
         override = macos_screencapture_override_path()
-        helper_dir = macos_screencapture_configured_helper_dir(root=root)
-    except (InvalidScreencaptureHelperOverride, InvalidScreencaptureHelperDir):
+    except InvalidScreencaptureHelperOverride:
         return None
     if override is not None:
         return override
+    try:
+        helper_dir = macos_screencapture_configured_helper_dir(root=root)
+    except InvalidScreencaptureHelperDir:
+        return None
 
     runtime = macos_screencapture_runtime_helper(home, helper_dir=helper_dir)
     assembler = (

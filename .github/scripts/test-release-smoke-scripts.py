@@ -1528,6 +1528,34 @@ class MacOsTccPreflightTest(unittest.TestCase):
             self.assertEqual(smoke_lib.TCC_UNKNOWN, status)
             self.assertEqual([], invoked)
 
+    def test_valid_override_ignores_invalid_helper_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = Path(tmp) / "home"
+            override = Path(tmp) / "override-helper"
+            override.write_text("#!/bin/sh\noverride\n", encoding="utf-8")
+            override.chmod(0o755)
+            invoked: list[str] = []
+            env = {
+                "SPECTRE_SCREENCAPTURE_HELPER": str(override),
+                "JAVA_TOOL_OPTIONS": (
+                    f"-D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}=tools/helper"
+                ),
+            }
+            with unittest.mock.patch.dict(os.environ, env, clear=False):
+                found = smoke_lib.ensure_macos_screencapture_helper(
+                    root, assemble=lambda: 0, home=home
+                )
+                status = smoke_lib.probe_macos_screen_recording(
+                    root=root,
+                    ensure_helper=lambda: found,
+                    invoke_helper=lambda argv: invoked.append(argv[0])
+                    or (0, '{"granted": true}\n'),
+                )
+            self.assertEqual(override, found)
+            self.assertEqual(smoke_lib.TCC_GRANTED, status)
+            self.assertEqual([str(override)], invoked)
+
     def test_override_bare_child_helper_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             parent = Path(tmp) / "helpers"
