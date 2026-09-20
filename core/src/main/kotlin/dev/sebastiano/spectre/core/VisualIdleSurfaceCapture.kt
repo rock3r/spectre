@@ -92,14 +92,33 @@ internal fun hashTrackedSurfacesForVisualIdle(
 }
 
 /**
- * True when window-scoped native stills can be used for visual-idle / atomic capture.
+ * True when the recording-owned native still bridge is on the classpath and this host is allowed to
+ * use it.
  *
- * Requires the recording-owned bridge on the classpath, a [RobotDriver] that allows platform
- * capture, and a host where the platform helper can actually run. Class presence alone is not
- * enough: Linux stills need `gst-launch-1.0` (#503). GitHub Actions Windows runners are treated as
- * non-interactive: Windows Graphics Capture needs an interactive console there (same gate as
- * Issue14 screenshot validation), so callers fall back to region sampling instead of hanging on a
- * one-shot WGC helper.
+ * Used by atomic [ComposeAutomator.capture]: class presence means take the native path and fail
+ * closed if the helper cannot run. Do **not** treat a missing `gst-launch-1.0` as "use Robot
+ * region" here — that would silently crop another application's pixels into an atomic artifact
+ * (#355). GitHub Actions hosted Windows is still treated as non-interactive (WGC needs a console).
+ */
+internal fun isNativeWindowCaptureBridgePresent(
+    classLoader: ClassLoader = VisualIdleSurfaceCapture::class.java.classLoader,
+    allowsPlatformCapture: Boolean = true,
+    osName: String = System.getProperty("os.name").orEmpty(),
+    getenv: (String) -> String? = System::getenv,
+): Boolean {
+    if (!allowsPlatformCapture) return false
+    if (isNonInteractiveHostedWindows(osName, getenv)) return false
+    return nativeWindowCaptureFor(classLoader) != null
+}
+
+/**
+ * True when window-scoped native stills can be used for visual-idle sampling.
+ *
+ * Requires the recording-owned bridge **and** a host where the platform helper can actually run.
+ * Class presence alone is not enough: Linux stills need `gst-launch-1.0` (#503). When the helper
+ * cannot run, [waitForVisualIdle] region-falls back like 0.4.0 instead of marking every sample
+ * unsampleable. Atomic [ComposeAutomator.capture] uses [isNativeWindowCaptureBridgePresent] instead
+ * so a missing helper stays fail-closed.
  */
 internal fun isNativeWindowCaptureAvailable(
     classLoader: ClassLoader = VisualIdleSurfaceCapture::class.java.classLoader,
@@ -108,9 +127,9 @@ internal fun isNativeWindowCaptureAvailable(
     getenv: (String) -> String? = System::getenv,
     platformCaptureUsable: (ClassLoader) -> Boolean = ::isNativePlatformCaptureUsable,
 ): Boolean {
-    if (!allowsPlatformCapture) return false
-    if (isNonInteractiveHostedWindows(osName, getenv)) return false
-    if (nativeWindowCaptureFor(classLoader) == null) return false
+    if (!isNativeWindowCaptureBridgePresent(classLoader, allowsPlatformCapture, osName, getenv)) {
+        return false
+    }
     return platformCaptureUsable(classLoader)
 }
 

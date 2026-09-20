@@ -427,6 +427,25 @@ class VisualIdleSurfaceCaptureTest {
     }
 
     @Test
+    fun `atomic capture still routes through the native bridge when the helper cannot run`() {
+        assertTrue(
+            isNativeWindowCaptureBridgePresent(
+                allowsPlatformCapture = true,
+                osName = "Linux",
+                getenv = { null },
+            )
+        )
+        assertFalse(
+            isNativeWindowCaptureAvailable(
+                allowsPlatformCapture = true,
+                osName = "Linux",
+                getenv = { null },
+                platformCaptureUsable = { false },
+            )
+        )
+    }
+
+    @Test
     fun `native window capture stays available when the platform helper can run`() {
         assertTrue(
             isNativeWindowCaptureAvailable(
@@ -495,6 +514,13 @@ class VisualIdleSurfaceCaptureTest {
     fun `native window capture is unavailable on GitHub-hosted Windows`() {
         assertTrue(
             isNonInteractiveHostedWindows(
+                osName = "Windows 11",
+                getenv = { if (it == "RUNNER_ENVIRONMENT") "github-hosted" else null },
+            )
+        )
+        assertFalse(
+            isNativeWindowCaptureBridgePresent(
+                allowsPlatformCapture = true,
                 osName = "Windows 11",
                 getenv = { if (it == "RUNNER_ENVIRONMENT") "github-hosted" else null },
             )

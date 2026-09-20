@@ -541,10 +541,11 @@ private constructor(
         }
         // Window-scoped still when the recording native bridge is present (#355). Injected core
         // excludes recording, so fall back to an explicit region capture only when the bridge is
-        // absent — never as a silent substitute after a failed native still.
+        // absent — never as a silent substitute after a failed native still, and never because
+        // the helper binary is missing (that must fail closed; visual-idle has its own fallback).
         val windowCapture =
             if (
-                isNativeWindowCaptureAvailable(
+                isNativeWindowCaptureBridgePresent(
                     allowsPlatformCapture = robotDriver.allowsPlatformCapture
                 )
             ) {
