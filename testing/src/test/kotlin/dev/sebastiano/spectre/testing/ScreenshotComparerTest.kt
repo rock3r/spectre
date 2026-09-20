@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.testing
 
 import java.awt.image.BufferedImage
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -63,6 +64,27 @@ class ScreenshotComparerTest {
             ScreenshotComparer.compare(expected, actual, ScreenshotTolerance(maxChannelDelta = 1))
         assertFalse(result.matches)
         assertEquals(1, result.differingPixels)
+    }
+
+    @Test
+    fun `maxChannelDelta above 255 is rejected`() {
+        val error =
+            assertFailsWith<IllegalArgumentException> { ScreenshotTolerance(maxChannelDelta = 256) }
+        assertTrue(error.message!!.contains("256"), error.message)
+    }
+
+    @Test
+    fun `maxChannelDelta of 255 is accepted`() {
+        val expected = solid(width = 1, height = 1, rgb = 0x000000)
+        val actual = solid(width = 1, height = 1, rgb = 0xFFFFFF)
+        val result =
+            ScreenshotComparer.compare(
+                expected,
+                actual,
+                ScreenshotTolerance(maxChannelDelta = 255),
+            )
+        assertTrue(result.matches)
+        assertEquals(0, result.differingPixels)
     }
 
     @Test

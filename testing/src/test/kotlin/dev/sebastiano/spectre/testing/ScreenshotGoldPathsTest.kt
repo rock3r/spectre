@@ -274,6 +274,15 @@ class ScreenshotGoldPathsTest {
     }
 
     @Test
+    fun `unicode case-fold aliases stay distinct on case-insensitive filesystems`() {
+        val sigma = ScreenshotGoldPaths.sanitizeGoldSegment("σ")
+        val finalSigma = ScreenshotGoldPaths.sanitizeGoldSegment("ς")
+        assertEquals("σ", sigma)
+        assertNotEquals(sigma, finalSigma)
+        assertTrue(finalSigma.matches(Regex("ς_[0-9a-f]{8}")), finalSigma)
+    }
+
+    @Test
     fun `colliding identities resolve to distinct gold files`(@TempDir temp: Path) {
         val slash =
             ScreenshotGoldPaths.goldFile(

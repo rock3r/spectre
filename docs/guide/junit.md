@@ -361,9 +361,10 @@ Explicit `invocationKey` values keep surrounding whitespace so `"foo"` and `" fo
 cannot share a gold; whitespace-only keys are treated as absent.
 
 Defaults are strict (max channel delta 0, differing-pixel count/fraction 0). Equal
-dimensions are required; there is no auto-scale. Loosen `maxChannelDelta` and/or
-`maxDifferingPixels` / `maxDifferingPixelFraction` when font AA or chrome noise is
-expected. There is no SSIM or perceptual matcher.
+dimensions are required; there is no auto-scale. Loosen `maxChannelDelta` (0..255;
+values above 255 are rejected) and/or `maxDifferingPixels` /
+`maxDifferingPixelFraction` when font AA or chrome noise is expected. There is no
+SSIM or perceptual matcher.
 
 ### Gold layout
 
@@ -409,7 +410,8 @@ mismatches omit the diff and delete any stale `diff.png` left from a prior equal
 separators, reserved Windows device names) and truncated to 255 UTF-8 bytes so long
 parameterized display names stay inside filesystem component limits. Rewritten
 segments get a short stable suffix so distinct names such as `foo/bar` and `foo_bar`,
-`NUL` and `NUL_`, or `Main` and `main`, cannot share a gold or report path. A later passing run, update-mode write, missing-gold
+`NUL` and `NUL_`, `Main` and `main`, or Greek `σ` and `ς`, cannot share a gold or
+report path. A later passing run, update-mode write, missing-gold
 failure, or unreadable gold deletes leftover report PNGs from a prior mismatch so CI
 does not upload stale failures. CI upload:
 

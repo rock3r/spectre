@@ -7,9 +7,10 @@ import kotlin.math.abs
  * Pixel-match tolerances for [ScreenshotComparer] / gold PNG assertions.
  *
  * Defaults are strict: every channel must match exactly, and no differing pixels are allowed.
- * Callers loosen [maxChannelDelta] for font AA, and/or a differing-pixel [maxDifferingPixels] count
- * and/or [maxDifferingPixelFraction] budget. When both budgets are set, a mismatch must satisfy
- * both. Dimensions must still be equal regardless of tolerance.
+ * Callers loosen [maxChannelDelta] (0..255, the 8-bit channel range) for font AA, and/or a
+ * differing-pixel [maxDifferingPixels] count and/or [maxDifferingPixelFraction] budget. When both
+ * budgets are set, a mismatch must satisfy both. Dimensions must still be equal regardless of
+ * tolerance.
  */
 public data class ScreenshotTolerance(
     public val maxChannelDelta: Int = 0,
@@ -17,7 +18,9 @@ public data class ScreenshotTolerance(
     public val maxDifferingPixelFraction: Double? = null,
 ) {
     init {
-        require(maxChannelDelta >= 0) { "maxChannelDelta must be >= 0, was $maxChannelDelta" }
+        require(maxChannelDelta in 0..MAX_CHANNEL_DELTA) {
+            "maxChannelDelta must be in 0..$MAX_CHANNEL_DELTA, was $maxChannelDelta"
+        }
         require(maxDifferingPixels == null || maxDifferingPixels >= 0) {
             "maxDifferingPixels must be null or >= 0, was $maxDifferingPixels"
         }
@@ -27,6 +30,9 @@ public data class ScreenshotTolerance(
     }
 
     public companion object {
+        /** Largest 8-bit ARGB channel delta; values above this silently match every pixel. */
+        public const val MAX_CHANNEL_DELTA: Int = 255
+
         /** Channel delta 0 and no differing-pixel budget (zero pixels may differ). */
         public val Strict: ScreenshotTolerance = ScreenshotTolerance()
     }

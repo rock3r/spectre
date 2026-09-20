@@ -128,9 +128,10 @@ public object ScreenshotGoldPaths {
             }
         val escaped = escapeReservedWindowsDeviceName(core)
         // Hash when the segment was rewritten (`foo/bar`, `NUL`), when it is not already
-        // lowercase (`Main` vs `main`), or when it already occupies the `_` + 8-hex suffix
-        // namespace so a literal `foo_bar_cc5d46bd` cannot collide with hashed `foo/bar`.
-        val caseFoldingCollision = escaped != escaped.lowercase(Locale.ROOT)
+        // in a filesystem-relevant Unicode case fold (`Main` vs `main`, Greek `ς` vs `σ`),
+        // or when it already occupies the `_` + 8-hex suffix namespace so a literal
+        // `foo_bar_cc5d46bd` cannot collide with hashed `foo/bar`.
+        val caseFoldingCollision = escaped != filesystemCaseFold(escaped)
         val occupiesFingerprintNamespace = FINGERPRINT_SUFFIX.containsMatchIn(escaped)
         val fingerprint = stableSegmentFingerprint(raw)
         val candidate =
@@ -161,6 +162,14 @@ public object ScreenshotGoldPaths {
         val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
         return HexFormat.of().formatHex(digest, 0, SEGMENT_FINGERPRINT_BYTES)
     }
+
+    /**
+     * Case-insensitive volumes compare via full Unicode case fold, not `lowercase` alone. Greek `ς`
+     * and `σ` are both lowercase but fold to the same character; `uppercase` then `lowercase` is
+     * the filesystem-relevant fold used to decide whether to fingerprint.
+     */
+    private fun filesystemCaseFold(value: String): String =
+        value.uppercase(Locale.ROOT).lowercase(Locale.ROOT)
 
     private fun escapeReservedWindowsDeviceName(name: String): String {
         val stem = name.substringBefore('.')
