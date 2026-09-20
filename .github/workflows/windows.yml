@@ -25,8 +25,9 @@ name: Windows
 #     the windows-runner cost. Mirrors the broad path-filter pattern from `macos-check.yml`.
 #   - `check-windows` has hung to GitHub's 6-hour job limit (#499). The Gradle step
 #     `timeout-minutes` is shorter than the job so a hang fails the step first; the
-#     remaining job budget runs the cancel/failure dump of every live JVM (Gradle
-#     daemon + test workers) before orphan cleanup.
+#     remaining job budget covers checkout/JDK/.NET/Gradle setup plus the
+#     cancel/failure dump of every live JVM (Gradle daemon + test workers)
+#     before orphan cleanup.
 
 on:
   pull_request:
@@ -122,7 +123,10 @@ jobs:
 
   check-windows:
     runs-on: windows-latest
-    timeout-minutes: 45
+    # 40-minute Gradle step + ≥15 minutes for setup and dump-jvm-stacks.sh.
+    # A 40/45 split lets a five-minute setup cancel the job before the step
+    # timeout and dump can run (#499 / Codex #519).
+    timeout-minutes: 60
 
     steps:
       - name: Check out repository
@@ -148,9 +152,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v5
 
       - name: Run checks
-        # Shorter than the job timeout so dump-jvm-stacks.sh still has budget
-        # after a hung `:check` (#499). A job-level timeout cancels the job
-        # and can skip the dump.
+        # Shorter than the job timeout so setup plus dump-jvm-stacks.sh still
+        # have budget after a hung `:check` (#499). A job-level timeout
+        # cancels the job and can skip the dump.
         timeout-minutes: 40
         run: ./gradlew check
         shell: bash

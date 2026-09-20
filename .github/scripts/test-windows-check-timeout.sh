@@ -50,15 +50,20 @@ grep -E -q 'DUMP_PID_TIMEOUT_SECONDS' "$dump_script" ||
 # Job timeout cancels the whole job; dump after that is not reliable. The Gradle
 # step that can hang must time out first so cancelled()/failure() still has job
 # budget for dump-jvm-stacks.sh.
+#
+# Codex #519 P2: the leftover must also cover checkout/JDK/.NET/Gradle setup,
+# not just the dump. A 40/45 split fails when setup takes five minutes or more.
+MIN_SETUP_AND_DUMP_HEADROOM_MINUTES=15
 assert_step_timeout_below_job() {
   local workflow="$1"
   local job="$2"
   local step_name="$3"
-  python3 - "$workflow" "$job" "$step_name" <<'PY' || fail "$3 step timeout is missing or not below the $2 job timeout"
+  python3 - "$workflow" "$job" "$step_name" "$MIN_SETUP_AND_DUMP_HEADROOM_MINUTES" <<'PY' || fail "$3 step timeout is missing, not below the $2 job timeout, or lacks setup+dump headroom"
 import re
 import sys
 
 path, job, step = sys.argv[1], sys.argv[2], sys.argv[3]
+min_headroom = int(sys.argv[4])
 lines = open(path, encoding="utf-8").read().splitlines()
 in_job = False
 job_timeout = None
@@ -97,7 +102,14 @@ if step_timeout is None:
     sys.exit(f"{path} step {step!r} missing timeout-minutes")
 if step_timeout >= job_timeout:
     sys.exit(f"{path} step {step!r} timeout {step_timeout} must be < job {job_timeout}")
-print(f"OK {job}/{step}: step {step_timeout} < job {job_timeout}")
+headroom = job_timeout - step_timeout
+if headroom < min_headroom:
+    sys.exit(
+        f"{path} step {step!r} headroom {headroom} must be >= {min_headroom} "
+        f"so setup plus dump-jvm-stacks.sh fit outside the Gradle budget "
+        f"(job {job_timeout}, step {step_timeout})"
+    )
+print(f"OK {job}/{step}: step {step_timeout} < job {job_timeout} (headroom {headroom} >= {min_headroom})")
 PY
 }
 
@@ -146,6 +158,30 @@ if dump != gradle + 1:
 if dump >= smoke:
     sys.exit(f"Dump live JVM stacks must run before the always() CLI smoke; steps={names}")
 print(f"OK validation dump is immediately after Run validation tests (before CLI smoke)")
+PY
+
+# Codex #519 P1: continue-on-error lets a 50-minute Gradle timeout keep the job
+# green when XML is clean. The verifier must fail closed unless the known #72
+# envelope flake produced evidence.
+python3 - "$validation_workflow" <<'PY' || fail "validation verifier does not fail the job on a Gradle timeout without envelope-flake evidence"
+import sys
+
+text = open(sys.argv[1], encoding="utf-8").read()
+required = [
+    'steps.gradle.outcome',
+    'not soft-passing',
+    'flaked[@]',
+    'exit 1',
+]
+missing = [needle for needle in required if needle not in text]
+if missing:
+    sys.exit(f"validation-windows.yml missing fail-closed timeout checks: {missing}")
+if 'no envelope-flake evidence' not in text:
+    sys.exit(
+        "validation-windows.yml must reject gradle.outcome=failure without "
+        "envelope-flake evidence so timeouts cannot soft-pass"
+    )
+print("OK validation verifier fails closed on Gradle timeout without envelope flakes")
 PY
 
 echo "OK: Windows check hang diagnostics (#499) are wired"

@@ -88,7 +88,10 @@ permissions:
 jobs:
   validation-windows:
     runs-on: windows-latest
-    timeout-minutes: 60
+    # 50-minute Gradle step + ≥15 minutes for setup and dump-jvm-stacks.sh.
+    # A 50/60 split can still cancel the job before the dump if setup is slow
+    # (#499 / Codex #519).
+    timeout-minutes: 70
 
     steps:
       - name: Check out repository
@@ -104,9 +107,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v5
 
       - name: Run validation tests
-        # Shorter than the job timeout so dump-jvm-stacks.sh still has budget
-        # after a hung validation Gradle (#499). A job-level timeout cancels
-        # the job and can skip the dump.
+        # Shorter than the job timeout so setup plus dump-jvm-stacks.sh still
+        # have budget after a hung validation Gradle (#499). A job-level
+        # timeout cancels the job and can skip the dump.
         timeout-minutes: 50
         # The Gradle test-executor protocol race (originally #72) is suppressed at its source
         # on Linux by serialising the validation Test tasks via a `ValidationTestSerialiser`
@@ -272,6 +275,18 @@ jobs:
           if [ "$fail_total" -gt 0 ] || [ "$err_total" -gt 0 ]; then
             echo "::error::Validation tests reported $fail_total failure(s) and $err_total error(s) across ${#all_xml[@]} XML report(s)."
             exit 1
+          fi
+          # continue-on-error on the Gradle step is only for the known #72
+          # test-event protocol flake. A hang after clean XML still times the
+          # step out (outcome=failure) and must fail the job — otherwise the
+          # 50-minute timeout is a soft pass (#499 / Codex #519).
+          if [ "${{ steps.gradle.outcome }}" != "success" ]; then
+            if [ "${#flaked[@]}" -gt 0 ]; then
+              echo "::warning::Gradle step outcome=${{ steps.gradle.outcome }} accepted because envelope flakes were detected: ${flaked[*]}"
+            else
+              echo "::error::Gradle step outcome=${{ steps.gradle.outcome }} with no envelope-flake evidence — not soft-passing."
+              exit 1
+            fi
           fi
           echo "All required classes present; ${#all_xml[@]} discovered XML report(s) clean (Gradle exit ignored due to known executor-protocol flake)."
         shell: bash
