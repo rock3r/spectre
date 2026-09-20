@@ -238,7 +238,21 @@ internal class MultiplexedIpcSession(
             try {
                 executor.submit {
                     if (slot.isAborted || Thread.currentThread().isInterrupted) {
-                        inFlight.remove(op.opId, slot)
+                        if (slot.tryClaimResponse()) {
+                            inFlight.remove(op.opId, slot)
+                            writeOpResponse(
+                                output,
+                                writeLock,
+                                op.opId,
+                                AgentResponse.Error(
+                                    message = "Operation cancelled",
+                                    category = AgentErrorCategory.Cancelled.wireName,
+                                ),
+                            )
+                        } else {
+                            inFlight.remove(op.opId, slot)
+                        }
+                        Thread.interrupted()
                         return@submit
                     }
                     val response = executeOp(body, op.deadlineEpochMs)
@@ -361,6 +375,12 @@ internal class MultiplexedIpcSession(
             Thread.currentThread().interrupt()
             AgentResponse.Error(
                 message = "Operation cancelled",
+                category = AgentErrorCategory.Cancelled.wireName,
+            )
+        } catch (ex: java.nio.channels.ClosedByInterruptException) {
+            Thread.currentThread().interrupt()
+            AgentResponse.Error(
+                message = "Operation cancelled: ${ex.javaClass.simpleName}",
                 category = AgentErrorCategory.Cancelled.wireName,
             )
         } catch (ex: Exception) {

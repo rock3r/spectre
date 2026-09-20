@@ -26,10 +26,12 @@ pub fn vk_to_keysym(vk: i32) -> anyhow::Result<i32> {
     const XK_RETURN: i32 = 0xff0d;
     const XK_ESCAPE: i32 = 0xff1b;
     const XK_DELETE: i32 = 0xffff;
+    const XK_HOME: i32 = 0xff50;
     const XK_LEFT: i32 = 0xff51;
     const XK_UP: i32 = 0xff52;
     const XK_RIGHT: i32 = 0xff53;
     const XK_DOWN: i32 = 0xff54;
+    const XK_END: i32 = 0xff57;
     const XK_SHIFT_L: i32 = 0xffe1;
     const XK_CONTROL_L: i32 = 0xffe3;
     const XK_ALT_L: i32 = 0xffe9;
@@ -46,6 +48,8 @@ pub fn vk_to_keysym(vk: i32) -> anyhow::Result<i32> {
     const VK_META: i32 = 157;
     const VK_ESCAPE: i32 = 27;
     const VK_SPACE: i32 = 32;
+    const VK_END: i32 = 35;
+    const VK_HOME: i32 = 36;
     const VK_LEFT: i32 = 37;
     const VK_UP: i32 = 38;
     const VK_RIGHT: i32 = 39;
@@ -62,6 +66,8 @@ pub fn vk_to_keysym(vk: i32) -> anyhow::Result<i32> {
         VK_TAB => Ok(XK_TAB),
         VK_ESCAPE => Ok(XK_ESCAPE),
         VK_DELETE => Ok(XK_DELETE),
+        VK_HOME => Ok(XK_HOME),
+        VK_END => Ok(XK_END),
         VK_LEFT => Ok(XK_LEFT),
         VK_UP => Ok(XK_UP),
         VK_RIGHT => Ok(XK_RIGHT),
@@ -112,6 +118,8 @@ mod tests {
         assert_eq!(vk_to_keysym(65).unwrap(), 0x0061); // VK_A → XK_a
         assert_eq!(vk_to_keysym(10).unwrap(), 0xff0d); // VK_ENTER → XK_Return
         assert_eq!(vk_to_keysym(9).unwrap(), 0xff09); // VK_TAB
+        assert_eq!(vk_to_keysym(36).unwrap(), 0xff50); // VK_HOME → XK_Home
+        assert_eq!(vk_to_keysym(35).unwrap(), 0xff57); // VK_END → XK_End
         assert!(vk_to_keysym(9999).is_err());
     }
 }

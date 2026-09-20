@@ -322,8 +322,9 @@ internal constructor(
     }
 
     /**
-     * Selects all content in the focused field, deletes it, then types [text]. The first half is a
-     * Ctrl/Cmd+A followed by Backspace; the second half uses [typeText].
+     * Selects all content in the focused field, deletes it, then types [text]. Select-all is
+     * Ctrl/Cmd+A, then a Home + Shift+End line-select fallback (Wayland portal keysyms often do not
+     * apply Control as a sticky modifier), then Backspace. The second half uses [typeText].
      *
      * Useful for overwriting a `TextField`'s current value without the caller having to compute
      * cursor / selection state. Same caveats as [typeText] for supported characters apply.
@@ -336,17 +337,7 @@ internal constructor(
         inputCoordination.withOperation("clearAndTypeText", CoordinatedResource.REAL_INPUT) {
             tccGuard.requireAccessibility()
             val selectAllModifier = shortcutModifierKeyCode(detectMacOs())
-            runOffEdt("clearText") {
-                robot.keyPress(selectAllModifier)
-                try {
-                    robot.keyPress(KeyEvent.VK_A)
-                    robot.keyRelease(KeyEvent.VK_A)
-                } finally {
-                    robot.keyRelease(selectAllModifier)
-                }
-                robot.keyPress(KeyEvent.VK_BACK_SPACE)
-                robot.keyRelease(KeyEvent.VK_BACK_SPACE)
-            }
+            runOffEdt("clearText") { robot.clearFocusedField(selectAllModifier) }
             typeText(text)
         }
     }
