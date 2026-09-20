@@ -42,6 +42,10 @@ done
 
 grep -F -q 'Thread.print' "$dump_script" || fail "dump-jvm-stacks.sh does not dump Thread.print"
 grep -F -q 'jcmd' "$dump_script" || fail "dump-jvm-stacks.sh does not use jcmd"
+# Codex #519: an unresponsive JVM can block jcmd/jstack for the leftover job
+# budget. Each PID must have its own deadline so later processes still dump.
+grep -E -q 'DUMP_PID_TIMEOUT_SECONDS' "$dump_script" ||
+  fail "dump-jvm-stacks.sh must bound each jcmd/jstack with DUMP_PID_TIMEOUT_SECONDS"
 
 # Job timeout cancels the whole job; dump after that is not reliable. The Gradle
 # step that can hang must time out first so cancelled()/failure() still has job

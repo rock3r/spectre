@@ -16,16 +16,40 @@ else
   exit 0
 fi
 
+# An unresponsive JVM can block attach forever. Bound each PID so later
+# processes still dump inside the leftover job budget (#499).
+DUMP_PID_TIMEOUT_SECONDS="${DUMP_PID_TIMEOUT_SECONDS:-20}"
+
+run_with_timeout() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --signal=KILL "${DUMP_PID_TIMEOUT_SECONDS}" "$@" || true
+    return
+  fi
+  python3 - "${DUMP_PID_TIMEOUT_SECONDS}" "$@" <<'PY' || true
+import subprocess
+import sys
+
+seconds = int(sys.argv[1])
+cmd = sys.argv[2:]
+try:
+    subprocess.run(cmd, timeout=seconds, check=False)
+except subprocess.TimeoutExpired:
+    print(f"timed out after {seconds}s: {' '.join(cmd)}", file=sys.stderr)
+except FileNotFoundError:
+    pass
+PY
+}
+
 dump_pid() {
   local pid="$1"
   local label="${2:-}"
   echo "===== Thread.print pid=${pid} ${label} ====="
   if command -v jcmd >/dev/null 2>&1; then
-    jcmd "${pid}" Thread.print || true
+    run_with_timeout jcmd "${pid}" Thread.print
     return
   fi
   if command -v jstack >/dev/null 2>&1; then
-    jstack "${pid}" || true
+    run_with_timeout jstack "${pid}"
     return
   fi
   echo "neither jcmd nor jstack is on PATH; cannot dump pid ${pid}"
