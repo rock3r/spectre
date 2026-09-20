@@ -23,6 +23,9 @@ name: Windows
 #     class `Assumptions.assumeFalse`-skips that variant on Windows hosts.
 #   - Job is gated on changes likely to affect Windows behaviour so unrelated PRs don't pay
 #     the windows-runner cost. Mirrors the broad path-filter pattern from `macos-check.yml`.
+#   - `check-windows` has hung to GitHub's 6-hour job limit (#499). Job `timeout-minutes`
+#     fail the hang in under an hour; a cancel/failure step dumps every live JVM (Gradle
+#     daemon + test workers) before orphan cleanup.
 
 on:
   pull_request:
@@ -58,6 +61,8 @@ on:
       - "settings.gradle.kts"
       - "gradle/**"
       - ".github/workflows/windows.yml"
+      - ".github/scripts/dump-jvm-stacks.sh"
+      - ".github/scripts/test-windows-check-timeout.sh"
   push:
     branches:
       - main
@@ -90,6 +95,8 @@ on:
       - "settings.gradle.kts"
       - "gradle/**"
       - ".github/workflows/windows.yml"
+      - ".github/scripts/dump-jvm-stacks.sh"
+      - ".github/scripts/test-windows-check-timeout.sh"
 
 permissions:
   contents: read
@@ -98,6 +105,7 @@ jobs:
   windows-helper-tests:
     name: Windows helper argument tests
     runs-on: windows-latest
+    timeout-minutes: 15
 
     steps:
       - name: Check out repository
@@ -113,6 +121,7 @@ jobs:
 
   check-windows:
     runs-on: windows-latest
+    timeout-minutes: 45
 
     steps:
       - name: Check out repository
@@ -140,3 +149,10 @@ jobs:
       - name: Run checks
         run: ./gradlew check
         shell: bash
+
+      - name: Dump live JVM stacks
+        # #499: the runner's cancel dump is the Gradle client only. Dump daemons and
+        # test workers before orphan cleanup so the next hang has a named stack.
+        if: cancelled() || failure()
+        shell: bash
+        run: bash .github/scripts/dump-jvm-stacks.sh

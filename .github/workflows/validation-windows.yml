@@ -57,6 +57,8 @@ on:
       - "settings.gradle.kts"
       - "build.gradle.kts"
       - ".github/workflows/validation-windows.yml"
+      - ".github/scripts/dump-jvm-stacks.sh"
+      - ".github/scripts/test-windows-check-timeout.sh"
   push:
     branches:
       - main
@@ -77,6 +79,8 @@ on:
       - "settings.gradle.kts"
       - "build.gradle.kts"
       - ".github/workflows/validation-windows.yml"
+      - ".github/scripts/dump-jvm-stacks.sh"
+      - ".github/scripts/test-windows-check-timeout.sh"
 
 permissions:
   contents: read
@@ -84,6 +88,7 @@ permissions:
 jobs:
   validation-windows:
     runs-on: windows-latest
+    timeout-minutes: 60
 
     steps:
       - name: Check out repository
@@ -278,6 +283,13 @@ jobs:
             --rerun-tasks \
             -Dspectre.cli.distributionExecutable="$launcher"
         shell: bash
+
+      - name: Dump live JVM stacks
+        # #499: same hang-diagnosis dump as windows.yml. Validation Gradle can sit
+        # in a worker after a protocol flake; dump daemons before orphan cleanup.
+        if: cancelled() || failure()
+        shell: bash
+        run: bash .github/scripts/dump-jvm-stacks.sh
 
       - name: Upload validation artefacts
         # Always upload — useful both for diagnosing flakes and for confirming what ran on

@@ -217,7 +217,9 @@ The full API lives in `dev.sebastiano.spectre.agent.launch` (`LaunchAndAttach`,
 `application { Window(...) { ... } }` blocks until the app exits, so do not call it
 inline from `@BeforeAll`. Start the Compose application loop on a daemon thread, disable
 `exitProcessOnExit`, capture `exitApplication` for cleanup, and capture the
-`ComposeWindow` from inside the `Window` content scope:
+`ComposeWindow` from inside the `Window` content scope. Spectre's own
+`SampleAppFixture` follows this (`exitProcessOnExit = false`) so Windows
+`validationTest` workers stay alive after green JUnit XML:
 
 ```kotlin
 import androidx.compose.runtime.Composable

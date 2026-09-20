@@ -148,6 +148,9 @@ grep -F -q -- '-PVERSION_NAME=' "$script" || fail "Windows CLI package must bake
 grep -F -q 'Get-PointerMoveSkipReason' "$script" || fail "Windows runner missing #433 pointer-move source probe"
 grep -F -q '*PointerMoveLive*' "$script" || fail "Windows runner missing PointerMoveLive test filter"
 grep -F -q 'Assert-PointerMoveLiveExecuted' "$script" || fail "Windows runner missing PointerMoveLive fail-closed XML gate"
+grep -F -q 'Test-PointerMoveTeardownRace' "$script" || fail "Windows runner missing #500 post-green worker-death probe"
+grep -F -q 'MessageIOException' "$script" || fail "Windows runner missing MessageIOException teardown-race needle"
+grep -F -q 'Could not write' "$script" || fail "Windows runner missing Could not write teardown-race needle"
 
 # --- Optional: parse with pwsh when present (macOS/Linux CI agents may have it) ---
 # Note: this is PowerShell Core parse, not Desktop 5.1; ASCII byte check is the 5.1 stand-in.
