@@ -100,4 +100,16 @@ PY
 assert_step_timeout_below_job "$windows_workflow" "check-windows" "Run checks"
 assert_step_timeout_below_job "$validation_workflow" "validation-windows" "Run validation tests"
 
+# continue-on-error on Run validation tests turns a step timeout into conclusion=success.
+# Dump must still fire from the pre-tolerance Gradle outcome.
+dump_if="$(awk '
+  $0 ~ /^      - name: Dump live JVM stacks/ { in_dump=1; next }
+  in_dump && $0 ~ /^      - name:/ { exit }
+  in_dump && $0 ~ /^        if:/ { print; exit }
+' "$validation_workflow")"
+echo "$dump_if" | grep -F -q 'cancelled()' || fail "validation dump is not gated on cancelled()"
+echo "$dump_if" | grep -F -q 'failure()' || fail "validation dump is not gated on failure()"
+echo "$dump_if" | grep -F -q "steps.gradle.outcome == 'failure'" ||
+  fail "validation dump must also run when continue-on-error hid a Gradle timeout"
+
 echo "OK: Windows check hang diagnostics (#499) are wired"

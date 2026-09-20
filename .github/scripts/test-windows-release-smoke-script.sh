@@ -164,6 +164,13 @@ grep -F -q 'GradleError' "$script" || fail "teardown probe must take the current
 probe_body="$(awk '/function Test-PointerMoveTeardownRace/{p=1; next} p && /^function /{exit} p' "$script")"
 echo "$probe_body" | grep -F -q 'timed out after' || fail "teardown probe must reject Invoke-Native timeout errors"
 echo "$probe_body" | grep -F -q 'exited with code' || fail "teardown probe must require a prompt nonzero Gradle exit"
+# Codex #519: a cache/report "Could not write" on a full disk must not waive
+# the required pointer-move smoke. Only the #500/#72 loopback test-event
+# socket (MessageIOException + 127.0.0.1) is waivable.
+echo "$probe_body" | grep -F -q '127.0.0.1' || fail "teardown probe must require the 127.0.0.1 test-event socket"
+if echo "$probe_body" | grep -E -q -- '-or \$raw -match "Could not write"'; then
+  fail "teardown probe still waives generic Could not write failures"
+fi
 
 # --- Optional: parse with pwsh when present (macOS/Linux CI agents may have it) ---
 # Note: this is PowerShell Core parse, not Desktop 5.1; ASCII byte check is the 5.1 stand-in.

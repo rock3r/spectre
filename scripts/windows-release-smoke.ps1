@@ -470,7 +470,13 @@ function Test-PointerMoveTeardownRace {
         if (-not (Test-Path -LiteralPath $path)) { continue }
         $raw = [string](Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue)
         if ([string]::IsNullOrWhiteSpace($raw)) { continue }
-        if ($raw -match "MessageIOException" -or $raw -match "Could not write") {
+        # Only the #500/#72 test-executor loopback socket. A generic
+        # "Could not write" (full disk, cache, reports) must stay fatal.
+        if (
+            $raw -match "MessageIOException" -and
+            $raw -match "Could not write" -and
+            $raw.Contains("127.0.0.1")
+        ) {
             return $true
         }
     }

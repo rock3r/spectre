@@ -291,7 +291,9 @@ jobs:
       - name: Dump live JVM stacks
         # #499: same hang-diagnosis dump as windows.yml. Validation Gradle can sit
         # in a worker after a protocol flake; dump daemons before orphan cleanup.
-        if: cancelled() || failure()
+        # continue-on-error on Run validation tests turns a step timeout into
+        # conclusion=success, so also key off the pre-tolerance gradle outcome.
+        if: cancelled() || failure() || steps.gradle.outcome == 'failure'
         shell: bash
         run: bash .github/scripts/dump-jvm-stacks.sh
 
