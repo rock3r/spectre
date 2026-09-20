@@ -435,17 +435,19 @@ def main(argv: list[str] | None = None) -> int:
         # Non-login SSH PATH lacks ~/.cargo/bin; xvfb-run inherits that and
         # :recording:buildWaylandHelper then cannot start cargo.
         apply_linux_toolchain_path()
-        # A leftover Gradle daemon started without that PATH still cannot exec cargo.
-        # Never --stop during --preflight-only: verifyReleaseSmokeScripts invokes that
-        # entrypoint under ./gradlew check and a stop kills the parent daemon.
-        if not args.preflight_only:
-            subprocess.run(
-                [str(ROOT / "gradlew"), "--stop"],
-                cwd=ROOT,
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+    if system in ("Linux", "Darwin") and not args.preflight_only:
+        # Linux: leftover daemons started without the rustup PATH cannot exec cargo.
+        # macOS: leftover daemons started by an ungranted wrapping app keep that TCC
+        # identity for later Robot/capture cells. macos-tcc helper assembly would
+        # otherwise reuse them. Never --stop during --preflight-only:
+        # verifyReleaseSmokeScripts invokes that entrypoint under ./gradlew check.
+        subprocess.run(
+            [str(ROOT / "gradlew"), "--stop"],
+            cwd=ROOT,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
     if system == "Windows":
         print(
             "Use scripts/windows-release-smoke.ps1 from the interactive desktop "

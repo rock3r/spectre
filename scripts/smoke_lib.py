@@ -638,7 +638,12 @@ def macos_screencapture_runtime_helper(
     if resolved is None:
         resolved = macos_screencapture_jvm_user_home(environ)
     if resolved is None:
-        resolved = Path.home()
+        resolved = macos_screencapture_query_java_user_home(environ)
+    if resolved is None:
+        raise InvalidScreencaptureHelperDir(
+            "could not resolve JVM user.home for the default helper extract path; "
+            "set -Duser.home to an absolute path or install a usable java"
+        )
     return (
         resolved
         / "Library"
@@ -740,6 +745,53 @@ def macos_screencapture_jvm_user_home(
     return None
 
 
+def parse_java_show_settings_property(text: str, name: str) -> Path | None:
+    """Parse `name = value` from `java -XshowSettings:properties` output."""
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if not stripped.startswith(f"{name} ="):
+            continue
+        value = stripped.split("=", 1)[1].strip()
+        if not value:
+            return None
+        path = Path(value)
+        if not path.is_absolute():
+            raise InvalidScreencaptureHelperDir(
+                f"{name} from java -XshowSettings:properties must be absolute "
+                f"(got {value!r})"
+            )
+        return path
+    return None
+
+
+def macos_screencapture_query_java_user_home(
+    environ: Mapping[str, str] | None = None,
+) -> Path | None:
+    """Effective JVM user.home, including the launcher default (not Path.home())."""
+    env = os.environ if environ is None else {**os.environ, **dict(environ)}
+    java = shutil.which("java", path=env.get("PATH"))
+    java_home = env.get("JAVA_HOME", "").rstrip("/")
+    if java is None and java_home:
+        candidate = Path(java_home) / "bin" / "java"
+        if candidate.is_file():
+            java = str(candidate)
+    if not java:
+        return None
+    try:
+        completed = subprocess.run(
+            [java, "-XshowSettings:properties", "-version"],
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return parse_java_show_settings_property(completed.stdout or "", "user.home")
+
+
 class InvalidScreencaptureHelperOverride(RuntimeError):
     """SPECTRE_SCREENCAPTURE_HELPER is set but is not an executable helper."""
 
@@ -750,8 +802,10 @@ def macos_screencapture_override_path(
     """Authoritative SPECTRE_SCREENCAPTURE_HELPER. Absolute paths only."""
     raw = (environ if environ is not None else os.environ).get(
         SCREENCAPTURE_HELPER_OVERRIDE_ENV, ""
-    ).strip()
-    if not raw:
+    )
+    # HelperBinaryExtractor uses isNotBlank() then Path.of(untrimmed). Do not strip:
+    # " /abs/helper" is a different path than "/abs/helper".
+    if not raw.strip():
         return None
     override = Path(raw)
     # HelperBinaryExtractor.resolveOverrideExecutable accepts a relative Path.of()
@@ -797,13 +851,13 @@ def macos_screencapture_helper_candidates(
     try:
         helper_dir = macos_screencapture_configured_helper_dir(root=root)
         jvm_home = macos_screencapture_jvm_user_home()
+        resolved_home = home if home is not None else jvm_home
+        if resolved_home is not None or helper_dir is not None or platform.system() == "Darwin":
+            candidates.append(
+                macos_screencapture_runtime_helper(resolved_home, helper_dir=helper_dir)
+            )
     except InvalidScreencaptureHelperDir:
         return []
-    resolved_home = home if home is not None else jvm_home
-    if resolved_home is not None or helper_dir is not None or platform.system() == "Darwin":
-        candidates.append(
-            macos_screencapture_runtime_helper(resolved_home, helper_dir=helper_dir)
-        )
     return candidates
 
 
@@ -979,11 +1033,10 @@ def ensure_macos_screencapture_helper(
     try:
         helper_dir = macos_screencapture_configured_helper_dir(root=root)
         jvm_home = macos_screencapture_jvm_user_home()
+        resolved_home = home if home is not None else jvm_home
+        runtime = macos_screencapture_runtime_helper(resolved_home, helper_dir=helper_dir)
     except InvalidScreencaptureHelperDir:
         return None
-    resolved_home = home if home is not None else jvm_home
-
-    runtime = macos_screencapture_runtime_helper(resolved_home, helper_dir=helper_dir)
     assembler = (
         assemble if assemble is not None else (lambda: _assemble_screencapture_helper(root))
     )

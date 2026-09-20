@@ -889,6 +889,44 @@ class ReleaseSmokeHelpTest(unittest.TestCase):
             "(verifyReleaseSmokeScripts runs this under ./gradlew check)",
         )
 
+    def test_preflight_only_does_not_stop_gradle_daemon_on_macos(self):
+        spec = importlib.util.spec_from_file_location(
+            "release_smoke_preflight_stop_macos", RELEASE_SMOKE
+        )
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        stop_cmds: list[list[str]] = []
+        real_run = module.subprocess.run
+
+        def wrapped(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args")
+            if isinstance(cmd, (list, tuple)) and "--stop" in cmd:
+                stop_cmds.append(list(cmd))
+                return subprocess.CompletedProcess(cmd, 0)
+            return real_run(*args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            with (
+                unittest.mock.patch.object(module.platform, "system", return_value="Darwin"),
+                unittest.mock.patch.object(module.subprocess, "run", side_effect=wrapped),
+            ):
+                code = module.main(
+                    [
+                        "--version",
+                        "0.5.0",
+                        "--base",
+                        "v0.4.1",
+                        "--preflight-only",
+                        "--out-dir",
+                        str(out),
+                    ]
+                )
+        self.assertEqual(0, code)
+        self.assertEqual([], stop_cmds)
+
 
 class ReleaseSmokeHelperLogicTest(unittest.TestCase):
     """Drive real helper functions shipped in release-smoke.py (not reimplemented)."""
@@ -1628,6 +1666,38 @@ class MacOsTccPreflightTest(unittest.TestCase):
             self.assertEqual(smoke_lib.TCC_UNKNOWN, status)
             self.assertEqual([], invoked)
 
+    def test_override_whitespace_fails_closed_without_strip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = Path(tmp) / "home"
+            helper = Path(tmp) / smoke_lib.SCREENCAPTURE_HELPER_NAME
+            helper.write_text("#!/bin/sh\n", encoding="utf-8")
+            helper.chmod(0o755)
+            staged = smoke_lib.macos_screencapture_staged_helper(root)
+            staged.parent.mkdir(parents=True)
+            staged.write_text("#!/bin/sh\n", encoding="utf-8")
+            staged.chmod(0o755)
+            invoked: list[list[str]] = []
+            env = {"SPECTRE_SCREENCAPTURE_HELPER": f"  {helper}  "}
+            with unittest.mock.patch.dict(os.environ, env, clear=False):
+                with self.assertRaises(
+                    smoke_lib.InvalidScreencaptureHelperOverride
+                ) as ctx:
+                    smoke_lib.macos_screencapture_override_path()
+                self.assertIn(str(helper), str(ctx.exception))
+                found = smoke_lib.ensure_macos_screencapture_helper(
+                    root, assemble=lambda: 0, home=home
+                )
+                status = smoke_lib.probe_macos_screen_recording(
+                    root=root,
+                    ensure_helper=lambda: found,
+                    invoke_helper=lambda argv: invoked.append(argv)
+                    or (0, '{"granted": true}\n'),
+                )
+            self.assertIsNone(found)
+            self.assertEqual(smoke_lib.TCC_UNKNOWN, status)
+            self.assertEqual([], invoked)
+
     def test_helper_dir_property_installs_and_probes_that_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1831,6 +1901,53 @@ class MacOsTccPreflightTest(unittest.TestCase):
             / smoke_lib.SCREENCAPTURE_HELPER_NAME,
             smoke_lib.macos_screencapture_runtime_helper(environ=precedence),
         )
+
+    def test_runtime_helper_uses_java_user_home_not_path_home(self):
+        account_home = Path("/tmp/jvm-account-home")
+        env_home = Path("/tmp/python-home")
+        settings = (
+            "Property settings:\n"
+            f"    user.home = {account_home}\n"
+            "    user.name = tester\n"
+        )
+
+        def fake_run(argv, **kwargs):
+            if isinstance(argv, (list, tuple)) and "-XshowSettings:properties" in argv:
+                return subprocess.CompletedProcess(argv, 0, stdout=settings)
+            raise AssertionError(argv)
+
+        expected = (
+            account_home
+            / "Library"
+            / "Application Support"
+            / "spectre"
+            / "helpers"
+            / smoke_lib.SCREENCAPTURE_HELPER_NAME
+            / smoke_lib.SCREENCAPTURE_HELPER_APP_NAME
+            / "Contents"
+            / "MacOS"
+            / smoke_lib.SCREENCAPTURE_HELPER_NAME
+        )
+        with (
+            unittest.mock.patch.object(smoke_lib.subprocess, "run", side_effect=fake_run),
+            unittest.mock.patch.object(Path, "home", return_value=env_home),
+        ):
+            self.assertEqual(
+                expected,
+                smoke_lib.macos_screencapture_runtime_helper(
+                    environ={"HOME": str(env_home)}
+                ),
+            )
+
+    def test_runtime_helper_fails_closed_when_java_user_home_unknown(self):
+        with (
+            unittest.mock.patch.object(
+                smoke_lib.subprocess, "run", side_effect=FileNotFoundError("java")
+            ),
+            unittest.mock.patch.object(Path, "home", return_value=Path("/tmp/python-home")),
+        ):
+            with self.assertRaises(smoke_lib.InvalidScreencaptureHelperDir):
+                smoke_lib.macos_screencapture_runtime_helper(environ={})
 
     def test_relative_helper_dir_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2054,13 +2171,87 @@ class ReleaseSmokeMacOsTccWiringTest(unittest.TestCase):
                     ]
                 )
             self.assertEqual(1, code)
-            self.assertEqual([], gradle_cmds, gradle_cmds)
+            self.assertTrue(
+                any("--stop" in cmd for cmd in gradle_cmds),
+                gradle_cmds,
+            )
+            self.assertFalse(
+                any("check" in cmd for cmd in gradle_cmds),
+                gradle_cmds,
+            )
             report = json.loads((out / "release-smoke.json").read_text(encoding="utf-8"))
             by_id = {row["id"]: row for row in report["scenarios"]}
             self.assertEqual("fail", by_id["macos-tcc"]["result"])
             self.assertIn("Accessibility", by_id["macos-tcc"]["detail"])
             self.assertEqual("n/a", by_id["check"]["result"])
             self.assertIn("macos-tcc", by_id["check"]["reason"])
+
+    @unittest.skipIf(
+        platform.system() == "Windows",
+        "Unix release-smoke entrypoint intentionally rejects Windows",
+    )
+    def test_macos_tcc_stops_stale_daemons_before_probe(self):
+        order: list[str] = []
+        real_run = self.rs.subprocess.run
+
+        def wrapped(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args")
+            if isinstance(cmd, (list, tuple)) and "--stop" in cmd:
+                order.append("stop")
+                return subprocess.CompletedProcess(cmd, 0)
+            if isinstance(cmd, (list, tuple)) and any(
+                str(part).endswith("gradlew") for part in cmd
+            ):
+                order.append("gradle")
+                return subprocess.CompletedProcess(cmd, 0)
+            return real_run(*args, **kwargs)
+
+        def accessibility() -> str:
+            order.append("probe")
+            return smoke_lib.TCC_DENIED
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            with (
+                unittest.mock.patch.object(
+                    self.rs.platform, "system", return_value="Darwin"
+                ),
+                unittest.mock.patch.object(
+                    self.rs, "macos_tcc_skip_reason", return_value=None
+                ),
+                unittest.mock.patch.object(
+                    self.rs, "probe_macos_accessibility", side_effect=accessibility
+                ),
+                unittest.mock.patch.object(
+                    self.rs,
+                    "probe_macos_screen_recording",
+                    return_value=smoke_lib.TCC_GRANTED,
+                ),
+                unittest.mock.patch.object(
+                    self.rs,
+                    "probe_macos_wrapping_screen_recording",
+                    return_value=smoke_lib.TCC_GRANTED,
+                ),
+                unittest.mock.patch.object(
+                    self.rs.subprocess, "run", side_effect=wrapped
+                ),
+            ):
+                code = self.rs.main(
+                    [
+                        "--version",
+                        "0.5.0",
+                        "--base",
+                        "v0.4.1",
+                        "--out-dir",
+                        str(out),
+                        "--overall-timeout",
+                        "60",
+                    ]
+                )
+        self.assertEqual(1, code)
+        self.assertIn("stop", order)
+        self.assertLess(order.index("stop"), order.index("probe"))
+        self.assertNotIn("gradle", order)
 
 
 if __name__ == "__main__":
