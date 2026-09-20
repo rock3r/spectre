@@ -57,6 +57,29 @@ internal sealed interface Command {
     ) : Command
 
     @Serializable @SerialName("stop") data object Stop : Command
+
+    @Serializable
+    @SerialName("pointer_move")
+    data class PointerMove(@SerialName("x") val x: Int, @SerialName("y") val y: Int) : Command
+
+    @Serializable
+    @SerialName("pointer_button")
+    data class PointerButton(
+        @SerialName("button") val button: Int,
+        @SerialName("pressed") val pressed: Boolean,
+    ) : Command
+
+    @Serializable
+    @SerialName("key")
+    data class Key(
+        @SerialName("key_code") val keyCode: Int,
+        @SerialName("pressed") val pressed: Boolean,
+    ) : Command
+
+    @Serializable
+    @SerialName("pointer_axis")
+    data class PointerAxis(@SerialName("axis") val axis: Int, @SerialName("steps") val steps: Int) :
+        Command
 }
 
 @Serializable
@@ -91,6 +114,8 @@ internal sealed interface Event {
         @SerialName("kind") val kind: String,
         @SerialName("message") val message: String,
     ) : Event
+
+    @Serializable @SerialName("input_ack") data object InputAck : Event
 }
 
 @Serializable
@@ -120,3 +145,104 @@ internal enum class CursorMode {
 }
 
 @Serializable internal data class Region(val x: Int, val y: Int, val width: Int, val height: Int)
+
+internal const val RD_TOKEN_FILE_PREFIX: String = "wayland-rd-restore-token"
+
+internal fun remoteDesktopTokenFileName(tokenKey: String): String =
+    "$RD_TOKEN_FILE_PREFIX-$tokenKey"
+
+internal data class WaylandSessionPaths(
+    val lock: java.nio.file.Path,
+    val socket: java.nio.file.Path,
+)
+
+internal fun waylandSessionPaths(dir: java.nio.file.Path): WaylandSessionPaths =
+    WaylandSessionPaths(
+        lock = dir.resolve("wayland-session.lock"),
+        socket = dir.resolve("wayland-session.sock"),
+    )
+
+internal const val VERTICAL_POINTER_AXIS: Int = 0
+internal const val SESSION_SOCKET_POLL_MS: Long = 50
+internal const val WAYLAND_SESSION_OWNED_EXIT: Int = 75
+
+internal fun isFatalWaylandHelperExit(exitCode: Int): Boolean =
+    exitCode != 0 && exitCode != WAYLAND_SESSION_OWNED_EXIT
+
+internal fun Process?.isFatalSessionExit(): Boolean {
+    if (this == null || isAlive) return false
+    return isFatalWaylandHelperExit(exitValue())
+}
+
+internal fun resolveWaylandSessionSocket(
+    paths: WaylandSessionPaths,
+    socketIsLive: (java.nio.file.Path) -> Boolean,
+    startHelper: () -> Unit,
+    waitForSocket: (java.nio.file.Path, Long) -> Boolean,
+    timeoutMs: Long,
+    helperExited: () -> Boolean = { false },
+    helperExitDetail: () -> String = { "exited before binding the session socket" },
+): java.nio.file.Path {
+    if (java.nio.file.Files.exists(paths.socket) && socketIsLive(paths.socket)) {
+        return paths.socket
+    }
+    // Do not unlink here. A concurrent helper can bind between this miss and deleteIfExists,
+    // which would remove the winner's live socket. The native process unlinks leftovers after
+    // it acquires the session flock.
+    startHelper()
+    val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+    while (System.nanoTime() < deadline) {
+        if (socketIsLive(paths.socket)) {
+            return paths.socket
+        }
+        if (waitForSocket(paths.socket, SESSION_SOCKET_POLL_MS) && socketIsLive(paths.socket)) {
+            return paths.socket
+        }
+        check(!helperExited()) { "spectre-wayland-helper --session ${helperExitDetail()}" }
+    }
+    check(!helperExited()) { "spectre-wayland-helper --session ${helperExitDetail()}" }
+    error(
+        "spectre-wayland-helper --session did not create ${paths.socket} within ${timeoutMs}ms. " +
+            "Accept the compositor Share / Allow remote interaction dialog if it is waiting, " +
+            "and check that xdg-desktop-portal is running. If a previous helper died, delete a " +
+            "stale ${paths.socket} and retry."
+    )
+}
+
+internal fun isRestoreTokenRejection(error: Throwable): Boolean {
+    val msg = error.message.orEmpty()
+    return (msg.contains("SelectSources rejected") ||
+        msg.contains("SelectDevices rejected") ||
+        msg.contains("Start rejected")) &&
+        (msg.contains("restore_token") ||
+            msg.contains("stored restore_token") ||
+            msg.contains("no longer valid") ||
+            msg.contains("response code"))
+}
+
+internal fun restoreRemoteDesktopGrant(
+    tokenKey: String,
+    loadToken: () -> String?,
+    clearToken: (String) -> Unit,
+    startWithToken: (String?) -> Result<String>,
+): String {
+    val stored = loadToken()
+    val first = startWithToken(stored)
+    val granted = first.getOrNull()
+    if (granted != null) return granted
+    val firstError =
+        first.exceptionOrNull() ?: error("RemoteDesktop start failed without an exception")
+    if (stored == null || !isRestoreTokenRejection(firstError)) {
+        throw firstError as? RuntimeException
+            ?: IllegalStateException("RemoteDesktop session failed", firstError)
+    }
+    clearToken(tokenKey)
+    return startWithToken(null).getOrElse { second ->
+        throw IllegalStateException(
+                "interactive RemoteDesktop retry after invalid restore_token also failed " +
+                    "(original: ${firstError.message})",
+                second,
+            )
+            .apply { addSuppressed(firstError) }
+    }
+}

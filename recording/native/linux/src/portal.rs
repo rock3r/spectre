@@ -37,16 +37,50 @@ use std::time::Duration;
 /// The compositor's portal service: bus name + entry object path. Constant across distros
 /// (`xdg-desktop-portal-gnome`, `xdg-desktop-portal-kde`, `xdg-desktop-portal-wlr` all
 /// register under the same well-known names per the freedesktop spec).
-const PORTAL_BUS: &str = "org.freedesktop.portal.Desktop";
-const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
+pub const PORTAL_BUS: &str = "org.freedesktop.portal.Desktop";
+pub const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
 const PORTAL_REQUEST_PATH_BASE: &str = "/org/freedesktop/portal/desktop/request";
 const REQUEST_RESPONSE_INTERFACE: &str = "org.freedesktop.portal.Request";
-const SCREEN_CAST_INTERFACE: &str = "org.freedesktop.portal.ScreenCast";
+pub const SCREEN_CAST_INTERFACE: &str = "org.freedesktop.portal.ScreenCast";
+pub const REMOTE_DESKTOP_INTERFACE: &str = "org.freedesktop.portal.RemoteDesktop";
+pub const HOST_REGISTRY_INTERFACE: &str = "org.freedesktop.host.portal.Registry";
 
 /// Default per-call timeout for both the synchronous D-Bus method and the asynchronous
 /// `Response` signal. 60s covers the worst case where the user is reading a permission dialog
 /// before clicking Share. Configurable via [`open_screen_cast_session`].
 pub const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Install the `.desktop` and `Registry.Register` this connection before any portal method.
+pub fn register_host_app(conn: &Connection, timeout: Duration) -> Result<()> {
+    crate::identity::install_desktop_file().context("installing Spectre .desktop for portal app_id")?;
+    let proxy = conn.with_proxy(PORTAL_BUS, PORTAL_PATH, timeout);
+    let options: PropMap = HashMap::new();
+    match proxy.method_call::<(), _, _, _>(
+        HOST_REGISTRY_INTERFACE,
+        "Register",
+        (crate::identity::SPECTRE_APP_ID.to_string(), options),
+    ) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("UnknownMethod")
+                || msg.contains("unknown method")
+                || msg.contains("does not exist")
+            {
+                eprintln!(
+                    "spectre-wayland-helper: org.freedesktop.host.portal.Registry.Register is \
+                     unavailable ({e:#}). Continuing without a host app_id — restore tokens \
+                     may not stick across processes on this portal version."
+                );
+                Ok(())
+            } else if msg.to_lowercase().contains("already") {
+                Ok(())
+            } else {
+                Err(anyhow::Error::from(e).context("Registry.Register"))
+            }
+        }
+    }
+}
 
 /// One stream returned by `Start.Response.streams[]`. Spectre uses the first (and on
 /// `monitor` source type, only) stream.
@@ -123,7 +157,9 @@ fn is_restore_token_rejection(err: &anyhow::Error) -> bool {
     let msg = format!("{err:#}");
     // Only explicit SelectSources/Start rejections when a token was supplied — not timeouts
     // or CreateSession / OpenPipeWireRemote failures (those leave a still-valid grant).
-    (msg.contains("SelectSources rejected") || msg.contains("Start rejected"))
+    (msg.contains("SelectSources rejected")
+        || msg.contains("SelectDevices rejected")
+        || msg.contains("Start rejected"))
         && (msg.contains("restore_token")
             || msg.contains("stored restore_token")
             || msg.contains("no longer valid")
@@ -153,6 +189,7 @@ fn open_screen_cast_session_inner(
     token_key: &str, // source+cursor key for persist path
 ) -> Result<ScreenCastSession> {
     let conn = Connection::new_session().context("opening session bus")?;
+    register_host_app(&conn, timeout)?;
     let sender = sender_token(&conn).context("computing sender token")?;
     let counter = AtomicUsize::new(0);
     let next_token = |kind: &str| {
@@ -296,7 +333,7 @@ fn open_screen_cast_session_inner(
 /// `persist_mode` value: keep the grant until the user revokes it (cross-session restore).
 const PERSIST_MODE_PERSISTENT: u32 = 2;
 
-fn extract_restore_token(results: &PropMap) -> Option<String> {
+pub fn extract_restore_token(results: &PropMap) -> Option<String> {
     results
         .get("restore_token")
         .and_then(|v| v.0.as_str())
@@ -323,6 +360,10 @@ pub fn restore_token_state_dir() -> PathBuf {
 }
 
 fn restore_token_file(token_key: &str) -> PathBuf {
+    restore_token_file_named("wayland-screencast-restore-token", token_key)
+}
+
+pub fn restore_token_file_named(prefix: &str, token_key: &str) -> PathBuf {
     if let Ok(override_path) = std::env::var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH") {
         // Always a file base path (not a directory). Append -{token_key} so keys stay separate.
         // Use SPECTRE_WAYLAND_RESTORE_TOKEN_DIR for directory-only overrides.
@@ -331,14 +372,18 @@ fn restore_token_file(token_key: &str) -> PathBuf {
         let name = base
             .file_name()
             .and_then(|s| s.to_str())
-            .unwrap_or("wayland-screencast-restore-token");
+            .unwrap_or(prefix);
         return parent.join(format!("{name}-{token_key}"));
     }
-    restore_token_state_dir().join(format!("wayland-screencast-restore-token-{token_key}"))
+    restore_token_state_dir().join(format!("{prefix}-{token_key}"))
 }
 
 pub fn load_restore_token(token_key: &str) -> Result<Option<String>> {
-    let path = restore_token_file(token_key);
+    load_restore_token_named("wayland-screencast-restore-token", token_key)
+}
+
+pub fn load_restore_token_named(prefix: &str, token_key: &str) -> Result<Option<String>> {
+    let path = restore_token_file_named(prefix, token_key);
     if !path.is_file() {
         return Ok(None);
     }
@@ -353,7 +398,11 @@ pub fn load_restore_token(token_key: &str) -> Result<Option<String>> {
 }
 
 pub fn save_restore_token(token_key: &str, token: &str) -> Result<()> {
-    let path = restore_token_file(token_key);
+    save_restore_token_named("wayland-screencast-restore-token", token_key, token)
+}
+
+pub fn save_restore_token_named(prefix: &str, token_key: &str, token: &str) -> Result<()> {
+    let path = restore_token_file_named(prefix, token_key);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("creating restore_token dir {}", parent.display()))?;
@@ -369,7 +418,11 @@ pub fn save_restore_token(token_key: &str, token: &str) -> Result<()> {
 }
 
 pub fn clear_restore_token(token_key: &str) -> Result<()> {
-    let path = restore_token_file(token_key);
+    clear_restore_token_named("wayland-screencast-restore-token", token_key)
+}
+
+pub fn clear_restore_token_named(prefix: &str, token_key: &str) -> Result<()> {
+    let path = restore_token_file_named(prefix, token_key);
     if path.is_file() {
         fs::remove_file(&path)
             .with_context(|| format!("removing restore_token at {}", path.display()))?;
@@ -407,15 +460,15 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
 
 /// One Response payload, captured by [`call_with_response`] from the matching `Request.Response`
 /// signal.
-struct ResponsePayload {
-    response_code: u32,
-    results: PropMap,
+pub struct ResponsePayload {
+    pub response_code: u32,
+    pub results: PropMap,
 }
 
 /// Make a portal method call that follows the Request/Response pattern: subscribe to the
 /// `Response` signal on the predicted Request object path, then make the call, then drain
 /// signals on the connection until the Response arrives or [`timeout`] elapses.
-fn call_with_response<A: dbus::arg::AppendAll>(
+pub fn call_with_response<A: dbus::arg::AppendAll>(
     conn: &Connection,
     sender: &str,
     handle_token: &str,
@@ -509,7 +562,7 @@ fn call_with_response<A: dbus::arg::AppendAll>(
 /// Compute the sender token used in the Request object path. dbus-rs exposes the
 /// connection's unique bus name in `:X.Y` form; the portal computes the path from that name
 /// with `:` and `.` replaced by `_`.
-fn sender_token(conn: &Connection) -> Result<String> {
+pub fn sender_token(conn: &Connection) -> Result<String> {
     let unique = conn.unique_name();
     let s: &str = unique.as_ref();
     if s.is_empty() {
@@ -520,7 +573,7 @@ fn sender_token(conn: &Connection) -> Result<String> {
 
 /// Build a `PropMap` (a{sv}) from a fixed list of (key, variant) pairs. Saves repeating the
 /// `Variant(Box::new(...))` boilerplate at every call site.
-fn make_options<const N: usize>(entries: [(&str, Variant<Box<dyn RefArg>>); N]) -> PropMap {
+pub fn make_options<const N: usize>(entries: [(&str, Variant<Box<dyn RefArg>>); N]) -> PropMap {
     entries
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
@@ -530,7 +583,7 @@ fn make_options<const N: usize>(entries: [(&str, Variant<Box<dyn RefArg>>); N]) 
 /// Box a value into a [`Variant`] for use in [`make_options`]. dbus-rs's `Variant<Box<dyn
 /// RefArg>>` is the standard a{sv} value-side wrapper; this function gets the boxing right
 /// in one place.
-fn variant<T: RefArg + 'static>(value: T) -> Variant<Box<dyn RefArg>> {
+pub fn variant<T: RefArg + 'static>(value: T) -> Variant<Box<dyn RefArg>> {
     Variant(Box::new(value))
 }
 
@@ -583,7 +636,7 @@ fn cursor_mode_flag(mode: CursorMode) -> u32 {
 /// builder ([`crate::gst::build_pipewire_argv`]) needs it for bounds-checking and pipeline
 /// construction; defaulting it would surface as a confusing
 /// `"stream_size must have positive dimensions"` instead of a clear "portal misbehaved" error.
-fn parse_first_stream(results: &PropMap) -> Result<StreamMetadata> {
+pub fn parse_first_stream(results: &PropMap) -> Result<StreamMetadata> {
     let streams_variant = results
         .get("streams")
         .context("Start Response missing 'streams' key")?;
@@ -826,10 +879,13 @@ mod restore_token_tests {
         assert!(!is_restore_token_rejection(&anyhow::anyhow!(
             "CreateSession rejected (response code 2)"
         )));
-        assert!(!is_restore_token_rejection(&anyhow::anyhow!(
-            "OpenPipeWireRemote failed"
-        )));
-    }
+    assert!(!is_restore_token_rejection(&anyhow::anyhow!(
+        "OpenPipeWireRemote failed"
+    )));
+    assert!(is_restore_token_rejection(&anyhow::anyhow!(
+        "SelectDevices rejected (response code 2): stored restore_token"
+    )));
+}
 
     #[test]
     fn save_restore_token_is_atomic_and_does_not_leave_partial_files() {
@@ -860,6 +916,27 @@ mod restore_token_tests {
             })
             .collect();
         assert!(leftovers.is_empty(), "tmp leftovers: {leftovers:?}");
+
+        save_restore_token_named(
+            "wayland-rd-restore-token",
+            "rd-monitor-embedded",
+            "rd-token",
+        )
+        .unwrap();
+        assert_eq!(
+            load_restore_token_named("wayland-rd-restore-token", "rd-monitor-embedded")
+                .unwrap()
+                .as_deref(),
+            Some("rd-token")
+        );
+        let rd_name = restore_token_file_named("wayland-rd-restore-token", "rd-monitor-embedded");
+        assert!(rd_name
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("wayland-rd-restore-token-"));
+        assert!(!rd_name.to_string_lossy().contains(".java/robot"));
 
         std::env::remove_var("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR");
         let _ = fs::remove_dir_all(&dir);
