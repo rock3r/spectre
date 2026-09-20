@@ -175,17 +175,16 @@ private fun runMissingTitleFailsClosed() {
             override var title: String? = MISSING_WINDOW_TITLE
             override val bounds: Rectangle = Rectangle(0, 0, 120, 80)
         }
-    val error =
-        runCatching {
-                LinuxX11Recorder()
-                    .start(
-                        window = missing,
-                        windowOwnerPid = ProcessHandle.current().pid(),
-                        output = output,
-                        options = RecordingOptions(frameRate = 15, captureCursor = false),
-                    )
-            }
-            .exceptionOrNull()
+    val error = runCatching {
+        LinuxX11Recorder()
+            .start(
+                window = missing,
+                windowOwnerPid = ProcessHandle.current().pid(),
+                output = output,
+                options = RecordingOptions(frameRate = 15, captureCursor = false),
+            )
+    }
+        .exceptionOrNull()
     val failed =
         checkNotNull(error) {
             "Missing title must fail closed; helper started a recording instead of erroring"

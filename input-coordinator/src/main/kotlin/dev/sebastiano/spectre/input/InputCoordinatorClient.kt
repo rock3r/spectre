@@ -228,18 +228,17 @@ private constructor(
             if (!connected.get()) return
             val pendingRequestId = registration.pendingReleaseRequestId()
             if (pendingRequestId != null) {
-                val releaseFailure =
-                    runCatching {
-                            send(
-                                    tokenMessage(
-                                        CoordinatorWireKind.RELEASE,
-                                        registration.token,
-                                        pendingRequestId,
-                                    )
-                                )
-                                .requireSuccess()
-                        }
-                        .exceptionOrNull()
+                val releaseFailure = runCatching {
+                    send(
+                            tokenMessage(
+                                CoordinatorWireKind.RELEASE,
+                                registration.token,
+                                pendingRequestId,
+                            )
+                        )
+                        .requireSuccess()
+                }
+                    .exceptionOrNull()
                 if (releaseFailure == null) {
                     completePendingRelease(registration, pendingRequestId)
                     return@forEach
@@ -254,9 +253,9 @@ private constructor(
                 return@forEach
             }
             runCatching {
-                    send(tokenMessage(CoordinatorWireKind.HEARTBEAT, registration.token))
-                        .requireSuccess()
-                }
+                send(tokenMessage(CoordinatorWireKind.HEARTBEAT, registration.token))
+                    .requireSuccess()
+            }
                 .onFailure {
                     registration.invalidate()
                     if (
@@ -300,16 +299,16 @@ private constructor(
         val wasInterrupted = Thread.interrupted()
         return try {
             runCatching {
-                    send(
-                            CoordinatorWireMessage(
-                                kind = CoordinatorWireKind.CANCEL,
-                                requestId = requestId,
-                                clientId = clientId,
-                                resourceKey = resourceKey.value,
-                            )
+                send(
+                        CoordinatorWireMessage(
+                            kind = CoordinatorWireKind.CANCEL,
+                            requestId = requestId,
+                            clientId = clientId,
+                            resourceKey = resourceKey.value,
                         )
-                        .requireSuccess()
-                }
+                    )
+                    .requireSuccess()
+            }
                 .isSuccess
         } finally {
             if (wasInterrupted) Thread.currentThread().interrupt()

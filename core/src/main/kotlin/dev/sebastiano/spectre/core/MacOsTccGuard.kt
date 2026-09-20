@@ -141,13 +141,12 @@ internal fun osascriptAccessibilityProbe(): TccStatus {
  * region. In practice the macOS menu bar always provides UI variation here.
  */
 internal fun robotScreenRecordingProbe(screenCapture: ScreenCaptureAdapter): TccStatus {
-    val image =
-        runCatching {
-                screenCapture.createScreenCapture(Rectangle(0, 0, PROBE_SIZE_PX, PROBE_SIZE_PX))
-            }
-            .getOrElse {
-                return TccStatus.Unknown
-            }
+    val image = runCatching {
+        screenCapture.createScreenCapture(Rectangle(0, 0, PROBE_SIZE_PX, PROBE_SIZE_PX))
+    }
+        .getOrElse {
+            return TccStatus.Unknown
+        }
     if (image.width <= 1 || image.height <= 1) {
         // Synthetic adapters (or a heavily-restricted environment) can return a 1×1 placeholder;
         // the probe can't say anything useful in that case.

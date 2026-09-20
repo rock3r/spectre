@@ -354,24 +354,23 @@ public constructor(
             activeClients.forEach { channel -> clients.add(channel) }
             activeClients.clear()
             clients.forEach { channel -> runCatching { channel.close() } }
-            val removedSocket =
-                runCatching {
-                        // Hold the same lock as stale recovery before closing the channel.
-                        // Otherwise a
-                        // successor can bind after close and before this server unlinks the path.
-                        withStaleSocketRecoveryLock {
-                            try {
-                                serverChannel.close()
-                            } finally {
-                                // Keep the recovery lock until the delete has at least been
-                                // attempted.
-                                // Retrying after releasing the lock could unlink a successor
-                                // daemon.
-                                runCatching { Files.deleteIfExists(socketPath) }
-                            }
-                        }
+            val removedSocket = runCatching {
+                // Hold the same lock as stale recovery before closing the channel.
+                // Otherwise a
+                // successor can bind after close and before this server unlinks the path.
+                withStaleSocketRecoveryLock {
+                    try {
+                        serverChannel.close()
+                    } finally {
+                        // Keep the recovery lock until the delete has at least been
+                        // attempted.
+                        // Retrying after releasing the lock could unlink a successor
+                        // daemon.
+                        runCatching { Files.deleteIfExists(socketPath) }
                     }
-                    .isSuccess
+                }
+            }
+                .isSuccess
             if (!removedSocket) runCatching { serverChannel.close() }
             removeCreatedParents()
             acceptThread.interrupt()

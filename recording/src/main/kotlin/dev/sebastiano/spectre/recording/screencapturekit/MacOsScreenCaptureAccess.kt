@@ -277,15 +277,14 @@ public data class ScreenCaptureAccessResult(
     }
 
     /** Multi-line text suitable for CLI/MCP relay to a human. */
-    public fun relayMessage(): String =
-        buildString {
-                appendLine(if (granted) "Screen Recording: granted" else "Screen Recording: DENIED")
-                if (binaryPath.isNotBlank()) appendLine("Binary needing grant: $binaryPath")
-                appendLine("Settings: $settingsPath")
-                appendLine("Deep link: $deepLink")
-                if (guidance.isNotBlank()) appendLine(guidance)
-            }
-            .trimEnd()
+    public fun relayMessage(): String = buildString {
+        appendLine(if (granted) "Screen Recording: granted" else "Screen Recording: DENIED")
+        if (binaryPath.isNotBlank()) appendLine("Binary needing grant: $binaryPath")
+        appendLine("Settings: $settingsPath")
+        appendLine("Deep link: $deepLink")
+        if (guidance.isNotBlank()) appendLine(guidance)
+    }
+        .trimEnd()
 }
 
 /** Thrown when capture is refused because Screen Recording TCC is missing. */

@@ -22,6 +22,15 @@ class LaunchDescendantDiscoveryTest {
             )
         )
         assertTrue(LaunchDescendantDiscovery.isGradleDaemonDisplayName("gradle-daemon"))
+        assertTrue(
+            LaunchDescendantDiscovery.isGradleDaemonDisplayName("Gradle Worker Daemon 9.7.1")
+        )
+        assertTrue(
+            LaunchDescendantDiscovery.isGradleDaemonDisplayName(
+                "org.gradle.process.internal.worker.GradleWorkerMain"
+            )
+        )
+        assertTrue(LaunchDescendantDiscovery.isGradleDaemonDisplayName("WorkerDaemon"))
         assertFalse(
             LaunchDescendantDiscovery.isGradleDaemonDisplayName(
                 "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt"
@@ -252,6 +261,240 @@ class LaunchDescendantDiscoveryTest {
     fun `selectAppJvm still finds the fresh fixture after the gradle client has exited`() {
         val scenario = GradleLaunchScenario(clientReaped = true)
         assertEquals(scenario.freshFixturePid, scenario.select(nameFilter = "ComposeFixtureMain"))
+    }
+
+    @Test
+    fun `selectAppJvm picks a name-matched fixture parented by a Gradle worker`() {
+        val launchedAt = Instant.parse("2026-08-23T10:00:00Z")
+        val clientPid = 12_300L
+        val daemonPid = 12_310L
+        val workerPid = 12_320L
+        val fixturePid = 12_672L
+        val selected =
+            LaunchDescendantDiscovery.selectAppJvm(
+                clientPid = clientPid,
+                nameFilter = "ComposeFixtureMain",
+                clientStart = launchedAt,
+                listed =
+                    listOf(
+                        JvmProcessInfo(
+                            daemonPid,
+                            "org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.7.1",
+                        ),
+                        JvmProcessInfo(
+                            workerPid,
+                            "org.gradle.process.internal.worker.GradleWorkerMain",
+                        ),
+                        JvmProcessInfo(
+                            fixturePid,
+                            "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt",
+                        ),
+                    ),
+                descendantsOf = { emptySet() },
+                parentOf = { pid ->
+                    when (pid) {
+                        workerPid -> daemonPid
+                        fixturePid -> workerPid
+                        else -> null
+                    }
+                },
+                startInstantOf = { pid ->
+                    when (pid) {
+                        fixturePid -> launchedAt.plusSeconds(5)
+                        workerPid -> launchedAt.plusSeconds(2)
+                        daemonPid -> launchedAt.minusSeconds(3_600)
+                        else -> launchedAt
+                    }
+                },
+                nativeFallback = { _, _, _ -> null },
+            )
+        assertEquals(fixturePid, selected)
+    }
+
+    @Test
+    fun `selectAppJvm never returns a Gradle worker pid as the app JVM`() {
+        val launchedAt = Instant.parse("2026-08-23T10:00:00Z")
+        val clientPid = 12_300L
+        val workerPid = 12_320L
+        val selected =
+            LaunchDescendantDiscovery.selectAppJvm(
+                clientPid = clientPid,
+                nameFilter = "ComposeFixtureMain",
+                clientStart = launchedAt,
+                listed =
+                    listOf(
+                        JvmProcessInfo(
+                            workerPid,
+                            "org.gradle.process.internal.worker.GradleWorkerMain",
+                        )
+                    ),
+                descendantsOf = { emptySet() },
+                parentOf = { null },
+                startInstantOf = { launchedAt.plusSeconds(2) },
+                nativeFallback = { _, _, _ -> null },
+            )
+        assertNull(selected)
+    }
+
+    @Test
+    fun `selectAppJvm accepts a unique name-matched fixture when parent is unknown`() {
+        // macOS ProcessHandle.parent() is often empty; native argv is hidden. list() already
+        // shows ComposeFixtureMain and predatesLaunch dropped leftovers — do not time out.
+        val launchedAt = Instant.parse("2026-08-23T10:00:00Z")
+        val clientPid = 12_300L
+        val daemonPid = 12_310L
+        val fixturePid = 12_672L
+        val selected =
+            LaunchDescendantDiscovery.selectAppJvm(
+                clientPid = clientPid,
+                nameFilter = "ComposeFixtureMain",
+                clientStart = launchedAt,
+                listed =
+                    listOf(
+                        JvmProcessInfo(
+                            daemonPid,
+                            "org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.7.1",
+                        ),
+                        JvmProcessInfo(
+                            fixturePid,
+                            "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt",
+                        ),
+                    ),
+                descendantsOf = { emptySet() },
+                parentOf = { null },
+                startInstantOf = { pid ->
+                    if (pid == fixturePid) launchedAt.plusSeconds(5)
+                    else launchedAt.minusSeconds(3_600)
+                },
+                nativeFallback = { _, _, _ -> null },
+            )
+        assertEquals(fixturePid, selected)
+    }
+
+    @Test
+    fun `selectAppJvm rejects ambiguous unparented name matches instead of picking the highest pid`() {
+        // Concurrent same-named Gradle apps + empty ProcessHandle.parent(): both fixtures are
+        // post-launch name matches. PID order is not identity — keep polling rather than steal
+        // the other launch's JVM.
+        val launchedAt = Instant.parse("2026-08-23T10:00:00Z")
+        val clientPid = 12_300L
+        val daemonPid = 12_310L
+        val thisLaunchPid = 12_672L
+        val otherLaunchPid = 12_900L
+        val selected =
+            LaunchDescendantDiscovery.selectAppJvm(
+                clientPid = clientPid,
+                nameFilter = "ComposeFixtureMain",
+                clientStart = launchedAt,
+                listed =
+                    listOf(
+                        JvmProcessInfo(
+                            daemonPid,
+                            "org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.7.1",
+                        ),
+                        JvmProcessInfo(
+                            thisLaunchPid,
+                            "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt",
+                        ),
+                        JvmProcessInfo(
+                            otherLaunchPid,
+                            "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt",
+                        ),
+                    ),
+                descendantsOf = { emptySet() },
+                parentOf = { null },
+                startInstantOf = { pid ->
+                    when (pid) {
+                        thisLaunchPid,
+                        otherLaunchPid -> launchedAt.plusSeconds(5)
+                        else -> launchedAt.minusSeconds(3_600)
+                    }
+                },
+                nativeFallback = { _, _, _ -> null },
+            )
+        assertNull(
+            selected,
+            "must not pick max pid=$otherLaunchPid when two unparented name matches exist",
+        )
+    }
+
+    @Test
+    fun `pickNativeTreeJvm does not treat a unique unnamed java as a name-filter match`() {
+        // macOS hides argv, so a Gradle worker looks like a lone `java`. Uniqueness is not
+        // identity when the caller asked for a main-class filter.
+        assertNull(
+            pickNativeTreeJvm(
+                nameFilter = "ComposeFixtureMain",
+                namedMatches = emptyList(),
+                javaDescendants = listOf(12_320L),
+            )
+        )
+    }
+
+    @Test
+    fun `pickNativeTreeJvm still returns a command-line name match`() {
+        assertEquals(
+            12_672L,
+            pickNativeTreeJvm(
+                nameFilter = "ComposeFixtureMain",
+                namedMatches = listOf(12_672L),
+                javaDescendants = listOf(12_320L, 12_672L),
+            ),
+        )
+    }
+
+    @Test
+    fun `selectAppJvm still skips leftover when parent is unknown`() {
+        val launchedAt = Instant.parse("2026-08-23T10:00:00Z")
+        val clientPid = 12_300L
+        val leftoverPid = 12_900L
+        val freshPid = 12_672L
+        val selected =
+            LaunchDescendantDiscovery.selectAppJvm(
+                clientPid = clientPid,
+                nameFilter = "ComposeFixtureMain",
+                clientStart = launchedAt,
+                listed =
+                    listOf(
+                        JvmProcessInfo(
+                            leftoverPid,
+                            "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt",
+                        ),
+                        JvmProcessInfo(
+                            freshPid,
+                            "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt",
+                        ),
+                    ),
+                descendantsOf = { emptySet() },
+                parentOf = { null },
+                startInstantOf = { pid ->
+                    when (pid) {
+                        leftoverPid -> launchedAt.minusSeconds(600)
+                        freshPid -> launchedAt.plusSeconds(5)
+                        else -> launchedAt
+                    }
+                },
+                nativeFallback = { _, _, _ -> null },
+            )
+        assertEquals(freshPid, selected)
+    }
+
+    @Test
+    fun `selectAppJvm still walks the native tree when the attach list is empty`() {
+        val scenario = GradleLaunchScenario(includeFreshFixture = false)
+        assertEquals(
+            NATIVE_FALLBACK_PID,
+            LaunchDescendantDiscovery.selectAppJvm(
+                clientPid = scenario.clientPid,
+                nameFilter = "ComposeFixtureMain",
+                clientStart = scenario.launchedAt,
+                listed = emptyList(),
+                descendantsOf = { emptySet() },
+                parentOf = { null },
+                startInstantOf = { null },
+                nativeFallback = { _, _, _ -> NATIVE_FALLBACK_PID },
+            ),
+        )
     }
 
     @Test

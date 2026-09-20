@@ -170,21 +170,21 @@ class Issue460NonInputDesktopTest {
         val pid = AtomicLong(-1)
         val ready = CountDownLatch(1)
         Thread {
-                runCatching {
-                    generateSequence(reader::readLine).forEach { line ->
-                        if (line.startsWith(READY_SENTINEL) && ready.count > 0) {
-                            pid.set(
-                                line
-                                    .substringAfter("pid=", "")
-                                    .substringBefore(' ')
-                                    .trim()
-                                    .toLongOrNull() ?: -1L
-                            )
-                            ready.countDown()
-                        }
+            runCatching {
+                generateSequence(reader::readLine).forEach { line ->
+                    if (line.startsWith(READY_SENTINEL) && ready.count > 0) {
+                        pid.set(
+                            line
+                                .substringAfter("pid=", "")
+                                .substringBefore(' ')
+                                .trim()
+                                .toLongOrNull() ?: -1L
+                        )
+                        ready.countDown()
                     }
                 }
             }
+        }
             .apply {
                 isDaemon = true
                 name = "issue460-fixture-drainer"
@@ -213,12 +213,11 @@ class Issue460NonInputDesktopTest {
     }
 
     /** A box with only Windows PowerShell 5.1 should skip, not error. */
-    private fun isPwshAvailable(): Boolean =
-        runCatching {
-                val probe = ProcessBuilder("pwsh", "-NoProfile", "-Command", "exit 0").start()
-                probe.waitFor(PWSH_PROBE_S, TimeUnit.SECONDS) && probe.exitValue() == 0
-            }
-            .getOrDefault(false)
+    private fun isPwshAvailable(): Boolean = runCatching {
+        val probe = ProcessBuilder("pwsh", "-NoProfile", "-Command", "exit 0").start()
+        probe.waitFor(PWSH_PROBE_S, TimeUnit.SECONDS) && probe.exitValue() == 0
+    }
+        .getOrDefault(false)
 
     /** The launcher ships as a test resource; PowerShell needs it as a real file on disk. */
     private fun launcherScript(): Path {

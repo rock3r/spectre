@@ -15,14 +15,13 @@ import java.awt.Window
  * a renamed internal field degrades gracefully (returns `null`) instead of crashing the rest of the
  * automator. Same multi-version policy as overlays (#322): single pinned-Compose chain,
  * degrade-to-empty/null — no adapter matrix for 1.0
- * (`docs/spikes/209-injection/overlay-adapter-policy.md`). The chain is:
+ * (`docs/spikes/209-injection/overlay-adapter-policy.md`). CMP 1.12 moved the live [Recomposer]
+ * onto `ComposeSceneMediator.frameRecomposer`; the chain is:
  * ```
  * ComposeWindow.composePanel  (ComposeWindowPanel)
  *   ._composeContainer         (ComposeContainer)
  *   .mediator                  (ComposeSceneMediator)
- *   .scene                     (ComposeScene / BaseComposeScene — backing field of `by lazy`,
- *                                 fall back to the synthetic `getScene` accessor)
- *   .recomposer                (ComposeSceneRecomposer)
+ *   .frameRecomposer           (FrameRecomposer; `getFrameRecomposer()` if the field is missing)
  *   .recomposer                (Recomposer)
  * ```
  *
@@ -37,10 +36,10 @@ public object RecomposerInspector {
     private const val COMPOSE_PANEL_FIELD = "composePanel"
     private const val COMPOSE_CONTAINER_FIELD = "_composeContainer"
     private const val MEDIATOR_FIELD = "mediator"
-    private const val SCENE_FIELD = "scene"
-    private const val SCENE_GETTER = "getScene"
-    private const val SCENE_RECOMPOSER_FIELD = "recomposer"
-    private const val SCENE_RECOMPOSER_INNER_FIELD = "recomposer"
+    private const val FRAME_RECOMPOSER_FIELD = "frameRecomposer"
+    private const val FRAME_RECOMPOSER_GETTER = "getFrameRecomposer"
+    private const val RECOMPOSER_FIELD = "recomposer"
+    private const val COMPOSITION_CONTEXT_GETTER = "getCompositionContext"
 
     /**
      * Returns the [Recomposer] for [trackedWindow]'s main surface, or `null` for surfaces this MVP
@@ -81,15 +80,16 @@ public object RecomposerInspector {
     private fun findRecomposerInHostChainBelowComposeContainer(panelHost: Any): Recomposer? {
         val composeContainer = readField(panelHost, COMPOSE_CONTAINER_FIELD) ?: return null
         val mediator = readField(composeContainer, MEDIATOR_FIELD) ?: return null
-        // `scene` is a `by lazy` property: the backing field is named `scene$delegate` (a Lazy
-        // wrapper), so a direct `getDeclaredField("scene")` returns null on real CMP. The
-        // synthetic getter `getScene()` triggers initialisation and returns the live scene; in
-        // fake hierarchies that use a plain `val`, the field read succeeds first and we never
-        // hit the getter path.
-        val scene = readField(mediator, SCENE_FIELD) ?: invokeGetter(mediator, SCENE_GETTER)
-        if (scene == null) return null
-        val sceneRecomposer = readField(scene, SCENE_RECOMPOSER_FIELD) ?: return null
-        val recomposer = readField(sceneRecomposer, SCENE_RECOMPOSER_INNER_FIELD) ?: return null
+        // CMP 1.12 stores the live Recomposer on FrameRecomposer. The field is private; the
+        // getter is public and is the fallback when a host only exposes the accessor.
+        val frameRecomposer =
+            readField(mediator, FRAME_RECOMPOSER_FIELD)
+                ?: invokeGetter(mediator, FRAME_RECOMPOSER_GETTER)
+                ?: return null
+        if (frameRecomposer is Recomposer) return frameRecomposer
+        val recomposer =
+            readField(frameRecomposer, RECOMPOSER_FIELD)
+                ?: invokeGetter(frameRecomposer, COMPOSITION_CONTEXT_GETTER)
         return recomposer as? Recomposer
     }
 

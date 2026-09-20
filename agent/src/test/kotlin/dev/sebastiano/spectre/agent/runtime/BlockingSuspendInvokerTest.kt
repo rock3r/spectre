@@ -23,15 +23,14 @@ class BlockingSuspendInvokerTest {
                 .getMethod("suspendUntilReleased", Continuation::class.java)
         val result = AtomicReference<Any?>()
         val invocationFinished = CountDownLatch(1)
-        val thread =
-            Thread {
-                    try {
-                        result.set(BlockingSuspendInvoker().invoke(method, target))
-                    } finally {
-                        invocationFinished.countDown()
-                    }
-                }
-                .apply { start() }
+        val thread = Thread {
+            try {
+                result.set(BlockingSuspendInvoker().invoke(method, target))
+            } finally {
+                invocationFinished.countDown()
+            }
+        }
+            .apply { start() }
         val continuation = target.continuation.get(3, TimeUnit.SECONDS)
 
         thread.interrupt()
@@ -55,17 +54,16 @@ class BlockingSuspendInvokerTest {
                 .getMethod("suspendUntilReleased", Continuation::class.java)
         val failure = AtomicReference<Throwable?>()
         val invocationFinished = CountDownLatch(1)
-        val thread =
-            Thread {
-                    try {
-                        BlockingSuspendInvoker(timeoutMs = 20).invoke(method, target)
-                    } catch (caught: Throwable) {
-                        failure.set(caught)
-                    } finally {
-                        invocationFinished.countDown()
-                    }
-                }
-                .apply { start() }
+        val thread = Thread {
+            try {
+                BlockingSuspendInvoker(timeoutMs = 20).invoke(method, target)
+            } catch (caught: Throwable) {
+                failure.set(caught)
+            } finally {
+                invocationFinished.countDown()
+            }
+        }
+            .apply { start() }
         val continuation = target.continuation.get(3, TimeUnit.SECONDS)
 
         assertFalse(

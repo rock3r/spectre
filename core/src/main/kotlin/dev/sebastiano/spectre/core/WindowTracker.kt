@@ -1,4 +1,4 @@
-@file:OptIn(InternalSpectreApi::class)
+@file:OptIn(InternalSpectreApi::class, androidx.compose.runtime.tooling.ComposeToolingApi::class)
 
 package dev.sebastiano.spectre.core
 

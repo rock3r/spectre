@@ -25,7 +25,8 @@ class CoordinatorEndpointTest {
         val expected =
             CoordinatorEndpointResolver.resolve(
                 baseDirectory = Path.of("/tmp"),
-                effectiveUserId = requireNotNull(ProcessHandle.current().info().user().orElse(null)),
+                effectiveUserId =
+                    requireNotNull(ProcessHandle.current().info().user().orElse(null)),
             )
 
         assertEquals(expected, LocalCoordinatorEnvironment.defaultEndpoint())

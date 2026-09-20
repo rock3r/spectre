@@ -88,14 +88,13 @@ public object DesktopInputIsolation {
     /** Acquires a lease synchronously for a JUnit lifecycle running off the AWT EDT. */
     public fun acquire(options: InputLeaseOptions = InputLeaseOptions()): AutomatorInputLease {
         val coordinator = ProductionInputLeaseCoordinator()
-        val lease =
-            runCatching {
-                    runBlocking { coordinator.acquire(options, "junitPerTest", immediate = false) }
-                }
-                .getOrElse { failure ->
-                    coordinator.close()
-                    throw failure
-                }
+        val lease = runCatching {
+            runBlocking { coordinator.acquire(options, "junitPerTest", immediate = false) }
+        }
+            .getOrElse { failure ->
+                coordinator.close()
+                throw failure
+            }
         return ProductionAutomatorInputLease(lease, coordinator)
     }
 }

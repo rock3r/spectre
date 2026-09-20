@@ -1,3 +1,4 @@
+@file:OptIn(androidx.compose.runtime.tooling.ComposeToolingApi::class)
 @file:Suppress("MatchingDeclarationName") // file-level utilities; `main` is the entry point.
 
 package dev.sebastiano.spectre.agent.fixture

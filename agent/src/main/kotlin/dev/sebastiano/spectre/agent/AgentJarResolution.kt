@@ -53,8 +53,10 @@ internal object AgentJarResolution {
     }
 
     private fun hasSpectreIdentityMarker(directory: Path): Boolean {
-        val settings =
-            runCatching { Files.readString(directory.resolve("settings.gradle.kts")) }.getOrNull()
+        val settings = runCatching {
+            Files.readString(directory.resolve("settings.gradle.kts"))
+        }
+            .getOrNull()
         if (
             settings != null &&
                 ACTIVE_SPECTRE_ROOT_NAME.containsMatchIn(stripKotlinLikeNonCode(settings))

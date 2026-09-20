@@ -175,13 +175,13 @@ internal constructor(
         val isolationKey = isolationStoreKey(context)
         store.put(isolationKey, isolation)
         runCatching {
-                isolation.acquireBeforeFactory()
-                val automator = isolation.createAutomator(factory, managedFactory)
-                isolation.bindAfterFactory(automator)
-                store.put(STORE_KEY, automator)
-                lastInstance = automator
-                startFailureVideo(context, automator)
-            }
+            isolation.acquireBeforeFactory()
+            val automator = isolation.createAutomator(factory, managedFactory)
+            isolation.bindAfterFactory(automator)
+            store.put(STORE_KEY, automator)
+            lastInstance = automator
+            startFailureVideo(context, automator)
+        }
             .onFailure {
                 store.remove(STORE_KEY)
                 store.remove(isolationKey)

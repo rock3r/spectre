@@ -63,7 +63,8 @@ class LaunchAndAttachIntegrationTest {
                             agentBootstrapMs = 20_000,
                             firstWindowMs = 30_000,
                         ),
-                    attachOptions = AttachOptions(agentJarPath = agentJar, attachTimeoutMs = 20_000),
+                    attachOptions =
+                        AttachOptions(agentJarPath = agentJar, attachTimeoutMs = 20_000),
                 )
             )
             .use { session ->

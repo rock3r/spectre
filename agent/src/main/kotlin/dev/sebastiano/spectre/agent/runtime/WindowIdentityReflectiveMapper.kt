@@ -64,9 +64,10 @@ internal object WindowIdentityReflectiveMapper {
         target: Any,
         name: String,
         default: Double,
-    ): Double =
-        runCatching { (klass.getMethod(name).invoke(target) as Number).toDouble() }
-            .getOrDefault(default)
+    ): Double = runCatching {
+        (klass.getMethod(name).invoke(target) as Number).toDouble()
+    }
+        .getOrDefault(default)
 
     private fun invokeInt(klass: Class<*>, target: Any, name: String): Int =
         (klass.getMethod(name).invoke(target) as Number).toInt()

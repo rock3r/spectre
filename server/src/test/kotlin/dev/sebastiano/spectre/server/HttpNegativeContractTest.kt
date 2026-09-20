@@ -56,15 +56,15 @@ class HttpNegativeContractTest {
     // --- Server-side decode failures -----------------------------------------------------
 
     @Test
-    fun `POST click with empty body returns 415`() = testApplication {
-        // Empty body + `Content-Type: application/json` reaches Ktor's content-negotiation
-        // precheck before our `receiveOrRespond400` wrapper. The precheck rejects the
-        // zero-byte body with 415 because there's nothing for the JSON converter to read —
-        // we pin that here so a future Ktor upgrade that changed it to 400 would notice us.
+    fun `POST click with empty body returns 400`() = testApplication {
+        // Ktor 3.6+ no longer 415s an empty `application/json` body at the content-negotiation
+        // precheck. The empty payload now reaches `receiveOrRespond400`, which responds 400
+        // with the curated type name and no body echo.
         application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
         val response =
             postRaw("/spectre/click", body = "", contentType = ContentType.Application.Json)
-        assertEquals(HttpStatusCode.UnsupportedMediaType, response.status)
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertBodyMentions(response, "ClickRequest")
     }
 
     @Test
@@ -140,14 +140,14 @@ class HttpNegativeContractTest {
     }
 
     @Test
-    fun `POST typeText with empty body returns 415`() = testApplication {
-        // Symmetry confirmation that the same Ktor content-negotiation precheck applies to
-        // /typeText — empty body with `application/json` is rejected as 415 before our
-        // `receiveOrRespond400` wrapper runs. Pinned for the same reason as the /click case.
+    fun `POST typeText with empty body returns 400`() = testApplication {
+        // Symmetry with `/click`: Ktor 3.6+ delivers an empty `application/json` body to
+        // `receiveOrRespond400`, which answers 400 naming the request type.
         application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
         val response =
             postRaw("/spectre/typeText", body = "", contentType = ContentType.Application.Json)
-        assertEquals(HttpStatusCode.UnsupportedMediaType, response.status)
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertBodyMentions(response, "TypeTextRequest")
     }
 
     @Test

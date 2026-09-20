@@ -71,8 +71,8 @@ public object HotReloadPortDiscovery {
     public fun readPortFromPidFile(path: Path, expectedPid: Long? = null): Int? {
         if (!path.isRegularFile()) return null
         return runCatching {
-                parsePortFromPidFileProperties(Files.readString(path), expectedPid = expectedPid)
-            }
+            parsePortFromPidFileProperties(Files.readString(path), expectedPid = expectedPid)
+        }
             .getOrNull()
     }
 

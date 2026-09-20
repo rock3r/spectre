@@ -57,8 +57,8 @@ class RunSpectreUiTest {
         val testContext =
             Starter.newContext(
                     CurrentTestMethod.hyphenateWithClass(),
-                    // The plugin compiles against IntelliJ IDEA 2026.2.0.1 (build
-                    // 262.8665.337 = IU). As of 2026.2, ide-starter split product defaults
+                    // The plugin compiles against IntelliJ IDEA 2026.2.3 (build
+                    // 262.10968.63 = IU). As of 2026.2, ide-starter split product defaults
                     // into `ide-starter-product-*` modules; IU is
                     // `IdeaUltimateProductInit().ideInfo` (IdeProductProvider was removed).
                     // As of the 253.x line JetBrains also stopped shipping a distinct
@@ -254,12 +254,12 @@ class RunSpectreUiTest {
     }
 
     private companion object {
-        // IntelliJ IDEA 2026.2.0.1 build number (resolves to IU here — see comment on the
+        // IntelliJ IDEA 2026.2.3 build number (resolves to IU here — see comment on the
         // `IdeProductProvider.IU` use above). Must stay in lockstep with `intellijIdea` /
         // `ideStarter` in `gradle/libs.versions.toml` — bumping those means updating this
         // constant to the matching build (product→build map:
         // https://data.services.jetbrains.com/products?code=IIU&release.type=release).
-        const val IDE_BUILD_NUMBER = "262.8665.337"
+        const val IDE_BUILD_NUMBER = "262.10968.63"
         const val SPECTRE_ACTION_ID = "dev.sebastiano.spectre.sample.RunSpectre"
         // Matches every test-tagged node the manual smoke proved discoverable in PR #43.
         // Keep this list aligned with `SpectreSampleToolWindowContent`'s `Modifier.testTag`

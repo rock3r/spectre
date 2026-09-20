@@ -205,7 +205,9 @@ class IpcRoundTripTest {
                                 )
                                 Framing.writeFrame(
                                     output,
-                                    WireCodec.encode(OpRequest(opId = 1L, body = AgentRequest.Ping)),
+                                    WireCodec.encode(
+                                        OpRequest(opId = 1L, body = AgentRequest.Ping)
+                                    ),
                                 )
                                 WireCodec.decodeOpResponse(
                                         Framing.readFrame(input) ?: error("no ping response")

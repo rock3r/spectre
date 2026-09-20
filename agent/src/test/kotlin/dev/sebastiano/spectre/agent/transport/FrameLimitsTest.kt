@@ -165,7 +165,9 @@ class FrameLimitsTest {
     fun `environment override wins over the default`() {
         assertEquals(
             32 * 1024 * 1024,
-            FrameLimits.resolveBudget { name -> if (name == FrameLimits.ENV_VAR) "32MiB" else null },
+            FrameLimits.resolveBudget { name ->
+                if (name == FrameLimits.ENV_VAR) "32MiB" else null
+            },
         )
     }
 

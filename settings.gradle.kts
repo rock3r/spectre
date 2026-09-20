@@ -75,7 +75,7 @@ plugins {
     // accept script-scope expressions for `version`. Keep the project-level plugin in
     // `sample-intellij-plugin/build.gradle.kts` applied without a version (`id(...)` only) so
     // it inherits this version through the settings classpath — single source of truth.
-    id("org.jetbrains.intellij.platform.settings") version "2.10.1"
+    id("org.jetbrains.intellij.platform.settings") version "2.19.0"
 }
 
 include(":core")

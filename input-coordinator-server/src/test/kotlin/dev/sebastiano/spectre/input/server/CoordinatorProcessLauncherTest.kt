@@ -71,15 +71,15 @@ class CoordinatorProcessLauncherTest {
 
         while (!acquired && System.nanoTime() < deadline) {
             runCatching {
-                    LocalInputCoordinatorClient.connect(
-                            endpoint,
-                            DesktopResourceKey("user:501/macos-console"),
-                            "forked test",
-                        )
-                        .use { client ->
-                            client.acquire(Duration.ofSeconds(1), "click").use { acquired = true }
-                        }
-                }
+                LocalInputCoordinatorClient.connect(
+                        endpoint,
+                        DesktopResourceKey("user:501/macos-console"),
+                        "forked test",
+                    )
+                    .use { client ->
+                        client.acquire(Duration.ofSeconds(1), "click").use { acquired = true }
+                    }
+            }
                 .onFailure {
                     lastFailure = it
                     Thread.onSpinWait()
