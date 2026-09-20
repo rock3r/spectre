@@ -21,7 +21,9 @@ import org.junit.jupiter.api.TestInfo
  * names that include `Any.toString()` identity-hash text (`Foo@4a12bc`) keep only the stable
  * `[index]` or `repetition N of M` token. Constant custom names — including ones that merely
  * resemble JUnit's default, such as `@ParameterizedTest(name = "[1] theme")` — require
- * [invocationKey].
+ * [invocationKey]. Ordinary `@Test` methods on a JUnit 5 `@ParameterizedClass` or `@ClassTemplate`
+ * also require [invocationKey]: [testInfo] exposes the method display name, not the class
+ * invocation.
  */
 public fun assertMatchesGold(
     testInfo: TestInfo,

@@ -61,11 +61,11 @@ internal fun resolveJunitTestMethod(
  * `@ParameterizedTest` and `@RepeatedTest`).
  */
 internal fun Method.isJunitTestMethod(): Boolean = annotations.any {
-    isJunitTestAnnotation(it.annotationClass.java)
+    annotationMetaNamed(it.annotationClass.java, JUNIT_TEST_ANNOTATION_NAMES)
 }
 
 internal fun Method.isJunitTestTemplate(): Boolean = annotations.any {
-    isJunitTemplateAnnotation(it.annotationClass.java)
+    annotationMetaNamed(it.annotationClass.java, JUNIT_TEMPLATE_ANNOTATION_NAMES)
 }
 
 internal fun resolveInvocationKey(
@@ -99,11 +99,28 @@ private fun identityFromResolved(cls: Class<*>, method: Method): Pair<String, St
 private fun requiresExplicitInvocationKey(testClassName: String, testMethodName: String): Boolean {
     val cls = runCatching { Class.forName(testClassName) }.getOrNull() ?: return false
     if (isJunit4ParameterizedHost(cls)) return true
+    if (isJunit5ClassTemplateHost(cls)) return true
     return cls.declaredMethods.any { method ->
         method.isJunitTestTemplate() &&
             (junitMethodIdentity(method) == testMethodName || method.name == testMethodName)
     }
 }
+
+/**
+ * JUnit 5.14 `@ParameterizedClass` (and `@ClassTemplate`) re-runs ordinary `@Test` methods once per
+ * class invocation. Detect the class-level template — including meta-annotations, `@Inherited`
+ * declarations, and enclosing parameterized hosts — without resolving `ParameterizedClass` so
+ * consumers that omit `junit-jupiter-params` stay intact.
+ */
+private fun isJunit5ClassTemplateHost(cls: Class<*>): Boolean =
+    generateSequence(cls) { current ->
+            current.enclosingClass?.takeUnless { it == Any::class.java }
+        }
+        .any { host ->
+            host.annotations.any {
+                annotationMetaNamed(it.annotationClass.java, JUNIT_CLASS_TEMPLATE_ANNOTATION_NAMES)
+            }
+        }
 
 /**
  * JUnit 4 `@RunWith(Parameterized)` executes each parameter set as an ordinary `@Test`. Detect that
@@ -144,37 +161,30 @@ private val GOLD_FACADE_CLASSES =
         "dev.sebastiano.spectre.testing.ScreenshotGoldIdentityKt",
     )
 
-private fun isJunitTestAnnotation(
-    annotationType: Class<out Annotation>,
-    visited: MutableSet<String> = mutableSetOf(),
-): Boolean {
-    val name = annotationType.name
-    if (!visited.add(name)) return false
-    when (name) {
+private val JUNIT_TEST_ANNOTATION_NAMES =
+    setOf(
         "org.junit.jupiter.api.Test",
         "org.junit.jupiter.api.TestTemplate",
         "org.junit.jupiter.api.TestFactory",
         "org.junit.platform.commons.annotation.Testable",
-        "org.junit.Test" -> return true
-    }
-    if (name.startsWith("java.") || name.startsWith("kotlin.")) return false
-    return annotationType.annotations.any { meta ->
-        isJunitTestAnnotation(meta.annotationClass.java, visited)
-    }
-}
+        "org.junit.Test",
+    )
 
-private fun isJunitTemplateAnnotation(
+private val JUNIT_TEMPLATE_ANNOTATION_NAMES =
+    setOf("org.junit.jupiter.api.TestTemplate", "org.junit.jupiter.api.TestFactory")
+
+private val JUNIT_CLASS_TEMPLATE_ANNOTATION_NAMES = setOf("org.junit.jupiter.api.ClassTemplate")
+
+private fun annotationMetaNamed(
     annotationType: Class<out Annotation>,
+    names: Set<String>,
     visited: MutableSet<String> = mutableSetOf(),
 ): Boolean {
     val name = annotationType.name
     if (!visited.add(name)) return false
-    when (name) {
-        "org.junit.jupiter.api.TestTemplate",
-        "org.junit.jupiter.api.TestFactory" -> return true
-    }
+    if (name in names) return true
     if (name.startsWith("java.") || name.startsWith("kotlin.")) return false
     return annotationType.annotations.any { meta ->
-        isJunitTemplateAnnotation(meta.annotationClass.java, visited)
+        annotationMetaNamed(meta.annotationClass.java, names, visited)
     }
 }

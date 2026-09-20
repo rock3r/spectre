@@ -8,10 +8,13 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.ClassTemplate
 import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.RepeatedTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInfo
+import org.junit.jupiter.params.ParameterizedClass
+import org.junit.jupiter.params.provider.ValueSource
 
 class ScreenshotGoldIdentityTest {
 
@@ -142,6 +145,111 @@ class ScreenshotGoldIdentityTest {
                 invocationKey = null,
             )
         )
+    }
+
+    @Test
+    fun `JUnit 5 ParameterizedClass hosts require invocationKey`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                resolveInvocationKey(
+                    GoldIdentityJunit5ParameterizedClassHost::class.java.name,
+                    "name-only gold assert requires invocationKey",
+                    invocationKey = null,
+                )
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
+        assertEquals(
+            "dark",
+            resolveInvocationKey(
+                GoldIdentityJunit5ParameterizedClassHost::class.java.name,
+                "name-only gold assert requires invocationKey",
+                invocationKey = "dark",
+            ),
+        )
+    }
+
+    @Test
+    fun `JUnit 5 ClassTemplate hosts require invocationKey`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                resolveInvocationKey(
+                    GoldIdentityJunit5ClassTemplateHost::class.java.name,
+                    "probe",
+                    invocationKey = null,
+                )
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
+        assertEquals(
+            "dark",
+            resolveInvocationKey(
+                GoldIdentityJunit5ClassTemplateHost::class.java.name,
+                "probe",
+                invocationKey = "dark",
+            ),
+        )
+    }
+
+    @Test
+    fun `composed ParameterizedClass hosts require invocationKey`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                resolveInvocationKey(
+                    GoldIdentityJunit5ComposedParameterizedClassHost::class.java.name,
+                    "probe",
+                    invocationKey = null,
+                )
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
+    }
+
+    @Test
+    fun `nested hosts inside ParameterizedClass require invocationKey`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                resolveInvocationKey(
+                    GoldIdentityJunit5ParameterizedClassOuter.NestedHost::class.java.name,
+                    "probe",
+                    invocationKey = null,
+                )
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
+    }
+
+    @Test
+    fun `inherited ParameterizedClass hosts require invocationKey`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                resolveInvocationKey(
+                    GoldIdentityJunit5ParameterizedClassChild::class.java.name,
+                    "probe",
+                    invocationKey = null,
+                )
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
+    }
+
+    @Test
+    fun `TestInfo cannot invent a key for ParameterizedClass ordinary tests`() {
+        val method =
+            GoldIdentityJunit5ParameterizedClassHost::class
+                .java
+                .getDeclaredMethod("name-only gold assert requires invocationKey")
+        val info =
+            fakeTestInfo(
+                "name-only gold assert requires invocationKey()",
+                GoldIdentityJunit5ParameterizedClassHost::class.java,
+                method,
+            )
+        assertNull(invocationKeyFromTestInfo(info))
+        val error =
+            assertFailsWith<IllegalStateException> {
+                resolveInvocationKey(
+                    GoldIdentityJunit5ParameterizedClassHost::class.java.name,
+                    method.name,
+                    invocationKey = invocationKeyFromTestInfo(info),
+                )
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
     }
 
     @Test
@@ -282,3 +390,74 @@ internal class GoldIdentityJunit4ParameterizedHost(private val themeIndex: Int) 
         fun data(): Collection<Array<Any>> = listOf(arrayOf(1), arrayOf(1))
     }
 }
+
+/**
+ * JUnit 5.14 `@ParameterizedClass` host. Each constructor argument set runs the same ordinary
+ * `@Test`, so gold identity must fail closed without an explicit `invocationKey`.
+ */
+@ParameterizedClass
+@ValueSource(ints = [1, 1])
+internal class GoldIdentityJunit5ParameterizedClassHost(private val themeIndex: Int) {
+    @Test
+    fun `name-only gold assert requires invocationKey`() {
+        assertEquals(1, themeIndex)
+        val image = java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+        image.setRGB(0, 0, 0xFFFFFFFF.toInt())
+        val error =
+            assertFailsWith<IllegalStateException> {
+                assertMatchesGold(name = "main-window", image = image)
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
+    }
+}
+
+@Disabled("reflective fixture for JUnit 5 ClassTemplate gold identity")
+@ClassTemplate
+internal class GoldIdentityJunit5ClassTemplateHost {
+    @Test
+    fun probe() {
+        error("class-template fixture")
+    }
+}
+
+@Target(AnnotationTarget.CLASS)
+@Retention(AnnotationRetention.RUNTIME)
+@ParameterizedClass
+private annotation class ComposedGoldParameterizedClass
+
+@Disabled("reflective fixture for composed ParameterizedClass gold identity")
+@ComposedGoldParameterizedClass
+@ValueSource(ints = [1])
+internal class GoldIdentityJunit5ComposedParameterizedClassHost {
+    @Test
+    fun probe() {
+        error("composed parameterized-class fixture")
+    }
+}
+
+@Disabled("reflective fixture for nested ParameterizedClass gold identity")
+@ParameterizedClass
+@ValueSource(ints = [1])
+internal class GoldIdentityJunit5ParameterizedClassOuter {
+    @Disabled("reflective fixture for nested ParameterizedClass gold identity")
+    class NestedHost {
+        @Test
+        fun probe() {
+            error("nested parameterized-class fixture")
+        }
+    }
+}
+
+@Disabled("reflective fixture for inherited ParameterizedClass gold identity")
+@ParameterizedClass
+@ValueSource(ints = [1])
+internal open class GoldIdentityJunit5ParameterizedClassBase {
+    @Test
+    fun probe() {
+        error("inherited parameterized-class fixture")
+    }
+}
+
+@Disabled("reflective fixture for inherited ParameterizedClass gold identity")
+internal class GoldIdentityJunit5ParameterizedClassChild :
+    GoldIdentityJunit5ParameterizedClassBase()
