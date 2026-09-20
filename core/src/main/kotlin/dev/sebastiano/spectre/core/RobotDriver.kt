@@ -638,6 +638,15 @@ internal interface RobotAdapter : ScreenCaptureAdapter {
     val deliversRealOsInput: Boolean
         get() = false
 
+    /**
+     * True when Ctrl/Cmd+A cannot be relied on to select the whole field. Wayland portal keysyms
+     * often do not apply Control as a sticky modifier, so [clearAndTypeText] then adds Home +
+     * Shift+End. Default is false so a successful full-field select-all is not collapsed to one
+     * line.
+     */
+    val needsSelectAllLineFallback: Boolean
+        get() = false
+
     fun mouseMove(x: Int, y: Int)
 
     /**

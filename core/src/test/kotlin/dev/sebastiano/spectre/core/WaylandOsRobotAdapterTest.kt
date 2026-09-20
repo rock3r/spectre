@@ -100,6 +100,12 @@ class WaylandOsRobotAdapterTest {
     }
 
     @Test
+    fun `Wayland adapters request a select-all line fallback`() {
+        assertTrue(MissingWaylandHelperAdapter.needsSelectAllLineFallback)
+        assertTrue(seatSocketRobotAdapterForTests().needsSelectAllLineFallback)
+    }
+
+    @Test
     fun `seat screenshot commands include AWT display bounds for HiDPI mapping`() {
         val json =
             waylandScreenshotCommandJson(

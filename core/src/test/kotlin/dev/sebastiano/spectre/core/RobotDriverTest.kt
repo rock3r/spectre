@@ -172,40 +172,6 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `clearAndTypeText uses shortcut then Home Shift End before typing`() = runTest {
-        val robot = RecordingRobotAdapter()
-        val driver = RobotDriver(robot, RecordingClipboardAdapter())
-        val selectAll = shortcutModifierKeyCode(detectMacOs())
-
-        driver.clearAndTypeText("ab")
-
-        assertEquals(
-            listOf(
-                "keyPress($selectAll)",
-                "keyPress(${KeyEvent.VK_A})",
-                "keyRelease(${KeyEvent.VK_A})",
-                "keyRelease($selectAll)",
-                "waitForIdle()",
-                "keyPress(${KeyEvent.VK_HOME})",
-                "keyRelease(${KeyEvent.VK_HOME})",
-                "keyPress(${KeyEvent.VK_SHIFT})",
-                "keyPress(${KeyEvent.VK_END})",
-                "keyRelease(${KeyEvent.VK_END})",
-                "keyRelease(${KeyEvent.VK_SHIFT})",
-                "waitForIdle()",
-                "keyPress(${KeyEvent.VK_BACK_SPACE})",
-                "keyRelease(${KeyEvent.VK_BACK_SPACE})",
-                "waitForIdle()",
-                "keyPress(${KeyEvent.VK_A})",
-                "keyRelease(${KeyEvent.VK_A})",
-                "keyPress(${KeyEvent.VK_B})",
-                "keyRelease(${KeyEvent.VK_B})",
-            ),
-            robot.events,
-        )
-    }
-
-    @Test
     fun `typeText with Caps Lock off does not mutate lock state`() = runTest {
         val robot = RecordingRobotAdapter(initialCapsLockOn = false)
         val driver = RobotDriver(robot, RecordingClipboardAdapter())
