@@ -346,10 +346,13 @@ methods that call it directly. It recognizes `@Test`, `@ParameterizedTest`,
 must not share a gold. The `TestInfo` facade keys those invocations from the JUnit
 display name only when the annotation `name` pattern varies per invocation *and* the
 resolved display looks unique (`[1] dark`, `repetition 1 of 2`). JUnit's omitted
-default (`{default_display_name}`) counts as varying. Constant custom names such as
-`@ParameterizedTest(name = "theme")` or `@ParameterizedTest(name = "[1] theme")`
-require an explicit `invocationKey`. The name-only overload cannot see the invocation,
-so it always requires `invocationKey` and fails closed without one.
+default (`{default_display_name}`) counts as varying. Display names that include
+`Any.toString()` identity-hash text (`Foo@4a12bc`) keep only the stable `[index]` or
+`repetition N of M` token so the gold path does not change between JVM runs. Constant
+custom names such as `@ParameterizedTest(name = "theme")` or
+`@ParameterizedTest(name = "[1] theme")` require an explicit `invocationKey`. The
+name-only overload cannot see the invocation, so it always requires `invocationKey`
+and fails closed without one.
 
 The default `scaleKey` prefers the captured window's display scale when a showing AWT
 window's outer, client, content-pane, or *showing* embedded ComposePanel size matches
@@ -375,7 +378,7 @@ src/test/resources/spectre-golds/
   <test-class>/
     <test-method>/
       <name>/
-        [<invocation>/]       # parameterized / repeated display name, or invocationKey
+        [<invocation>/]       # stable display / [index] / repetition, or invocationKey
         <os>/                 # macos | windows | linux-x11 | linux-wayland
           scale-<sx>x<sy>/    # captured window display; else default screen; or pass scaleKey
             gold.png
@@ -410,8 +413,8 @@ mismatches omit the diff and delete any stale `diff.png` left from a prior equal
 separators, reserved Windows device names) and truncated to 255 UTF-8 bytes so long
 parameterized display names stay inside filesystem component limits. Rewritten
 segments get a short stable suffix so distinct names such as `foo/bar` and `foo_bar`,
-`NUL` and `NUL_`, `Main` and `main`, or Greek `σ` and `ς`, cannot share a gold or
-report path. A later passing run, update-mode write, missing-gold
+`NUL` and `NUL_`, `Main` and `main`, Greek `σ` and `ς`, or Hangul `가` and Jamo `가`,
+cannot share a gold or report path. A later passing run, update-mode write, missing-gold
 failure, or unreadable gold deletes leftover report PNGs from a prior mismatch so CI
 does not upload stale failures. CI upload:
 

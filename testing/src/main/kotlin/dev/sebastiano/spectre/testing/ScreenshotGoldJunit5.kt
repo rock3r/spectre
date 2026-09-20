@@ -16,8 +16,10 @@ import org.junit.jupiter.api.TestInfo
  * `@ParameterizedTest` and `@RepeatedTest` invocations are keyed from [testInfo]'s display name
  * only when the annotation `name` pattern varies per invocation *and* the resolved display looks
  * unique (`[index] …` or `repetition N of M`). JUnit 5.14's omitted/`{default_display_name}`
- * pattern counts as varying. Constant custom names — including ones that merely resemble JUnit's
- * default, such as `@ParameterizedTest(name = "[1] theme")` — require [invocationKey].
+ * pattern counts as varying. Display names that include `Any.toString()` identity-hash text
+ * (`Foo@4a12bc`) keep only the stable `[index]` or `repetition N of M` token. Constant custom names
+ * — including ones that merely resemble JUnit's default, such as `@ParameterizedTest(name = "[1]
+ * theme")` — require [invocationKey].
  */
 public fun assertMatchesGold(
     testInfo: TestInfo,
@@ -59,7 +61,13 @@ internal fun invocationKeyFromTestInfo(testInfo: TestInfo): String? {
     // Only trust the display name when the annotation pattern itself varies.
     if (!method.hasVaryingInvocationNamePattern()) return null
     val display = testInfo.displayName.trim().takeIf { it.isNotEmpty() } ?: return null
-    return display.takeIf(::looksUniqueInvocationLabel)
+    return stableInvocationKeyFromDisplay(display)
+}
+
+internal fun stableInvocationKeyFromDisplay(display: String): String? {
+    if (!looksUniqueInvocationLabel(display)) return null
+    if (!containsIdentityHashText(display)) return display
+    return parameterizedInvocationIndex(display) ?: repeatedInvocationIndex(display)
 }
 
 internal fun java.lang.reflect.Method.hasVaryingInvocationNamePattern(): Boolean {
@@ -82,9 +90,20 @@ internal fun looksUniqueInvocationLabel(display: String): Boolean {
     return false
 }
 
+internal fun containsIdentityHashText(display: String): Boolean =
+    IDENTITY_HASH_TEXT.containsMatchIn(display)
+
+private fun parameterizedInvocationIndex(display: String): String? =
+    PARAMETERIZED_INVOCATION_LABEL.find(display)?.value
+
+private fun repeatedInvocationIndex(display: String): String? =
+    REPEATED_INVOCATION_LABEL.find(display)?.value?.trim()
+
 private val PARAMETERIZED_INVOCATION_LABEL = Regex("""^\[\d+]""")
 private val REPEATED_INVOCATION_LABEL =
     Regex("""(?:^| )repetition \d+(?: of \d+)?$""", RegexOption.IGNORE_CASE)
+// Object.toString() / default Any.toString(): ClassName@hex, arrays, nested types.
+private val IDENTITY_HASH_TEXT = Regex("""(?:[\w.$]+|\[+[ZBCSIJFD]|\[+L[\w.$]+;)@[0-9a-fA-F]+""")
 private val VARYING_INVOCATION_PLACEHOLDER =
     Regex(
         """\{index\}|\{arguments(?:WithNames)?\}|""" +

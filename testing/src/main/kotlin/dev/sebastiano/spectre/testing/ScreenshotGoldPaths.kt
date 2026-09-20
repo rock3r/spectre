@@ -5,6 +5,7 @@ import dev.sebastiano.spectre.core.isWaylandSession
 import java.awt.GraphicsConfiguration
 import java.nio.file.Path
 import java.security.MessageDigest
+import java.text.Normalizer
 import java.util.HexFormat
 import java.util.Locale
 
@@ -129,13 +130,21 @@ public object ScreenshotGoldPaths {
         val escaped = escapeReservedWindowsDeviceName(core)
         // Hash when the segment was rewritten (`foo/bar`, `NUL`), when it is not already
         // in a filesystem-relevant Unicode case fold (`Main` vs `main`, Greek `ς` vs `σ`),
-        // or when it already occupies the `_` + 8-hex suffix namespace so a literal
-        // `foo_bar_cc5d46bd` cannot collide with hashed `foo/bar`.
+        // when NFC would change it (Hangul `가` vs Jamo `가` on macOS), or when it already
+        // occupies the `_` + 8-hex suffix namespace so a literal `foo_bar_cc5d46bd`
+        // cannot collide with hashed `foo/bar`.
         val caseFoldingCollision = escaped != filesystemCaseFold(escaped)
+        // APFS/HFS+ treat NFC and NFD as the same name; fingerprint the decomposed alias.
+        val normalizationCollision = escaped != Normalizer.normalize(escaped, Normalizer.Form.NFC)
         val occupiesFingerprintNamespace = FINGERPRINT_SUFFIX.containsMatchIn(escaped)
         val fingerprint = stableSegmentFingerprint(raw)
         val candidate =
-            if (escaped == raw && !caseFoldingCollision && !occupiesFingerprintNamespace) {
+            if (
+                escaped == raw &&
+                    !caseFoldingCollision &&
+                    !normalizationCollision &&
+                    !occupiesFingerprintNamespace
+            ) {
                 escaped
             } else {
                 "${escaped}_$fingerprint"

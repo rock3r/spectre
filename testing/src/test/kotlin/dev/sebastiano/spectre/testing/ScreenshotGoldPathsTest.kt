@@ -283,6 +283,48 @@ class ScreenshotGoldPathsTest {
     }
 
     @Test
+    fun `unicode normalization aliases stay distinct on macOS filesystems`() {
+        val composed = "\uAC00" // Hangul syllable 가 (NFC)
+        val jamo = "\u1100\u1161" // choseong ᄀ + jungseong ᅡ (NFD)
+        assertNotEquals(composed, jamo)
+        val composedSeg = ScreenshotGoldPaths.sanitizeGoldSegment(composed)
+        val jamoSeg = ScreenshotGoldPaths.sanitizeGoldSegment(jamo)
+        assertEquals(composed, composedSeg)
+        assertNotEquals(composedSeg, jamoSeg)
+        assertTrue(jamoSeg.matches(Regex("\u1100\u1161_[0-9a-f]{8}")), jamoSeg)
+    }
+
+    @Test
+    fun `hangul nfc and nfd names resolve to distinct gold files`(@TempDir temp: Path) {
+        val composed =
+            ScreenshotGoldPaths.goldFile(
+                temp,
+                "dev.example.HomeTest",
+                "renders",
+                "\uAC00",
+                "macos",
+                "scale-1x1",
+            )
+        val jamo =
+            ScreenshotGoldPaths.goldFile(
+                temp,
+                "dev.example.HomeTest",
+                "renders",
+                "\u1100\u1161",
+                "macos",
+                "scale-1x1",
+            )
+        assertNotEquals(composed, jamo)
+        assertEquals("\uAC00", composed.parent.parent.parent.fileName.toString())
+        assertTrue(
+            jamo.parent.parent.parent.fileName
+                .toString()
+                .matches(Regex("\u1100\u1161_[0-9a-f]{8}")),
+            jamo.toString(),
+        )
+    }
+
+    @Test
     fun `colliding identities resolve to distinct gold files`(@TempDir temp: Path) {
         val slash =
             ScreenshotGoldPaths.goldFile(

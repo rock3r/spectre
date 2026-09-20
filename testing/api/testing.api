@@ -218,6 +218,7 @@ public final class dev/sebastiano/spectre/testing/ScreenshotGoldPaths {
 
 public final class dev/sebastiano/spectre/testing/ScreenshotTolerance {
 	public static final field Companion Ldev/sebastiano/spectre/testing/ScreenshotTolerance$Companion;
+	public static final field MAX_CHANNEL_DELTA I
 	public fun <init> ()V
 	public fun <init> (ILjava/lang/Integer;Ljava/lang/Double;)V
 	public synthetic fun <init> (ILjava/lang/Integer;Ljava/lang/Double;ILkotlin/jvm/internal/DefaultConstructorMarker;)V

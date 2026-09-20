@@ -36,7 +36,8 @@ import kotlin.math.roundToInt
  *
  * `@ParameterizedTest` and `@RepeatedTest` invocations that share a [name] must pass
  * [invocationKey] here, or use the TestInfo facade when its display name is unique per invocation
- * (`[1] …` or `repetition N of M`). Constant custom display names still require [invocationKey].
+ * (`[1] …` or `repetition N of M`). Identity-hash display text (`Foo@4a12bc`) keeps only that
+ * index. Constant custom display names still require [invocationKey].
  *
  * [scaleKey] defaults to the captured window's display scale when a showing AWT window's outer,
  * client, content-pane, or showing embedded ComposePanel size matches the still (or every showing

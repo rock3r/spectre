@@ -65,6 +65,41 @@ class ScreenshotGoldJunit5Test {
     }
 
     @Test
+    fun `identity-hash display names keep only the stable invocation index`() {
+        val method = parameterizedMethod()
+        assertEquals(
+            "[1]",
+            invocationKeyFromTestInfo(fakeTestInfo("[1] value=Foo@4a12bc", method)),
+        )
+        assertEquals(
+            "[2]",
+            invocationKeyFromTestInfo(fakeTestInfo("[2] [Ldev.example.Theme;@7f31245a", method)),
+        )
+        assertEquals(
+            "repetition 1 of 2",
+            invocationKeyFromTestInfo(
+                fakeTestInfo("Foo@4a12bc repetition 1 of 2", repeatedMethod())
+            ),
+        )
+    }
+
+    @Test
+    fun `identity-hash display without a stable index requires invocationKey`() {
+        val method = parameterizedMethod()
+        val info = fakeTestInfo("value=Foo@4a12bc", method)
+        assertNull(invocationKeyFromTestInfo(info))
+        val error =
+            assertFailsWith<IllegalStateException> {
+                resolveInvocationKey(
+                    ScreenshotGoldJunit5Test::class.java.name,
+                    "ParameterizedTest methods are recognized for gold identity",
+                    invocationKey = invocationKeyFromTestInfo(info),
+                )
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
+    }
+
+    @Test
     fun `TestInfo repeated-test display name is a unique invocation key`() {
         val info = fakeTestInfo("repetition 1 of 2", repeatedMethod())
         assertEquals("repetition 1 of 2", invocationKeyFromTestInfo(info))
