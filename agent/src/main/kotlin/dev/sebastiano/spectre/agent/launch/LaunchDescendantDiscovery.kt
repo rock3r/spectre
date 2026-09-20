@@ -169,12 +169,12 @@ public object LaunchDescendantDiscovery {
             nativeFallback(clientPid, daemonPids, nameFilter)?.let {
                 return it
             }
-            // list() already found a post-launch name match, but we could not prove it is a
-            // client descendant or daemon/worker child. On macOS `ProcessHandle.parent()` is
-            // often empty, JavaExec parents the app to a Worker that VirtualMachine.list()
-            // may omit, and the native walk cannot see argv. predatesLaunch already dropped
-            // leftovers — prefer that listed JVM over polling until JVM_ATTACHABLE times out.
-            return nameMatched.maxByOrNull { it.pid }?.pid
+            // list() already found post-launch name match(es), but we could not prove parentage.
+            // On macOS ProcessHandle.parent() is often empty and JavaExec may parent the app
+            // to a Worker that VirtualMachine.list() omitted. A unique match is enough —
+            // predatesLaunch already dropped leftovers. Two matches are concurrent launches;
+            // PID order is not identity, so keep polling rather than steal the other JVM.
+            return nameMatched.singleOrNull()?.pid
         }
 
         // No name filter: only client descendants (never unfiltered daemon children).
@@ -285,9 +285,7 @@ public object LaunchDescendantDiscovery {
         val named = javaDescendants.filter { pid ->
             nameFilter.isNullOrBlank() || commandLineContains(pid, nameFilter)
         }
-        // macOS often hides argv (`ProcessHandle.info().arguments()` is empty), so a unique
-        // post-launch java child of the client/daemon/worker is this launch's app JVM.
-        return named.maxOrNull() ?: javaDescendants.singleOrNull()
+        return pickNativeTreeJvm(nameFilter, named, javaDescendants)
     }
 
     private fun commandLineLooksLikeGradleDaemon(pid: Long): Boolean {
@@ -346,3 +344,16 @@ public object LaunchDescendantDiscovery {
     private fun parentPid(pid: Long): Long? =
         ProcessHandle.of(pid).flatMap { it.parent() }.map { it.pid() }.orElse(null)
 }
+
+/**
+ * Pick among native-tree java descendants after command-line name filtering.
+ *
+ * When [nameFilter] is set, only [namedMatches] count. A unique unnamed `java` may be a Gradle
+ * worker whose argv is hidden — uniqueness is not identity proof.
+ */
+internal fun pickNativeTreeJvm(
+    nameFilter: String?,
+    namedMatches: Collection<Long>,
+    javaDescendants: Collection<Long>,
+): Long? =
+    namedMatches.maxOrNull() ?: javaDescendants.singleOrNull().takeIf { nameFilter.isNullOrBlank() }

@@ -372,6 +372,78 @@ class LaunchDescendantDiscoveryTest {
     }
 
     @Test
+    fun `selectAppJvm rejects ambiguous unparented name matches instead of picking the highest pid`() {
+        // Concurrent same-named Gradle apps + empty ProcessHandle.parent(): both fixtures are
+        // post-launch name matches. PID order is not identity — keep polling rather than steal
+        // the other launch's JVM.
+        val launchedAt = Instant.parse("2026-08-23T10:00:00Z")
+        val clientPid = 12_300L
+        val daemonPid = 12_310L
+        val thisLaunchPid = 12_672L
+        val otherLaunchPid = 12_900L
+        val selected =
+            LaunchDescendantDiscovery.selectAppJvm(
+                clientPid = clientPid,
+                nameFilter = "ComposeFixtureMain",
+                clientStart = launchedAt,
+                listed =
+                    listOf(
+                        JvmProcessInfo(
+                            daemonPid,
+                            "org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.7.1",
+                        ),
+                        JvmProcessInfo(
+                            thisLaunchPid,
+                            "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt",
+                        ),
+                        JvmProcessInfo(
+                            otherLaunchPid,
+                            "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt",
+                        ),
+                    ),
+                descendantsOf = { emptySet() },
+                parentOf = { null },
+                startInstantOf = { pid ->
+                    when (pid) {
+                        thisLaunchPid,
+                        otherLaunchPid -> launchedAt.plusSeconds(5)
+                        else -> launchedAt.minusSeconds(3_600)
+                    }
+                },
+                nativeFallback = { _, _, _ -> null },
+            )
+        assertNull(
+            selected,
+            "must not pick max pid=$otherLaunchPid when two unparented name matches exist",
+        )
+    }
+
+    @Test
+    fun `pickNativeTreeJvm does not treat a unique unnamed java as a name-filter match`() {
+        // macOS hides argv, so a Gradle worker looks like a lone `java`. Uniqueness is not
+        // identity when the caller asked for a main-class filter.
+        assertNull(
+            pickNativeTreeJvm(
+                nameFilter = "ComposeFixtureMain",
+                namedMatches = emptyList(),
+                javaDescendants = listOf(12_320L),
+            )
+        )
+    }
+
+    @Test
+    fun `pickNativeTreeJvm still returns a command-line name match`() {
+        assertEquals(
+            12_672L,
+            pickNativeTreeJvm(
+                nameFilter = "ComposeFixtureMain",
+                namedMatches = listOf(12_672L),
+                javaDescendants = listOf(12_320L, 12_672L),
+            ),
+        )
+    }
+
+    @Test
     fun `selectAppJvm still skips leftover when parent is unknown`() {
         val launchedAt = Instant.parse("2026-08-23T10:00:00Z")
         val clientPid = 12_300L
