@@ -24,10 +24,10 @@ import org.junit.jupiter.api.TestInfo
  * This overload infers the test from the **calling thread** stack. Inside [runSpectreTest], use the
  * [TestInfo] overload instead — the body runs on a worker dispatcher that has no JUnit frame.
  *
- * [scaleKey] defaults to the captured window's display scale when that can be inferred from showing
- * AWT windows; otherwise the primary/default screen transform. Pass an explicit key (from
- * [ScreenshotGoldPaths.scaleKey]) when the window is on a different monitor than the fallback or
- * when several densities are visible.
+ * [scaleKey] defaults to the captured window's display scale when a showing AWT window's outer,
+ * client, or content-pane size matches the still (or every showing window shares one density).
+ * Otherwise it uses the primary/default screen transform. Pass an explicit key (from
+ * [ScreenshotGoldPaths.scaleKey]) when several densities are visible and inference is ambiguous.
  */
 public fun assertMatchesGold(
     name: String,
