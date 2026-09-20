@@ -6,68 +6,61 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
-import io.ktor.server.application.createRouteScopedPlugin
-import io.ktor.server.application.install
+import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.plugins.origin
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.intercept
 
+// Ktor's route-scoped `onCall` hook cannot terminate the routing pipeline. This lower-level
+// interceptor is deliberate: every rejection must call `finish()` before privileged handlers run.
+@Suppress("DEPRECATION")
 internal fun Route.installExposureGuard(security: SpectreHttpSecurity) {
-    install(SpectreExposureGuard) { this.security = security }
-}
+    intercept(ApplicationCallPipeline.Plugins) {
+        val call = context
+        if (!call.usesAllowedTransport(security)) {
+            call.respond(HttpStatusCode.UpgradeRequired, "HTTPS required")
+            finish()
+            return@intercept
+        }
 
-private class SpectreExposureGuardConfig {
-    lateinit var security: SpectreHttpSecurity
-}
+        val originValues = call.request.headers.getAll(HttpHeaders.Origin)
+        val requestedMethodValues =
+            call.request.headers.getAll(HttpHeaders.AccessControlRequestMethod)
+        if ((originValues?.size ?: 0) > 1 || (requestedMethodValues?.size ?: 0) > 1) {
+            call.respond(HttpStatusCode.Forbidden, "CORS request rejected")
+            finish()
+            return@intercept
+        }
+        val origin = originValues?.singleOrNull()
+        val requestedMethod = requestedMethodValues?.singleOrNull()
+        val isPreflight =
+            call.request.local.method == HttpMethod.Options &&
+                origin != null &&
+                requestedMethod != null
 
-private val SpectreExposureGuard =
-    createRouteScopedPlugin(
-        name = "SpectreHttpExposureGuard",
-        createConfiguration = ::SpectreExposureGuardConfig,
-    ) {
-        val security = pluginConfig.security
-        onCall { call ->
-            if (!call.usesAllowedTransport(security)) {
-                call.respond(HttpStatusCode.UpgradeRequired, "HTTPS required")
-                return@onCall
-            }
+        if (isPreflight) {
+            call.respondToPreflight(security, origin, requestedMethod)
+            finish()
+            return@intercept
+        }
 
-            val originValues = call.request.headers.getAll(HttpHeaders.Origin)
-            val requestedMethodValues =
-                call.request.headers.getAll(HttpHeaders.AccessControlRequestMethod)
-            if ((originValues?.size ?: 0) > 1 || (requestedMethodValues?.size ?: 0) > 1) {
-                call.respond(HttpStatusCode.Forbidden, "CORS request rejected")
-                return@onCall
-            }
-            val origin = originValues?.singleOrNull()
-            val requestedMethod = requestedMethodValues?.singleOrNull()
-            val isPreflight =
-                call.request.local.method == HttpMethod.Options &&
-                    origin != null &&
-                    requestedMethod != null
+        if (origin != null && !call.allowCorsOrigin(security, origin)) {
+            call.respond(HttpStatusCode.Forbidden, "Origin not allowed")
+            finish()
+            return@intercept
+        }
 
-            if (isPreflight) {
-                call.respondToPreflight(security, origin, requestedMethod)
-                return@onCall
-            }
-
-            if (origin != null && !call.allowCorsOrigin(security, origin)) {
-                call.respond(HttpStatusCode.Forbidden, "Origin not allowed")
-                return@onCall
-            }
-
-            val authorizationValues = call.request.headers.getAll(HttpHeaders.Authorization)
-            val authorized =
-                authorizationValues?.singleOrNull()?.let(security::acceptsAuthorization) == true
-            if (!authorized) {
-                call.response.headers.append(
-                    HttpHeaders.WWWAuthenticate,
-                    """Bearer realm="Spectre"""",
-                )
-                call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
-            }
+        val authorizationValues = call.request.headers.getAll(HttpHeaders.Authorization)
+        val authorized =
+            authorizationValues?.singleOrNull()?.let(security::acceptsAuthorization) == true
+        if (!authorized) {
+            call.response.headers.append(HttpHeaders.WWWAuthenticate, """Bearer realm="Spectre"""")
+            call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
+            finish()
         }
     }
+}
 
 private fun ApplicationCall.usesAllowedTransport(security: SpectreHttpSecurity): Boolean =
     request.origin.scheme.equals("https", ignoreCase = true) ||

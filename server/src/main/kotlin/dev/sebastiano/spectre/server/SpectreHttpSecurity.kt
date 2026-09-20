@@ -22,7 +22,7 @@ public class SpectreHttpSecurity(
     allowedOrigins: Set<String> = emptySet(),
     public val allowInsecureLoopback: Boolean = false,
 ) {
-    public val allowedOrigins: Set<String> = allowedOrigins.toSet()
+    public val allowedOrigins: Set<String> = java.util.Set.copyOf(allowedOrigins)
 
     init {
         require(bearerToken.length >= MINIMUM_BEARER_LENGTH) {

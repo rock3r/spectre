@@ -4,13 +4,25 @@ package dev.sebastiano.spectre.server
 
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.RobotDriver
+import dev.sebastiano.spectre.server.dto.TypeTextRequest
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.options
 import io.ktor.client.request.post
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
+import io.ktor.serialization.kotlinx.json.json
+import io.ktor.server.application.install
+import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.request.receive
+import io.ktor.server.response.respond
+import io.ktor.server.routing.post
+import io.ktor.server.routing.route
+import io.ktor.server.routing.routing
 import io.ktor.server.testing.testApplication
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -44,6 +56,33 @@ class HttpExposureSecurityTest {
         assertEquals(HttpStatusCode.OK, valid.status)
         assertFalse(wrong.bodyAsText().contains("wrong-token"))
         assertFalse(wrong.bodyAsText().contains(TEST_HTTP_TOKEN))
+    }
+
+    @Test
+    fun `unauthenticated valid typeText is terminated before driver handler`() = testApplication {
+        val driver = RecordingTypeTextDriver()
+        application {
+            install(ContentNegotiation) { json() }
+            routing {
+                route("/spectre") {
+                    installExposureGuard(testHttpSecurity())
+                    post("/typeText") {
+                        val request = call.receive<TypeTextRequest>()
+                        driver.typeText(request.text)
+                        call.respond(HttpStatusCode.NoContent)
+                    }
+                }
+            }
+        }
+
+        val response =
+            client.post("/spectre/typeText") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"text":"must-not-be-typed"}""")
+            }
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertEquals(0, driver.calls)
     }
 
     @Test
@@ -144,6 +183,32 @@ class HttpExposureSecurityTest {
         assertFailsWith<IllegalArgumentException> { SpectreHttpSecurity(bearerToken = "too-short") }
         assertFailsWith<IllegalArgumentException> {
             SpectreHttpSecurity(bearerToken = TEST_HTTP_TOKEN, allowedOrigins = setOf("*"))
+        }
+    }
+
+    @Test
+    fun `allowedOrigins is immutable and detached from caller set`() {
+        val allowed = "https://runner.example"
+        val attacker = "https://attacker.example"
+        val source = mutableSetOf(allowed)
+        val security = SpectreHttpSecurity(TEST_HTTP_TOKEN, allowedOrigins = source)
+
+        source += attacker
+        assertFailsWith<UnsupportedOperationException> {
+            (security.allowedOrigins as MutableSet<String>).add(attacker)
+        }
+
+        assertTrue(security.allowsOrigin(allowed))
+        assertFalse(security.allowsOrigin(attacker))
+        assertEquals(setOf(allowed), security.allowedOrigins)
+    }
+
+    private class RecordingTypeTextDriver {
+        var calls: Int = 0
+            private set
+
+        fun typeText(@Suppress("UNUSED_PARAMETER") text: String) {
+            calls++
         }
     }
 }
