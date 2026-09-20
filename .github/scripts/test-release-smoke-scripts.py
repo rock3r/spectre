@@ -1585,6 +1585,11 @@ class MacOsTccPreflightTest(unittest.TestCase):
             f'-ea -D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}="/tmp/my helper" -Xmx2g'
         )
         self.assertEqual(Path("/tmp/my helper"), quoted)
+        last_wins = smoke_lib.parse_screencapture_helper_dir_property(
+            f"-D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}=/tmp/first -Xmx2g "
+            f"-D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}=/tmp/second"
+        )
+        self.assertEqual(Path("/tmp/second"), last_wins)
 
     def test_unparseable_helper_dir_property_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
