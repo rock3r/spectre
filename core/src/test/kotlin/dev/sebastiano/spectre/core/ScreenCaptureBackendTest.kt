@@ -37,6 +37,24 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
+    fun `native usability probe is absent without recording on the classpath`() {
+        val recordingFreeLoader =
+            object : ClassLoader(null) {
+                override fun loadClass(name: String, resolve: Boolean): Class<*> =
+                    throw ClassNotFoundException(name)
+            }
+
+        assertFalse(isNativePlatformCaptureUsable(recordingFreeLoader))
+    }
+
+    @Test
+    fun `native usability probe loads when recording is present`() {
+        // Value is host-dependent (Linux needs gst-launch-1.0). The contract is that reflection
+        // reaches the recording bridge instead of throwing.
+        isNativePlatformCaptureUsable(javaClass.classLoader)
+    }
+
+    @Test
     fun `headless driver disables platform capture routing`() {
         assertFalse(RobotDriver.headless().allowsPlatformCapture)
     }

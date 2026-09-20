@@ -315,6 +315,35 @@ private const val XDPYINFO_READER_JOIN_MS: Long = 500
  * absence of the bridge makes implicit window capture fail loudly; callers may opt in to the
  * independent screen-region API when that is the capture they want.
  */
+/**
+ * Asks the optional recording bridge whether the platform helper can actually capture.
+ *
+ * Class presence is not enough on Linux: `spectre-recording` can load while `gst-launch-1.0` is
+ * missing (#503). Older recording jars without the probe method keep the 0.6.0 "class present"
+ * behaviour.
+ */
+internal fun isNativePlatformCaptureUsable(classLoader: ClassLoader): Boolean {
+    val bridge =
+        try {
+            Class.forName(NATIVE_WINDOW_CAPTURE_BRIDGE, false, classLoader)
+        } catch (_: ClassNotFoundException) {
+            return false
+        }
+    val probe =
+        try {
+            bridge.getMethod("isPlatformCaptureUsable")
+        } catch (_: NoSuchMethodException) {
+            return true
+        }
+    return try {
+        probe.invoke(null) as? Boolean ?: false
+    } catch (_: InvocationTargetException) {
+        false
+    } catch (_: ReflectiveOperationException) {
+        false
+    }
+}
+
 internal fun nativeWindowCaptureFor(classLoader: ClassLoader): ((Window) -> BufferedImage)? {
     val bridge =
         try {

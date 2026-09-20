@@ -13,12 +13,16 @@ import java.awt.image.BufferedImage
  *
  * When [nativeWindowCaptureAvailable] is true, uses window-scoped pixels via
  * [ScreenCaptureBackend.captureWindow] and crops to [surfaceRegion]. Failures do **not** fall back
- * to screen-region capture (that would reintroduce occlusion sensitivity #355 exists to remove).
- * Returning `null` makes the visual-idle streak reset so the wait times out rather than reporting
- * fake stability.
+ * to screen-region capture (that would reintroduce occlusion sensitivity #355 exists to remove),
+ * except when the native helper cannot actually run (#503: recording classes present but GStreamer
+ * / platform helper missing). That case is treated as "native unavailable" and uses
+ * [ScreenCaptureBackend.captureRegion], matching 0.4.0 Robot sampling.
  *
- * When the native bridge is absent or disabled, falls back to [ScreenCaptureBackend.captureRegion]
- * so visual-idle still works in environments without `spectre-recording` on the classpath.
+ * Returning `null` for other native failures makes the visual-idle streak reset so the wait times
+ * out rather than reporting fake stability.
+ *
+ * When the native bridge is absent, disabled, or not actually usable, falls back to
+ * [ScreenCaptureBackend.captureRegion].
  */
 internal fun captureSurfaceForVisualIdle(
     backend: ScreenCaptureBackend,
@@ -46,8 +50,12 @@ internal fun captureSurfaceForVisualIdle(
         }
     } catch (_: UnsupportedOperationException) {
         null
-    } catch (_: IllegalStateException) {
-        null
+    } catch (error: IllegalStateException) {
+        if (isNativeCaptureHelperUnusable(error)) {
+            backend.captureRegion(surfaceRegion)
+        } else {
+            null
+        }
     } catch (_: IllegalArgumentException) {
         null
     }
@@ -85,20 +93,41 @@ internal fun hashTrackedSurfacesForVisualIdle(
 /**
  * True when window-scoped native stills can be used for visual-idle / atomic capture.
  *
- * Requires the recording-owned bridge on the classpath and a [RobotDriver] that allows platform
- * capture. GitHub Actions Windows runners are treated as non-interactive: Windows Graphics Capture
- * needs an interactive console there (same gate as Issue14 screenshot validation), so callers fall
- * back to region sampling instead of hanging on a one-shot WGC helper.
+ * Requires the recording-owned bridge on the classpath, a [RobotDriver] that allows platform
+ * capture, and a host where the platform helper can actually run. Class presence alone is not
+ * enough: Linux stills need `gst-launch-1.0` (#503). GitHub Actions Windows runners are treated as
+ * non-interactive: Windows Graphics Capture needs an interactive console there (same gate as
+ * Issue14 screenshot validation), so callers fall back to region sampling instead of hanging on a
+ * one-shot WGC helper.
  */
 internal fun isNativeWindowCaptureAvailable(
     classLoader: ClassLoader = VisualIdleSurfaceCapture::class.java.classLoader,
     allowsPlatformCapture: Boolean = true,
     osName: String = System.getProperty("os.name").orEmpty(),
     getenv: (String) -> String? = System::getenv,
+    platformCaptureUsable: (ClassLoader) -> Boolean = ::isNativePlatformCaptureUsable,
 ): Boolean {
     if (!allowsPlatformCapture) return false
     if (isNonInteractiveHostedWindows(osName, getenv)) return false
-    return nativeWindowCaptureFor(classLoader) != null
+    if (nativeWindowCaptureFor(classLoader) == null) return false
+    return platformCaptureUsable(classLoader)
+}
+
+/**
+ * True when a native-window capture failure means the helper cannot run, not that this window was
+ * ambiguous or occluded.
+ *
+ * [captureSurfaceForVisualIdle] may region-fallback in this case (#503). Other native failures stay
+ * unsampleable so #355's no-silent-region-substitute rule still holds.
+ */
+internal fun isNativeCaptureHelperUnusable(error: Throwable): Boolean {
+    val messages = generateSequence(error) { it.cause }.mapNotNull { it.message }
+    return messages.any { message ->
+        message.contains("Linux screenshot helper failed", ignoreCase = true) ||
+            message.contains("gst-launch", ignoreCase = true) ||
+            (message.contains("Linux", ignoreCase = true) &&
+                message.contains("screenshot is unavailable", ignoreCase = true))
+    }
 }
 
 /**

@@ -18,6 +18,22 @@ import java.util.concurrent.locks.ReentrantLock
 internal object NativeWindowCaptureBridge {
     private val screenshotter: AutoScreenshotter by lazy(::AutoScreenshotter)
     private val captureLocks = WeakHashMap<Window, ReentrantLock>()
+    private val cachedPlatformCaptureUsable: Boolean by lazy { computePlatformCaptureUsable() }
+
+    /**
+     * True when the host can actually run a native still (not merely load this class).
+     *
+     * Linux stills spawn `gst-launch-1.0` via the bundled helper. If that binary is missing, core
+     * treats native capture as unavailable and falls back to Robot region sampling (#503).
+     */
+    @JvmStatic
+    @JvmName("isPlatformCaptureUsable")
+    internal fun isPlatformCaptureUsable(): Boolean = cachedPlatformCaptureUsable
+
+    internal fun computePlatformCaptureUsable(
+        isLinux: () -> Boolean = HostPlatform::isLinux,
+        gstLaunchAvailable: () -> Boolean = { LinuxCaptureDependencies.isGstLaunchAvailable() },
+    ): Boolean = if (isLinux()) gstLaunchAvailable() else true
 
     @JvmStatic
     @JvmName("captureWindow")

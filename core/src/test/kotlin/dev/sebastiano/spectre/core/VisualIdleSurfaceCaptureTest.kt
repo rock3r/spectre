@@ -7,6 +7,7 @@ import java.awt.Frame
 import java.awt.Insets
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
+import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -141,6 +142,50 @@ class VisualIdleSurfaceCaptureTest {
             assertSame(regionImage, image)
             assertEquals(1, regionCalls)
             assertEquals(0, windowCalls)
+        } finally {
+            frame.dispose()
+        }
+    }
+
+    @Test
+    fun `falls back to region when native helper cannot actually run`() {
+        assumeLiveAwtAvailable()
+        val frame =
+            Frame("helper-missing").apply {
+                setBounds(0, 0, 80, 60)
+                addNotify()
+            }
+        val regionImage = solidImage(80, 60, 0xFF00AA00.toInt())
+        var regionCalls = 0
+        var windowCalls = 0
+        val backend =
+            PlatformScreenCaptureBackend(
+                regionCapture = {
+                    regionCalls += 1
+                    regionImage
+                },
+                nativeCapture = {
+                    windowCalls += 1
+                    throw IllegalStateException(
+                        "Linux screenshot helper failed",
+                        IOException("Cannot run program \"gst-launch-1.0\""),
+                    )
+                },
+                nativeCaptureBounds = { _, _, bounds, _ -> bounds },
+            )
+        try {
+            val image =
+                captureSurfaceForVisualIdle(
+                    backend = backend,
+                    window = tracked(frame),
+                    surfaceRegion = Rectangle(frame.bounds),
+                    windowBounds = Rectangle(frame.bounds),
+                    frameInsets = Insets(0, 0, 0, 0),
+                    nativeWindowCaptureAvailable = true,
+                )
+            assertSame(regionImage, image)
+            assertEquals(1, windowCalls)
+            assertEquals(1, regionCalls)
         } finally {
             frame.dispose()
         }
@@ -323,6 +368,48 @@ class VisualIdleSurfaceCaptureTest {
         } finally {
             window.dispose()
         }
+    }
+
+    @Test
+    fun `native window capture is unavailable when the platform helper cannot run`() {
+        assertFalse(
+            isNativeWindowCaptureAvailable(
+                allowsPlatformCapture = true,
+                osName = "Linux",
+                getenv = { null },
+                platformCaptureUsable = { false },
+            )
+        )
+    }
+
+    @Test
+    fun `native window capture stays available when the platform helper can run`() {
+        assertTrue(
+            isNativeWindowCaptureAvailable(
+                allowsPlatformCapture = true,
+                osName = "Linux",
+                getenv = { null },
+                platformCaptureUsable = { true },
+            )
+        )
+    }
+
+    @Test
+    fun `native capture helper-unusable recognises Linux gst-launch failures`() {
+        assertTrue(
+            isNativeCaptureHelperUnusable(
+                IllegalStateException(
+                    "Linux screenshot helper failed",
+                    IOException("Cannot run program \"gst-launch-1.0\""),
+                )
+            )
+        )
+        assertFalse(
+            isNativeCaptureHelperUnusable(
+                IllegalStateException("duplicate window title 'same title'")
+            )
+        )
+        assertFalse(isNativeCaptureHelperUnusable(UnsupportedOperationException("not a Frame")))
     }
 
     @Test
