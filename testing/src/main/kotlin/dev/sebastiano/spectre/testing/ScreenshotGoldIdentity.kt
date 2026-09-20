@@ -5,7 +5,7 @@ import java.lang.invoke.MethodType
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 
-internal fun inferTestIdentity(): Pair<String, String> =
+internal fun inferTestIdentity(): GoldTestIdentity =
     StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE).walk { frames ->
         frames.iterator().asSequence().firstNotNullOfOrNull(::testIdentityFromWalkerFrame)
     }
@@ -13,21 +13,33 @@ internal fun inferTestIdentity(): Pair<String, String> =
             "assertMatchesGold could not infer the calling test method; pass TestInfo explicitly"
         )
 
-internal fun testIdentityFromWalkerFrame(frame: StackWalker.StackFrame): Pair<String, String>? {
+internal fun testIdentityFromWalkerFrame(frame: StackWalker.StackFrame): GoldTestIdentity? {
     val cls = frame.declaringClass
-    if (isGoldFacadeClass(cls.name)) return null
+    if (
+        GOLD_FACADE_CLASSES.any { facade ->
+            cls.name == facade || cls.name.startsWith(facade + "$")
+        }
+    ) {
+        return null
+    }
     val method =
         resolveJunitTestMethod(cls.declaredMethods, frame.methodName, frame.methodType)
             ?: return null
     return identityFromResolved(cls, method)
 }
 
-internal fun testIdentityFromFrame(frame: StackTraceElement): Pair<String, String>? {
+internal fun testIdentityFromFrame(frame: StackTraceElement): GoldTestIdentity? {
     val className = frame.className
     // Skip gold facade frames, not other types whose names happen to start with
     // ScreenshotGold (e.g. ScreenshotGoldAssertTest).
-    if (isGoldFacadeClass(className)) return null
-    val cls = runCatching { Class.forName(className) }.getOrNull() ?: return null
+    if (
+        GOLD_FACADE_CLASSES.any { facade ->
+            className == facade || className.startsWith(facade + "$")
+        }
+    ) {
+        return null
+    }
+    val cls = loadTestClass(className) ?: return null
     val method = resolveJunitTestMethod(cls.declaredMethods, frame.methodName) ?: return null
     return identityFromResolved(cls, method)
 }
@@ -73,10 +85,11 @@ internal fun resolveInvocationKey(
     testMethodName: String,
     invocationKey: String?,
     derivedInvocationKey: String? = null,
+    testClass: Class<*>? = null,
 ): String? {
     val explicit = invocationKey?.takeIf { it.isNotBlank() }
     if (explicit != null) return explicit
-    val cls = runCatching { Class.forName(testClassName) }.getOrNull()
+    val cls = testClass ?: loadTestClass(testClassName)
     // Class-template hosts repeat method-level indexes ([1], repetition 1) once per outer
     // argument set. A TestInfo-derived method key is not unique across those invocations.
     if (cls != null && isJunit5ClassTemplateHost(cls)) {
@@ -87,7 +100,7 @@ internal fun resolveInvocationKey(
     }
     val derived = derivedInvocationKey?.takeIf { it.isNotBlank() }
     if (derived != null) return derived
-    if (requiresExplicitInvocationKey(testClassName, testMethodName)) {
+    if (cls != null && requiresExplicitInvocationKey(cls, testMethodName)) {
         error(
             "assertMatchesGold on a parameterized or repeated test requires invocationKey " +
                 "or a unique TestInfo display name so each invocation gets its own gold"
@@ -96,7 +109,7 @@ internal fun resolveInvocationKey(
     return null
 }
 
-private fun identityFromResolved(cls: Class<*>, method: Method): Pair<String, String> {
+private fun identityFromResolved(cls: Class<*>, method: Method): GoldTestIdentity {
     // Non-final concrete hosts can be subclassed; the stack frame names the declaring
     // class, so two children would share a gold without TestInfo.
     if (cls.isInterface || !Modifier.isFinal(cls.modifiers)) {
@@ -105,17 +118,37 @@ private fun identityFromResolved(cls: Class<*>, method: Method): Pair<String, St
                 "pass TestInfo so inherited tests key golds by the executing class"
         )
     }
-    return cls.name to junitMethodIdentity(method)
+    return GoldTestIdentity(cls, junitMethodIdentity(method))
 }
 
-private fun requiresExplicitInvocationKey(testClassName: String, testMethodName: String): Boolean {
-    val cls = runCatching { Class.forName(testClassName) }.getOrNull() ?: return false
+internal data class GoldTestIdentity(val testClass: Class<*>, val testMethodName: String) {
+    val testClassName: String
+        get() = testClass.name
+}
+
+private fun requiresExplicitInvocationKey(cls: Class<*>, testMethodName: String): Boolean {
     if (isJunit4ParameterizedHost(cls)) return true
     if (isJunit5ClassTemplateHost(cls)) return true
     return cls.declaredMethods.any { method ->
         method.isJunitTestTemplate() &&
             (junitMethodIdentity(method) == testMethodName || method.name == testMethodName)
     }
+}
+
+/**
+ * Reloads [className] with the context or supplied loader before Spectre's defining loader. Plugin
+ * and child test loaders are often invisible to one-argument `Class.forName`.
+ */
+private fun loadTestClass(className: String, hint: ClassLoader? = null): Class<*>? {
+    val loaders = listOfNotNull(hint, Thread.currentThread().contextClassLoader).distinct()
+    for (loader in loaders) {
+        runCatching { Class.forName(className, false, loader) }
+            .getOrNull()
+            ?.let {
+                return it
+            }
+    }
+    return runCatching { Class.forName(className) }.getOrNull()
 }
 
 /**
@@ -158,10 +191,6 @@ private fun isJunit4ParameterizedHost(cls: Class<*>): Boolean {
 private fun methodMatchesType(method: Method, methodType: MethodType): Boolean =
     method.returnType == methodType.returnType() &&
         method.parameterTypes.contentEquals(methodType.parameterArray())
-
-private fun isGoldFacadeClass(className: String): Boolean = GOLD_FACADE_CLASSES.any { facade ->
-    className == facade || className.startsWith(facade + "$")
-}
 
 private const val JUNIT4_RUN_WITH = "org.junit.runner.RunWith"
 private const val JUNIT4_PARAMETERIZED_RUNNER = "org.junit.runners.Parameterized"

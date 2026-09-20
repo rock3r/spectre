@@ -261,11 +261,11 @@ class ScreenshotGoldJunit5Test {
             )
         val worker = java.util.concurrent.Executors.newSingleThreadExecutor()
         try {
-            val identity = worker.submit<Pair<String, String>> { identityFromTestInfo(info) }.get()
-            assertEquals(ScreenshotGoldJunit5Test::class.java.name, identity.first)
+            val identity = worker.submit<GoldTestIdentity> { identityFromTestInfo(info) }.get()
+            assertEquals(ScreenshotGoldJunit5Test::class.java.name, identity.testClassName)
             assertEquals(
                 "template methods require an invocation key when TestInfo is absent",
-                identity.second,
+                identity.testMethodName,
             )
         } finally {
             worker.shutdownNow()
@@ -274,25 +274,34 @@ class ScreenshotGoldJunit5Test {
 
     @RepeatedTest(1)
     fun `RepeatedTest methods are recognized for gold identity`() {
-        val (cls, method) = inferTestIdentity()
-        assertEquals(ScreenshotGoldJunit5Test::class.java.name, cls)
-        assertEquals("RepeatedTest methods are recognized for gold identity", method)
+        val identity = inferTestIdentity()
+        assertEquals(ScreenshotGoldJunit5Test::class.java.name, identity.testClassName)
+        assertEquals(
+            "RepeatedTest methods are recognized for gold identity",
+            identity.testMethodName,
+        )
     }
 
     @ParameterizedTest
     @ValueSource(ints = [1])
     fun `ParameterizedTest methods are recognized for gold identity`(value: Int) {
         assertEquals(1, value)
-        val (cls, method) = inferTestIdentity()
-        assertEquals(ScreenshotGoldJunit5Test::class.java.name, cls)
-        assertEquals("ParameterizedTest methods are recognized for gold identity(int)", method)
+        val identity = inferTestIdentity()
+        assertEquals(ScreenshotGoldJunit5Test::class.java.name, identity.testClassName)
+        assertEquals(
+            "ParameterizedTest methods are recognized for gold identity(int)",
+            identity.testMethodName,
+        )
     }
 
     @ComposedGoldJunit5Test
     fun `composed Test meta-annotations are recognized for gold identity`() {
-        val (cls, method) = inferTestIdentity()
-        assertEquals(ScreenshotGoldJunit5Test::class.java.name, cls)
-        assertEquals("composed Test meta-annotations are recognized for gold identity", method)
+        val identity = inferTestIdentity()
+        assertEquals(ScreenshotGoldJunit5Test::class.java.name, identity.testClassName)
+        assertEquals(
+            "composed Test meta-annotations are recognized for gold identity",
+            identity.testMethodName,
+        )
     }
 
     @Test
@@ -306,7 +315,9 @@ class ScreenshotGoldJunit5Test {
         assertEquals(annotated, resolveJunitTestMethod(arrayOf(annotated, unannotated), "probe"))
         assertEquals("probe(int)", junitMethodIdentity(annotated))
         val frame = StackTraceElement(cls.name, "probe", "GoldJunit5OverloadHost.kt", 1)
-        assertEquals(cls.name to "probe(int)", testIdentityFromFrame(frame))
+        val identity = testIdentityFromFrame(frame)
+        assertEquals(cls, identity?.testClass)
+        assertEquals("probe(int)", identity?.testMethodName)
     }
 
     private fun parameterizedMethod(): java.lang.reflect.Method =

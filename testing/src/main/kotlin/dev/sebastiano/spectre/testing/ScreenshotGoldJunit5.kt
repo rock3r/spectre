@@ -34,30 +34,34 @@ public fun assertMatchesGold(
     scaleKey: String = currentScaleKey(image),
     invocationKey: String? = null,
 ) {
-    val (testClassName, testMethodName) = identityFromTestInfo(testInfo)
+    val identity = identityFromTestInfo(testInfo)
     assertMatchesGold(
         name = name,
         image = image,
-        testClassName = testClassName,
-        testMethodName = testMethodName,
+        testClassName = identity.testClassName,
+        testMethodName = identity.testMethodName,
         tolerance = tolerance,
         scaleKey = scaleKey,
         invocationKey =
             resolveInvocationKey(
-                testClassName,
-                testMethodName,
+                identity.testClassName,
+                identity.testMethodName,
                 invocationKey,
                 derivedInvocationKey = invocationKeyFromTestInfo(testInfo),
+                testClass = identity.testClass,
             ),
     )
 }
 
-internal fun identityFromTestInfo(testInfo: TestInfo): Pair<String, String> {
-    val fromClass = testInfo.testClass.map { it.name }.orElse(null)
+internal fun identityFromTestInfo(testInfo: TestInfo): GoldTestIdentity {
+    val fromClass = testInfo.testClass.orElse(null)
     val fromMethod = testInfo.testMethod.map(::junitMethodIdentity).orElse(null)
-    if (fromClass != null && fromMethod != null) return fromClass to fromMethod
+    if (fromClass != null && fromMethod != null) return GoldTestIdentity(fromClass, fromMethod)
     val inferred = inferTestIdentity()
-    return (fromClass ?: inferred.first) to (fromMethod ?: inferred.second)
+    return GoldTestIdentity(
+        testClass = fromClass ?: inferred.testClass,
+        testMethodName = fromMethod ?: inferred.testMethodName,
+    )
 }
 
 internal fun invocationKeyFromTestInfo(testInfo: TestInfo): String? {

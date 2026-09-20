@@ -363,7 +363,9 @@ set — so it always requires `invocationKey` and fails closed without one.
 invocation, so the TestInfo facade also requires `invocationKey` there. A
 `@ParameterizedTest` or `@RepeatedTest` inside a `@ParameterizedClass` still needs
 an explicit `invocationKey`: each outer argument set repeats the same method-level
-`[1]` / `repetition 1` index.
+`[1]` / `repetition 1` index. Identity resolution keeps the `Class` from `TestInfo`
+or `StackWalker` (or reloads the name with the context / child loader) so a plugin
+class loader cannot hide a parameterized host from Spectre's defining loader.
 
 The default `scaleKey` prefers the captured window's display scale when a showing AWT
 window's outer, client, content-pane, or *showing* embedded ComposePanel size matches

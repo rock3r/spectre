@@ -32,7 +32,7 @@ class ScreenshotGoldIdentityTest {
             resolveJunitTestMethod(
                 arrayOf(noArg, withInfo),
                 "render",
-                MethodType.methodType(Pair::class.java),
+                MethodType.methodType(GoldTestIdentity::class.java),
             ),
         )
         assertEquals(
@@ -40,7 +40,7 @@ class ScreenshotGoldIdentityTest {
             resolveJunitTestMethod(
                 arrayOf(noArg, withInfo),
                 "render",
-                MethodType.methodType(Pair::class.java, TestInfo::class.java),
+                MethodType.methodType(GoldTestIdentity::class.java, TestInfo::class.java),
             ),
         )
     }
@@ -53,19 +53,19 @@ class ScreenshotGoldIdentityTest {
             host.render(
                 fakeTestInfo("render", host.javaClass, host.javaClass.getDeclaredMethod("render"))
             )
-        assertEquals(GoldIdentitySignatureHost::class.java.name, noArg.first)
-        assertEquals("render", noArg.second)
-        assertEquals("render(org.junit.jupiter.api.TestInfo)", withInfo.second)
+        assertEquals(GoldIdentitySignatureHost::class.java.name, noArg.testClassName)
+        assertEquals("render", noArg.testMethodName)
+        assertEquals("render(org.junit.jupiter.api.TestInfo)", withInfo.testMethodName)
     }
 
     @Test
     fun `TestInfo identity includes the method signature`(testInfo: TestInfo) {
         val fromStack = inferTestIdentity()
         val fromInfo = identityFromTestInfo(testInfo)
-        assertEquals(ScreenshotGoldIdentityTest::class.java.name, fromStack.first)
+        assertEquals(ScreenshotGoldIdentityTest::class.java.name, fromStack.testClassName)
         assertEquals(
             "TestInfo identity includes the method signature(org.junit.jupiter.api.TestInfo)",
-            fromStack.second,
+            fromStack.testMethodName,
         )
         assertEquals(fromStack, fromInfo)
     }
@@ -259,6 +259,78 @@ class ScreenshotGoldIdentityTest {
     }
 
     @Test
+    fun `child class loader ClassTemplate hosts still require invocationKey`() {
+        IsolatedGoldHostLoader().use { isolated ->
+            val previous = Thread.currentThread().contextClassLoader
+            Thread.currentThread().contextClassLoader = isolated.loader
+            try {
+                val error =
+                    assertFailsWith<IllegalStateException> {
+                        resolveInvocationKey(
+                            isolated.classTemplateHost.name,
+                            "probe",
+                            invocationKey = null,
+                        )
+                    }
+                assertTrue(error.message!!.contains("invocationKey"), error.message)
+                assertEquals(
+                    "dark",
+                    resolveInvocationKey(
+                        isolated.classTemplateHost.name,
+                        "probe",
+                        invocationKey = "dark",
+                    ),
+                )
+            } finally {
+                Thread.currentThread().contextClassLoader = previous
+            }
+        }
+    }
+
+    @Test
+    fun `child class loader parameterized methods still require invocationKey`() {
+        IsolatedGoldHostLoader().use { isolated ->
+            val previous = Thread.currentThread().contextClassLoader
+            Thread.currentThread().contextClassLoader = isolated.loader
+            try {
+                val error =
+                    assertFailsWith<IllegalStateException> {
+                        resolveInvocationKey(
+                            isolated.parameterizedMethodHost.name,
+                            "renders",
+                            invocationKey = null,
+                        )
+                    }
+                assertTrue(error.message!!.contains("invocationKey"), error.message)
+            } finally {
+                Thread.currentThread().contextClassLoader = previous
+            }
+        }
+    }
+
+    @Test
+    fun `TestInfo from a child class loader ClassTemplate still requires invocationKey`() {
+        IsolatedGoldHostLoader().use { isolated ->
+            val method = isolated.classTemplateHost.getDeclaredMethod("probe")
+            val info =
+                fakeTestInfo(
+                    "probe()",
+                    isolated.classTemplateHost,
+                    method,
+                )
+            assertNull(invocationKeyFromTestInfo(info))
+            val image =
+                java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+            image.setRGB(0, 0, 0xFFFFFFFF.toInt())
+            val error =
+                assertFailsWith<IllegalStateException> {
+                    assertMatchesGold(testInfo = info, name = "main-window", image = image)
+                }
+            assertTrue(error.message!!.contains("invocationKey"), error.message)
+        }
+    }
+
+    @Test
     fun `TestInfo cannot invent a key for ParameterizedClass ordinary tests`() {
         val method =
             GoldIdentityJunit5ParameterizedClassHost::class
@@ -312,8 +384,8 @@ class ScreenshotGoldIdentityTest {
         val info =
             fakeTestInfo("inheritedProbe()", GoldIdentityInheritedConcrete::class.java, method)
         val identity = identityFromTestInfo(info)
-        assertEquals(GoldIdentityInheritedConcrete::class.java.name, identity.first)
-        assertEquals("inheritedProbe", identity.second)
+        assertEquals(GoldIdentityInheritedConcrete::class.java.name, identity.testClassName)
+        assertEquals("inheritedProbe", identity.testMethodName)
         val fromConcreteBase =
             identityFromTestInfo(
                 fakeTestInfo(
@@ -322,8 +394,8 @@ class ScreenshotGoldIdentityTest {
                     GoldIdentityConcreteBase::class.java.getDeclaredMethod("inheritedFromConcrete"),
                 )
             )
-        assertEquals(GoldIdentityConcreteChildA::class.java.name, fromConcreteBase.first)
-        assertEquals("inheritedFromConcrete", fromConcreteBase.second)
+        assertEquals(GoldIdentityConcreteChildA::class.java.name, fromConcreteBase.testClassName)
+        assertEquals("inheritedFromConcrete", fromConcreteBase.testMethodName)
     }
 
     private fun fakeTestInfo(
@@ -345,15 +417,15 @@ class ScreenshotGoldIdentityTest {
 /** Host for same-name annotated overloads; JUnit must not execute these as specs. */
 @Disabled("reflective fixture for gold identity signature resolution")
 internal class GoldIdentitySignatureHost {
-    @Test fun render(): Pair<String, String> = inferTestIdentity()
+    @Test fun render(): GoldTestIdentity = inferTestIdentity()
 
-    @Test fun render(ignored: TestInfo): Pair<String, String> = inferTestIdentity()
+    @Test fun render(ignored: TestInfo): GoldTestIdentity = inferTestIdentity()
 }
 
 internal abstract class GoldIdentityInheritedBase {
     abstract val inheritedGoldAnchor: String
 
-    @Test fun inheritedProbe(): Pair<String, String> = inferTestIdentity()
+    @Test fun inheritedProbe(): GoldTestIdentity = inferTestIdentity()
 }
 
 @Disabled("reflective fixture for inherited gold identity")
@@ -362,7 +434,7 @@ internal class GoldIdentityInheritedConcrete : GoldIdentityInheritedBase() {
 }
 
 internal interface GoldIdentityInheritedInterface {
-    @Test fun inheritedDefault(): Pair<String, String> = inferTestIdentity()
+    @Test fun inheritedDefault(): GoldTestIdentity = inferTestIdentity()
 }
 
 @Disabled("reflective fixture for inherited gold identity")
@@ -378,7 +450,7 @@ internal class GoldIdentityParenTemplateHost {
 
 @Disabled("reflective fixture for inherited gold identity")
 internal open class GoldIdentityConcreteBase {
-    @Test fun inheritedFromConcrete(): Pair<String, String> = inferTestIdentity()
+    @Test fun inheritedFromConcrete(): GoldTestIdentity = inferTestIdentity()
 }
 
 @Disabled("reflective fixture for inherited gold identity")
@@ -503,3 +575,90 @@ internal open class GoldIdentityJunit5ParameterizedClassBase {
 @Disabled("reflective fixture for inherited ParameterizedClass gold identity")
 internal class GoldIdentityJunit5ParameterizedClassChild :
     GoldIdentityJunit5ParameterizedClassBase()
+
+/**
+ * Compiles ClassTemplate / ParameterizedTest hosts that Spectre's defining loader cannot see, then
+ * loads them through a child [java.net.URLClassLoader]. One-argument `Class.forName` from
+ * spectre-testing therefore fails unless identity resolution keeps the discovered class or the
+ * context/child loader.
+ */
+private class IsolatedGoldHostLoader : AutoCloseable {
+    private val work = java.nio.file.Files.createTempDirectory("spectre-gold-isolated")
+    val loader: java.net.URLClassLoader
+    val classTemplateHost: Class<*>
+    val parameterizedMethodHost: Class<*>
+
+    init {
+        val compiler =
+            javax.tools.ToolProvider.getSystemJavaCompiler()
+                ?: error("JDK JavaCompiler is required to isolate gold-identity test hosts")
+        val srcDir = work.resolve("src")
+        java.nio.file.Files.createDirectories(srcDir)
+        val source = srcDir.resolve("IsolatedGoldHosts.java")
+        java.nio.file.Files.writeString(
+            source,
+            """
+            package isolated.gold;
+            import org.junit.jupiter.api.ClassTemplate;
+            import org.junit.jupiter.api.Test;
+            import org.junit.jupiter.params.ParameterizedTest;
+            import org.junit.jupiter.params.provider.ValueSource;
+
+            @ClassTemplate
+            final class IsolatedClassTemplateHost {
+                @Test public void probe() {}
+            }
+
+            final class IsolatedParameterizedMethodHost {
+                @ParameterizedTest
+                @ValueSource(ints = {1})
+                public void renders(int value) {}
+            }
+            """
+                .trimIndent(),
+        )
+        val classpath =
+            listOf(
+                    org.junit.jupiter.api.ClassTemplate::class.java,
+                    org.junit.jupiter.params.ParameterizedTest::class.java,
+                )
+                .map { type ->
+                    java.nio.file.Path.of(type.protectionDomain.codeSource.location.toURI())
+                        .toString()
+                }
+                .distinct()
+                .joinToString(java.io.File.pathSeparator)
+        compiler.getStandardFileManager(null, null, null).use { files ->
+            val units = files.getJavaFileObjects(source.toFile())
+            val compiled =
+                compiler
+                    .getTask(
+                        null,
+                        files,
+                        null,
+                        listOf("-classpath", classpath, "-d", work.toString()),
+                        null,
+                        units,
+                    )
+                    .call()
+            check(compiled == true) { "failed to compile isolated gold-identity hosts" }
+        }
+        loader =
+            java.net.URLClassLoader(
+                arrayOf(work.toUri().toURL()),
+                ScreenshotGoldIdentityTest::class.java.classLoader,
+            )
+        classTemplateHost = Class.forName("isolated.gold.IsolatedClassTemplateHost", true, loader)
+        parameterizedMethodHost =
+            Class.forName("isolated.gold.IsolatedParameterizedMethodHost", true, loader)
+        check(runCatching { Class.forName(classTemplateHost.name) }.getOrNull() == null) {
+            "isolated ClassTemplate host must be invisible to Spectre's defining loader"
+        }
+    }
+
+    override fun close() {
+        loader.close()
+        val paths = java.nio.file.Files.walk(work).use { it.toList() }
+        paths.sortedByDescending { it.nameCount }.forEach { java.nio.file.Files.deleteIfExists(it) }
+    }
+}

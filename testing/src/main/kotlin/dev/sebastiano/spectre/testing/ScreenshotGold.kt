@@ -65,15 +65,21 @@ public fun assertMatchesGold(
     scaleKey: String = currentScaleKey(image),
     invocationKey: String? = null,
 ) {
-    val (testClassName, testMethodName) = inferTestIdentity()
+    val identity = inferTestIdentity()
     assertMatchesGold(
         name = name,
         image = image,
-        testClassName = testClassName,
-        testMethodName = testMethodName,
+        testClassName = identity.testClassName,
+        testMethodName = identity.testMethodName,
         tolerance = tolerance,
         scaleKey = scaleKey,
-        invocationKey = resolveInvocationKey(testClassName, testMethodName, invocationKey),
+        invocationKey =
+            resolveInvocationKey(
+                identity.testClassName,
+                identity.testMethodName,
+                invocationKey,
+                testClass = identity.testClass,
+            ),
     )
 }
 
