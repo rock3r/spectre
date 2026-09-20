@@ -3,7 +3,6 @@ package dev.sebastiano.spectre.agent.transport
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ExecutionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
@@ -61,9 +60,14 @@ internal class MultiplexedIpcSession(
         val writeLock = Any()
         val detachRequested = AtomicBoolean(false)
         val detachOpId = AtomicReference<Long?>()
-        val responseWriter: ExecutorService = Executors.newSingleThreadExecutor { r ->
-            Thread(r, "spectre-agent-ipc-writer").apply { isDaemon = true }
-        }
+        val responseWriter =
+            InterruptSafeFrameWriter("spectre-agent-ipc-writer") { payload ->
+                synchronized(writeLock) {
+                    FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
+                        Framing.writeFrame(output, payload)
+                    }
+                }
+            }
         inputWorkers.register(inputWorker)
         try {
             serveOps(
@@ -104,11 +108,7 @@ internal class MultiplexedIpcSession(
                     )
                 }
             } finally {
-                // Never shutdownNow(): interrupting the writer would close the shared UDS.
-                responseWriter.shutdown()
-                runCatching {
-                    responseWriter.awaitTermination(WORKER_SHUTDOWN_SEC, TimeUnit.SECONDS)
-                }
+                responseWriter.close()
                 if (inputWaitInterrupted) Thread.currentThread().interrupt()
             }
         }
@@ -122,7 +122,7 @@ internal class MultiplexedIpcSession(
         deadlineScheduler: ScheduledExecutorService,
         inFlight: ConcurrentHashMap<Long, OpSlot>,
         writeLock: Any,
-        responseWriter: ExecutorService,
+        responseWriter: InterruptSafeFrameWriter,
         detachRequested: AtomicBoolean,
         detachOpId: AtomicReference<Long?>,
     ) {
@@ -172,7 +172,7 @@ internal class MultiplexedIpcSession(
         requestBytes: ByteArray,
         output: OutputStream,
         writeLock: Any,
-        responseWriter: ExecutorService,
+        responseWriter: InterruptSafeFrameWriter,
     ): OpRequest? =
         try {
             WireCodec.decodeOpRequest(requestBytes)
@@ -207,7 +207,7 @@ internal class MultiplexedIpcSession(
         cancelFrameOpId: Long,
         output: OutputStream,
         writeLock: Any,
-        responseWriter: ExecutorService,
+        responseWriter: InterruptSafeFrameWriter,
         inFlight: ConcurrentHashMap<Long, OpSlot>,
     ) {
         val slot = inFlight.remove(cancel.opId)
@@ -251,7 +251,7 @@ internal class MultiplexedIpcSession(
         inFlight: ConcurrentHashMap<Long, OpSlot>,
         output: OutputStream,
         writeLock: Any,
-        responseWriter: ExecutorService,
+        responseWriter: InterruptSafeFrameWriter,
     ) {
         val slot = OpSlot()
         inFlight[op.opId] = slot
@@ -359,7 +359,7 @@ internal class MultiplexedIpcSession(
         inFlight: ConcurrentHashMap<Long, OpSlot>,
         output: OutputStream,
         writeLock: Any,
-        responseWriter: ExecutorService,
+        responseWriter: InterruptSafeFrameWriter,
     ): ScheduledFuture<*>? {
         val deadline = op.deadlineEpochMs ?: return null
         val delayMs = deadline - System.currentTimeMillis()
@@ -432,10 +432,11 @@ internal class MultiplexedIpcSession(
         }
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private fun writeOpResponse(
         output: OutputStream,
         writeLock: Any,
-        responseWriter: ExecutorService,
+        responseWriter: InterruptSafeFrameWriter,
         opId: Long,
         body: AgentResponse,
     ) {
@@ -459,49 +460,9 @@ internal class MultiplexedIpcSession(
                     )
                 )
             }
-        // SocketChannel is an InterruptibleChannel: a write from an interrupted worker
-        // (status set, or interrupt arriving mid-write) closes the shared client socket.
-        // Clearing interrupt on the worker still races — hop the write onto [responseWriter],
-        // which cancel/deadline never interrupt.
-        val task =
-            try {
-                responseWriter.submit<Unit> {
-                    Thread.interrupted()
-                    synchronized(writeLock) {
-                        FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
-                            Framing.writeFrame(output, toWrite)
-                        }
-                    }
-                }
-            } catch (ex: RejectedExecutionException) {
-                throw java.io.IOException("Session writer is shut down", ex)
-            }
-        awaitWriter(task)
-    }
-
-    private fun awaitWriter(task: Future<*>) {
-        var interrupted = Thread.interrupted()
-        try {
-            while (true) {
-                try {
-                    task.get()
-                    return
-                } catch (_: InterruptedException) {
-                    interrupted = true
-                } catch (ex: ExecutionException) {
-                    val cause = ex.cause
-                    throw when (cause) {
-                        is java.io.IOException -> cause
-                        null -> java.io.IOException("IPC write failed: ${ex.message}", ex)
-                        else -> java.io.IOException("IPC write failed: ${cause.message}", cause)
-                    }
-                }
-            }
-        } finally {
-            if (interrupted) {
-                Thread.currentThread().interrupt()
-            }
-        }
+        // [output] / [writeLock] are captured by [responseWriter]'s daemon thread (see run()).
+        // This caller only waits; it is never the thread that touches the InterruptibleChannel.
+        responseWriter.writeFrame(toWrite)
     }
 
     /**

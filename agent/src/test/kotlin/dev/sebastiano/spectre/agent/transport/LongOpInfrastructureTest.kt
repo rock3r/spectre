@@ -355,6 +355,14 @@ class LongOpInfrastructureTest {
                     client.send(AgentRequest.Ping),
                     "session must stay usable after interrupt cancel",
                 )
+                val writerThreads =
+                    Thread.getAllStackTraces().keys.filter {
+                        it.name == "spectre-ipc-client-writer" && it.isAlive
+                    }
+                assertTrue(
+                    writerThreads.isNotEmpty() && writerThreads.all { it.isDaemon },
+                    "IPC writer must be a daemon thread so stdin-close / process exit is not pinned",
+                )
             }
         }
     }

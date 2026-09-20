@@ -12,11 +12,6 @@ import java.nio.channels.SocketChannel
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ExecutionException
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
-import java.util.concurrent.Future
-import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -57,9 +52,14 @@ constructor(
     private val nextOpId = AtomicLong(1)
     private val pending = ConcurrentHashMap<Long, CompletableFuture<AgentResponse>>()
     private val closed = AtomicBoolean(false)
-    private val writer: ExecutorService = Executors.newSingleThreadExecutor { r ->
-        Thread(r, "spectre-ipc-client-writer").apply { isDaemon = true }
-    }
+    private val writer =
+        InterruptSafeFrameWriter("spectre-ipc-client-writer") { payload ->
+            synchronized(writeLock) {
+                FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
+                    Framing.writeFrame(output, payload)
+                }
+            }
+        }
     private val readerThread: Thread
 
     init {
@@ -106,7 +106,7 @@ constructor(
         } finally {
             if (!handshakeOk) {
                 runCatching { channel.close() }
-                writer.shutdown()
+                writer.close()
             }
         }
 
@@ -280,63 +280,12 @@ constructor(
     }
 
     /**
-     * SocketChannel is an InterruptibleChannel: a write from a thread that is interrupted (status
-     * already set, or interrupt arriving mid-write) throws ClosedByInterruptException and closes
-     * the shared client socket. Clearing interrupt on the caller around the write still races —
-     * macOS can deliver the interrupt during `SocketChannel.write` on the cancel path, after which
-     * a later op on the same session fails with ClosedChannelException.
-     *
-     * All writes therefore run on [writer], which callers never interrupt. The caller waits
-     * uninterruptibly for the write to finish and then restores interrupt status so [send] can
-     * still report Cancelled without closing the UDS.
+     * SocketChannel is an InterruptibleChannel: a write from a thread that is interrupted closes
+     * the shared client socket. All writes therefore run on [writer], a dedicated daemon thread
+     * that callers never interrupt.
      */
     private fun writeFrameInterruptSafe(payload: ByteArray) {
-        val task =
-            try {
-                writer.submit<Unit> { writeFrameOnWriterThread(payload) }
-            } catch (ex: RejectedExecutionException) {
-                throw IOException("IpcClient writer is shut down", ex)
-            }
-        awaitWriter(task)
-    }
-
-    private fun writeFrameOnWriterThread(payload: ByteArray) {
-        // A stale flag on the pooled writer must not close the shared channel.
-        Thread.interrupted()
-        synchronized(writeLock) {
-            FrameIoDeadline.withTimeout(channel, frameIoTimeoutMs) {
-                Framing.writeFrame(output, payload)
-            }
-        }
-    }
-
-    private fun awaitWriter(task: Future<*>) {
-        var interrupted = Thread.interrupted()
-        try {
-            while (true) {
-                try {
-                    task.get()
-                    return
-                } catch (_: InterruptedException) {
-                    interrupted = true
-                } catch (ex: ExecutionException) {
-                    throw unwrapWriteFailure(ex)
-                }
-            }
-        } finally {
-            if (interrupted) {
-                Thread.currentThread().interrupt()
-            }
-        }
-    }
-
-    private fun unwrapWriteFailure(ex: ExecutionException): IOException {
-        val cause = ex.cause
-        return when (cause) {
-            is IOException -> cause
-            null -> IOException("IPC write failed: ${ex.message}", ex)
-            else -> IOException("IPC write failed: ${cause.message}", cause)
-        }
+        writer.writeFrame(payload)
     }
 
     /** Bare (pre-envelope) exchange used only for Hello / best-effort Detach on failed Hello. */
@@ -354,11 +303,10 @@ constructor(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         // Drop the socket only — Detach is explicit agent teardown, not implied by close.
-        // Do not shutdownNow() the writer: interrupting it would close the shared channel
-        // if a write is still in flight. Closing the socket unblocks a wedged write.
+        // Close the channel before the writer so a blocked write unblocks without an
+        // interrupt-on-open-socket (which would close a still-shared UDS).
         runCatching { channel.close() }
-        writer.shutdown()
-        runCatching { writer.awaitTermination(WRITER_JOIN_MS, TimeUnit.MILLISECONDS) }
+        writer.close()
         runCatching { readerThread.join(READER_JOIN_MS) }
         failAllPending(EOFException("IpcClient closed"))
     }
@@ -374,6 +322,5 @@ constructor(
         const val ELAPSED_DEADLINE_GRACE_MS: Long = 5_000
         const val CANCEL_ACK_WAIT_MS: Long = 5_000
         const val READER_JOIN_MS: Long = 1_000
-        const val WRITER_JOIN_MS: Long = 1_000
     }
 }
