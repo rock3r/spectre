@@ -44,7 +44,9 @@ import kotlinx.coroutines.runBlocking
  *    activates without delivering — to be verified separately when MacOsRobotUnfocusedSmoke runs.)
  *    An intermittent Xvfb miss that never reaches this JVM is reported at the click, with an AWT
  *    press verdict (never dispatched vs dispatched with no Compose effect), not at the downstream
- *    `typeText` assertion.
+ *    `typeText` assertion. Headless Xvfb without a WM can map both always-on-top frames at the
+ *    origin; the shared rig then separates them from observed `locationOnScreen` and clicks an
+ *    unobscured counter pixel so the press cannot land on the distractor (CI miss at (270,96)).
  * 4. **typeText-after-focus-click works through XWayland.** `typeText` sends key events rather than
  *    touching the clipboard. Both XWayland and Xvfb produce the expected text after the
  *    focus-handoff click.
@@ -123,6 +125,8 @@ private suspend fun runSmokeSuspend(): Int {
     waitForFrame(distractorRef)
     waitForLayout(state)
     delay(POST_LAYOUT_UNFOCUSED_WARMUP_MS.milliseconds)
+
+    printEnvironment("LinuxRobotUnfocusedSmoke", state)
 
     val driver = RobotDriver()
     val distractor = requireNotNull(distractorRef.get()) { "distractor frame missing" }
