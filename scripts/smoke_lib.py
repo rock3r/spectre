@@ -308,11 +308,13 @@ SCREENCAPTURE_PREFLIGHT_TIMEOUT_SECONDS = 15
 SCREENCAPTURE_HELPER_EXIT_NOT_GRANTED = 6
 SCREENCAPTURE_HELPER_OVERRIDE_ENV = "SPECTRE_SCREENCAPTURE_HELPER"
 SCREENCAPTURE_HELPER_DIR_PROPERTY = "spectre.recording.screencapturekit.helperDir"
+# Same effective -D precedence as the java launcher / HotSpot (JDK 21+):
+# _JAVA_OPTIONS appends and wins, JDK_JAVA_OPTIONS prepends onto the command
+# line and beats JAVA_TOOL_OPTIONS. GRADLE_OPTS is not read by child JVMs.
 SCREENCAPTURE_HELPER_DIR_JVM_ENVS = (
-    "GRADLE_OPTS",
     "_JAVA_OPTIONS",
-    "JAVA_TOOL_OPTIONS",
     "JDK_JAVA_OPTIONS",
+    "JAVA_TOOL_OPTIONS",
 )
 MACOS_TCC_BLOCKED_REASON = (
     "blocked by macos-tcc failure; grant Accessibility and Screen Recording to the "
@@ -678,33 +680,24 @@ def macos_screencapture_configured_helper_dir(
     *,
     root: Path | None = None,
 ) -> Path | None:
-    """Resolve helperDir the same way HelperBinaryExtractor reads the JVM property."""
+    """Resolve helperDir from env vars the child JVM actually inherits."""
+    del root  # gradle.properties is Gradle-JVM only; JavaExec does not forward it.
     env = environ if environ is not None else os.environ
-    resolved: Path | None = None
-    if root is not None:
-        properties = root / "gradle.properties"
-        if properties.is_file():
-            text = properties.read_text(encoding="utf-8")
-            prefix = f"systemProp.{SCREENCAPTURE_HELPER_DIR_PROPERTY}"
-            for line in text.splitlines():
-                stripped = line.strip()
-                if stripped.startswith("#") or "=" not in stripped:
-                    continue
-                key, _, value = stripped.partition("=")
-                if key.strip() == prefix:
-                    value = value.strip()
-                    resolved = Path(value) if value else None
-            jvmargs = parse_screencapture_helper_dir_property(text)
-            if jvmargs is not None:
-                resolved = jvmargs
     for name in SCREENCAPTURE_HELPER_DIR_JVM_ENVS:
         raw = env.get(name, "")
         if not raw:
             continue
         parsed = parse_screencapture_helper_dir_property(raw)
-        if parsed is not None:
-            resolved = parsed
-    return resolved
+        if parsed is None:
+            continue
+        if not parsed.is_absolute():
+            raise InvalidScreencaptureHelperDir(
+                f"{SCREENCAPTURE_HELPER_DIR_PROPERTY} must be an absolute path "
+                f"(got {str(parsed)!r} from {name}). Relative values resolve "
+                "against different working directories in smoke vs Gradle."
+            )
+        return parsed
+    return None
 
 
 class InvalidScreencaptureHelperOverride(RuntimeError):
