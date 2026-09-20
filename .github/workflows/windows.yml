@@ -23,6 +23,11 @@ name: Windows
 #     class `Assumptions.assumeFalse`-skips that variant on Windows hosts.
 #   - Job is gated on changes likely to affect Windows behaviour so unrelated PRs don't pay
 #     the windows-runner cost. Mirrors the broad path-filter pattern from `macos-check.yml`.
+#   - `check-windows` has hung to GitHub's 6-hour job limit (#499). The Gradle step
+#     `timeout-minutes` is shorter than the job so a hang fails the step first; the
+#     remaining job budget covers checkout/JDK/.NET/Gradle setup plus the
+#     cancel/failure dump of every live JVM (Gradle daemon + test workers)
+#     before orphan cleanup.
 
 on:
   pull_request:
@@ -58,6 +63,8 @@ on:
       - "settings.gradle.kts"
       - "gradle/**"
       - ".github/workflows/windows.yml"
+      - ".github/scripts/dump-jvm-stacks.sh"
+      - ".github/scripts/test-windows-check-timeout.sh"
   push:
     branches:
       - main
@@ -90,6 +97,8 @@ on:
       - "settings.gradle.kts"
       - "gradle/**"
       - ".github/workflows/windows.yml"
+      - ".github/scripts/dump-jvm-stacks.sh"
+      - ".github/scripts/test-windows-check-timeout.sh"
 
 permissions:
   contents: read
@@ -98,6 +107,7 @@ jobs:
   windows-helper-tests:
     name: Windows helper argument tests
     runs-on: windows-latest
+    timeout-minutes: 15
 
     steps:
       - name: Check out repository
@@ -113,6 +123,10 @@ jobs:
 
   check-windows:
     runs-on: windows-latest
+    # 40-minute Gradle step + ≥15 minutes for setup and dump-jvm-stacks.sh.
+    # A 40/45 split lets a five-minute setup cancel the job before the step
+    # timeout and dump can run (#499 / Codex #519).
+    timeout-minutes: 60
 
     steps:
       - name: Check out repository
@@ -138,5 +152,16 @@ jobs:
         uses: gradle/actions/setup-gradle@v5
 
       - name: Run checks
+        # Shorter than the job timeout so setup plus dump-jvm-stacks.sh still
+        # have budget after a hung `:check` (#499). A job-level timeout
+        # cancels the job and can skip the dump.
+        timeout-minutes: 40
         run: ./gradlew check
         shell: bash
+
+      - name: Dump live JVM stacks
+        # #499: the runner's cancel dump is the Gradle client only. Dump daemons and
+        # test workers before orphan cleanup so the next hang has a named stack.
+        if: cancelled() || failure()
+        shell: bash
+        run: bash .github/scripts/dump-jvm-stacks.sh

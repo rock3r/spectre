@@ -203,6 +203,12 @@ val validationTest by
         // EDT and dispatcher state that survives `exitApplication()` — sharing a JVM across
         // classes would silently break the second class's fixture (the latch never trips because
         // a previous shutdown finalises the AWT runtime).
+        //
+        // #500 / #72: the fixture must also pass `exitProcessOnExit = false`. The default
+        // `application {}` calls `exitProcess(0)` on teardown, which kills this forked worker
+        // after green JUnit XML and makes the daemon report `MessageIOException: Could not
+        // write '/127.0.0.1:…'`. `forkEvery = 1` can only exit cleanly if the worker is still
+        // alive to close the test-event socket.
         forkEvery = 1
         // Re-render the picker / spawn the window inside each test method via the fixture's poll
         // loop. SampleAppFixture.DEFAULT_STARTUP_TIMEOUT (30s) leaves headroom for cold AWT +

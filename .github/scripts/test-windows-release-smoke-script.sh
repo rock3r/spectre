@@ -148,6 +148,29 @@ grep -F -q -- '-PVERSION_NAME=' "$script" || fail "Windows CLI package must bake
 grep -F -q 'Get-PointerMoveSkipReason' "$script" || fail "Windows runner missing #433 pointer-move source probe"
 grep -F -q '*PointerMoveLive*' "$script" || fail "Windows runner missing PointerMoveLive test filter"
 grep -F -q 'Assert-PointerMoveLiveExecuted' "$script" || fail "Windows runner missing PointerMoveLive fail-closed XML gate"
+grep -F -q 'Test-PointerMoveTeardownRace' "$script" || fail "Windows runner missing #500 post-green worker-death probe"
+grep -F -q 'MessageIOException' "$script" || fail "Windows runner missing MessageIOException teardown-race needle"
+grep -F -q 'Could not write' "$script" || fail "Windows runner missing Could not write teardown-race needle"
+# Codex #519: a leftover pointer-move-*.log from an earlier MessageIOException must not
+# waive a later unrelated Gradle failure. Probe only the log paths embedded in this
+# invocation's exception, and drop stale validationTest XML before the run.
+if grep -F -q 'pointer-move-*.log' "$script"; then
+  fail "pointer-move teardown probe still globs historical build/smoke pointer-move-*.log files"
+fi
+grep -F -q 'Clear-PointerMoveLiveResults' "$script" || fail "Windows runner must clear this-run PointerMoveLive XML before Gradle"
+grep -F -q 'GradleError' "$script" || fail "teardown probe must take the current Gradle error so it can parse this invocation's log paths"
+# Codex: a hung Gradle that already wrote green XML + MessageIOException must not
+# pass. Only a prompt "exited with code" teardown is waivable.
+probe_body="$(awk '/function Test-PointerMoveTeardownRace/{p=1; next} p && /^function /{exit} p' "$script")"
+echo "$probe_body" | grep -F -q 'timed out after' || fail "teardown probe must reject Invoke-Native timeout errors"
+echo "$probe_body" | grep -F -q 'exited with code' || fail "teardown probe must require a prompt nonzero Gradle exit"
+# Codex #519: a cache/report "Could not write" on a full disk must not waive
+# the required pointer-move smoke. Only the #500/#72 loopback test-event
+# socket (MessageIOException + 127.0.0.1) is waivable.
+echo "$probe_body" | grep -F -q '127.0.0.1' || fail "teardown probe must require the 127.0.0.1 test-event socket"
+if echo "$probe_body" | grep -E -q -- '-or \$raw -match "Could not write"'; then
+  fail "teardown probe still waives generic Could not write failures"
+fi
 
 # --- Optional: parse with pwsh when present (macOS/Linux CI agents may have it) ---
 # Note: this is PowerShell Core parse, not Desktop 5.1; ASCII byte check is the 5.1 stand-in.

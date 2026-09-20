@@ -57,6 +57,8 @@ on:
       - "settings.gradle.kts"
       - "build.gradle.kts"
       - ".github/workflows/validation-windows.yml"
+      - ".github/scripts/dump-jvm-stacks.sh"
+      - ".github/scripts/test-windows-check-timeout.sh"
   push:
     branches:
       - main
@@ -77,6 +79,8 @@ on:
       - "settings.gradle.kts"
       - "build.gradle.kts"
       - ".github/workflows/validation-windows.yml"
+      - ".github/scripts/dump-jvm-stacks.sh"
+      - ".github/scripts/test-windows-check-timeout.sh"
 
 permissions:
   contents: read
@@ -84,6 +88,10 @@ permissions:
 jobs:
   validation-windows:
     runs-on: windows-latest
+    # 50-minute Gradle step + ≥15 minutes for setup and dump-jvm-stacks.sh.
+    # A 50/60 split can still cancel the job before the dump if setup is slow
+    # (#499 / Codex #519).
+    timeout-minutes: 70
 
     steps:
       - name: Check out repository
@@ -99,6 +107,10 @@ jobs:
         uses: gradle/actions/setup-gradle@v5
 
       - name: Run validation tests
+        # Shorter than the job timeout so setup plus dump-jvm-stacks.sh still
+        # have budget after a hung validation Gradle (#499). A job-level
+        # timeout cancels the job and can skip the dump.
+        timeout-minutes: 50
         # The Gradle test-executor protocol race (originally #72) is suppressed at its source
         # on Linux by serialising the validation Test tasks via a `ValidationTestSerialiser`
         # `BuildService` in `sample-desktop/build.gradle.kts` (see the comment block there for
@@ -121,11 +133,27 @@ jobs:
         continue-on-error: true
         id: gradle
         run: |
+          status=0
           ./gradlew \
             :sample-desktop:validationTest \
             :sample-desktop:validationTestPopupLayers \
-            --continue
+            --continue || status=$?
+          # Prompt exits (including a #72 protocol-flake nonzero) reach this
+          # line. A 50-minute step timeout kills the script first, so
+          # completed stays unset and the verifier must fail the job even
+          # when envelope flakes also exist (#499 / Codex #519).
+          echo "completed=true" >> "$GITHUB_OUTPUT"
+          exit "$status"
         shell: bash
+
+      - name: Dump live JVM stacks
+        # #499: dump immediately after validation Gradle so XML verify and the
+        # always() CLI smoke cannot spend the leftover job budget first.
+        # continue-on-error turns a step timeout into conclusion=success, so
+        # also key off the pre-tolerance gradle outcome.
+        if: cancelled() || failure() || steps.gradle.outcome == 'failure'
+        shell: bash
+        run: bash .github/scripts/dump-jvm-stacks.sh
 
       - name: Verify validation tests passed via JUnit XML
         # Envelope-detection safety net (issue #72): the `ValidationTestSerialiser` BuildService
@@ -254,6 +282,23 @@ jobs:
           if [ "$fail_total" -gt 0 ] || [ "$err_total" -gt 0 ]; then
             echo "::error::Validation tests reported $fail_total failure(s) and $err_total error(s) across ${#all_xml[@]} XML report(s)."
             exit 1
+          fi
+          # continue-on-error on the Gradle step is only for the known #72
+          # test-event protocol flake. A hang after clean XML still times the
+          # step out (outcome=failure, completed unset) and must fail the job
+          # even if envelope flakes are also present — otherwise the
+          # 50-minute timeout is a soft pass (#499 / Codex #519).
+          if [ "${{ steps.gradle.outputs.completed }}" != "true" ]; then
+            echo "::error::Gradle step timed out or was cancelled (outcome=${{ steps.gradle.outcome }}) — not soft-passing even if envelope flakes exist."
+            exit 1
+          fi
+          if [ "${{ steps.gradle.outcome }}" != "success" ]; then
+            if [ "${#flaked[@]}" -gt 0 ]; then
+              echo "::warning::Gradle step outcome=${{ steps.gradle.outcome }} accepted because envelope flakes were detected: ${flaked[*]}"
+            else
+              echo "::error::Gradle step outcome=${{ steps.gradle.outcome }} with no envelope-flake evidence — not soft-passing."
+              exit 1
+            fi
           fi
           echo "All required classes present; ${#all_xml[@]} discovered XML report(s) clean (Gradle exit ignored due to known executor-protocol flake)."
         shell: bash
