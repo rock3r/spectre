@@ -48,6 +48,7 @@ from smoke_lib import (  # noqa: E402
     linux_portal_token_path,
     build_report,
     collect_preflight,
+    ensure_macos_screencapture_helper,
     fill_blocked_remaining,
     gradle_ui_force_args,
     hard_failures,
@@ -119,7 +120,10 @@ def _run_macos_tcc_scenario(out_dir: Path, system: str) -> ScenarioResult:
     def action() -> None:
         require_macos_tcc(
             accessibility_probe=probe_macos_accessibility,
-            screen_recording_probe=lambda: probe_macos_screen_recording(root=ROOT),
+            screen_recording_probe=lambda: probe_macos_screen_recording(
+                root=ROOT,
+                ensure_helper=lambda: ensure_macos_screencapture_helper(ROOT),
+            ),
         )
 
     return run_callable_scenario(
@@ -139,7 +143,10 @@ def _macos_tcc_recheck_failure(
     try:
         require_macos_tcc(
             accessibility_probe=probe_macos_accessibility,
-            screen_recording_probe=lambda: probe_macos_screen_recording(root=ROOT),
+            screen_recording_probe=lambda: probe_macos_screen_recording(
+                root=ROOT,
+                ensure_helper=lambda: ensure_macos_screencapture_helper(ROOT),
+            ),
         )
     except RuntimeError as error:
         return scenario_result(

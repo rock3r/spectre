@@ -1224,8 +1224,9 @@ class MacOsTccPreflightTest(unittest.TestCase):
             message,
         )
         self.assertIn("./gradlew --stop", message)
+        self.assertNotIn("Spectre Capture Helper", message)
 
-    def test_evaluate_denied_screen_recording_names_grant_and_relaunch(self):
+    def test_evaluate_denied_screen_recording_names_helper_not_wrapping_app(self):
         with self.assertRaises(RuntimeError) as raised:
             smoke_lib.evaluate_macos_tcc(
                 accessibility=smoke_lib.TCC_GRANTED,
@@ -1237,7 +1238,10 @@ class MacOsTccPreflightTest(unittest.TestCase):
             message,
         )
         self.assertIn("Privacy & Security", message)
-        self.assertIn("./gradlew --stop", message)
+        self.assertIn("Spectre Capture Helper", message)
+        self.assertIn("SpectreCaptureHelper.app", message)
+        self.assertIn("not the wrapping Terminal/IDE", message)
+        self.assertNotIn("Grant System Settings → Privacy & Security → Screen & System Audio Recording to the wrapping app", message)
 
     def test_evaluate_unknown_is_fail_closed(self):
         with self.assertRaises(RuntimeError) as raised:
@@ -1258,10 +1262,13 @@ class MacOsTccPreflightTest(unittest.TestCase):
                 accessibility=smoke_lib.TCC_GRANTED,
                 screen_recording=smoke_lib.TCC_UNKNOWN,
             )
+        screen = str(raised.exception)
         self.assertTrue(
-            "Screen Recording" in str(raised.exception)
-            or "Screen & System Audio Recording" in str(raised.exception)
+            "Screen Recording" in screen or "Screen & System Audio Recording" in screen
         )
+        self.assertIn("Spectre Capture Helper", screen)
+        self.assertIn(":recording:assembleScreenCaptureKitHelper", screen)
+        self.assertIn("not the wrapping Terminal/IDE", screen)
 
     def test_evaluate_locked_screen_recording_fails(self):
         with self.assertRaises(RuntimeError) as raised:
@@ -1336,6 +1343,57 @@ class MacOsTccPreflightTest(unittest.TestCase):
         self.assertNotIn("request", joined)
         self.assertNotIn("guide-permissions", joined)
         self.assertNotIn("TCC.db", joined)
+
+    def test_ensure_helper_skips_assemble_when_already_staged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            helper = smoke_lib.macos_screencapture_helper_candidates(root)[-1]
+            helper.parent.mkdir(parents=True)
+            helper.write_text("#!/bin/sh\n", encoding="utf-8")
+            helper.chmod(0o755)
+            calls: list[int] = []
+            found = smoke_lib.ensure_macos_screencapture_helper(
+                root, assemble=lambda: calls.append(1) or 0
+            )
+            self.assertEqual(helper, found)
+            self.assertEqual([], calls)
+
+    def test_ensure_helper_assembles_when_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            helper = smoke_lib.macos_screencapture_helper_candidates(root)[-1]
+
+            def assemble() -> int:
+                helper.parent.mkdir(parents=True)
+                helper.write_text("#!/bin/sh\n", encoding="utf-8")
+                helper.chmod(0o755)
+                return 0
+
+            found = smoke_lib.ensure_macos_screencapture_helper(root, assemble=assemble)
+            self.assertEqual(helper, found)
+
+    def test_probe_stages_helper_before_unknown_on_fresh_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            helper = smoke_lib.macos_screencapture_helper_candidates(root)[-1]
+            staged: list[str] = []
+
+            def assemble() -> int:
+                helper.parent.mkdir(parents=True)
+                helper.write_text("#!/bin/sh\n", encoding="utf-8")
+                helper.chmod(0o755)
+                staged.append(str(helper))
+                return 0
+
+            status = smoke_lib.probe_macos_screen_recording(
+                root=root,
+                ensure_helper=lambda: smoke_lib.ensure_macos_screencapture_helper(
+                    root, assemble=assemble
+                ),
+                invoke_helper=lambda argv: (0, '{"granted": true}\n'),
+            )
+            self.assertEqual([str(helper)], staged)
+            self.assertEqual(smoke_lib.TCC_GRANTED, status)
 
     def test_blocked_remaining_fills_required_ids_with_reason(self):
         existing = [

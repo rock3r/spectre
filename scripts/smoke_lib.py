@@ -301,16 +301,27 @@ ACCESSIBILITY_OSASCRIPT = (
 SCREENCAPTURE_HELPER_NAME = "spectre-screencapture"
 SCREENCAPTURE_PREFLIGHT_TIMEOUT_SECONDS = 15
 MACOS_TCC_BLOCKED_REASON = (
-    "blocked by macos-tcc failure; grant Screen Recording and Accessibility, "
-    "quit/relaunch the wrapping app, then ./gradlew --stop"
+    "blocked by macos-tcc failure; grant Accessibility to the wrapping app and "
+    "Screen Recording to Spectre Capture Helper, then quit/relaunch and ./gradlew --stop"
 )
-MACOS_TCC_PARENT_PROCESS_GUIDANCE = (
-    "macOS attributes Robot input and Screen Recording to the wrapping app that "
-    "launched this process (Terminal, iTerm2, IntelliJ IDEA, Grok Bot, Claude.app, "
-    "etc.) — not to the JVM binary itself. Grant System Settings → Privacy & Security "
-    "to that wrapping app, then fully quit and relaunch it (macOS only re-evaluates "
-    "TCC at process start). Run `./gradlew --stop` so Gradle daemons started before "
-    "the grant are not reused."
+SCREENCAPTURE_HELPER_DISPLAY_NAME = "Spectre Capture Helper"
+SCREENCAPTURE_HELPER_APP_NAME = "SpectreCaptureHelper.app"
+ASSEMBLE_SCREENCAPTURE_HELPER_TASK = ":recording:assembleScreenCaptureKitHelper"
+ASSEMBLE_SCREENCAPTURE_HELPER_TIMEOUT_SECONDS = 180
+MACOS_TCC_ACCESSIBILITY_GUIDANCE = (
+    "macOS attributes Robot input to the wrapping app that launched this process "
+    "(Terminal, iTerm2, IntelliJ IDEA, Grok Bot, Claude.app, etc.) — not to the JVM "
+    "binary itself. Grant System Settings → Privacy & Security → Accessibility to that "
+    "wrapping app, then fully quit and relaunch it (macOS only re-evaluates TCC at "
+    "process start). Run `./gradlew --stop` so Gradle daemons started before the grant "
+    "are not reused."
+)
+MACOS_TCC_SCREEN_RECORDING_GUIDANCE = (
+    f"Screen Recording TCC for this probe accrues to {SCREENCAPTURE_HELPER_DISPLAY_NAME} "
+    f"({SCREENCAPTURE_HELPER_APP_NAME}), not the wrapping Terminal/IDE. Grant System "
+    f"Settings → Privacy & Security → Screen & System Audio Recording to that helper "
+    f"row. If the helper is not on disk yet, run `./gradlew "
+    f"{ASSEMBLE_SCREENCAPTURE_HELPER_TASK}` (or set SPECTRE_SCREENCAPTURE_HELPER)."
 )
 
 
@@ -324,15 +335,40 @@ def macos_tcc_skip_reason(system: str | None = None) -> str | None:
 
 def evaluate_macos_tcc(*, accessibility: str, screen_recording: str) -> None:
     """Fail closed unless both probes are granted or not applicable."""
-    problems = [
-        *_tcc_status_problem("Accessibility", accessibility, allow_locked=False),
-        *_tcc_status_problem("Screen Recording", screen_recording, allow_locked=True),
-    ]
+    problems: list[str] = []
+    accessibility_failed = False
+    screen_failed = False
+    for line in _tcc_status_problem(
+        "Accessibility",
+        accessibility,
+        allow_locked=False,
+        grant_target="the wrapping app",
+    ):
+        problems.append(line)
+        accessibility_failed = True
+    for line in _tcc_status_problem(
+        "Screen Recording",
+        screen_recording,
+        allow_locked=True,
+        grant_target=f"{SCREENCAPTURE_HELPER_DISPLAY_NAME} ({SCREENCAPTURE_HELPER_APP_NAME})",
+    ):
+        problems.append(line)
+        screen_failed = True
+    if accessibility_failed:
+        problems.append(MACOS_TCC_ACCESSIBILITY_GUIDANCE)
+    if screen_failed:
+        problems.append(MACOS_TCC_SCREEN_RECORDING_GUIDANCE)
     if problems:
-        raise RuntimeError("\n".join([*problems, MACOS_TCC_PARENT_PROCESS_GUIDANCE]))
+        raise RuntimeError("\n".join(problems))
 
 
-def _tcc_status_problem(label: str, status: str, *, allow_locked: bool) -> list[str]:
+def _tcc_status_problem(
+    label: str,
+    status: str,
+    *,
+    allow_locked: bool,
+    grant_target: str,
+) -> list[str]:
     if status in {TCC_GRANTED, TCC_NOT_APPLICABLE}:
         return []
     settings = (
@@ -346,11 +382,14 @@ def _tcc_status_problem(label: str, status: str, *, allow_locked: bool) -> list[
             "Unlock the screen and retry before treating this as a TCC denial."
         ]
     if status == TCC_DENIED:
-        return [f"macOS {label} TCC is denied. Grant {settings} to the wrapping app."]
+        return [f"macOS {label} TCC is denied. Grant {settings} to {grant_target}."]
+    extra = ""
+    if label == "Screen Recording":
+        extra = f" Stage the helper with `./gradlew {ASSEMBLE_SCREENCAPTURE_HELPER_TASK}` if needed."
     return [
         f"could not determine macOS {label} TCC permission state (probe was unknown/"
         f"inconclusive: {status}). Release smoke is fail-closed — grant {settings} "
-        "to the wrapping app and relaunch, or rerun after the probe can decide."
+        f"to {grant_target}.{extra}"
     ]
 
 
@@ -385,6 +424,38 @@ def _run_osascript_accessibility() -> tuple[int, str] | None:
     return int(completed.returncode), completed.stdout or ""
 
 
+def macos_screencapture_staged_helper(root: Path) -> Path:
+    return (
+        root
+        / "recording"
+        / "build"
+        / "generated"
+        / "screenCaptureHelper"
+        / "native"
+        / "macos"
+        / SCREENCAPTURE_HELPER_APP_NAME
+        / "Contents"
+        / "MacOS"
+        / SCREENCAPTURE_HELPER_NAME
+    )
+
+
+def macos_screencapture_runtime_helper() -> Path:
+    """Same stable extract path as HelperBinaryExtractor.defaultTargetDir()."""
+    return (
+        Path.home()
+        / "Library"
+        / "Application Support"
+        / "spectre"
+        / "helpers"
+        / SCREENCAPTURE_HELPER_NAME
+        / SCREENCAPTURE_HELPER_APP_NAME
+        / "Contents"
+        / "MacOS"
+        / SCREENCAPTURE_HELPER_NAME
+    )
+
+
 def macos_screencapture_helper_candidates(root: Path) -> list[Path]:
     override = os.environ.get("SPECTRE_SCREENCAPTURE_HELPER", "").strip()
     candidates: list[Path] = []
@@ -395,17 +466,9 @@ def macos_screencapture_helper_candidates(root: Path) -> list[Path]:
             candidates.append(path / "Contents" / "MacOS" / SCREENCAPTURE_HELPER_NAME)
         elif path.name != SCREENCAPTURE_HELPER_NAME:
             candidates.append(path / SCREENCAPTURE_HELPER_NAME)
-    staged_app = (
-        root
-        / "recording"
-        / "build"
-        / "generated"
-        / "screenCaptureHelper"
-        / "native"
-        / "macos"
-        / "SpectreCaptureHelper.app"
-    )
-    candidates.append(staged_app / "Contents" / "MacOS" / SCREENCAPTURE_HELPER_NAME)
+    if platform.system() == "Darwin":
+        candidates.append(macos_screencapture_runtime_helper())
+    candidates.append(macos_screencapture_staged_helper(root))
     return candidates
 
 
@@ -448,10 +511,10 @@ def probe_macos_screen_recording(
         return parse_screencapture_preflight_json(result[1])
 
     resolved = helper_path
-    if resolved is None and ensure_helper is not None:
-        resolved = ensure_helper()
     if resolved is None and root is not None:
         resolved = macos_screencapture_helper_path(root)
+    if resolved is None and ensure_helper is not None:
+        resolved = ensure_helper()
     if resolved is None:
         return TCC_UNKNOWN
 
@@ -461,6 +524,37 @@ def probe_macos_screen_recording(
     if invoked is None:
         return TCC_UNKNOWN
     return parse_screencapture_preflight_json(invoked[1])
+
+
+def ensure_macos_screencapture_helper(
+    root: Path,
+    *,
+    assemble: Callable[[], int] | None = None,
+) -> Path | None:
+    """Find the helper, or stage it with assembleScreenCaptureKitHelper when missing."""
+    found = macos_screencapture_helper_path(root)
+    if found is not None:
+        return found
+    assembler = assemble if assemble is not None else (lambda: _assemble_screencapture_helper(root))
+    if assembler() != 0:
+        return None
+    return macos_screencapture_helper_path(root)
+
+
+def _assemble_screencapture_helper(root: Path) -> int:
+    gradlew = root / "gradlew"
+    if not gradlew.is_file():
+        return 127
+    try:
+        completed = subprocess.run(
+            [str(gradlew), ASSEMBLE_SCREENCAPTURE_HELPER_TASK, "--console=plain"],
+            cwd=root,
+            timeout=ASSEMBLE_SCREENCAPTURE_HELPER_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 124
+    return int(completed.returncode)
 
 
 def _run_screencapture_preflight(argv: Sequence[str]) -> tuple[int, str] | None:

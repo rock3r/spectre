@@ -336,7 +336,7 @@ Shared across macOS / Linux / Windows entrypoints (`scripts/smoke_lib.py` → `R
 | ID | Cell |
 | --- | --- |
 | `preflight` | Environment / SHA / clean-tree preflight |
-| `macos-tcc` | macOS Screen Recording + Accessibility TCC preflight (`MacOsScreenCaptureAccess.preflight` + `MacOsTccGuard` osascript). **Fail-closed** on Denied / Locked / Unknown. Hard `n/a` on Linux/Windows. Runs before `./gradlew check`; a failure records remaining cells as hard `n/a` and prints wrapping-app + `./gradlew --stop` / quit-relaunch guidance. |
+| `macos-tcc` | macOS Screen Recording + Accessibility TCC preflight. Screen Recording uses `MacOsScreenCaptureAccess.preflight` (`SpectreCaptureHelper.app` / `spectre-screencapture --mode preflight`; stages via `:recording:assembleScreenCaptureKitHelper` when missing). Accessibility uses the `MacOsTccGuard` osascript (wrapping app). **Fail-closed** on Denied / Locked / Unknown. Hard `n/a` on Linux/Windows. Runs before `./gradlew check`. |
 | `check` | `./gradlew check` |
 | `junit-live` | Live JUnit failure artifacts/video and atomic capture |
 | `agent-attach-core` | Agent attach with preinstalled core |
@@ -403,7 +403,7 @@ coverage to the runner rather than leaving a one-release command only in chat.
 | Input coordination gate (#459: contention / cancellation / quarantine / revoke / forced recovery / JUnit PerTest) | Unix + Windows `input-coord-*` (coordinator protocol + forked process + JUnit isolation, fail-closed XML) | — |
 | Headed two-`RobotDriver` real-input contention (#491) | Unix + Windows `input-coord-headed-robot` → `:sample-desktop:headedRobotContentionTest` (Linux Xvfb, macOS desktop with TCC, Windows interactive/RDP) | **Hard** on hosts that cannot run it (Windows SSH; no `xvfb-run`): record via `--headed-robot-evidence` / `-HeadedRobotEvidence` |
 | Host native recording | macOS SCK + Linux X11 in `release-smoke.py`; WGC in Windows PS when **interactive** | SSH WGC is N/A (not PASS) |
-| macOS Screen Recording / Accessibility TCC | Unix `macos-tcc` fail-closed preflight (no SecurityAgent prompt; no `TCC.db` reads) | Grant + quit/relaunch wrapping app + `./gradlew --stop`, then rerun |
+| macOS Screen Recording / Accessibility TCC | Unix `macos-tcc` fail-closed preflight (no SecurityAgent prompt; no `TCC.db` reads) | Grant Accessibility to the wrapping app and Screen Recording to Spectre Capture Helper; quit/relaunch + `./gradlew --stop`, then rerun |
 | Notarization / app seal | — | macOS recipes below |
 | Real Wayland portal | — | Real Wayland session (Xvfb ≠ Wayland) |
 | Public Homebrew / Scoop / archive installs | — | After draft release undraft |
@@ -465,9 +465,10 @@ These cannot currently be made portable and fail-closed by the baseline runner:
   `UnauthorizedAccessException`. The Windows harness records hard `n/a` with reason when
   `displayMode` is `windows-ssh` — do **not** treat SSH runs as visual PASS evidence.
 - **macOS TCC grant + release seal:** `macos-tcc` already fail-closes when Screen Recording or
-  Accessibility is Denied / Locked / Unknown (wrapping-app attribution + `./gradlew --stop` /
-  quit-relaunch in the failure text). After a grant, fully quit the wrapping app, relaunch it, and
-  run `./gradlew --stop` before rerunning smoke. Live SCK still/record plus signed-app
+  Accessibility is Denied / Locked / Unknown. Accessibility names the wrapping app; Screen
+  Recording names Spectre Capture Helper (`SpectreCaptureHelper.app`), which the harness stages
+  via `:recording:assembleScreenCaptureKitHelper` when missing. After a grant, quit/relaunch the
+  wrapping app, run `./gradlew --stop`, and rerun smoke. Live SCK still/record plus signed-app
   `codesign --verify --deep --strict`, `spctl`, and `xcrun stapler validate` remain manual. A local
   ad-hoc app is not notarization evidence.
 - **Wayland portal:** Xvfb proves X11 only. On a real Wayland desktop the Unix harness runs
