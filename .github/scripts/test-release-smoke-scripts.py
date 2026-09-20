@@ -1141,6 +1141,8 @@ class DocsAndSchemaPolicyTest(unittest.TestCase):
         self.assertIn("Accessibility", docs)
         self.assertIn("Screen Recording", docs)
         self.assertIn("./gradlew --stop", docs)
+        self.assertIn("Application Support", docs)
+        self.assertIn("SPECTRE_SCREENCAPTURE_HELPER", docs)
         # #459: the experimental input-coordination delta cells are reusable scenario IDs, so the
         # stable-ID table / gate must document them (not leave the commands only in chat).
         for coordination_id in (
@@ -1324,6 +1326,21 @@ class MacOsTccPreflightTest(unittest.TestCase):
         )
         self.assertEqual(smoke_lib.TCC_UNKNOWN, unknown)
 
+        granted_nonzero = smoke_lib.probe_macos_screen_recording(
+            runner=lambda: (1, '{"granted": true}\n')
+        )
+        self.assertEqual(smoke_lib.TCC_UNKNOWN, granted_nonzero)
+
+        granted_denied_exit = smoke_lib.probe_macos_screen_recording(
+            runner=lambda: (6, '{"granted": true}\n')
+        )
+        self.assertEqual(smoke_lib.TCC_UNKNOWN, granted_denied_exit)
+
+        denied_ok_exit = smoke_lib.probe_macos_screen_recording(
+            runner=lambda: (0, '{"granted": false}\n')
+        )
+        self.assertEqual(smoke_lib.TCC_UNKNOWN, denied_ok_exit)
+
     def test_screen_recording_probe_never_requests_or_reads_tcc_db(self):
         seen: list[list[str]] = []
 
@@ -1344,56 +1361,114 @@ class MacOsTccPreflightTest(unittest.TestCase):
         self.assertNotIn("guide-permissions", joined)
         self.assertNotIn("TCC.db", joined)
 
-    def test_ensure_helper_skips_assemble_when_already_staged(self):
+    def test_ensure_skips_assemble_when_runtime_helper_exists(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            helper = smoke_lib.macos_screencapture_helper_candidates(root)[-1]
-            helper.parent.mkdir(parents=True)
-            helper.write_text("#!/bin/sh\n", encoding="utf-8")
-            helper.chmod(0o755)
+            home = Path(tmp) / "home"
+            runtime = smoke_lib.macos_screencapture_runtime_helper(home)
+            runtime.parent.mkdir(parents=True)
+            runtime.write_text("#!/bin/sh\n", encoding="utf-8")
+            runtime.chmod(0o755)
             calls: list[int] = []
             found = smoke_lib.ensure_macos_screencapture_helper(
-                root, assemble=lambda: calls.append(1) or 0
+                root,
+                assemble=lambda: calls.append(1) or 0,
+                home=home,
             )
-            self.assertEqual(helper, found)
+            self.assertEqual(runtime, found)
             self.assertEqual([], calls)
 
-    def test_ensure_helper_assembles_when_missing(self):
+    def test_ensure_installs_staged_helper_to_runtime_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            helper = smoke_lib.macos_screencapture_helper_candidates(root)[-1]
+            home = Path(tmp) / "home"
+            staged = smoke_lib.macos_screencapture_staged_helper(root)
+            runtime = smoke_lib.macos_screencapture_runtime_helper(home)
+            calls: list[int] = []
 
             def assemble() -> int:
-                helper.parent.mkdir(parents=True)
-                helper.write_text("#!/bin/sh\n", encoding="utf-8")
-                helper.chmod(0o755)
+                staged.parent.mkdir(parents=True)
+                staged.write_text("#!/bin/sh\n", encoding="utf-8")
+                staged.chmod(0o755)
+                calls.append(1)
                 return 0
 
-            found = smoke_lib.ensure_macos_screencapture_helper(root, assemble=assemble)
-            self.assertEqual(helper, found)
+            found = smoke_lib.ensure_macos_screencapture_helper(
+                root, assemble=assemble, home=home
+            )
+            self.assertEqual(runtime, found)
+            self.assertEqual([1], calls)
+            self.assertTrue(runtime.is_file())
+            self.assertNotEqual(staged, runtime)
 
-    def test_probe_stages_helper_before_unknown_on_fresh_tree(self):
+    def test_ensure_installs_existing_staged_without_assemble(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            helper = smoke_lib.macos_screencapture_helper_candidates(root)[-1]
-            staged: list[str] = []
+            home = Path(tmp) / "home"
+            staged = smoke_lib.macos_screencapture_staged_helper(root)
+            runtime = smoke_lib.macos_screencapture_runtime_helper(home)
+            staged.parent.mkdir(parents=True)
+            staged.write_text("#!/bin/sh\n", encoding="utf-8")
+            staged.chmod(0o755)
+            calls: list[int] = []
+            found = smoke_lib.ensure_macos_screencapture_helper(
+                root,
+                assemble=lambda: calls.append(1) or 0,
+                home=home,
+            )
+            self.assertEqual(runtime, found)
+            self.assertEqual([], calls)
+            self.assertTrue(runtime.is_file())
+
+    def test_probe_invokes_runtime_helper_not_build_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = Path(tmp) / "home"
+            staged = smoke_lib.macos_screencapture_staged_helper(root)
+            runtime = smoke_lib.macos_screencapture_runtime_helper(home)
+            invoked: list[str] = []
 
             def assemble() -> int:
-                helper.parent.mkdir(parents=True)
-                helper.write_text("#!/bin/sh\n", encoding="utf-8")
-                helper.chmod(0o755)
-                staged.append(str(helper))
+                staged.parent.mkdir(parents=True)
+                staged.write_text("#!/bin/sh\n", encoding="utf-8")
+                staged.chmod(0o755)
                 return 0
 
             status = smoke_lib.probe_macos_screen_recording(
                 root=root,
                 ensure_helper=lambda: smoke_lib.ensure_macos_screencapture_helper(
-                    root, assemble=assemble
+                    root, assemble=assemble, home=home
                 ),
-                invoke_helper=lambda argv: (0, '{"granted": true}\n'),
+                invoke_helper=lambda argv: invoked.append(argv[0])
+                or (0, '{"granted": true}\n'),
             )
-            self.assertEqual([str(helper)], staged)
             self.assertEqual(smoke_lib.TCC_GRANTED, status)
+            self.assertEqual([str(runtime)], invoked)
+            self.assertNotEqual(str(staged), invoked[0])
+
+    def test_invalid_override_fails_closed_without_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = Path(tmp) / "home"
+            staged = smoke_lib.macos_screencapture_staged_helper(root)
+            staged.parent.mkdir(parents=True)
+            staged.write_text("#!/bin/sh\n", encoding="utf-8")
+            staged.chmod(0o755)
+            invoked: list[list[str]] = []
+            env = {"SPECTRE_SCREENCAPTURE_HELPER": str(Path(tmp) / "missing-helper")}
+            with unittest.mock.patch.dict(os.environ, env, clear=False):
+                found = smoke_lib.ensure_macos_screencapture_helper(
+                    root, assemble=lambda: 0, home=home
+                )
+                status = smoke_lib.probe_macos_screen_recording(
+                    root=root,
+                    ensure_helper=lambda: found,
+                    invoke_helper=lambda argv: invoked.append(argv)
+                    or (0, '{"granted": true}\n'),
+                )
+            self.assertIsNone(found)
+            self.assertEqual(smoke_lib.TCC_UNKNOWN, status)
+            self.assertEqual([], invoked)
 
     def test_blocked_remaining_fills_required_ids_with_reason(self):
         existing = [

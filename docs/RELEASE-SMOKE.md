@@ -336,7 +336,7 @@ Shared across macOS / Linux / Windows entrypoints (`scripts/smoke_lib.py` → `R
 | ID | Cell |
 | --- | --- |
 | `preflight` | Environment / SHA / clean-tree preflight |
-| `macos-tcc` | macOS Screen Recording + Accessibility TCC preflight. Screen Recording uses `MacOsScreenCaptureAccess.preflight` (`SpectreCaptureHelper.app` / `spectre-screencapture --mode preflight`; stages via `:recording:assembleScreenCaptureKitHelper` when missing). Accessibility uses the `MacOsTccGuard` osascript (wrapping app). **Fail-closed** on Denied / Locked / Unknown. Hard `n/a` on Linux/Windows. Runs before `./gradlew check`. |
+| `macos-tcc` | macOS Screen Recording + Accessibility TCC preflight. Screen Recording uses `MacOsScreenCaptureAccess.preflight` (`spectre-screencapture --mode preflight` on the runtime `~/Library/Application Support/spectre/helpers/spectre-screencapture/SpectreCaptureHelper.app`, not the Gradle build-tree copy). The harness assembles via `:recording:assembleScreenCaptureKitHelper` when missing, then installs that bundle to the HelperBinaryExtractor path before probing. Accessibility uses the `MacOsTccGuard` osascript (wrapping app). **Fail-closed** on Denied / Locked / Unknown, on helper exit/JSON mismatch, and on a missing `SPECTRE_SCREENCAPTURE_HELPER`. Hard `n/a` on Linux/Windows. Runs before `./gradlew check`. |
 | `check` | `./gradlew check` |
 | `junit-live` | Live JUnit failure artifacts/video and atomic capture |
 | `agent-attach-core` | Agent attach with preinstalled core |
@@ -466,8 +466,9 @@ These cannot currently be made portable and fail-closed by the baseline runner:
   `displayMode` is `windows-ssh` — do **not** treat SSH runs as visual PASS evidence.
 - **macOS TCC grant + release seal:** `macos-tcc` already fail-closes when Screen Recording or
   Accessibility is Denied / Locked / Unknown. Accessibility names the wrapping app; Screen
-  Recording names Spectre Capture Helper (`SpectreCaptureHelper.app`), which the harness stages
-  via `:recording:assembleScreenCaptureKitHelper` when missing. After a grant, quit/relaunch the
+  Recording names Spectre Capture Helper (`SpectreCaptureHelper.app`), which the harness installs
+  to `~/Library/Application Support/spectre/helpers/spectre-screencapture/` (same path later
+  capture cells extract) after `:recording:assembleScreenCaptureKitHelper` when missing. After a grant, quit/relaunch the
   wrapping app, run `./gradlew --stop`, and rerun smoke. Live SCK still/record plus signed-app
   `codesign --verify --deep --strict`, `spctl`, and `xcrun stapler validate` remain manual. A local
   ad-hoc app is not notarization evidence.

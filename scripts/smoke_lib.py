@@ -10,6 +10,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -300,6 +301,8 @@ ACCESSIBILITY_OSASCRIPT = (
 )
 SCREENCAPTURE_HELPER_NAME = "spectre-screencapture"
 SCREENCAPTURE_PREFLIGHT_TIMEOUT_SECONDS = 15
+SCREENCAPTURE_HELPER_EXIT_NOT_GRANTED = 6
+SCREENCAPTURE_HELPER_OVERRIDE_ENV = "SPECTRE_SCREENCAPTURE_HELPER"
 MACOS_TCC_BLOCKED_REASON = (
     "blocked by macos-tcc failure; grant Accessibility to the wrapping app and "
     "Screen Recording to Spectre Capture Helper, then quit/relaunch and ./gradlew --stop"
@@ -385,7 +388,13 @@ def _tcc_status_problem(
         return [f"macOS {label} TCC is denied. Grant {settings} to {grant_target}."]
     extra = ""
     if label == "Screen Recording":
-        extra = f" Stage the helper with `./gradlew {ASSEMBLE_SCREENCAPTURE_HELPER_TASK}` if needed."
+        extra = (
+            f" Stage the helper with `./gradlew {ASSEMBLE_SCREENCAPTURE_HELPER_TASK}` "
+            f"and probe the runtime install under "
+            f"~/Library/Application Support/spectre/helpers/{SCREENCAPTURE_HELPER_NAME}/"
+            f"{SCREENCAPTURE_HELPER_APP_NAME}. A missing or non-executable "
+            f"{SCREENCAPTURE_HELPER_OVERRIDE_ENV} is fail-closed."
+        )
     return [
         f"could not determine macOS {label} TCC permission state (probe was unknown/"
         f"inconclusive: {status}). Release smoke is fail-closed — grant {settings} "
@@ -440,10 +449,10 @@ def macos_screencapture_staged_helper(root: Path) -> Path:
     )
 
 
-def macos_screencapture_runtime_helper() -> Path:
+def macos_screencapture_runtime_helper(home: Path | None = None) -> Path:
     """Same stable extract path as HelperBinaryExtractor.defaultTargetDir()."""
     return (
-        Path.home()
+        (home if home is not None else Path.home())
         / "Library"
         / "Application Support"
         / "spectre"
@@ -456,25 +465,66 @@ def macos_screencapture_runtime_helper() -> Path:
     )
 
 
-def macos_screencapture_helper_candidates(root: Path) -> list[Path]:
-    override = os.environ.get("SPECTRE_SCREENCAPTURE_HELPER", "").strip()
+class InvalidScreencaptureHelperOverride(RuntimeError):
+    """SPECTRE_SCREENCAPTURE_HELPER is set but is not an executable helper."""
+
+
+def macos_screencapture_override_path(
+    environ: Mapping[str, str] | None = None,
+) -> Path | None:
+    """Authoritative SPECTRE_SCREENCAPTURE_HELPER, matching HelperBinaryExtractor."""
+    raw = (environ if environ is not None else os.environ).get(
+        SCREENCAPTURE_HELPER_OVERRIDE_ENV, ""
+    ).strip()
+    if not raw:
+        return None
+    override = Path(raw)
+    candidates = [override]
+    if override.name.endswith(".app"):
+        candidates.append(override / "Contents" / "MacOS" / SCREENCAPTURE_HELPER_NAME)
+    elif override.name != SCREENCAPTURE_HELPER_NAME:
+        candidates.append(override / "Contents" / "MacOS" / SCREENCAPTURE_HELPER_NAME)
+        candidates.append(override / SCREENCAPTURE_HELPER_NAME)
+    for candidate in candidates:
+        if _is_executable_helper(candidate):
+            return candidate
+    raise InvalidScreencaptureHelperOverride(
+        f"{SCREENCAPTURE_HELPER_OVERRIDE_ENV} points at {raw!r} but no executable "
+        f"helper was found. Point it at {SCREENCAPTURE_HELPER_NAME} or "
+        f"{SCREENCAPTURE_HELPER_APP_NAME}, or unset it."
+    )
+
+
+def macos_screencapture_helper_candidates(
+    root: Path,
+    *,
+    home: Path | None = None,
+) -> list[Path]:
     candidates: list[Path] = []
-    if override:
-        path = Path(override)
-        candidates.append(path)
-        if path.name.endswith(".app"):
-            candidates.append(path / "Contents" / "MacOS" / SCREENCAPTURE_HELPER_NAME)
-        elif path.name != SCREENCAPTURE_HELPER_NAME:
-            candidates.append(path / SCREENCAPTURE_HELPER_NAME)
-    if platform.system() == "Darwin":
-        candidates.append(macos_screencapture_runtime_helper())
-    candidates.append(macos_screencapture_staged_helper(root))
+    try:
+        override = macos_screencapture_override_path()
+    except InvalidScreencaptureHelperOverride:
+        return []
+    if override is not None:
+        return [override]
+    if home is not None or platform.system() == "Darwin":
+        candidates.append(macos_screencapture_runtime_helper(home))
     return candidates
 
 
-def macos_screencapture_helper_path(root: Path) -> Path | None:
-    for candidate in macos_screencapture_helper_candidates(root):
-        if candidate.is_file() and os.access(candidate, os.X_OK):
+def macos_screencapture_helper_path(
+    root: Path,
+    *,
+    home: Path | None = None,
+) -> Path | None:
+    try:
+        override = macos_screencapture_override_path()
+    except InvalidScreencaptureHelperOverride:
+        return None
+    if override is not None:
+        return override
+    for candidate in macos_screencapture_helper_candidates(root, home=home):
+        if _is_executable_helper(candidate):
             return candidate
     return None
 
@@ -495,6 +545,16 @@ def parse_screencapture_preflight_json(stdout: str) -> str:
     return TCC_UNKNOWN
 
 
+def interpret_screencapture_preflight(exit_code: int, stdout: str) -> str:
+    """Match MacOsScreenCaptureAccess.runHelper: exit 0 granted, exit 6 denied."""
+    parsed = parse_screencapture_preflight_json(stdout)
+    if exit_code == 0 and parsed == TCC_GRANTED:
+        return TCC_GRANTED
+    if exit_code == SCREENCAPTURE_HELPER_EXIT_NOT_GRANTED and parsed == TCC_DENIED:
+        return TCC_DENIED
+    return TCC_UNKNOWN
+
+
 def probe_macos_screen_recording(
     *,
     root: Path | None = None,
@@ -502,19 +562,24 @@ def probe_macos_screen_recording(
     helper_path: Path | None = None,
     invoke_helper: Callable[[list[str]], tuple[int, str] | None] | None = None,
     ensure_helper: Callable[[], Path | None] | None = None,
+    home: Path | None = None,
 ) -> str:
     """Run MacOsScreenCaptureAccess.preflight via the helper; never request/guide."""
     if runner is not None:
         result = runner()
         if result is None:
             return TCC_UNKNOWN
-        return parse_screencapture_preflight_json(result[1])
+        return interpret_screencapture_preflight(result[0], result[1])
 
-    resolved = helper_path
-    if resolved is None and root is not None:
-        resolved = macos_screencapture_helper_path(root)
+    try:
+        override = macos_screencapture_override_path()
+    except InvalidScreencaptureHelperOverride:
+        return TCC_UNKNOWN
+    resolved = override if override is not None else helper_path
     if resolved is None and ensure_helper is not None:
         resolved = ensure_helper()
+    if resolved is None and root is not None:
+        resolved = macos_screencapture_helper_path(root, home=home)
     if resolved is None:
         return TCC_UNKNOWN
 
@@ -523,22 +588,80 @@ def probe_macos_screen_recording(
     invoked = invoker(argv)
     if invoked is None:
         return TCC_UNKNOWN
-    return parse_screencapture_preflight_json(invoked[1])
+    return interpret_screencapture_preflight(invoked[0], invoked[1])
+
+
+def macos_screencapture_app_root(executable: Path) -> Path | None:
+    cursor = executable
+    for _ in range(6):
+        if cursor.name.endswith(".app"):
+            return cursor
+        parent = cursor.parent
+        if parent == cursor:
+            break
+        cursor = parent
+    return None
+
+
+def install_macos_screencapture_helper(
+    staged_executable: Path,
+    dest_executable: Path,
+) -> Path | None:
+    """Copy the staged .app onto the HelperBinaryExtractor runtime path."""
+    src_app = macos_screencapture_app_root(staged_executable)
+    dest_app = macos_screencapture_app_root(dest_executable)
+    if src_app is None or dest_app is None or not src_app.is_dir():
+        dest_executable.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(staged_executable, dest_executable)
+        dest_executable.chmod(0o755)
+        return dest_executable if _is_executable_helper(dest_executable) else None
+    if dest_app.exists():
+        shutil.rmtree(dest_app)
+    dest_app.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src_app, dest_app)
+    if dest_executable.is_file():
+        dest_executable.chmod(0o755)
+    return dest_executable if _is_executable_helper(dest_executable) else None
 
 
 def ensure_macos_screencapture_helper(
     root: Path,
     *,
     assemble: Callable[[], int] | None = None,
+    home: Path | None = None,
+    install: Callable[[Path, Path], Path | None] | None = None,
 ) -> Path | None:
-    """Find the helper, or stage it with assembleScreenCaptureKitHelper when missing."""
-    found = macos_screencapture_helper_path(root)
-    if found is not None:
-        return found
-    assembler = assemble if assemble is not None else (lambda: _assemble_screencapture_helper(root))
-    if assembler() != 0:
+    """Install the helper to the runtime TCC path, assembling first when needed."""
+    try:
+        override = macos_screencapture_override_path()
+    except InvalidScreencaptureHelperOverride:
         return None
-    return macos_screencapture_helper_path(root)
+    if override is not None:
+        return override
+
+    runtime = macos_screencapture_runtime_helper(home)
+    if _is_executable_helper(runtime):
+        return runtime
+
+    staged = macos_screencapture_staged_helper(root)
+    if not _is_executable_helper(staged):
+        assembler = (
+            assemble if assemble is not None else (lambda: _assemble_screencapture_helper(root))
+        )
+        if assembler() != 0:
+            return None
+        staged = macos_screencapture_staged_helper(root)
+    if not _is_executable_helper(staged):
+        return None
+
+    if home is None and platform.system() != "Darwin":
+        return None
+    installer = install if install is not None else install_macos_screencapture_helper
+    return installer(staged, runtime)
+
+
+def _is_executable_helper(path: Path) -> bool:
+    return path.is_file() and os.access(path, os.X_OK)
 
 
 def _assemble_screencapture_helper(root: Path) -> int:
