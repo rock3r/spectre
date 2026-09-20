@@ -749,6 +749,8 @@ class SmokeLibSchemaTest(unittest.TestCase):
         # #502: macos-tcc must refresh a stale runtime helper after an unknown probe.
         self.assertIn("refresh_helper", text)
         self.assertIn("refresh=True", text)
+        self.assertIn("probe_macos_wrapping_screen_recording", text)
+        self.assertIn("wrapping_screen_recording_probe", text)
         # Nested buildSrc test must not start a daemon that --stops parent ./gradlew check.
         root_build = (ROOT / "build.gradle.kts").read_text(encoding="utf-8")
         self.assertIn('"--no-daemon"', root_build)
@@ -1147,6 +1149,8 @@ class DocsAndSchemaPolicyTest(unittest.TestCase):
         self.assertIn("Application Support", docs)
         self.assertIn("SPECTRE_SCREENCAPTURE_HELPER", docs)
         self.assertIn("stale cached helper", docs)
+        self.assertIn("IOConsoleLocked", docs)
+        self.assertIn("Robot", docs)
         # #459: the experimental input-coordination delta cells are reusable scenario IDs, so the
         # stable-ID table / gate must document them (not leave the commands only in chat).
         for coordination_id in (
@@ -1285,6 +1289,44 @@ class MacOsTccPreflightTest(unittest.TestCase):
         message = str(raised.exception).lower()
         self.assertIn("locked", message)
         self.assertIn("unlock", message)
+
+    def test_console_lock_status_matches_macos_tcc_guard(self):
+        self.assertTrue(smoke_lib.macos_console_lock_status('"IOConsoleLocked" = Yes'))
+        self.assertFalse(smoke_lib.macos_console_lock_status('"IOConsoleLocked" = No'))
+        self.assertIsNone(smoke_lib.macos_console_lock_status('"IOConsoleUsers" = ()'))
+
+    def test_helper_granted_is_locked_when_console_is_locked(self):
+        status = smoke_lib.probe_macos_screen_recording(
+            runner=lambda: (0, '{"granted": true}\n'),
+            console_locked_probe=lambda: True,
+        )
+        self.assertEqual(smoke_lib.TCC_LOCKED, status)
+
+    def test_evaluate_denied_wrapping_screen_recording_names_robot_app(self):
+        with self.assertRaises(RuntimeError) as raised:
+            smoke_lib.evaluate_macos_tcc(
+                accessibility=smoke_lib.TCC_GRANTED,
+                screen_recording=smoke_lib.TCC_GRANTED,
+                wrapping_screen_recording=smoke_lib.TCC_DENIED,
+            )
+        message = str(raised.exception)
+        self.assertIn("wrapping", message.lower())
+        self.assertIn("Screen Recording", message)
+        self.assertIn("Robot", message)
+
+    def test_wrapping_screen_recording_probe_matches_robot_pixels(self):
+        granted = smoke_lib.interpret_wrapping_screen_recording_pixels(
+            [0, 0, 0, 0x0000FF], width=2, height=2
+        )
+        self.assertEqual(smoke_lib.TCC_GRANTED, granted)
+        denied = smoke_lib.interpret_wrapping_screen_recording_pixels(
+            [0, 0, 0, 0], width=2, height=2
+        )
+        self.assertEqual(smoke_lib.TCC_DENIED, denied)
+        unknown = smoke_lib.interpret_wrapping_screen_recording_pixels(
+            [0xFFFFFF], width=1, height=1
+        )
+        self.assertEqual(smoke_lib.TCC_UNKNOWN, unknown)
 
     def test_accessibility_probe_matches_macos_tcc_guard_semantics(self):
         granted = smoke_lib.probe_macos_accessibility(
@@ -1612,6 +1654,11 @@ class ReleaseSmokeMacOsTccWiringTest(unittest.TestCase):
                 unittest.mock.patch.object(
                     self.rs,
                     "probe_macos_screen_recording",
+                    return_value=smoke_lib.TCC_GRANTED,
+                ),
+                unittest.mock.patch.object(
+                    self.rs,
+                    "probe_macos_wrapping_screen_recording",
                     return_value=smoke_lib.TCC_GRANTED,
                 ),
                 unittest.mock.patch.object(

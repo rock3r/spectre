@@ -12,8 +12,10 @@ import platform
 import re
 import shutil
 import signal
+import struct
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -304,9 +306,13 @@ SCREENCAPTURE_PREFLIGHT_TIMEOUT_SECONDS = 15
 SCREENCAPTURE_HELPER_EXIT_NOT_GRANTED = 6
 SCREENCAPTURE_HELPER_OVERRIDE_ENV = "SPECTRE_SCREENCAPTURE_HELPER"
 MACOS_TCC_BLOCKED_REASON = (
-    "blocked by macos-tcc failure; grant Accessibility to the wrapping app and "
-    "Screen Recording to Spectre Capture Helper, then quit/relaunch and ./gradlew --stop"
+    "blocked by macos-tcc failure; grant Accessibility and Screen Recording to the "
+    "wrapping app and Screen Recording to Spectre Capture Helper, then quit/relaunch "
+    "and ./gradlew --stop"
 )
+IOREG_CONSOLE_LOCK_TIMEOUT_SECONDS = 3
+WRAPPING_SCREEN_RECORDING_PROBE_SIZE_PX = 32
+WRAPPING_SCREEN_RECORDING_RGB_MASK = 0x00FFFFFF
 SCREENCAPTURE_HELPER_DISPLAY_NAME = "Spectre Capture Helper"
 SCREENCAPTURE_HELPER_APP_NAME = "SpectreCaptureHelper.app"
 ASSEMBLE_SCREENCAPTURE_HELPER_TASK = ":recording:assembleScreenCaptureKitHelper"
@@ -320,11 +326,17 @@ MACOS_TCC_ACCESSIBILITY_GUIDANCE = (
     "are not reused."
 )
 MACOS_TCC_SCREEN_RECORDING_GUIDANCE = (
-    f"Screen Recording TCC for this probe accrues to {SCREENCAPTURE_HELPER_DISPLAY_NAME} "
+    f"Native capture TCC accrues to {SCREENCAPTURE_HELPER_DISPLAY_NAME} "
     f"({SCREENCAPTURE_HELPER_APP_NAME}), not the wrapping Terminal/IDE. Grant System "
     f"Settings → Privacy & Security → Screen & System Audio Recording to that helper "
     f"row. If the helper is not on disk yet, run `./gradlew "
     f"{ASSEMBLE_SCREENCAPTURE_HELPER_TASK}` (or set SPECTRE_SCREENCAPTURE_HELPER)."
+)
+MACOS_TCC_WRAPPING_SCREEN_RECORDING_GUIDANCE = (
+    "RobotDriver.screenshot() and junit-live captures require Screen Recording for the "
+    "wrapping Terminal/IDE, in addition to Spectre Capture Helper. Grant System "
+    "Settings → Privacy & Security → Screen & System Audio Recording to that wrapping "
+    "app, then fully quit and relaunch it and run `./gradlew --stop`."
 )
 
 
@@ -336,11 +348,17 @@ def macos_tcc_skip_reason(system: str | None = None) -> str | None:
     return None
 
 
-def evaluate_macos_tcc(*, accessibility: str, screen_recording: str) -> None:
-    """Fail closed unless both probes are granted or not applicable."""
+def evaluate_macos_tcc(
+    *,
+    accessibility: str,
+    screen_recording: str,
+    wrapping_screen_recording: str = TCC_GRANTED,
+) -> None:
+    """Fail closed unless helper, wrapping-app, and Accessibility probes pass."""
     problems: list[str] = []
     accessibility_failed = False
-    screen_failed = False
+    helper_failed = False
+    wrapping_failed = False
     for line in _tcc_status_problem(
         "Accessibility",
         accessibility,
@@ -356,11 +374,21 @@ def evaluate_macos_tcc(*, accessibility: str, screen_recording: str) -> None:
         grant_target=f"{SCREENCAPTURE_HELPER_DISPLAY_NAME} ({SCREENCAPTURE_HELPER_APP_NAME})",
     ):
         problems.append(line)
-        screen_failed = True
+        helper_failed = True
+    for line in _tcc_status_problem(
+        "wrapping-app Screen Recording",
+        wrapping_screen_recording,
+        allow_locked=True,
+        grant_target="the wrapping app (RobotDriver.screenshot / junit-live)",
+    ):
+        problems.append(line)
+        wrapping_failed = True
     if accessibility_failed:
         problems.append(MACOS_TCC_ACCESSIBILITY_GUIDANCE)
-    if screen_failed:
+    if helper_failed:
         problems.append(MACOS_TCC_SCREEN_RECORDING_GUIDANCE)
+    if wrapping_failed:
+        problems.append(MACOS_TCC_WRAPPING_SCREEN_RECORDING_GUIDANCE)
     if problems:
         raise RuntimeError("\n".join(problems))
 
@@ -400,6 +428,138 @@ def _tcc_status_problem(
         f"inconclusive: {status}). Release smoke is fail-closed — grant {settings} "
         f"to {grant_target}.{extra}"
     ]
+
+
+def macos_console_lock_status(ioreg_output: str) -> bool | None:
+    """Same parse as MacOsTccGuard.macOsConsoleLockStatus."""
+    match = re.search(r'"IOConsoleLocked"\s*=\s*(Yes|No)', ioreg_output)
+    if match is None:
+        return None
+    return match.group(1) == "Yes"
+
+
+def probe_macos_console_locked(
+    runner: Callable[[], str | None] | None = None,
+) -> bool | None:
+    """True when ioreg reports IOConsoleLocked=Yes (MacOsTccGuard)."""
+    output = runner() if runner is not None else _run_ioreg_console_lock()
+    if output is None:
+        return None
+    return macos_console_lock_status(output)
+
+
+def _run_ioreg_console_lock() -> str | None:
+    try:
+        completed = subprocess.run(
+            ["/usr/sbin/ioreg", "-n", "Root", "-d", "1", "-r"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=IOREG_CONSOLE_LOCK_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return completed.stdout or ""
+
+
+def interpret_wrapping_screen_recording_pixels(
+    pixels: Sequence[int],
+    *,
+    width: int,
+    height: int,
+) -> str:
+    """Same all-black origin-region rule as MacOsTccGuard.robotScreenRecordingProbe."""
+    if width <= 1 or height <= 1:
+        return TCC_UNKNOWN
+    if len(pixels) < width * height:
+        return TCC_UNKNOWN
+    for rgb in pixels:
+        if (int(rgb) & WRAPPING_SCREEN_RECORDING_RGB_MASK) != 0:
+            return TCC_GRANTED
+    return TCC_DENIED
+
+
+def probe_macos_wrapping_screen_recording(
+    *,
+    runner: Callable[[], str | None] | None = None,
+    console_locked_probe: Callable[[], bool | None] | None = None,
+    system: str | None = None,
+) -> str:
+    """Wrapping-app Screen Recording for RobotDriver.screenshot / junit-live."""
+    if macos_tcc_skip_reason(system=system) is not None:
+        return TCC_NOT_APPLICABLE
+    if (console_locked_probe or probe_macos_console_locked)() is True:
+        return TCC_LOCKED
+    if runner is not None:
+        raw = runner()
+        if raw is None:
+            return TCC_UNKNOWN
+        return _wrapping_status_from_bmp(raw.encode("latin1") if isinstance(raw, str) else raw)
+
+    bmp = _capture_wrapping_screen_recording_bmp()
+    if bmp is None:
+        return TCC_UNKNOWN
+    return _wrapping_status_from_bmp(bmp)
+
+
+def _wrapping_status_from_bmp(data: bytes) -> str:
+    parsed = _bmp_rgb_pixels(data)
+    if parsed is None:
+        return TCC_UNKNOWN
+    pixels, width, height = parsed
+    return interpret_wrapping_screen_recording_pixels(pixels, width=width, height=height)
+
+
+def _bmp_rgb_pixels(data: bytes) -> tuple[list[int], int, int] | None:
+    if len(data) < 30 or data[:2] != b"BM":
+        return None
+    offset = struct.unpack_from("<I", data, 10)[0]
+    width, height = struct.unpack_from("<ii", data, 18)
+    bits = struct.unpack_from("<H", data, 28)[0]
+    height = abs(height)
+    if width <= 0 or height <= 0 or bits not in {24, 32} or offset < 0:
+        return None
+    row_size = ((width * bits + 31) // 32) * 4
+    pixels: list[int] = []
+    for row in range(height):
+        start = offset + row * row_size
+        for col in range(width):
+            pixel_at = start + col * (bits // 8)
+            if pixel_at + 2 >= len(data):
+                return None
+            blue, green, red = data[pixel_at], data[pixel_at + 1], data[pixel_at + 2]
+            pixels.append((red << 16) | (green << 8) | blue)
+    return pixels, width, height
+
+
+def _capture_wrapping_screen_recording_bmp() -> bytes | None:
+    path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".bmp", delete=False) as handle:
+            path = Path(handle.name)
+        completed = subprocess.run(
+            [
+                "screencapture",
+                "-x",
+                "-t",
+                "bmp",
+                "-R",
+                f"0,0,{WRAPPING_SCREEN_RECORDING_PROBE_SIZE_PX},"
+                f"{WRAPPING_SCREEN_RECORDING_PROBE_SIZE_PX}",
+                str(path),
+            ],
+            timeout=SCREENCAPTURE_PREFLIGHT_TIMEOUT_SECONDS,
+            check=False,
+        )
+        if completed.returncode != 0 or not path.is_file():
+            return None
+        return path.read_bytes()
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    finally:
+        if path is not None:
+            path.unlink(missing_ok=True)
 
 
 def probe_macos_accessibility(
@@ -566,8 +726,11 @@ def probe_macos_screen_recording(
     ensure_helper: Callable[[], Path | None] | None = None,
     refresh_helper: Callable[[], Path | None] | None = None,
     home: Path | None = None,
+    console_locked_probe: Callable[[], bool | None] | None = None,
 ) -> str:
     """Run MacOsScreenCaptureAccess.preflight via the helper; never request/guide."""
+    if (console_locked_probe or probe_macos_console_locked)() is True:
+        return TCC_LOCKED
     if runner is not None:
         result = runner()
         if result is None:
@@ -718,6 +881,7 @@ def require_macos_tcc(
     *,
     accessibility_probe: Callable[[], str] | None = None,
     screen_recording_probe: Callable[[], str] | None = None,
+    wrapping_screen_recording_probe: Callable[[], str] | None = None,
     system: str | None = None,
 ) -> None:
     """Fail closed for live Robot / capture cells when Darwin TCC is missing."""
@@ -726,6 +890,9 @@ def require_macos_tcc(
     evaluate_macos_tcc(
         accessibility=(accessibility_probe or probe_macos_accessibility)(),
         screen_recording=(screen_recording_probe or probe_macos_screen_recording)(),
+        wrapping_screen_recording=(
+            wrapping_screen_recording_probe or probe_macos_wrapping_screen_recording
+        )(),
     )
 
 

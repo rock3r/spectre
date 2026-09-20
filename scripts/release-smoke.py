@@ -60,6 +60,7 @@ from smoke_lib import (  # noqa: E402
     prepare_linux_portal_token_env,
     probe_macos_accessibility,
     probe_macos_screen_recording,
+    probe_macos_wrapping_screen_recording,
     require_macos_tcc,
     robot_xvfb_prefix,
     robot_xvfb_unavailable_reason,
@@ -127,6 +128,7 @@ def _run_macos_tcc_scenario(out_dir: Path, system: str) -> ScenarioResult:
                     ROOT, refresh=True
                 ),
             ),
+            wrapping_screen_recording_probe=probe_macos_wrapping_screen_recording,
         )
 
     return run_callable_scenario(
@@ -153,6 +155,7 @@ def _macos_tcc_recheck_failure(
                     ROOT, refresh=True
                 ),
             ),
+            wrapping_screen_recording_probe=probe_macos_wrapping_screen_recording,
         )
     except RuntimeError as error:
         return scenario_result(

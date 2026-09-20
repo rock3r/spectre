@@ -336,7 +336,7 @@ Shared across macOS / Linux / Windows entrypoints (`scripts/smoke_lib.py` → `R
 | ID | Cell |
 | --- | --- |
 | `preflight` | Environment / SHA / clean-tree preflight |
-| `macos-tcc` | macOS Screen Recording + Accessibility TCC preflight. Screen Recording uses `MacOsScreenCaptureAccess.preflight` (`spectre-screencapture --mode preflight` on the runtime `~/Library/Application Support/spectre/helpers/spectre-screencapture/SpectreCaptureHelper.app`, not the Gradle build-tree copy). The harness assembles via `:recording:assembleScreenCaptureKitHelper` when missing, then installs that bundle to the HelperBinaryExtractor path before probing. Accessibility uses the `MacOsTccGuard` osascript (wrapping app). **Fail-closed** on Denied / Locked / Unknown, on helper exit/JSON mismatch, and on a missing `SPECTRE_SCREENCAPTURE_HELPER`. Hard `n/a` on Linux/Windows. Runs before `./gradlew check`. |
+| `macos-tcc` | macOS Screen Recording + Accessibility TCC preflight. Screen Recording uses `MacOsScreenCaptureAccess.preflight` on the runtime `~/Library/Application Support/spectre/helpers/spectre-screencapture/SpectreCaptureHelper.app`, plus the `MacOsTccGuard` wrapping-app Robot probe (`screencapture` 32×32 origin, all-black = denied) and `ioreg` `IOConsoleLocked` (locked console is fail-closed even if the helper reports granted). Accessibility uses the `MacOsTccGuard` osascript (wrapping app). **Fail-closed** on Denied / Locked / Unknown, on helper exit/JSON mismatch, and on a missing `SPECTRE_SCREENCAPTURE_HELPER`. Hard `n/a` on Linux/Windows. Runs before `./gradlew check`. |
 | `check` | `./gradlew check` |
 | `junit-live` | Live JUnit failure artifacts/video and atomic capture |
 | `agent-attach-core` | Agent attach with preinstalled core |
@@ -403,7 +403,7 @@ coverage to the runner rather than leaving a one-release command only in chat.
 | Input coordination gate (#459: contention / cancellation / quarantine / revoke / forced recovery / JUnit PerTest) | Unix + Windows `input-coord-*` (coordinator protocol + forked process + JUnit isolation, fail-closed XML) | — |
 | Headed two-`RobotDriver` real-input contention (#491) | Unix + Windows `input-coord-headed-robot` → `:sample-desktop:headedRobotContentionTest` (Linux Xvfb, macOS desktop with TCC, Windows interactive/RDP) | **Hard** on hosts that cannot run it (Windows SSH; no `xvfb-run`): record via `--headed-robot-evidence` / `-HeadedRobotEvidence` |
 | Host native recording | macOS SCK + Linux X11 in `release-smoke.py`; WGC in Windows PS when **interactive** | SSH WGC is N/A (not PASS) |
-| macOS Screen Recording / Accessibility TCC | Unix `macos-tcc` fail-closed preflight (no SecurityAgent prompt; no `TCC.db` reads) | Grant Accessibility to the wrapping app and Screen Recording to Spectre Capture Helper; quit/relaunch + `./gradlew --stop`, then rerun |
+| macOS Screen Recording / Accessibility TCC | Unix `macos-tcc` fail-closed preflight (no SecurityAgent prompt; no `TCC.db` reads) | Unlock the console if `IOConsoleLocked`; grant Accessibility and Screen Recording to the wrapping app (Robot) and Screen Recording to Spectre Capture Helper; quit/relaunch + `./gradlew --stop`, then rerun |
 | Notarization / app seal | — | macOS recipes below |
 | Real Wayland portal | — | Real Wayland session (Xvfb ≠ Wayland) |
 | Public Homebrew / Scoop / archive installs | — | After draft release undraft |
