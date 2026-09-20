@@ -34,6 +34,34 @@ class ScreenshotGoldUpdateForwardingTest {
     }
 
     @Test
+    fun `update mode is true only for an explicit true property or env`() {
+        assertEquals(false, screenshotGoldUpdateModeEnabled(propertyValue = "", envValue = ""))
+        assertEquals(false, screenshotGoldUpdateModeEnabled(propertyValue = "   ", envValue = ""))
+        assertEquals(true, screenshotGoldUpdateModeEnabled(propertyValue = "true", envValue = ""))
+        assertEquals(true, screenshotGoldUpdateModeEnabled(propertyValue = "TRUE", envValue = ""))
+        assertEquals(true, screenshotGoldUpdateModeEnabled(propertyValue = "", envValue = "true"))
+        assertEquals(
+            false,
+            screenshotGoldUpdateModeEnabled(propertyValue = "false", envValue = "true"),
+        )
+        assertEquals(
+            true,
+            screenshotGoldUpdateModeEnabled(propertyValue = "true", envValue = "false"),
+        )
+        assertEquals(false, screenshotGoldUpdateModeEnabled(propertyValue = "yes", envValue = ""))
+    }
+
+    @Test
+    fun `update mode forces a Test rerun and disables build-cache reuse`() {
+        val enabled = screenshotGoldUpdateExecutionPolicy(updateEnabled = true)
+        assertEquals(true, enabled.disableUpToDate)
+        assertEquals(true, enabled.disableCache)
+        val disabled = screenshotGoldUpdateExecutionPolicy(updateEnabled = false)
+        assertEquals(false, disabled.disableUpToDate)
+        assertEquals(false, disabled.disableCache)
+    }
+
+    @Test
     fun `the forwarded names match the knobs the test JVM actually reads`() {
         val source =
             repoRoot()
@@ -52,6 +80,22 @@ class ScreenshotGoldUpdateForwardingTest {
                 source.contains("\"$SCREENSHOT_GOLD_UPDATE_GRADLE_PROPERTY\""),
             "ScreenshotUpdateMode.GRADLE_PROPERTY no longer matches " +
                 "SCREENSHOT_GOLD_UPDATE_GRADLE_PROPERTY ($SCREENSHOT_GOLD_UPDATE_GRADLE_PROPERTY)",
+        )
+        assertTrue(
+            source.contains("const val ENV") && source.contains("\"$SCREENSHOT_GOLD_UPDATE_ENV\""),
+            "ScreenshotUpdateMode.ENV no longer matches SCREENSHOT_GOLD_UPDATE_ENV " +
+                "($SCREENSHOT_GOLD_UPDATE_ENV)",
+        )
+        val forwarding =
+            repoRoot()
+                .resolve(
+                    "buildSrc/src/main/kotlin/dev/sebastiano/spectre/build/" +
+                        "ScreenshotGoldUpdateForwarding.kt"
+                )
+                .readText()
+        assertTrue(
+            forwarding.contains("outputs.upToDateWhen") && forwarding.contains("outputs.cacheIf"),
+            "update mode must disable UP-TO-DATE skipping and build-cache reuse",
         )
     }
 

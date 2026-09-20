@@ -101,7 +101,8 @@ internal fun assertMatchesGold(
     if (!Files.isRegularFile(goldFile)) {
         throw AssertionError(
             "Screenshot gold missing: $goldFile. Re-run with " +
-                "${ScreenshotUpdateMode.ENV}=true or -P${ScreenshotUpdateMode.GRADLE_PROPERTY}=true " +
+                "${ScreenshotUpdateMode.ENV}=true or " +
+                "-P${ScreenshotUpdateMode.GRADLE_PROPERTY}=true " +
                 "to write the current platform/scale gold."
         )
     }
