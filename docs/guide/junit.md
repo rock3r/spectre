@@ -332,10 +332,19 @@ fun homeMatchesGold(testInfo: TestInfo, automator: ComposeAutomator): Unit = run
 ```
 
 Pass JUnit 5 `TestInfo` when the body runs inside `runSpectreTest` (it executes on a
-worker dispatcher). The name-only `assertMatchesGold(name, image)` overload infers the
-test from the calling thread and is for JUnit methods that call it directly.
-It recognizes `@Test`, `@ParameterizedTest`, `@RepeatedTest`, and other annotations
-meta-annotated with JUnit's `@Testable` / `@TestTemplate` (including composed ones).
+worker dispatcher). That overload lives on the `ScreenshotGoldJunit5` facade so the
+name-only `ScreenshotGoldKt.assertMatchesGold(name, image)` method has no `TestInfo`
+descriptor — JUnit 4-only Java callers can resolve it without `junit-jupiter-api`.
+The name-only overload infers the test from the calling thread and is for JUnit
+methods that call it directly. It recognizes `@Test`, `@ParameterizedTest`,
+`@RepeatedTest`, and other annotations meta-annotated with JUnit's `@Testable` /
+`@TestTemplate` (including composed ones).
+
+`@ParameterizedTest` and `@RepeatedTest` invocations that share a screenshot name
+must not share a gold. The `TestInfo` facade keys those invocations from the JUnit
+display name (`[1] dark`, `repetition 1 of 2`, …). The name-only overload cannot see
+the invocation, so it requires an explicit `invocationKey` and fails closed without
+one.
 
 The default `scaleKey` prefers the captured window's display scale when a showing AWT
 window's outer, client, content-pane, or embedded ComposePanel size matches the still
@@ -358,6 +367,7 @@ src/test/resources/spectre-golds/
   <test-class>/
     <test-method>/
       <name>/
+        [<invocation>/]       # parameterized / repeated display name, or invocationKey
         <os>/                 # macos | windows | linux-x11 | linux-wayland
           scale-<sx>x<sy>/    # captured window display; else default screen; or pass scaleKey
             gold.png
@@ -365,6 +375,8 @@ src/test/resources/spectre-golds/
 
 The method segment is the inferred JUnit method (or `TestInfo`), so two tests in the
 same class can reuse a natural name such as `main-window` without sharing a gold.
+Parameterized and repeated invocations add an extra `<invocation>` segment so they
+cannot overwrite each other.
 
 The default root is `src/test/resources/spectre-golds/` (the main JUnit source set). Linux
 keys follow the same session detection as window capture: `SPECTRE_CAPTURE_BACKEND`,
@@ -378,15 +390,16 @@ On mismatch, the assertion writes `actual.png` and a copy of the expected `gold.
 under:
 
 ```text
-build/reports/spectre-screenshots/<class>/<method>/<name>/
+build/reports/spectre-screenshots/<class>/<method>/<name>[/<invocation>]/
 ```
 
 When dimensions match, it also writes `diff.png` (magenta highlight on black). Size
-mismatches omit the diff and delete any stale `diff.png` left from a prior equal-size run. Class, method, and name segments are sanitized (path
+mismatches omit the diff and delete any stale `diff.png` left from a prior equal-size run. Class, method, name, and invocation segments are sanitized (path
 separators, reserved Windows device names). Rewritten segments get a short stable suffix so
 distinct names such as `foo/bar` and `foo_bar`, `NUL` and `NUL_`, or `Main` and `main`, cannot
-share a gold or report path. A later passing run deletes leftover report PNGs from a prior
-mismatch so CI does not upload stale failures. CI upload:
+share a gold or report path. A later passing run, update-mode write, or missing-gold
+failure deletes leftover report PNGs from a prior mismatch so CI does not upload stale
+failures. CI upload:
 
 ```yaml
 - name: Upload Spectre screenshot gold failures

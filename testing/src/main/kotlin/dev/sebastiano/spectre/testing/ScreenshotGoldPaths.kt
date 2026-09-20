@@ -27,29 +27,41 @@ public object ScreenshotGoldPaths {
         name: String,
         osKey: String,
         scaleKey: String,
-    ): Path =
-        goldRoot
-            .resolve(sanitizeGoldSegment(testClassName))
-            .resolve(sanitizeGoldSegment(testMethodName))
-            .resolve(sanitizeGoldSegment(name))
+        invocationKey: String? = null,
+    ): Path {
+        val named =
+            goldRoot
+                .resolve(sanitizeGoldSegment(testClassName))
+                .resolve(sanitizeGoldSegment(testMethodName))
+                .resolve(sanitizeGoldSegment(name))
+        val invocation = invocationKey?.trim()?.takeIf { it.isNotEmpty() }
+        val directory =
+            if (invocation == null) named else named.resolve(sanitizeGoldSegment(invocation))
+        return directory
             .resolve(sanitizeGoldSegment(osKey))
             .resolve(sanitizeGoldSegment(scaleKey))
             .resolve("gold.png")
             .normalize()
             .also { requireInside(goldRoot, it) }
+    }
 
     public fun reportDirectory(
         reportsRoot: Path,
         testClassName: String,
         testMethodName: String,
         name: String,
-    ): Path =
-        reportsRoot
-            .resolve(sanitizeGoldSegment(testClassName))
-            .resolve(sanitizeGoldSegment(testMethodName))
-            .resolve(sanitizeGoldSegment(name))
-            .normalize()
-            .also { requireInside(reportsRoot, it) }
+        invocationKey: String? = null,
+    ): Path {
+        val named =
+            reportsRoot
+                .resolve(sanitizeGoldSegment(testClassName))
+                .resolve(sanitizeGoldSegment(testMethodName))
+                .resolve(sanitizeGoldSegment(name))
+        val invocation = invocationKey?.trim()?.takeIf { it.isNotEmpty() }
+        val directory =
+            if (invocation == null) named else named.resolve(sanitizeGoldSegment(invocation))
+        return directory.normalize().also { requireInside(reportsRoot, it) }
+    }
 
     public fun scaleKey(scaleX: Double, scaleY: Double): String =
         "scale-${formatScale(scaleX)}x${formatScale(scaleY)}"

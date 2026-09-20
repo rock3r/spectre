@@ -34,6 +34,76 @@ class ScreenshotGoldPathsTest {
     }
 
     @Test
+    fun `invocation key is inserted between name and os`(@TempDir temp: Path) {
+        val path =
+            ScreenshotGoldPaths.goldFile(
+                goldRoot = temp,
+                testClassName = "dev.example.MainWindowTest",
+                testMethodName = "rendersEachTheme",
+                name = "main-window",
+                osKey = "macos",
+                scaleKey = "scale-1x1",
+                invocationKey = "[1] dark",
+            )
+        assertEquals(
+            temp
+                .resolve(ScreenshotGoldPaths.sanitizeGoldSegment("dev.example.MainWindowTest"))
+                .resolve(ScreenshotGoldPaths.sanitizeGoldSegment("rendersEachTheme"))
+                .resolve("main-window")
+                .resolve(ScreenshotGoldPaths.sanitizeGoldSegment("[1] dark"))
+                .resolve("macos")
+                .resolve("scale-1x1")
+                .resolve("gold.png"),
+            path,
+        )
+    }
+
+    @Test
+    fun `same name with different invocation keys writes distinct gold files`(@TempDir temp: Path) {
+        val dark =
+            ScreenshotGoldPaths.goldFile(
+                temp,
+                "dev.example.MainWindowTest",
+                "rendersEachTheme",
+                "main-window",
+                "macos",
+                "scale-1x1",
+                "[1] dark",
+            )
+        val light =
+            ScreenshotGoldPaths.goldFile(
+                temp,
+                "dev.example.MainWindowTest",
+                "rendersEachTheme",
+                "main-window",
+                "macos",
+                "scale-1x1",
+                "[2] light",
+            )
+        assertNotEquals(dark, light)
+    }
+
+    @Test
+    fun `report directory includes the invocation key`(@TempDir temp: Path) {
+        val dir =
+            ScreenshotGoldPaths.reportDirectory(
+                reportsRoot = temp,
+                testClassName = "dev.example.MainWindowTest",
+                testMethodName = "rendersEachTheme",
+                name = "main-window",
+                invocationKey = "[1] dark",
+            )
+        assertEquals(
+            temp
+                .resolve(ScreenshotGoldPaths.sanitizeGoldSegment("dev.example.MainWindowTest"))
+                .resolve(ScreenshotGoldPaths.sanitizeGoldSegment("rendersEachTheme"))
+                .resolve("main-window")
+                .resolve(ScreenshotGoldPaths.sanitizeGoldSegment("[1] dark")),
+            dir,
+        )
+    }
+
+    @Test
     fun `same screenshot name in two methods writes distinct gold files`(@TempDir temp: Path) {
         val home =
             ScreenshotGoldPaths.goldFile(

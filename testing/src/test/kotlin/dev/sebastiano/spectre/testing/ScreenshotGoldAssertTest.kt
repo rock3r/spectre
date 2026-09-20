@@ -7,6 +7,8 @@ import javax.imageio.ImageIO
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.RepeatedTest
@@ -214,6 +216,191 @@ class ScreenshotGoldAssertTest {
                 )
             }
         assertTrue(error.message!!.contains("gold"), error.message)
+    }
+
+    @Test
+    fun `missing gold deletes stale report files from a prior mismatch`(@TempDir temp: Path) {
+        val reportsRoot = temp.resolve("reports")
+        val reportDir = homeReportDir(reportsRoot)
+        Files.createDirectories(reportDir)
+        Files.writeString(reportDir.resolve("actual.png"), "stale-actual")
+        Files.writeString(reportDir.resolve("gold.png"), "stale-gold")
+        Files.writeString(reportDir.resolve("diff.png"), "stale-diff")
+
+        val error =
+            assertFailsWith<AssertionError> {
+                assertMatchesGold(
+                    name = "main-window",
+                    image = solid(1, 1, 0xFFFFFF),
+                    testClassName = "dev.example.HomeTest",
+                    testMethodName = "renders",
+                    goldRoot = temp.resolve("golds"),
+                    reportsRoot = reportsRoot,
+                    osKey = "macos",
+                    scaleKey = "scale-1x1",
+                    updateEnabled = false,
+                )
+            }
+
+        assertTrue(error.message!!.contains("gold"), error.message)
+        assertFalse(Files.exists(reportDir.resolve("actual.png")))
+        assertFalse(Files.exists(reportDir.resolve("gold.png")))
+        assertFalse(Files.exists(reportDir.resolve("diff.png")))
+        assertFalse(Files.exists(reportDir))
+    }
+
+    @Test
+    fun `name-only ScreenshotGoldKt facade has no TestInfo descriptors`() {
+        val methods = Class.forName("dev.sebastiano.spectre.testing.ScreenshotGoldKt").methods
+        methods.forEach { method ->
+            assertTrue(
+                method.parameterTypes.none { it.name == "org.junit.jupiter.api.TestInfo" },
+                method.toString(),
+            )
+        }
+    }
+
+    @Test
+    fun `JUnit 5 gold facade isolates TestInfo overloads`() {
+        val facade = Class.forName("dev.sebastiano.spectre.testing.ScreenshotGoldJunit5")
+        assertTrue(
+            facade.methods.any { method ->
+                method.parameterTypes.any { it.name == "org.junit.jupiter.api.TestInfo" }
+            }
+        )
+    }
+
+    @Test
+    fun `distinct invocation keys write distinct gold files`(@TempDir temp: Path) {
+        val goldRoot = temp.resolve("golds")
+        val reportsRoot = temp.resolve("reports")
+        val first = solid(2, 2, 0x00FF00)
+        val second = solid(2, 2, 0x0000FF)
+        assertMatchesGold(
+            name = "main-window",
+            image = first,
+            testClassName = "dev.example.HomeTest",
+            testMethodName = "rendersEachTheme",
+            goldRoot = goldRoot,
+            reportsRoot = reportsRoot,
+            osKey = "macos",
+            scaleKey = "scale-1x1",
+            updateEnabled = true,
+            invocationKey = "[1] dark",
+        )
+        assertMatchesGold(
+            name = "main-window",
+            image = second,
+            testClassName = "dev.example.HomeTest",
+            testMethodName = "rendersEachTheme",
+            goldRoot = goldRoot,
+            reportsRoot = reportsRoot,
+            osKey = "macos",
+            scaleKey = "scale-1x1",
+            updateEnabled = true,
+            invocationKey = "[2] light",
+        )
+        val dark =
+            ScreenshotGoldPaths.goldFile(
+                goldRoot,
+                "dev.example.HomeTest",
+                "rendersEachTheme",
+                "main-window",
+                "macos",
+                "scale-1x1",
+                "[1] dark",
+            )
+        val light =
+            ScreenshotGoldPaths.goldFile(
+                goldRoot,
+                "dev.example.HomeTest",
+                "rendersEachTheme",
+                "main-window",
+                "macos",
+                "scale-1x1",
+                "[2] light",
+            )
+        assertNotEquals(dark, light)
+        assertEquals(opaque(0x00FF00), ImageIO.read(dark.toFile()).getRGB(0, 0))
+        assertEquals(opaque(0x0000FF), ImageIO.read(light.toFile()).getRGB(0, 0))
+    }
+
+    @Test
+    fun `TestInfo supplies an invocation key for template methods`() {
+        val parameterized =
+            ScreenshotGoldAssertTest::class.java.declaredMethods.single {
+                it.name == "ParameterizedTest methods are recognized for gold identity"
+            }
+        val info =
+            object : org.junit.jupiter.api.TestInfo {
+                override fun getDisplayName(): String = "[1] dark"
+
+                override fun getTags(): Set<String> = emptySet()
+
+                override fun getTestClass(): java.util.Optional<Class<*>> =
+                    java.util.Optional.of(ScreenshotGoldAssertTest::class.java)
+
+                override fun getTestMethod(): java.util.Optional<java.lang.reflect.Method> =
+                    java.util.Optional.of(parameterized)
+            }
+        assertEquals("[1] dark", invocationKeyFromTestInfo(info))
+    }
+
+    @Test
+    fun `TestInfo does not invent an invocation key for plain tests`() {
+        val plain =
+            ScreenshotGoldAssertTest::class.java.declaredMethods.single {
+                it.name == "identical gold passes without writing reports"
+            }
+        val info =
+            object : org.junit.jupiter.api.TestInfo {
+                override fun getDisplayName(): String =
+                    "identical gold passes without writing reports"
+
+                override fun getTags(): Set<String> = emptySet()
+
+                override fun getTestClass(): java.util.Optional<Class<*>> =
+                    java.util.Optional.of(ScreenshotGoldAssertTest::class.java)
+
+                override fun getTestMethod(): java.util.Optional<java.lang.reflect.Method> =
+                    java.util.Optional.of(plain)
+            }
+        assertNull(invocationKeyFromTestInfo(info))
+    }
+
+    @Test
+    fun `plain test methods do not require an invocation key`() {
+        assertNull(
+            resolveInvocationKey(
+                ScreenshotGoldAssertTest::class.java.name,
+                "identical gold passes without writing reports",
+                invocationKey = null,
+            )
+        )
+    }
+
+    @Test
+    fun `template methods require an invocation key when TestInfo is absent`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                resolveInvocationKey(
+                    ScreenshotGoldAssertTest::class.java.name,
+                    "ParameterizedTest methods are recognized for gold identity",
+                    invocationKey = null,
+                )
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = [1])
+    fun `name-only gold assert requires invocationKey on parameterized tests`(value: Int) {
+        assertEquals(1, value)
+        val error =
+            assertFailsWith<IllegalStateException> {
+                assertMatchesGold(name = "main-window", image = solid(1, 1, 0xFFFFFF))
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
     }
 
     @Test

@@ -12,7 +12,6 @@ import java.nio.file.StandardCopyOption
 import javax.imageio.ImageIO
 import javax.swing.RootPaneContainer
 import kotlin.math.roundToInt
-import org.junit.jupiter.api.TestInfo
 
 /**
  * Opt-in gold PNG assertion for in-process JUnit tests. Never runs automatically; call it from a
@@ -20,14 +19,19 @@ import org.junit.jupiter.api.TestInfo
  * a window when recording helpers are present).
  *
  * Golds live under
- * `src/test/resources/spectre-golds/<class>/<method>/<name>/<os>/scale-<sx>x<sy>/gold.png`.
+ * `src/test/resources/spectre-golds/<class>/<method>/<name>[/<invocation>]/<os>/scale-<sx>x<sy>/gold.png`.
  * Mismatches write `actual.png` and a copy of `gold.png` under
- * `build/reports/spectre-screenshots/<class>/<method>/<name>/`. `diff.png` is written when
- * dimensions match; a stale `diff.png` is deleted when there is no diff. A later match deletes
- * leftover report PNGs from a prior mismatch.
+ * `build/reports/spectre-screenshots/<class>/<method>/<name>[/<invocation>]/`. `diff.png` is
+ * written when dimensions match; a stale `diff.png` is deleted when there is no diff. A later
+ * match, update write, or missing-gold failure deletes leftover report PNGs from a prior mismatch.
  *
- * This overload infers the test from the **calling thread** stack. Inside [runSpectreTest], use the
- * [TestInfo] overload instead — the body runs on a worker dispatcher that has no JUnit frame.
+ * This name-only overload lives on `ScreenshotGoldKt` and does not mention JUnit 5 `TestInfo`, so
+ * JUnit 4-only Java callers can resolve it without `junit-jupiter-api`. It infers the test from the
+ * **calling thread** stack. Inside [runSpectreTest], use the JUnit 5 facade
+ * (`ScreenshotGoldJunit5`) instead — the body runs on a worker dispatcher that has no JUnit frame.
+ *
+ * `@ParameterizedTest` and `@RepeatedTest` invocations that share a [name] must pass
+ * [invocationKey] here, or use the TestInfo facade (which keys from the invocation display name).
  *
  * [scaleKey] defaults to the captured window's display scale when a showing AWT window's outer,
  * client, content-pane, or embedded ComposePanel size matches the still (or every showing window
@@ -40,6 +44,7 @@ public fun assertMatchesGold(
     image: BufferedImage,
     tolerance: ScreenshotTolerance = ScreenshotTolerance.Strict,
     scaleKey: String = currentScaleKey(image),
+    invocationKey: String? = null,
 ) {
     val (testClassName, testMethodName) = inferTestIdentity()
     assertMatchesGold(
@@ -49,28 +54,7 @@ public fun assertMatchesGold(
         testMethodName = testMethodName,
         tolerance = tolerance,
         scaleKey = scaleKey,
-    )
-}
-
-/**
- * JUnit 5 overload. Safe inside [runSpectreTest] because identity comes from [testInfo], not the
- * worker stack. [scaleKey] follows the same capture-display default as the name-only overload.
- */
-public fun assertMatchesGold(
-    testInfo: TestInfo,
-    name: String,
-    image: BufferedImage,
-    tolerance: ScreenshotTolerance = ScreenshotTolerance.Strict,
-    scaleKey: String = currentScaleKey(image),
-) {
-    val (testClassName, testMethodName) = identityFromTestInfo(testInfo)
-    assertMatchesGold(
-        name = name,
-        image = image,
-        testClassName = testClassName,
-        testMethodName = testMethodName,
-        tolerance = tolerance,
-        scaleKey = scaleKey,
+        invocationKey = resolveInvocationKey(testClassName, testMethodName, invocationKey),
     )
 }
 
@@ -85,11 +69,26 @@ internal fun assertMatchesGold(
     scaleKey: String = currentScaleKey(image),
     updateEnabled: Boolean = ScreenshotUpdateMode.isEnabled(),
     tolerance: ScreenshotTolerance = ScreenshotTolerance.Strict,
+    invocationKey: String? = null,
 ) {
     val goldFile =
-        ScreenshotGoldPaths.goldFile(goldRoot, testClassName, testMethodName, name, osKey, scaleKey)
+        ScreenshotGoldPaths.goldFile(
+            goldRoot,
+            testClassName,
+            testMethodName,
+            name,
+            osKey,
+            scaleKey,
+            invocationKey,
+        )
     val reportDir =
-        ScreenshotGoldPaths.reportDirectory(reportsRoot, testClassName, testMethodName, name)
+        ScreenshotGoldPaths.reportDirectory(
+            reportsRoot,
+            testClassName,
+            testMethodName,
+            name,
+            invocationKey,
+        )
     if (updateEnabled) {
         Files.createDirectories(goldFile.parent)
         check(ImageIO.write(image, "png", goldFile.toFile())) {
@@ -99,6 +98,7 @@ internal fun assertMatchesGold(
         return
     }
     if (!Files.isRegularFile(goldFile)) {
+        deleteReportDirectory(reportDir)
         throw AssertionError(
             "Screenshot gold missing: $goldFile. Re-run with " +
                 "${ScreenshotUpdateMode.ENV}=true or " +
@@ -261,67 +261,4 @@ internal fun fallbackDisplayScale(): Pair<Double, Double> {
             .defaultConfiguration
             .defaultTransform
     return transform.scaleX to transform.scaleY
-}
-
-internal fun identityFromTestInfo(testInfo: TestInfo): Pair<String, String> {
-    val fromClass = testInfo.testClass.map { it.name }.orElse(null)
-    val fromMethod = testInfo.testMethod.map { it.name }.orElse(null)
-    if (fromClass != null && fromMethod != null) return fromClass to fromMethod
-    val inferred = inferTestIdentity()
-    return (fromClass ?: inferred.first) to (fromMethod ?: inferred.second)
-}
-
-internal fun inferTestIdentity(): Pair<String, String> =
-    Thread.currentThread().stackTrace.firstNotNullOfOrNull(::testIdentityFromFrame)
-        ?: error(
-            "assertMatchesGold could not infer the calling test method; pass TestInfo explicitly"
-        )
-
-internal fun testIdentityFromFrame(frame: StackTraceElement): Pair<String, String>? {
-    val className = frame.className
-    // Only skip frames from this file (ScreenshotGoldKt), not other types whose names
-    // happen to start with ScreenshotGold (e.g. ScreenshotGoldAssertTest).
-    if (
-        className == "dev.sebastiano.spectre.testing.ScreenshotGoldKt" ||
-            className.startsWith("dev.sebastiano.spectre.testing.ScreenshotGoldKt$")
-    ) {
-        return null
-    }
-    val cls = runCatching { Class.forName(className) }.getOrNull() ?: return null
-    val methodName =
-        resolveJunitTestMethodName(cls.declaredMethods, frame.methodName) ?: return null
-    return className to methodName
-}
-
-internal fun resolveJunitTestMethodName(
-    methods: Array<java.lang.reflect.Method>,
-    methodName: String,
-): String? = methods.firstOrNull { it.name == methodName && it.isJunitTestMethod() }?.name
-
-/**
- * True for JUnit 4 `@Test`, JUnit 5 `@Test` / `@TestTemplate` / `@TestFactory`, the platform
- * `@Testable` meta-annotation, and composed annotations that meta-annotate those (including
- * `@ParameterizedTest` and `@RepeatedTest`).
- */
-internal fun java.lang.reflect.Method.isJunitTestMethod(): Boolean = annotations.any {
-    isJunitTestAnnotation(it.annotationClass.java)
-}
-
-private fun isJunitTestAnnotation(
-    annotationType: Class<out Annotation>,
-    visited: MutableSet<String> = mutableSetOf(),
-): Boolean {
-    val name = annotationType.name
-    if (!visited.add(name)) return false
-    when (name) {
-        "org.junit.jupiter.api.Test",
-        "org.junit.jupiter.api.TestTemplate",
-        "org.junit.jupiter.api.TestFactory",
-        "org.junit.platform.commons.annotation.Testable",
-        "org.junit.Test" -> return true
-    }
-    if (name.startsWith("java.") || name.startsWith("kotlin.")) return false
-    return annotationType.annotations.any { meta ->
-        isJunitTestAnnotation(meta.annotationClass.java, visited)
-    }
 }
