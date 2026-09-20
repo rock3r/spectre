@@ -681,7 +681,12 @@ class ScreencaptureHelperDirSetting:
 
 
 def _strip_hotspot_argfile_comments(text: str) -> str:
-    """Drop unquoted # comments, matching the Java launcher argument-file rules."""
+    """Drop unquoted # comments, matching JDK 21/25 launcher argument-file rules.
+
+    An unquoted # comments out the rest of the line. If it appears mid-token,
+    HotSpot discards that whole argument (the property is absent) rather than
+    keeping the prefix before #. Quoted # stays part of the token.
+    """
     cleaned: list[str] = []
     for line in text.splitlines():
         in_quote = ""
@@ -706,6 +711,10 @@ def _strip_hotspot_argfile_comments(text: str) -> str:
                 chars.append(char)
                 continue
             if char == "#":
+                # Mid-token #: drop the unfinished argument, then the comment.
+                if chars and not chars[-1].isspace():
+                    while chars and not chars[-1].isspace():
+                        chars.pop()
                 break
             chars.append(char)
         cleaned.append("".join(chars))

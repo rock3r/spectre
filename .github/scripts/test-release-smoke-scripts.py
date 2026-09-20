@@ -1853,6 +1853,77 @@ class MacOsTccPreflightTest(unittest.TestCase):
                     {"JDK_JAVA_OPTIONS": f"@{Path(tmp) / 'missing.opts'}"}
                 )
 
+    def test_helper_dir_argfile_discards_token_on_unquoted_hash(self):
+        """HotSpot drops a mid-token unquoted # argument; do not keep the prefix."""
+        prop = smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY
+        with tempfile.TemporaryDirectory() as tmp:
+            hashed = Path(tmp) / "hashed.opts"
+            hashed.write_text(f"-D{prop}=/tmp/helper#note\n", encoding="utf-8")
+            self.assertIsNone(
+                smoke_lib.macos_screencapture_configured_helper_dir(
+                    {"JDK_JAVA_OPTIONS": f"@{hashed}"}
+                )
+            )
+            quoted = Path(tmp) / "quoted.opts"
+            quoted.write_text(f"-D{prop}='/tmp/helper#note'\n", encoding="utf-8")
+            self.assertEqual(
+                Path("/tmp/helper#note"),
+                smoke_lib.macos_screencapture_configured_helper_dir(
+                    {"JDK_JAVA_OPTIONS": f"@{quoted}"}
+                ),
+            )
+            later_wins = Path(tmp) / "later.opts"
+            later_wins.write_text(
+                f"-D{prop}=/tmp/helper#note\n-D{prop}=/tmp/after\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                Path("/tmp/after"),
+                smoke_lib.macos_screencapture_configured_helper_dir(
+                    {"JDK_JAVA_OPTIONS": f"@{later_wins}"}
+                ),
+            )
+            earlier_kept = Path(tmp) / "earlier.opts"
+            earlier_kept.write_text(
+                f"-D{prop}=/tmp/before\n-D{prop}=/tmp/helper#note\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                Path("/tmp/before"),
+                smoke_lib.macos_screencapture_configured_helper_dir(
+                    {"JDK_JAVA_OPTIONS": f"@{earlier_kept}"}
+                ),
+            )
+            root = Path(tmp) / "root"
+            home = Path(tmp) / "home"
+            staged = smoke_lib.macos_screencapture_staged_helper(root)
+            default_runtime = smoke_lib.macos_screencapture_runtime_helper(home)
+            hashed_runtime = (
+                Path("/tmp/helper")
+                / smoke_lib.SCREENCAPTURE_HELPER_APP_NAME
+                / "Contents"
+                / "MacOS"
+                / smoke_lib.SCREENCAPTURE_HELPER_NAME
+            )
+
+            def assemble() -> int:
+                staged.parent.mkdir(parents=True)
+                staged.write_text("#!/bin/sh\n", encoding="utf-8")
+                staged.chmod(0o755)
+                return 0
+
+            env = {
+                "JDK_JAVA_OPTIONS": f"@{hashed}",
+                "GRADLE_USER_HOME": str(Path(tmp) / "gradle-user-home"),
+            }
+            Path(env["GRADLE_USER_HOME"]).mkdir()
+            with unittest.mock.patch.dict(os.environ, env, clear=False):
+                found = smoke_lib.ensure_macos_screencapture_helper(
+                    root, assemble=assemble, home=home
+                )
+            self.assertEqual(default_runtime, found)
+            self.assertNotEqual(hashed_runtime, found)
+
     def test_blank_higher_precedence_helper_dir_uses_default(self):
         prop = smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY
         env = {
