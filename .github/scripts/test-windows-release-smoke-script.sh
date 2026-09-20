@@ -159,6 +159,11 @@ if grep -F -q 'pointer-move-*.log' "$script"; then
 fi
 grep -F -q 'Clear-PointerMoveLiveResults' "$script" || fail "Windows runner must clear this-run PointerMoveLive XML before Gradle"
 grep -F -q 'GradleError' "$script" || fail "teardown probe must take the current Gradle error so it can parse this invocation's log paths"
+# Codex: a hung Gradle that already wrote green XML + MessageIOException must not
+# pass. Only a prompt "exited with code" teardown is waivable.
+probe_body="$(awk '/function Test-PointerMoveTeardownRace/{p=1; next} p && /^function /{exit} p' "$script")"
+echo "$probe_body" | grep -F -q 'timed out after' || fail "teardown probe must reject Invoke-Native timeout errors"
+echo "$probe_body" | grep -F -q 'exited with code' || fail "teardown probe must require a prompt nonzero Gradle exit"
 
 # --- Optional: parse with pwsh when present (macOS/Linux CI agents may have it) ---
 # Note: this is PowerShell Core parse, not Desktop 5.1; ASCII byte check is the 5.1 stand-in.

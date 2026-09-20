@@ -457,6 +457,11 @@ function Test-PointerMoveTeardownRace {
     param(
         [Parameter(Mandatory = $true)][string] $GradleError
     )
+    # A hang that reaches AgentE2eTimeoutSeconds also writes "(logs: ...)" and may
+    # already contain MessageIOException from an earlier worker death. Never waive
+    # "timed out after"; only a prompt "exited with code" teardown is #500.
+    if ($GradleError -match 'timed out after') { return $false }
+    if ($GradleError -notmatch 'exited with code') { return $false }
     $match = [regex]::Match($GradleError, '\(logs: ([^;]+) ; ([^)]+)\)')
     if (-not $match.Success) { return $false }
     $paths = @($match.Groups[1].Value.Trim(), $match.Groups[2].Value.Trim())
