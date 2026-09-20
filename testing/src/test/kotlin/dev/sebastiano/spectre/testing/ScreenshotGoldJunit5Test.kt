@@ -106,6 +106,21 @@ class ScreenshotGoldJunit5Test {
                 invocationKey = null,
             )
         )
+        assertNull(
+            resolveInvocationKey(
+                ScreenshotGoldJunit5Test::class.java.name,
+                "name-only ScreenshotGoldKt facade has no TestInfo descriptors",
+                invocationKey = "   ",
+            )
+        )
+        assertEquals(
+            " foo ",
+            resolveInvocationKey(
+                ScreenshotGoldJunit5Test::class.java.name,
+                "name-only ScreenshotGoldKt facade has no TestInfo descriptors",
+                invocationKey = " foo ",
+            ),
+        )
     }
 
     @Test

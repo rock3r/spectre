@@ -73,8 +73,8 @@ internal fun resolveInvocationKey(
     testMethodName: String,
     invocationKey: String?,
 ): String? {
-    val trimmed = invocationKey?.trim()?.takeIf { it.isNotEmpty() }
-    if (trimmed != null) return trimmed
+    val present = invocationKey?.takeIf { it.isNotBlank() }
+    if (present != null) return present
     if (isJunitTestTemplateMethod(testClassName, testMethodName)) {
         error(
             "assertMatchesGold on a parameterized or repeated test requires invocationKey " +

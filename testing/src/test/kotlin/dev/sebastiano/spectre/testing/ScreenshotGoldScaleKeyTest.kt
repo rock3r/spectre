@@ -1,8 +1,12 @@
 package dev.sebastiano.spectre.testing
 
+import androidx.compose.ui.awt.ComposePanel
+import java.awt.Container
 import java.awt.image.BufferedImage
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicBoolean
+import javax.swing.SwingUtilities
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
@@ -116,6 +120,27 @@ class ScreenshotGoldScaleKeyTest {
                 fallbackScaleY = 1.0,
             )
         assertEquals("scale-1x1", key)
+    }
+
+    @Test
+    fun `hidden compose panels are not capture surfaces`() {
+        val root = readAwtSnapshotOnEdt {
+            val panel = ComposePanel()
+            panel.setSize(80, 40)
+            Container().also { it.add(panel) }
+        }
+        assertEquals(emptyList(), composePanelAwtSizes(root))
+    }
+
+    @Test
+    fun `capture surface geometry is read on the EDT`() {
+        val onEdt = AtomicBoolean(false)
+        val value = readAwtSnapshotOnEdt {
+            onEdt.set(SwingUtilities.isEventDispatchThread())
+            "ok"
+        }
+        assertEquals("ok", value)
+        assertTrue(onEdt.get())
     }
 
     @Test

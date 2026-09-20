@@ -7,11 +7,13 @@ import java.awt.GraphicsEnvironment
 import java.awt.Window
 import java.awt.image.BufferedImage
 import java.io.IOException
+import java.lang.reflect.InvocationTargetException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import javax.imageio.ImageIO
 import javax.swing.RootPaneContainer
+import javax.swing.SwingUtilities
 import kotlin.math.roundToInt
 
 /**
@@ -37,10 +39,10 @@ import kotlin.math.roundToInt
  * (`[1] …` or `repetition N of M`). Constant custom display names still require [invocationKey].
  *
  * [scaleKey] defaults to the captured window's display scale when a showing AWT window's outer,
- * client, content-pane, or embedded ComposePanel size matches the still (or every showing window
- * shares one density). Otherwise it uses the primary/default screen transform. Pass an explicit key
- * (from [ScreenshotGoldPaths.scaleKey]) when several densities are visible and inference is
- * ambiguous.
+ * client, content-pane, or showing embedded ComposePanel size matches the still (or every showing
+ * window shares one density). Hidden panels are ignored. Surface geometry is read on the EDT.
+ * Otherwise it uses the primary/default screen transform. Pass an explicit key (from
+ * [ScreenshotGoldPaths.scaleKey]) when several densities are visible and inference is ambiguous.
  */
 public fun assertMatchesGold(
     name: String,
@@ -189,30 +191,44 @@ internal fun currentScaleKey(
     return ScreenshotGoldPaths.scaleKey(scaleX, scaleY)
 }
 
+internal fun <T> readAwtSnapshotOnEdt(block: () -> T): T {
+    if (SwingUtilities.isEventDispatchThread()) return block()
+    val box = arrayOfNulls<Any>(1)
+    try {
+        SwingUtilities.invokeAndWait { box[0] = block() }
+    } catch (thrown: InvocationTargetException) {
+        throw thrown.cause ?: thrown
+    }
+    @Suppress("UNCHECKED_CAST")
+    return box[0] as T
+}
+
 internal fun liveCaptureSurfaces(): List<CaptureSurfaceScale> {
     if (GraphicsEnvironment.isHeadless()) return emptyList()
-    return Window.getWindows()
-        .filter { it.isShowing }
-        .flatMap { window ->
-            val configuration = window.graphicsConfiguration ?: return@flatMap emptyList()
-            val content =
-                (window as? RootPaneContainer)?.contentPane?.takeIf {
-                    it.width > 0 && it.height > 0
-                }
-            captureSurfacesForBounds(
-                awtWidth = window.width,
-                awtHeight = window.height,
-                insetLeft = window.insets.left,
-                insetTop = window.insets.top,
-                insetRight = window.insets.right,
-                insetBottom = window.insets.bottom,
-                scaleX = configuration.defaultTransform.scaleX,
-                scaleY = configuration.defaultTransform.scaleY,
-                contentWidth = content?.width,
-                contentHeight = content?.height,
-                extraAwtSizes = composePanelAwtSizes(window),
-            )
-        }
+    return readAwtSnapshotOnEdt {
+        Window.getWindows()
+            .filter { it.isShowing }
+            .flatMap { window ->
+                val configuration = window.graphicsConfiguration ?: return@flatMap emptyList()
+                val content =
+                    (window as? RootPaneContainer)?.contentPane?.takeIf {
+                        it.width > 0 && it.height > 0
+                    }
+                captureSurfacesForBounds(
+                    awtWidth = window.width,
+                    awtHeight = window.height,
+                    insetLeft = window.insets.left,
+                    insetTop = window.insets.top,
+                    insetRight = window.insets.right,
+                    insetBottom = window.insets.bottom,
+                    scaleX = configuration.defaultTransform.scaleX,
+                    scaleY = configuration.defaultTransform.scaleY,
+                    contentWidth = content?.width,
+                    contentHeight = content?.height,
+                    extraAwtSizes = composePanelAwtSizes(window),
+                )
+            }
+    }
 }
 
 internal fun captureSurfacesForBounds(
@@ -254,7 +270,12 @@ internal fun captureSurfacesForBounds(
 internal fun composePanelAwtSizes(root: Component): List<Pair<Int, Int>> {
     val sizes = mutableListOf<Pair<Int, Int>>()
     fun walk(component: Component) {
-        if (component is ComposePanel && component.width > 0 && component.height > 0) {
+        if (
+            component is ComposePanel &&
+                component.isShowing &&
+                component.width > 0 &&
+                component.height > 0
+        ) {
             sizes += component.width to component.height
         }
         if (component is Container) {

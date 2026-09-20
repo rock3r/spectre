@@ -84,6 +84,37 @@ class ScreenshotGoldPathsTest {
     }
 
     @Test
+    fun `invocation keys that differ only by surrounding whitespace stay distinct`(
+        @TempDir temp: Path
+    ) {
+        val tight =
+            ScreenshotGoldPaths.goldFile(
+                temp,
+                "dev.example.MainWindowTest",
+                "rendersEachTheme",
+                "main-window",
+                "macos",
+                "scale-1x1",
+                "foo",
+            )
+        val padded =
+            ScreenshotGoldPaths.goldFile(
+                temp,
+                "dev.example.MainWindowTest",
+                "rendersEachTheme",
+                "main-window",
+                "macos",
+                "scale-1x1",
+                " foo ",
+            )
+        assertNotEquals(tight, padded)
+        assertNotEquals(
+            ScreenshotGoldPaths.sanitizeGoldSegment("foo"),
+            ScreenshotGoldPaths.sanitizeGoldSegment(" foo "),
+        )
+    }
+
+    @Test
     fun `report directory includes the invocation key`(@TempDir temp: Path) {
         val dir =
             ScreenshotGoldPaths.reportDirectory(

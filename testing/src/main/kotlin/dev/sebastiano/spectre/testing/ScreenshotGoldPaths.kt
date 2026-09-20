@@ -36,7 +36,7 @@ public object ScreenshotGoldPaths {
                 .resolve(sanitizeGoldSegment(testClassName))
                 .resolve(sanitizeGoldSegment(testMethodName))
                 .resolve(sanitizeGoldSegment(name))
-        val invocation = invocationKey?.trim()?.takeIf { it.isNotEmpty() }
+        val invocation = invocationKey?.takeIf { it.isNotBlank() }
         val directory =
             if (invocation == null) named else named.resolve(sanitizeGoldSegment(invocation))
         return directory
@@ -59,7 +59,7 @@ public object ScreenshotGoldPaths {
                 .resolve(sanitizeGoldSegment(testClassName))
                 .resolve(sanitizeGoldSegment(testMethodName))
                 .resolve(sanitizeGoldSegment(name))
-        val invocation = invocationKey?.trim()?.takeIf { it.isNotEmpty() }
+        val invocation = invocationKey?.takeIf { it.isNotBlank() }
         val directory =
             if (invocation == null) named else named.resolve(sanitizeGoldSegment(invocation))
         return directory.normalize().also { requireInside(reportsRoot, it) }
