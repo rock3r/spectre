@@ -84,16 +84,23 @@ internal fun java.lang.reflect.Method.hasVaryingInvocationNamePattern(): Boolean
     // RepeatedTest lives in junit-jupiter-api. Do not resolve ParameterizedTest::class —
     // that class is in junit-jupiter-params, which is optional at runtime.
     val repeated = getAnnotation(RepeatedTest::class.java)
-    if (repeated != null) return patternVariesPerInvocation(repeated.name)
+    if (repeated != null) return repeatedPatternVariesPerInvocation(repeated.name)
     return annotations.any { annotationHasVaryingInvocationPattern(it) }
 }
 
 /**
- * Blank or `{default_display_name}` is JUnit's default, which includes `{index}`. Argument
- * placeholders (`{0}`, `{arguments}`) can repeat and are not unique.
+ * Blank is JUnit's RepeatedTest default (`repetition {currentRepetition} of {totalRepetitions}`).
+ * `{index}` is a parameterized token and stays literal on RepeatedTest.
  */
-private fun patternVariesPerInvocation(pattern: String): Boolean =
-    pattern.isBlank() || UNIQUE_INVOCATION_PLACEHOLDER.containsMatchIn(pattern)
+private fun repeatedPatternVariesPerInvocation(pattern: String): Boolean =
+    pattern.isBlank() || REPEATED_UNIQUE_PLACEHOLDER.containsMatchIn(pattern)
+
+/**
+ * Blank or `{default_display_name}` is JUnit's parameterized default, which includes `{index}`.
+ * Argument placeholders (`{0}`, `{arguments}`) can repeat and are not unique.
+ */
+private fun parameterizedPatternVariesPerInvocation(pattern: String): Boolean =
+    pattern.isBlank() || PARAMETERIZED_UNIQUE_PLACEHOLDER.containsMatchIn(pattern)
 
 internal fun looksUniqueInvocationLabel(display: String): Boolean {
     // JUnit parameterized default: "[{index}] {argumentsWithNames}" → "[1] dark"
@@ -117,8 +124,9 @@ private val REPEATED_INVOCATION_LABEL =
     Regex("""(?:^| )repetition \d+(?: of \d+)?$""", RegexOption.IGNORE_CASE)
 // Object.toString() / default Any.toString(): ClassName@hex, arrays, nested types.
 private val IDENTITY_HASH_TEXT = Regex("""(?:[\w.$]+|\[+[ZBCSIJFD]|\[+L[\w.$]+;)@[0-9a-fA-F]+""")
-private val UNIQUE_INVOCATION_PLACEHOLDER =
-    Regex("""\{index\}|\{currentRepetition\}|\{default_display_name\}""")
+private val REPEATED_UNIQUE_PLACEHOLDER =
+    Regex("""\{currentRepetition\}|\{default_display_name\}""")
+private val PARAMETERIZED_UNIQUE_PLACEHOLDER = Regex("""\{index\}|\{default_display_name\}""")
 
 private fun annotationHasVaryingInvocationPattern(
     annotation: Annotation,
@@ -127,13 +135,19 @@ private fun annotationHasVaryingInvocationPattern(
     val type = annotation.annotationClass.java
     if (!visited.add(type.name)) return false
     when (type.name) {
-        "org.junit.jupiter.params.ParameterizedTest",
         "org.junit.jupiter.api.RepeatedTest" -> {
             val pattern = runCatching {
                 type.getMethod("name").invoke(annotation) as String
             }
                 .getOrNull()
-            return pattern == null || patternVariesPerInvocation(pattern)
+            return pattern == null || repeatedPatternVariesPerInvocation(pattern)
+        }
+        "org.junit.jupiter.params.ParameterizedTest" -> {
+            val pattern = runCatching {
+                type.getMethod("name").invoke(annotation) as String
+            }
+                .getOrNull()
+            return pattern == null || parameterizedPatternVariesPerInvocation(pattern)
         }
     }
     if (type.name.startsWith("java.") || type.name.startsWith("kotlin.")) return false

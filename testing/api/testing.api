@@ -196,10 +196,15 @@ public final class dev/sebastiano/spectre/testing/ScreenshotGoldJunit5 {
 }
 
 public final class dev/sebastiano/spectre/testing/ScreenshotGoldKt {
+	public static final fun assertMatchesGold (Ljava/lang/Class;Ljava/lang/String;Ljava/awt/image/BufferedImage;)V
+	public static final fun assertMatchesGold (Ljava/lang/Class;Ljava/lang/String;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;)V
+	public static final fun assertMatchesGold (Ljava/lang/Class;Ljava/lang/String;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;Ljava/lang/String;)V
+	public static final fun assertMatchesGold (Ljava/lang/Class;Ljava/lang/String;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;Ljava/lang/String;Ljava/lang/String;)V
 	public static final fun assertMatchesGold (Ljava/lang/String;Ljava/awt/image/BufferedImage;)V
 	public static final fun assertMatchesGold (Ljava/lang/String;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;)V
 	public static final fun assertMatchesGold (Ljava/lang/String;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;Ljava/lang/String;)V
 	public static final fun assertMatchesGold (Ljava/lang/String;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;Ljava/lang/String;Ljava/lang/String;)V
+	public static synthetic fun assertMatchesGold$default (Ljava/lang/Class;Ljava/lang/String;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)V
 	public static synthetic fun assertMatchesGold$default (Ljava/lang/String;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)V
 }
 

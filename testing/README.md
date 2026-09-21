@@ -35,9 +35,9 @@ fun `clicking increment bumps the counter`(): Unit = runSpectreTest {
 `junit:junit` and `org.junit.jupiter:junit-jupiter-api` are both `compileOnly`. Consumers pick
 whichever JUnit they're already using and pull in the matching test dependency themselves; the
 testing module never forces both onto the test classpath. The name-only `assertMatchesGold`
-overloads live on `ScreenshotGoldKt` with no `TestInfo` descriptor; the JUnit 5
-`TestInfo` overloads live on `ScreenshotGoldJunit5` so JUnit 4-only Java callers can
-resolve the name-only method.
+overloads live on `ScreenshotGoldKt` with no `TestInfo` descriptor; pass the executing
+`Class` when a JUnit 4 `@Test` is inherited. The JUnit 5 `TestInfo` overloads live on
+`ScreenshotGoldJunit5` so JUnit 4-only Java callers can resolve the name-only method.
 
 ## Cross-boundary contracts
 

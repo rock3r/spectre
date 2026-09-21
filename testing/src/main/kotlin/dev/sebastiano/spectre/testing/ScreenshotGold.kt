@@ -33,17 +33,21 @@ import kotlin.math.roundToInt
  *
  * This name-only overload lives on `ScreenshotGoldKt` and does not mention JUnit 5 `TestInfo`, so
  * JUnit 4-only Java callers can resolve it without `junit-jupiter-api`. It infers the test from the
- * **calling thread** stack. Inside [runSpectreTest], use the JUnit 5 facade
- * (`ScreenshotGoldJunit5`) instead — the body runs on a worker dispatcher that has no JUnit frame.
+ * **calling thread** stack. Ordinary non-final Java test classes used directly are accepted;
+ * abstract hosts, interfaces, and inherited methods (declaring class != executing class) fail
+ * closed. Pass the executing [Class] overload or the JUnit 5 `TestInfo` facade so those golds key
+ * by the running class. Inside [runSpectreTest], use the JUnit 5 facade (`ScreenshotGoldJunit5`)
+ * instead — the body runs on a worker dispatcher that has no JUnit frame.
  *
  * `@ParameterizedTest`, `@RepeatedTest`, JUnit 5 `@ParameterizedClass` / `@ClassTemplate`, and
  * JUnit 4 `@RunWith(Parameterized)` invocations that share a [name] must pass [invocationKey] here,
  * or use the TestInfo facade when its display name is unique per invocation (`[1] …` or `repetition
- * N of M`). The facade only trusts method-level patterns that include `{index}` /
- * `{currentRepetition}` (or JUnit's default, which includes `{index}`). Identity-hash display text
- * (`Foo@4a12bc`) keeps only that index. Constant custom display names, argument-only patterns such
- * as `[{0}] theme`, and ordinary `@Test` methods on a parameterized class still require
- * [invocationKey] — `TestInfo.displayName` is the method name, not the class invocation.
+ * N of M`). The facade only trusts method-level patterns that include `{index}` (ParameterizedTest,
+ * including its default) or `{currentRepetition}` (RepeatedTest, including its default).
+ * RepeatedTest `{index}` stays literal. Identity-hash display text (`Foo@4a12bc`) keeps only that
+ * index. Constant custom display names, argument-only patterns such as `[{0}] theme`, and ordinary
+ * `@Test` methods on a parameterized class still require [invocationKey] — `TestInfo.displayName`
+ * is the method name, not the class invocation.
  *
  * [scaleKey] defaults to the captured window's display scale when a showing AWT window's outer,
  * client, content-pane, or showing embedded ComposePanel size matches the still (or every showing
@@ -66,6 +70,39 @@ public fun assertMatchesGold(
     invocationKey: String? = null,
 ) {
     val identity = inferTestIdentity()
+    assertMatchesGold(
+        name = name,
+        image = image,
+        testClassName = identity.testClassName,
+        testMethodName = identity.testMethodName,
+        tolerance = tolerance,
+        scaleKey = scaleKey,
+        invocationKey =
+            resolveInvocationKey(
+                identity.testClassName,
+                identity.testMethodName,
+                invocationKey,
+                testClass = identity.testClass,
+            ),
+    )
+}
+
+/**
+ * Name-only gold assertion with an explicit executing [testClass].
+ *
+ * JUnit 4 callers do not have `TestInfo`. Pass `getClass()` when the `@Test` is inherited so golds
+ * key by the running class instead of the declaring base.
+ */
+@JvmOverloads
+public fun assertMatchesGold(
+    testClass: Class<*>,
+    name: String,
+    image: BufferedImage,
+    tolerance: ScreenshotTolerance = ScreenshotTolerance.Strict,
+    scaleKey: String = currentScaleKey(image),
+    invocationKey: String? = null,
+) {
+    val identity = inferTestIdentity(executingClass = testClass)
     assertMatchesGold(
         name = name,
         image = image,

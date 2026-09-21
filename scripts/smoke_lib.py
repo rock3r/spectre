@@ -334,6 +334,10 @@ STAGE_PREBUILT_MAC_HELPER_TASK = ":recording:stagePrebuiltMacHelper"
 STAGE_STUB_MAC_HELPER_TASK = ":recording:stageStubMacHelper"
 ASSEMBLE_SCREENCAPTURE_HELPER_TIMEOUT_SECONDS = 180
 GRADLE_STOP_TIMEOUT_SECONDS = 120
+# overall_deadline can clip a just-started --stop to 1s (int truncation / #520
+# remaining budget). Gradle daemon stop needs a real floor or preflight fails
+# closed and every later cell is blocked N/A.
+GRADLE_STOP_MIN_TIMEOUT_SECONDS = 30
 GRADLE_PROJECT_UNIVERSAL_HELPER = "universalHelper"
 GRADLE_PROJECT_NOTARIZE_HELPER = "notarizeScreenCaptureKitHelper"
 GRADLE_PROJECT_PREBUILT_MAC_HELPER = "prebuiltMacHelperPath"
@@ -1647,6 +1651,30 @@ def kill_process_tree(proc: subprocess.Popen[Any]) -> None:
         pass
 
 
+def remaining_command_timeout(
+    timeout: int,
+    overall_deadline: float | None = None,
+    *,
+    floor: int = 0,
+    now: float | None = None,
+) -> int:
+    """Seconds a command may run, clipped by [overall_deadline].
+
+    Returns 0 when the overall deadline has already expired. Otherwise [floor]
+    wins over a positive but tiny leftover budget so ``gradle --stop`` cannot
+    be clipped to 1s.
+    """
+    remaining = max(0, timeout)
+    if overall_deadline is not None:
+        budget_left = int(overall_deadline - (now if now is not None else time.monotonic()))
+        if budget_left <= 0:
+            return 0
+        remaining = min(remaining, budget_left)
+    if floor > 0 and remaining > 0:
+        remaining = max(remaining, floor)
+    return remaining
+
+
 def run_command(
     command: Sequence[str],
     *,
@@ -1655,6 +1683,7 @@ def run_command(
     log_path: Path,
     env: Mapping[str, str] | None = None,
     overall_deadline: float | None = None,
+    floor: int = 0,
 ) -> tuple[int, str, str]:
     """Run command with timeout and process-group cleanup.
 
@@ -1670,14 +1699,13 @@ def run_command(
             if key in env and value == "":
                 del merged_env[key]
 
-    remaining = timeout
-    if overall_deadline is not None:
-        budget_left = int(overall_deadline - time.monotonic())
-        if budget_left <= 0:
-            message = "overall smoke deadline exceeded before step start"
-            log_path.write_text(message + "\n", encoding="utf-8")
-            return 124, message, str(log_path)
-        remaining = min(remaining, budget_left)
+    remaining = remaining_command_timeout(
+        timeout, overall_deadline, floor=floor
+    )
+    if remaining <= 0:
+        message = "overall smoke deadline exceeded before step start"
+        log_path.write_text(message + "\n", encoding="utf-8")
+        return 124, message, str(log_path)
 
     # start_new_session creates a new process group on POSIX so killpg works.
     popen_kwargs: dict[str, Any] = {

@@ -5,15 +5,20 @@ import java.lang.invoke.MethodType
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 
-internal fun inferTestIdentity(): GoldTestIdentity =
+internal fun inferTestIdentity(executingClass: Class<*>? = null): GoldTestIdentity =
     StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE).walk { frames ->
-        frames.iterator().asSequence().firstNotNullOfOrNull(::testIdentityFromWalkerFrame)
+        frames.iterator().asSequence().firstNotNullOfOrNull { frame ->
+            testIdentityFromWalkerFrame(frame, executingClass)
+        }
     }
         ?: error(
             "assertMatchesGold could not infer the calling test method; pass TestInfo explicitly"
         )
 
-internal fun testIdentityFromWalkerFrame(frame: StackWalker.StackFrame): GoldTestIdentity? {
+internal fun testIdentityFromWalkerFrame(
+    frame: StackWalker.StackFrame,
+    executingClass: Class<*>? = null,
+): GoldTestIdentity? {
     val cls = frame.declaringClass
     if (
         GOLD_FACADE_CLASSES.any { facade ->
@@ -23,9 +28,13 @@ internal fun testIdentityFromWalkerFrame(frame: StackWalker.StackFrame): GoldTes
         return null
     }
     val method =
-        resolveJunitTestMethod(cls.declaredMethods, frame.methodName, frame.methodType)
-            ?: return null
-    return identityFromResolved(cls, method)
+        resolveJunitTestMethod(
+            emptyArray(),
+            frame.methodName,
+            frame.methodType,
+            hierarchyRoot = cls,
+        ) ?: return null
+    return identityFromResolved(cls, method, executingClass)
 }
 
 internal fun testIdentityFromFrame(frame: StackTraceElement): GoldTestIdentity? {
@@ -40,7 +49,8 @@ internal fun testIdentityFromFrame(frame: StackTraceElement): GoldTestIdentity? 
         return null
     }
     val cls = loadTestClass(className) ?: return null
-    val method = resolveJunitTestMethod(cls.declaredMethods, frame.methodName) ?: return null
+    val method =
+        resolveJunitTestMethod(emptyArray(), frame.methodName, hierarchyRoot = cls) ?: return null
     return identityFromResolved(cls, method)
 }
 
@@ -58,13 +68,32 @@ internal fun resolveJunitTestMethod(
     methods: Array<Method>,
     methodName: String,
     methodType: MethodType? = null,
+    hierarchyRoot: Class<*>? = null,
 ): Method? {
-    val candidates = methods.filter { it.name == methodName && it.isJunitTestMethod() }
-    if (candidates.isEmpty()) return null
-    if (methodType != null) {
-        return candidates.firstOrNull { methodMatchesType(it, methodType) }
+    val declaredSets: Sequence<Array<Method>> =
+        if (hierarchyRoot == null) {
+            sequenceOf(methods)
+        } else {
+            generateSequence(hierarchyRoot) { current ->
+                    current.superclass?.takeUnless { it == Any::class.java }
+                }
+                .flatMap { host ->
+                    sequenceOf(host.declaredMethods) +
+                        host.interfaces.asSequence().map { it.declaredMethods }
+                }
+        }
+    for (declared in declaredSets) {
+        val candidates = declared.filter { it.name == methodName && it.isJunitTestMethod() }
+        if (candidates.isEmpty()) continue
+        val match =
+            if (methodType != null) {
+                candidates.firstOrNull { methodMatchesType(it, methodType) }
+            } else {
+                candidates.singleOrNull()
+            }
+        if (match != null) return match
     }
-    return candidates.singleOrNull()
+    return null
 }
 
 /**
@@ -109,16 +138,33 @@ internal fun resolveInvocationKey(
     return null
 }
 
-private fun identityFromResolved(cls: Class<*>, method: Method): GoldTestIdentity {
-    // Non-final concrete hosts can be subclassed; the stack frame names the declaring
-    // class, so two children would share a gold without TestInfo.
-    if (cls.isInterface || !Modifier.isFinal(cls.modifiers)) {
+private fun identityFromResolved(
+    cls: Class<*>,
+    method: Method,
+    executingClass: Class<*>? = null,
+): GoldTestIdentity {
+    val host = executingClass ?: cls
+    // Abstract/interface hosts and inherited methods (declaring class != executing class)
+    // would share a gold across subclasses. Ordinary non-final Java classes used directly
+    // are fine — Java test classes are non-final by default. JUnit 4 callers can pass the
+    // executing class; JUnit 5 callers can pass TestInfo.
+    val abstractOrInterface = host.isInterface || Modifier.isAbstract(host.modifiers)
+    val inherited = method.declaringClass != host
+    if (executingClass == null && (abstractOrInterface || inherited)) {
         error(
             "assertMatchesGold cannot infer the concrete test class from ${cls.name}; " +
-                "pass TestInfo so inherited tests key golds by the executing class"
+                "pass TestInfo or the executing test class so inherited tests key golds " +
+                "by the running class"
         )
     }
-    return GoldTestIdentity(cls, junitMethodIdentity(method))
+    if (executingClass != null && abstractOrInterface) {
+        error(
+            "assertMatchesGold cannot infer the concrete test class from ${host.name}; " +
+                "pass TestInfo or the executing test class so inherited tests key golds " +
+                "by the running class"
+        )
+    }
+    return GoldTestIdentity(host, junitMethodIdentity(method))
 }
 
 internal data class GoldTestIdentity(val testClass: Class<*>, val testMethodName: String) {

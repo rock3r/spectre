@@ -26,6 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from smoke_lib import (  # noqa: E402
+    GRADLE_STOP_MIN_TIMEOUT_SECONDS,
     GRADLE_STOP_TIMEOUT_SECONDS,
     HEADED_ROBOT_GRADLE_TASK,
     HEADED_ROBOT_NAME,
@@ -496,6 +497,7 @@ def main(argv: list[str] | None = None) -> int:
             timeout=GRADLE_STOP_TIMEOUT_SECONDS,
             log_path=out_dir / "gradle-stop.log",
             overall_deadline=overall_deadline,
+            floor=GRADLE_STOP_MIN_TIMEOUT_SECONDS,
         )
         if stop_code != 0:
             stop_failure_detail = stop_detail or f"exit {stop_code}"

@@ -664,6 +664,34 @@ class SmokeLibSchemaTest(unittest.TestCase):
             self.assertIn("timeout", detail)
             self.assertTrue(log.is_file())
 
+    def test_remaining_command_timeout_clips_to_overall_deadline(self):
+        now = 1_000.0
+        remaining = smoke_lib.remaining_command_timeout(
+            120, overall_deadline=now + 1.9, now=now
+        )
+        self.assertEqual(1, remaining)
+
+    def test_remaining_command_timeout_floors_gradle_stop(self):
+        now = 1_000.0
+        remaining = smoke_lib.remaining_command_timeout(
+            smoke_lib.GRADLE_STOP_TIMEOUT_SECONDS,
+            overall_deadline=now + 1.9,
+            floor=smoke_lib.GRADLE_STOP_MIN_TIMEOUT_SECONDS,
+            now=now,
+        )
+        self.assertEqual(smoke_lib.GRADLE_STOP_MIN_TIMEOUT_SECONDS, remaining)
+        self.assertGreaterEqual(remaining, 30)
+
+    def test_remaining_command_timeout_expired_deadline_is_zero(self):
+        now = 1_000.0
+        remaining = smoke_lib.remaining_command_timeout(
+            120,
+            overall_deadline=now - 1,
+            floor=smoke_lib.GRADLE_STOP_MIN_TIMEOUT_SECONDS,
+            now=now,
+        )
+        self.assertEqual(0, remaining)
+
     def test_detect_display_mode_linux_xvfb(self):
         # Force Linux path without mutating real platform for other tests.
         old_display = os.environ.pop("DISPLAY", None)
@@ -2652,6 +2680,7 @@ class ReleaseSmokeMacOsTccWiringTest(unittest.TestCase):
             self.assertIn("--stop", command)
             seen["timeout"] = kwargs.get("timeout")
             seen["overall_deadline"] = kwargs.get("overall_deadline")
+            seen["floor"] = kwargs.get("floor")
             seen["now"] = time.monotonic()
             return 0, "", str(kwargs.get("log_path") or "")
 
@@ -2668,6 +2697,7 @@ class ReleaseSmokeMacOsTccWiringTest(unittest.TestCase):
         started = float(seen["now"])  # type: ignore[arg-type]
         self.assertGreater(timeout, 0)
         self.assertLessEqual(timeout, smoke_lib.GRADLE_STOP_TIMEOUT_SECONDS)
+        self.assertEqual(smoke_lib.GRADLE_STOP_MIN_TIMEOUT_SECONDS, seen.get("floor"))
         self.assertLessEqual(deadline, started + 60 + 1)
         self.assertGreater(deadline, started)
 

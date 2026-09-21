@@ -25,9 +25,9 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ThreadContextElement
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -457,11 +457,14 @@ internal class ProductionInputLeaseCoordinator(
             runInterruptible(ioDispatcher) {
                 acquireBlocking(options, currentOperation).also(acquired::set)
             }
-            // Keep the lease in [acquired] until this coroutine is still active. Clearing it in
-            // the same expression as runInterruptible used to drop a granted lease when cancel
-            // arrived after the server published the hold and before the caller could keep it.
-            coroutineContext.ensureActive()
-            requireNotNull(acquired.getAndSet(null))
+            val lease = requireNotNull(acquired.get())
+            // Keep [acquired] until the cancellable continuation accepts the value.
+            // ensureActive() + getAndSet(null) transferred ownership after a point-in-time
+            // check; a cancelled Deferred can then discard the result while finally sees null.
+            suspendCancellableCoroutine { cont ->
+                cont.resume(lease) { _, _, _ -> acquired.getAndSet(null)?.close() }
+            }
+                .also { acquired.compareAndSet(lease, null) }
         } finally {
             acquired.getAndSet(null)?.close()
         }

@@ -346,9 +346,11 @@ methods that call it directly. It recognizes `@Test`, `@ParameterizedTest`,
 `@ClassTemplate`, and JUnit 4 `@RunWith(Parameterized)` invocations that share a
 screenshot name must not share a gold. The `TestInfo` facade keys method-level
 invocations from the JUnit display name only when the annotation `name` pattern
-includes a true invocation index (`{index}` or `{currentRepetition}`) *and* the
-resolved display looks unique (`[1] dark`, `repetition 1 of 2`). JUnit's omitted
-default (`{default_display_name}`) counts because it includes `{index}`. Argument
+includes a true invocation index (`{index}` on ParameterizedTest, `{currentRepetition}`
+on RepeatedTest) *and* the resolved display looks unique (`[1] dark`,
+`repetition 1 of 2`). ParameterizedTest's omitted default (`{default_display_name}`)
+counts because it includes `{index}`; RepeatedTest's default already includes
+`{currentRepetition}`. RepeatedTest `{index}` stays literal. Argument
 placeholders such as `{0}` or `{arguments}` are not unique when values repeat.
 Display names that include `Any.toString()` identity-hash text (`Foo@4a12bc`) keep
 only the stable `[index]` or `repetition N of M` token so the gold path does not
@@ -407,10 +409,13 @@ The method segment is the inferred JUnit method (or `TestInfo`). No-arg tests ke
 bare method name; overloads append `(fqcn,…)` so `@Test render()` and
 `@Test render(testInfo: TestInfo)` cannot share a gold. Parameterized and repeated
 invocations add an extra `<invocation>` segment so they cannot overwrite each other.
-Tests inherited from an abstract class, interface, or non-final concrete base cannot
-infer the concrete executing class from the stack — pass `TestInfo` so those golds key
-by the running class. Method names that contain `(` are matched by the full generated
-identity, not by cutting at the first parenthesis.
+Tests inherited from an abstract class or interface, and inherited methods whose
+declaring class is not the executing class, cannot infer the concrete running class
+from the stack — pass `TestInfo` or `assertMatchesGold(getClass(), name, image)` so
+those golds key by the running class. Ordinary non-final Java test classes used
+directly still resolve; Java classes are non-final by default. Method names that
+contain `(` are matched by the full generated identity, not by cutting at the first
+parenthesis.
 
 The default root is `src/test/resources/spectre-golds/` (the main JUnit source set). Linux
 keys follow the same session detection as window capture: `SPECTRE_CAPTURE_BACKEND`,

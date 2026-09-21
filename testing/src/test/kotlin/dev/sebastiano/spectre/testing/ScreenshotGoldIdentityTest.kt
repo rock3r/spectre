@@ -2,10 +2,13 @@ package dev.sebastiano.spectre.testing
 
 import java.lang.invoke.MethodType
 import java.lang.reflect.Method
+import java.lang.reflect.Modifier
 import java.util.Optional
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.ClassTemplate
@@ -355,27 +358,61 @@ class ScreenshotGoldIdentityTest {
     }
 
     @Test
-    fun `inherited tests from a concrete base fail closed without TestInfo`() {
-        val frame =
+    fun `non-final concrete Java host used directly still resolves`() {
+        val cls = GoldIdentityJavaStyleHost::class.java
+        assertFalse(Modifier.isFinal(cls.modifiers), cls.toString())
+        assertFalse(Modifier.isAbstract(cls.modifiers), cls.toString())
+        val frame = StackTraceElement(cls.name, "probe", "GoldIdentityJavaStyleHost.java", 1)
+        val fromFrame = assertNotNull(testIdentityFromFrame(frame))
+        assertEquals(cls.name, fromFrame.testClassName)
+        assertEquals("probe", fromFrame.testMethodName)
+        val live = GoldIdentityJavaStyleHost().probe()
+        assertEquals(cls.name, live.testClassName)
+        assertEquals("probe", live.testMethodName)
+        val javaBase = GoldIdentityJavaBase::class.java
+        val baseFrame =
             StackTraceElement(
-                GoldIdentityConcreteBase::class.java.name,
-                "inheritedFromConcrete",
-                "GoldIdentityConcreteBase.kt",
+                javaBase.name,
+                "inheritedFromJavaBase",
+                "GoldIdentityJavaBase.java",
                 1,
             )
-        val error = assertFailsWith<IllegalStateException> { testIdentityFromFrame(frame) }
-        assertTrue(error.message!!.contains("TestInfo"), error.message)
-        assertTrue(error.message!!.contains("concrete"), error.message)
-        val fromA =
-            assertFailsWith<IllegalStateException> {
-                GoldIdentityConcreteChildA().inheritedFromConcrete()
-            }
-        val fromB =
-            assertFailsWith<IllegalStateException> {
-                GoldIdentityConcreteChildB().inheritedFromConcrete()
-            }
-        assertTrue(fromA.message!!.contains("TestInfo"), fromA.message)
-        assertTrue(fromB.message!!.contains("TestInfo"), fromB.message)
+        val fromBase = assertNotNull(testIdentityFromFrame(baseFrame))
+        assertEquals(javaBase.name, fromBase.testClassName)
+        assertEquals("inheritedFromJavaBase", fromBase.testMethodName)
+        val liveBase = GoldIdentityJavaBase().inheritedFromJavaBase()
+        assertEquals(javaBase.name, liveBase.testClassName)
+    }
+
+    @Test
+    fun `explicit executing class keys inherited golds without TestInfo`() {
+        val identity = GoldIdentityConcreteChildA().inheritedKeyedByExecutingClass()
+        assertEquals(GoldIdentityConcreteChildA::class.java.name, identity.testClassName)
+        assertEquals("inheritedKeyedByExecutingClass", identity.testMethodName)
+    }
+
+    @Test
+    fun `inherited method on a subclass frame fails closed without TestInfo`() {
+        val kotlinChild =
+            StackTraceElement(
+                GoldIdentityConcreteChildA::class.java.name,
+                "inheritedFromConcrete",
+                "GoldIdentityConcreteChildA.kt",
+                1,
+            )
+        val kotlinError =
+            assertFailsWith<IllegalStateException> { testIdentityFromFrame(kotlinChild) }
+        assertTrue(kotlinError.message!!.contains("TestInfo"), kotlinError.message)
+        assertTrue(kotlinError.message!!.contains("concrete"), kotlinError.message)
+        val javaChild =
+            StackTraceElement(
+                GoldIdentityJavaChild::class.java.name,
+                "inheritedFromJavaBase",
+                "GoldIdentityJavaChild.java",
+                1,
+            )
+        val javaError = assertFailsWith<IllegalStateException> { testIdentityFromFrame(javaChild) }
+        assertTrue(javaError.message!!.contains("TestInfo"), javaError.message)
     }
 
     @Test
@@ -451,6 +488,8 @@ internal class GoldIdentityParenTemplateHost {
 @Disabled("reflective fixture for inherited gold identity")
 internal open class GoldIdentityConcreteBase {
     @Test fun inheritedFromConcrete(): GoldTestIdentity = inferTestIdentity()
+
+    @Test fun inheritedKeyedByExecutingClass(): GoldTestIdentity = inferTestIdentity(javaClass)
 }
 
 @Disabled("reflective fixture for inherited gold identity")

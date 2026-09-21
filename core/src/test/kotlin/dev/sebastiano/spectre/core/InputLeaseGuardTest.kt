@@ -34,10 +34,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.getCompleted
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
@@ -713,6 +713,7 @@ class InputLeaseGuardTest {
      * holds the result, this test is the caller and must close it or STATUS will keep seeing a
      * holder until the poll budget expires.
      */
+    @OptIn(ExperimentalCoroutinesApi::class)
     private fun closeIfPublished(deferred: Deferred<CoordinatedInputLease>) {
         if (deferred.isCancelled) return
         deferred.getCompleted().close()

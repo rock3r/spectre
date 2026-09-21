@@ -39,6 +39,22 @@ class ScreenshotGoldJunit5Test {
     }
 
     @Test
+    fun `name-only ScreenshotGoldKt facade exposes a Class test-identity Java overload`() {
+        val method =
+            Class.forName("dev.sebastiano.spectre.testing.ScreenshotGoldKt").methods.singleOrNull {
+                candidate ->
+                candidate.name == "assertMatchesGold" &&
+                    candidate.parameterTypes.map { it.name } ==
+                        listOf(
+                            "java.lang.Class",
+                            "java.lang.String",
+                            "java.awt.image.BufferedImage",
+                        )
+            }
+        assertTrue(method != null, "ScreenshotGoldKt.assertMatchesGold(testClass, name, image)")
+    }
+
+    @Test
     fun `JUnit 5 gold facade isolates TestInfo overloads`() {
         val facade = Class.forName("dev.sebastiano.spectre.testing.ScreenshotGoldJunit5")
         assertTrue(
@@ -270,6 +286,40 @@ class ScreenshotGoldJunit5Test {
         } finally {
             worker.shutdownNow()
         }
+    }
+
+    @RepeatedTest(name = "[1] {index}", value = 1)
+    fun `RepeatedTest index placeholder is not a unique invocation key`() {
+        val method =
+            javaClass.declaredMethods.single {
+                it.name == "RepeatedTest index placeholder is not a unique invocation key"
+            }
+        assertFalse(method.hasVaryingInvocationNamePattern())
+        val info = fakeTestInfo("[1] {index}", method)
+        assertNull(invocationKeyFromTestInfo(info))
+        val error =
+            assertFailsWith<IllegalStateException> {
+                resolveInvocationKey(
+                    ScreenshotGoldJunit5Test::class.java.name,
+                    method.name,
+                    invocationKey = invocationKeyFromTestInfo(info),
+                )
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
+    }
+
+    @RepeatedTest(name = "repetition {currentRepetition} of {totalRepetitions}", value = 1)
+    fun `RepeatedTest currentRepetition placeholder remains a unique invocation key`() {
+        val method =
+            javaClass.declaredMethods.single {
+                it.name ==
+                    "RepeatedTest currentRepetition placeholder remains a unique invocation key"
+            }
+        assertTrue(method.hasVaryingInvocationNamePattern())
+        assertEquals(
+            "repetition 1 of 1",
+            invocationKeyFromTestInfo(fakeTestInfo("repetition 1 of 1", method)),
+        )
     }
 
     @RepeatedTest(1)
