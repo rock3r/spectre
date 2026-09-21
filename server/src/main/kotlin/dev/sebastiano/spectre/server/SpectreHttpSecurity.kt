@@ -72,9 +72,31 @@ public class SpectreHttpSecurity(
     }
 }
 
+/**
+ * Token the plaintext loopback hatch trusts.
+ *
+ * [remoteAddress] is the TCP peer (`RequestConnectionPoint.remoteAddress`). [remoteHost] is Ktor's
+ * reverse-DNS name of that peer. On Windows, 127.0.0.1 reverse-resolves to the computer name, so
+ * trusting [remoteHost] rejects a real loopback client with HTTP 426. A blank address fails closed:
+ * the host name is never a substitute, including when it is `localhost`.
+ */
+internal fun loopbackCheckInput(remoteAddress: String, remoteHost: String): String {
+    if (remoteHost.isEmpty() && remoteAddress.isEmpty()) return ""
+    return remoteAddress
+}
+
+private fun isNumericAddressLiteral(literal: String): Boolean {
+    val ipv6 = literal.contains(':')
+    return literal.all { character ->
+        character.isDigit() ||
+            character == '.' ||
+            (ipv6 && (character == ':' || character.lowercaseChar() in 'a'..'f'))
+    }
+}
+
 internal fun isLoopbackHost(host: String): Boolean {
     if (host.equals("localhost", ignoreCase = true)) return true
-    val literal = host.removePrefix("[").removeSuffix("]")
-    if (!literal.all { it.isDigit() || it == '.' || it == ':' }) return false
+    val literal = host.removePrefix("[").removeSuffix("]").substringBefore('%')
+    if (literal.isEmpty() || !isNumericAddressLiteral(literal)) return false
     return runCatching { InetAddress.getByName(literal).isLoopbackAddress }.getOrDefault(false)
 }

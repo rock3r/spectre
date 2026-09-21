@@ -62,9 +62,14 @@ internal fun Route.installExposureGuard(security: SpectreHttpSecurity) {
     }
 }
 
-private fun ApplicationCall.usesAllowedTransport(security: SpectreHttpSecurity): Boolean =
-    request.origin.scheme.equals("https", ignoreCase = true) ||
-        (security.allowInsecureLoopback && isLoopbackHost(request.local.remoteHost))
+private fun ApplicationCall.usesAllowedTransport(security: SpectreHttpSecurity): Boolean {
+    if (request.origin.scheme.equals("https", ignoreCase = true)) return true
+    if (!security.allowInsecureLoopback) return false
+    // Read the TCP address before any reverse-DNS lookup. JDK caches that name on the
+    // InetAddress, and a later getHostString() would then return the computer name.
+    val peerAddress = request.local.remoteAddress
+    return isLoopbackHost(loopbackCheckInput(peerAddress, remoteHost = ""))
+}
 
 private suspend fun ApplicationCall.respondToPreflight(
     security: SpectreHttpSecurity,

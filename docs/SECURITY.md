@@ -114,9 +114,10 @@ command-line arguments, URLs, or logs.
   `Authorization`.
 - **HTTPS by default.** `HttpComposeAutomator` constructs `https://` URLs and the server rejects
   non-HTTPS requests. `allowInsecureLoopback = true` is a test-only escape hatch: the client accepts
-  only `localhost` or a literal loopback address, and the server checks that the plaintext peer is
-  loopback. TLS keys, certificates, and connector lifecycle remain the host Ktor application's
-  responsibility.
+  only `localhost` or a literal loopback address, and the server checks that the plaintext TCP peer
+  address is loopback (not the reverse-DNS name, which on Windows is the computer name). Scoped
+  IPv6 loopback addresses count. TLS keys, certificates, and connector lifecycle remain the host
+  Ktor application's responsibility.
 - **Reverse proxies.** When TLS terminates at a proxy, configure Ktor's forwarded-header handling
   only if the application's direct peers are trusted proxies. Spectre uses Ktor's resolved origin;
   trusting arbitrary client-supplied forwarding headers can bypass the HTTPS check.
