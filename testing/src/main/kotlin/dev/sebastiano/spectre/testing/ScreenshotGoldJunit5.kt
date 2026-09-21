@@ -90,7 +90,7 @@ internal fun java.lang.reflect.Method.hasVaryingInvocationNamePattern(): Boolean
 
 /**
  * Blank is JUnit's RepeatedTest default (`repetition {currentRepetition} of {totalRepetitions}`).
- * `{index}` is a parameterized token and stays literal on RepeatedTest.
+ * `{index}` and `{default_display_name}` are parameterized tokens and stay literal on RepeatedTest.
  */
 private fun repeatedPatternVariesPerInvocation(pattern: String): Boolean =
     pattern.isBlank() || REPEATED_UNIQUE_PLACEHOLDER.containsMatchIn(pattern)
@@ -124,8 +124,7 @@ private val REPEATED_INVOCATION_LABEL =
     Regex("""(?:^| )repetition \d+(?: of \d+)?$""", RegexOption.IGNORE_CASE)
 // Object.toString() / default Any.toString(): ClassName@hex, arrays, nested types.
 private val IDENTITY_HASH_TEXT = Regex("""(?:[\w.$]+|\[+[ZBCSIJFD]|\[+L[\w.$]+;)@[0-9a-fA-F]+""")
-private val REPEATED_UNIQUE_PLACEHOLDER =
-    Regex("""\{currentRepetition\}|\{default_display_name\}""")
+private val REPEATED_UNIQUE_PLACEHOLDER = Regex("""\{currentRepetition\}""")
 private val PARAMETERIZED_UNIQUE_PLACEHOLDER = Regex("""\{index\}|\{default_display_name\}""")
 
 private fun annotationHasVaryingInvocationPattern(

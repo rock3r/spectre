@@ -129,7 +129,9 @@ class ScreenshotGoldJunit5Test {
 
     @Test
     fun `TestInfo repeated-test display name is a unique invocation key`() {
-        val info = fakeTestInfo("repetition 1 of 2", repeatedMethod())
+        val method = repeatedMethod()
+        assertTrue(method.hasVaryingInvocationNamePattern())
+        val info = fakeTestInfo("repetition 1 of 2", method)
         assertEquals("repetition 1 of 2", invocationKeyFromTestInfo(info))
     }
 
@@ -286,6 +288,39 @@ class ScreenshotGoldJunit5Test {
         } finally {
             worker.shutdownNow()
         }
+    }
+
+    @ParameterizedTest(name = "{default_display_name}")
+    @ValueSource(ints = [1])
+    fun `ParameterizedTest default_display_name remains a unique invocation key`(value: Int) {
+        assertEquals(1, value)
+        val method =
+            javaClass.declaredMethods.single {
+                it.name == "ParameterizedTest default_display_name remains a unique invocation key"
+            }
+        assertTrue(method.hasVaryingInvocationNamePattern())
+        assertEquals("[1] value=1", invocationKeyFromTestInfo(fakeTestInfo("[1] value=1", method)))
+    }
+
+    @RepeatedTest(name = "[1] {default_display_name}", value = 1)
+    fun `RepeatedTest default_display_name placeholder is not a unique invocation key`() {
+        val method =
+            javaClass.declaredMethods.single {
+                it.name ==
+                    "RepeatedTest default_display_name placeholder is not a unique invocation key"
+            }
+        assertFalse(method.hasVaryingInvocationNamePattern())
+        val info = fakeTestInfo("[1] {default_display_name}", method)
+        assertNull(invocationKeyFromTestInfo(info))
+        val error =
+            assertFailsWith<IllegalStateException> {
+                resolveInvocationKey(
+                    ScreenshotGoldJunit5Test::class.java.name,
+                    method.name,
+                    invocationKey = invocationKeyFromTestInfo(info),
+                )
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
     }
 
     @RepeatedTest(name = "[1] {index}", value = 1)
