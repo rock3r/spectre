@@ -35,6 +35,7 @@ class HelperBinaryExtractorTest {
         val extractor =
             HelperBinaryExtractor(
                 envLookup = { null },
+                sysPropLookup = { null },
                 materialLocator = { material(payload) },
                 targetDirProvider = { tempRoot },
             )
@@ -67,6 +68,7 @@ class HelperBinaryExtractorTest {
         val first =
             HelperBinaryExtractor(
                     envLookup = { null },
+                    sysPropLookup = { null },
                     materialLocator = { material },
                     targetDirProvider = { tempRoot },
                 )
@@ -76,6 +78,7 @@ class HelperBinaryExtractorTest {
         val second =
             HelperBinaryExtractor(
                     envLookup = { null },
+                    sysPropLookup = { null },
                     materialLocator = { material },
                     targetDirProvider = { tempRoot },
                 )
@@ -94,6 +97,7 @@ class HelperBinaryExtractorTest {
         val newPayload = byteArrayOf(0x02)
         HelperBinaryExtractor(
                 envLookup = { null },
+                sysPropLookup = { null },
                 materialLocator = { material(oldPayload) },
                 targetDirProvider = { tempRoot },
             )
@@ -102,6 +106,7 @@ class HelperBinaryExtractorTest {
         val path =
             HelperBinaryExtractor(
                     envLookup = { null },
+                    sysPropLookup = { null },
                     materialLocator = { material(newPayload) },
                     targetDirProvider = { tempRoot },
                 )
@@ -156,6 +161,7 @@ class HelperBinaryExtractorTest {
         val extractor =
             HelperBinaryExtractor(
                 envLookup = { null },
+                sysPropLookup = { null },
                 materialLocator = {
                     locatorCalls += 1
                     material(byteArrayOf(0x01, 0x02, 0x03))
@@ -175,6 +181,7 @@ class HelperBinaryExtractorTest {
         val extractor =
             HelperBinaryExtractor(
                 envLookup = { null },
+                sysPropLookup = { null },
                 materialLocator = { null },
                 targetDirProvider = { tempRoot },
             )
@@ -194,7 +201,11 @@ class HelperBinaryExtractorTest {
         if (!isMacOs) return
 
         val extractor =
-            HelperBinaryExtractor(envLookup = { null }, targetDirProvider = { tempRoot })
+            HelperBinaryExtractor(
+                envLookup = { null },
+                sysPropLookup = { null },
+                targetDirProvider = { tempRoot },
+            )
         val path = extractor.extract()
         assertTrue(path.exists())
         assertTrue(Files.isExecutable(path))
@@ -226,6 +237,7 @@ class HelperBinaryExtractorTest {
         val path =
             HelperBinaryExtractor(
                     envLookup = { null },
+                    sysPropLookup = { null },
                     materialLocator = { material },
                     targetDirProvider = { tempRoot },
                 )
@@ -251,6 +263,7 @@ class HelperBinaryExtractorTest {
         val extractor =
             HelperBinaryExtractor(
                 envLookup = { key -> if (key == OVERRIDE_ENV) fakeHelper.toString() else null },
+                sysPropLookup = { null },
                 materialLocator = {
                     locatorCalled = true
                     material(byteArrayOf())
@@ -276,7 +289,8 @@ class HelperBinaryExtractorTest {
 
         val extractor =
             HelperBinaryExtractor(
-                envLookup = { key -> if (key == OVERRIDE_ENV) appRoot.toString() else null }
+                envLookup = { key -> if (key == OVERRIDE_ENV) appRoot.toString() else null },
+                sysPropLookup = { null },
             )
 
         assertEquals(nested, extractor.extract())
@@ -288,7 +302,8 @@ class HelperBinaryExtractorTest {
 
         val extractor =
             HelperBinaryExtractor(
-                envLookup = { key -> if (key == OVERRIDE_ENV) fakeHelper.toString() else null }
+                envLookup = { key -> if (key == OVERRIDE_ENV) fakeHelper.toString() else null },
+                sysPropLookup = { null },
             )
 
         val first = extractor.extract()
@@ -302,7 +317,8 @@ class HelperBinaryExtractorTest {
 
         val extractor =
             HelperBinaryExtractor(
-                envLookup = { key -> if (key == OVERRIDE_ENV) unusablePath.toString() else null }
+                envLookup = { key -> if (key == OVERRIDE_ENV) unusablePath.toString() else null },
+                sysPropLookup = { null },
             )
 
         val ex = assertFailsWith<IllegalStateException> { extractor.extract() }
@@ -320,6 +336,7 @@ class HelperBinaryExtractorTest {
         val extractor =
             HelperBinaryExtractor(
                 envLookup = { key -> if (key == OVERRIDE_ENV) "   " else null },
+                sysPropLookup = { null },
                 materialLocator = {
                     locatorCalled = true
                     material(payload)
@@ -340,8 +357,12 @@ class HelperBinaryExtractorTest {
         val payload = byteArrayOf(0x7F, 0x45, 0x4C, 0x46)
 
         var targetDirCalled = false
+        val developerInstall = createExecutableHelper("application-support-helper", 0x0A)
         val extractor =
             HelperBinaryExtractor(
+                envLookup = { key ->
+                    if (key == OVERRIDE_ENV) developerInstall.toString() else null
+                },
                 sysPropLookup = { key ->
                     if (key == HELPER_DIR_PROPERTY) stableDir.toString() else null
                 },
@@ -372,8 +393,12 @@ class HelperBinaryExtractorTest {
     @Test
     fun `helperDir system property creates the directory if it does not exist`() {
         val nonExistentDir = tempRoot.resolve("a").resolve("b").resolve("c")
+        val developerInstall = createExecutableHelper("application-support-helper", 0x0B)
         val extractor =
             HelperBinaryExtractor(
+                envLookup = { key ->
+                    if (key == OVERRIDE_ENV) developerInstall.toString() else null
+                },
                 sysPropLookup = { key ->
                     if (key == HELPER_DIR_PROPERTY) nonExistentDir.toString() else null
                 },
@@ -382,14 +407,22 @@ class HelperBinaryExtractorTest {
 
         val path = extractor.extract()
 
+        assertTrue(
+            path.startsWith(nonExistentDir),
+            "Explicit helperDir must win over the developer install; got: $path",
+        )
         assertTrue(path.exists(), "Extracted binary must exist even when the dir was created")
     }
 
     @Test
     fun `blank helperDir system property falls through to targetDirProvider`() {
+        val developerInstall = createExecutableHelper("application-support-helper", 0x0C)
         var targetDirCalled = false
         val extractor =
             HelperBinaryExtractor(
+                envLookup = { key ->
+                    if (key == OVERRIDE_ENV) developerInstall.toString() else null
+                },
                 sysPropLookup = { key -> if (key == HELPER_DIR_PROPERTY) "  " else null },
                 materialLocator = { material(byteArrayOf(0x01)) },
                 targetDirProvider = {
@@ -398,34 +431,70 @@ class HelperBinaryExtractorTest {
                 },
             )
 
-        extractor.extract()
+        val path = extractor.extract()
 
         assertTrue(
             targetDirCalled,
             "Blank helperDir system property must fall through to targetDirProvider",
         )
+        assertEquals(
+            tempRoot
+                .resolve(HelperAppBundle.APP_DIR_NAME)
+                .resolve(HelperAppBundle.EXECUTABLE_RELATIVE_PATH),
+            path,
+            "Blank helperDir must not keep the developer-shell override; got: $path",
+        )
     }
 
     @Test
-    fun `env-var override takes priority over helperDir system property`() {
+    fun `explicit helperDir takes priority over env-var override`() {
         val fakeHelper = createExecutableHelper("env-override-binary", 0x01)
+        val stableDir = tempRoot.resolve("stable")
 
         var locatorCalled = false
         val extractor =
             HelperBinaryExtractor(
                 envLookup = { key -> if (key == OVERRIDE_ENV) fakeHelper.toString() else null },
                 sysPropLookup = { key ->
-                    if (key == HELPER_DIR_PROPERTY) tempRoot.resolve("stable").toString() else null
+                    if (key == HELPER_DIR_PROPERTY) stableDir.toString() else null
                 },
                 materialLocator = {
                     locatorCalled = true
-                    material(byteArrayOf())
+                    material(byteArrayOf(0x11))
                 },
             )
 
         val path = extractor.extract()
 
-        assertEquals(fakeHelper, path, "Env-var override must win over helperDir property")
+        assertEquals(
+            stableDir
+                .resolve(HelperAppBundle.APP_DIR_NAME)
+                .resolve(HelperAppBundle.EXECUTABLE_RELATIVE_PATH),
+            path,
+            "Explicit helperDir must win over SPECTRE_SCREENCAPTURE_HELPER",
+        )
+        assertTrue(locatorCalled, "Bundled helper must be extracted when helperDir wins")
+        assertContentEquals(byteArrayOf(0x11), path.readBytes())
+    }
+
+    @Test
+    fun `absent helperDir still honours the env-var override`() {
+        val fakeHelper = createExecutableHelper("env-override-binary", 0x01)
+        var locatorCalled = false
+        val extractor =
+            HelperBinaryExtractor(
+                envLookup = { key -> if (key == OVERRIDE_ENV) fakeHelper.toString() else null },
+                sysPropLookup = { null },
+                materialLocator = {
+                    locatorCalled = true
+                    material(byteArrayOf())
+                },
+                targetDirProvider = { tempRoot.resolve("should-not-be-used") },
+            )
+
+        val path = extractor.extract()
+
+        assertEquals(fakeHelper, path, "Unset helperDir must leave the env override in place")
         assertTrue(!locatorCalled, "Classpath resource must not be read when env-var wins")
     }
 

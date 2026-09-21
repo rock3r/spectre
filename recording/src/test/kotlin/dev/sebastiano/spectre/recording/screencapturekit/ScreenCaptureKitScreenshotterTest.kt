@@ -24,6 +24,8 @@ class ScreenCaptureKitScreenshotterTest {
             ScreenCaptureKitScreenshotter(
                 helperExtractor =
                     HelperBinaryExtractor(
+                        envLookup = { null },
+                        sysPropLookup = { null },
                         materialLocator = {
                             helperAppBundleMaterial(byteArrayOf(0x01), byteArrayOf())
                         },
@@ -50,6 +52,8 @@ class ScreenCaptureKitScreenshotterTest {
         val factory = ScreenshotHelperProcessFactory()
         val extractor =
             HelperBinaryExtractor(
+                envLookup = { null },
+                sysPropLookup = { null },
                 materialLocator = {
                     helperAppBundleMaterial(
                         executable = byteArrayOf(0x01),
@@ -88,6 +92,8 @@ class ScreenCaptureKitScreenshotterTest {
         val factory = ScreenshotHelperProcessFactory(process)
         val extractor =
             HelperBinaryExtractor(
+                envLookup = { null },
+                sysPropLookup = { null },
                 materialLocator = {
                     helperAppBundleMaterial(
                         executable = byteArrayOf(0x01),
@@ -122,6 +128,8 @@ class ScreenCaptureKitScreenshotterTest {
             ScreenCaptureKitScreenshotter(
                 helperExtractor =
                     HelperBinaryExtractor(
+                        envLookup = { null },
+                        sysPropLookup = { null },
                         materialLocator = {
                             helperAppBundleMaterial(
                                 executable = byteArrayOf(0x01),

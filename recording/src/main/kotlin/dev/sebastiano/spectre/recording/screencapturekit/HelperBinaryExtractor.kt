@@ -21,10 +21,15 @@ import kotlin.io.path.isRegularFile
  * inside the jar — this class is the corresponding read side.
  *
  * Lifecycle:
- * 1. First [extract] call checks for the [OVERRIDE_ENV] env var and returns that path directly if
- *    set (dev-iteration escape hatch, skips JAR extraction). Accepts either a nested executable
- *    path or a path to the `.app` bundle itself.
- * 2. Otherwise it loads **every** file under the staged app resource tree (including
+ * 1. First [extract] call resolves where the helper comes from:
+ *     - A non-blank [HELPER_DIR_PROPERTY] wins over [OVERRIDE_ENV] and the stable per-user install.
+ *       The bundled app is extracted under that directory.
+ *     - A blank [HELPER_DIR_PROPERTY] also ignores [OVERRIDE_ENV] and falls through to
+ *       [targetDirProvider] (the stable per-user directory by default).
+ *     - When [HELPER_DIR_PROPERTY] is unset, a non-blank [OVERRIDE_ENV] returns that existing
+ *       executable or `.app` directly (dev-iteration escape hatch, skips JAR extraction).
+ *     - Otherwise the bundled app is extracted via [targetDirProvider].
+ * 2. Extraction loads **every** file under the staged app resource tree (including
  *    `Contents/_CodeSignature/` when present), copies them byte-for-byte to a fixed install path,
  *    and chmods the executable. The sealed signature and any stapled ticket payload travel with the
  *    tree; extraction must not rewrite sealed contents.
@@ -62,22 +67,26 @@ internal class HelperBinaryExtractor(
             return it
         }
 
-        // Env var override: use a pre-existing binary or .app at the given path, skipping
-        // classpath extraction. Mirrors WaylandHelperBinaryExtractor's SPECTRE_WAYLAND_HELPER
-        // pattern. Developer-only escape hatch for iterating on the Swift helper without
-        // rebuilding the JAR. Never set this in environments that ingest untrusted input.
-        envLookup(OVERRIDE_ENV)
-            ?.takeIf { it.isNotBlank() }
-            ?.let { override ->
-                val path = resolveOverrideExecutable(Path.of(override))
-                check(Files.isExecutable(path)) {
-                    "$OVERRIDE_ENV points at '$override' but no executable helper was found at " +
-                        "'$path'. Point it at ${HelperAppBundle.EXECUTABLE_NAME} or " +
-                        "${HelperAppBundle.APP_DIR_NAME}, or unset it to use the bundled helper."
+        // An explicit helperDir (including a blank value) outranks the developer-shell
+        // SPECTRE_SCREENCAPTURE_HELPER override. Non-blank extracts the bundled app there.
+        // Blank falls through to targetDirProvider. Only an unset property consults the env
+        // var, which is a developer-only hatch for iterating on the Swift helper without
+        // rebuilding the JAR. Never set that env var in environments that ingest untrusted input.
+        val helperDirProperty = sysPropLookup(HELPER_DIR_PROPERTY)
+        if (helperDirProperty == null) {
+            envLookup(OVERRIDE_ENV)
+                ?.takeIf { it.isNotBlank() }
+                ?.let { override ->
+                    val path = resolveOverrideExecutable(Path.of(override))
+                    check(Files.isExecutable(path)) {
+                        "$OVERRIDE_ENV points at '$override' but no executable helper was found " +
+                            "at '$path'. Point it at ${HelperAppBundle.EXECUTABLE_NAME} or " +
+                            "${HelperAppBundle.APP_DIR_NAME}, or unset it to use the bundled helper."
+                    }
+                    cached = path
+                    return path
                 }
-                cached = path
-                return path
-            }
+        }
 
         val material =
             materialLocator()
@@ -89,8 +98,7 @@ internal class HelperBinaryExtractor(
                         "macOS with the Swift toolchain available."
                 )
 
-        val propertyDir =
-            sysPropLookup(HELPER_DIR_PROPERTY)?.takeIf { it.isNotBlank() }?.let { Path.of(it) }
+        val propertyDir = helperDirProperty?.takeIf { it.isNotBlank() }?.let { Path.of(it) }
         // Fixed app path (no content-hash subdir): stable TCC identity across updates that
         // overwrite the same bundle in place. Fingerprint is used only to detect staleness.
         val appRoot =
