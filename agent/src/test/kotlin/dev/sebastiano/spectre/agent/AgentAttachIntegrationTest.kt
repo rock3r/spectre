@@ -463,17 +463,18 @@ class AgentAttachIntegrationTest {
     }
 
     /**
-     * The Robot-backed keyboard subpath: click the field until Compose reports it focused twice,
-     * type one character, then assert the field received it. Gated by [RealKeyboardGate] because
-     * it needs the fixture window to own OS keyboard focus throughout (#444).
+     * The Robot-backed keyboard subpath: click the field until Compose reports it focused, wait
+     * for that focus to persist, type one character, then assert the field received it. Gated by
+     * [RealKeyboardGate] because it needs the fixture window to own OS keyboard focus throughout
+     * (#444).
      */
     private fun AttachedAutomator.exerciseRealKeyboard(textFieldKey: String, iteration: Int) {
         val focusedTextField =
             waitForFocusedTextField(textFieldKey, iteration = iteration) ?: return
         val editableTextBefore = focusedTextField.editableText.orEmpty()
         // One typeText, matching AttachedAutomator.typeText's single exchange. Click-retry
-        // above already confirmed Compose focus twice so X11 keyboard routing can settle
-        // after the activation click (0.7.0 Linux smoke: first typeText Ok, field unchanged).
+        // plus a post-focus settle above let X11 finish routing after the activation click
+        // (0.7.0 Linux smoke: first typeText Ok, field unchanged).
         if (typeTextOrSkipCiFocusLoss(iteration = iteration)) {
             waitForTextFieldToReceiveTypedCharacterOrSkipCi(
                 textFieldKey = textFieldKey,
@@ -575,26 +576,27 @@ class AgentAttachIntegrationTest {
     ): NodeSnapshotDto? {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(FOCUS_TIMEOUT_MS)
         var lastMatches: List<NodeSnapshotDto> = emptyList()
-        var consecutiveFocusedClicks = 0
         while (System.nanoTime() < deadline) {
             // #364: raise/activate the fixture window first, then click the field. On macOS the
             // first click may only activate the app; focusWindow makes that activation expressible
             // over attach (the remediation pressKey/typeText error text already asks for).
-            // Require two consecutive click-confirmed focused snapshots so X11 can finish
-            // routing keyboard input after the activation click before a single typeText.
             focusWindow(textFieldKey)
             click(textFieldKey)
             lastMatches = findByTestTag(TAG_TEXT_FIELD)
             val focused = lastMatches.firstOrNull { it.key == textFieldKey && it.isFocused }
             if (focused != null) {
-                consecutiveFocusedClicks++
-                if (consecutiveFocusedClicks >= FOCUSED_CONFIRMATION_CLICKS) {
-                    return focused
-                }
+                // Re-query after a settle instead of a second click: two clicks inside the
+                // AWT multi-click interval select-all, so typeText would replace existing
+                // text and the increment-count assertion would miss a successful 'x'.
+                sleepQuietly(FOCUS_KEYBOARD_SETTLE_MS)
+                findByTestTag(TAG_TEXT_FIELD)
+                    .firstOrNull { it.key == textFieldKey && it.isFocused }
+                    ?.let {
+                        return it
+                    }
             } else {
-                consecutiveFocusedClicks = 0
+                sleepBetweenFocusPolls()
             }
-            sleepBetweenFocusPolls()
         }
         val message =
             "iteration $iteration: fixture text field $textFieldKey did not become focused " +
@@ -741,7 +743,7 @@ class AgentAttachIntegrationTest {
         const val FIXTURE_ATTACH_SETTLE_MS: Long = 750
         const val FOCUS_TIMEOUT_MS: Long = 2_000
         const val FOCUS_POLL_INTERVAL_MS: Long = 50
-        const val FOCUSED_CONFIRMATION_CLICKS: Int = 2
+        const val FOCUS_KEYBOARD_SETTLE_MS: Long = 200
         const val TYPED_CHARACTER: Char = 'x'
         const val TARGET_FOCUS_ERROR: String = "target JVM does not currently own OS keyboard focus"
         const val MIN_PNG_BYTES: Int = 100
