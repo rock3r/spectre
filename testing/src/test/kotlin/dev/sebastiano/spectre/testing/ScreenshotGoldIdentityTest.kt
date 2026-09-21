@@ -415,6 +415,33 @@ class ScreenshotGoldIdentityTest {
     }
 
     @Test
+    fun `transitive interface template methods still require invocationKey`() {
+        val method =
+            GoldIdentityTransitiveRepeatedGrandparent::class
+                .java
+                .getDeclaredMethod("inheritedRepeatedFromInterface")
+        val error =
+            assertFailsWith<IllegalStateException> {
+                resolveInvocationKey(
+                    GoldIdentityTransitiveRepeatedChild::class.java.name,
+                    junitMethodIdentity(method),
+                    invocationKey = null,
+                    testClass = GoldIdentityTransitiveRepeatedChild::class.java,
+                )
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
+        assertEquals(
+            "theme",
+            resolveInvocationKey(
+                GoldIdentityTransitiveRepeatedChild::class.java.name,
+                junitMethodIdentity(method),
+                invocationKey = "theme",
+                testClass = GoldIdentityTransitiveRepeatedChild::class.java,
+            ),
+        )
+    }
+
+    @Test
     fun `explicit executing class keys inherited golds without TestInfo`() {
         val identity = GoldIdentityConcreteChildA().inheritedKeyedByExecutingClass()
         assertEquals(GoldIdentityConcreteChildA::class.java.name, identity.testClassName)
@@ -532,6 +559,20 @@ internal open class GoldIdentityInheritedRepeatedBase {
 
 @Disabled("reflective fixture for inherited RepeatedTest gold identity")
 internal class GoldIdentityInheritedRepeatedChild : GoldIdentityInheritedRepeatedBase()
+
+@Disabled("reflective fixture for transitive interface RepeatedTest gold identity")
+internal interface GoldIdentityTransitiveRepeatedGrandparent {
+    @RepeatedTest(name = "theme", value = 1)
+    fun inheritedRepeatedFromInterface() {
+        error("transitive repeated fixture")
+    }
+}
+
+@Disabled("reflective fixture for transitive interface RepeatedTest gold identity")
+internal interface GoldIdentityTransitiveRepeatedParent : GoldIdentityTransitiveRepeatedGrandparent
+
+@Disabled("reflective fixture for transitive interface RepeatedTest gold identity")
+internal class GoldIdentityTransitiveRepeatedChild : GoldIdentityTransitiveRepeatedParent
 
 @Disabled("reflective fixture for inherited gold identity")
 internal open class GoldIdentityConcreteBase {

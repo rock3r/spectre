@@ -173,17 +173,24 @@ internal data class GoldTestIdentity(val testClass: Class<*>, val testMethodName
 private fun requiresExplicitInvocationKey(cls: Class<*>, testMethodName: String): Boolean {
     if (isJunit4ParameterizedHost(cls)) return true
     if (isJunit5ClassTemplateHost(cls)) return true
-    return generateSequence(cls) { current ->
-            current.superclass?.takeUnless { it == Any::class.java }
-        }
-        .flatMap { host ->
-            host.declaredMethods.asSequence() +
-                host.interfaces.asSequence().flatMap { it.declaredMethods.asSequence() }
-        }
+    return typeAndInheritedTypes(cls)
+        .flatMap { it.declaredMethods.asSequence() }
         .any { method ->
             method.isJunitTestTemplate() &&
                 (junitMethodIdentity(method) == testMethodName || method.name == testMethodName)
         }
+}
+
+/** Superclasses plus the full interface hierarchy, including transitive parents. */
+private fun typeAndInheritedTypes(cls: Class<*>): Sequence<Class<*>> {
+    val seen = mutableSetOf<Class<*>>()
+    fun walk(type: Class<*>): Sequence<Class<*>> = sequence {
+        if (type == Any::class.java || !seen.add(type)) return@sequence
+        yield(type)
+        type.superclass?.let { yieldAll(walk(it)) }
+        type.interfaces.forEach { yieldAll(walk(it)) }
+    }
+    return walk(cls)
 }
 
 /**
