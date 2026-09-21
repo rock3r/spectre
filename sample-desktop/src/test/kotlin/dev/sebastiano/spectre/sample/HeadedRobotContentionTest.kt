@@ -59,6 +59,7 @@ class HeadedRobotContentionTest {
     private val workDirectory: Path = Files.createTempDirectory("spectre-headed-contention-")
     private val goFile: Path = workDirectory.resolve("go")
     private val nudgeFile: Path = workDirectory.resolve("nudge")
+    private val aimFile: Path = workDirectory.resolve("aim")
     private val children = mutableListOf<Process>()
     private var frame: JFrame? = null
 
@@ -105,6 +106,11 @@ class HeadedRobotContentionTest {
 
         awaitReady(first, second)
         awaitFocusedField(state)
+        val aim =
+            requireNotNull(awtCenter(state, state.textFieldBounds)) {
+                "the shared text field lost its screen bounds before the gate opened"
+            }
+        Files.writeString(aimFile, "${aim.x} ${aim.y}\n")
         Files.writeString(goFile, "go\n")
 
         assertEquals(0, waitForExit(first), "the '${first.character}' probe JVM exited non-zero")
@@ -226,6 +232,7 @@ class HeadedRobotContentionTest {
                 contentionBarrier(
                     bothProbesReady = true,
                     textFieldFocused = state.textFieldFocused,
+                    windowFocused = invokeOnEdt { state.frame?.isFocused == true },
                     focusGraceElapsed = System.nanoTime() >= graceDeadline,
                 )
             ) {
@@ -238,8 +245,9 @@ class HeadedRobotContentionTest {
             }
         }
         error(
-            "the shared text field never reported focus, so the probes would type into an " +
-                "unfocused window; expected '$FIRST_BLOCK_CHARACTER'x$BLOCK_LENGTH and " +
+            "the shared text field never had both Compose focus and the fixture window in " +
+                "front, so the probes would type into an unfocused window; expected " +
+                "'$FIRST_BLOCK_CHARACTER'x$BLOCK_LENGTH and " +
                 "'$SECOND_BLOCK_CHARACTER'x$BLOCK_LENGTH"
         )
     }

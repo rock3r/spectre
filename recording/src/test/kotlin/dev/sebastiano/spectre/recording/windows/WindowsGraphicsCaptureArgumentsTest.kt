@@ -159,6 +159,34 @@ class WindowsGraphicsCaptureArgumentsTest {
     }
 
     @Test
+    fun `argument rejection names the launch command when it differs from the logical flags`() {
+        val logical =
+            listOf(
+                "C:/Users/rock3r/AppData/Local/spectre/helpers/" +
+                    "spectre-window-capture/abc/x64/spectre-window-capture.exe",
+                "--mode",
+                "recording",
+                "--source",
+                "region",
+                "--cursor",
+                "true",
+            )
+        val launch =
+            listOf(logical.first(), "@C:/Users/rock3r/AppData/Local/Temp/spectre-wgc-args-1.txt")
+
+        val message =
+            messageForWindowsGraphicsCaptureHelperExit(
+                exit = 2,
+                argv = logical,
+                launchArgv = launch,
+            )
+
+        assertTrue(message.contains("rejected its arguments"))
+        assertTrue(message.contains("Launch: $launch"))
+        assertTrue(message.contains("Logical argv: $logical"))
+    }
+
+    @Test
     fun `direct launch keeps the logical argv`() {
         val logical = listOf("helper.exe", "--mode", "recording", "--output", "out.mp4")
         assertEquals(

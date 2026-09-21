@@ -43,15 +43,28 @@ spectre-window-capture.exe \
 ```
 
 Window capture requires `--title` and `--owner-pid`. Region capture requires `--x`, `--y`,
-`--width`, and `--height`; the rectangle must be fully contained by a single monitor. Fullscreen
-recording is represented as a region equal to the monitor bounds.
+`--width`, and `--height`. The rectangle should lie on one monitor; a region that only overshoots
+that monitor is clamped to the overlap. Fullscreen recording is represented as a region equal to
+the monitor bounds.
 
-On Windows the JVM does not put that flag list on the process command line. It writes one token
-per line to a temporary UTF-8 args file and launches `spectre-window-capture.exe @<args-file>`.
+On Windows the JVM does not put that flag list on the process command line for screenshot
+**or** recording. Both paths call `startPumpedHelperProcess`, which writes one token per line to a
+temporary UTF-8 args file and launches `spectre-window-capture.exe @<args-file>`.
 Paths that contain spaces (the helper lives under `%LOCALAPPDATA%`, and the recording path is
 often under a user temp directory) stay one argument each. `NormalizeIncomingArgs` expands
 `@<args-file>` and, if the host leaked the program path as the first user token, skips it.
 Direct flag argv still parses. A missing args file is exit 2 (`Arguments file not found`).
+Exit 2 is only that CLI parse. A later WinRT `E_INVALIDARG` (`Value does not fall within the
+expected range.`) is exit 5 and includes the exception text. The JVM failure names `Launch:`
+(the real `exe @args-file` command) separately from `Logical argv:` (the flag list).
+
+Region capture prefers `GraphicsCaptureItem.TryCreateFromDisplayId` on Windows 11
+(UniversalApiContract 12). `IGraphicsCaptureItemInterop.CreateForMonitor` returns
+`E_INVALIDARG` for an otherwise valid `HMONITOR` on current Windows 11 builds. The rectangle
+must intersect a monitor; a one-pixel DPI overshoot is clamped to that monitor instead of
+failing the capture. `--cursor true|false` is parsed as those two literals. Setting
+`IsCursorCaptureEnabled` is best-effort: some builds reject it for monitor capture, and the
+recording continues.
 
 `:recording:runWindowsGraphicsCaptureRegionSmoke` needs a Windows desktop with Windows Graphics
 Capture. It cannot run on a Linux host.

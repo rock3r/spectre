@@ -57,6 +57,17 @@ class InputLeaseGuardTest {
     }
 
     @Test
+    fun `click and type acquires once around the click caret and text`() = runTest {
+        val coordinator = RecordingInputLeaseCoordinator()
+        val driver = realDriver(coordinator)
+
+        driver.clickAndTypeText(4, 5, "ab")
+
+        assertEquals(listOf("clickAndTypeText"), coordinator.operations)
+        assertEquals(1, coordinator.closedLeases)
+    }
+
+    @Test
     fun `explicit exclusive scope is reentrant across operations`() = runTest {
         val coordinator = RecordingInputLeaseCoordinator()
         val driver = realDriver(coordinator)

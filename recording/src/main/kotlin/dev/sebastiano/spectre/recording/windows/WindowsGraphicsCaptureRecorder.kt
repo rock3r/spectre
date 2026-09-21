@@ -199,8 +199,11 @@ internal constructor(
                 }
             error(
                 appendHelperStderr(
-                    messageForWindowsGraphicsCaptureHelperExit(exit, argv) +
-                        if (line == null) "" else " First stdout line: $line",
+                    messageForWindowsGraphicsCaptureHelperExit(
+                        exit,
+                        argv,
+                        helperLaunchArgv(process),
+                    ) + if (line == null) "" else " First stdout line: $line",
                     helperFailureDetail(process),
                 )
             )
@@ -289,7 +292,7 @@ private class WindowsGraphicsCaptureRecordingHandle(
         val exit = process.exitValue()
         check(exit == 0 || sentTerminationOurselves) {
             appendHelperStderr(
-                messageForWindowsGraphicsCaptureHelperExit(exit, argv),
+                messageForWindowsGraphicsCaptureHelperExit(exit, argv, helperLaunchArgv(process)),
                 helperFailureDetail(process),
             ) + " The helper may also have been terminated externally after stop was requested."
         }

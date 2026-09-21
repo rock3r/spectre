@@ -142,6 +142,21 @@ class RobotDriverTest {
     }
 
     @Test
+    fun `clickAndTypeText clicks then moves the caret to the end before typing`() = runTest {
+        val robot = RecordingRobotAdapter()
+        val driver = RobotDriver(robot, RecordingClipboardAdapter())
+
+        driver.clickAndTypeText(screenX = 12, screenY = 34, text = "ab")
+
+        val endPress = robot.events.indexOf("keyPress(${KeyEvent.VK_END})")
+        val firstLetter = robot.events.indexOf("keyPress(${KeyEvent.VK_A})")
+        assertTrue(robot.events.first() == "move(12,34)", robot.events.toString())
+        assertTrue(endPress > 0, robot.events.toString())
+        assertTrue(firstLetter > endPress, robot.events.toString())
+        assertTrue(robot.events.contains("keyPress(${KeyEvent.VK_B})"))
+    }
+
+    @Test
     fun `typeText with Caps Lock on compensates letter Shift and does not mutate lock`() = runTest {
         // #396: ambient Caps Lock must not invert requested letter case. Spectre does not write
         // locking-key state (unreliable across JVMs); it inverts Shift on letters instead.

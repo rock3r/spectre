@@ -33,12 +33,16 @@ internal fun startPumpedHelperProcess(
             .apply(configure)
             .redirectError(ProcessBuilder.Redirect.PIPE)
             .start()
-    attachStderrPump(process)
+    val pump = StderrPump(process)
+    helperSessions[process] = HelperSession(launchArgv, pump)
+    pump.start()
     return process
 }
 
+internal fun helperLaunchArgv(process: Process): List<String>? = helperSessions[process]?.launchArgv
+
 internal fun helperFailureDetail(process: Process): String {
-    val pump = stderrPumps[process]
+    val pump = helperSessions[process]?.pump
     if (pump != null) {
         pump.awaitBriefly()
         return pump.text().trim()
@@ -49,13 +53,9 @@ internal fun helperFailureDetail(process: Process): String {
 internal fun appendHelperStderr(message: String, stderr: String): String =
     if (stderr.isBlank()) message else "$message\nHelper stderr:\n$stderr"
 
-private val stderrPumps = Collections.synchronizedMap(WeakHashMap<Process, StderrPump>())
+private class HelperSession(val launchArgv: List<String>, val pump: StderrPump)
 
-private fun attachStderrPump(process: Process) {
-    val pump = StderrPump(process)
-    stderrPumps[process] = pump
-    pump.start()
-}
+private val helperSessions = Collections.synchronizedMap(WeakHashMap<Process, HelperSession>())
 
 private fun readAvailableStderr(process: Process): String {
     val stream = process.errorStream

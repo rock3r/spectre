@@ -5,6 +5,7 @@ package dev.sebastiano.spectre.sample
 
 import dev.sebastiano.spectre.core.InputLeasePolicy
 import dev.sebastiano.spectre.core.RobotDriver
+import dev.sebastiano.spectre.core.clickAndTypeText
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
@@ -29,11 +30,11 @@ import kotlinx.coroutines.runBlocking
  * 2. **Signal readiness**, then park on the parent's gate file. While parked, a nudge file holding
  *    `x y` is one more click at those screen coordinates. The parent writes it when the shared
  *    field is still unfocused; the click is outside the measured `typeText` lease.
- * 3. **Type one block in a single `typeText` call.** One call is deliberate: `RobotDriver` holds
- *    one lease for a whole `typeText`, so a block is the unit the coordinator is allowed to
- *    serialise. Splitting it across calls would take a fresh lease per call and interleaving
- *    between them would be entirely legitimate — the test would then be asserting something the
- *    coordinator never promised.
+ * 3. **Click the latest aim point and type one block under one lease.** [clickAndTypeText] holds
+ *    the desktop lease across the click, a short focus settle, End (so the caret is not left in the
+ *    middle of text the other probe already typed), and the characters. One lease is deliberate:
+ *    splitting the click and the typing would let the other JVM steal the foreground between them.
+ *    The block stays one `typeText`, which is the unit the coordinator serialises.
  * 4. **Record wall-clock timestamps** so the parent can prove demand actually overlapped rather
  *    than assuming it. `currentTimeMillis`, not `nanoTime`: the two are only comparable across
  *    processes as wall clock.
@@ -97,40 +98,40 @@ private suspend fun typeOneBlock(
 
         Files.writeString(readyFile, "ready\n")
         awaitGate(goFile, nudgeFile, driver)
+        val aim = readAim(readyFile.parent.resolve("aim")) ?: (screenX to screenY)
 
         val requestedAt = System.currentTimeMillis()
-        driver.typeText(character.toString().repeat(blockLength))
+        driver.clickAndTypeText(aim.first, aim.second, character.toString().repeat(blockLength))
         val typedTo = System.currentTimeMillis()
-        // `typedFrom` is not measurable from here: the lease is acquired inside `typeText`, so the
-        // wait for the other probe is folded into the call. `requestedAt` (when this process began
-        // wanting the keyboard) and `typedTo` (when it stopped using it) are what the parent needs
-        // to prove the two demands overlapped.
+        // `requestedAt` is before the lease is acquired, so it includes the wait while the other
+        // probe still holds the keyboard. `typedTo` is when this probe stopped using it.
         Files.writeString(outputFile, "REQUESTED $requestedAt\nTYPED_TO $typedTo\n")
     }
 }
 
 private suspend fun awaitGate(goFile: Path, nudgeFile: Path, driver: RobotDriver) {
     val deadline = System.nanoTime() + Duration.ofSeconds(GATE_TIMEOUT_SECONDS).toNanos()
-    var consumedNudge = false
     while (System.nanoTime() < deadline) {
+        applyNudge(nudgeFile, driver)
         if (Files.exists(goFile)) return
-        consumedNudge = applyNudge(nudgeFile, driver, consumedNudge)
         delay(GATE_POLL_MILLIS)
     }
     error("parent never opened the contention gate at $goFile")
 }
 
-private suspend fun applyNudge(
-    nudgeFile: Path,
-    driver: RobotDriver,
-    alreadyConsumed: Boolean,
-): Boolean {
-    if (!Files.isRegularFile(nudgeFile)) return false
-    if (alreadyConsumed) return true
-    val text = runCatching { Files.readString(nudgeFile) }.getOrNull() ?: return false
-    val target = parseNudgeTarget(text) ?: return false
+private suspend fun applyNudge(nudgeFile: Path, driver: RobotDriver) {
+    if (!Files.isRegularFile(nudgeFile)) return
+    val text = runCatching { Files.readString(nudgeFile) }.getOrNull() ?: return
+    val target = parseNudgeTarget(text) ?: return
+    // Delete before the click so a later parent write is a new nudge, not a spin on this one.
+    runCatching { Files.deleteIfExists(nudgeFile) }
     driver.click(target.first, target.second)
-    return true
+}
+
+private fun readAim(aimFile: Path): Pair<Int, Int>? {
+    if (!Files.isRegularFile(aimFile)) return null
+    val text = runCatching { Files.readString(aimFile) }.getOrNull() ?: return null
+    return parseNudgeTarget(text)
 }
 
 private const val EXPECTED_ARGUMENT_COUNT: Int = 8

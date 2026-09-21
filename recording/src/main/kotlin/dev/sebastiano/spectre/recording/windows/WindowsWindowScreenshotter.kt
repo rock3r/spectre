@@ -61,7 +61,11 @@ internal constructor(
             val exit = process.exitValue()
             check(exit == 0) {
                 appendHelperStderr(
-                    messageForWindowsGraphicsCaptureHelperExit(exit, argv),
+                    messageForWindowsGraphicsCaptureHelperExit(
+                        exit,
+                        argv,
+                        helperLaunchArgv(process),
+                    ),
                     helperFailureDetail(process),
                 )
             }
