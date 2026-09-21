@@ -21,7 +21,6 @@ import androidx.compose.ui.unit.dp
 import java.awt.Dimension
 import javax.swing.JFrame
 import javax.swing.SwingUtilities
-import javax.swing.WindowConstants
 
 /**
  * Compose-only fixture for #209 injection e2e: same tagged UI as [main] but **never** references
@@ -37,7 +36,7 @@ fun injectMain() {
     SwingUtilities.invokeAndWait {
         val frame =
             JFrame(SPECTRE_FIXTURE_WINDOW_TITLE).apply {
-                defaultCloseOperation = WindowConstants.EXIT_ON_CLOSE
+                defaultCloseOperation = FIXTURE_DEFAULT_CLOSE_OPERATION
                 size = Dimension(FIXTURE_WIDTH_PX, FIXTURE_HEIGHT_PX)
                 setLocationRelativeTo(null)
                 isAlwaysOnTop = true

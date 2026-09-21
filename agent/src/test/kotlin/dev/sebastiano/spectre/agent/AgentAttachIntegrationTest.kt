@@ -463,17 +463,18 @@ class AgentAttachIntegrationTest {
     }
 
     /**
-     * The Robot-backed keyboard subpath: click the field until Compose reports it focused, type one
-     * character, then assert the field received it. Gated by [RealKeyboardGate] because it needs
-     * the fixture window to own OS keyboard focus throughout (#444).
+     * The Robot-backed keyboard subpath: click the field until Compose reports it focused, wait
+     * for that focus to persist, type one character, then assert the field received it. Gated by
+     * [RealKeyboardGate] because it needs the fixture window to own OS keyboard focus throughout
+     * (#444).
      */
     private fun AttachedAutomator.exerciseRealKeyboard(textFieldKey: String, iteration: Int) {
         val focusedTextField =
             waitForFocusedTextField(textFieldKey, iteration = iteration) ?: return
         val editableTextBefore = focusedTextField.editableText.orEmpty()
-        // This is a real keyboard event path. Do not call typeText until a refreshed semantics
-        // snapshot proves the fixture text field owns Compose focus; the in-target handler also
-        // checks that this JVM owns OS keyboard focus before dispatching Robot key events.
+        // One typeText, matching AttachedAutomator.typeText's single exchange. Click-retry
+        // plus a post-focus settle above let X11 finish routing after the activation click
+        // (0.7.0 Linux smoke: first typeText Ok, field unchanged).
         if (typeTextOrSkipCiFocusLoss(iteration = iteration)) {
             waitForTextFieldToReceiveTypedCharacterOrSkipCi(
                 textFieldKey = textFieldKey,
@@ -582,12 +583,20 @@ class AgentAttachIntegrationTest {
             focusWindow(textFieldKey)
             click(textFieldKey)
             lastMatches = findByTestTag(TAG_TEXT_FIELD)
-            lastMatches
-                .firstOrNull { it.key == textFieldKey && it.isFocused }
-                ?.let {
-                    return it
-                }
-            sleepBetweenFocusPolls()
+            val focused = lastMatches.firstOrNull { it.key == textFieldKey && it.isFocused }
+            if (focused != null) {
+                // Re-query after a settle instead of a second click: two clicks inside the
+                // AWT multi-click interval select-all, so typeText would replace existing
+                // text and the increment-count assertion would miss a successful 'x'.
+                sleepQuietly(FOCUS_KEYBOARD_SETTLE_MS)
+                findByTestTag(TAG_TEXT_FIELD)
+                    .firstOrNull { it.key == textFieldKey && it.isFocused }
+                    ?.let {
+                        return it
+                    }
+            } else {
+                sleepBetweenFocusPolls()
+            }
         }
         val message =
             "iteration $iteration: fixture text field $textFieldKey did not become focused " +
@@ -734,6 +743,7 @@ class AgentAttachIntegrationTest {
         const val FIXTURE_ATTACH_SETTLE_MS: Long = 750
         const val FOCUS_TIMEOUT_MS: Long = 2_000
         const val FOCUS_POLL_INTERVAL_MS: Long = 50
+        const val FOCUS_KEYBOARD_SETTLE_MS: Long = 200
         const val TYPED_CHARACTER: Char = 'x'
         const val TARGET_FOCUS_ERROR: String = "target JVM does not currently own OS keyboard focus"
         const val MIN_PNG_BYTES: Int = 100

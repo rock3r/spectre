@@ -241,10 +241,12 @@ class HotReloadDaemonFixtureE2eTest {
                 .start()
         val reader = BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8))
         val ready = CountDownLatch(1)
+        val output = java.util.concurrent.ConcurrentLinkedQueue<String>()
         Thread(
                 {
                     try {
                         generateSequence(reader::readLine).forEach { line ->
+                            output.add(line)
                             if (line.startsWith(READY_SENTINEL)) ready.countDown()
                         }
                     } catch (_: java.io.IOException) {}
@@ -262,8 +264,9 @@ class HotReloadDaemonFixtureE2eTest {
         // READY is printed before the JVM is always attachable.
         Thread.sleep(1_500)
         check(process.isAlive) {
+            val exit = runCatching { process.exitValue() }.getOrNull()
             process.destroyForcibly()
-            "Compose fixture exited after READY"
+            composeFixtureDiedAfterReadyMessage(exit, output.joinToString("\n"))
         }
         return FixtureProcess(process)
     }
