@@ -173,24 +173,25 @@ internal data class GoldTestIdentity(val testClass: Class<*>, val testMethodName
 private fun requiresExplicitInvocationKey(cls: Class<*>, testMethodName: String): Boolean {
     if (isJunit4ParameterizedHost(cls)) return true
     if (isJunit5ClassTemplateHost(cls)) return true
-    return typeAndInheritedTypes(cls)
-        .flatMap { it.declaredMethods.asSequence() }
-        .any { method ->
-            method.isJunitTestTemplate() &&
-                (junitMethodIdentity(method) == testMethodName || method.name == testMethodName)
-        }
-}
-
-/** Superclasses plus the full interface hierarchy, including transitive parents. */
-private fun typeAndInheritedTypes(cls: Class<*>): Sequence<Class<*>> {
+    // Walk superclasses and the full interface hierarchy, including transitive parents.
+    // A Java `Child implements Mid extends Grandparent` host does not redeclare the
+    // grandparent default method, so a direct-interfaces-only scan misses @RepeatedTest.
     val seen = mutableSetOf<Class<*>>()
-    fun walk(type: Class<*>): Sequence<Class<*>> = sequence {
-        if (type == Any::class.java || !seen.add(type)) return@sequence
-        yield(type)
-        type.superclass?.let { yieldAll(walk(it)) }
-        type.interfaces.forEach { yieldAll(walk(it)) }
+    val pending = ArrayDeque<Class<*>>()
+    pending.add(cls)
+    while (pending.isNotEmpty()) {
+        val type = pending.removeFirst()
+        if (type == Any::class.java || !seen.add(type)) continue
+        val found =
+            type.declaredMethods.any { method ->
+                method.isJunitTestTemplate() &&
+                    (junitMethodIdentity(method) == testMethodName || method.name == testMethodName)
+            }
+        if (found) return true
+        type.superclass?.let(pending::add)
+        pending.addAll(type.interfaces)
     }
-    return walk(cls)
+    return false
 }
 
 /**
