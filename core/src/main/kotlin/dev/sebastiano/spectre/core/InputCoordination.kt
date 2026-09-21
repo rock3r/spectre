@@ -25,6 +25,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ThreadContextElement
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
@@ -454,9 +455,13 @@ internal class ProductionInputLeaseCoordinator(
         val acquired = AtomicReference<CoordinatedInputLease?>()
         return try {
             runInterruptible(ioDispatcher) {
-                    acquireBlocking(options, currentOperation).also(acquired::set)
-                }
-                .also { acquired.set(null) }
+                acquireBlocking(options, currentOperation).also(acquired::set)
+            }
+            // Keep the lease in [acquired] until this coroutine is still active. Clearing it in
+            // the same expression as runInterruptible used to drop a granted lease when cancel
+            // arrived after the server published the hold and before the caller could keep it.
+            ensureActive()
+            requireNotNull(acquired.getAndSet(null))
         } finally {
             acquired.getAndSet(null)?.close()
         }
