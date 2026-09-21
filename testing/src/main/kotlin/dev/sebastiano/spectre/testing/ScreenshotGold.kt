@@ -52,7 +52,8 @@ import kotlin.math.roundToInt
  *
  * [scaleKey] defaults to the captured window's display scale when a showing AWT window's outer,
  * client, content-pane, or showing embedded ComposePanel size matches the still (or every showing
- * window shares one density). Cropped stills use the same edge rounding as
+ * window shares one density). On Linux X11 the capture PNG is the client area, so the decorated
+ * outer window is not a scale candidate. Cropped stills use the same edge rounding as
  * [dev.sebastiano.spectre.core.capture.screenRectToImageRect], so a fractional-DPI client or panel
  * crop does not miss by one pixel. Crop candidates use the predicted capture PNG size
  * (`round(captureAwt * gcScale)`), then the same `imageWidth / captureAwtWidth` ratio as a real
@@ -330,7 +331,10 @@ internal fun captureSurfacesForBounds(
     val predictedImageWidth = (captureAwtWidth * scaleX).roundToInt()
     val predictedImageHeight = (captureAwtHeight * scaleY).roundToInt()
     val regions = buildList {
-        add(CaptureAwtRegion(0, 0, awtWidth, awtHeight))
+        val captureIsOuterWindow = captureAwtWidth == awtWidth && captureAwtHeight == awtHeight
+        if (captureIsOuterWindow) {
+            add(CaptureAwtRegion(0, 0, awtWidth, awtHeight))
+        }
         add(CaptureAwtRegion(insetLeft, insetTop, clientWidth, clientHeight))
         if (contentWidth != null && contentHeight != null) {
             add(CaptureAwtRegion(contentX, contentY, contentWidth, contentHeight))

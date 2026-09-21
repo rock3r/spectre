@@ -154,6 +154,37 @@ class ScreenshotGoldScaleKeyTest {
     }
 
     @Test
+    fun `X11 client capture omits the outer frame from scale candidates`() {
+        // Linux X11 captures the client area only. The decorated outer window at 1.5×
+        // predicts 300×150, which can collide with another window's real 2× still and
+        // make matchingScales ambiguous (fallback to the primary display).
+        val image = BufferedImage(300, 150, BufferedImage.TYPE_INT_ARGB)
+        val surfaces =
+            captureSurfacesForBounds(
+                awtWidth = 200,
+                awtHeight = 100,
+                insetLeft = 20,
+                insetTop = 0,
+                insetRight = 0,
+                insetBottom = 0,
+                scaleX = 1.5,
+                scaleY = 1.5,
+                captureOriginX = 20,
+                captureOriginY = 0,
+                captureAwtWidth = 180,
+                captureAwtHeight = 100,
+            ) + CaptureSurfaceScale(300, 150, 2.0, 2.0)
+        val key =
+            currentScaleKey(
+                image = image,
+                surfaces = surfaces,
+                fallbackScaleX = 1.0,
+                fallbackScaleY = 1.0,
+            )
+        assertEquals("scale-2x2", key)
+    }
+
+    @Test
     fun `scale key matches an X11 client-origin panel crop at fractional DPI`() {
         // Linux X11 native capture starts at the client origin. A panel flush with that
         // origin is (1,0,81,100) in window space but (0,0,81,100) in capture space:

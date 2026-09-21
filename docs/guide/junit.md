@@ -371,9 +371,10 @@ class loader cannot hide a parameterized host from Spectre's defining loader.
 
 The default `scaleKey` prefers the captured window's display scale when a showing AWT
 window's outer, client, content-pane, or *showing* embedded ComposePanel size matches
-the still (or every showing window shares one density). Cropped stills use the same
-edge rounding as window capture, so a fractional-DPI client or panel crop is not missed
-by one pixel. Crop size uses the predicted capture PNG
+the still (or every showing window shares one density). On Linux X11 the capture PNG
+is the client area, so the decorated outer window is not a scale candidate. Cropped
+stills use the same edge rounding as window capture, so a fractional-DPI client or
+panel crop is not missed by one pixel. Crop size uses the predicted capture PNG
 (`round(captureAwt × displayScale)`), then the same `imageWidth / captureAwtWidth`
 ratio as a real crop — not the nominal display scale — so an 801-DP capture at 1.25×
 (1001 px) still matches a 202-DP panel. On Linux X11, native capture starts at the
