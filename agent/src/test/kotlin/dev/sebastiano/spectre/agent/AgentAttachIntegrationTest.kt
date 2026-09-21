@@ -463,8 +463,8 @@ class AgentAttachIntegrationTest {
     }
 
     /**
-     * The Robot-backed keyboard subpath: click the field until Compose reports it focused, wait
-     * for that focus to persist, type one character, then assert the field received it. Gated by
+     * The Robot-backed keyboard subpath: click the field until Compose reports it focused, wait for
+     * that focus to persist, type one character, then assert the field received it. Gated by
      * [RealKeyboardGate] because it needs the fixture window to own OS keyboard focus throughout
      * (#444).
      */
