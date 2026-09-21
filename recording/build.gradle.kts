@@ -1175,6 +1175,7 @@ tasks.register<JavaExec>("runWindowsGraphicsCaptureRegionSmoke") {
     description =
         "Records a small JFrame-backed screen region via Windows Graphics Capture and verifies the MP4."
     onlyIf { OperatingSystem.current().isWindows }
+    dependsOn(assembleWindowsScreenshotHelper)
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("dev.sebastiano.spectre.recording.WindowsGraphicsCaptureRegionSmoke")
 }

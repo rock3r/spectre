@@ -991,7 +991,9 @@ try {
         else {
             $step = Invoke-Step -Id "host-native-recording" -Name "Host native recording (WGC region)" -Action {
                 Invoke-Gradle -RepoRoot $repoRoot -TimeoutSeconds $WgcTimeoutSeconds -LogName "wgc-region" -GradleArgs @(
-                    ":recording:runWindowsGraphicsCaptureRegionSmoke"
+                    ":recording:runWindowsGraphicsCaptureRegionSmoke",
+                    "--rerun-tasks",
+                    "--no-build-cache"
                 )
                 $mp4 = Join-Path $env:TEMP "spectre-wgc-region-smoke.mp4"
                 if (-not (Test-Path -LiteralPath $mp4)) { throw "Expected output missing: $mp4" }
