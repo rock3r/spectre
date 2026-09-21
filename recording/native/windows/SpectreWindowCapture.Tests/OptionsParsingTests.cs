@@ -140,4 +140,92 @@ public sealed class OptionsParsingTests
 
         Assert.Contains(messageFragment, ex.Message);
     }
+
+    [Fact]
+    public void NormalizeDropsLeakedProgramPathAndParsesRegionSmokeArgv()
+    {
+        var normalized =
+            Options.NormalizeIncomingArgs([
+                @"C:\Users\Mattone User\AppData\Local\spectre\helpers\spectre-window-capture.exe",
+                "--mode",
+                "recording",
+                "--source",
+                "region",
+                "--x",
+                "160",
+                "--y",
+                "160",
+                "--width",
+                "360",
+                "--height",
+                "180",
+                "--fps",
+                "30",
+                "--cursor",
+                "true",
+                "--output",
+                @"C:\Users\Mattone User\AppData\Local\Temp\spectre-wgc-region-smoke.mp4",
+            ]);
+
+        var options = Options.Parse(normalized);
+
+        Assert.Equal(CaptureSource.Region, options.Source);
+        Assert.Equal(CaptureMode.Recording, options.Mode);
+        Assert.Equal(new CaptureRect(160, 160, 360, 180), options.Region);
+        Assert.Equal(30, options.Fps);
+        Assert.True(options.CaptureCursor);
+    }
+
+    [Fact]
+    public void NormalizeReadsArgsFileOfOneTokenPerLine()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllLines(
+                path,
+                [
+                    "--mode",
+                    "recording",
+                    "--source",
+                    "region",
+                    "--x",
+                    "160",
+                    "--y",
+                    "160",
+                    "--width",
+                    "360",
+                    "--height",
+                    "180",
+                    "--fps",
+                    "30",
+                    "--cursor",
+                    "true",
+                    "--output",
+                    "out.mp4",
+                    "",
+                ]);
+
+            var options = Options.Parse(Options.NormalizeIncomingArgs(["@" + path]));
+
+            Assert.Equal(CaptureSource.Region, options.Source);
+            Assert.Equal(new CaptureRect(160, 160, 360, 180), options.Region);
+            Assert.Equal("out.mp4", options.Output);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void NormalizeRejectsMissingArgsFile()
+    {
+        var missing = Path.Combine(Path.GetTempPath(), "spectre-wgc-missing-args.txt");
+        File.Delete(missing);
+
+        var ex = Assert.Throws<ArgumentException>(() => Options.NormalizeIncomingArgs(["@" + missing]));
+
+        Assert.Contains(missing, ex.Message);
+    }
 }

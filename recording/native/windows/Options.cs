@@ -30,6 +30,29 @@ internal sealed record Options(
     bool CaptureCursor,
     string Output)
 {
+    public static string[] NormalizeIncomingArgs(string[] args)
+    {
+        if (args.Length == 1 && args[0].StartsWith('@') && args[0].Length > 1)
+        {
+            var path = args[0][1..];
+            if (!File.Exists(path))
+            {
+                throw new ArgumentException($"Arguments file not found: {path}");
+            }
+
+            args = File.ReadAllLines(path)
+                .Where(static line => !string.IsNullOrWhiteSpace(line))
+                .ToArray();
+        }
+
+        if (args.Length > 0 && IsLeakedProgramPath(args[0]))
+        {
+            args = args[1..];
+        }
+
+        return args;
+    }
+
     public static Options Parse(string[] args)
     {
         CaptureMode? mode = null;
@@ -154,6 +177,18 @@ internal sealed record Options(
             fps ?? 30,
             captureCursor ?? true,
             output);
+    }
+
+    private static bool IsLeakedProgramPath(string token)
+    {
+        if (token.StartsWith('-'))
+        {
+            return false;
+        }
+
+        return token.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            || token.Contains('\\')
+            || token.Contains('/');
     }
 
     private static string ReadValue(string[] args, ref int index, string name)

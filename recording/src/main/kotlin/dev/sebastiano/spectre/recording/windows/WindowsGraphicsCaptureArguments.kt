@@ -97,3 +97,19 @@ internal data class WindowsGraphicsCaptureArguments(
         add(output.toString())
     }
 }
+
+/**
+ * On Windows, launch [logicalArgv] as `executable @args-file` so `CommandLineToArgvW` cannot split
+ * paths that contain spaces. Elsewhere, and in unit tests of the logical argv, return it unchanged.
+ * [createArgsFile] receives every token except the executable.
+ */
+internal fun windowsHelperProcessArgv(
+    logicalArgv: List<String>,
+    useArgsFile: Boolean,
+    createArgsFile: (List<String>) -> Path,
+): List<String> {
+    if (!useArgsFile) return logicalArgv
+    require(logicalArgv.isNotEmpty()) { "helper argv must include the executable" }
+    val argsFile = createArgsFile(logicalArgv.drop(1))
+    return listOf(logicalArgv.first(), "@${argsFile.toAbsolutePath()}")
+}

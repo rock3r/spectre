@@ -46,6 +46,16 @@ Window capture requires `--title` and `--owner-pid`. Region capture requires `--
 `--width`, and `--height`; the rectangle must be fully contained by a single monitor. Fullscreen
 recording is represented as a region equal to the monitor bounds.
 
+On Windows the JVM does not put that flag list on the process command line. It writes one token
+per line to a temporary UTF-8 args file and launches `spectre-window-capture.exe @<args-file>`.
+Paths that contain spaces (the helper lives under `%LOCALAPPDATA%`, and the recording path is
+often under a user temp directory) stay one argument each. `NormalizeIncomingArgs` expands
+`@<args-file>` and, if the host leaked the program path as the first user token, skips it.
+Direct flag argv still parses. A missing args file is exit 2 (`Arguments file not found`).
+
+`:recording:runWindowsGraphicsCaptureRegionSmoke` needs a Windows desktop with Windows Graphics
+Capture. It cannot run on a Linux host.
+
 Screenshot mode writes a PNG and exits. Screenshot mode currently supports `--source window`.
 
 Recording mode writes `READY` to stdout after the Windows Graphics Capture and MP4 encoder

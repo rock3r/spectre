@@ -25,7 +25,7 @@ internal static class Program
     {
         try
         {
-            var options = Options.Parse(args);
+            var options = Options.Parse(Options.NormalizeIncomingArgs(args));
             if (!GraphicsCaptureSession.IsSupported())
             {
                 Console.Error.WriteLine("Windows Graphics Capture is not supported on this system.");

@@ -236,6 +236,41 @@ class WindowsGraphicsCaptureRecorderTest {
     }
 
     @Test
+    fun `start includes helper stderr when arguments are rejected`() {
+        val helper = Files.createTempFile("spectre-window-capture", ".exe")
+        val recorder =
+            WindowsGraphicsCaptureRecorder(
+                helperExtractor =
+                    WindowsGraphicsCaptureHelperBinaryExtractor(
+                        resourceLocator = { null },
+                        targetDirProvider = { helper.parent },
+                        getenv = { helper.toString() },
+                        osArch = { "amd64" },
+                    ),
+                processFactory =
+                    RecordingProcessFactory(
+                        InstantlyExitingProcess(
+                            exit = 2,
+                            stderr = "Unknown argument: --cursor\n".encodeToByteArray(),
+                        )
+                    ),
+            )
+
+        val error =
+            assertFailsWith<IllegalStateException> {
+                recorder.start(
+                    Window(title = "Missing"),
+                    4242,
+                    Path.of("out.mp4"),
+                    RecordingOptions(),
+                )
+            }
+
+        assertTrue(error.message.orEmpty().contains("rejected its arguments"))
+        assertTrue(error.message.orEmpty().contains("Unknown argument: --cursor"))
+    }
+
+    @Test
     fun `stop writes q and waits for helper`() {
         val output = Files.createTempFile("spectre-wgc-test-", ".mp4")
         val process = FakeRecordingProcess()
@@ -406,12 +441,15 @@ private open class FakeRecordingProcess : Process() {
     override fun onExit(): CompletableFuture<Process> = CompletableFuture.completedFuture(this)
 }
 
-private class InstantlyExitingProcess(private val exit: Int) : Process() {
+private class InstantlyExitingProcess(
+    private val exit: Int,
+    private val stderr: ByteArray = ByteArray(0),
+) : Process() {
     override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
 
     override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
 
-    override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+    override fun getErrorStream(): InputStream = ByteArrayInputStream(stderr)
 
     override fun waitFor(): Int = exit
 
