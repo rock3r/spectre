@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.sample
 
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -77,6 +78,59 @@ class HeadedRobotContentionAnalysisTest {
         val failure = describeContentionFailure("aaaaXbbbb", 'a', 'b', blockLength = 4)
         assertNotNull(failure)
         assertTrue(failure.contains("X"), "failure must name the foreign character: $failure")
+    }
+
+    @Test
+    fun `barrier stays closed until the field is focused`() {
+        assertEquals(
+            ContentionBarrier.Hold,
+            contentionBarrier(
+                bothProbesReady = false,
+                textFieldFocused = false,
+                focusGraceElapsed = false,
+            ),
+        )
+        assertEquals(
+            ContentionBarrier.Hold,
+            contentionBarrier(
+                bothProbesReady = false,
+                textFieldFocused = true,
+                focusGraceElapsed = true,
+            ),
+        )
+        assertEquals(
+            ContentionBarrier.Release,
+            contentionBarrier(
+                bothProbesReady = true,
+                textFieldFocused = true,
+                focusGraceElapsed = false,
+            ),
+        )
+        assertEquals(
+            ContentionBarrier.Hold,
+            contentionBarrier(
+                bothProbesReady = true,
+                textFieldFocused = false,
+                focusGraceElapsed = false,
+            ),
+        )
+        assertEquals(
+            ContentionBarrier.Nudge,
+            contentionBarrier(
+                bothProbesReady = true,
+                textFieldFocused = false,
+                focusGraceElapsed = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `nudge coordinates are two integers`() {
+        assertEquals(160 to 240, parseNudgeTarget("160 240"))
+        assertEquals(160 to 240, parseNudgeTarget("  160\t240\n"))
+        assertNull(parseNudgeTarget("160"))
+        assertNull(parseNudgeTarget("x y"))
+        assertNull(parseNudgeTarget(""))
     }
 
     @Test

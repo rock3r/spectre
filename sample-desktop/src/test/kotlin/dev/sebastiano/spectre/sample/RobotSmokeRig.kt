@@ -20,6 +20,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposePanel
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -57,6 +58,7 @@ internal class SmokeState {
     @Volatile var shortcutFiredCount: Int = 0
     @Volatile var counterBounds: Rect = Rect.Zero
     @Volatile var textFieldBounds: Rect = Rect.Zero
+    @Volatile var textFieldFocused: Boolean = false
     @Volatile var colorPatchBounds: Rect = Rect.Zero
 }
 
@@ -114,7 +116,8 @@ internal fun SmokeContent(state: SmokeState) {
                     .padding(8.dp)
                     .onGloballyPositioned { coords ->
                         state.textFieldBounds = coords.boundsInWindow()
-                    },
+                    }
+                    .onFocusChanged { state.textFieldFocused = it.isFocused },
         )
         BasicText("textValue = \"${state.textValue.text}\"")
         BasicText("shortcutFiredCount = ${state.shortcutFiredCount}")
