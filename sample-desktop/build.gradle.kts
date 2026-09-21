@@ -138,6 +138,16 @@ val headedRobotContentionTest by
         // background-only and never takes keyboard focus, so the probes' keystrokes would land
         // nowhere and the field would come back empty.
         systemProperty("apple.awt.UIElement", "false")
+        // HWND lookup for the foreground gate reflects into sun.awt. FFM GetForegroundWindow is a
+        // restricted native call. Both are no-ops on the failure path: the gate still has isActive.
+        jvmArgs(
+            "--add-exports=java.desktop/sun.awt=ALL-UNNAMED",
+            "--add-exports=java.desktop/sun.awt.windows=ALL-UNNAMED",
+            "--add-opens=java.desktop/sun.awt=ALL-UNNAMED",
+            "--add-opens=java.desktop/sun.awt.windows=ALL-UNNAMED",
+            "--add-opens=java.desktop/java.awt=ALL-UNNAMED",
+            "--enable-native-access=ALL-UNNAMED",
+        )
         // Red-proof lever, off unless asked for: forwards
         // -Dspectre.headedContention.distinctDesktopKeys=true to the worker so each probe gets its
         // own desktop resource key and mutual exclusion is disabled. See HeadedRobotContentionTest.

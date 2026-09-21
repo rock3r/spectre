@@ -139,6 +139,40 @@ class HeadedRobotContentionAnalysisTest {
     }
 
     @Test
+    fun `an active fixture is in front when AWT does not report focus`() {
+        // Windows ComposePanel: the Skia child HWND holds focus, so JFrame.isFocused is false
+        // while the frame is still the active window. Keystrokes reach the fixture.
+        assertTrue(fixtureWindowIsInFront(awtFocused = false, awtActive = true))
+        assertTrue(
+            fixtureWindowIsInFront(
+                awtFocused = false,
+                awtActive = false,
+                osForegroundIsFrameOrChild = true,
+            )
+        )
+    }
+
+    @Test
+    fun `a deactivated fixture is not in front`() {
+        // #534: Compose can still report a focused field after Windows deactivated the window.
+        assertTrue(
+            !fixtureWindowIsInFront(
+                awtFocused = false,
+                awtActive = false,
+                osForegroundIsFrameOrChild = false,
+            )
+        )
+    }
+
+    @Test
+    fun `foreground root matches the frame hwnd`() {
+        assertTrue(foregroundBelongsToFrame(frameHwnd = 10L, foregroundRoot = 10L))
+        assertTrue(!foregroundBelongsToFrame(frameHwnd = 10L, foregroundRoot = 20L))
+        assertTrue(!foregroundBelongsToFrame(frameHwnd = 0L, foregroundRoot = 10L))
+        assertTrue(!foregroundBelongsToFrame(frameHwnd = 10L, foregroundRoot = 0L))
+    }
+
+    @Test
     fun `nudge coordinates are two integers`() {
         assertEquals(160 to 240, parseNudgeTarget("160 240"))
         assertEquals(160 to 240, parseNudgeTarget("  160\t240\n"))
