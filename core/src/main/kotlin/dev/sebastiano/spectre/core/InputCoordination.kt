@@ -460,7 +460,7 @@ internal class ProductionInputLeaseCoordinator(
             // Keep the lease in [acquired] until this coroutine is still active. Clearing it in
             // the same expression as runInterruptible used to drop a granted lease when cancel
             // arrived after the server published the hold and before the caller could keep it.
-            ensureActive()
+            coroutineContext.ensureActive()
             requireNotNull(acquired.getAndSet(null))
         } finally {
             acquired.getAndSet(null)?.close()
