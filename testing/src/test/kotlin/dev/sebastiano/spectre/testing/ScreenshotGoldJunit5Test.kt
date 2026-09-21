@@ -112,6 +112,21 @@ class ScreenshotGoldJunit5Test {
     }
 
     @Test
+    fun `identity-hash after a Unicode class name keeps only the stable index`() {
+        val method = parameterizedMethod()
+        assertEquals(
+            "[1]",
+            invocationKeyFromTestInfo(fakeTestInfo("[1] value=Δοκιμή@4a12bc", method)),
+        )
+        assertEquals(
+            "repetition 1 of 2",
+            invocationKeyFromTestInfo(
+                fakeTestInfo("Δοκιμή@4a12bc repetition 1 of 2", repeatedMethod())
+            ),
+        )
+    }
+
+    @Test
     fun `identity-hash display without a stable index requires invocationKey`() {
         val method = parameterizedMethod()
         val info = fakeTestInfo("value=Foo@4a12bc", method)

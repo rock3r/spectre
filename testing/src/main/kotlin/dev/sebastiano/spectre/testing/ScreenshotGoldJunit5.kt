@@ -122,8 +122,10 @@ private fun repeatedInvocationIndex(display: String): String? =
 private val PARAMETERIZED_INVOCATION_LABEL = Regex("""^\[\d+]""")
 private val REPEATED_INVOCATION_LABEL =
     Regex("""(?:^| )repetition \d+(?: of \d+)?$""", RegexOption.IGNORE_CASE)
-// Object.toString() / default Any.toString(): ClassName@hex, arrays, nested types.
-private val IDENTITY_HASH_TEXT = Regex("""(?:[\w.$]+|\[+[ZBCSIJFD]|\[+L[\w.$]+;)@[0-9a-fA-F]+""")
+// Object.toString() / default Any.toString(): ClassName@hex, including Unicode names
+// (`Δοκιμή@4a12bc`) and arrays (`[Ldev.example.Theme;@7f31245a`). Match the `@<hex>`
+// suffix; do not restrict the preceding identifier to ASCII `\w`.
+private val IDENTITY_HASH_TEXT = Regex("""\S@[0-9a-fA-F]+""")
 private val REPEATED_UNIQUE_PLACEHOLDER = Regex("""\{currentRepetition\}""")
 private val PARAMETERIZED_UNIQUE_PLACEHOLDER = Regex("""\{index\}|\{default_display_name\}""")
 
