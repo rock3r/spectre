@@ -54,15 +54,19 @@ Paths that contain spaces (the helper lives under `%LOCALAPPDATA%`, and the reco
 often under a user temp directory) stay one argument each. `NormalizeIncomingArgs` expands
 `@<args-file>` and, if the host leaked the program path as the first user token, skips it.
 Direct flag argv still parses. A missing args file is exit 2 (`Arguments file not found`).
-Exit 2 is only that CLI parse. A later WinRT `E_INVALIDARG` (`Value does not fall within the
-expected range.`) is exit 5 and includes the exception text. The JVM failure names `Launch:`
-(the real `exe @args-file` command) separately from `Logical argv:` (the flag list).
+Exit 2 is only that CLI parse. A later pipeline failure is exit 5 and includes the exception
+text. The JVM failure names `Launch:` (the real `exe @args-file` command) separately from
+`Logical argv:` (the flag list). Exit 5 means a missing .NET 8 Desktop Runtime or Windows App
+Runtime 1.8 only when that stderr says the runtime failed to load. `PlatformNotSupportedException:
+Marshalling as IInspectable is not supported` is a CsWinRT cast failure, not a missing runtime.
 
-Region capture prefers `GraphicsCaptureItem.TryCreateFromDisplayId` on Windows 11
-(UniversalApiContract 12). `IGraphicsCaptureItemInterop.CreateForMonitor` returns
-`E_INVALIDARG` for an otherwise valid `HMONITOR` on current Windows 11 builds. The rectangle
-must intersect a monitor; a one-pixel DPI overshoot is clamped to that monitor instead of
-failing the capture. `--cursor true|false` is parsed as those two literals. Setting
+Region capture on Windows 11 (UniversalApiContract 12) calls
+`IGraphicsCaptureItemStatics2.TryCreateFromDisplayId` through `RoGetActivationFactory` and vtable
+slot 7. `GraphicsCaptureItem.As<IInspectable>()` throws `PlatformNotSupportedException` under the
+.NET 8 / Windows App SDK 1.8 combination this helper ships, so the helper does not use that cast.
+If DisplayId capture fails, the helper falls back to `IGraphicsCaptureItemInterop.CreateForMonitor`.
+The rectangle must intersect a monitor; a one-pixel DPI overshoot is clamped to that monitor
+instead of failing the capture. `--cursor true|false` is parsed as those two literals. Setting
 `IsCursorCaptureEnabled` is best-effort: some builds reject it for monitor capture, and the
 recording continues.
 

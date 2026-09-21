@@ -271,6 +271,44 @@ class WindowsGraphicsCaptureRecorderTest {
     }
 
     @Test
+    fun `exit 5 with IInspectable marshalling stderr does not blame a missing runtime`() {
+        val helper = Files.createTempFile("spectre-window-capture", ".exe")
+        val stderr =
+            "System.PlatformNotSupportedException: Marshalling as IInspectable is not " +
+                "supported in the .NET runtime.\n" +
+                "   at Windows.Graphics.Capture.GraphicsCaptureItem.As[I]()\n"
+        val recorder =
+            WindowsGraphicsCaptureRecorder(
+                helperExtractor =
+                    WindowsGraphicsCaptureHelperBinaryExtractor(
+                        resourceLocator = { null },
+                        targetDirProvider = { helper.parent },
+                        getenv = { helper.toString() },
+                        osArch = { "amd64" },
+                    ),
+                processFactory =
+                    RecordingProcessFactory(
+                        InstantlyExitingProcess(exit = 5, stderr = stderr.encodeToByteArray())
+                    ),
+            )
+
+        val error =
+            assertFailsWith<IllegalStateException> {
+                recorder.start(
+                    Window(title = "Spectre"),
+                    4242,
+                    Path.of("out.mp4"),
+                    RecordingOptions(),
+                )
+            }
+
+        val message = error.message.orEmpty()
+        assertTrue(message.contains("PlatformNotSupportedException"), message)
+        assertTrue(message.contains("IInspectable"), message)
+        assertTrue(!message.contains("Check that .NET 8 Desktop Runtime"), message)
+    }
+
+    @Test
     fun `stop writes q and waits for helper`() {
         val output = Files.createTempFile("spectre-wgc-test-", ".mp4")
         val process = FakeRecordingProcess()
