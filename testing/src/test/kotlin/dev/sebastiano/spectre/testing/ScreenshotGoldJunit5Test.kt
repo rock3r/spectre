@@ -113,10 +113,16 @@ class ScreenshotGoldJunit5Test {
 
     @Test
     fun `identity-hash after a Unicode class name keeps only the stable index`() {
+        assertTrue(containsIdentityHashText("Δοκιμή@4a12bc"))
+        assertTrue(containsIdentityHashText("[LΔοκιμή;@7f31245a"))
         val method = parameterizedMethod()
         assertEquals(
             "[1]",
             invocationKeyFromTestInfo(fakeTestInfo("[1] value=Δοκιμή@4a12bc", method)),
+        )
+        assertEquals(
+            "[2]",
+            invocationKeyFromTestInfo(fakeTestInfo("[2] [LΔοκιμή;@7f31245a", method)),
         )
         assertEquals(
             "repetition 1 of 2",
