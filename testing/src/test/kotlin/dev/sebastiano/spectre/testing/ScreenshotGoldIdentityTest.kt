@@ -217,13 +217,27 @@ class ScreenshotGoldIdentityTest {
     }
 
     @Test
-    fun `nested hosts inside ParameterizedClass require invocationKey`() {
+    fun `static nested hosts inside ParameterizedClass do not inherit outer invocationKey`() {
+        assertEquals(
+            null,
+            resolveInvocationKey(
+                GoldIdentityJunit5ParameterizedClassOuter.NestedHost::class.java.name,
+                "probe",
+                invocationKey = null,
+                testClass = GoldIdentityJunit5ParameterizedClassOuter.NestedHost::class.java,
+            ),
+        )
+    }
+
+    @Test
+    fun `inner hosts inside ParameterizedClass require invocationKey`() {
         val error =
             assertFailsWith<IllegalStateException> {
                 resolveInvocationKey(
-                    GoldIdentityJunit5ParameterizedClassOuter.NestedHost::class.java.name,
+                    GoldIdentityJunit5ParameterizedClassOuter.InnerHost::class.java.name,
                     "probe",
                     invocationKey = null,
+                    testClass = GoldIdentityJunit5ParameterizedClassOuter.InnerHost::class.java,
                 )
             }
         assertTrue(error.message!!.contains("invocationKey"), error.message)
@@ -686,6 +700,14 @@ internal class GoldIdentityJunit5ParameterizedClassOuter {
         @Test
         fun probe() {
             error("nested parameterized-class fixture")
+        }
+    }
+
+    @Disabled("reflective fixture for inner ParameterizedClass gold identity")
+    inner class InnerHost {
+        @Test
+        fun probe() {
+            error("inner parameterized-class fixture")
         }
     }
 }

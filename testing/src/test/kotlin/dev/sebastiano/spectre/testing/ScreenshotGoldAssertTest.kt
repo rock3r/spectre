@@ -168,6 +168,23 @@ class ScreenshotGoldAssertTest {
     }
 
     @Test
+    fun `failed atomic gold write leaves the previous file intact`(@TempDir temp: Path) {
+        val goldFile = temp.resolve("gold.png")
+        Files.writeString(goldFile, "previous-gold")
+        val error =
+            assertFailsWith<IllegalStateException> {
+                writeFileAtomically(goldFile) { error("disk full") }
+            }
+        assertEquals("disk full", error.message)
+        assertEquals("previous-gold", Files.readString(goldFile))
+        val leftoverTmp =
+            Files.list(temp).use { stream ->
+                stream.anyMatch { path -> path.fileName.toString().endsWith(".tmp") }
+            }
+        assertFalse(leftoverTmp)
+    }
+
+    @Test
     fun `update mode creates a missing gold file`(@TempDir temp: Path) {
         val goldRoot = temp.resolve("golds")
         val goldFile =

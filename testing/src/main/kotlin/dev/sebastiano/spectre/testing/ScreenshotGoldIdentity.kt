@@ -213,12 +213,15 @@ private fun loadTestClass(className: String, hint: ClassLoader? = null): Class<*
 /**
  * JUnit 5.14 `@ParameterizedClass` (and `@ClassTemplate`) re-runs ordinary `@Test` methods once per
  * class invocation. Detect the class-level template — including meta-annotations, `@Inherited`
- * declarations, and enclosing parameterized hosts — without resolving `ParameterizedClass` so
- * consumers that omit `junit-jupiter-params` stay intact.
+ * declarations, and enclosing *non-static* nested-test hosts — without resolving
+ * `ParameterizedClass` so consumers that omit `junit-jupiter-params` stay intact. A static Java
+ * nested class or Kotlin nested (not `inner`) class is independently runnable and does not inherit
+ * the outer template's invocationKey requirement.
  */
 private fun isJunit5ClassTemplateHost(cls: Class<*>): Boolean =
     generateSequence(cls) { current ->
-            current.enclosingClass?.takeUnless { it == Any::class.java }
+            if (Modifier.isStatic(current.modifiers)) null
+            else current.enclosingClass?.takeUnless { it == Any::class.java }
         }
         .any { host ->
             host.annotations.any {

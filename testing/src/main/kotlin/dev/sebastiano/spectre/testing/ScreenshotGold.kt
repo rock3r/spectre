@@ -154,9 +154,10 @@ internal fun assertMatchesGold(
             invocationKey,
         )
     if (updateEnabled) {
-        Files.createDirectories(goldFile.parent)
-        check(ImageIO.write(image, "png", goldFile.toFile())) {
-            "Failed to write PNG gold: $goldFile"
+        writeFileAtomically(goldFile) { tmp ->
+            check(ImageIO.write(image, "png", tmp.toFile())) {
+                "Failed to write PNG gold: $goldFile"
+            }
         }
         deleteReportDirectory(reportDir)
         return
@@ -212,6 +213,31 @@ internal fun assertMatchesGold(
         "Screenshot '$name' did not match gold ($reason). " +
             "Wrote diagnostic PNGs under $reportDir"
     )
+}
+
+/**
+ * Encodes into a sibling temp file and replaces [target] only after [writeTo] succeeds, so a failed
+ * update keeps the last readable gold.
+ */
+internal fun writeFileAtomically(target: Path, writeTo: (Path) -> Unit) {
+    val parent = target.parent ?: error("gold path has no parent: $target")
+    Files.createDirectories(parent)
+    val tmp = Files.createTempFile(parent, target.fileName.toString(), ".tmp")
+    try {
+        writeTo(tmp)
+        try {
+            Files.move(
+                tmp,
+                target,
+                StandardCopyOption.REPLACE_EXISTING,
+                StandardCopyOption.ATOMIC_MOVE,
+            )
+        } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+            Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING)
+        }
+    } finally {
+        Files.deleteIfExists(tmp)
+    }
 }
 
 private fun deleteReportDirectory(reportDir: Path) {
