@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1259,8 +1260,84 @@ class DocsAndSchemaPolicyTest(unittest.TestCase):
         self.assertTrue(any("missing required scenario ids" in e for e in errors), errors)
 
 
+# Process env the child JVM and HelperBinaryExtractor actually honor. A developer
+# shell (or release-smoke) often exports the TCC-granted helper; contract tests
+# must not read that ambient value unless they opt in via patch.dict.
+_HELPER_PROCESS_ENV_KEYS = (
+    smoke_lib.SCREENCAPTURE_HELPER_OVERRIDE_ENV,
+    *smoke_lib.SCREENCAPTURE_HELPER_DIR_JVM_ENVS,
+)
+
+
 class MacOsTccPreflightTest(unittest.TestCase):
     """#502: release-smoke must fail closed on missing macOS TCC before ./gradlew check."""
+
+    @classmethod
+    def setUpClass(cls):
+        # Poison the process env the way a macOS developer shell does
+        # (`SPECTRE_SCREENCAPTURE_HELPER` → the Application Support install, plus
+        # JVM helperDir). setUp strips it so each case stays on its injected home.
+        cls._saved_helper_env = {
+            key: os.environ.get(key) for key in _HELPER_PROCESS_ENV_KEYS
+        }
+        cls.addClassCleanup(cls._restore_helper_env)
+        poison_dir = Path(tempfile.mkdtemp(prefix="ambient-screencapture-helper-"))
+        cls._poison_dir = poison_dir
+        helper = (
+            poison_dir
+            / smoke_lib.SCREENCAPTURE_HELPER_APP_NAME
+            / "Contents"
+            / "MacOS"
+            / smoke_lib.SCREENCAPTURE_HELPER_NAME
+        )
+        helper.parent.mkdir(parents=True)
+        # Non-UTF8 bytes match a Mach-O helper: leaked overrides raise
+        # UnicodeDecodeError in the refresh probes instead of a path assertion.
+        helper.write_bytes(b"\xff\xfeambient-helper")
+        helper.chmod(0o755)
+        os.environ[smoke_lib.SCREENCAPTURE_HELPER_OVERRIDE_ENV] = str(helper)
+        helper_dir = poison_dir / "helper-dir"
+        helper_dir.mkdir()
+        helper_dir_opt = (
+            f"-D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}={helper_dir}"
+        )
+        for key in smoke_lib.SCREENCAPTURE_HELPER_DIR_JVM_ENVS:
+            os.environ[key] = helper_dir_opt
+
+    @classmethod
+    def _restore_helper_env(cls):
+        for key, value in cls._saved_helper_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        poison = getattr(cls, "_poison_dir", None)
+        if poison is not None:
+            shutil.rmtree(poison, ignore_errors=True)
+
+    def setUp(self):
+        for key in _HELPER_PROCESS_ENV_KEYS:
+            os.environ.pop(key, None)
+
+    def test_ambient_helper_env_does_not_redirect_injected_home(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = Path(tmp) / "home"
+            staged = smoke_lib.macos_screencapture_staged_helper(root)
+            runtime = smoke_lib.macos_screencapture_runtime_helper(home)
+
+            def assemble() -> int:
+                staged.parent.mkdir(parents=True)
+                staged.write_text("#!/bin/sh\n", encoding="utf-8")
+                staged.chmod(0o755)
+                return 0
+
+            found = smoke_lib.ensure_macos_screencapture_helper(
+                root, assemble=assemble, home=home
+            )
+            self.assertEqual(runtime, found)
+            self.assertIsNone(smoke_lib.macos_screencapture_override_path())
+            self.assertIsNone(smoke_lib.macos_screencapture_configured_helper_dir())
 
     def test_skip_reason_on_non_darwin(self):
         linux = smoke_lib.macos_tcc_skip_reason(system="Linux")
