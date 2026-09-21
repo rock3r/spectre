@@ -280,7 +280,7 @@ class ScreenshotGoldJunit5Test {
             val identity = worker.submit<GoldTestIdentity> { identityFromTestInfo(info) }.get()
             assertEquals(ScreenshotGoldJunit5Test::class.java.name, identity.testClassName)
             assertEquals(
-                "template methods require an invocation key when TestInfo is absent",
+                "template methods require an invocation key when TestInfo is absent()",
                 identity.testMethodName,
             )
         } finally {
@@ -327,7 +327,7 @@ class ScreenshotGoldJunit5Test {
         val identity = inferTestIdentity()
         assertEquals(ScreenshotGoldJunit5Test::class.java.name, identity.testClassName)
         assertEquals(
-            "RepeatedTest methods are recognized for gold identity",
+            "RepeatedTest methods are recognized for gold identity()",
             identity.testMethodName,
         )
     }
@@ -349,7 +349,7 @@ class ScreenshotGoldJunit5Test {
         val identity = inferTestIdentity()
         assertEquals(ScreenshotGoldJunit5Test::class.java.name, identity.testClassName)
         assertEquals(
-            "composed Test meta-annotations are recognized for gold identity",
+            "composed Test meta-annotations are recognized for gold identity()",
             identity.testMethodName,
         )
     }

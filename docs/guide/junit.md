@@ -405,9 +405,10 @@ src/test/resources/spectre-golds/
             gold.png
 ```
 
-The method segment is the inferred JUnit method (or `TestInfo`). No-arg tests keep the
-bare method name; overloads append `(fqcn,…)` so `@Test render()` and
-`@Test render(testInfo: TestInfo)` cannot share a gold. Parameterized and repeated
+The method segment is the inferred JUnit method (or `TestInfo`). Every identity includes
+an explicit parameter list: no-arg tests use `name()`, and overloads append `(fqcn,…)`.
+That keeps `@Test render()`, a zero-arg method literally named `render(int)`, and
+`@Test render(value: Int)` on distinct golds. Parameterized and repeated
 invocations add an extra `<invocation>` segment so they cannot overwrite each other.
 Tests inherited from an abstract class or interface, and inherited methods whose
 declaring class is not the executing class, cannot infer the concrete running class
@@ -467,6 +468,13 @@ When both are set, the Gradle/system property **wins**, including an explicit `f
 that disables a true environment variable. Unset property falls back to the environment
 variable. Consumers who use `-P` on their own `Test` task must forward it the same way
 (or set the environment variable, which needs no forwarding).
+
+The environment variable is read only after a test JVM starts. Spectre's own test
+tasks already force a rerun when update mode is on; consuming builds do not. If you
+rely on `SPECTRE_UPDATE_SCREENSHOT_GOLDS=true` alone, force execution with
+`./gradlew test --rerun-tasks` (or the equivalent `outputs.upToDateWhen { false }` /
+`outputs.cacheIf { false }` on that `Test` task). Otherwise Gradle can skip the worker
+and no golds are rewritten.
 
 Update mode must run on the OS and scale that owns that gold file.
 

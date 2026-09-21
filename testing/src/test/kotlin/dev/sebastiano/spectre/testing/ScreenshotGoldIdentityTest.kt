@@ -26,7 +26,7 @@ class ScreenshotGoldIdentityTest {
         val cls = GoldIdentitySignatureHost::class.java
         val noArg = cls.getDeclaredMethod("render")
         val withInfo = cls.getDeclaredMethod("render", TestInfo::class.java)
-        assertEquals("render", junitMethodIdentity(noArg))
+        assertEquals("render()", junitMethodIdentity(noArg))
         assertEquals("render(org.junit.jupiter.api.TestInfo)", junitMethodIdentity(withInfo))
         assertNotEquals(junitMethodIdentity(noArg), junitMethodIdentity(withInfo))
         assertNull(resolveJunitTestMethod(arrayOf(noArg, withInfo), "render"))
@@ -49,6 +49,18 @@ class ScreenshotGoldIdentityTest {
     }
 
     @Test
+    fun `zero-arg parenthesized names do not collide with typed overloads`() {
+        val cls = GoldIdentityParenNameCollisionHost::class.java
+        val named = cls.getDeclaredMethod("render(int)")
+        val typed = cls.getDeclaredMethod("render", Int::class.java)
+        assertEquals(0, named.parameterCount)
+        assertEquals(1, typed.parameterCount)
+        assertNotEquals(junitMethodIdentity(named), junitMethodIdentity(typed))
+        assertEquals("render(int)()", junitMethodIdentity(named))
+        assertEquals("render(int)", junitMethodIdentity(typed))
+    }
+
+    @Test
     fun `stack inference includes the executing overload signature`() {
         val host = GoldIdentitySignatureHost()
         val noArg = host.render()
@@ -57,7 +69,7 @@ class ScreenshotGoldIdentityTest {
                 fakeTestInfo("render", host.javaClass, host.javaClass.getDeclaredMethod("render"))
             )
         assertEquals(GoldIdentitySignatureHost::class.java.name, noArg.testClassName)
-        assertEquals("render", noArg.testMethodName)
+        assertEquals("render()", noArg.testMethodName)
         assertEquals("render(org.junit.jupiter.api.TestInfo)", withInfo.testMethodName)
     }
 
@@ -365,10 +377,10 @@ class ScreenshotGoldIdentityTest {
         val frame = StackTraceElement(cls.name, "probe", "GoldIdentityJavaStyleHost.java", 1)
         val fromFrame = assertNotNull(testIdentityFromFrame(frame))
         assertEquals(cls.name, fromFrame.testClassName)
-        assertEquals("probe", fromFrame.testMethodName)
+        assertEquals("probe()", fromFrame.testMethodName)
         val live = GoldIdentityJavaStyleHost().probe()
         assertEquals(cls.name, live.testClassName)
-        assertEquals("probe", live.testMethodName)
+        assertEquals("probe()", live.testMethodName)
         val javaBase = GoldIdentityJavaBase::class.java
         val baseFrame =
             StackTraceElement(
@@ -379,7 +391,7 @@ class ScreenshotGoldIdentityTest {
             )
         val fromBase = assertNotNull(testIdentityFromFrame(baseFrame))
         assertEquals(javaBase.name, fromBase.testClassName)
-        assertEquals("inheritedFromJavaBase", fromBase.testMethodName)
+        assertEquals("inheritedFromJavaBase()", fromBase.testMethodName)
         val liveBase = GoldIdentityJavaBase().inheritedFromJavaBase()
         assertEquals(javaBase.name, liveBase.testClassName)
     }
@@ -388,7 +400,7 @@ class ScreenshotGoldIdentityTest {
     fun `explicit executing class keys inherited golds without TestInfo`() {
         val identity = GoldIdentityConcreteChildA().inheritedKeyedByExecutingClass()
         assertEquals(GoldIdentityConcreteChildA::class.java.name, identity.testClassName)
-        assertEquals("inheritedKeyedByExecutingClass", identity.testMethodName)
+        assertEquals("inheritedKeyedByExecutingClass()", identity.testMethodName)
     }
 
     @Test
@@ -422,7 +434,7 @@ class ScreenshotGoldIdentityTest {
             fakeTestInfo("inheritedProbe()", GoldIdentityInheritedConcrete::class.java, method)
         val identity = identityFromTestInfo(info)
         assertEquals(GoldIdentityInheritedConcrete::class.java.name, identity.testClassName)
-        assertEquals("inheritedProbe", identity.testMethodName)
+        assertEquals("inheritedProbe()", identity.testMethodName)
         val fromConcreteBase =
             identityFromTestInfo(
                 fakeTestInfo(
@@ -432,7 +444,7 @@ class ScreenshotGoldIdentityTest {
                 )
             )
         assertEquals(GoldIdentityConcreteChildA::class.java.name, fromConcreteBase.testClassName)
-        assertEquals("inheritedFromConcrete", fromConcreteBase.testMethodName)
+        assertEquals("inheritedFromConcrete()", fromConcreteBase.testMethodName)
     }
 
     private fun fakeTestInfo(
@@ -457,6 +469,17 @@ internal class GoldIdentitySignatureHost {
     @Test fun render(): GoldTestIdentity = inferTestIdentity()
 
     @Test fun render(ignored: TestInfo): GoldTestIdentity = inferTestIdentity()
+}
+
+@Disabled("reflective fixture for parenthesized zero-arg gold identity")
+internal class GoldIdentityParenNameCollisionHost {
+    @Test fun `render(int)`(): GoldTestIdentity = inferTestIdentity()
+
+    @Test
+    fun render(value: Int): GoldTestIdentity {
+        assertEquals(0, value)
+        return inferTestIdentity()
+    }
 }
 
 internal abstract class GoldIdentityInheritedBase {

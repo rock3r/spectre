@@ -54,14 +54,11 @@ internal fun testIdentityFromFrame(frame: StackTraceElement): GoldTestIdentity? 
     return identityFromResolved(cls, method)
 }
 
-internal fun junitMethodIdentity(method: Method): String {
-    if (method.parameterCount == 0) return method.name
-    return buildString {
-        append(method.name)
-        append('(')
-        append(method.parameterTypes.joinToString(",") { it.name })
-        append(')')
-    }
+internal fun junitMethodIdentity(method: Method): String = buildString {
+    append(method.name)
+    append('(')
+    append(method.parameterTypes.joinToString(",") { it.name })
+    append(')')
 }
 
 internal fun resolveJunitTestMethod(

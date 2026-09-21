@@ -306,7 +306,10 @@ test JVM with no Gradle forwarding. `-Pspectre.updateScreenshotGolds=true` only 
 forked workers if the `Test` task forwards it as
 `-Ddev.sebastiano.spectre.testing.updateScreenshotGolds=true` (Spectre's `:testing` tests
 already do). The Gradle/system property wins over the environment variable, including an
-explicit `false`.
+explicit `false`. Consuming builds that set only the environment variable must also
+force the `Test` task to run (`--rerun-tasks`, or `outputs.upToDateWhen { false }` /
+`outputs.cacheIf { false }`); Spectre's repo-local update-mode helper is not applied to
+downstream `Test` tasks, so an `UP-TO-DATE` or `FROM-CACHE` skip never starts a JVM.
 
 ## Failure video uploads
 
