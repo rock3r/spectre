@@ -106,10 +106,12 @@ private fun quoted(text: String): String =
 /**
  * Gate decision for the headed contention proof.
  *
- * [Release] only when both probes are parked and the shared field is focused, so the measured
- * `typeText` calls are not aimed at an unfocused window. [Nudge] is a fresh click, and it happens
- * before the gate opens, outside the measured lease. [Hold] covers "not ready yet" and the grace
- * after the warmup click, so a focus event that is already in flight is not immediately re-nudged.
+ * [Release] only when both probes are parked, the shared field is focused, and the fixture window
+ * is the focused window. Compose can report a focused text field inside a window Windows has
+ * already deactivated; keystrokes then go to whichever window is actually in front. [Nudge] is a
+ * fresh click, and it happens before the gate opens, outside the measured lease. [Hold] covers "not
+ * ready yet" and the grace after the warmup click, so a focus event that is already in flight is
+ * not immediately re-nudged.
  */
 internal enum class ContentionBarrier {
     Hold,
@@ -120,11 +122,12 @@ internal enum class ContentionBarrier {
 internal fun contentionBarrier(
     bothProbesReady: Boolean,
     textFieldFocused: Boolean,
+    windowFocused: Boolean,
     focusGraceElapsed: Boolean,
 ): ContentionBarrier =
     when {
         !bothProbesReady -> ContentionBarrier.Hold
-        textFieldFocused -> ContentionBarrier.Release
+        textFieldFocused && windowFocused -> ContentionBarrier.Release
         !focusGraceElapsed -> ContentionBarrier.Hold
         else -> ContentionBarrier.Nudge
     }

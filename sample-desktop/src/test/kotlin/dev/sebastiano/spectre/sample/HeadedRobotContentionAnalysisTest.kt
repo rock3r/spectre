@@ -87,6 +87,7 @@ class HeadedRobotContentionAnalysisTest {
             contentionBarrier(
                 bothProbesReady = false,
                 textFieldFocused = false,
+                windowFocused = false,
                 focusGraceElapsed = false,
             ),
         )
@@ -95,6 +96,7 @@ class HeadedRobotContentionAnalysisTest {
             contentionBarrier(
                 bothProbesReady = false,
                 textFieldFocused = true,
+                windowFocused = true,
                 focusGraceElapsed = true,
             ),
         )
@@ -103,7 +105,17 @@ class HeadedRobotContentionAnalysisTest {
             contentionBarrier(
                 bothProbesReady = true,
                 textFieldFocused = true,
+                windowFocused = true,
                 focusGraceElapsed = false,
+            ),
+        )
+        assertEquals(
+            ContentionBarrier.Nudge,
+            contentionBarrier(
+                bothProbesReady = true,
+                textFieldFocused = true,
+                windowFocused = false,
+                focusGraceElapsed = true,
             ),
         )
         assertEquals(
@@ -111,6 +123,7 @@ class HeadedRobotContentionAnalysisTest {
             contentionBarrier(
                 bothProbesReady = true,
                 textFieldFocused = false,
+                windowFocused = true,
                 focusGraceElapsed = false,
             ),
         )
@@ -119,6 +132,7 @@ class HeadedRobotContentionAnalysisTest {
             contentionBarrier(
                 bothProbesReady = true,
                 textFieldFocused = false,
+                windowFocused = true,
                 focusGraceElapsed = true,
             ),
         )
