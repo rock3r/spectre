@@ -605,14 +605,22 @@ internal class ReflectiveAutomatorHandler(
     }
 
     /**
-     * Only the missing recording bridge (inject attach) may fall back to region capture. Other
-     * [UnsupportedOperationException]s from native capture (e.g. non-Frame hosts) must surface —
-     * silent framebuffer fallback would reintroduce occluded-pixel captures.
+     * Fall back to region capture when native window capture cannot produce a usable image: the
+     * recording bridge is absent, the helper fails (including argument rejection), or the native
+     * crop misses the node. Other failures, including a non-Frame host, must surface — a silent
+     * framebuffer fallback there would reintroduce occluded-pixel captures.
      */
     private fun isNativeWindowCaptureUnavailable(ex: ReflectiveOperationException): Boolean {
         var current: Throwable? = ex
         while (current != null) {
-            if (current.message.orEmpty().contains(NATIVE_BRIDGE_UNAVAILABLE_SNIPPET)) return true
+            val message = current.message.orEmpty()
+            if (
+                message.contains(NATIVE_BRIDGE_UNAVAILABLE_SNIPPET) ||
+                    message.contains(NATIVE_HELPER_FAILURE_SNIPPET) ||
+                    message.contains(NATIVE_CROP_MISS_SNIPPET)
+            ) {
+                return true
+            }
             current = current.cause
         }
         return false
@@ -957,6 +965,10 @@ internal class ReflectiveAutomatorHandler(
         /** Matches core ScreenCaptureBackend when NativeWindowCaptureBridge is not loadable. */
         const val NATIVE_BRIDGE_UNAVAILABLE_SNIPPET: String =
             "Native window capture bridge is unavailable"
+        /** Matches `WindowsGraphicsCaptureHelperErrors` when the .NET helper fails. */
+        const val NATIVE_HELPER_FAILURE_SNIPPET: String = "spectre-window-capture"
+        /** Matches `cropImageToScreenRegion` when the native image misses the node rectangle. */
+        const val NATIVE_CROP_MISS_SNIPPET: String = "does not intersect the captured image"
         /**
          * Fail-closed message for attach/CLI window or surface screenshots (#359). Must mention
          * occlusion/privacy risk and point callers at explicit fullscreen opt-in.
