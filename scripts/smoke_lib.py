@@ -842,12 +842,19 @@ def parse_screencapture_helper_dir_property(text: str) -> ScreencaptureHelperDir
     return parse_jvm_system_property(text, SCREENCAPTURE_HELPER_DIR_PROPERTY)
 
 
-def macos_screencapture_configured_helper_dir(
+def macos_screencapture_helper_dir_setting(
     environ: Mapping[str, str] | None = None,
     *,
     root: Path | None = None,
-) -> Path | None:
-    """Resolve helperDir from env vars the child JVM actually inherits."""
+) -> ScreencaptureHelperDirSetting:
+    """helperDir as the child JVM sees it.
+
+    defined is False only when the property is absent, which is the only case
+    that may consult SPECTRE_SCREENCAPTURE_HELPER. A blank value (including
+    whitespace, matching Kotlin isNotBlank()) is defined with path None and
+    falls through to the default extract directory. A non-blank value must be
+    absolute.
+    """
     del root  # gradle.properties is Gradle-JVM only; JavaExec does not forward it.
     env = environ if environ is not None else os.environ
     for name in SCREENCAPTURE_HELPER_DIR_JVM_ENVS:
@@ -862,15 +869,28 @@ def macos_screencapture_configured_helper_dir(
         if not parsed.defined:
             continue
         if parsed.path is None:
-            return None
+            return ScreencaptureHelperDirSetting(defined=True, path=None)
         if not jvm_path_is_absolute(parsed.path):
             raise InvalidScreencaptureHelperDir(
                 f"{SCREENCAPTURE_HELPER_DIR_PROPERTY} must be an absolute path "
                 f"(got {str(parsed.path)!r} from {name}). Relative values resolve "
                 "against different working directories in smoke vs Gradle."
             )
-        return parsed.path
-    return None
+        return parsed
+    return ScreencaptureHelperDirSetting(defined=False)
+
+
+def macos_screencapture_configured_helper_dir(
+    environ: Mapping[str, str] | None = None,
+    *,
+    root: Path | None = None,
+) -> Path | None:
+    """Absolute helperDir, or None when the property is unset or blank.
+
+    None does not mean "consult the env override": a blank property is also
+    None here. Use macos_screencapture_helper_dir_setting to tell those apart.
+    """
+    return macos_screencapture_helper_dir_setting(environ, root=root).path
 
 
 def macos_screencapture_jvm_user_home(
@@ -948,10 +968,48 @@ class InvalidScreencaptureHelperOverride(RuntimeError):
     """SPECTRE_SCREENCAPTURE_HELPER is set but is not an executable helper."""
 
 
+@dataclass(frozen=True)
+class ScreencaptureHelperChoice:
+    """Which helper HelperBinaryExtractor.extract would run.
+
+    override is set only when helperDir is unset and SPECTRE_SCREENCAPTURE_HELPER
+    names an executable. Otherwise the bundled app is extracted: helper_dir is
+    the non-blank property, or None for the default per-user directory (blank
+    helperDir, or unset helperDir with no env override).
+    """
+
+    override: Path | None = None
+    helper_dir: Path | None = None
+
+
+def macos_screencapture_helper_choice(
+    environ: Mapping[str, str] | None = None,
+    *,
+    root: Path | None = None,
+) -> ScreencaptureHelperChoice:
+    """Match HelperBinaryExtractor: helperDir outranks the env override.
+
+    A non-blank helperDir wins. A blank helperDir ignores the env var and uses
+    the default extract directory. The env var applies only when helperDir is
+    unset.
+    """
+    setting = macos_screencapture_helper_dir_setting(environ, root=root)
+    if setting.defined:
+        return ScreencaptureHelperChoice(helper_dir=setting.path)
+    override = macos_screencapture_override_path(environ)
+    if override is not None:
+        return ScreencaptureHelperChoice(override=override)
+    return ScreencaptureHelperChoice()
+
+
 def macos_screencapture_override_path(
     environ: Mapping[str, str] | None = None,
 ) -> Path | None:
-    """Authoritative SPECTRE_SCREENCAPTURE_HELPER. Absolute paths only."""
+    """Resolve SPECTRE_SCREENCAPTURE_HELPER. Absolute paths only.
+
+    This does not apply helperDir precedence. Callers that mirror
+    HelperBinaryExtractor use macos_screencapture_helper_choice.
+    """
     raw = (environ if environ is not None else os.environ).get(
         SCREENCAPTURE_HELPER_OVERRIDE_ENV, ""
     )
@@ -995,13 +1053,13 @@ def macos_screencapture_helper_candidates(
 ) -> list[Path]:
     candidates: list[Path] = []
     try:
-        override = macos_screencapture_override_path()
-    except InvalidScreencaptureHelperOverride:
+        choice = macos_screencapture_helper_choice(root=root)
+    except (InvalidScreencaptureHelperOverride, InvalidScreencaptureHelperDir):
         return []
-    if override is not None:
-        return [override]
+    if choice.override is not None:
+        return [choice.override]
     try:
-        helper_dir = macos_screencapture_configured_helper_dir(root=root)
+        helper_dir = choice.helper_dir
         jvm_home = macos_screencapture_jvm_user_home()
         resolved_home = home if home is not None else jvm_home
         if resolved_home is not None or helper_dir is not None or platform.system() == "Darwin":
@@ -1019,11 +1077,11 @@ def macos_screencapture_helper_path(
     home: Path | None = None,
 ) -> Path | None:
     try:
-        override = macos_screencapture_override_path()
-    except InvalidScreencaptureHelperOverride:
+        choice = macos_screencapture_helper_choice(root=root)
+    except (InvalidScreencaptureHelperOverride, InvalidScreencaptureHelperDir):
         return None
-    if override is not None:
-        return override
+    if choice.override is not None:
+        return choice.override
     for candidate in macos_screencapture_helper_candidates(root, home=home):
         if _is_executable_helper(candidate):
             return candidate
@@ -1075,14 +1133,10 @@ def probe_macos_screen_recording(
         return interpret_screencapture_preflight(result[0], result[1])
 
     try:
-        override = macos_screencapture_override_path()
-    except InvalidScreencaptureHelperOverride:
+        choice = macos_screencapture_helper_choice(root=root)
+    except (InvalidScreencaptureHelperOverride, InvalidScreencaptureHelperDir):
         return TCC_UNKNOWN
-    if override is None:
-        try:
-            macos_screencapture_configured_helper_dir(root=root)
-        except InvalidScreencaptureHelperDir:
-            return TCC_UNKNOWN
+    override = choice.override
     resolved = override if override is not None else helper_path
     if resolved is None and ensure_helper is not None:
         resolved = ensure_helper()
@@ -1179,13 +1233,13 @@ def ensure_macos_screencapture_helper(
 ) -> Path | None:
     """Install the helper to the runtime TCC path, assembling first when needed."""
     try:
-        override = macos_screencapture_override_path()
-    except InvalidScreencaptureHelperOverride:
+        choice = macos_screencapture_helper_choice(root=root)
+    except (InvalidScreencaptureHelperOverride, InvalidScreencaptureHelperDir):
         return None
-    if override is not None:
-        return override
+    if choice.override is not None:
+        return choice.override
     try:
-        helper_dir = macos_screencapture_configured_helper_dir(root=root)
+        helper_dir = choice.helper_dir
         jvm_home = macos_screencapture_jvm_user_home()
         resolved_home = home if home is not None else jvm_home
         runtime = macos_screencapture_runtime_helper(resolved_home, helper_dir=helper_dir)
