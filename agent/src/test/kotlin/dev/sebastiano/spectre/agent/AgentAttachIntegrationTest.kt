@@ -438,8 +438,10 @@ class AgentAttachIntegrationTest {
      * ready to participate in attach handshake` or `IOException: Connection refused` on
      * `VirtualMachine.attach` (leftover POSIX `.java_pid<pid>`).
      * [LaunchReadiness.awaitAgentBootstrap] already retries exactly these failures for the launch
-     * path; this suite calls [AgentAttach.attach] directly, so it retries against the same
-     * [LaunchReadiness.isPreLoadAttachRetryable] definition rather than a second copy of the rule.
+     * path, and unlinks a leftover `.java_pid` orphan on attach-socket `Connection refused`. This
+     * suite calls [AgentAttach.attach] directly, so it retries against the same
+     * [LaunchReadiness.isPreLoadAttachRetryable] definition and the same
+     * [HotSpotAttachSocket.recoverStaleOrphanIfAttachRefused] recovery rather than a second copy.
      *
      * Every other failure — including the dynamic-agent-loading refusal that `attach explains when
      * the target JVM disables dynamic agent loading` asserts on — propagates from the first
@@ -456,6 +458,11 @@ class AgentAttachIntegrationTest {
                 val retryable =
                     LaunchReadiness.isPreLoadAttachRetryable(ex.message, ex.cause?.message)
                 if (!retryable || System.nanoTime() >= deadline) throw ex
+                HotSpotAttachSocket.recoverStaleOrphanIfAttachRefused(
+                    pid,
+                    ex.message,
+                    ex.cause?.message,
+                )
                 System.err.println(
                     "pid $pid was not ready for the attach handshake yet; retrying. ${ex.message}"
                 )

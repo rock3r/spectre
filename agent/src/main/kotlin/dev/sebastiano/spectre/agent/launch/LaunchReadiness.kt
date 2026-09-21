@@ -5,6 +5,7 @@ import dev.sebastiano.spectre.agent.AttachInterruptedException
 import dev.sebastiano.spectre.agent.AttachOptions
 import dev.sebastiano.spectre.agent.AttachedAutomator
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.HotSpotAttachSocket
 import dev.sebastiano.spectre.agent.SpectreAgentException
 import dev.sebastiano.spectre.agent.SpectreAttachException
 import dev.sebastiano.spectre.agent.effectiveUdsPath
@@ -147,10 +148,10 @@ internal object LaunchReadiness {
      * a second attempt with a different path would wait forever (Codex P1). Retries are limited to
      * pre-load failures where HotSpot refuses attach — "state is not ready…" while the handshake is
      * still opening, and `VirtualMachine.attach` `IOException: Connection refused` when a leftover
-     * `/tmp/.java_pid<pid>` is still on disk (pid reuse after a force-kill, or a new JVM that has
-     * not yet replaced that file in `vm_start`). Discovery can list the JVM before that file is
-     * gone. A live target unlinks the stale socket and starts a real listener, so the retry
-     * converges. Those retries never reach `loadAgent`, so the pinned path stays safe.
+     * `/tmp/.java_pid<pid>` is still on disk (pid reuse after a force-kill). The POSIX attach
+     * provider will keep connecting to that dead socket and will not send SIGQUIT until the path is
+     * gone, so [HotSpotAttachSocket.recoverStaleOrphanIfAttachRefused] unlinks the orphan before
+     * the next retry. Those retries never reach `loadAgent`, so the pinned path stays safe.
      */
     fun awaitAgentBootstrap(
         process: Process,
@@ -234,9 +235,9 @@ internal object LaunchReadiness {
                     cause = ex,
                 )
             } catch (ex: SpectreAttachException) {
-                // Cheap instantaneous check, kept ahead of the retry decision: an already-dead
-                // process has nothing left to retry against. The grace-aware reclassification in
-                // bootstrapFailureOrProcessExit covers the slower "still exiting" case, and is
+                // Cheap instantaneous check ahead of retry: an already-dead process has nothing
+                // left to retry against. The grace-aware reclassification in
+                // bootstrapFailureOrProcessExit covers the slower "still exiting" case and is
                 // deliberately not on this path so retries stay fast.
                 rethrowIfProcessDied(process, gradleish, stdoutPath, stderrPath)
                 lastAttachFailure = ex
@@ -254,19 +255,13 @@ internal object LaunchReadiness {
                         cause = ex,
                     )
                 }
-                try {
-                    sleepQuietly(POLL_MS)
-                } catch (interrupted: InterruptedException) {
-                    // Preserve AGENT_BOOTSTRAP taxonomy when backoff is interrupted
-                    // (same wrapping as AttachInterruptedException during attach).
-                    Thread.currentThread().interrupt()
-                    throw LaunchAgentBootstrapException(
-                        attachedPid = attachedPid,
-                        stdoutPath = stdoutPath,
-                        stderrPath = stderrPath,
-                        cause = AttachInterruptedException(udsPath, interrupted),
-                    )
-                }
+                recoverStaleAttachSocketAndBackoff(
+                    attachedPid = attachedPid,
+                    failure = ex,
+                    udsPath = udsPath,
+                    stdoutPath = stdoutPath,
+                    stderrPath = stderrPath,
+                )
             } catch (ex: IOException) {
                 bootstrapFailureOrProcessExit(
                     graceMs = graceWithinBudget(ex),
@@ -306,7 +301,8 @@ internal object LaunchReadiness {
             "no such process" in msg ||
             // Require Spectre's openVirtualMachine prefix so post-loadAgent UDS /
             // loadAgent "Connection refused" is not retried (those already bound the agent).
-            ("virtualmachine.attach(" in msg && "connection refused" in msg)
+            (HotSpotAttachSocket.ATTACH_FAILURE_PREFIX in msg &&
+                HotSpotAttachSocket.CONNECTION_REFUSED in msg)
     }
 
     /**
@@ -552,3 +548,35 @@ internal object LaunchReadiness {
         "Gradle client exited before any app JVM was discovered " +
             "(wrapper download failure, bad env, or build error are common causes — see stderr)"
 }
+
+/**
+ * Unlink a leftover `.java_pid` on attach-socket `Connection refused`, then poll. Interrupt keeps
+ * the AGENT_BOOTSTRAP taxonomy (same wrapping as [AttachInterruptedException] during attach).
+ */
+@OptIn(ExperimentalSpectreAgentApi::class)
+private fun recoverStaleAttachSocketAndBackoff(
+    attachedPid: Long,
+    failure: SpectreAttachException,
+    udsPath: Path,
+    stdoutPath: Path,
+    stderrPath: Path,
+) {
+    HotSpotAttachSocket.recoverStaleOrphanIfAttachRefused(
+        attachedPid,
+        failure.message,
+        failure.cause?.message,
+    )
+    try {
+        Thread.sleep(ATTACH_RETRY_POLL_MS)
+    } catch (interrupted: InterruptedException) {
+        Thread.currentThread().interrupt()
+        throw LaunchAgentBootstrapException(
+            attachedPid = attachedPid,
+            stdoutPath = stdoutPath,
+            stderrPath = stderrPath,
+            cause = AttachInterruptedException(udsPath, interrupted),
+        )
+    }
+}
+
+private const val ATTACH_RETRY_POLL_MS: Long = 50
