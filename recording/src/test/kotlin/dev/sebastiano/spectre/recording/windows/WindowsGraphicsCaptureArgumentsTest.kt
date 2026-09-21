@@ -187,6 +187,51 @@ class WindowsGraphicsCaptureArgumentsTest {
     }
 
     @Test
+    fun `exit 5 names IInspectable marshalling instead of a missing runtime`() {
+        val stderr =
+            "System.PlatformNotSupportedException: Marshalling as IInspectable is not " +
+                "supported in the .NET runtime."
+        val message =
+            messageForWindowsGraphicsCaptureHelperExit(
+                exit = 5,
+                argv = listOf("helper.exe", "--mode", "recording"),
+                stderr = stderr,
+            )
+
+        assertTrue(message.contains("PlatformNotSupportedException"), message)
+        assertTrue(message.contains("IInspectable"), message)
+        assertTrue(!message.contains("Check that .NET 8 Desktop Runtime"), message)
+    }
+
+    @Test
+    fun `exit 5 without a runtime-load error points at helper stderr`() {
+        val message =
+            messageForWindowsGraphicsCaptureHelperExit(
+                exit = 5,
+                argv = listOf("helper.exe"),
+                stderr = "System.InvalidOperationException: Region does not intersect a monitor.",
+            )
+
+        assertTrue(message.contains("helper stderr"), message)
+        assertTrue(!message.contains("Check that .NET 8 Desktop Runtime"), message)
+    }
+
+    @Test
+    fun `exit 5 names the runtime when stderr says it failed to load`() {
+        val message =
+            messageForWindowsGraphicsCaptureHelperExit(
+                exit = 5,
+                argv = listOf("helper.exe"),
+                stderr =
+                    "You must install or update .NET to run this application.\n" +
+                        "Framework: 'Microsoft.WindowsDesktop.App', version '8.0.0'",
+            )
+
+        assertTrue(message.contains(".NET 8 Desktop Runtime"), message)
+        assertTrue(message.contains("Windows App Runtime 1.8"), message)
+    }
+
+    @Test
     fun `direct launch keeps the logical argv`() {
         val logical = listOf("helper.exe", "--mode", "recording", "--output", "out.mp4")
         assertEquals(

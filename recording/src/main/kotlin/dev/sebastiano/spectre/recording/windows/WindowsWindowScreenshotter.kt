@@ -60,13 +60,15 @@ internal constructor(
             }
             val exit = process.exitValue()
             check(exit == 0) {
+                val stderr = helperFailureDetail(process)
                 appendHelperStderr(
                     messageForWindowsGraphicsCaptureHelperExit(
                         exit,
                         argv,
                         helperLaunchArgv(process),
+                        stderr,
                     ),
-                    helperFailureDetail(process),
+                    stderr,
                 )
             }
             return ImageIO.read(output.toFile())

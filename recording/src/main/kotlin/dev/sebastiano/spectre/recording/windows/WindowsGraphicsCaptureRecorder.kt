@@ -197,14 +197,16 @@ internal constructor(
                     process.destroyForcibly()
                     -1
                 }
+            val stderr = helperFailureDetail(process)
             error(
                 appendHelperStderr(
                     messageForWindowsGraphicsCaptureHelperExit(
                         exit,
                         argv,
                         helperLaunchArgv(process),
+                        stderr,
                     ) + if (line == null) "" else " First stdout line: $line",
-                    helperFailureDetail(process),
+                    stderr,
                 )
             )
         }
@@ -291,9 +293,15 @@ private class WindowsGraphicsCaptureRecordingHandle(
         }
         val exit = process.exitValue()
         check(exit == 0 || sentTerminationOurselves) {
+            val stderr = helperFailureDetail(process)
             appendHelperStderr(
-                messageForWindowsGraphicsCaptureHelperExit(exit, argv, helperLaunchArgv(process)),
-                helperFailureDetail(process),
+                messageForWindowsGraphicsCaptureHelperExit(
+                    exit,
+                    argv,
+                    helperLaunchArgv(process),
+                    stderr,
+                ),
+                stderr,
             ) + " The helper may also have been terminated externally after stop was requested."
         }
     }

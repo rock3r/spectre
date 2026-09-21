@@ -232,7 +232,7 @@ class HeadedRobotContentionTest {
                 contentionBarrier(
                     bothProbesReady = true,
                     textFieldFocused = state.textFieldFocused,
-                    windowFocused = invokeOnEdt { state.frame?.isFocused == true },
+                    windowFocused = invokeOnEdt { fixtureIsInFront(state.frame) },
                     focusGraceElapsed = System.nanoTime() >= graceDeadline,
                 )
             ) {
@@ -246,10 +246,24 @@ class HeadedRobotContentionTest {
         }
         error(
             "the shared text field never had both Compose focus and the fixture window in " +
-                "front, so the probes would type into an unfocused window; expected " +
+                "front (textFieldFocused=${state.textFieldFocused}, ${fixtureFocusDetail(state)}), " +
+                "so the probes would type into an unfocused window; expected " +
                 "'$FIRST_BLOCK_CHARACTER'x$BLOCK_LENGTH and " +
                 "'$SECOND_BLOCK_CHARACTER'x$BLOCK_LENGTH"
         )
+    }
+
+    private fun fixtureFocusDetail(state: SmokeState): String = invokeOnEdt {
+        val frame = state.frame ?: return@invokeOnEdt "frame=null"
+        val osForeground = windowsOsForegroundBelongsTo(frame)
+        val inFront =
+            fixtureWindowIsInFront(
+                awtFocused = frame.isFocused,
+                awtActive = frame.isActive,
+                osForegroundIsFrameOrChild = osForeground,
+            )
+        "isFocused=${frame.isFocused} isActive=${frame.isActive} " +
+            "osForegroundBelongs=$osForeground inFront=$inFront"
     }
 
     private suspend fun nudgeField(state: SmokeState) {

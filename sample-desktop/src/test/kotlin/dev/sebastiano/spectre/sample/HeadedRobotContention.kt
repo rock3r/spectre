@@ -106,18 +106,38 @@ private fun quoted(text: String): String =
 /**
  * Gate decision for the headed contention proof.
  *
- * [Release] only when both probes are parked, the shared field is focused, and the fixture window
- * is the focused window. Compose can report a focused text field inside a window Windows has
- * already deactivated; keystrokes then go to whichever window is actually in front. [Nudge] is a
- * fresh click, and it happens before the gate opens, outside the measured lease. [Hold] covers "not
- * ready yet" and the grace after the warmup click, so a focus event that is already in flight is
- * not immediately re-nudged.
+ * [Release] only when both probes are parked, the shared field is focused, and the fixture is in
+ * front. Compose can report a focused text field inside a window Windows has already deactivated;
+ * keystrokes then go to whichever window is actually in front. On Windows the Skia child HWND of a
+ * `ComposePanel` holds focus, so `Window.isFocused` stays false while the frame is still the active
+ * window — that still counts as in front ([fixtureWindowIsInFront]). [Nudge] is a fresh click, and
+ * it happens before the gate opens, outside the measured lease. [Hold] covers "not ready yet" and
+ * the grace after the warmup click, so a focus event that is already in flight is not immediately
+ * re-nudged.
  */
 internal enum class ContentionBarrier {
     Hold,
     Nudge,
     Release,
 }
+
+/**
+ * True when keystrokes aimed at the fixture are not going to some other app.
+ *
+ * [awtFocused] is `Window.isFocused`. That is false on Windows when Compose's Skia child HWND is
+ * the focused window, even though the frame is still the active owner ([awtActive]) or the OS
+ * foreground root ([osForegroundIsFrameOrChild]). All three false is a deactivated fixture: Compose
+ * focus left over from an earlier click is not enough to open the gate.
+ */
+internal fun fixtureWindowIsInFront(
+    awtFocused: Boolean,
+    awtActive: Boolean,
+    osForegroundIsFrameOrChild: Boolean = false,
+): Boolean = awtFocused || awtActive || osForegroundIsFrameOrChild
+
+/** True when [foregroundRoot] is the frame's top-level HWND. Zero handles are not a match. */
+internal fun foregroundBelongsToFrame(frameHwnd: Long, foregroundRoot: Long): Boolean =
+    frameHwnd != 0L && foregroundRoot != 0L && frameHwnd == foregroundRoot
 
 internal fun contentionBarrier(
     bothProbesReady: Boolean,

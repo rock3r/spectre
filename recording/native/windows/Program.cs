@@ -862,6 +862,15 @@ internal static class Program
             }
         }
 
+        // IGraphicsCaptureItemStatics2.TryCreateFromDisplayId. IUnknown (3) + IInspectable (3)
+        // + TryCreateFromWindowId = slot 7. CsWinRT GraphicsCaptureItem.As<IInspectable>() throws
+        // PlatformNotSupportedException ("Marshalling as IInspectable is not supported"), so this
+        // calls the slot on the RoGetActivationFactory pointer instead.
+        private const int TryCreateFromDisplayIdVtableSlot = 7;
+
+        private static readonly Guid IGraphicsCaptureItemStatics2Guid =
+            new("3b92acc9-e584-5862-bf5c-9c316c6d2dbb");
+
         private static GraphicsCaptureItem? TryCreateForDisplayId(IntPtr monitor)
         {
             if (!Windows.Foundation.Metadata.ApiInformation.IsApiContractPresent(
@@ -872,68 +881,103 @@ internal static class Program
                 return null;
             }
 
-            Microsoft.UI.DisplayId uiId;
             try
             {
-                uiId = Microsoft.UI.Win32Interop.GetDisplayIdFromMonitor(monitor);
-            }
-            catch (Exception e) when (
-                e is ArgumentException or COMException or EntryPointNotFoundException or TypeLoadException)
-            {
-                Console.Error.WriteLine(
-                    $"GetDisplayIdFromMonitor failed: {e.GetType().Name}: {e.Message}");
-                return null;
-            }
-
-            if (uiId.Value == 0)
-            {
-                Console.Error.WriteLine("GetDisplayIdFromMonitor returned 0; using CreateForMonitor.");
-                return null;
-            }
-
-            try
-            {
-                var statics = GraphicsCaptureItem.As<IGraphicsCaptureItemStatics2>();
-                var hr = statics.TryCreateFromDisplayId(uiId.Value, out var abi);
-                if (hr < 0 || abi == IntPtr.Zero)
+                var uiId = Microsoft.UI.Win32Interop.GetDisplayIdFromMonitor(monitor);
+                if (uiId.Value == 0)
                 {
-                    Console.Error.WriteLine($"TryCreateFromDisplayId failed hr=0x{hr:X8}.");
-                    if (abi != IntPtr.Zero)
-                    {
-                        Marshal.Release(abi);
-                    }
-
+                    Console.Error.WriteLine("GetDisplayIdFromMonitor returned 0; using CreateForMonitor.");
                     return null;
                 }
 
-                Console.Error.WriteLine($"region capture item from DisplayId 0x{uiId.Value:X}.");
-                return MarshalInterface<GraphicsCaptureItem>.FromAbi(abi);
+                return CreateItemForDisplayId(uiId.Value);
             }
-            catch (Exception e) when (
-                e is ArgumentException
-                    or COMException
-                    or InvalidCastException
-                    or EntryPointNotFoundException
-                    or MissingMethodException
-                    or TypeLoadException)
+            catch (Exception e)
             {
+                // DisplayId is optional. CreateForMonitor is the path that captured regions
+                // before the IInspectable cast started failing the pipeline.
                 Console.Error.WriteLine(
-                    $"TryCreateFromDisplayId failed: {e.GetType().Name}: {e.Message}");
+                    $"DisplayId capture failed ({e.GetType().Name}: {e.Message}); using CreateForMonitor.");
                 return null;
             }
         }
-    }
 
-    [ComImport]
-    [Guid("3b92acc9-e584-5862-bf5c-9c316c6d2dbb")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIInspectable)]
-    private interface IGraphicsCaptureItemStatics2
-    {
-        [PreserveSig]
-        int TryCreateFromWindowId(ulong windowId, out IntPtr item);
+        private static GraphicsCaptureItem? CreateItemForDisplayId(ulong displayId)
+        {
+            var className = "Windows.Graphics.Capture.GraphicsCaptureItem";
+            var hrString = WindowsCreateString(className, className.Length, out var classNamePtr);
+            if (hrString < 0)
+            {
+                Console.Error.WriteLine($"WindowsCreateString failed hr=0x{hrString:X8}.");
+                return null;
+            }
 
-        [PreserveSig]
-        int TryCreateFromDisplayId(ulong displayId, out IntPtr item);
+            try
+            {
+                var iid = IGraphicsCaptureItemStatics2Guid;
+                var hrFactory = RoGetActivationFactory(classNamePtr, ref iid, out var factory);
+                if (hrFactory < 0 || factory == IntPtr.Zero)
+                {
+                    if (factory != IntPtr.Zero)
+                    {
+                        Marshal.Release(factory);
+                    }
+
+                    Console.Error.WriteLine(
+                        $"RoGetActivationFactory(IGraphicsCaptureItemStatics2) failed hr=0x{hrFactory:X8}.");
+                    return null;
+                }
+
+                try
+                {
+                    var vtable = Marshal.ReadIntPtr(factory);
+                    var methodPtr = Marshal.ReadIntPtr(
+                        vtable,
+                        IntPtr.Size * TryCreateFromDisplayIdVtableSlot);
+                    var tryCreate =
+                        Marshal.GetDelegateForFunctionPointer<TryCreateFromDisplayIdDelegate>(methodPtr);
+                    var hr = tryCreate(factory, displayId, out var abi);
+                    if (hr < 0 || abi == IntPtr.Zero)
+                    {
+                        // Leave a failed out-pointer alone: WinRT may not have written it.
+                        Console.Error.WriteLine($"TryCreateFromDisplayId failed hr=0x{hr:X8}.");
+                        return null;
+                    }
+
+                    Console.Error.WriteLine($"region capture item from DisplayId 0x{displayId:X}.");
+                    return MarshalInterface<GraphicsCaptureItem>.FromAbi(abi);
+                }
+                finally
+                {
+                    Marshal.Release(factory);
+                }
+            }
+            finally
+            {
+                WindowsDeleteString(classNamePtr);
+            }
+        }
+
+        [DllImport("combase.dll", ExactSpelling = true, PreserveSig = true)]
+        private static extern int WindowsCreateString(
+            [MarshalAs(UnmanagedType.LPWStr)] string sourceString,
+            int length,
+            out IntPtr hstring);
+
+        [DllImport("combase.dll", ExactSpelling = true, PreserveSig = true)]
+        private static extern int WindowsDeleteString(IntPtr hstring);
+
+        [DllImport("combase.dll", ExactSpelling = true, PreserveSig = true)]
+        private static extern int RoGetActivationFactory(
+            IntPtr activatableClassId,
+            ref Guid iid,
+            out IntPtr factory);
+
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        private delegate int TryCreateFromDisplayIdDelegate(
+            IntPtr thisPtr,
+            ulong displayId,
+            out IntPtr item);
     }
 
     [ComImport]
