@@ -705,8 +705,28 @@ def jvm_path_is_absolute(path: PurePath) -> bool:
 
 
 def _preserve_windows_path_separators_for_shlex(text: str) -> str:
-    """Double backslashes so POSIX shlex keeps Windows path separators."""
-    return text.replace("\\", "\\\\")
+    """Double unquoted backslashes so POSIX shlex keeps Windows path separators.
+
+    Single-quoted regions are left alone: shlex already treats those backslashes
+    as literals, matching the Java launcher (`-Duser.home='/tmp/a\\b'`).
+    """
+    out: list[str] = []
+    in_single = False
+    in_double = False
+    for char in text:
+        if char == "'" and not in_double:
+            in_single = not in_single
+            out.append(char)
+            continue
+        if char == '"' and not in_single:
+            in_double = not in_double
+            out.append(char)
+            continue
+        if char == "\\" and not in_single:
+            out.append("\\\\")
+            continue
+        out.append(char)
+    return "".join(out)
 
 
 def _strip_hotspot_argfile_comments(text: str) -> str:

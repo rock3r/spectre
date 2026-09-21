@@ -1802,6 +1802,13 @@ class MacOsTccPreflightTest(unittest.TestCase):
             tokens,
         )
 
+    def test_tokenize_jvm_options_preserves_single_quoted_backslashes(self):
+        """Java keeps a quoted backslash; doubling it before shlex would invent a second one."""
+        tokens = smoke_lib.tokenize_jvm_options("-Duser.home='/tmp/a\\b'")
+        self.assertEqual([r"-Duser.home=/tmp/a\b"], tokens)
+        tokens = smoke_lib.tokenize_jvm_options(r'-Duser.home="C:\Users\RUNNER~1\tmp"')
+        self.assertEqual([r"-Duser.home=C:\Users\RUNNER~1\tmp"], tokens)
+
     def test_jvm_path_is_absolute_accepts_posix_and_windows_forms(self):
         from pathlib import PureWindowsPath
 

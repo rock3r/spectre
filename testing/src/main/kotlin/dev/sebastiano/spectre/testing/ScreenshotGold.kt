@@ -33,11 +33,12 @@ import kotlin.math.roundToInt
  *
  * This name-only overload lives on `ScreenshotGoldKt` and does not mention JUnit 5 `TestInfo`, so
  * JUnit 4-only Java callers can resolve it without `junit-jupiter-api`. It infers the test from the
- * **calling thread** stack. Ordinary non-final Java test classes used directly are accepted;
- * abstract hosts, interfaces, and inherited methods (declaring class != executing class) fail
- * closed. Pass the executing [Class] overload or the JUnit 5 `TestInfo` facade so those golds key
- * by the running class. Inside [runSpectreTest], use the JUnit 5 facade (`ScreenshotGoldJunit5`)
- * instead — the body runs on a worker dispatcher that has no JUnit frame.
+ * **calling thread** stack. Name-only inference requires a final declaring class — a stack frame
+ * cannot distinguish a direct run of a non-final Java/`open` Kotlin host from a subclass inheriting
+ * that `@Test`. Abstract hosts, interfaces, and inherited methods fail closed. Pass the executing
+ * [Class] overload or the JUnit 5 `TestInfo` facade so those golds key by the running class. Inside
+ * [runSpectreTest], use the JUnit 5 facade (`ScreenshotGoldJunit5`) instead — the body runs on a
+ * worker dispatcher that has no JUnit frame.
  *
  * `@ParameterizedTest`, `@RepeatedTest`, JUnit 5 `@ParameterizedClass` / `@ClassTemplate`, and
  * JUnit 4 `@RunWith(Parameterized)` invocations that share a [name] must pass [invocationKey] here,

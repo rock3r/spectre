@@ -8,7 +8,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
-import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.ClassTemplate
@@ -370,17 +369,15 @@ class ScreenshotGoldIdentityTest {
     }
 
     @Test
-    fun `non-final concrete Java host used directly still resolves`() {
+    fun `non-final concrete hosts fail closed without an executing class`() {
         val cls = GoldIdentityJavaStyleHost::class.java
         assertFalse(Modifier.isFinal(cls.modifiers), cls.toString())
         assertFalse(Modifier.isAbstract(cls.modifiers), cls.toString())
         val frame = StackTraceElement(cls.name, "probe", "GoldIdentityJavaStyleHost.java", 1)
-        val fromFrame = assertNotNull(testIdentityFromFrame(frame))
-        assertEquals(cls.name, fromFrame.testClassName)
-        assertEquals("probe()", fromFrame.testMethodName)
-        val live = GoldIdentityJavaStyleHost().probe()
-        assertEquals(cls.name, live.testClassName)
-        assertEquals("probe()", live.testMethodName)
+        val fromFrame = assertFailsWith<IllegalStateException> { testIdentityFromFrame(frame) }
+        assertTrue(fromFrame.message!!.contains("TestInfo"), fromFrame.message)
+        val live = assertFailsWith<IllegalStateException> { GoldIdentityJavaStyleHost().probe() }
+        assertTrue(live.message!!.contains("TestInfo"), live.message)
         val javaBase = GoldIdentityJavaBase::class.java
         val baseFrame =
             StackTraceElement(
@@ -389,11 +386,32 @@ class ScreenshotGoldIdentityTest {
                 "GoldIdentityJavaBase.java",
                 1,
             )
-        val fromBase = assertNotNull(testIdentityFromFrame(baseFrame))
-        assertEquals(javaBase.name, fromBase.testClassName)
-        assertEquals("inheritedFromJavaBase()", fromBase.testMethodName)
-        val liveBase = GoldIdentityJavaBase().inheritedFromJavaBase()
-        assertEquals(javaBase.name, liveBase.testClassName)
+        val fromBase = assertFailsWith<IllegalStateException> { testIdentityFromFrame(baseFrame) }
+        assertTrue(fromBase.message!!.contains("TestInfo"), fromBase.message)
+        val liveBase =
+            assertFailsWith<IllegalStateException> {
+                GoldIdentityJavaBase().inheritedFromJavaBase()
+            }
+        assertTrue(liveBase.message!!.contains("TestInfo"), liveBase.message)
+        val keyed = GoldIdentityJavaStyleHost().probeKeyed()
+        assertEquals(cls.name, keyed.testClassName)
+        assertEquals("probeKeyed()", keyed.testMethodName)
+    }
+
+    @Test
+    fun `inherited template methods still require invocationKey`() {
+        val method =
+            GoldIdentityInheritedRepeatedBase::class.java.getDeclaredMethod("inheritedRepeated")
+        val error =
+            assertFailsWith<IllegalStateException> {
+                resolveInvocationKey(
+                    GoldIdentityInheritedRepeatedChild::class.java.name,
+                    junitMethodIdentity(method),
+                    invocationKey = null,
+                    testClass = GoldIdentityInheritedRepeatedChild::class.java,
+                )
+            }
+        assertTrue(error.message!!.contains("invocationKey"), error.message)
     }
 
     @Test
@@ -503,6 +521,17 @@ internal class GoldIdentityParenTemplateHost {
         error("template fixture")
     }
 }
+
+@Disabled("reflective fixture for inherited RepeatedTest gold identity")
+internal open class GoldIdentityInheritedRepeatedBase {
+    @RepeatedTest(name = "theme", value = 1)
+    fun inheritedRepeated() {
+        error("inherited repeated fixture")
+    }
+}
+
+@Disabled("reflective fixture for inherited RepeatedTest gold identity")
+internal class GoldIdentityInheritedRepeatedChild : GoldIdentityInheritedRepeatedBase()
 
 @Disabled("reflective fixture for inherited gold identity")
 internal open class GoldIdentityConcreteBase {

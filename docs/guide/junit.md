@@ -410,11 +410,11 @@ an explicit parameter list: no-arg tests use `name()`, and overloads append `(fq
 That keeps `@Test render()`, a zero-arg method literally named `render(int)`, and
 `@Test render(value: Int)` on distinct golds. Parameterized and repeated
 invocations add an extra `<invocation>` segment so they cannot overwrite each other.
-Tests inherited from an abstract class or interface, and inherited methods whose
-declaring class is not the executing class, cannot infer the concrete running class
-from the stack — pass `TestInfo` or `assertMatchesGold(getClass(), name, image)` so
-those golds key by the running class. Ordinary non-final Java test classes used
-directly still resolve; Java classes are non-final by default. Method names that
+Tests inherited from an abstract class or interface, inherited methods, and any
+non-final declaring class (ordinary Java tests, `open` Kotlin bases) cannot infer
+the concrete running class from the stack — a frame names the declaring class, not
+the receiver. Pass `TestInfo` or `assertMatchesGold(getClass(), name, image)` so
+those golds key by the running class. Method names that
 contain `(` are matched by the full generated identity, not by cutting at the first
 parenthesis.
 

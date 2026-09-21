@@ -141,13 +141,14 @@ private fun identityFromResolved(
     executingClass: Class<*>? = null,
 ): GoldTestIdentity {
     val host = executingClass ?: cls
-    // Abstract/interface hosts and inherited methods (declaring class != executing class)
-    // would share a gold across subclasses. Ordinary non-final Java classes used directly
-    // are fine — Java test classes are non-final by default. JUnit 4 callers can pass the
-    // executing class; JUnit 5 callers can pass TestInfo.
+    // A stack frame names the declaring class, not the receiver. Non-final concrete
+    // hosts (ordinary Java classes, open Kotlin bases) can be subclassed, so name-only
+    // inference cannot tell a direct run from an inherited one. Require TestInfo or the
+    // executing-class overload unless the declaring class is final.
     val abstractOrInterface = host.isInterface || Modifier.isAbstract(host.modifiers)
     val inherited = method.declaringClass != host
-    if (executingClass == null && (abstractOrInterface || inherited)) {
+    val inheritableHost = !Modifier.isFinal(host.modifiers)
+    if (executingClass == null && (abstractOrInterface || inherited || inheritableHost)) {
         error(
             "assertMatchesGold cannot infer the concrete test class from ${cls.name}; " +
                 "pass TestInfo or the executing test class so inherited tests key golds " +
@@ -172,10 +173,17 @@ internal data class GoldTestIdentity(val testClass: Class<*>, val testMethodName
 private fun requiresExplicitInvocationKey(cls: Class<*>, testMethodName: String): Boolean {
     if (isJunit4ParameterizedHost(cls)) return true
     if (isJunit5ClassTemplateHost(cls)) return true
-    return cls.declaredMethods.any { method ->
-        method.isJunitTestTemplate() &&
-            (junitMethodIdentity(method) == testMethodName || method.name == testMethodName)
-    }
+    return generateSequence(cls) { current ->
+            current.superclass?.takeUnless { it == Any::class.java }
+        }
+        .flatMap { host ->
+            host.declaredMethods.asSequence() +
+                host.interfaces.asSequence().flatMap { it.declaredMethods.asSequence() }
+        }
+        .any { method ->
+            method.isJunitTestTemplate() &&
+                (junitMethodIdentity(method) == testMethodName || method.name == testMethodName)
+        }
 }
 
 /**
